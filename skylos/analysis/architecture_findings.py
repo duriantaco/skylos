@@ -210,11 +210,17 @@ def generate_architecture_findings(
                 "simple_name": v.stable_module.split(".")[-1],
                 "value": f"{v.stable_module} -> {v.unstable_module}",
                 "message": (
-                    f"Dependency Inversion violation: stable module '{v.stable_module}' "
+                    f"Stable dependency review: stable module '{v.stable_module}' "
                     f"(I={v.stable_instability:.2f}) depends on unstable module "
                     f"'{v.unstable_module}' (I={v.unstable_instability:.2f}). "
-                    f"Consider introducing an abstraction layer."
+                    "Instability alone does not prove a Dependency Inversion violation. "
+                    "Review the boundary if changes to the dependency ripple through "
+                    "its consumers; introduce an abstraction only when a real "
+                    "interchangeable contract is needed."
                 ),
+                "scope": "file",
+                "metric_granularity": "file-level heuristic",
+                "metric_origin": "Stable Dependencies Principle instability ordering",
                 "file": stable_file.file_path if stable_file else "",
                 "basename": Path(stable_file.file_path).name
                 if stable_file and stable_file.file_path

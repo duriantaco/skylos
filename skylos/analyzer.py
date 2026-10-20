@@ -42,10 +42,15 @@ from skylos.visitors.languages.typescript.analysis import (
     build_ts_import_graph,
     demote_unconsumed_ts_exports,
     _discover_ts_vscode_lifecycle_entry_files,
+    discover_ts_build_aliases,
     discover_ts_bundle_entry_files,
     find_dead_ts_files,
     find_unused_ts_exports,
     mark_package_api_ts_exports_consumed,
+)
+from skylos.visitors.languages.typescript.build_configs import (
+    JestMappedResolver,
+    apply_ts_module_substitutions,
 )
 from skylos.visitors.languages.typescript.framework import is_framework_loaded_file
 from skylos.analysis.ast_cache import (
@@ -152,6 +157,7 @@ _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_ts_demoted_exports",
     "_browser_script_entry_files",
     "_generated_file_scope",
+    "_module_names_by_file",
 )
 
 
@@ -1656,6 +1662,27 @@ def _source_file_key(value) -> str | None:
     return os.path.normcase(os.path.abspath(path))
 
 
+def _python_import_bindings_by_module_attr(definitions, module_names) -> dict:
+    """Map ``module.binding`` to the Python imports that bind it in ``module``."""
+    if not module_names:
+        return {}
+    module_by_file = {str(path): module for path, module in module_names.items()}
+    bindings = defaultdict(list)
+    for definition in definitions:
+        if getattr(definition, "type", None) != "import":
+            continue
+        filename = str(getattr(definition, "filename", ""))
+        if _reference_language_family(filename) != "python":
+            continue
+        module = module_by_file.get(filename)
+        if not module:
+            continue
+        binding = _definition_binding_name(definition)
+        if binding:
+            bindings[f"{module}.{binding}"].append(definition)
+    return bindings
+
+
 def _definition_binding_name(definition) -> str:
     simple_name = str(getattr(definition, "simple_name", ""))
     if getattr(definition, "type", None) != "import":
@@ -1693,6 +1720,22 @@ def _is_loaded_root(defn) -> bool:
     if not filename.endswith(_TS_JS_SOURCE_EXTS):
         return True
     return is_framework_loaded_file(filename)
+
+
+# Penalty codes for methods kept because their base class dispatches to them.
+_DISPATCHED_OVERRIDE_CODES = frozenset({"parent_override", "protocol_override"})
+
+
+def _is_dispatched_override(defn) -> bool:
+    """An override the base class calls is not a dead caller of its helpers.
+
+    The penalty pass already keeps it out of the report; treating it as dead
+    here would report the methods only it calls (``self.helper`` callbacks).
+    """
+    return (
+        getattr(defn, "type", None) == "method"
+        and getattr(defn, "suppression_code", None) in _DISPATCHED_OVERRIDE_CODES
+    )
 
 
 def _annotate_dead_code_evidence_sources(defs, test_flags, framework_flags) -> None:
@@ -2260,7 +2303,7 @@ class Skylos:
             # A root with no static references (a Next.js page's default
             # export, a Laravel listener) is called by its framework, so the
             # helpers it calls must not inherit deadness from it.
-            if _is_loaded_root(defn):
+            if _is_loaded_root(defn) or _is_dispatched_override(defn):
                 continue
             if (
                 defn.type in ("function", "method")
@@ -2290,6 +2333,13 @@ class Skylos:
         changed = True
         iterations = 0
         max_iterations = 100
+        # Definitions this pass zeroed, with the references they had. A
+        # later rescue of their caller (grep verification) must restore them.
+        killed = {}
+        self._transitive_dead_kills = killed
+        self._transitive_dead_caller_key = key_for_caller
+        self._transitive_dead_class_keys = class_key_by_name_file
+        self._transitive_dead_filename = resolved_filename
 
         while changed and iterations < max_iterations:
             changed = False
@@ -2321,6 +2371,7 @@ class Skylos:
                     )
                     if defn.references <= dead_callers:
                         dead_set.add(key)
+                        killed[key] = defn.references
                         defn.references = 0
                         if defn.type in ("class", "type"):
                             dead_classes.add(key)
@@ -2353,6 +2404,52 @@ class Skylos:
                 if why_reduced is not None:
                     why_reduced.append("survived_propagation_via_attr_heuristic")
                 defn.confidence = min(defn.confidence, 40)
+
+    def _restore_transitive_dead_callees(self) -> int:
+        """Undo transitive deadness whose caller was later found to be used.
+
+        Transitive propagation zeroes callees whose only callers had no
+        references. When a caller is rescued afterwards (for example by grep
+        verification), reporting its callees as dead would contradict that.
+        """
+        killed = getattr(self, "_transitive_dead_kills", None)
+        if not killed:
+            return 0
+        key_for_caller = self._transitive_dead_caller_key
+        class_keys = self._transitive_dead_class_keys
+        resolved_filename = self._transitive_dead_filename
+
+        def is_live(key):
+            defn = self.defs.get(key)
+            if defn is None:
+                return False
+            if key in killed:
+                return False
+            return defn.references > 0 or bool(defn.is_exported)
+
+        def is_live_caller(caller, callee_defn):
+            caller_key = key_for_caller(caller, callee_defn)
+            if caller_key is None or not is_live(caller_key):
+                return False
+            owner = caller.rsplit(".", 1)[0] if "." in caller else ""
+            owner_key = class_keys.get((owner, resolved_filename(callee_defn.filename)))
+            return owner_key is None or is_live(owner_key)
+
+        restored = 0
+        changed = True
+        while changed:
+            changed = False
+            for key, original in list(killed.items()):
+                defn = self.defs.get(key)
+                if defn is None or defn.references > 0:
+                    killed.pop(key, None)
+                    continue
+                if any(is_live_caller(c, defn) for c in defn.called_by):
+                    killed.pop(key, None)
+                    defn.references = max(original, 1)
+                    restored += 1
+                    changed = True
+        return restored
 
     def _class_declares_attr(self, defn, attr_name: str) -> bool:
         node = getattr(defn, "node", None)
@@ -2469,6 +2566,11 @@ class Skylos:
             reason = report.reasons[key]
             if reason not in defn.why_unused:
                 defn.why_unused.append(reason)
+
+    def _refresh_after_rescue(self):
+        self._restore_transitive_dead_callees()
+        self._refresh_python_reachability()
+        self._restore_transitive_dead_callees()
 
     def _refresh_python_reachability(self):
         report = getattr(self, "_python_reachability_report", None)
@@ -2606,11 +2708,11 @@ class Skylos:
                     if key in verified_keys
                 },
             )
-            self._refresh_python_reachability()
+            self._refresh_after_rescue()
             return rescued
 
         rescued = _apply_grep_verify_verdicts(candidate_defs, verdicts)
-        self._refresh_python_reachability()
+        self._refresh_after_rescue()
 
         if rescued:
             logger.info(f"Grep verify: rescued {rescued} findings from dead code")
@@ -2628,6 +2730,7 @@ class Skylos:
                 exclude_folders=getattr(self, "_analysis_scope", {}).get(
                     "excluded_folders"
                 ),
+                module_names=getattr(self, "_module_names_by_file", None),
             )
             self._dead_code_liveness_report = report
             if report.rescued:
@@ -2781,6 +2884,10 @@ class Skylos:
             if d.type == "method":
                 _methods_by_file_and_name[(str(d.filename), d.simple_name)].append(d)
 
+        reexported_import_bindings = _python_import_bindings_by_module_attr(
+            self.defs.values(), getattr(self, "_module_names_by_file", None)
+        )
+
         csharp_by_name = defaultdict(list)
         csharp_by_simple = defaultdict(list)
         for definition in self.defs.values():
@@ -2909,6 +3016,13 @@ class Skylos:
                 ):
                     if d.type == "method":
                         d.references += 1
+
+            if ref_family in {None, "python"} and ref in reexported_import_bindings:
+                # ``from pkg.mod import name`` / ``mod.name`` elsewhere reads the
+                # name that pkg.mod binds by importing it, so that import is used.
+                for binding in reexported_import_bindings[ref]:
+                    if str(binding.filename) != str(ref_file):
+                        binding.references += 1
 
             file_key = f"{ref_file}:{ref}"
 
@@ -3056,11 +3170,15 @@ class Skylos:
 
         from skylos.analysis.implicit_refs import pattern_tracker as global_tracker
 
+        if global_tracker._class_patterns:
+            global_tracker.set_class_hierarchy(self._python_subclass_map())
+
         if (
             global_tracker.traced_calls
             or global_tracker.coverage_hits
             or global_tracker.known_refs
             or global_tracker._compiled_patterns
+            or global_tracker._class_patterns
             or getattr(global_tracker, "known_qualified_refs", None)
         ):
             for def_obj in self.defs.values():
@@ -3131,6 +3249,82 @@ class Skylos:
                     continue
 
                 attribute_contexts.mark(defn, _heuristic_weights)
+
+    def _python_subclass_map(self):
+        children_of = defaultdict(set)
+        for name, defn in self.defs.items():
+            if defn.type != "class":
+                continue
+            for base_qname in getattr(defn, "base_classes", None) or ():
+                children_of[base_qname].add(name)
+        return children_of
+
+    def _mark_reflected_module_members(self, module_names):
+        """Mark members of modules that code enumerates by reflection.
+
+        ``for name in dir(module)`` (directly, or in a function that receives
+        the module as an argument) reaches every member the loop does not
+        filter out. ``issubclass(obj, Base)`` and ``name.startswith(prefix)``
+        filters narrow the members to those subclasses or names.
+        """
+        from skylos.analysis.implicit_refs import (
+            _compile_pattern_ref,
+            pattern_tracker as global_tracker,
+        )
+
+        targets = set(getattr(global_tracker, "reflected_modules", ()) or ())
+        reflective_params = getattr(global_tracker, "reflective_params", {}) or {}
+        for callee, index, name in getattr(global_tracker, "module_call_args", ()):
+            for name_filter in reflective_params.get((callee, index), ()):
+                targets.add((name, name_filter))
+        targets = {
+            (module, name_filter)
+            for module, name_filter in targets
+            if module in module_names
+        }
+        if not targets:
+            return 0
+
+        children_of = self._python_subclass_map()
+        descendants = {}
+
+        def subclasses(base):
+            if base not in descendants:
+                seen = set()
+                stack = list(children_of.get(base, ()))
+                while stack:
+                    child = stack.pop()
+                    if child not in seen:
+                        seen.add(child)
+                        stack.extend(children_of.get(child, ()))
+                descendants[base] = seen
+            return descendants[base]
+
+        members_by_module = defaultdict(list)
+        for defn in self.defs.values():
+            if defn.type not in ("class", "function", "variable"):
+                continue
+            owner, _, simple = defn.name.rpartition(".")
+            if owner and simple == defn.simple_name:
+                members_by_module[owner].append(defn)
+
+        marked = set()
+        for module, (bases, patterns) in targets:
+            allowed = set()
+            for base in bases:
+                allowed |= subclasses(base)
+            regexes = [_compile_pattern_ref(pattern) for pattern in patterns]
+            for defn in members_by_module.get(module, ()):
+                if defn.name in marked:
+                    continue
+                if bases and defn.name not in allowed:
+                    continue
+                if regexes and not any(r.match(defn.simple_name) for r in regexes):
+                    continue
+                defn.references += 1
+                _mark_evidence_ref(defn, "dynamic_pattern")
+                marked.add(defn.name)
+        return len(marked)
 
     def _mark_call_arg_method_refs(self):
         param_method_refs = getattr(self, "_param_method_refs", {})
@@ -3673,6 +3867,7 @@ class Skylos:
         include_review_context=False,
         skip_generated=False,
         generated_keep_paths=None,
+        all_advice=True,
     ) -> str:
         if not isinstance(path, (str, list, tuple)):
             raise TypeError(
@@ -4169,6 +4364,13 @@ class Skylos:
             )
             result["assessment"] = compute_assessment(result)
             result["analysis_summary"]["assessment_scope"] = "all_analyzed_findings"
+            from skylos.reporting.advice_policy import apply_advice_policy
+            from skylos.reporting.listing import explicit_rule_ids, normalize_rule_ids
+
+            result = apply_advice_policy(
+                result, project_root=str(project_root), all_advice=all_advice,
+                explicit_rules=explicit_rule_ids(project_cfg) | normalize_rule_ids(required_config_rules),
+            )
             return json.dumps(result)
 
         logger.info(f"Analyzing {len(files)} files...")
@@ -4179,6 +4381,7 @@ class Skylos:
         modmap = {}
         for f in files:
             modmap[f] = self._module(module_root, f)
+        self._module_names_by_file = modmap
 
         from skylos.analysis.implicit_refs import pattern_tracker
         from skylos.analysis.implicit_refs import (
@@ -4195,6 +4398,8 @@ class Skylos:
         global_pattern_tracker.traced_calls.clear()
         global_pattern_tracker.traced_by_file.clear()
         global_pattern_tracker._traced_by_basename.clear()
+        global_pattern_tracker.pattern_refs.clear()
+        global_pattern_tracker.reset_dynamic_refs()
 
         pyproject_entrypoint_qnames = set()
         pyproject_entrypoint_modules = set()
@@ -4443,6 +4648,9 @@ class Skylos:
 
                 if pattern_tracker_obj:
                     pattern_trackers[mod] = pattern_tracker_obj
+                    # A process-pool worker returns its own tracker; serial
+                    # analysis already wrote into the global one.
+                    global_pattern_tracker.merge(pattern_tracker_obj)
 
                 if file_inferred_types:
                     all_inferred_types.update(file_inferred_types)
@@ -5761,7 +5969,37 @@ class Skylos:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error("JS API hallucination scan failed", exc_info=True)
 
-        self._build_ts_import_graph(ts_raw_imports, monorepo_resolver)
+        jest_mappings, file_replacements = [], []
+        try:
+            jest_mappings, file_replacements = discover_ts_build_aliases(
+                files,
+                project_root=str(self._project_root),
+                workspace_inventory=workspace_inventory,
+                exclude_folders=exclude_folders,
+            )
+        except Exception:
+            if os.getenv("SKYLOS_DEBUG"):
+                logger.error("JS/TS build config alias scan failed", exc_info=True)
+        graph_resolver = monorepo_resolver
+        if jest_mappings:
+            # Under Jest, moduleNameMapper decides what a bare import loads;
+            # the analysis resolver is only asked first.
+            graph_resolver = JestMappedResolver(
+                monorepo_resolver,
+                jest_mappings,
+                {
+                    os.path.realpath(str(f))
+                    for f in files
+                    if str(f).endswith(_TS_JS_SOURCE_EXTS)
+                },
+            )
+        self._build_ts_import_graph(ts_raw_imports, graph_resolver)
+        apply_ts_module_substitutions(
+            file_replacements,
+            self.ts_consumed_exports,
+            self._ts_importers_of,
+            self._ts_wildcard_edges,
+        )
 
         self._global_type_map = {}
         self._global_type_map.update(all_inferred_types)
@@ -5820,6 +6058,7 @@ class Skylos:
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: mark refs"))
         self._mark_refs(progress_callback=progress_callback)
+        self._mark_reflected_module_members(set(modmap.values()))
         self._mark_call_arg_method_refs()
         mark_signature_contract_parameters(self.defs)
 
@@ -6011,6 +6250,15 @@ class Skylos:
             result["analysis_summary"]["unused_dependency_analysis"] = (
                 unused_dependency_analysis
             )
+        # The CLI asks for focused advice, so its terminal, JSON, SARIF, gate
+        # and upload read one result. Library callers keep every check.
+        from skylos.reporting.advice_policy import apply_advice_policy
+        from skylos.reporting.listing import explicit_rule_ids, normalize_rule_ids
+
+        result = apply_advice_policy(
+            result, project_root=str(project_root), all_advice=all_advice,
+            explicit_rules=explicit_rule_ids(project_cfg) | normalize_rule_ids(required_config_rules),
+        )
 
         return json.dumps(result, indent=2)
 
@@ -6154,6 +6402,7 @@ def analyze(
     include_review_context=False,
     skip_generated=False,
     generated_keep_paths=None,
+    all_advice=True,
 ) -> str:
     return Skylos().analyze(
         path,
@@ -6180,6 +6429,7 @@ def analyze(
         include_review_context=include_review_context,
         skip_generated=skip_generated,
         generated_keep_paths=generated_keep_paths,
+        all_advice=all_advice,
     )
 
 

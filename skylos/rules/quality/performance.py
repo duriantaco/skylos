@@ -4446,6 +4446,17 @@ class PerformanceRule(SkylosRule):
                 return True
         return False
 
+    @staticmethod
+    def _pandas_lazy_iterator(node):
+        # read_csv(iterator=True) returns a TextFileReader instead of eagerly
+        # constructing the complete DataFrame. Unknown flags are not proof.
+        return any(
+            keyword.arg == "iterator"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in node.keywords
+        )
+
     def _find_nested_loops(self, outer: ast.For, body: list[ast.stmt]) -> list[ast.For]:
         findings_list = []
         for child in body:
@@ -4546,7 +4557,7 @@ class PerformanceRule(SkylosRule):
 
             if self._is_pandas_read(node):
                 if "SKY-P402" not in self.ignore_list:
-                    if not self._pandas_row_bound(node):
+                    if not self._pandas_row_bound(node) and not self._pandas_lazy_iterator(node):
                         findings.append(
                             {
                                 "rule_id": "SKY-P402",

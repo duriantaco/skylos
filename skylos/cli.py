@@ -1923,7 +1923,9 @@ def _apply_display_filters(
     filtered.pop("ai_security_stats", None)
     filtered.pop("provenance_summary", None)
 
-    return filtered
+    from skylos.reporting.advice_policy import refresh_listing_summary
+
+    return refresh_listing_summary(filtered, preserve_assessment=preserve_grade)
 
 
 def _normalize_selected_rules(selectors) -> list[str]:
@@ -2014,7 +2016,9 @@ def _apply_rule_selection(result: dict, selectors) -> dict:
     filtered.pop("assessment", None)
     summary.pop("assessment_scope", None)
     summary.pop("assessment_includes_filtered_findings", None)
-    return filtered
+    from skylos.reporting.advice_policy import refresh_listing_summary
+
+    return refresh_listing_summary(filtered)
 
 
 def _apply_selected_rule_analysis_flags(args) -> None:
@@ -4947,6 +4951,10 @@ def main() -> None:
                             "grep_verify": False,
                             "progress_callback": _update_precommit_progress,
                         }
+                        analysis_options["all_advice"] = bool(
+                            getattr(agent_args, "all_advice", False)
+                            or getattr(agent_args, "select", None)
+                        )
                         if include_review_proofs:
                             analysis_options["include_review_proofs"] = True
                         if include_review_context:

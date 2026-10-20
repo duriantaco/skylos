@@ -166,7 +166,8 @@ def _scan(repo, *extra):
 
 
 def test_diff_base_scan_moves_metrics_and_does_not_gate(repo):
-    proc, data = _scan(repo, "--diff-base", "HEAD")
+    # Code-health routing covers every metric, so ask for every check.
+    proc, data = _scan(repo, "--diff-base", "HEAD", "--all-advice")
     quality_rules = {f.get("rule_id") for f in data.get("quality", [])}
     assert not quality_rules & CODE_HEALTH_RULES
     names = {f.get("name") for f in data.get("code_health", []) if f["rule_id"] == "SKY-C304"}
@@ -175,7 +176,7 @@ def test_diff_base_scan_moves_metrics_and_does_not_gate(repo):
 
 
 def test_full_scan_still_reports_metrics_as_quality(repo):
-    _proc, data = _scan(repo)
+    _proc, data = _scan(repo, "--all-advice")
     rules = {f.get("rule_id") for f in data.get("quality", [])}
     assert "SKY-C304" in rules
     assert not data.get("code_health")

@@ -68,9 +68,11 @@ def _result(*rows):
     return annotate_finding_types(result)
 
 
-def _render(kind, result, *, expand=False, limit=None):
+def _render(kind, result, *, expand=False, limit=None, all_advice=False):
     if kind == "llm":
-        return _generate_llm_report(result, Path("/example"), expand_advice=expand)
+        return _generate_llm_report(
+            result, Path("/example"), expand_advice=expand, all_advice=all_advice
+        )
     console = Console(
         record=True, width=400, color_system=None, theme=_skylos_console_theme()
     )
@@ -81,6 +83,7 @@ def _render(kind, result, *, expand=False, limit=None):
             root_path=Path("/example"),
             expand_advice=expand,
             limit=limit,
+            all_advice=all_advice,
         )
     else:
         render_results(
@@ -91,6 +94,7 @@ def _render(kind, result, *, expand=False, limit=None):
             tree=kind == "tree",
             limit=limit,
             copy_badge=False,
+            all_advice=all_advice,
         )
     return console.export_text()
 
@@ -138,7 +142,9 @@ def test_single_trigger_keeps_its_metric_and_rule(kind, rule):
     result = _result(row)
     before = copy.deepcopy(result)
 
-    text = _render(kind, result, expand=True)
+    # One metric alone is measured, not listed, by default.
+    assert rule not in _render(kind, result, expand=True)
+    text = _render(kind, result, expand=True, all_advice=True)
 
     assert rule in text
     assert ("SKY-Q306" if rule == "SKY-Q301" else "SKY-Q301") not in text
@@ -170,7 +176,10 @@ def test_custom_rule_collision_stays_separate_from_builtin_complexity(kind):
     annotate_finding_types(result)
     before = copy.deepcopy(result)
 
-    text = _render(kind, result, expand=True)
+    # A custom rule cannot corroborate a built-in metric: the lone Q301 is
+    # measured by default and listed with --all-advice.
+    assert "Custom route policy failed" in _render(kind, result, expand=True)
+    text = _render(kind, result, expand=True, all_advice=True)
 
     assert "Custom route policy failed" in text
     assert "SKY-Q301" in text and "SKY-Q306" in text
@@ -222,7 +231,13 @@ def test_nested_scope_components_render_all_child_metrics_and_locations(kind, li
     result = _result(*rows)
     before = copy.deepcopy(result)
 
-    text = _render(kind, result, expand=True, limit=limit)
+    # factory's own cognitive score is mostly inner's, and nothing else agrees,
+    # so by default only inner (cyclomatic, cognitive and nesting) is listed.
+    focused = " ".join(_render(kind, result, expand=True, limit=limit).split())
+    assert "1 advice entry (4 findings) in 1 group" in focused
+    assert "Cognitive complexity: 27" not in focused
+
+    text = _render(kind, result, expand=True, limit=limit, all_advice=True)
     normalized = " ".join(text.split())
 
     assert "1 advice entry (6 findings) in 1 group" in normalized

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tree_sitter_typescript as tsts
 from tree_sitter import Language, Query, QueryCursor
 
@@ -109,17 +110,38 @@ def _get_query(lang: Language, key: str, pattern: str) -> Query | None:
     return _QUERY_CACHE[cache_key]
 
 
+_BINDING_NAME_FIELDS = {
+    "variable_declarator": "name",
+    "pair": "key",
+    "public_field_definition": "name",
+    "field_definition": "property",
+    "assignment_expression": "left",
+}
+
+
 def _get_func_name(func_node, source: bytes) -> str:
-    name = "anonymous"
+    """The declared name, or the variable/property/field the function is bound to."""
     try:
         name_node = func_node.child_by_field_name("name")
-        if name_node:
+        if name_node is None:
+            parent = func_node.parent
+            field = (
+                _BINDING_NAME_FIELDS.get(parent.type) if parent is not None else None
+            )
+            if field is not None:
+                value = parent.child_by_field_name(
+                    "right" if parent.type == "assignment_expression" else "value"
+                )
+                if value is None or value.id == func_node.id:
+                    name_node = parent.child_by_field_name(field)
+        if name_node is not None:
             name = source[name_node.start_byte : name_node.end_byte].decode(
                 "utf-8", errors="replace"
             )
+            return name.strip("\"'`") or "anonymous"
     except Exception:
         pass
-    return name
+    return "anonymous"
 
 
 def _get_text(source: bytes, node) -> str:
@@ -147,14 +169,167 @@ def _max_nesting(node, depth: int = 0) -> int:
         for child in current.children:
             if child.type in _FUNC_BOUNDARY_NODES:
                 continue
+            # `else if` continues the same chain: it is not a deeper block.
+            else_if = child.type == "if_statement" and current.type == "else_clause"
             child_depth = (
-                current_depth + 1 if child.type in NESTING_NODES else current_depth
+                current_depth + 1
+                if child.type in NESTING_NODES and not else_if
+                else current_depth
             )
             if child_depth > max_depth:
                 max_depth = child_depth
             stack.append((child, child_depth))
 
     return max_depth
+
+
+_LOGICAL_OPERATORS = frozenset({"&&", "||", "??"})
+_COGNITIVE_NESTING_NODES = frozenset(
+    {
+        "for_statement",
+        "for_in_statement",
+        "while_statement",
+        "do_statement",
+        "switch_statement",
+        "catch_clause",
+        "ternary_expression",
+    }
+)
+
+
+def _logical_operator(node):
+    if node is None or node.type != "binary_expression":
+        return None
+    operator = node.child_by_field_name("operator")
+    return (
+        operator.type
+        if operator is not None and operator.type in _LOGICAL_OPERATORS
+        else None
+    )
+
+
+def _logical_sequence(node, out: list) -> None:
+    # Flat operator chains are left-deep ASTs; source length must not consume
+    # Python's call stack. Keep the same left-to-right operator sequence.
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, str):
+            out.append(current)
+            continue
+        operator = _logical_operator(current)
+        if operator is not None:
+            pending.extend(
+                (
+                    current.child_by_field_name("right"),
+                    operator,
+                    current.child_by_field_name("left"),
+                )
+            )
+
+
+def _cognitive_complexity(func_node) -> int:
+    """Sonar cognitive complexity: structures cost 1 plus their nesting;
+    `else if`/`else` cost 1; each run of one logical operator costs 1;
+    nested functions add a nesting level, as in the Python rule."""
+    total = 0
+    pending = [(child, 0) for child in reversed(func_node.children)]
+    while pending:
+        node, nesting = pending.pop()
+        kind = node.type
+        children = list(node.children)
+        if kind in _FUNC_BOUNDARY_NODES:
+            pending.extend((child, nesting + 1) for child in reversed(children))
+            continue
+        if kind == "if_statement":
+            is_else_if = node.parent is not None and node.parent.type == "else_clause"
+            total += 1 if is_else_if else 1 + nesting
+            alternative = node.child_by_field_name("alternative")
+            for child in reversed(children):
+                if alternative is not None and child.id == alternative.id:
+                    inner = [c for c in child.named_children]
+                    if inner and inner[0].type == "if_statement":
+                        pending.append((inner[0], nesting))
+                    else:
+                        total += 1
+                        pending.extend(
+                            (c, nesting + 1) for c in reversed(child.children)
+                        )
+                elif child.type == "parenthesized_expression":
+                    pending.append((child, nesting))
+                else:
+                    pending.append((child, nesting + 1))
+            continue
+        if kind in _COGNITIVE_NESTING_NODES:
+            total += 1 + nesting
+            pending.extend((child, nesting + 1) for child in reversed(children))
+            continue
+        if (
+            _logical_operator(node) is not None
+            and _logical_operator(node.parent) is None
+        ):
+            operators: list = []
+            _logical_sequence(node, operators)
+            total += 1 + sum(1 for a, b in zip(operators, operators[1:]) if a != b)
+        if (
+            kind in {"break_statement", "continue_statement"}
+            and node.child_by_field_name("label") is not None
+        ):
+            total += 1
+        pending.extend((child, nesting) for child in reversed(children))
+    return total
+
+
+def _code_line_count(func_node, source: bytes) -> int:
+    """Lines with code: blank lines and comment-only lines are not counted."""
+    # The parser distinguishes comments from comment-like text in strings,
+    # templates and regular expressions. Preserve newlines when masking only
+    # its comment spans, including code after a closing block comment.
+    start, end = func_node.start_byte, func_node.end_byte
+    comments = []
+    pending = [func_node]
+    while pending:
+        node = pending.pop()
+        if node.type == "comment":
+            comments.append((node.start_byte, node.end_byte))
+        else:
+            pending.extend(node.named_children)
+    pieces = []
+    position = start
+    for left, right in sorted(comments):
+        pieces.append(source[position:left])
+        pieces.append(re.sub(rb"[^\r\n]", b" ", source[left:right]))
+        position = right
+    pieces.append(source[position:end])
+    return sum(bool(line.strip()) for line in b"".join(pieces).splitlines())
+
+
+_TEST_FILE_NAME = re.compile(r"\.(?:spec|test|e2e|cy)\.[cm]?[jt]sx?$", re.IGNORECASE)
+_TEST_FILE_DIRS = frozenset(
+    {"__tests__", "__mocks__", "test", "tests", "e2e", "cypress"}
+)
+
+
+def _is_js_test_file(file_path) -> bool:
+    from .conventions import is_expo_router_file
+    from .nextjs import is_nextjs_project_entry_file, is_nextjs_project_pages_file
+
+    # A URL segment called tests does not make a shipped framework route a
+    # test suite. This classification is only for the narrow callback-length
+    # exception; raw metrics remain available for every test-file function.
+    if (
+        is_nextjs_project_entry_file(str(file_path))
+        or is_nextjs_project_pages_file(str(file_path))
+        or is_expo_router_file(file_path)
+    ):
+        return False
+    path = str(file_path).replace("\\", "/")
+    parts = [part.lower() for part in path.split("/")]
+    return (
+        get_non_library_dir_kind(file_path) == "test"
+        or bool(_TEST_FILE_NAME.search(parts[-1]))
+        or bool(_TEST_FILE_DIRS.intersection(parts[:-1]))
+    )
 
 
 def _param_count(func_node) -> int:
@@ -282,6 +457,7 @@ def scan_quality(
     max_params: int = 5,
     lang: Language | None = None,
     measurement: dict | None = None,
+    cognitive_threshold: int = 15,
 ) -> list[dict]:
     findings: list[dict] = []
     if lang is None:
@@ -290,7 +466,7 @@ def scan_quality(
         return []
 
     func_nodes = _get_func_nodes(root_node, lang)
-    is_test_file = get_non_library_dir_kind(file_path) == "test"
+    is_test_file = _is_js_test_file(file_path)
     if measurement is not None:
         measurement.update(
             {
@@ -310,6 +486,12 @@ def scan_quality(
             }
         )
 
+    # Keep test helpers and unrelated callbacks measurable. Only the existing
+    # proven test/suite callback length exception applies below.
+    generated_file = _is_generated_file(file_path, source)
+    # The type-safety hint also accepts folder/header conventions. Those do
+    # not prove that a real function should lose its metric observations.
+    # Repository-level generated exclusions are handled by scan discovery.
     for func_node in func_nodes:
         line: int = func_node.start_point[0] + 1
         name = _get_func_name(func_node, source)
@@ -348,7 +530,24 @@ def scan_quality(
                 }
             )
 
-        func_length: int = func_node.end_point[0] - func_node.start_point[0] + 1
+        cognitive = _cognitive_complexity(func_node)
+        if cognitive > cognitive_threshold:
+            findings.append(
+                {
+                    "rule_id": "SKY-Q306",
+                    "value": cognitive,
+                    "threshold": cognitive_threshold,
+                    "severity": "MEDIUM",
+                    "message": f"Function '{name}' has cognitive complexity {cognitive} (limit: {cognitive_threshold})",
+                    "file": str(file_path),
+                    "line": line,
+                    "col": 0,
+                    "name": name,
+                    "simple_name": name,
+                }
+            )
+
+        func_length: int = _code_line_count(func_node, source)
         if func_length > max_length and not (
             is_test_file and _is_test_callback(func_node, source)
         ):
@@ -358,7 +557,7 @@ def scan_quality(
                     "value": func_length,
                     "threshold": max_length,
                     "severity": "LOW",
-                    "message": f"Function '{name}' is {func_length} lines long (limit: {max_length})",
+                    "message": f"Function '{name}' has {func_length} code lines (limit: {max_length}); blank and comment lines are not counted",
                     "file": str(file_path),
                     "line": line,
                     "col": 0,
@@ -394,7 +593,6 @@ def scan_quality(
     _check_unreachable_code(root_node, source, file_path, findings)
 
     # --- Type-evidence bypasses (SKY-T103 through SKY-T106) ---
-    generated_file = _is_generated_file(file_path, source)
     findings.extend(
         scan_type_safety(
             root_node,

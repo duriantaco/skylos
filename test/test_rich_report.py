@@ -302,7 +302,11 @@ def test_tables_keep_rule_ids_locations_and_messages_readable(
     )
 
     render_results(
-        console, _scan_result(tmp_path), copy_badge=False, expand_advice=True
+        console,
+        _scan_result(tmp_path),
+        copy_badge=False,
+        expand_advice=True,
+        all_advice=True,
     )
 
     rendered = output.getvalue()

@@ -348,9 +348,9 @@ def _is_numeric_or_math_shape(node: ast.AST, evidence: _RhsEvidence) -> bool:
     if isinstance(node, ast.UnaryOp):
         return _is_numeric_or_math_shape(node.operand, evidence)
     if isinstance(node, ast.BinOp):
-        return _is_numeric_or_math_shape(node.left, evidence) or _is_numeric_or_math_shape(
-            node.right, evidence
-        )
+        return _is_numeric_or_math_shape(
+            node.left, evidence
+        ) or _is_numeric_or_math_shape(node.right, evidence)
     if isinstance(node, ast.Call):
         return bool(set(evidence.semantic_tokens) & _MATH_TOKENS)
     return False
@@ -486,7 +486,9 @@ def _usage_profile(
             next_assignment_line is None or line < next_assignment_line
         )
 
-    use_lines = [line for line in uses.get(assignment.name, []) if in_assignment_window(line)]
+    use_lines = [
+        line for line in uses.get(assignment.name, []) if in_assignment_window(line)
+    ]
     context_values = {
         context
         for line, context in contexts.get(assignment.name, [])
@@ -524,6 +526,11 @@ def _should_report(
     if not evidence.key_tokens:
         return False
     if evidence.score < 2 or not evidence.suggested_name:
+        return False
+    # A synonym with the same opacity does not establish a clearer name.
+    # Keep stronger improvements (tmp -> result, value -> user_id), while
+    # avoiding generic-name churn such as value -> result.
+    if _name_opacity_strength(evidence.suggested_name) >= strength:
         return False
     if _rhs_already_names_target(assignment.name, evidence):
         return False

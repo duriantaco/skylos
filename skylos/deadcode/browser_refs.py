@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import re
+import tokenize
 from pathlib import Path, PurePosixPath
 
 from skylos.core.file_discovery import discover_source_files
@@ -70,6 +72,32 @@ _SCRIPT_ATTR_RE = re.compile(
 _DJANGO_STATIC_TAG_RE = re.compile(
     r"""^\s*{%\s*static\s+(?P<quote>["'])(?P<path>[^"']+)(?P=quote)\s*%}\s*$""",
     re.DOTALL,
+)
+# ``{{ 'js/app.js'|url }}``: one quoted path plus template filters.
+_TEMPLATE_LITERAL_SRC_RE = re.compile(
+    r"""^\s*{{\s*(?P<quote>["'])(?P<path>[^"'{}]+)(?P=quote)"""
+    r"""(?:\s*\|\s*[A-Za-z_]\w*(?:\([^(){}]*\))?)*\s*}}\s*$"""
+)
+# ``{{ url_for('static', filename='js/app.js') }}``.
+_URL_FOR_STATIC_SRC_RE = re.compile(
+    r"""^\s*{{\s*url_for\(\s*["']static["']\s*,\s*filename\s*=\s*"""
+    r"""(?P<quote>["'])(?P<path>[^"'{}]+)(?P=quote)\s*\)\s*}}\s*$"""
+)
+_PYTHON_SOURCE_SUFFIXES = {".py", ".pyw"}
+# DOM event attributes; Python sources are only searched for these names.
+_DOM_EVENT_ATTRIBUTES = (
+    "abort|animationend|beforeunload|blur|change|click|contextmenu|copy|cut|"
+    "dblclick|drag|dragend|dragenter|dragleave|dragover|dragstart|drop|error|"
+    "focus|focusin|focusout|hashchange|input|invalid|keydown|keypress|keyup|"
+    "load|mousedown|mouseenter|mouseleave|mousemove|mouseout|mouseover|"
+    "mouseup|paste|pointerdown|pointerup|popstate|reset|resize|scroll|"
+    "search|select|submit|toggle|touchend|touchmove|touchstart|transitionend|"
+    "unload|wheel"
+)
+_PYTHON_EVENT_HANDLER_RE = re.compile(
+    rf"""\bon(?:{_DOM_EVENT_ATTRIBUTES})\s*=\s*\\?"""
+    r"""(?:"(?P<double>[^"\n]*?)\\?"|'(?P<single>[^'\n]*?)\\?')""",
+    re.IGNORECASE,
 )
 _HTML_COMMENT_RE = re.compile(r"""<!--[\s\S]*?-->""")
 _DJANGO_SHORT_COMMENT_RE = re.compile(r"""{#[\s\S]*?#}""")
@@ -274,7 +302,61 @@ def collect_browser_event_handler_refs(
             if _source_defines_top_level_browser_name(source, name):
                 _append_ref(refs, seen_refs, name, script_file)
 
+    # Python code that renders HTML (``onclick="copyCode(this)"``) names
+    # page-global functions too. No template ties it to a script, so only a
+    # name that exactly one scanned script defines is credited.
+    python_names = _python_event_handler_names(root, source_files, source_cache)
+    definers: dict[str, list[Path]] = {}
+    for script_file in sorted(scanned_scripts) if python_names else ():
+        source = _read_text(root, script_file, source_cache)
+        if source is None:
+            continue
+        for name in python_names:
+            if _source_defines_top_level_browser_name(source, name):
+                definers.setdefault(name, []).append(script_file)
+    for name, script_files in sorted(definers.items()):
+        if len(script_files) == 1:
+            _append_ref(refs, seen_refs, name, script_files[0])
+
     return refs
+
+
+def _python_event_handler_names(
+    root: Path, source_files, source_cache: dict[Path, str]
+) -> set[str]:
+    names: set[str] = set()
+    for raw_file in source_files:
+        file_path = Path(raw_file)
+        if file_path.suffix.lower() not in _PYTHON_SOURCE_SUFFIXES:
+            continue
+        source = _read_text(root, file_path, source_cache)
+        if not source or not _PYTHON_EVENT_HANDLER_RE.search(source):
+            continue
+        for match in _PYTHON_EVENT_HANDLER_RE.finditer(_without_python_comments(source)):
+            handler = match.group("double")
+            if handler is None:
+                handler = match.group("single")
+            names.update(_extract_call_names(_normalize_handler_source(handler)))
+    return names
+
+
+def _without_python_comments(source: str) -> str:
+    """Blank ``#`` comments: a commented-out handler does not name a function."""
+    try:
+        comments = [
+            token.start
+            for token in tokenize.generate_tokens(io.StringIO(source).readline)
+            if token.type == tokenize.COMMENT
+        ]
+    except (tokenize.TokenError, SyntaxError):
+        return source
+    if not comments:
+        return source
+    lines = source.splitlines(keepends=True)
+    for row, col in comments:
+        line = lines[row - 1]
+        lines[row - 1] = line[:col] + line[len(line.rstrip("\r\n")) :]
+    return "".join(lines)
 
 
 def collect_browser_script_entry_files(
@@ -591,6 +673,19 @@ def _resolve_script_src(
         matches = static_asset_index.get(static_asset_path, set())
         return next(iter(matches)) if len(matches) == 1 else None
 
+    literal = _template_literal_script_path(src)
+    if literal is not None:
+        literal_path, static_only = literal
+        if not static_only:
+            # Theme-style templates name assets relative to their own folder.
+            candidate = _resolve_readable_project_file(
+                root, template_dir / literal_path
+            )
+            if candidate is not None:
+                return candidate
+        matches = static_asset_index.get(literal_path, set())
+        return next(iter(matches)) if len(matches) == 1 else None
+
     clean_src = src.split("#", 1)[0].split("?", 1)[0].strip()
     if not clean_src:
         return None
@@ -608,6 +703,32 @@ def _resolve_script_src(
         return None
 
     return _resolve_readable_project_file(root, candidate)
+
+
+def _template_literal_script_path(src: str) -> tuple[str, bool] | None:
+    """The script path inside a template expression that only quotes it.
+
+    Returns the path and whether it names a static asset (``url_for``).
+    """
+    static_only = False
+    match = _TEMPLATE_LITERAL_SRC_RE.fullmatch(src)
+    if match is None:
+        match = _URL_FOR_STATIC_SRC_RE.fullmatch(src)
+        static_only = True
+    if match is None:
+        return None
+    raw_path = match.group("path").strip().lstrip("/")
+    if not raw_path or any(
+        character in raw_path for character in ("\\", "\x00", ":", "?", "#")
+    ):
+        return None
+    parts = raw_path.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        return None
+    normalized = PurePosixPath(*parts)
+    if normalized.suffix.lower() not in _JS_SOURCE_SUFFIXES:
+        return None
+    return normalized.as_posix(), static_only
 
 
 def _django_static_asset_path(src: str) -> str | None:

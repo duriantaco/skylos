@@ -144,6 +144,9 @@ class _ModuleEvidence:
     star_imports: set = field(default_factory=set)
     # UPPER_CASE names assigned at module level, with their values.
     module_settings: dict = field(default_factory=dict)
+    # Values added to those names in place (``MIDDLEWARE.append(path)``) at
+    # import time, including inside functions the module calls while loading.
+    setting_mutations: dict = field(default_factory=dict)
 
     def definition(self, name: str, *, line=None, kind=None):
         candidates = [
@@ -224,6 +227,8 @@ class _WebScanner:
                 if target:
                     self.evidence.star_imports.add(target)
                 continue
+            for name, value in _setting_mutations(statement):
+                self.evidence.setting_mutations.setdefault(name, []).append(value)
             targets, value = _assigned(statement)
             if value is None:
                 continue
@@ -232,6 +237,34 @@ class _WebScanner:
                     self.evidence.module_settings.setdefault(target.id, []).append(
                         value
                     )
+        self._collect_import_time_setting_mutations()
+
+    def _collect_import_time_setting_mutations(self):
+        """Mutations inside module functions the module calls while loading
+        (``HEADER = _parse_remote_user_settings()``)."""
+        called = {
+            node.func.id
+            for statement in _module_level_statements(self.tree.body)
+            for node in ast.walk(statement)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        for statement in self.tree.body:
+            if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if statement.name not in called:
+                continue
+            module_names = set(self.evidence.module_settings) | {
+                name
+                for node in ast.walk(statement)
+                if isinstance(node, ast.Global)
+                for name in node.names
+            }
+            for node in ast.walk(statement):
+                for name, value in _setting_mutations(node):
+                    if name in module_names:
+                        self.evidence.setting_mutations.setdefault(name, []).append(
+                            value
+                        )
 
     def suite(self, statements, bindings, *, owner=None):
         for statement in statements:
@@ -522,6 +555,41 @@ class _WebScanner:
             self.evidence.routes.append(target)
             if view.args or view.keywords:
                 self.evidence.view_overrides.add(target)
+
+
+_SETTING_MUTATORS = {"append", "extend", "insert", "add", "update", "setdefault"}
+
+
+def _setting_root(node):
+    while isinstance(node, ast.Subscript):
+        node = node.value
+    if isinstance(node, ast.Name) and node.id.isupper():
+        return node.id
+    return None
+
+
+def _setting_mutations(statement):
+    """(UPPER_CASE name, added value) pairs for an in-place update."""
+    if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
+        call = statement.value
+        if isinstance(call.func, ast.Attribute) and call.func.attr in _SETTING_MUTATORS:
+            name = _setting_root(call.func.value)
+            if name:
+                for value in (*call.args, *(kw.value for kw in call.keywords)):
+                    yield name, value
+    elif isinstance(statement, ast.AugAssign):
+        name = _setting_root(statement.target)
+        if name:
+            yield name, statement.value
+    elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        targets, value = _assigned(statement)
+        if value is None:
+            return
+        for target in targets:
+            if isinstance(target, ast.Subscript):
+                name = _setting_root(target)
+                if name:
+                    yield name, value
 
 
 def _module_level_statements(statements):

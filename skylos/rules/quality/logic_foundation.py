@@ -5,6 +5,7 @@ import operator
 import tokenize
 from dataclasses import dataclass
 from pathlib import Path
+from string import Formatter
 
 from skylos.rules.base import SkylosRule
 from skylos.rules.quality._mutable_defaults import copy_only_default_ids
@@ -1512,14 +1513,50 @@ def _is_import_fallback_try(node: ast.AST) -> bool:
     )
 
 
+def _protected_children(node: ast.AST):
+    """Syntax evaluated now, rather than a callable's deferred body.
+
+    Function defaults/decorators and class bodies execute at definition time.
+    Calling the resulting function later does not run inside this catch scope.
+    """
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        yield node.args
+        yield from node.decorator_list
+        if node.returns is not None:
+            yield node.returns
+        yield from getattr(node, "type_params", ())
+    elif isinstance(node, ast.Lambda):
+        yield node.args
+    else:
+        yield from ast.iter_child_nodes(node)
+
+
+def _protected_nodes(body: list[ast.stmt]):
+    pending = list(body)
+    while pending:
+        node = pending.pop()
+        yield node
+        pending.extend(_protected_children(node))
+
+
+def _deferred_callable_spans(body: list[ast.stmt]):
+    for node in _protected_nodes(body):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            first, last = node.body[0], node.body[-1]
+        elif isinstance(node, ast.Lambda):
+            first = last = node.body
+        else:
+            continue
+        yield (
+            (first.lineno, first.col_offset),
+            (last.end_lineno, last.end_col_offset),
+        )
+
+
 def _protected_operation_count(body: list[ast.stmt]) -> int:
     """Count operations, not the visual layout of one multiline expression."""
     count = 0
-    pending = list(body)
-    while pending:
-        current = pending.pop()
-        if isinstance(current, _NESTED_SCOPE_TYPES):
-            continue
+    for current in _protected_nodes(body):
         # One wrapped call with literal/name arguments remains one operation.
         # Nested calls in its arguments are independent protected work, even
         # though all of them are formatted as one assignment statement.
@@ -1529,7 +1566,6 @@ def _protected_operation_count(body: list[ast.stmt]) -> int:
             value = getattr(current, "value", None)
             if not isinstance(value, ast.Call):
                 count += 1
-        pending.extend(ast.iter_child_nodes(current))
     return count
 
 
@@ -1545,8 +1581,6 @@ def _scan_protected_body(body: list[ast.stmt], nested_is_broad=None) -> tuple[in
     stack = [(stmt, False) for stmt in body]
     while stack:
         node, inside_loop = stack.pop()
-        if isinstance(node, _NESTED_SCOPE_TYPES):
-            continue
         if isinstance(node, _CONTROL_FLOW_TYPES):
             control_flow_count += 1
         if (
@@ -1562,7 +1596,7 @@ def _scan_protected_body(body: list[ast.stmt], nested_is_broad=None) -> tuple[in
             stack.extend((child, True) for child in node.body)
             stack.extend((child, inside_loop) for child in node.orelse)
             continue
-        stack.extend((child, inside_loop) for child in ast.iter_child_nodes(node))
+        stack.extend((child, inside_loop) for child in _protected_children(node))
     return control_flow_count, has_nested_try
 
 
@@ -1662,7 +1696,7 @@ def _ast_code_rows(body: list[ast.stmt], first: int, last: int) -> set[int]:
     rows = set()
     comment_rows = set()
     for stmt in body:
-        for node in ast.walk(stmt):
+        for node in _protected_nodes([stmt]):
             start = getattr(node, "lineno", None)
             if start is None:
                 continue
@@ -1673,7 +1707,18 @@ def _ast_code_rows(body: list[ast.stmt], first: int, last: int) -> set[int]:
                 rows.update(range(start, end + 1))
             else:
                 rows.update((start, end))
-    return {row for row in rows - comment_rows if first <= row <= last}
+    deferred_rows = {
+        row
+        for (start, _), (end, _) in _deferred_callable_spans(body)
+        for row in range(start, end + 1)
+    }
+    active_starts = {
+        node.lineno for node in _protected_nodes(body) if hasattr(node, "lineno")
+    }
+    return {
+        row for row in rows - comment_rows
+        if first <= row <= last and (row not in deferred_rows or row in active_starts)
+    }
 
 
 class TryBlockPatternsRule(SkylosRule):
@@ -1715,13 +1760,14 @@ class TryBlockPatternsRule(SkylosRule):
             for n in ast.walk(stmt)
             if _is_string_statement(n)
         ]
+        excluded_spans = [*comment_strings, *_deferred_callable_spans(node.body)]
         starts, spans = index
         rows = set()
         for i in range(bisect.bisect_left(starts, first), len(starts)):
             (srow, scol), (erow, _) = spans[i]
             if srow > last:
                 break
-            if any(lo <= (srow, scol) < hi for lo, hi in comment_strings):
+            if any(lo <= (srow, scol) < hi for lo, hi in excluded_spans):
                 continue
             rows.update(range(srow, min(erow, last) + 1))
         return len(rows)
@@ -1833,6 +1879,7 @@ class UnusedExceptVarRule(SkylosRule):
         self._namespace_source = None
 
     def _explicit_namespace_use(self, handler):
+        capture_rebound = _rebinds_name(handler.body, handler.name)
         pending = list(handler.body)
         while pending:
             current = pending.pop()
@@ -1843,6 +1890,28 @@ class UnusedExceptVarRule(SkylosRule):
                 namespace, key = current.value, current.slice
             elif isinstance(current, ast.Call) and isinstance(current.func, ast.Attribute) and current.func.attr == "get" and current.args:
                 namespace, key = current.func.value, current.args[0]
+            elif (
+                isinstance(current, ast.Call)
+                and isinstance(current.func, ast.Attribute)
+                and current.func.attr == "format_map"
+                and isinstance(current.func.value, ast.Constant)
+                and isinstance(current.func.value.value, str)
+                and len(current.args) == 1
+                and not current.keywords
+            ):
+                # Literal str.format_map reads named mapping fields itself;
+                # there need not be a Name node for that captured exception.
+                try:
+                    fields = [
+                        field.split(".", 1)[0].split("[", 1)[0]
+                        for _, field, _, _ in Formatter().parse(current.func.value.value)
+                        if field is not None
+                    ]
+                except ValueError:
+                    fields = []
+                if handler.name in fields and not capture_rebound:
+                    namespace = current.args[0]
+                    key = ast.Constant(value=handler.name)
             if (
                 isinstance(key, ast.Constant) and key.value == handler.name
                 and isinstance(namespace, ast.Call) and not namespace.args and not namespace.keywords
@@ -1895,7 +1964,15 @@ class UnusedExceptVarRule(SkylosRule):
 
         use_count = 0
         for child in ast.walk(node):
-            if isinstance(child, ast.Name) and child.id == node.name:
+            if (
+                isinstance(child, ast.Name)
+                and child.id == node.name
+                and isinstance(child.ctx, ast.Load)
+            ) or (
+                isinstance(child, ast.AugAssign)
+                and isinstance(child.target, ast.Name)
+                and child.target.id == node.name
+            ):
                 use_count += 1
 
         if use_count == 0 and not self._explicit_namespace_use(node):

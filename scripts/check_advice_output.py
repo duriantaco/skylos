@@ -21,6 +21,7 @@ from skylos.reporting.advice_display import (
 )
 from skylos.reporting.advice_policy import prepare_advice_view
 from skylos.reporting.finding_types import get_finding_type, iter_result_findings
+from skylos.reporting.listing import is_listed, listing_decision
 
 
 def _key(category, finding):
@@ -79,6 +80,17 @@ def check_report(result, project_root):
     assert original_risk == focused_risk, (
         "Focused advice changed risk or custom records"
     )
+    marked = result.get("listing_policy_version") == 1
+    if marked:
+        assert all(listing_decision(row) is not None for _, row in original), (
+            "A versioned report contains an unmarked finding"
+        )
+        expected = Counter(
+            _key(category, row)
+            for category, row in original
+            if is_listed(row, category)
+        )
+        assert focus_records == expected, "Focused view disagrees with listing marks"
     assert json.dumps(result, sort_keys=True) == before, "Presentation mutated raw JSON"
     assert check_gate(copy.deepcopy(result), gate_config) == gate_before, (
         "Raw gate outcome changed"
@@ -101,6 +113,7 @@ def check_report(result, project_root):
         "raw_json_unchanged": True,
         "risk_records_unchanged": True,
         "raw_gate_unchanged": True,
+        "shared_listing_verified": marked,
     }
 
 

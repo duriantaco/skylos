@@ -128,10 +128,14 @@ def _setting_reference_targets(scanner):
 
     ``MIDDLEWARE``, ``STORAGES`` backends, ``TEMPLATES`` context processors,
     ``AUTHENTICATION_BACKENDS`` and ``REST_FRAMEWORK`` classes are imported by
-    Django from these strings.
+    Django from these strings, whether assigned or added in place
+    (``MIDDLEWARE.append(...)`` under ``if DEBUG:``).
     """
     targets = []
-    for values in getattr(scanner, "module_settings", {}).values():
+    for values in (
+        *getattr(scanner, "module_settings", {}).values(),
+        *getattr(scanner, "setting_mutations", {}).values(),
+    ):
         for value in values:
             for node in ast.walk(value):
                 if not isinstance(node, ast.Constant) or not isinstance(
