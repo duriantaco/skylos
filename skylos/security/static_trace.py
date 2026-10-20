@@ -46,8 +46,18 @@ def _sink_call(unit, finding):
         }
     else:
         return None
+    source_calls = unit.calls_by_line.get(line, [])
+    column = finding.get("col", finding.get("column"))
+    if type(column) is int:
+        exact = []
+        for node in source_calls:
+            if node.col_offset == column:
+                exact.append(node)
+        if len(exact) == 1:
+            return exact[0]
+        return None
     calls = []
-    for node in unit.calls_by_line.get(line, []):
+    for node in source_calls:
         name = None
         if isinstance(node.func, ast.Name):
             name = node.func.id
@@ -57,14 +67,6 @@ def _sink_call(unit, finding):
             calls.append(node)
     if not calls:
         return None
-    column = finding.get("col", finding.get("column"))
-    exact = []
-    if type(column) is int:
-        for node in calls:
-            if node.col_offset == column:
-                exact.append(node)
-    if len(exact) == 1:
-        return exact[0]
     if len(calls) == 1:
         return calls[0]
     return None
