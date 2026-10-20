@@ -2053,15 +2053,32 @@ class _YamlSpanParser:
         self.string_spans = []
 
     def parse(self):
+        """Return ``[(document, first_span, end_span), ...]`` and all spans.
+
+        pnpm writes one lock document, or an environment document followed by
+        the project document; any longer stream is rejected.
+        """
         self._expect(yaml.events.StreamStartEvent)
-        self._expect(yaml.events.DocumentStartEvent)
-        document = self._parse_node((), 0)
-        self._expect(yaml.events.DocumentEndEvent)
-        self._expect(yaml.events.StreamEndEvent)
+        documents = []
+        while True:
+            event = self._next_event()
+            if isinstance(event, yaml.events.StreamEndEvent):
+                break
+            if (
+                not isinstance(event, yaml.events.DocumentStartEvent)
+                or len(documents) == 2
+            ):
+                raise ValueError("unsupported YAML document stream")
+            first_span = len(self.string_spans)
+            document = self._parse_node((), 0)
+            self._expect(yaml.events.DocumentEndEvent)
+            documents.append((document, first_span, len(self.string_spans)))
+        if not documents:
+            raise ValueError("empty YAML document stream")
         try:
             next(self.events)
         except StopIteration:
-            return document, self.string_spans
+            return documents, self.string_spans
         raise ValueError("trailing YAML events")
 
     def _next_event(self):
@@ -2127,16 +2144,20 @@ class _YamlSpanParser:
     def _parse_mapping_event(self, path, depth, event):
         if event.anchor is not None or event.tag is not None:
             raise ValueError("anchored or tagged YAML mapping")
-        root_result = {} if not path else None
+        # Retain only the structure needed to distinguish pnpm's environment
+        # and project documents. Other mappings keep their type without
+        # constructing a second full tree or coercing YAML scalar spellings.
+        retain_entries = path in {(), ("importers",), ("importers", ".")}
+        result = {}
         seen_keys = set()
         while True:
             key_event = self._next_event()
             if isinstance(key_event, yaml.events.MappingEndEvent):
-                return root_result
+                return result
             key = self._parse_mapping_key(key_event, seen_keys)
             value = self._parse_node((*path, key), depth + 1)
-            if root_result is not None:
-                root_result[key] = value
+            if retain_entries:
+                result[key] = value
 
     def _parse_sequence_event(self, path, depth, event):
         if event.anchor is not None or event.tag is not None:
@@ -2167,6 +2188,8 @@ def _pnpm_context_values(scalar_spans):
 
 
 def _pnpm_expected_kind(lockfile_version):
+    if not isinstance(lockfile_version, str):
+        return None
     if lockfile_version == "9.0":
         return "pnpm9"
     if lockfile_version in {"6.0", "6.1"}:
@@ -2176,19 +2199,34 @@ def _pnpm_expected_kind(lockfile_version):
     return None
 
 
-def _finish_pnpm_spans(source: str, document, scalar_spans):
+def _is_pnpm_environment_pair(documents) -> bool:
+    """Two documents are approved only in pnpm's environment-then-project order."""
+    from skylos.rules.sca.pnpm_lockfile import _is_environment_document
+
+    environment = documents[0][0]
+    project = documents[1][0]
+    return _is_environment_document(environment) and not _is_environment_document(
+        project
+    )
+
+
+def _finish_pnpm_spans(source: str, documents, scalar_spans):
     contexts = _pnpm_context_values(scalar_spans)
     context_by_line = _line_contexts(source, contexts)
-    if not isinstance(document, dict):
-        return {}, context_by_line
-    expected_kind = _pnpm_expected_kind(document.get("lockfileVersion"))
-    if expected_kind is None:
-        return {}, context_by_line
-    approved_spans = [
-        (start, end)
-        for kind, value, start, end in scalar_spans
-        if kind == expected_kind and _is_valid_sri_list(value, _is_valid_yarn_sri_token)
-    ]
+    approved_spans = []
+    for document, first_span, end_span in documents:
+        # Any unrecognized document keeps every digest in the file reported.
+        if not isinstance(document, dict):
+            return {}, context_by_line
+        expected_kind = _pnpm_expected_kind(document.get("lockfileVersion"))
+        if expected_kind is None:
+            return {}, context_by_line
+        approved_spans.extend(
+            (start, end)
+            for kind, value, start, end in scalar_spans[first_span:end_span]
+            if kind == expected_kind
+            and _is_valid_sri_list(value, _is_valid_yarn_sri_token)
+        )
     return _line_spans(source, approved_spans), context_by_line
 
 
@@ -2203,13 +2241,15 @@ def _pnpm_integrity_spans(file_lines: list[str]):
         loader=loader,
     )
     try:
-        document, scalar_spans = parser.parse()
+        documents, scalar_spans = parser.parse()
+        if len(documents) == 2 and not _is_pnpm_environment_pair(documents):
+            raise ValueError("unsupported pnpm YAML document stream")
     except MemoryError:
         return {}, {}
     except (RecursionError, ValueError, yaml.YAMLError):
         partial_context = _pnpm_context_values(parser.string_spans)
         return {}, _line_contexts(source, partial_context)
-    return _finish_pnpm_spans(source, document, scalar_spans)
+    return _finish_pnpm_spans(source, documents, scalar_spans)
 
 
 def _yaml_checksum_kind(key):
