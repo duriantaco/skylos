@@ -5956,6 +5956,11 @@ class Skylos:
             all_dangers = drop_closed_world_helper_findings(
                 all_dangers, scan_path=path, suppressed=all_suppressed
             )
+            from skylos.security.static_trace import attach_security_traces
+
+            attach_security_traces(
+                all_dangers, project_root=project_root, files=files
+            )
         result = self._build_result(
             files,
             thr,
@@ -5996,6 +6001,12 @@ class Skylos:
         result["analysis_summary"]["resolution_scope_limited"] = (
             resolution_scope_limited
         )
+        if enable_danger:
+            from skylos.security.trace_report import trace_coverage
+
+            result["analysis_summary"]["security_trace_coverage"] = trace_coverage(
+                all_dangers
+            )
         if unused_dependency_analysis is not None:
             result["analysis_summary"]["unused_dependency_analysis"] = (
                 unused_dependency_analysis
