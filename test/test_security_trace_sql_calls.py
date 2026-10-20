@@ -31,7 +31,7 @@ def test_unique_sql_operation_inside_result_chain_is_located(rule, result_method
 
 @pytest.mark.parametrize("rule", ["SKY-D211", "SKY-D217"])
 def test_two_sql_operations_at_the_same_location_remain_ambiguous(rule):
-    tree = ast.parse('cursor.execute(first).execute(second).fetchall()\n')
+    tree = ast.parse("cursor.execute(first).execute(second).fetchall()\n")
     calls = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
