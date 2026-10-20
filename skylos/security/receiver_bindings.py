@@ -51,6 +51,14 @@ _IMMUTABLE_OS_FLAGS = {
     "O_PATH",
     "O_TMPFILE",
     "O_LARGEFILE",
+    "O_NOINHERIT",
+    "O_EVTONLY",
+    "O_FSYNC",
+    "O_SYMLINK",
+    "O_NOFOLLOW_ANY",
+    "O_ASYNC",
+    "O_SHLOCK",
+    "O_EXLOCK",
 }
 
 

@@ -25,6 +25,28 @@ def test_documented_integer_flag_does_not_escape_module(tmp_path, source, module
 
 
 @pytest.mark.parametrize(
+    "flag",
+    [
+        "O_NOINHERIT",
+        "O_EVTONLY",
+        "O_FSYNC",
+        "O_SYMLINK",
+        "O_NOFOLLOW_ANY",
+        "O_ASYNC",
+        "O_SHLOCK",
+        "O_EXLOCK",
+    ],
+)
+def test_platform_integer_flags_preserve_aliased_module_binding(tmp_path, flag):
+    # Parse target syntax; never access flags on the host platform.
+    source = "import os as fs\nflags = fs." + flag + "\nconsume(flags)\n"
+    path = write_fixture(tmp_path, "app.py", source)
+    resolver = ReceiverResolver(ast.parse(source), path, project_root=tmp_path)
+    assert "fs" not in resolver.main.mutated
+    assert "flags" not in resolver.main.mutated
+
+
+@pytest.mark.parametrize(
     "source, module_name",
     [
         ("import os\nconsume(os.unknown_value)\n", "os"),
