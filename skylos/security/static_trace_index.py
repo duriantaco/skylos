@@ -214,9 +214,9 @@ class ProjectTraceIndex:
 
     def resolver(self, unit):
         if unit.path not in self.resolvers:
-            from skylos.security.receiver_resolution import ReceiverResolver
+            from skylos.security.static_trace_receivers import TraceReceiverResolver
 
-            self.resolvers[unit.path] = ReceiverResolver(
+            self.resolvers[unit.path] = TraceReceiverResolver(
                 unit.tree, self.root / unit.path, self.root
             )
         return self.resolvers[unit.path]
@@ -283,7 +283,7 @@ class ProjectTraceIndex:
         selected = json.dumps(self.selected_paths, separators=(",", ":"))
         return {
             "algorithm": "security-static-trace-v1",
-            "receiver_model_version": 1,
+            "receiver_model_version": 2,
             "analyzer_version": __version__,
             "python_syntax_version": ".".join(map(str, sys.version_info[:3])),
             "limits": dict(vars(self.limits)),

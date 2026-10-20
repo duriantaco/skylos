@@ -199,7 +199,7 @@ def test_algorithm_parser_scope_and_limits_are_auditable(tmp_path):
     assert context["algorithm"] == "security-static-trace-v1"
     assert context["analyzer_version"]
     assert context["python_syntax_version"]
-    assert context["receiver_model_version"] == 1
+    assert context["receiver_model_version"] == 2
     assert context["limits"]["max_steps"] == 12
     assert context["selected_file_count"] == 1
     assert len(context["selected_scope_sha256"]) == 64
