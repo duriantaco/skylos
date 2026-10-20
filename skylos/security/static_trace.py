@@ -55,7 +55,13 @@ def _sink_call(unit, finding):
                 exact.append(node)
         if len(exact) == 1:
             return exact[0]
-        return None
+        # Chained calls share their starting column. SQL findings identify a
+        # SQL operation, so an outer fetch/result call must not obscure the
+        # unique SQL call at that location. Arbitrary path calls still need an
+        # unambiguous exact match; a method name alone cannot select them.
+        if rule not in {"SKY-D211", "SKY-D217"}:
+            return None
+        source_calls = exact
     calls = []
     for node in source_calls:
         name = None
