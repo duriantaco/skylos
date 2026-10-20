@@ -10,6 +10,11 @@ from typing import Any
 
 from skylos.core.safe_cache_io import read_project_text_no_symlink, read_text_no_symlink
 from skylos.rules.config.cicd.runner_labels import runner_may_be_self_hosted
+from skylos.rules.config.cicd.secret_value_flow import (
+    ALL_SECRETS,
+    DYNAMIC_SECRET,
+    secret_value_names,
+)
 from skylos.rules.config.cicd.yaml_source import YamlSource, load_yaml_with_locations
 from skylos.rules.config.findings import config_finding
 from skylos.security.command_guard import scan_shell_command
@@ -2236,13 +2241,17 @@ def _scan_broad_secret_env(
         for name, value in env.items():
             if not isinstance(value, str):
                 continue
-            matches = [
-                match.group(1)
-                for match in SECRETS_OUTSIDE_ENV_RE.finditer(value)
-                if match.group(1).upper() != "GITHUB_TOKEN"
-            ]
+            matches = []
+            for secret_name in secret_value_names(value):
+                if secret_name.upper() != "GITHUB_TOKEN":
+                    matches.append(secret_name)
             if not matches:
                 continue
+            exposed = f"secret {matches[0]}"
+            if matches[0] == ALL_SECRETS:
+                exposed = "the secrets context"
+            elif matches[0] == DYNAMIC_SECRET:
+                exposed = "a dynamically selected secret"
             _add_finding(
                 findings,
                 lines,
@@ -2250,8 +2259,8 @@ def _scan_broad_secret_env(
                     rule_id=rule_id,
                     name="github-actions-broad-secret-env",
                     message=(
-                        f"{location} environment variable {name} exposes secret "
-                        f"{matches[0]} to every nested step. Move it to the one step "
+                        f"{location} environment variable {name} exposes {exposed} "
+                        "to every nested step. Move it to the one step "
                         "that needs it."
                     ),
                     file=path,
