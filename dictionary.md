@@ -365,6 +365,12 @@ Finding types:
 final symlink. D325 does not exempt a read solely because that basename is
 joined to a fixed base directory.
 
+Python open-mode checks distinguish read, write and update (`+`) modes,
+including bounded sets of literal modes assigned before the call. An unknown
+mode keeps both operations possible. Update modes add a read warning when
+the same handle is observed reading or being iterated. Explicit modes captured
+before `**kwargs` expansion cannot be replaced by that mapping.
+
 For Python path checks (`D215`, `D324`, `D325`), direct
 `pytest.mark.parametrize` decorators can establish that a filename parameter
 contains only literal relative paths. Supported forms include import aliases,
