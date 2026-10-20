@@ -344,7 +344,24 @@ advisory, its lowest reported fix above the installed version (so `next`
 14.0.0 with fixes in 15.5.24 and 16.3.3 needs 15.5.24), then the highest of
 those; advisories with no fix above the installed version are counted next to
 it. Check the ranges in JSON before pinning. JSON, SARIF and
-`--format concise` keep one finding per advisory.
+`--format concise` keep one finding per vulnerability and dependency context.
+Package-matched advisory details can establish that several IDs are aliases
+of the same vulnerability. Skylos combines those records only within the same
+ecosystem, package, installed version and dependency context. Shared titles,
+reference URLs and related IDs do not establish equivalence.
+
+Combined findings retain the source records in `advisory_records`, their IDs
+in `advisory_ids`, and published aliases in `aliases`. Selecting any retained
+advisory ID still selects the combined finding. The strongest reported
+severity is retained; conflicting ranges, fixes and severity information stay
+in the source records and are identified by `advisory_conflicts`. Conflicting
+fix versions do not produce a single upgrade hint. An incomplete source
+lookup keeps the combined finding incomplete and clears that hint.
+
+CLI JSON retains all source advisory records. Cloud's compact fallback payload
+keeps bounded advisory evidence and marks truncation with counts when its
+limits are exceeded; SARIF properties remain subject to the exporter's normal
+budgets.
 
 Findings use the existing `SKY-SCA-*` rule IDs and
 `dependency_vulnerabilities` result field. Metadata includes package identity,
