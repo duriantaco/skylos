@@ -1,4 +1,5 @@
 import ast
+import copy
 from pathlib import Path
 from typing import NamedTuple
 
@@ -13,7 +14,10 @@ from skylos.rules.quality._receivers import (
     possible_method_receiver,
     resolve_method_kinds,
 )
-from skylos.rules.quality._scope import is_non_production_python
+from skylos.rules.quality._scope import (
+    is_non_production_function_scope,
+    is_non_production_python,
+)
 
 
 class _Arity(NamedTuple):
@@ -26,12 +30,44 @@ class _Arity(NamedTuple):
     uncertain: bool
 
 
+def _declaration_tree(module):
+    """Clone syntax iteratively without copying another analyzer's metadata.
+
+    Parser contexts/operators are shared across ASTs. A ``parent`` annotation
+    on one can point into an unrelated source tree; deepcopy follows that
+    graph rather than just this module's syntax.
+    """
+    copies = {}
+    for original in ast.walk(module):
+        if original in copies:
+            continue
+        duplicate = copy.copy(original)
+        duplicate.__dict__.clear()
+        for attribute in original._attributes:
+            if hasattr(original, attribute):
+                setattr(duplicate, attribute, getattr(original, attribute))
+        copies[original] = duplicate
+    for original, duplicate in copies.items():
+        for field, value in ast.iter_fields(original):
+            if isinstance(value, ast.AST):
+                value = copies[value]
+            elif isinstance(value, list):
+                value = [
+                    copies[item] if isinstance(item, ast.AST) else item
+                    for item in value
+                ]
+            setattr(duplicate, field, value)
+    return copies[module], {
+        duplicate: original for original, duplicate in copies.items()
+    }
+
+
 class ArgCountRule(SkylosRule):
     """Positional arity (like pylint R0917) and total parameter count.
 
-    Required positional arguments must be passed in order, which is what
-    makes a wide signature error-prone. Keyword-only parameters are named at
-    every call site, so they count toward the total only.
+    Parameters in the positional part may also accept keyword calls. Its
+    width measures a declaration, not observed argument-order mistakes.
+    Keyword-only parameters count toward the total only.
     """
 
     rule_id = "SKY-C303"
@@ -46,6 +82,7 @@ class ArgCountRule(SkylosRule):
         self._tree = None
         self._contracts = None
         self._parameter_context = None
+        self._optional_stub_signatures = set()
 
     def visit_node(self, node, context):
         if isinstance(node, ast.Module):
@@ -69,6 +106,7 @@ class ArgCountRule(SkylosRule):
                 if not self._skip_file
                 else {}
             )
+            self._optional_stub_signatures = self._stub_surfaces(node, context)
             return None
         if self._skip_file:
             return None
@@ -83,6 +121,26 @@ class ArgCountRule(SkylosRule):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return None
 
+        if node in self._optional_stub_signatures:
+            original_group = self._overloads.get(node)
+            members = original_group.members if original_group is not None else (node,)
+            widest = max(self._arity(member).total for member in members)
+            if widest > self.max_total and (
+                original_group is None or node is original_group.anchor
+            ):
+                self._precision_exclusion(
+                    node,
+                    context,
+                    "optional_overload_declaration",
+                    {
+                        "source_kind": "pyi",
+                        "implementation": False,
+                        "total_parameters": widest,
+                        "threshold": self.max_total,
+                        "source_lines": [member.lineno for member in members],
+                    },
+                )
+            return None
         group = self._overloads.get(node)
         if group is not None:
             return self._overload_finding(group, node, context)
@@ -101,8 +159,273 @@ class ArgCountRule(SkylosRule):
         if arity.required > self.max_required:
             return [self._required_finding(node, context, arity)]
         if arity.total > self.max_total:
+            forwarded = self._record_option_forwarding(node, context, arity)
+            if forwarded is not None:
+                self._precision_exclusion(
+                    node, context, "named_record_option_forwarding", forwarded
+                )
+                return None
             return [self._total_finding(node, context, arity)]
         return None
+
+    @staticmethod
+    def _precision_exclusion(node, context, reason, evidence):
+        collector = context.get("precision_exclusions")
+        if isinstance(collector, list):
+            collector.append(
+                {
+                    "rule_id": "SKY-C303",
+                    "file": context.get("filename"),
+                    "line": node.lineno,
+                    "reason": reason,
+                    "evidence": evidence,
+                }
+            )
+
+    def _stub_surfaces(self, module, context):
+        """Optional overload declarations repeat an API rather than design it.
+
+        Keep actual positional overload hazards and unknown decorators. A
+        dataclass_transform marker is declaration metadata only after its
+        typing import and unchanged binding have been proved.
+        """
+        if self._skip_file or not str(context.get("filename", "")).endswith(".pyi"):
+            return set()
+        from skylos.rules.quality.logic_maintainability import _TypingLiteralCalls
+
+        facts = _TypingLiteralCalls(
+            module,
+            {"typing", "typing_extensions"},
+            context.get("filename"),
+            context.get("project_root"),
+        )
+        declarations, originals = _declaration_tree(module)
+        for duplicate, original in originals.items():
+            if isinstance(original, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                duplicate.decorator_list = [
+                    copied
+                    for copied, marker in zip(
+                        duplicate.decorator_list, original.decorator_list
+                    )
+                    if not (
+                        isinstance(marker, ast.Call)
+                        and facts.is_marker(
+                            marker.func,
+                            "dataclass_transform",
+                            {"typing", "typing_extensions"},
+                        )
+                    )
+                ]
+        result = set()
+        for group in overload_groups(
+            declarations, filename=context.get("filename", "")
+        ):
+            signatures = [originals[item] for item in group.signatures]
+            if group.implementation is not None or not all(
+                any(
+                    facts.is_marker(marker, "overload", {"typing", "typing_extensions"})
+                    for marker in signature.decorator_list
+                    if not isinstance(marker, ast.Call)
+                )
+                for signature in signatures
+            ):
+                continue
+            if any(
+                self._arity(signature).required > self.max_required
+                for signature in signatures
+            ):
+                continue
+            if any(
+                self._arity(signature).total > self.max_total
+                for signature in signatures
+            ):
+                result.update(signatures)
+        return result
+
+    def _record_option_forwarding(self, node, context, arity):
+        """Prove optional named options are consumed by one declared record.
+
+        This does not exempt wide keyword signatures generally: every option
+        must feed its same-named dataclass field and have no independent use.
+        """
+        if (
+            not isinstance(self._tree, ast.Module)
+            or node.decorator_list
+            or arity.uncertain
+            or not node.args.kwonlyargs
+            or any(default is None for default in node.args.kw_defaults)
+            or node.args.vararg
+            or node.args.kwarg
+            or arity.total - arity.keyword_only > self.max_total
+        ):
+            return None
+        options = {argument.arg for argument in node.args.kwonlyargs}
+        parents = {
+            child: parent
+            for parent in ast.walk(node)
+            for child in ast.iter_child_nodes(parent)
+        }
+        uses = {name: [] for name in options}
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name) and child.id in options:
+                if not isinstance(child.ctx, ast.Load):
+                    return None
+                uses[child.id].append(child)
+        resolver = self._contract_resolver(context)
+        from skylos.rules.quality.logic_maintainability import _TypingLiteralCalls
+
+        facts = None
+        for call in (child for child in ast.walk(node) if isinstance(child, ast.Call)):
+            if call.args or any(keyword.arg is None for keyword in call.keywords):
+                continue
+            keywords = {keyword.arg: keyword for keyword in call.keywords}
+            if len(keywords) != len(call.keywords) or not options <= keywords.keys():
+                continue
+            if not all(
+                references
+                and all(
+                    self._within(reference, keywords[name], parents)
+                    for reference in references
+                )
+                and self._option_value(keywords[name].value, name)
+                for name, references in uses.items()
+            ):
+                continue
+            definition = resolver._class(call.func, resolver.main)
+            if (
+                definition is None
+                or resolver.class_sources.get(definition) is not resolver.main
+                or definition.bases
+                or definition.keywords
+                or len(definition.decorator_list) != 1
+            ):
+                continue
+            marker = definition.decorator_list[0]
+            if isinstance(marker, ast.Call):
+                if marker.args or any(
+                    kw.arg is None
+                    or not isinstance(kw.value, ast.Constant)
+                    or (kw.arg == "init" and kw.value.value is not True)
+                    for kw in marker.keywords
+                ):
+                    continue
+                marker = marker.func
+            if facts is None:
+                facts = _TypingLiteralCalls(
+                    self._tree,
+                    {"dataclasses"},
+                    context.get("filename"),
+                    context.get("project_root"),
+                )
+            if not facts.is_marker(marker, "dataclass", {"dataclasses"}):
+                continue
+            fields = {
+                statement.target.id
+                for statement in definition.body
+                if isinstance(statement, ast.AnnAssign)
+                and isinstance(statement.target, ast.Name)
+            }
+            if (
+                not isinstance(call.func, ast.Name)
+                or facts.scopes.resolve(
+                    call.func.id, facts.scopes.scope_of.get(call.func)
+                )
+                is not self._tree
+                or not options <= fields
+                or any(
+                    resolver._bindings(definition).counts[name] != 1 for name in fields
+                )
+                or resolver._bindings(definition).names
+                & {
+                    "__init__",
+                    "__new__",
+                    "__post_init__",
+                    "__setattr__",
+                    "__getattribute__",
+                    "__getattr__",
+                }
+                or any(
+                    isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and statement.name in fields
+                    for statement in definition.body
+                )
+            ):
+                continue
+            # Descriptors/default factories may define behavior. Only ordinary
+            # fields and the standard dataclasses.field declaration qualify.
+            if any(
+                isinstance(statement, ast.AnnAssign)
+                and statement.value is not None
+                and not isinstance(statement.value, ast.Constant)
+                and not (
+                    isinstance(statement.value, ast.Call)
+                    and facts.member(statement.value.func) == "field"
+                    and all(
+                        keyword.arg is not None
+                        and (
+                            keyword.arg != "init"
+                            or (
+                                isinstance(keyword.value, ast.Constant)
+                                and keyword.value.value is True
+                            )
+                        )
+                        for keyword in statement.value.keywords
+                    )
+                )
+                for statement in definition.body
+            ):
+                continue
+            return {
+                "record_line": definition.lineno,
+                "constructor_line": call.lineno,
+                "total_parameters": arity.total,
+                "threshold": self.max_total,
+                "required_positional": arity.required,
+                "keyword_only_parameters": sorted(options),
+                "contract": "same_module_dataclass_fields",
+            }
+        return None
+
+    @staticmethod
+    def _within(node, ancestor, parents):
+        while node in parents:
+            node = parents[node]
+            if node is ancestor:
+                return True
+        return False
+
+    @staticmethod
+    def _option_value(value, name):
+        if isinstance(value, ast.Name):
+            return value.id == name
+        if isinstance(value, ast.BoolOp) and isinstance(value.op, ast.Or):
+            return (
+                len(value.values) == 2
+                and isinstance(value.values[0], ast.Name)
+                and value.values[0].id == name
+                and isinstance(value.values[1], ast.Constant)
+            )
+        return (
+            isinstance(value, ast.IfExp)
+            and isinstance(value.body, ast.Name)
+            and value.body.id == name
+            and isinstance(value.test, ast.Compare)
+            and isinstance(value.test.left, ast.Name)
+            and value.test.left.id == name
+            and len(value.test.ops) == 1
+            and isinstance(value.test.ops[0], ast.IsNot)
+            and len(value.test.comparators) == 1
+            and isinstance(value.test.comparators[0], ast.Constant)
+            and value.test.comparators[0].value is None
+            and (
+                isinstance(value.orelse, ast.Constant)
+                or (
+                    isinstance(value.orelse, ast.Attribute)
+                    and isinstance(value.orelse.value, ast.Name)
+                    and value.orelse.value.id in {"self", "cls"}
+                )
+            )
+        )
 
     def _overload_finding(self, group, node, context):
         if node is not group.anchor:
@@ -323,9 +646,8 @@ class ArgCountRule(SkylosRule):
             ),
             message=(
                 f"Function has {at_least}{arity.required} required positional "
-                f"arguments (limit: {self.max_required}). Callers must pass "
-                "them in order; consider making some keyword-only or "
-                "grouping related ones into a parameter object."
+                f"arguments (limit: {self.max_required}). Review actual call "
+                "sites and compatibility before changing the signature."
             ),
         )
 
@@ -375,6 +697,8 @@ class FunctionLengthRule(SkylosRule):
 
     def visit_node(self, node, context):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+        if is_non_production_function_scope(context):
             return None
 
         start = getattr(node, "lineno", 0)

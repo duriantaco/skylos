@@ -119,7 +119,8 @@ def test_tree_prints_paths_literally():
 def test_quality_table_help_shows_the_config_table_name():
     console = _console()
 
-    render_results(console, _result(), copy_badge=False)
+    # The sample is one complexity metric, which is listed with --all-advice.
+    render_results(console, _result(), copy_badge=False, all_advice=True)
 
     assert "tune in [tool.skylos] (complexity" in console.export_text()
 

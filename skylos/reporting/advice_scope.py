@@ -40,6 +40,9 @@ _MAX_BYTES = 2_000_000
 _MAX_METADATA_BYTES = 128_000
 _MAX_DEPTH = 64
 _SAMPLE_DIRS = frozenset({"example", "examples", "docs_src", "doc_src"})
+# Conventional folder names; each needs a second fact below before it applies.
+_NESTED_TEST_DIRS = frozenset({"test", "tests", "testing"})
+_TOOLING_DIRS = frozenset({"docs", "doc", "scripts", "tools"})
 _BENCHMARK_DIRS = frozenset({"bench", "benchmark", "benchmarks"})
 _READMES = ("README", "README.md", "README.rst", "README.txt")
 _LICENSES = ("LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING", "COPYING.txt")
@@ -829,6 +832,41 @@ def _file_context(filename, project_root):
         and _profile_data(_tree(root, path, info))
     ):
         return "profiling"
+    return _conventional_context(root, path, relative, info)
+
+
+def _conventional_context(root, path, relative, info):
+    """Folder conventions confirmed by file facts, or declared source ownership.
+
+    A nested ``tests`` folder counts only when the module imports a test
+    framework; generated context requires an explicit repository attribute or
+    an executable bundle structure. A comment does not establish ownership.
+    Vendor context requires the provenance checks above. A folder name must
+    not override first-party ownership or a missing/invalid copy inventory.
+    """
+    directories = [part.lower() for part in relative.parts[:-1]]
+    if (
+        path.suffix.lower() in {".py", ".pyi", ".pyw"}
+        and _NESTED_TEST_DIRS.intersection(directories)
+    ):
+        tree = _tree(root, path, info)
+        if tree is not None and _uses_test_framework(tree):
+            return "test"
+    if directories and (
+        directories[0].startswith(".") or directories[0] in _TOOLING_DIRS
+    ) and not _shipped_package(root, relative):
+        return "tooling"
+    from skylos.core.generated_files import (
+        REASON_LINGUIST_GENERATED,
+        _linguist_attribute,
+        _looks_bundled,
+    )
+
+    if _linguist_attribute(path, root) == REASON_LINGUIST_GENERATED:
+        return "generated"
+    if path.suffix.lower() in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}:
+        if _looks_bundled(path):
+            return "generated"
     return None
 
 

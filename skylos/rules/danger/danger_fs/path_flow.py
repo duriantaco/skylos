@@ -5,6 +5,7 @@ import sys
 from skylos.rules.danger.taint import TaintVisitor, PATH_SANITIZERS
 from skylos.rules.danger.danger_fs.closed_world import HELPER_PARAMETER_SOURCE
 from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
+from skylos.security.receiver_resolution import ReceiverResolver
 from skylos.rules.danger.untrusted_sources import (
     is_traversal_safe_value,
     UntrustedSourceIndex,
@@ -509,9 +510,16 @@ class _PathFlowChecker(TaintVisitor):
         # ids of open() calls whose ``with`` handle is only read in bounded chunks
         self._bounded_opens = set()
         self._constant_sizes = {}
+        self.receiver_resolver = None
+        self._receiver_proofs = {}
 
     def visit_Module(self, node):
         self.untrusted_sources = UntrustedSourceIndex(node, follow_local_calls=True)
+        try:
+            self.receiver_resolver = ReceiverResolver(node, self.file_path)
+        except Exception:
+            # Optional receiver evidence must never remove an existing warning.
+            self.receiver_resolver = None
         self._constant_sizes = _module_constant_sizes(node)
         if _is_probable_test_file(self.file_path):
             self._literal_pytest_paths = literal_path_parameters(node)
@@ -1043,7 +1051,48 @@ class _PathFlowChecker(TaintVisitor):
         if evidence:
             finding["metadata"] = {"security_evidence": evidence}
         _mark_helper_parameter(finding, evidence)
+        self._attach_receiver_proof(node, finding)
         self.findings.append(finding)
+
+    def _attach_receiver_proof(self, node, finding):
+        proof = self._receiver_proofs.get(id(node))
+        if proof is not None:
+            finding.setdefault("metadata", {})["receiver_resolution"] = proof
+
+    def _method_path_operand(self, node):
+        """A proven wrapper's file argument differs from a Path receiver.
+
+        Unknown implementations retain the old conservative check. Only a
+        resolved non-Path implementation with no filesystem effect is skipped.
+        """
+        proof = self._receiver_proofs.get(id(node))
+        if self.receiver_resolver is not None:
+            try:
+                proof = self.receiver_resolver.resolve_call(node)
+            except Exception:
+                proof = None
+        if not isinstance(proof, dict):
+            proof = {
+                "status": "unknown",
+                "effects": {"filesystem": "unknown", "database": "unknown"},
+                "limitations": ["Receiver resolution unavailable."],
+            }
+        self._receiver_proofs[id(node)] = proof
+        if proof.get("status") != "resolved" or not proof.get("receiver_is_non_path"):
+            return node.func.value, True
+        effect = proof.get("effects", {}).get("filesystem")
+        if effect == "none":
+            return None, True
+        if effect == "wrapped_path_argument":
+            index = proof.get("path_argument_index")
+            if type(index) is int and 0 <= index < len(node.args):
+                return node.args[index], False
+            name = proof.get("path_argument_name")
+            if isinstance(name, str):
+                for keyword in node.keywords:
+                    if keyword.arg == name:
+                        return keyword.value, False
+        return node.func.value, True
 
     def _source_evidence(self, node, path_expr, sink):
         return self.untrusted_sources.evidence(
@@ -1133,6 +1182,7 @@ class _PathFlowChecker(TaintVisitor):
         if evidence:
             finding["metadata"] = {"security_evidence": evidence}
         _mark_helper_parameter(finding, evidence)
+        self._attach_receiver_proof(node, finding)
         self.findings.append(finding)
 
     def _flag_if_tainted_path(self, node, path_expr):
@@ -1216,6 +1266,13 @@ class _PathFlowChecker(TaintVisitor):
 
     def visit_Call(self, node: ast.Call):
         qn = _qualified_name(node)
+        method_sink = isinstance(node.func, ast.Attribute) and node.func.attr in {
+            *self.PATHLIB_WRITE_METHODS, *self.PATHLIB_READ_METHODS, "open"
+        }
+        method_operand = None
+        bound_path_method = True
+        if method_sink:
+            method_operand, bound_path_method = self._method_path_operand(node)
         archive_method = _archive_call_name(node)
         first_path = None
         if qn in FIRST_PATH_PARAMETERS:
@@ -1228,6 +1285,7 @@ class _PathFlowChecker(TaintVisitor):
             isinstance(node.func, ast.Attribute)
             and node.func.attr in self.PATHLIB_SINK_METHODS
             and self._is_path_like_expr(node.func.value)
+            and (not method_sink or method_operand is not None)
         ):
             self._flag_if_tainted_path(node, node.func.value)
 
@@ -1238,17 +1296,22 @@ class _PathFlowChecker(TaintVisitor):
         if canonical in FILE_RESPONSE_SINKS:
             self._flag_file_response(node, canonical)
 
-        if isinstance(node.func, ast.Attribute):
+        if method_sink:
+            operand = method_operand
+            if operand is None:
+                self._record_safety_tokens(node)
+                self.generic_visit(node)
+                return
             if node.func.attr in self.PATHLIB_WRITE_METHODS:
-                self._flag_symlink_write_if_unsafe(node, node.func.value)
+                self._flag_symlink_write_if_unsafe(node, operand)
             elif node.func.attr in self.PATHLIB_READ_METHODS:
-                self._flag_symlink_read_if_unsafe(node, node.func.value)
+                self._flag_symlink_read_if_unsafe(node, operand)
             elif node.func.attr == "open":
-                mode = _call_mode(node, bound_method=True)
+                mode = _call_mode(node, bound_method=bound_path_method)
                 if _mode_writes(mode):
-                    self._flag_symlink_write_if_unsafe(node, node.func.value)
+                    self._flag_symlink_write_if_unsafe(node, operand)
                 else:
-                    self._flag_symlink_read_if_unsafe(node, node.func.value)
+                    self._flag_symlink_read_if_unsafe(node, operand)
 
         if qn == "open" and first_path is not None:
             mode = _call_mode(node)

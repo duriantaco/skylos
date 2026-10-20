@@ -39,7 +39,8 @@ def test_default_report_groups_large_advice_and_keeps_every_risk_record(tmp_path
     reviews = [_finding("SKY-T103", n) for n in range(75)]
     result = {"quality": [*advice, *defects, *reviews]}
     before = copy.deepcopy(result)
-    report = _generate_llm_report(result, tmp_path)
+    # Single-metric samples are listed with --all-advice.
+    report = _generate_llm_report(result, tmp_path, all_advice=True)
     records = _records(report)
 
     assert len(records) == 135
@@ -61,7 +62,7 @@ def test_default_report_groups_large_advice_and_keeps_every_risk_record(tmp_path
 
 def test_advice_only_report_discloses_records_instead_of_no_findings(tmp_path):
     result = {"quality": [_finding("SKY-Q301", 0), _finding("SKY-R101", 1)]}
-    report = _generate_llm_report(result, tmp_path)
+    report = _generate_llm_report(result, tmp_path, all_advice=True)
     assert "No findings." not in report
     assert "0 defects · 0 review · 2 advice in 2 groups." in report
     assert "SKY-Q301: 1 advice entry" in report
@@ -72,7 +73,7 @@ def test_advice_only_report_discloses_records_instead_of_no_findings(tmp_path):
 def test_expanded_report_includes_every_advice_record(tmp_path):
     advice = [_finding("SKY-Q301", n) for n in range(120)]
     result = {"quality": advice}
-    report = _generate_llm_report(result, tmp_path, expand_advice=True)
+    report = _generate_llm_report(result, tmp_path, expand_advice=True, all_advice=True)
     assert _records(report) == [
         {**finding, "finding_type": "advice"} for finding in advice
     ]

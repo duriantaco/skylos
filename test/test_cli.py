@@ -1496,7 +1496,10 @@ def test_generate_llm_report_formats_findings_and_defaults_dead_code(tmp_path):
     }
 
     original = deepcopy(result)
-    report = cli._generate_llm_report(result, tmp_path, expand_advice=True)
+    # The sample advice is one complexity metric, listed with --all-advice.
+    report = cli._generate_llm_report(
+        result, tmp_path, expand_advice=True, all_advice=True
+    )
 
     assert report.startswith(
         "# Skylos Report\n\n0 defects · 2 review · 1 advice in 1 group."

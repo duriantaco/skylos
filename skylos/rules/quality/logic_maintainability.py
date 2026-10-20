@@ -10,7 +10,10 @@ from pathlib import Path
 
 from skylos.audit.redaction import REDACTION, redact_text
 from skylos.rules.base import SkylosRule
-from skylos.rules.quality._scope import is_non_production_python
+from skylos.rules.quality._scope import (
+    is_non_production_function_scope,
+    is_non_production_python,
+)
 from skylos.rules.quality.logic_foundation import (
     _exception_type_names,
     _handler_body_is_trivial,
@@ -19,7 +22,7 @@ from skylos.rules.quality.logic_foundation import (
 from skylos.rules.quality.logic_security import _qualified_call_name
 from skylos.rules.quality._ast_visit import IterativeNodeVisitor
 from skylos.rules.quality._provider_context import project_local_provider
-from skylos.rules.quality._overload_groups import overload_groups
+from skylos.rules.quality._overload_groups import _mutated_names, overload_groups
 
 
 _SENSITIVE_LITERAL_KEYWORDS = (
@@ -617,6 +620,7 @@ class _TypingLiteralCalls:
         self.changed_modules = set()
         self.changed_members = set()
         self.dynamic_namespace = False
+        self.marker_mutations = None
         local_providers = {}
 
         def external_module(module):
@@ -780,6 +784,41 @@ class _TypingLiteralCalls:
             if self.scopes.resolve(name, scope) is None:
                 return True
         return self.member(expression, {"builtins"}) == name
+
+    def is_marker(self, expression, name, modules):
+        """Direct decorators consume a definition, not an escaping marker.
+
+        The general callable resolver intentionally rejects bare imported
+        values. For a known declaration marker, additionally prove unchanged
+        imports and reject actual escapes or mutations instead.
+        """
+        if self.dynamic_namespace:
+            return False
+        if isinstance(expression, ast.Name):
+            root, imported = expression, name
+        elif (
+            isinstance(expression, ast.Attribute)
+            and isinstance(expression.value, ast.Name)
+            and expression.attr == name
+        ):
+            root, imported = expression.value, None
+        else:
+            return False
+        if self.marker_mutations is None:
+            self.marker_mutations = _mutated_names(self.scopes.module)
+        values = self._values(root)
+        return (
+            root.id not in self.marker_mutations
+            and "*" not in self.marker_mutations
+            and bool(values)
+            and None not in values
+            and all(
+                module in modules
+                and member == imported
+                and module not in self.changed_modules
+                for module, member in values
+            )
+        )
 
     def is_mapping_constructor(self, expression, seen=()):
         if self.is_builtin_reference(expression, "dict"):
@@ -957,8 +996,294 @@ _DUPLICATE_LITERAL_API_MODULES = frozenset(
         "celery.utils.dispatch.signal",
         "django.dispatch",
         "django.dispatch.dispatcher",
+        "argparse",
+        "starlette.types",
+        "asgiref.typing",
     }
 )
+
+
+_ASGI_EVENT_TYPES = frozenset(
+    {
+        "http.request",
+        "http.disconnect",
+        "http.response.start",
+        "http.response.body",
+        "http.response.trailers",
+        "websocket.connect",
+        "websocket.accept",
+        "websocket.receive",
+        "websocket.send",
+        "websocket.disconnect",
+        "websocket.close",
+        "lifespan.startup",
+        "lifespan.startup.complete",
+        "lifespan.startup.failed",
+        "lifespan.shutdown",
+        "lifespan.shutdown.complete",
+        "lifespan.shutdown.failed",
+    }
+)
+
+
+class _ProtocolLiteralRoles:
+    """Bounded, binding-aware proofs for literal fields of known protocols."""
+
+    def __init__(self, module, context, calls):
+        self.module = module
+        self.context = context
+        self.calls = calls
+        self.mutated = None
+        self.sources = None
+        self.local_asgi = {}
+
+    def argparse_destination(self, node, parents):
+        keyword = parents.get(id(node))
+        call = parents.get(id(keyword))
+        if not (
+            isinstance(keyword, ast.keyword)
+            and keyword.arg == "dest"
+            and node.value.isidentifier()
+            and isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "add_argument"
+            and isinstance(call.func.value, ast.Name)
+        ):
+            return False
+        if self.mutated is None:
+            self.mutated = _mutated_names(self.module)
+        facts = self.calls()
+        scopes = facts.scopes
+
+        def parser_receiver(expression, seen=()):
+            if not isinstance(expression, ast.Name) or len(seen) >= 8:
+                return False
+            scope = scopes.resolve(expression.id, scopes.scope_of.get(expression))
+            key = (scope, expression.id)
+            if (
+                key in seen
+                or expression.id in self.mutated
+                or "*" in self.mutated
+                or scopes.binding_counts[key] != 1
+                or scopes.aliases.get(key)
+            ):
+                return False
+            values = scopes.assigned.get(key, ())
+            if len(values) != 1 or not isinstance(values[0], ast.Call):
+                return False
+            constructor = values[0]
+            if constructor.lineno >= expression.lineno:
+                return False
+            # A parser passed to another consumer or accessed through an
+            # unknown operation may have had add_argument replaced.
+            if any(
+                not (
+                    isinstance(scopes.parents.get(reference), ast.Attribute)
+                    and scopes.parents[reference].value is reference
+                    and isinstance(
+                        scopes.parents.get(scopes.parents[reference]), ast.Call
+                    )
+                    and scopes.parents[scopes.parents[reference]].func
+                    is scopes.parents[reference]
+                    and scopes.parents[reference].attr
+                    in {
+                        "add_argument",
+                        "add_argument_group",
+                        "add_mutually_exclusive_group",
+                        "parse_args",
+                        "parse_known_args",
+                        "print_help",
+                        "format_help",
+                    }
+                )
+                for reference in scopes.value_refs.get(key, ())
+            ):
+                return False
+            if facts.member(constructor.func, {"argparse"}) == "ArgumentParser":
+                return True
+            return (
+                isinstance(constructor.func, ast.Attribute)
+                and constructor.func.attr
+                in {"add_argument_group", "add_mutually_exclusive_group"}
+                and parser_receiver(constructor.func.value, (*seen, key))
+            )
+
+        return parser_receiver(call.func.value)
+
+    def _annotation_member(self, annotation):
+        if not isinstance(annotation, (ast.Name, ast.Attribute)):
+            return None
+        facts = self.calls()
+        # A checkout of the protocol provider is local source, not an external
+        # import. Prove the actual aliases instead of trusting its package name.
+        root = annotation.value if isinstance(annotation, ast.Attribute) else annotation
+        if not isinstance(root, ast.Name):
+            return None
+        scope = facts.scopes.resolve(root.id, facts.scopes.scope_of.get(root))
+        if scope is not self.module:
+            return None
+        if self.sources is None:
+            from skylos.rules.quality._argument_contracts import ArgumentContracts
+
+            self.sources = ArgumentContracts(self.module, self.context, {})
+        source = self.sources.main
+        imported = source.imports.get(root.id)
+        if imported is None or not source.stable(root.id):
+            return None
+        statement, alias = imported
+        if statement.lineno >= annotation.lineno:
+            return None
+        if isinstance(statement, ast.ImportFrom) and not statement.level:
+            module, member = statement.module, alias.name
+            if isinstance(annotation, ast.Attribute):
+                return None
+        elif isinstance(statement, ast.Import) and isinstance(
+            annotation, ast.Attribute
+        ):
+            module, member = alias.name, annotation.attr
+            if not alias.asname:
+                return None
+        else:
+            return None
+        if member not in {
+            "starlette.types": {"Send", "Message"},
+            "asgiref.typing": {"ASGISendCallable"},
+        }.get(module, ()):
+            return None
+        if not project_local_provider(
+            module.split(".", 1)[0],
+            self.context.get("filename"),
+            self.context.get("project_root"),
+        ):
+            return member
+        if module != "starlette.types" or not isinstance(statement, ast.ImportFrom):
+            return None
+        if module not in self.local_asgi:
+            provider = self.sources._module(source, statement)
+            self.local_asgi[module] = self._asgi_aliases(provider)
+        return member if self.local_asgi[module] else None
+
+    def _asgi_aliases(self, source):
+        if source is None:
+            return False
+        facts = _TypingLiteralCalls(
+            source.tree,
+            {"typing", "collections.abc"},
+            source.filename,
+            self.context.get("project_root"),
+        )
+        aliases = {
+            statement.targets[0].id: statement.value
+            for statement in source.tree.body
+            if isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+        }
+        message, send = aliases.get("Message"), aliases.get("Send")
+
+        def typing_member(expression):
+            root = (
+                expression.value
+                if isinstance(expression, ast.Attribute)
+                else expression
+            )
+            if not isinstance(root, ast.Name) or not source.stable(root.id):
+                return None
+            imported = source.imports.get(root.id)
+            if imported is None:
+                return None
+            statement, alias = imported
+            if statement.lineno >= expression.lineno:
+                return None
+            if isinstance(statement, ast.ImportFrom) and not statement.level:
+                module, member = statement.module, alias.name
+                if isinstance(expression, ast.Attribute):
+                    return None
+            elif isinstance(statement, ast.Import) and isinstance(
+                expression, ast.Attribute
+            ):
+                module, member = alias.name, expression.attr
+            else:
+                return None
+            if module not in {"typing", "collections.abc"} or project_local_provider(
+                module.split(".", 1)[0],
+                source.filename,
+                self.context.get("project_root"),
+            ):
+                return None
+            return member
+
+        if not all(source.stable(name) for name in ("Message", "Send")):
+            return False
+        if not (
+            isinstance(message, ast.Subscript)
+            and typing_member(message.value) == "MutableMapping"
+            and isinstance(message.slice, ast.Tuple)
+            and len(message.slice.elts) == 2
+            and facts.is_builtin_reference(message.slice.elts[0], "str")
+            and typing_member(message.slice.elts[1]) == "Any"
+            and isinstance(send, ast.Subscript)
+            and typing_member(send.value) == "Callable"
+            and isinstance(send.slice, ast.Tuple)
+            and len(send.slice.elts) == 2
+        ):
+            return False
+        parameters, result = send.slice.elts
+        return (
+            isinstance(parameters, ast.List)
+            and len(parameters.elts) == 1
+            and isinstance(parameters.elts[0], ast.Name)
+            and parameters.elts[0].id == "Message"
+            and isinstance(result, ast.Subscript)
+            and typing_member(result.value) == "Awaitable"
+            and isinstance(result.slice, ast.Constant)
+            and result.slice.value is None
+        )
+
+    def asgi_discriminator(self, node, parents):
+        if node.value not in _ASGI_EVENT_TYPES:
+            return False
+        mapping = parents.get(id(node))
+        if not isinstance(mapping, ast.Dict) or not any(
+            value is node and isinstance(key, ast.Constant) and key.value == "type"
+            for key, value in zip(mapping.keys, mapping.values)
+        ):
+            return False
+        parent = parents.get(id(mapping))
+        if isinstance(parent, ast.AnnAssign) and parent.value is mapping:
+            return self._annotation_member(parent.annotation) == "Message"
+        if not (
+            isinstance(parent, ast.Call)
+            and len(parent.args) == 1
+            and parent.args[0] is mapping
+            and not parent.keywords
+            and isinstance(parent.func, ast.Name)
+        ):
+            return False
+        scopes = self.calls().scopes
+        scope = scopes.resolve(parent.func.id, scopes.scope_of.get(parent.func))
+        if (
+            not isinstance(scope, _FUNCTION_NODES)
+            or (scope, parent.func.id) in scopes.receiver_writes
+        ):
+            return False
+        parameter = next(
+            (
+                argument
+                for argument in (
+                    *scope.args.posonlyargs,
+                    *scope.args.args,
+                    *scope.args.kwonlyargs,
+                )
+                if argument.arg == parent.func.id
+            ),
+            None,
+        )
+        return parameter is not None and self._annotation_member(
+            parameter.annotation
+        ) in {"Send", "ASGISendCallable"}
+
+
 _SCHEMA_LITERAL_MODULES = frozenset(
     {
         "sqlalchemy",
@@ -1448,6 +1773,8 @@ class DuplicateStringLiteralRule(SkylosRule):
                 parent_map[id(child)] = parent
         typing_calls = None
         membership_cache = {}
+        protocol_roles = None
+        precision_occurrences = defaultdict(list)
 
         def call_facts():
             nonlocal typing_calls
@@ -1525,6 +1852,22 @@ class DuplicateStringLiteralRule(SkylosRule):
                     continue
                 if _is_cli_declaration_literal(child, parent_map):
                     continue
+                if child.value in _ASGI_EVENT_TYPES or (
+                    isinstance(parent_map.get(id(child)), ast.keyword)
+                    and parent_map[id(child)].arg == "dest"
+                ):
+                    if protocol_roles is None:
+                        protocol_roles = _ProtocolLiteralRoles(
+                            node, context, call_facts
+                        )
+                    reason = None
+                    if protocol_roles.argparse_destination(child, parent_map):
+                        reason = "argparse_namespace_destination"
+                    elif protocol_roles.asgi_discriminator(child, parent_map):
+                        reason = "typed_asgi_event_discriminator"
+                    if reason is not None:
+                        precision_occurrences[child.value].append((child, reason))
+                        continue
                 if _is_signal_field_collection(child, parent_map, call_facts):
                     continue
                 parent = parent_map.get(id(child))
@@ -1552,6 +1895,36 @@ class DuplicateStringLiteralRule(SkylosRule):
                 string_occurrences[key].append(child)
 
         findings = []
+        collector = context.get("precision_exclusions")
+        if isinstance(collector, list):
+            for value, excluded in precision_occurrences.items():
+                remaining = string_occurrences.get(value, ())
+                if len(excluded) + len(remaining) < self.threshold:
+                    continue
+                collector.append(
+                    {
+                        "rule_id": self.rule_id,
+                        "file": filename,
+                        "line": min(
+                            occurrence.lineno
+                            for occurrence in (
+                                *remaining,
+                                *(item[0] for item in excluded),
+                            )
+                        ),
+                        "reason": "protocol_literal_roles",
+                        "evidence": {
+                            "literal": _duplicate_string_display(value),
+                            "before_occurrences": len(excluded) + len(remaining),
+                            "after_occurrences": len(remaining),
+                            "finding_removed": len(remaining) < self.threshold,
+                            "excluded": [
+                                {"line": occurrence.lineno, "role": reason}
+                                for occurrence, reason in excluded
+                            ],
+                        },
+                    }
+                )
         function_scopes = None
         for value, nodes in string_occurrences.items():
             count = len(nodes)
@@ -1613,6 +1986,8 @@ class TooManyReturnsRule(SkylosRule):
 
     def visit_node(self, node, context):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+        if is_non_production_function_scope(context):
             return None
 
         count = self._count_returns(node)

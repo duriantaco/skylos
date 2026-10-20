@@ -51,8 +51,10 @@ def test_default_report_counts_functions_and_discloses_original_checks(tmp_path)
 
     report = _generate_llm_report(result, tmp_path)
 
-    assert "0 defects · 0 review · 2 advice entries (3 findings) in 1 group." in report
-    assert "SKY-Q301 + SKY-Q306: 2 advice entries in 1 file — Function complexity" in report
+    # The lone cognitive score is measured, not listed, by default.
+    assert "0 defects · 0 review · 1 advice entry (2 findings) in 1 group." in report
+    assert "1 optional advice finding (1 function metrics without two agreeing" in report
+    assert "SKY-Q301 + SKY-Q306: 1 advice entry in 1 file — Function complexity" in report
     assert "each original record for grouped metric checks" in report
     assert _records(report) == []
 
@@ -102,8 +104,11 @@ def test_unpaired_complexity_report_keeps_original_rule_and_record(tmp_path, rul
     finding = _finding(rule)
     result = {"quality": [finding]}
 
-    compact = _generate_llm_report(result, tmp_path)
-    expanded = _generate_llm_report(result, tmp_path, expand_advice=True)
+    # One metric alone is listed with --all-advice.
+    compact = _generate_llm_report(result, tmp_path, all_advice=True)
+    expanded = _generate_llm_report(
+        result, tmp_path, expand_advice=True, all_advice=True
+    )
 
     assert "0 defects · 0 review · 1 advice in 1 group." in compact
     assert f"{rule}: 1 advice entry in 1 file" in compact

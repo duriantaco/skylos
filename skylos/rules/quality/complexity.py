@@ -1,6 +1,7 @@
 import ast
 from pathlib import Path
 from skylos.rules.base import SkylosRule
+from skylos.rules.quality._scope import is_non_production_function_scope
 
 RULE_ID = "SKY-Q301"
 COGNITIVE_RULE_ID = "SKY-Q306"
@@ -106,6 +107,8 @@ class ComplexityRule(SkylosRule):
 
     def visit_node(self, node, context):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+        if is_non_production_function_scope(context):
             return None
 
         complexity = _func_complexity(node)
@@ -373,6 +376,8 @@ class CognitiveComplexityRule(SkylosRule):
                 )
             return None
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+        if is_non_production_function_scope(context):
             return None
 
         complexity = _cognitive_complexity(node)

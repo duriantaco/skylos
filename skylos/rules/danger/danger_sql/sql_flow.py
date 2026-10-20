@@ -7,6 +7,7 @@ from skylos.rules.danger.danger_sql.sqlalchemy_provenance import (
     SQLAlchemyTextProvenance,
 )
 from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
+from skylos.security.receiver_resolution import ReceiverResolver
 
 
 DB_MODULES = frozenset(
@@ -258,6 +259,16 @@ class _SQLFlowChecker(TaintVisitor):
     def __init__(self, tree: ast.AST, file_path, findings):
         super().__init__(file_path, findings)
         self.untrusted_sources = UntrustedSourceIndex(tree)
+        self.receiver_resolver = None
+        self.receiver_resolution_error = None
+        if isinstance(tree, ast.Module):
+            try:
+                self.receiver_resolver = ReceiverResolver(tree, file_path)
+            except Exception as exc:
+                self.receiver_resolution_error = (
+                    f"Receiver resolution unavailable ({type(exc).__name__})."
+                )
+        self.receiver_resolution_cache: dict[ast.Call, dict] = {}
         self.passthrough_functions: set[str] = set()
         self.db_names: set[str] = set()
         self.sqlalchemy_text = SQLAlchemyTextProvenance(tree)
@@ -596,6 +607,57 @@ class _SQLFlowChecker(TaintVisitor):
             evidence_kind="python_sql_taint",
         )
 
+    def _unknown_receiver_resolution(self, node: ast.Call, limitation: str) -> dict:
+        return {
+            "status": "unknown",
+            "qualified_name": None,
+            "kind": "unknown",
+            "file": str(self.file_path),
+            "line": node.lineno,
+            "steps": [],
+            "limitations": [limitation],
+        }
+
+    def _receiver_resolution(self, node: ast.Call) -> dict | None:
+        if self.receiver_resolver is None:
+            if self.receiver_resolution_error:
+                return self._unknown_receiver_resolution(
+                    node, self.receiver_resolution_error
+                )
+            return None
+        if node not in self.receiver_resolution_cache:
+            try:
+                proof = self.receiver_resolver.resolve_call(node)
+            except Exception as exc:
+                # Receiver proof is additional precision, not a requirement
+                # for retaining an otherwise reportable SQL operation.
+                proof = self._unknown_receiver_resolution(
+                    node,
+                    f"Receiver resolution unavailable ({type(exc).__name__}).",
+                )
+            if not isinstance(proof, dict):
+                proof = self._unknown_receiver_resolution(
+                    node, "Receiver resolver returned no usable proof."
+                )
+            self.receiver_resolution_cache[node] = proof
+        return self.receiver_resolution_cache[node]
+
+    def _proved_non_database_receiver(self, node: ast.Call) -> bool:
+        """Exclude only a resolved implementation whose body proves no DB effect.
+
+        Knowing a local method's name or owner is insufficient: it may delegate
+        to a database, inherit unknown behavior or have been replaced. The
+        resolver keeps those cases unknown/ambiguous rather than authorizing
+        an exclusion.
+        """
+        proof = self._receiver_resolution(node)
+        return bool(
+            proof
+            and proof.get("status") == "resolved"
+            and isinstance(proof.get("effects"), dict)
+            and proof["effects"].get("database") == "none"
+        )
+
     def _sqli_finding(self, node, severity, message, query_expr, sink, evidence=None):
         finding = {
             "rule_id": self.RULE_ID_SQLI,
@@ -608,8 +670,15 @@ class _SQLFlowChecker(TaintVisitor):
         }
         if evidence is None:
             evidence = self._source_evidence(node, query_expr, sink)
+        metadata = {}
         if evidence is not None:
-            finding["metadata"] = {"security_evidence": evidence}
+            metadata["security_evidence"] = evidence
+        if isinstance(node, ast.Call):
+            receiver = self._receiver_resolution(node)
+            if receiver is not None:
+                metadata["receiver_resolution"] = receiver
+        if metadata:
+            finding["metadata"] = metadata
         self.findings.append(finding)
 
     def _check_chained_execute(self, node: ast.Call) -> None:
@@ -868,6 +937,14 @@ class _SQLFlowChecker(TaintVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node):
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in SQL_EXECUTE_METHODS
+            and self._proved_non_database_receiver(node)
+        ):
+            self.generic_visit(node)
+            return
+
         qual_name = _qualified_name_from_call(node)
 
         if qual_name and qual_name in self.passthrough_functions:

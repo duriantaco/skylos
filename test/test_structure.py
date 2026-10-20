@@ -21,6 +21,25 @@ def check_code(rule, code, filename="test.py", project_root=None):
 
 
 class TestArgCountRule:
+    def test_required_parameters_do_not_imply_positional_call_order(self):
+        code = (
+            "def configure(a, b, c, d, e, f): pass\n"
+            "configure(f=6, e=5, d=4, c=3, b=2, a=1)\n"
+        )
+        [finding] = check_code(ArgCountRule(), code)
+        assert finding["value"] == 6
+        assert finding["argument_evidence"]["positional_or_keyword"] == 6
+        assert "Callers must pass" not in finding["message"]
+        assert "actual call sites" in finding["message"]
+
+    def test_positional_only_signature_keeps_the_same_measurement(self):
+        [finding] = check_code(
+            ArgCountRule(), "def configure(a, b, c, d, e, f, /): pass\n"
+        )
+        assert finding["value"] == 6
+        assert finding["argument_evidence"]["positional_only"] == 6
+        assert finding["argument_evidence"]["positional_or_keyword"] == 0
+
     def test_too_many_args(self):
         code = """
 def my_func(self, b, c, d, e, f):
@@ -107,6 +126,9 @@ def helper(a, b, c, d, e, f, g):
         """
         rule = ArgCountRule(max_args=5)
 
+        (tmp_path / "pyproject.toml").write_text('[project]\nname="fixture-app"\n')
+        (tmp_path / "examples").mkdir()
+        (tmp_path / "examples" / "demo.py").write_text(code)
         assert check_code(rule, code, "tests/helpers.py", tmp_path) == []
         assert check_code(rule, code, "examples/demo.py", tmp_path) == []
         assert len(check_code(rule, code, "src/app.py", tmp_path)) == 1
