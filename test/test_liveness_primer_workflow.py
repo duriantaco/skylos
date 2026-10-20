@@ -53,7 +53,7 @@ def test_liveness_primer_workflow_covers_all_prs_read_only_and_advisory():
     assert job["name"] == "Skylos analyzer blast radius"
     assert "if" not in job  # Draft PRs get evidence too.
     assert job["runs-on"] == "ubuntu-24.04"
-    assert job["timeout-minutes"] == 45
+    assert job["timeout-minutes"] == 75
 
     comparison = _comparison_step(workflow)
     assert "--all" in comparison["run"]
@@ -184,7 +184,7 @@ def test_liveness_primer_workflow_uses_locked_comparison_contract():
     assert "--output github" in script
     assert '--json-out "$REPORT_JSON"' in script
     assert "--jobs 1" in script
-    assert "--timeout 300" in script
+    assert "--timeout 900" in script
     assert "set -euo pipefail" in script
     assert '| tee "$REPORT_MARKDOWN" >> "$GITHUB_STEP_SUMMARY"' in script
     assert 'test -s "$REPORT_JSON"' in script
@@ -301,7 +301,7 @@ def test_comparison_shell_passes_exact_revisions_and_keeps_both_reports(tmp_path
         "--jobs",
         "1",
         "--timeout",
-        "300",
+        "900",
     ]
     assert json.loads((tmp_path / "report data.json").read_text()) == {
         "fixture": "offline workflow test"
@@ -326,10 +326,15 @@ def test_comparison_shell_preserves_timeout_error_report_and_failure(tmp_path):
                 "project": "controlled",
                 "errors": [
                     {
+                        "side": "base",
+                        "exit_code": None,
+                        "detail": "timed out after 900s",
+                    },
+                    {
                         "side": "head",
                         "exit_code": None,
-                        "detail": "timed out after 300s",
-                    }
+                        "detail": "timed out after 900s",
+                    },
                 ],
             }
         ]
