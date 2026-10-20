@@ -487,6 +487,9 @@ def fixture_path_evidence(tree, file_path, literal_parameters=None):
         ):
             continue
         extension_names = set(parameters) - builtin_names
+        if not context.anchored:
+            for name in extension_names:
+                parameters.pop(name, None)
         if (
             builtin_names
             and extension_names
@@ -495,6 +498,7 @@ def fixture_path_evidence(tree, file_path, literal_parameters=None):
             for name in extension_names:
                 parameters.pop(name, None)
         evidence.parameters[function] = set(parameters)
+        evidence.legacy_parameters[function] = builtin_names & set(parameters)
         # Ordinary, positively bound builtins retain the existing opaque-call
         # policy. New providers and layouts require complete expression proof.
         # This is compatibility, not a claim that unknown callbacks are safe.

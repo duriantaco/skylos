@@ -674,6 +674,9 @@ class _PathFlowChecker(TaintVisitor):
             if self._is_pytest_tmp_fixture_param(name, fn):
                 self._set_path_like(name, True)
                 self._set_basename_sanitized(name, False)
+                if name in self._pytest_fixture_paths.legacy_parameters.get(fn, ()):
+                    self._set(name, False)
+                    self._set_symlink_sensitive(name, False)
             else:
                 if name not in PYTEST_TMP_FIXTURE_NAMES:
                     self._set_path_like(name, False)

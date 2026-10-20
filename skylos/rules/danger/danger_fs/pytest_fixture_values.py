@@ -29,6 +29,16 @@ _PATH_METHODS = {
     "unlink",
     "rmdir",
 }
+_PATH_MUTATIONS = {
+    "symlink_to",
+    "hardlink_to",
+    "link_to",
+    "chmod",
+    "lchmod",
+    "rename",
+    "replace",
+    "remove",
+}
 
 
 @dataclass
@@ -36,6 +46,7 @@ class FixturePathEvidence:
     paths: set[ast.AST] = field(default_factory=set)
     unsafe: set[ast.AST] = field(default_factory=set)
     parameters: dict[ast.AST, set[str]] = field(default_factory=dict)
+    legacy_parameters: dict[ast.AST, set[str]] = field(default_factory=dict)
 
 
 def _parameters(function):
@@ -194,7 +205,10 @@ class _FunctionPaths:
                             if self.value(argument) != "relative":
                                 kind = None
                 elif receiver == "path":
-                    derived = node.func.attr not in _PATH_METHODS
+                    if node.func.attr in _PATH_MUTATIONS:
+                        derived = True
+                    elif not self.preserve_opaque_calls:
+                        derived = node.func.attr not in _PATH_METHODS
             # Inspect nested operands even when the enclosing call has no path result.
             for argument in node.args:
                 self.value(argument)
@@ -319,6 +333,12 @@ class _FunctionPaths:
                 receiver = self.value(call.func.value)
                 if receiver == "path" and call.func.attr in _PATH_METHODS:
                     continue
+                if (
+                    receiver == "path"
+                    and self.preserve_opaque_calls
+                    and call.func.attr not in _PATH_MUTATIONS
+                ):
+                    continue
                 if receiver == "factory" and call.func.attr == "mktemp":
                     continue
                 if receiver == "outside_path" and call.func.attr in {
@@ -416,6 +436,38 @@ class _FunctionPaths:
                 self.value(statement.test)
                 if self._escapes(statement.test):
                     self._lose_paths()
+            elif isinstance(statement, _FUNCTIONS) and self.preserve_opaque_calls:
+                # Creating a function executes its headers, not its body.
+                headers = list(statement.decorator_list)
+                headers.extend(statement.args.defaults)
+                for default in statement.args.kw_defaults:
+                    if default is not None:
+                        headers.append(default)
+                deferred = False
+                for imported in self.tree.body:
+                    if (
+                        isinstance(imported, ast.ImportFrom)
+                        and imported.module == "__future__"
+                    ):
+                        for alias in imported.names:
+                            if alias.name == "annotations":
+                                deferred = True
+                if not deferred:
+                    for argument in _parameters(statement):
+                        if argument.annotation is not None:
+                            headers.append(argument.annotation)
+                    if statement.returns is not None:
+                        headers.append(statement.returns)
+                for header in headers:
+                    self.value(header)
+                    if self._escapes(header):
+                        self._lose_paths()
+                if self.env.pop(statement.name, None) in {
+                    "path",
+                    "factory",
+                    "aggregate",
+                }:
+                    self.lost_names.add(statement.name)
             elif isinstance(statement, ast.With):
                 supported = True
                 for item in statement.items:
@@ -446,15 +498,20 @@ class _FunctionPaths:
                             if isinstance(target, ast.Name):
                                 self.env.pop(target.id, None)
                 if not supported:
-                    self._lose_paths()
+                    self._lose_paths(unsupported=True)
                 self.run(statement.body)
             else:
                 # Branches, generators, context-manager binding and nested code
                 # require another value model. Never assume the old bindings survive.
-                self._lose_paths()
+                self._lose_paths(unsupported=True)
         return returned
 
-    def _lose_paths(self):
+    def _lose_paths(self, *, unsupported=False):
+        if unsupported and self.preserve_opaque_calls:
+            # Defer to the original taint flow; lack of a new expression model
+            # must not turn a proven builtin's value into attacker input.
+            self.env.clear()
+            return
         for name, kind in self.env.items():
             if kind in {"path", "factory", "aggregate", "outside_path"}:
                 self.lost_names.add(name)
