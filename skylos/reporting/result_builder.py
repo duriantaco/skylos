@@ -9,6 +9,7 @@ from skylos.core.evidence_contract import attach_evidence_contract
 from skylos.core.review_context import review_config_hash_for_category
 from skylos.reporting.architecture_result import attach_circular_and_architecture
 from skylos.reporting.dead_code_result import (
+    DEAD_CODE_OUTPUT_BUCKETS,
     dead_code_candidate_decisions,
     dead_code_evidence,
     definition_context,
@@ -524,18 +525,8 @@ def _enrich_danger(result, enable_danger):
 
 
 def _bucket_unused_definitions(result, unused):
-    buckets = {
-        "function": "unused_functions",
-        "method": "unused_functions",
-        "import": "unused_imports",
-        "class": "unused_classes",
-        "type": "unused_classes",
-        "variable": "unused_variables",
-        "constant": "unused_variables",
-        "parameter": "unused_parameters",
-    }
     for item in unused:
-        bucket = buckets.get(item["type"])
+        bucket = DEAD_CODE_OUTPUT_BUCKETS.get(item["type"])
         if bucket:
             result[bucket].append(item)
 

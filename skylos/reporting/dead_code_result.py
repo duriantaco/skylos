@@ -9,6 +9,20 @@ REPORTABLE_DEAD_CODE_CLASSIFICATIONS = {
     "validated_dead",
 }
 
+# Synthetic graph nodes (for example anonymous lambdas) have no standalone
+# dead-code finding. Candidate decisions and output assembly must agree on
+# which definition kinds can actually be emitted.
+DEAD_CODE_OUTPUT_BUCKETS = {
+    "function": "unused_functions",
+    "method": "unused_functions",
+    "import": "unused_imports",
+    "class": "unused_classes",
+    "type": "unused_classes",
+    "variable": "unused_variables",
+    "constant": "unused_variables",
+    "parameter": "unused_parameters",
+}
+
 
 def _primary_path(path):
     if not isinstance(path, (list, tuple)):
@@ -136,6 +150,8 @@ def _attach_evidence(target: dict, definition, evidence_by_name) -> None:
 
 
 def _candidate_disposition(definition, thr, evidence_by_name):
+    if definition.type not in DEAD_CODE_OUTPUT_BUCKETS:
+        return None
     if not _is_dead_definition(definition, thr):
         return None
 
