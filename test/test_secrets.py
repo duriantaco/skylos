@@ -1633,6 +1633,166 @@ def test_large_pnpm_lock_keeps_streaming_integrity_suppression():
     assert elapsed < 2.0
 
 
+def _pnpm_environment_document(integrity=NPM_SRI):
+    return (
+        "---\nlockfileVersion: '9.0'\n\nimporters:\n\n  .:\n"
+        "    configDependencies: {}\n    packageManagerDependencies:\n"
+        "      pnpm:\n        specifier: 12.6.0\n        version: 12.6.0\n\n"
+        "packages:\n\n  pnpm@12.6.0:\n"
+        f"    resolution: {{integrity: {integrity}}}\n\n"
+        "snapshots:\n\n  pnpm@12.6.0: {}\n"
+    )
+
+
+def _pnpm_project_document(integrity=NPM_SRI, extra=""):
+    return (
+        "---\nlockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n\n"
+        "importers:\n\n  .:\n    dependencies:\n      left-pad:\n"
+        "        specifier: 1.3.0\n        version: 1.3.0\n\n"
+        "packages:\n\n  left-pad@1.3.0:\n"
+        f"    resolution: {{integrity: {integrity}}}\n\n"
+        f"snapshots:\n\n  left-pad@1.3.0: {{}}\n{extra}"
+    )
+
+
+def _pnpm_generic(src):
+    return [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="pnpm-lock.yaml"))
+        if finding["provider"] == "generic"
+    ]
+
+
+def test_pnpm_environment_and_project_lock_integrity_is_not_flagged():
+    pytest.importorskip("yaml")
+    src = _pnpm_environment_document() + "\n" + _pnpm_project_document()
+
+    assert _pnpm_generic(src) == []
+
+
+def test_pnpm_environment_and_project_lock_keeps_other_secrets():
+    pytest.importorskip("yaml")
+    src = (
+        _pnpm_environment_document()
+        + "\n"
+        + _pnpm_project_document(extra=f"\nmetadata:\n  token: {PURE_ALNUM_SECRET}\n")
+    )
+
+    findings = scan_ctx(_ctx_from_source(src, rel="pnpm-lock.yaml"))
+
+    assert [finding["provider"] for finding in findings] == ["config_credential"]
+
+
+@pytest.fixture(params=["c", "python"])
+def pnpm_yaml_loader(request, monkeypatch):
+    yaml_module = pytest.importorskip("yaml")
+    if request.param == "python":
+        monkeypatch.setattr(yaml_module, "CSafeLoader", None, raising=False)
+    elif getattr(yaml_module, "CSafeLoader", None) is None:
+        pytest.skip("PyYAML C loader is unavailable")
+    return yaml_module
+
+
+def _pnpm_project_with_workspace(workspace, extra=""):
+    return _pnpm_project_document(extra=extra).replace(
+        "\npackages:\n", f"\n  {workspace}: {{}}\n\npackages:\n", 1
+    )
+
+
+@pytest.mark.parametrize(
+    "workspace", ["workspace", "2026-02-30", "on", "off", "yes", "no"]
+)
+def test_pnpm_environment_lock_preserves_yaml12_workspace_names(
+    workspace, pnpm_yaml_loader
+):
+    project = _pnpm_project_with_workspace(workspace)
+    src = _pnpm_environment_document() + "\n" + project
+
+    assert _pnpm_generic(project) == []
+    assert _pnpm_generic(src) == []
+
+
+def test_pnpm_environment_lock_with_datelike_workspace_keeps_credentials(
+    pnpm_yaml_loader,
+):
+    project = _pnpm_project_with_workspace(
+        "2026-02-30", extra=f"\nmetadata:\n  token: {PURE_ALNUM_SECRET}\n"
+    )
+    src = _pnpm_environment_document() + "\n" + project
+
+    findings = scan_ctx(_ctx_from_source(src, rel="pnpm-lock.yaml"))
+
+    assert [finding["provider"] for finding in findings] == ["config_credential"]
+
+
+@pytest.mark.parametrize(
+    "layout",
+    [
+        "packages_sequence",
+        "snapshots_sequence",
+        "importers_sequence",
+        "root_importer_sequence",
+        "extra_importer",
+    ],
+)
+def test_pnpm_environment_lock_requires_mapping_containers_and_one_importer(layout):
+    yaml_module = pytest.importorskip("yaml")
+    environment = yaml_module.safe_load(_pnpm_environment_document())
+    if layout == "packages_sequence":
+        environment["packages"] = []
+    elif layout == "snapshots_sequence":
+        environment["snapshots"] = []
+    elif layout == "importers_sequence":
+        environment["importers"] = []
+    elif layout == "root_importer_sequence":
+        environment["importers"]["."] = []
+    else:
+        environment["importers"]["workspace"] = {}
+    src = yaml_module.safe_dump(environment, explicit_start=True)
+    src += "\n" + _pnpm_project_document()
+
+    assert _pnpm_generic(src)
+
+
+@pytest.mark.parametrize("version", ["{}", "[]"])
+@pytest.mark.parametrize("with_environment", [False, True])
+def test_pnpm_mapping_or_sequence_version_keeps_digest_findings(
+    version, with_environment
+):
+    pytest.importorskip("yaml")
+    src = _pnpm_project_document().replace(
+        "lockfileVersion: '9.0'", f"lockfileVersion: {version}", 1
+    )
+    if with_environment:
+        src = _pnpm_environment_document() + "\n" + src
+
+    assert _pnpm_generic(src)
+
+
+@pytest.mark.parametrize(
+    "layout",
+    [
+        "project_then_environment",
+        "two_projects",
+        "three_documents",
+        "malformed_second_digest",
+    ],
+)
+def test_pnpm_multidocument_integrity_requires_environment_then_project(layout):
+    pytest.importorskip("yaml")
+    environment, project = _pnpm_environment_document(), _pnpm_project_document()
+    src = {
+        "project_then_environment": project + "\n" + environment,
+        "two_projects": project + "\n" + project,
+        "three_documents": environment + "\n" + project + "\n" + project,
+        "malformed_second_digest": environment
+        + "\n"
+        + _pnpm_project_document(integrity=URLSAFE_NPM_SRI),
+    }[layout]
+
+    assert _pnpm_generic(src)
+
+
 @pytest.mark.parametrize(
     "relpath,payload",
     [
