@@ -188,6 +188,47 @@ def _compact_verification(value: Any) -> dict[str, Any] | None:
     return compact
 
 
+def _compact_advisory_evidence(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Bound legacy inline evidence; the full report artifact remains lossless."""
+    compact = {}
+    truncated = False
+    for field in ("advisory_ids", "aliases", "advisory_conflicts"):
+        values = metadata.get(field)
+        if not isinstance(values, list):
+            continue
+        kept = []
+        for value in values[:512]:
+            if isinstance(value, str) and len(value) <= 200:
+                kept.append(value)
+            else:
+                truncated = True
+        if len(values) > len(kept):
+            truncated = True
+        compact[field] = kept
+
+    records = metadata.get("advisory_records")
+    if isinstance(records, list):
+        compact["advisory_record_count"] = len(records)
+        kept = []
+        remaining = 65_534
+        for record in records[:512]:
+            if not isinstance(record, dict):
+                truncated = True
+                continue
+            size = _json_size_bytes(record) + 1
+            if size > remaining:
+                truncated = True
+                continue
+            kept.append(record)
+            remaining -= size
+        compact["advisory_records"] = kept
+        if len(records) > len(kept):
+            truncated = True
+    if truncated:
+        compact["advisory_evidence_truncated"] = True
+    return compact
+
+
 def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
     if not isinstance(metadata, dict):
         return None
@@ -212,6 +253,8 @@ def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
         "affected_range",
         "fixed_version",
         "cvss_score",
+        "advisory_status",
+        "advisory_error",
         "fingerprint_version",
         "stable_fingerprint",
         "context_hash",
@@ -231,6 +274,8 @@ def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
     aliases = metadata.get("aliases")
     if isinstance(aliases, list):
         compact["aliases"] = aliases[:5]
+    if isinstance(metadata.get("advisory_records"), list):
+        compact.update(_compact_advisory_evidence(metadata))
     return compact or None
 
 

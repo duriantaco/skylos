@@ -1969,6 +1969,28 @@ def _finding_rule_id(item, category: str) -> str:
     return _RULE_SELECTION_DEFAULT_IDS.get(category, "")
 
 
+def _finding_matches_rule_selection(item, category: str, allowed: set[str]) -> bool:
+    if _finding_rule_id(item, category).upper() in allowed:
+        return True
+    if category != "dependency_vulnerabilities" or not isinstance(item, dict):
+        return False
+
+    from skylos.rules.sca.osv_client import is_valid_advisory_id
+
+    metadata = item.get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    for field in ("advisory_ids", "aliases"):
+        identifiers = metadata.get(field)
+        if not isinstance(identifiers, list):
+            continue
+        for advisory_id in identifiers:
+            if is_valid_advisory_id(advisory_id):
+                if f"SKY-SCA-{advisory_id}".upper() in allowed:
+                    return True
+    return False
+
+
 def _apply_rule_selection(result: dict, selectors) -> dict:
     import copy
 
@@ -1984,7 +2006,7 @@ def _apply_rule_selection(result: dict, selectors) -> dict:
         filtered[category] = [
             item
             for item in (result.get(category) or [])
-            if _finding_rule_id(item, category).upper() in allowed
+            if _finding_matches_rule_selection(item, category, allowed)
         ]
 
     _filter_architecture_advisories(
