@@ -33,6 +33,7 @@ from __future__ import annotations
 import ast
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -88,6 +89,10 @@ _MAX_SITES = 512
 _MAX_WORK = 400000
 _MAX_VALUE_DEPTH = 12
 _MAX_PARAM_VALUE_DEPTH = 3
+_MAX_FIXPOINT_ROUNDS = 8
+_RECURSION_LIMIT = 4000
+if sys.version_info >= (3, 11):
+    _RECURSION_LIMIT = 12000
 
 _MODULE_DUNDERS = frozenset({"__file__", "__name__", "__package__", "__spec__", "__path__"})
 _CLI_DECORATORS = frozenset({"command", "group", "callback", "argument", "option"})
@@ -2525,6 +2530,12 @@ def _default_of(fn, name):
     return None
 
 
+def _same_facts(left, right):
+    return all(
+        set(left.chains[kind]) == set(right.chains[kind]) for kind in _Facts.KINDS
+    )
+
+
 def _env_lookup(env, key):
     while env is not None:
         fn_id, site, parent = env
@@ -2555,6 +2566,12 @@ class _Tracer:
         self.work = 0
         self.depth_of = {}
         self.lows = []
+        self.cut_targets = set()
+        self.provisional = {}
+        self.pending = []
+        self.fresh = {}
+        self.epoch = 0
+        self.dirty = False
         self.active_params = []
         self.param_memo = {}
         self.attr_memo = {}
@@ -2584,9 +2601,11 @@ class _Tracer:
             return self._limit(unit, expr, "expression too deep to follow")
 
     def _memoized(self, memo, key, compute):
-        """``compute()`` once per key. A key already being computed is a
-        cycle and contributes nothing new; a result is stored only when every
-        cycle it saw closes inside it and no analysis limit was hit."""
+        """``compute()`` once per key, also inside cycles. A key already being
+        computed is a cycle: it reads the latest provisional value of that key.
+        The cycle's head recomputes the cycle until no provisional value grows
+        (a least fixpoint), then stores every member's value. Nothing is stored
+        when an analysis limit was hit."""
         cached = memo.get(key)
         if cached is not None:
             return cached
@@ -2594,21 +2613,71 @@ class _Tracer:
         if depth is not None:
             if self.lows:
                 self.lows[-1] = min(self.lows[-1], depth)
-            return _Facts()
+            self.cut_targets.add(depth)
+            return self.provisional.get(key) or _Facts()
+        if self.fresh.get(key) == self.epoch and key in self.provisional:
+            return self.provisional[key]
         own = len(self.lows)
-        self.depth_of[key] = own
-        self.lows.append(own)
         limited = self.limited
-        try:
-            result = compute()
-        finally:
-            low = self.lows.pop()
-            del self.depth_of[key]
-            if self.lows:
-                self.lows[-1] = min(self.lows[-1], low)
-        if low >= own and self.limited == limited:
-            memo[key] = result
-        return result
+        outer_dirty = self.dirty
+        rounds = 0
+        seen = []
+        while True:
+            mark = len(self.pending)
+            if own == 0 or rounds:
+                self.epoch += 1
+            self.dirty = False
+            self.depth_of[key] = own
+            self.lows.append(own)
+            self.cut_targets.discard(own)
+            try:
+                result = compute()
+            finally:
+                low = self.lows.pop()
+                del self.depth_of[key]
+                if self.lows:
+                    self.lows[-1] = min(self.lows[-1], low)
+            previous = self.provisional.get(key)
+            merged = _Facts()
+            if previous is not None:
+                merged.add(previous)
+            merged.add(result)
+            if previous is None or not _same_facts(previous, merged):
+                self.dirty = True
+            self.provisional[key] = merged
+            self.fresh[key] = self.epoch
+            if low < own:
+                self.pending.append((memo, key))
+                self.dirty = self.dirty or outer_dirty
+                return merged
+            cycle = own in self.cut_targets
+            self.cut_targets.discard(own)
+            if cycle and self.dirty and rounds < _MAX_FIXPOINT_ROUNDS:
+                seen.extend(self.pending[mark:])
+                del self.pending[mark:]
+                rounds += 1
+                continue
+            if cycle and self.dirty:
+                merged.add(self._limit_text("a cyclic data dependency did not settle"))
+            members = self.pending[mark:]
+            del self.pending[mark:]
+            for member_memo, member_key in members:
+                value = self.provisional.get(member_key)
+                if value is not None and self.limited == limited:
+                    member_memo[member_key] = value
+            for _, member_key in [*seen, *members]:
+                self.provisional.pop(member_key, None)
+                self.fresh.pop(member_key, None)
+            self.provisional.pop(key, None)
+            self.fresh.pop(key, None)
+            if self.limited == limited:
+                memo[key] = merged
+            self.dirty = outer_dirty
+            return merged
+
+    def _limit_text(self, text):
+        self.limited += 1
+        return _Facts.leaf(INCOMPLETE, text)
 
     def _union(self, unit, scope, nodes, env):
         facts = _Facts()
@@ -3775,6 +3844,16 @@ def resolve_helper_parameter_findings(findings, *, scan_path, project_root, supp
     root, files, complete = _scan_root(scan_path, project_root)
     if root is None:
         return findings
+    previous_limit = sys.getrecursionlimit()
+    if previous_limit < _RECURSION_LIMIT:
+        sys.setrecursionlimit(_RECURSION_LIMIT)
+    try:
+        return _resolve(findings, root, files, complete, suppressed)
+    finally:
+        sys.setrecursionlimit(previous_limit)
+
+
+def _resolve(findings, root, files, complete, suppressed):
     project = _Project.load(root, files, complete)
     tracers = {}
     kept = []
