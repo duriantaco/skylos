@@ -54,6 +54,9 @@ class ImplicitRefTracker:
         self.module_call_args = set()
         # reflected_modules: {(imported name, name filter)}
         self.reflected_modules = set()
+        # Source-owned discovery sites: (base, caller, module, line, kind,
+        # reflected receiver). A base name alone does not establish liveness.
+        self.discovered_subclass_bases = set()
 
     def __getattr__(self, name):
         if name == "known_qualified_refs":
@@ -65,6 +68,7 @@ class ImplicitRefTracker:
             "reflective_params": dict,
             "module_call_args": set,
             "reflected_modules": set,
+            "discovered_subclass_bases": set,
         }
         if name in defaults:
             value = defaults[name]()
@@ -136,6 +140,9 @@ class ImplicitRefTracker:
             self.reflective_params.setdefault(key, set()).update(filters)
         self.module_call_args.update(getattr(other, "module_call_args", ()) or ())
         self.reflected_modules.update(getattr(other, "reflected_modules", ()) or ())
+        self.discovered_subclass_bases.update(
+            getattr(other, "discovered_subclass_bases", ()) or ()
+        )
 
     def reset_for_worker_file(self) -> None:
         """Start a pool worker's file with an empty tracker.
@@ -159,6 +166,7 @@ class ImplicitRefTracker:
         self.reflective_params = {}
         self.module_call_args = set()
         self.reflected_modules = set()
+        self.discovered_subclass_bases = set()
 
     def reset_dynamic_refs(self) -> None:
         self._class_patterns.clear()
@@ -166,6 +174,7 @@ class ImplicitRefTracker:
         self.reflective_params.clear()
         self.module_call_args.clear()
         self.reflected_modules.clear()
+        self.discovered_subclass_bases.clear()
 
     def _class_pattern_match(self, definition):
         if not self._class_patterns:

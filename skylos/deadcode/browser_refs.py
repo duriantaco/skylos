@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ast
 import io
 import re
 import tokenize
+from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
 
 from skylos.core.file_discovery import discover_source_files
@@ -54,15 +56,11 @@ _MDX_IMPORT_RE = re.compile(
     re.MULTILINE,
 )
 _MDX_NAMED_IMPORT_RE = re.compile(r"""\{(?P<body>[^}]*)\}""", re.DOTALL)
-_MDX_NAMESPACE_IMPORT_RE = re.compile(
-    r"""\*\s+as\s+(?P<name>[A-Za-z_$][\w$]*)"""
-)
+_MDX_NAMESPACE_IMPORT_RE = re.compile(r"""\*\s+as\s+(?P<name>[A-Za-z_$][\w$]*)""")
 _MDX_COMPONENT_TAG_RE = re.compile(
     r"""</?\s*(?P<name>[A-Z][A-Za-z0-9_$]*)(?:\s|/|>|[.])"""
 )
-_MARKDOWN_CODE_BLOCK_RE = re.compile(
-    r"""(```[\s\S]*?```|~~~[\s\S]*?~~~)"""
-)
+_MARKDOWN_CODE_BLOCK_RE = re.compile(r"""(```[\s\S]*?```|~~~[\s\S]*?~~~)""")
 _MARKDOWN_INLINE_CODE_RE = re.compile(r"""`[^`\n]*`""")
 _SCRIPT_TAG_RE = re.compile(r"""<script\b(?P<attrs>[^>]*)>""", re.IGNORECASE)
 _SCRIPT_ATTR_RE = re.compile(
@@ -302,23 +300,418 @@ def collect_browser_event_handler_refs(
             if _source_defines_top_level_browser_name(source, name):
                 _append_ref(refs, seen_refs, name, script_file)
 
-    # Python code that renders HTML (``onclick="copyCode(this)"``) names
-    # page-global functions too. No template ties it to a script, so only a
-    # name that exactly one scanned script defines is credited.
-    python_names = _python_event_handler_names(root, source_files, source_cache)
-    definers: dict[str, list[Path]] = {}
-    for script_file in sorted(scanned_scripts) if python_names else ():
-        source = _read_text(root, script_file, source_cache)
-        if source is None:
-            continue
-        for name in python_names:
-            if _source_defines_top_level_browser_name(source, name):
-                definers.setdefault(name, []).append(script_file)
-    for name, script_files in sorted(definers.items()):
-        if len(script_files) == 1:
-            _append_ref(refs, seen_refs, name, script_files[0])
+    # Python strings count only in JavaScript-consuming positions, and only
+    # for classic scripts that the project actually loads into a page.
+    names, patterns = _python_string_browser_names(root, source_files, source_cache)
+    project_index = None
+    if any(
+        Path(path).suffix.lower() in _PYTHON_SOURCE_SUFFIXES for path in source_files
+    ):
+        from skylos.deadcode.python_browser_effects import project_browser_names
+        from skylos.deadcode.python_project_sources import ProjectSourceIndex
+
+        project_index = ProjectSourceIndex(root, source_files)
+        project_names, project_patterns = project_browser_names(project_index)
+        names.update(project_names)
+        patterns.update(project_patterns)
+    if names or patterns:
+        loaded_scripts = _python_loaded_classic_scripts(
+            root,
+            source_files,
+            source_cache,
+            scanned_scripts,
+            static_asset_index,
+            template_files,
+        )
+        if project_index is not None:
+            from skylos.deadcode.python_browser_effects import (
+                project_script_entry_files,
+            )
+
+            loaded_scripts.update(
+                project_script_entry_files(project_index, classic_only=True)
+                & scanned_scripts
+            )
+        globals_by_name: dict[str, list[Path]] = {}
+        for script_file in sorted(loaded_scripts):
+            if script_file.suffix.lower() in _MODULE_ONLY_SUFFIXES:
+                continue
+            source = _read_text(root, script_file, source_cache)
+            if source is None or not _is_classic_script(source):
+                continue
+            for name in _top_level_browser_names(source):
+                globals_by_name.setdefault(name, []).append(script_file)
+        matcher = _compile_name_patterns(patterns)
+        for name, script_files in sorted(globals_by_name.items()):
+            if len(script_files) != 1:
+                continue
+            if name in names or (matcher is not None and matcher.fullmatch(name)):
+                _append_ref(refs, seen_refs, name, script_files[0])
 
     return refs
+
+
+_MODULE_ONLY_SUFFIXES = {".mjs", ".cjs", ".mts", ".cts"}
+_JS_IDENTIFIER_RE = re.compile(r"[A-Za-z_$][\w$]*")
+# A computed part of a Python string; never valid in a JS identifier.
+_PLACEHOLDER = "\x00"
+_TEMPLATE_TOKEN_RE = re.compile(
+    r"(?<![.\w$\x00])(?P<name>[A-Za-z_$\x00][\w$\x00]*)\s*\("
+)
+_TEMPLATE_WINDOW_CALL_RE = re.compile(
+    r"\bwindow\s*\.\s*(?P<name>[A-Za-z_$\x00][\w$\x00]*)\s*\("
+)
+_TEMPLATE_NAME_RE = re.compile(r"[A-Za-z_$\x00][\w$\x00]*")
+_MIN_PATTERN_LITERAL = 3
+_ES_MODULE_RE = re.compile(r"^\s*(?:import\s*(?:[\w${*]|[\"'])|export\s)", re.MULTILINE)
+_COMMONJS_EXPORT_RE = re.compile(r"\b(?:module\.exports|exports\.[A-Za-z_$][\w$]*)\s*=")
+_TOP_LEVEL_BROWSER_NAME_RES = (
+    re.compile(
+        r"^(?:async\s+)?function\s*\*?\s*(?P<name>[A-Za-z_$][\w$]*)", re.MULTILINE
+    ),
+    re.compile(r"^(?:const|let|var)\s+(?P<name>[A-Za-z_$][\w$]*)\s*=", re.MULTILINE),
+)
+
+
+def _is_classic_script(source: str) -> bool:
+    """No ES module or CommonJS export syntax: its top level is page-global."""
+    return not _ES_MODULE_RE.search(source) and not _COMMONJS_EXPORT_RE.search(source)
+
+
+def _top_level_browser_names(source: str) -> set[str]:
+    names = set()
+    for pattern in _TOP_LEVEL_BROWSER_NAME_RES:
+        for match in pattern.finditer(source):
+            names.add(match.group("name"))
+    return names
+
+
+def _python_string_browser_names(
+    root: Path, source_files, source_cache: dict[Path, str]
+) -> tuple[set[str], set[str]]:
+    names: set[str] = set()
+    patterns: set[str] = set()
+    for raw_file in source_files:
+        file_path = Path(raw_file)
+        if file_path.suffix.lower() not in _PYTHON_SOURCE_SUFFIXES:
+            continue
+        source = _read_text(root, file_path, source_cache)
+        if not source:
+            continue
+        try:
+            tree = ast.parse(source)
+        except (SyntaxError, ValueError, RecursionError):
+            continue
+        from skylos.deadcode.python_source_proofs import (
+            _PythonReferenceProof,
+        )
+
+        proof = _PythonReferenceProof(tree, root, file_path)
+        for scope, bindings in proof.contexts():
+            for template in _python_string_templates(scope):
+                parser = _PythonBrowserCode()
+                try:
+                    parser.feed(template)
+                    parser.close()
+                except (ValueError, RecursionError):
+                    continue
+                for code in parser.code:
+                    _template_browser_names(code, names, patterns, allow_bare=False)
+    return names, patterns
+
+
+def _python_string_templates(tree: ast.AST):
+    """Each string a Python expression builds, computed parts as placeholders.
+
+    A bare string statement (a docstring) is not a value and is skipped.
+    """
+    from skylos.deadcode.python_source_proofs import _scope_nodes
+
+    nodes = list(_scope_nodes(tree))
+    skipped: set[int] = set()
+    for node in nodes:
+        if isinstance(node, ast.Expr) and _string_parts(node.value) is not None:
+            skipped.update(id(part) for part in _string_nodes(node.value))
+    for node in nodes:
+        if id(node) in skipped:
+            continue
+        parts = _string_parts(node)
+        if parts is None:
+            continue
+        skipped.update(id(part) for part in _string_nodes(node))
+        yield "".join(parts)
+
+
+def _string_parts(node: ast.AST) -> list[str] | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [node.value]
+    if isinstance(node, ast.JoinedStr):
+        parts = []
+        for value in node.values:
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                parts.append(value.value)
+            elif isinstance(value, ast.FormattedValue) and (
+                value.conversion != -1 or value.format_spec is not None
+            ):
+                return None
+            else:
+                parts.append(_PLACEHOLDER)
+        return parts
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _string_parts(node.left), _string_parts(node.right)
+        if left is None and right is None:
+            return None
+        return (left or [_PLACEHOLDER]) + (right or [_PLACEHOLDER])
+    return None
+
+
+def _string_nodes(node: ast.AST):
+    """The string-building nodes a template consumed (not computed parts)."""
+    if isinstance(node, (ast.Constant, ast.JoinedStr)):
+        yield node
+        if isinstance(node, ast.JoinedStr):
+            for value in node.values:
+                if isinstance(value, ast.Constant):
+                    yield value
+    elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        yield node
+        for side in (node.left, node.right):
+            if _string_parts(side) is not None:
+                yield from _string_nodes(side)
+
+
+def _template_browser_names(
+    template: str, names: set[str], patterns: set[str], *, allow_bare: bool = True
+) -> None:
+    def add(token: str) -> None:
+        if _PLACEHOLDER not in token:
+            if token not in _JS_CONTROL_WORDS:
+                names.add(token)
+            return
+        if len(token.replace(_PLACEHOLDER, "")) >= _MIN_PATTERN_LITERAL:
+            patterns.add(token)
+
+    stripped = template.strip()
+    if (
+        allow_bare
+        and _TEMPLATE_NAME_RE.fullmatch(stripped)
+        and stripped != _PLACEHOLDER
+    ):
+        add(stripped)
+    for token in _javascript_global_calls(template):
+        add(token)
+
+
+def _javascript_global_calls(source):
+    """Calls in JS syntax, excluding comments, string data and local bindings."""
+    from skylos.visitors.languages.typescript.file_references import _TS_PARSER
+
+    if _TS_PARSER is None:
+        return set()
+    marker = "_SKYLOS_DYNAMIC_"
+    while marker in source:
+        marker += "X"
+    text = source.replace(_PLACEHOLDER, marker).encode("utf-8")
+    try:
+        root = _TS_PARSER.parse(text).root_node
+    except (ValueError, RecursionError):
+        return set()
+    nodes = [root]
+    calls = []
+    bound = set()
+    while nodes:
+        node = nodes.pop()
+        nodes.extend(node.named_children)
+        if node.type == "call_expression":
+            function = node.child_by_field_name("function")
+            if function is not None:
+                calls.append(function)
+        elif node.type in {
+            "variable_declarator",
+            "function_declaration",
+            "class_declaration",
+        }:
+            name = node.child_by_field_name("name")
+            if name is not None and name.type == "identifier":
+                bound.add(text[name.start_byte : name.end_byte].decode("utf-8"))
+        elif node.type in {"formal_parameters", "catch_clause"}:
+            pending = list(node.named_children)
+            while pending:
+                child = pending.pop()
+                if child.type == "identifier":
+                    bound.add(text[child.start_byte : child.end_byte].decode("utf-8"))
+                else:
+                    pending.extend(child.named_children)
+    names = set()
+    for function in calls:
+        name = None
+        if function.type == "identifier":
+            name = text[function.start_byte : function.end_byte].decode("utf-8")
+        elif function.type == "member_expression" and "window" not in bound:
+            receiver = function.child_by_field_name("object")
+            attribute = function.child_by_field_name("property")
+            if (
+                receiver is not None
+                and attribute is not None
+                and text[receiver.start_byte : receiver.end_byte] == b"window"
+            ):
+                name = text[attribute.start_byte : attribute.end_byte].decode("utf-8")
+        if name is not None and name not in bound:
+            names.add(name.replace(marker, _PLACEHOLDER))
+    return names
+
+
+class _PythonBrowserCode(HTMLParser):
+    """JavaScript positions in HTML, excluding prose and data scripts."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.code = []
+        self.in_script = False
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if tag == "script":
+            script_type = (attributes.get("type") or "").strip().lower()
+            self.in_script = (
+                script_type in _CLASSIC_SCRIPT_TYPES and not attributes.get("src")
+            )
+        for name, value in attrs:
+            if not value:
+                continue
+            if name.startswith("on") and name[2:] in _DOM_EVENT_ATTRIBUTES.split("|"):
+                self.code.append(value)
+            elif name in {
+                "href",
+                "src",
+                "action",
+            } and value.lstrip().lower().startswith("javascript:"):
+                self.code.append(value.lstrip()[len("javascript:") :])
+
+    def handle_endtag(self, tag):
+        if tag == "script":
+            self.in_script = False
+
+    def handle_data(self, data):
+        if self.in_script:
+            self.code.append(data)
+
+
+_GRADIO_COMPONENTS = {
+    "Button",
+    "Checkbox",
+    "CheckboxGroup",
+    "ColorPicker",
+    "Dataframe",
+    "Dropdown",
+    "File",
+    "Gallery",
+    "HTML",
+    "Image",
+    "Markdown",
+    "Number",
+    "Radio",
+    "Slider",
+    "State",
+    "Textbox",
+    "Video",
+    "Audio",
+    "Blocks",
+    "Interface",
+    "Tab",
+    "Tabs",
+    "Row",
+    "Column",
+    "Group",
+    "Accordion",
+}
+_GRADIO_EVENTS = {
+    "click",
+    "change",
+    "input",
+    "submit",
+    "select",
+    "load",
+    "release",
+    "upload",
+    "clear",
+    "play",
+    "pause",
+    "stop",
+    "end",
+    "blur",
+    "focus",
+    "then",
+    "success",
+}
+_SELENIUM_DRIVERS = {"Chrome", "Firefox", "Safari", "Edge", "Ie", "Remote"}
+
+
+def _browser_api_arguments(call, bindings, proof):
+    provider = proof.qualified(call.func, bindings)
+    if provider == "nicegui.ui.run_javascript":
+        if call.args:
+            yield call.args[0]
+        return
+    if not isinstance(call.func, ast.Attribute):
+        return
+    receiver = proof.substitute(call.func.value, bindings)
+    if isinstance(call.func.value, ast.Name) and call.func.value.id in proof.invalid:
+        return
+    while (
+        isinstance(receiver, ast.Call)
+        and isinstance(receiver.func, ast.Attribute)
+        and receiver.func.attr in _GRADIO_EVENTS
+    ):
+        receiver = proof.substitute(receiver.func.value, bindings)
+    if not isinstance(receiver, ast.Call):
+        return
+    constructor = proof.qualified(receiver.func, bindings)
+    package, _, component = constructor.rpartition(".")
+    if (
+        package in {"gradio", "gradio.components", "gradio.layouts"}
+        and component in _GRADIO_COMPONENTS
+        and call.func.attr in _GRADIO_EVENTS
+    ):
+        for keyword in call.keywords:
+            if keyword.arg in {"_js", "js"}:
+                yield keyword.value
+    elif (
+        package == "selenium.webdriver"
+        and component in _SELENIUM_DRIVERS
+        and call.func.attr in {"execute_script", "execute_async_script"}
+    ):
+        if call.args:
+            yield call.args[0]
+
+
+def _python_loaded_classic_scripts(
+    root, source_files, source_cache, scanned_scripts, static_asset_index, templates
+):
+    loaded = _collect_template_script_files(
+        root,
+        templates,
+        source_cache,
+        include_modules=False,
+        static_asset_index=static_asset_index,
+        allowed_files=scanned_scripts,
+    )
+    return loaded
+
+
+def _compile_name_patterns(patterns: set[str]):
+    if not patterns:
+        return None
+    alternatives = []
+    for pattern in sorted(patterns):
+        parts = []
+        for char in pattern:
+            if char == _PLACEHOLDER:
+                parts.append("[\\w$]*")
+            else:
+                parts.append(re.escape(char))
+        alternatives.append("(?:" + "".join(parts) + ")")
+    return re.compile("|".join(alternatives))
 
 
 def _python_event_handler_names(
@@ -332,7 +725,9 @@ def _python_event_handler_names(
         source = _read_text(root, file_path, source_cache)
         if not source or not _PYTHON_EVENT_HANDLER_RE.search(source):
             continue
-        for match in _PYTHON_EVENT_HANDLER_RE.finditer(_without_python_comments(source)):
+        for match in _PYTHON_EVENT_HANDLER_RE.finditer(
+            _without_python_comments(source)
+        ):
             handler = match.group("double")
             if handler is None:
                 handler = match.group("single")
