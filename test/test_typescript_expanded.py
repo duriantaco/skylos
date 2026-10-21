@@ -539,6 +539,99 @@ class TestTSDangerRules:
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D216" not in ids
 
+    def test_fetch_url_built_only_from_constants_is_not_ssrf(self, tmp_path):
+        """ui-ux-pro-max-skill cli/src/utils/github.ts: two functions each
+        build ``const url`` from module constants; a third takes ``url`` as a
+        parameter and is still reported."""
+        code = (
+            "const REPO_OWNER = 'nextlevelbuilder';\n"
+            "export const API_BASE = 'https://api.github.com';\n"
+            "let REPO_NAME = 'ui-ux-pro-max-skill';\n"
+            "export async function fetchReleases(token?: string) {\n"
+            "  const url = `${API_BASE}/repos/${REPO_OWNER}/${REPO_NAME}/releases`;\n"
+            "  return fetch(url, { headers: {} });\n"
+            "}\n"
+            "export async function getLatestRelease() {\n"
+            "  const url = API_BASE + '/repos/' + REPO_OWNER + '/latest';\n"
+            "  return fetch(url);\n"
+            "}\n"
+            "export async function downloadRelease(url: string) {\n"
+            "  return fetch(url);\n"
+            "}\n"
+            "export function mirror(flag: boolean) {\n"
+            "  const url = flag ? `${API_BASE}/a` : API_BASE + '/b';\n"
+            "  return fetch(url);\n"
+            "}\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        assert [f["line"] for f in danger if f["rule_id"] == "SKY-D216"] == [13]
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            "let url = 'https://api.example.com/x';\n"
+            "export function f(req: any) {\n  url = req.query.u;\n  return fetch(url);\n}\n",
+            "const API = 'https://api.example.com';\n"
+            "export function f(API: string) {\n  return fetch(`${API}/x`);\n}\n",
+            "const u = 'https://api.example.com/x';\n"
+            "export function f(urls: string[]) {\n  for (const u of urls) {\n    fetch(u);\n  }\n}\n",
+            "const API = 'https://api.example.com';\n"
+            "export function f(req: any) {\n  if (req) {\n    var API = req.query.u;\n  }\n"
+            "  return fetch(API + '/p');\n}\n",
+            "const API_BASE = 'https://api.example.com';\n"
+            "export function f(req: any) {\n  return fetch(`${API_BASE}${req.query.path}`);\n}\n",
+            "export function f() {\n  const base = getBase();\n  return fetch(`${base}/x`);\n}\n",
+            "function a() {\n  const target = 'https://api.example.com/x';\n  return target;\n}\n"
+            "export function b() {\n  return fetch(target);\n}\n",
+            "const API = 'https://api.example.com';\n"
+            "export function f(code: string) {\n  eval(code);\n  return fetch(`${API}/x`);\n}\n",
+            "export function f(config: any) {\n  const { url } = config;\n  return fetch(url);\n}\n",
+            "import { API_BASE } from './config';\n"
+            "export function f() {\n  return fetch(`${API_BASE}/x`);\n}\n",
+            "export function f(req: any, flag: boolean) {\n"
+            "  const url = flag ? 'https://api.example.com/x' : req.query.u;\n"
+            "  return fetch(url);\n}\n",
+            "const API = 'https://api.example.com';\n"
+            "export function f(req: any) {\n  const base = req.query.b || API;\n"
+            "  return fetch(`${base}/x`);\n}\n",
+            "export function f(req: any) {\n  const url = new URL(req.query.u);\n"
+            "  return fetch(url);\n}\n",
+            "export function f(req: any, flag: boolean) {\n"
+            "  return fetch(`${flag ? req.query.h : 'https://a.example.com'}/x`);\n}\n",
+            "const url = 'https://api.example.com/x';\n"
+            "export function f(req: any, k: number) {\n  switch (k) {\n"
+            "    case 1:\n      const url = req.query.u;\n      return fetch(url);\n  }\n}\n",
+            "const BASE = flag ? 'https://safe.example/' : 'https://';\n"
+            "export function f(req: any) {\n  return fetch(BASE + req.query.target);\n}\n",
+            "export function f(flag: boolean) {\n"
+            "  const url = flag ? 'https://a.example.com/x' : 'https://b.example.com/y';\n"
+            "  return fetch(url);\n}\n",
+        ],
+        ids=[
+            "reassigned_let",
+            "parameter_shadows_constant",
+            "loop_variable_shadows_constant",
+            "hoisted_var_shadows_constant",
+            "host_left_open",
+            "call_result",
+            "constant_of_another_function",
+            "eval_in_file",
+            "destructured",
+            "imported",
+            "conditional_with_request_branch",
+            "logical_fallback",
+            "url_object",
+            "conditional_in_substitution",
+            "case_constant_shadows_outer",
+            "conditional_prefix_leaves_host_open",
+            "conditional_between_hosts",
+        ],
+    )
+    def test_fetch_url_that_can_vary_still_flags_ssrf(self, tmp_path, code):
+        """Names that look constant but can hold another value."""
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        assert "SKY-D216" in {f["rule_id"] for f in danger}
+
 
 class TestTSQualityRules:
     def test_cyclomatic_complexity(self, tmp_path):

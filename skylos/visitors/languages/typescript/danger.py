@@ -1195,23 +1195,6 @@ def _math_random_requires_finding(prop_node, source_bytes: bytes) -> bool:
     return False
 
 
-def _collect_static_string_bindings(root_node, source_bytes: bytes) -> dict[str, str]:
-    bindings: dict[str, str] = {}
-    stack = [root_node]
-    while stack:
-        node = stack.pop()
-        if node.type == "variable_declarator":
-            name_node = node.child_by_field_name("name")
-            value_node = node.child_by_field_name("value")
-            if name_node is not None and value_node is not None:
-                if name_node.type == "identifier":
-                    value = _static_string_value(value_node, source_bytes)
-                    if value is not None:
-                        bindings[_get_text(source_bytes, name_node)] = value
-        stack.extend(reversed(node.children))
-    return bindings
-
-
 def _child_process_aliases(
     root_node, lang: Language, source_bytes: bytes
 ) -> dict[str, str]:
@@ -1711,13 +1694,217 @@ def _has_dynamic_url_part(node) -> bool:
     return False
 
 
-def _static_prefix_until_dynamic(node, source_bytes: bytes) -> tuple[str, bool]:
+_MAX_STATIC_BINDING_DEPTH = 8
+_JS_BLOCK_SCOPES = {"program", "statement_block", "switch_body", "class_static_block"}
+_JS_FUNCTION_SCOPES = {
+    "function_declaration",
+    "generator_function_declaration",
+    "function_expression",
+    "function",
+    "generator_function",
+    "arrow_function",
+    "method_definition",
+}
+_NOT_DECLARED = object()
+
+
+def _binding_names(node, source_bytes: bytes) -> set[str]:
+    if node is None:
+        return set()
+    names = set()
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type in {"identifier", "shorthand_property_identifier_pattern"}:
+            names.add(_get_text(source_bytes, current))
+        elif current.type not in {"type_annotation", "member_expression"}:
+            stack.extend(current.children)
+    return names
+
+
+def _scope_declaration(statement, name: str, source_bytes: bytes):
+    """The variable declarator of ``name`` among one scope statement; None
+    when the statement binds ``name`` another way (a destructuring pattern,
+    a function, a class, an import); ``_NOT_DECLARED`` when it does not."""
+    if statement.type == "export_statement":
+        declaration = statement.child_by_field_name("declaration")
+        if declaration is None:
+            return _NOT_DECLARED
+        statement = declaration
+    if statement.type in {"lexical_declaration", "variable_declaration"}:
+        for declarator in statement.children:
+            if declarator.type != "variable_declarator":
+                continue
+            target = declarator.child_by_field_name("name")
+            if target is None or name not in _binding_names(target, source_bytes):
+                continue
+            if target.type == "identifier":
+                return declarator
+            return None
+        return _NOT_DECLARED
+    if statement.type == "import_statement":
+        clause = [child for child in statement.children if child.type == "import_clause"]
+        if any(name in _binding_names(child, source_bytes) for child in clause):
+            return None
+        return _NOT_DECLARED
+    if statement.type in _JS_FUNCTION_SCOPES or statement.type in {
+        "class_declaration",
+        "enum_declaration",
+        "internal_module",
+    }:
+        declared = statement.child_by_field_name("name")
+        if declared is not None and _get_text(source_bytes, declared) == name:
+            return None
+    return _NOT_DECLARED
+
+
+def _lexical_declarator(use_node, name: str, source_bytes: bytes):
+    """The declarator ``use_node`` refers to by lexical scope, or None when the
+    nearest binding is a parameter, loop or catch variable, pattern, function,
+    class or import, or nothing in the file binds the name."""
+    current = use_node.parent
+    while current is not None:
+        if current.type in _JS_BLOCK_SCOPES:
+            statements = list(current.children)
+            if current.type == "switch_body":
+                statements = [
+                    statement
+                    for case in current.children
+                    for statement in case.children
+                ]
+            for statement in statements:
+                found = _scope_declaration(statement, name, source_bytes)
+                if found is not _NOT_DECLARED:
+                    return found
+        elif current.type in _JS_FUNCTION_SCOPES:
+            parameters = current.child_by_field_name("parameters")
+            if parameters is None:
+                parameters = current.child_by_field_name("parameter")
+            if name in _binding_names(parameters, source_bytes):
+                return None
+            if current.type in {"function_expression", "function", "generator_function"}:
+                declared = current.child_by_field_name("name")
+                if declared is not None and _get_text(source_bytes, declared) == name:
+                    return None
+        elif current.type in {"for_statement", "for_in_statement"}:
+            for field in ("initializer", "left"):
+                if name in _binding_names(current.child_by_field_name(field), source_bytes):
+                    return None
+        elif current.type == "catch_clause":
+            parameter = current.child_by_field_name("parameter")
+            if name in _binding_names(parameter, source_bytes):
+                return None
+        current = current.parent
+    return None
+
+
+def _static_url_binding(identifier, source_bytes: bytes, bindings):
+    """The initializer of the variable ``identifier`` refers to, when that
+    variable can only ever hold it: a ``const``, or a ``let``/``var`` that is
+    the name's only binding. A name assigned anywhere in the file, or bound
+    by a hoisted ``var`` or function next to other bindings, is not resolved;
+    neither is any name in a file that uses ``eval`` or ``with``."""
+    name = _get_text(source_bytes, identifier)
+    if bindings.dynamic_scope or name in bindings.assigned:
+        return None
+    kinds = [entry[0] for entry in bindings.bindings.get(name, [])]
+    if len(kinds) > 1 and any(kind in {"var", "declaration"} for kind in kinds):
+        return None
+    declarator = _lexical_declarator(identifier, name, source_bytes)
+    if declarator is None:
+        return None
+    declaration = declarator.parent
+    kind_node = None
+    if declaration is not None and declaration.type == "lexical_declaration":
+        kind_node = declaration.child_by_field_name("kind")
+    if kind_node is None or _get_text(source_bytes, kind_node) != "const":
+        if len(kinds) != 1:
+            return None
+    return declarator.child_by_field_name("value")
+
+
+def _resolved_template_prefix(node, source_bytes: bytes, bindings, depth: int):
+    prefix = ""
+    for child in node.children:
+        if child.type == "`":
+            continue
+        if child.type != "template_substitution":
+            prefix += _get_text(source_bytes, child)
+            continue
+        expressions = [part for part in child.children if part.type not in {"${", "}"}]
+        if len(expressions) != 1:
+            return prefix, True
+        part_prefix, dynamic = _strict_static_prefix(
+            expressions[0], source_bytes, bindings, depth + 1
+        )
+        prefix += part_prefix
+        if dynamic:
+            return prefix, True
+    return prefix, False
+
+
+def _strict_static_prefix(node, source_bytes: bytes, bindings, depth: int):
+    """The known prefix of a value read through a binding or a template
+    substitution. Only literals, names that can hold one value and ``+``
+    chains of those are static; a conditional is static only when both
+    branches are the same text, and otherwise only the prefix every branch
+    shares is known. Anything else (calls, members, ``||``/``??``,
+    ``new URL(...)``) is dynamic."""
+    node = _unwrap_ts_expression(node)
+    if node is None or depth >= _MAX_STATIC_BINDING_DEPTH:
+        return "", True
+    if node.type == "string":
+        return _string_literal_value(node, source_bytes), False
+    if node.type == "number":
+        return _get_text(source_bytes, node), False
+    if node.type == "identifier":
+        value = _static_url_binding(node, source_bytes, bindings)
+        if value is None:
+            return "", True
+        return _strict_static_prefix(value, source_bytes, bindings, depth + 1)
+    if node.type == "template_string":
+        return _resolved_template_prefix(node, source_bytes, bindings, depth)
+    if node.type == "binary_expression":
+        operator = node.child_by_field_name("operator")
+        if operator is None or _get_text(source_bytes, operator) != "+":
+            return "", True
+        left_prefix, left_dynamic = _strict_static_prefix(
+            node.child_by_field_name("left"), source_bytes, bindings, depth + 1
+        )
+        if left_dynamic:
+            return left_prefix, True
+        right_prefix, right_dynamic = _strict_static_prefix(
+            node.child_by_field_name("right"), source_bytes, bindings, depth + 1
+        )
+        return left_prefix + right_prefix, right_dynamic
+    if node.type == "ternary_expression":
+        (first, first_dynamic), (second, second_dynamic) = [
+            _strict_static_prefix(
+                node.child_by_field_name(field), source_bytes, bindings, depth + 1
+            )
+            for field in ("consequence", "alternative")
+        ]
+        if not first_dynamic and not second_dynamic and first == second:
+            return first, False
+        return os.path.commonprefix([first, second]), True
+    return "", True
+
+
+def _static_prefix_until_dynamic(
+    node, source_bytes: bytes, bindings=None, depth: int = 0
+) -> tuple[str, bool]:
+    """The URL text known before the first dynamic part, and whether one
+    follows. With ``bindings``, identifiers that can only hold a fixed value
+    (``const API_BASE = 'https://...'``) are read through, also inside
+    template substitutions."""
     unwrapped = _unwrap_ts_expression(node)
     if unwrapped is not node:
-        return _static_prefix_until_dynamic(unwrapped, source_bytes)
+        return _static_prefix_until_dynamic(unwrapped, source_bytes, bindings, depth)
 
     if node.type == "string":
         return _string_literal_value(node, source_bytes), False
+    if bindings is not None and node.type in {"identifier", "template_string"}:
+        return _strict_static_prefix(node, source_bytes, bindings, depth)
     if node.type == "template_string":
         return _template_prefix(node, source_bytes), _has_dynamic_url_part(node)
     if node.type in {"binary_expression", "parenthesized_expression"}:
@@ -1726,7 +1913,7 @@ def _static_prefix_until_dynamic(node, source_bytes: bytes) -> tuple[str, bool]:
             if child.type in {"(", ")", "+"}:
                 continue
             child_prefix, child_dynamic = _static_prefix_until_dynamic(
-                child, source_bytes
+                child, source_bytes, bindings, depth
             )
             prefix += child_prefix
             if child_dynamic:
@@ -1764,18 +1951,14 @@ def _url_arg_is_ssrf_relevant(
     node,
     source_bytes: bytes,
     file_path: str | None = None,
-    static_string_bindings: dict[str, str] | None = None,
+    bindings=None,
 ) -> bool:
     if node.type == "string":
         return False
-    if node.type == "identifier" and static_string_bindings is not None:
-        name = _get_text(source_bytes, node)
-        if name in static_string_bindings:
-            return False
     if node.type == "template_string" and not _has_dynamic_url_part(node):
         return False
 
-    prefix, saw_dynamic = _static_prefix_until_dynamic(node, source_bytes)
+    prefix, saw_dynamic = _static_prefix_until_dynamic(node, source_bytes, bindings)
     if not saw_dynamic:
         return False
 
@@ -2164,7 +2347,6 @@ def scan_danger(
         if exec_prop_nodes
         else set()
     )
-    static_string_bindings = _collect_static_string_bindings(root_node, source_bytes)
 
     for k, v in jsx_captures.items():
         simple_captures.setdefault(k, []).extend(v)
@@ -2301,10 +2483,13 @@ def scan_danger(
                         break
 
     # --- fetch SSRF (SKY-D216) ---
+    url_bindings = None
+    if complex_captures.get("fetch_args") or complex_captures.get("axios_args"):
+        url_bindings = _JsBindings(root_node, source_bytes)
     for node in complex_captures.get("fetch_args", []):
         first_arg = _first_real_arg(node)
         if first_arg and _url_arg_is_ssrf_relevant(
-            first_arg, source_bytes, str(file_path), static_string_bindings
+            first_arg, source_bytes, str(file_path), url_bindings
         ):
             findings.append(
                 {
@@ -2321,7 +2506,7 @@ def scan_danger(
     for node in complex_captures.get("axios_args", []):
         first_arg = _first_real_arg(node)
         if first_arg and _url_arg_is_ssrf_relevant(
-            first_arg, source_bytes, str(file_path), static_string_bindings
+            first_arg, source_bytes, str(file_path), url_bindings
         ):
             findings.append(
                 {
