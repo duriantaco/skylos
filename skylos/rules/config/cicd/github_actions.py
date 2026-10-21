@@ -4,13 +4,16 @@ import json
 import os
 import re
 import shlex
+from collections import Counter
 from collections.abc import Iterator
+from dataclasses import replace
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
 from skylos.core.safe_cache_io import read_project_text_no_symlink, read_text_no_symlink
 from skylos.rules.config.cicd.runner_labels import runner_may_be_self_hosted
+from skylos.rules.config.cicd.template_injection import interpolates_untrusted
 from skylos.rules.config.cicd.yaml_source import YamlSource, load_yaml_with_locations
 from skylos.rules.config.findings import config_finding
 from skylos.security.command_guard import scan_shell_command
@@ -57,11 +60,6 @@ WORKSPACE_EXPR_RE = re.compile(
 POSIX_RUNNER_PREFIXES = ("ubuntu-", "macos-")
 POSIX_RUNNER_LABELS = {"linux", "macos"}
 POSIX_SHELLS = {"bash", "sh"}
-TEMPLATE_EXPR_RE = re.compile(
-    r"\$\{\{\s*(github\.event(?:[.\[]|\s|\})|github\."
-    r"(?:base_ref|head_ref|ref_name)(?:\s|\})|inputs\.)",
-    re.IGNORECASE,
-)
 SECRETS_OUTSIDE_ENV_RE = re.compile(
     r"\$\{\{[^}]*\bsecrets\.([A-Za-z_][A-Za-z0-9_]*)\b[^}]*\}\}",
     re.IGNORECASE,
@@ -140,13 +138,6 @@ WRITE_PERMISSION_SEVERITY = {
     "security-events": "MEDIUM",
 }
 
-ACTION_INJECTION_SINKS = {
-    "actions/github-script": {"script"},
-    "amadevus/pwsh-script": {"script"},
-    "jannekem/run-python-script-action": {"script"},
-    "cardinalby/js-eval-action": {"expression"},
-    "addnab/docker-run-action": {"options", "run"},
-}
 
 CACHE_AWARE_ACTIONS = {
     "actions/cache",
@@ -546,13 +537,6 @@ def _line_for_key(lines: list[str], key: str) -> int:
         if pattern.search(line):
             return lineno
     return 1
-
-
-def _line_for_template(lines: list[str], run_body: str) -> int:
-    match = TEMPLATE_EXPR_RE.search(run_body)
-    if match:
-        return _line_for_contains(lines, match.group(0))
-    return _line_for_key(lines, "run")
 
 
 def _source_for_lines(lines: list[str]) -> YamlSource | None:
@@ -994,24 +978,20 @@ def _is_false(value: Any) -> bool:
     return isinstance(value, str) and value.lower() == "false"
 
 
-# GitHub-owned actions and reusable workflows. GitHub runs the workflow and
-# owns these repositories, so trusting their tags adds no new party; zizmor's
-# default ``unpinned-uses`` policy allows ref-pins for ``actions/*`` and
-# ``github/*`` and OpenSSF Scorecard scores GitHub-owned actions apart from
-# third-party ones. An unpinned one is LOW hygiene; any other owner stays HIGH.
 _GITHUB_OWNED_ACTION_OWNERS = frozenset({"actions", "github"})
 
 
 def _unpinned_uses_severity(value: str) -> str:
     value = value.strip()
     owner, slash, rest = value.partition("/")
-    ref = value.rsplit("@", 1)[1] if "@" in value else ""
+    path, at, ref = rest.rpartition("@")
     if (
         slash
+        and at
         and owner.lower() in _GITHUB_OWNED_ACTION_OWNERS
-        and "@" in rest
         and ref.strip()
         and "${{" not in value
+        and all(part not in ("", ".", "..") for part in path.split("/"))
     ):
         return "LOW"
     return "HIGH"
@@ -1114,7 +1094,8 @@ def _pull_request_target_is_isolated(data: dict[str, Any]) -> bool:
         steps = [step for step in job.get("steps") or [] if isinstance(step, dict)]
         for step in steps:
             if any(
-                TEMPLATE_EXPR_RE.search(text) for text in _iter_strings(step.get("run"))
+                interpolates_untrusted(data, job, step, text)
+                for text in _iter_strings(step.get("run"))
             ):
                 return False
         if not _job_reads_pr_code(job):
@@ -1218,48 +1199,59 @@ def _scan_permissions(
     findings: list[dict[str, Any]],
     ignore: set[str],
 ) -> None:
+    """Token scope the workflow hands out. A job's own ``permissions`` replaces
+    the workflow's entirely, so a workflow-level value matters only for the
+    jobs that inherit it. Missing permissions are reported once per workflow,
+    naming the jobs that run with the repository default, not again per job."""
     rule_id = "SKY-D291"
     if rule_id in ignore:
         return
 
-    if "permissions" not in data:
-        _add_finding(
-            findings,
-            lines,
-            _finding(
-                rule_id=rule_id,
-                name="github-actions-default-permissions",
-                message=(
-                    "Workflow does not declare top-level permissions. Set "
-                    "permissions: {} and grant minimal permissions per job."
-                ),
-                file=path,
-                line=1,
-                severity="MEDIUM",
-                value="default_permissions",
-            ),
-        )
-        parent_permissions_explicit = False
-    else:
-        parent_permissions_explicit = True
-
+    inheriting = [str(job_id) for job_id, job in _jobs(data) if "permissions" not in job]
     permissions = data.get("permissions")
-    if isinstance(permissions, str) and permissions in {"read-all", "write-all"}:
-        severity = "HIGH" if permissions == "write-all" else "MEDIUM"
-        _add_finding(
-            findings,
-            lines,
-            _finding(
-                rule_id=rule_id,
-                name="github-actions-broad-permissions",
-                message=f"Workflow grants {permissions} permissions to GITHUB_TOKEN.",
-                file=path,
-                line=_line_for_key(lines, "permissions"),
-                severity=severity,
-                value=permissions,
-            ),
-        )
-    elif isinstance(permissions, dict):
+    if "permissions" not in data:
+        if inheriting:
+            _add_finding(
+                findings,
+                lines,
+                _finding(
+                    rule_id=rule_id,
+                    name="github-actions-default-permissions",
+                    message=(
+                        "Workflow declares no permissions, so "
+                        f"{_job_list(inheriting)} run with the repository's default "
+                        "GITHUB_TOKEN permissions, which may be read-write. Set "
+                        "permissions: {} at the top and grant each job only what "
+                        "it needs."
+                    ),
+                    file=path,
+                    line=1,
+                    severity="MEDIUM",
+                    value="default_permissions",
+                ),
+            )
+    elif isinstance(permissions, str) and permissions in {"read-all", "write-all"}:
+        if inheriting:
+            severity = "MEDIUM"
+            if permissions == "write-all":
+                severity = "HIGH"
+            _add_finding(
+                findings,
+                lines,
+                _finding(
+                    rule_id=rule_id,
+                    name="github-actions-broad-permissions",
+                    message=(
+                        f"Workflow grants {permissions} permissions to GITHUB_TOKEN "
+                        f"for {_job_list(inheriting)}."
+                    ),
+                    file=path,
+                    line=_line_for_key(lines, "permissions"),
+                    severity=severity,
+                    value=permissions,
+                ),
+            )
+    elif isinstance(permissions, dict) and len(inheriting) > 1:
         for permission, level in permissions.items():
             if str(level).lower() != "write":
                 continue
@@ -1271,11 +1263,13 @@ def _scan_permissions(
                     rule_id=rule_id,
                     name="github-actions-broad-permissions",
                     message=(
-                        f"Workflow-level permission {permission}: write is broad. "
-                        "Prefer granting write access only on the job that needs it."
+                        f"Workflow-level permission {permission}: write reaches "
+                        f"{_job_list(inheriting)}. Grant write access only on the "
+                        "job that needs it."
                     ),
                     file=path,
-                    line=_line_for_contains(lines, str(permission)),
+                    line=_line_for_yaml_path(lines, ("permissions", permission))
+                    or _line_for_contains(lines, str(permission)),
                     severity=severity,
                     value=f"{permission}:write",
                 ),
@@ -1283,24 +1277,7 @@ def _scan_permissions(
 
     for job_id, job in _jobs(data):
         job_permissions = job.get("permissions")
-        if job_permissions is None and not parent_permissions_explicit:
-            _add_finding(
-                findings,
-                lines,
-                _finding(
-                    rule_id=rule_id,
-                    name="github-actions-default-permissions",
-                    message=(
-                        f"Job {job_id} inherits the default GITHUB_TOKEN "
-                        "permissions because neither workflow nor job permissions are set."
-                    ),
-                    file=path,
-                    line=_line_for_contains(lines, f"{job_id}:"),
-                    severity="MEDIUM",
-                    value=f"{job_id}:default_permissions",
-                ),
-            )
-        elif isinstance(job_permissions, str) and job_permissions in {
+        if isinstance(job_permissions, str) and job_permissions in {
             "read-all",
             "write-all",
         }:
@@ -1313,11 +1290,21 @@ def _scan_permissions(
                     name="github-actions-broad-permissions",
                     message=f"Job {job_id} grants {job_permissions} permissions.",
                     file=path,
-                    line=_line_for_contains(lines, "permissions", start=1),
+                    line=_line_for_job_field(lines, job_id, "permissions"),
                     severity=severity,
                     value=f"{job_id}:{job_permissions}",
                 ),
             )
+
+
+def _job_list(job_ids: list[str], *, limit: int = 5) -> str:
+    if len(job_ids) == 1:
+        return f"job {job_ids[0]}"
+    shown = ", ".join(job_ids[:limit])
+    more = len(job_ids) - limit
+    if more > 0:
+        return f"jobs {shown} and {more} more"
+    return f"jobs {shown}"
 
 
 def _scan_uses(
@@ -1365,7 +1352,6 @@ def _scan_uses(
                     value=uses_value,
                 ),
             )
-
 
 
 _UPLOAD_ARTIFACT_VERSION_RE = re.compile(r"^v(\d+)(?:\.(\d+)(?:\.\d+)?)?$")
@@ -1696,6 +1682,7 @@ def _scan_run_blocks(
     ignore: set[str],
     *,
     is_workflow: bool,
+    root: Path | None = None,
 ) -> None:
     rule_id = "SKY-D294"
 
@@ -1723,103 +1710,152 @@ def _scan_run_blocks(
                     value=risk.rule_id,
                 ),
             )
-        if rule_id not in ignore and TEMPLATE_EXPR_RE.search(run_body):
-            _add_finding(
-                findings,
-                lines,
-                _finding(
-                    rule_id=rule_id,
-                    name="github-actions-template-injection",
-                    message=(
-                        "run block expands attacker-influenced GitHub context directly. "
-                        "Move the value into env and quote/use the environment variable."
-                    ),
-                    file=path,
-                    line=_line_for_template(lines, run_body),
-                    severity="HIGH",
-                    value="template_in_run",
-                ),
+    if rule_id not in ignore:
+        _scan_template_injection(
+            data, path, lines, findings, is_workflow=is_workflow, root=root
+        )
+
+
+def _scan_template_injection(
+    data: dict[str, Any],
+    path: Path,
+    lines: list[str],
+    findings: list[dict[str, Any]],
+    *,
+    is_workflow: bool,
+    root: Path | None,
+) -> None:
+    from skylos.rules.config.cicd.template_injection import Scope, job_audiences
+
+    source = _source_for_lines(lines)
+    if not is_workflow:
+        scope = Scope(data, path, root, False, audience="unknown")
+        runs = data.get("runs")
+        steps = []
+        if isinstance(runs, dict) and isinstance(runs.get("steps"), list):
+            steps = runs["steps"]
+        for index, step in enumerate(steps):
+            if isinstance(step, dict):
+                _report_step_injections(
+                    findings, lines, source, path, replace(scope, step=step), step,
+                    ("runs", "steps", index),
+                )
+        return
+    audiences = job_audiences(data, path, root)
+    for job_id, job in _jobs(data):
+        audience, events = audiences.get(job_id, ("writers", frozenset()))
+        scope = Scope(
+            data, path, root, True, job_id, job, None, audience,
+            audiences=audiences, events=events,
+        )
+        container = job.get("container")
+        if isinstance(container, dict):
+            _report_injections(
+                findings, lines, source, path, scope, container.get("options"),
+                ("jobs", job_id, "container", "options"),
+                f"Job {job_id} container options",
             )
-
-    if is_workflow and rule_id not in ignore:
-        for job_id, job in _jobs(data):
-            container = job.get("container")
-            if isinstance(container, dict):
-                options = container.get("options")
-                if isinstance(options, str) and TEMPLATE_EXPR_RE.search(options):
-                    _add_finding(
-                        findings,
-                        lines,
-                        _finding(
-                            rule_id=rule_id,
-                            name="github-actions-template-injection",
-                            message=(
-                                f"Job {job_id} container options expand "
-                                "attacker-influenced GitHub context directly."
-                            ),
-                            file=path,
-                            line=_line_for_value(lines, options),
-                            severity="HIGH",
-                            value=f"{job_id}:container_options",
-                        ),
-                    )
-
-            services = job.get("services")
-            if not isinstance(services, dict):
-                continue
+        services = job.get("services")
+        if isinstance(services, dict):
             for service, config in services.items():
-                if not isinstance(config, dict):
-                    continue
-                options = config.get("options")
-                if not isinstance(options, str) or not TEMPLATE_EXPR_RE.search(options):
-                    continue
-                _add_finding(
-                    findings,
-                    lines,
-                    _finding(
-                        rule_id=rule_id,
-                        name="github-actions-template-injection",
-                        message=(
-                            f"Service {service} options expand attacker-influenced "
-                            "GitHub context directly."
-                        ),
-                        file=path,
-                        line=_line_for_value(lines, options),
-                        severity="HIGH",
-                        value=f"{job_id}:{service}:options",
-                    ),
+                if isinstance(config, dict):
+                    _report_injections(
+                        findings, lines, source, path, scope, config.get("options"),
+                        ("jobs", job_id, "services", service, "options"),
+                        f"Service {service} options",
+                    )
+        steps = job.get("steps")
+        if not isinstance(steps, list):
+            continue
+        for index, step in enumerate(steps):
+            if isinstance(step, dict):
+                _report_step_injections(
+                    findings, lines, source, path, replace(scope, step=step), step,
+                    ("jobs", job_id, "steps", index),
                 )
 
-    for step in _iter_steps(data, is_workflow=is_workflow):
-        uses_value = step.get("uses")
-        with_config = step.get("with")
-        if not isinstance(uses_value, str) or not isinstance(with_config, dict):
-            continue
 
-        sink_inputs = ACTION_INJECTION_SINKS.get(_uses_repo(uses_value))
-        if not sink_inputs:
-            continue
+def _report_step_injections(
+    findings: list[dict[str, Any]],
+    lines: list[str],
+    source: YamlSource | None,
+    path: Path,
+    scope: Any,
+    step: dict[str, Any],
+    step_path: tuple[Any, ...],
+) -> None:
+    from skylos.rules.config.cicd.template_injection import action_sink_inputs
 
-        for input_name in sink_inputs:
-            script = with_config.get(input_name)
-            if not isinstance(script, str) or not TEMPLATE_EXPR_RE.search(script):
-                continue
-            _add_finding(
-                findings,
-                lines,
-                _finding(
-                    rule_id=rule_id,
-                    name="github-actions-template-injection",
-                    message=(
-                        f"{uses_value} input {input_name} accepts code and expands "
-                        "attacker-influenced GitHub context directly."
-                    ),
-                    file=path,
-                    line=_line_for_value(lines, script),
-                    severity="HIGH",
-                    value=f"{uses_value}:{input_name}",
+    _report_injections(
+        findings, lines, source, path, scope, step.get("run"), (*step_path, "run"),
+        "run block",
+    )
+    uses_value = step.get("uses")
+    with_config = step.get("with")
+    if not isinstance(uses_value, str) or not isinstance(with_config, dict):
+        return
+    for input_name in action_sink_inputs(uses_value):
+        _report_injections(
+            findings, lines, source, path, scope, with_config.get(input_name),
+            (*step_path, "with", input_name),
+            f"{uses_value} input {input_name}",
+        )
+
+
+def _report_injections(
+    findings: list[dict[str, Any]],
+    lines: list[str],
+    source: YamlSource | None,
+    path: Path,
+    scope: Any,
+    text: Any,
+    yaml_path: tuple[Any, ...],
+    where: str,
+) -> None:
+    if not isinstance(text, str) or "${{" not in text:
+        return
+    injections = scope.injections(text)
+    if not injections:
+        return
+    start_line = None
+    if source is not None:
+        start_line = source.line_for_path(yaml_path, key=False)
+    if start_line is None:
+        start_line = _line_for_value(lines, text)
+    seen: Counter[str] = Counter()
+    for injection in injections:
+        needle = injection.raw.splitlines()[0]
+        line = _fragment_line(lines, start_line, needle, seen[needle])
+        seen[needle] += 1
+        reasons = "; ".join(
+            f"{item.context} ({item.reason})" for item in injection.sources[:3]
+        )
+        _add_finding(
+            findings,
+            lines,
+            _finding(
+                rule_id="SKY-D294",
+                name="github-actions-template-injection",
+                message=(
+                    f"{where} expands {injection.raw} into code: {reasons}. Pass the "
+                    "value through env and quote the variable instead."
                 ),
-            )
+                file=path,
+                line=line,
+                severity=injection.severity,
+                value=f"{where}:{injection.raw}:{seen[needle]}",
+            ),
+        )
+
+
+def _fragment_line(lines: list[str], start_line: int, needle: str, skip: int) -> int:
+    first = max(start_line, 1)
+    for number in range(first, len(lines) + 1):
+        count = lines[number - 1].count(needle)
+        if skip < count:
+            return number
+        skip -= count
+    return first
 
 
 def _scan_self_hosted_runners(
@@ -2119,12 +2155,27 @@ def _scan_secrets_outside_env(
     lines: list[str],
     findings: list[dict[str, Any]],
     ignore: set[str],
+    *,
+    root: Path | None = None,
 ) -> None:
+    """A repository secret in a job that accounts without write access can
+    start. An environment with required reviewers is what stands between them
+    and the secret. Jobs only writers can start (push, schedule, dispatch,
+    release) and pull_request runs, which get no secrets from forks, are not
+    reported: anyone who can start them can already read repository secrets."""
     rule_id = "SKY-D299"
     if rule_id in ignore:
         return
+    from skylos.rules.config.cicd.ai_agents import outsider_job_events
+
+    outsiders = outsider_job_events(data, path, root)
+    if not outsiders:
+        return
     for job_id, job in _jobs(data):
         if _is_reusable_job(job) or job.get("environment") is not None:
+            continue
+        events = outsiders.get(str(job_id))
+        if not events:
             continue
         for text in _iter_strings(job):
             for match in SECRETS_OUTSIDE_ENV_RE.finditer(text):
@@ -2139,7 +2190,8 @@ def _scan_secrets_outside_env(
                         name="github-actions-secrets-outside-environment",
                         message=(
                             f"Job {job_id} references secret {secret_name} without a "
-                            "dedicated GitHub environment."
+                            "dedicated GitHub environment, and accounts without "
+                            f"write access can start it ({', '.join(events)})."
                         ),
                         file=path,
                         line=_line_for_value(lines, text),
@@ -2794,7 +2846,9 @@ def scan_github_actions_file(
         _scan_permissions(data, file_path, lines, findings, ignore)
         _scan_self_hosted_runners(data, file_path, lines, findings, ignore)
         _scan_secrets_inherit(data, file_path, lines, findings, ignore)
-        _scan_secrets_outside_env(data, file_path, lines, findings, ignore)
+        _scan_secrets_outside_env(
+            data, file_path, lines, findings, ignore, root=root_path
+        )
         _scan_hardcoded_container_credentials(data, file_path, lines, findings, ignore)
         _scan_conditions(data, file_path, lines, findings, ignore, is_workflow=True)
         _scan_cache_poisoning(data, file_path, lines, findings, ignore)
@@ -2814,7 +2868,9 @@ def scan_github_actions_file(
     _scan_persisted_checkout_credentials(
         data, file_path, lines, findings, ignore, is_workflow=is_workflow, root=root_path
     )
-    _scan_run_blocks(data, file_path, lines, findings, ignore, is_workflow=is_workflow)
+    _scan_run_blocks(
+        data, file_path, lines, findings, ignore, is_workflow=is_workflow, root=root_path
+    )
     _scan_container_images(
         data, file_path, lines, findings, ignore, is_workflow=is_workflow
     )
@@ -2835,6 +2891,11 @@ def scan_github_actions_file(
         data, file_path, lines, findings, ignore, is_workflow=is_workflow
     )
     _scan_anonymous_definition(data, file_path, lines, findings, ignore)
+    from skylos.rules.config.cicd.workflow_audits import scan_workflow_audits
+
+    scan_workflow_audits(
+        data, file_path, lines, findings, ignore, is_workflow=is_workflow, root=root_path
+    )
     return findings
 
 
@@ -2853,4 +2914,12 @@ def scan_github_actions(
                 file_path, root=root_path, ignore=ignore, analysis_errors=analysis_errors
             )
         )
+    from skylos.rules.config.cicd.workflow_audits import scan_dependabot
+
+    findings.extend(
+        scan_dependabot(
+            root_path, changed_files=changed_files, ignore=ignore,
+            analysis_errors=analysis_errors,
+        )
+    )
     return findings

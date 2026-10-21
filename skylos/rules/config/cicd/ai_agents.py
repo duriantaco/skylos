@@ -1186,8 +1186,6 @@ def _job_routes_by_event(job: dict[str, Any] | None) -> bool:
     )
 
 
-
-
 def _literal_environment(job: dict[str, Any]) -> str:
     environment = job.get("environment")
     if isinstance(environment, dict):
@@ -1364,6 +1362,23 @@ class _Context:
         if self.caller is not None:
             text += f" via {self.caller.file.name}"
         return text
+
+
+def local_workflow_callers(
+    data: dict[str, Any], path: Path, root: Path | None
+) -> list[tuple[Path, dict[str, Any], Any, dict[str, Any]]]:
+    if "workflow_call" not in _trigger_map(data):
+        return []
+    target = f".github/workflows/{path.name}"
+    callers = []
+    for sibling, sibling_data in _sibling_workflows(path, root):
+        for job_id, job in _jobs(sibling_data):
+            uses = job.get("uses")
+            if not isinstance(uses, str):
+                continue
+            if uses.strip().split("@", 1)[0].removeprefix("./") == target:
+                callers.append((sibling, sibling_data, job_id, job))
+    return callers
 
 
 def _caller_contexts(
