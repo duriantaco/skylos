@@ -535,3 +535,317 @@ def test_text_variable_is_reported_at_text_call_only(tmp_path):
     )
     out = _scan_one(tmp_path, "text_variable.py", code)
     assert sorted(f["line"] for f in out if f["rule_id"] == "SKY-D211") == [3]
+
+
+def _d211_lines(tmp_path, name, code):
+    out = _scan_one(tmp_path, name, code)
+    return sorted(f["line"] for f in out if f["rule_id"] == "SKY-D211")
+
+
+def test_placeholder_runs_and_numbers_are_not_sql_injection(tmp_path):
+    code = (
+        "import sqlite3\n"
+        "PLACEHOLDER = '?'\n"
+        "def f(cursor, ids, rows, limit, tag_ids):\n"
+        "    if ids:\n"
+        "        placeholders = ','.join('?' * len(ids))\n"
+        "        cursor.execute(f'SELECT * FROM t WHERE id IN ({placeholders})', ids)\n"
+        "    marks = ', '.join(['%s'] * len(rows))\n"
+        "    cursor.execute('INSERT INTO t VALUES (' + marks + ')', rows)\n"
+        "    cursor.execute(f'SELECT * FROM t LIMIT {int(limit)}')\n"
+        "    cursor.execute(f'SELECT * FROM t WHERE a = {PLACEHOLDER}', (1,))\n"
+        "    gen = ','.join('?' for _ in tag_ids)\n"
+        "    cursor.execute('UPDATE t SET s = 0 WHERE id IN (%s)' % gen, tag_ids)\n"
+        "    for batch in rows:\n"
+        "        q = ','.join(['?'] * len(batch))\n"
+        "        cursor.execute(f'DELETE FROM t WHERE id IN ({q})', batch)\n"
+    )
+    assert _d211_lines(tmp_path, "placeholders.py", code) == []
+
+
+def test_text_that_can_carry_data_still_flags(tmp_path):
+    code = (
+        "PLACEHOLDER = '?'\n"
+        "PLACEHOLDER = input()\n"
+        "def f(cursor, ids, limit, user, flag):\n"
+        "    joined = ','.join(ids)\n"
+        "    cursor.execute(f'SELECT * FROM t WHERE id IN ({joined})')\n"
+        "    as_text = ','.join(str(i) for i in ids)\n"
+        "    cursor.execute(f'SELECT * FROM t WHERE id IN ({as_text})')\n"
+        "    cursor.execute(f'SELECT * FROM t LIMIT {limit}')\n"
+        "    cursor.execute(f'SELECT * FROM t WHERE a = {PLACEHOLDER}')\n"
+        "    if flag:\n"
+        "        part = '?'\n"
+        "    else:\n"
+        "        part = user\n"
+        "    cursor.execute(f'SELECT * FROM t WHERE a = {part}')\n"
+        "    repeated = user * 3\n"
+        "    cursor.execute(f'SELECT * FROM t WHERE a = {repeated}')\n"
+        "    safe = '?'\n"
+        "    def later():\n"
+        "        cursor.execute(f'SELECT * FROM t WHERE a = {safe}')\n"
+        "    safe = user\n"
+        "    later()\n"
+    )
+    assert _d211_lines(tmp_path, "unsafe.py", code) == [5, 7, 8, 9, 14, 16, 19]
+
+
+def test_executescript_flags_only_string_built_or_tainted_scripts(tmp_path):
+    code = (
+        "from pathlib import Path\n"
+        "def init(conn, name):\n"
+        "    conn.executescript(Path(__file__).with_name('schema.sql').read_text())\n"
+        "    with open(Path(__file__).parent / 'more.sql') as f:\n"
+        "        conn.executescript(f.read())\n"
+        "    conn.executescript(f'DROP TABLE {name};')\n"
+    )
+    assert _d211_lines(tmp_path, "schema.py", code) == [6]
+
+
+def test_a_rebound_builtin_name_is_not_trusted_as_a_number(tmp_path):
+    query = "    cursor.execute('SELECT * FROM t WHERE id = ' + {call}(user))\n"
+    shadows = {
+        "def": "def int(value):\n    return value\n",
+        "import": "from helpers import len\n",
+        "alias": "from helpers import to_text as str\n",
+        "assign": "float = lambda value: value\n",
+        "star": "from helpers import *\n",
+        "patched": "import builtins\nbuiltins.int = lambda value: value\n",
+        "except": "try:\n    pass\nexcept Exception as len:\n    pass\n",
+        "loop": "for int in []:\n    pass\n",
+    }
+    calls = {"def": "int", "import": "len", "alias": "str", "assign": "float",
+             "star": "int", "patched": "int", "except": "len", "loop": "int"}
+    for name, shadow in shadows.items():
+        code = shadow + "def f(cursor, user):\n" + query.format(call=calls[name])
+        line = code.count("\n")
+        assert _d211_lines(tmp_path, f"shadow_{name}.py", code) == [line], name
+    parameter = (
+        "def f(cursor, user, len):\n"
+        "    cursor.execute('SELECT * FROM t LIMIT ' + len(user))\n"
+    )
+    assert _d211_lines(tmp_path, "shadow_param.py", parameter) == [2]
+    builtin = (
+        "def f(cursor, user, ids):\n"
+        "    cursor.execute('SELECT * FROM t WHERE id = ' + str(int(user)))\n"
+        "    marks = ','.join('?' * len(ids))\n"
+        "    cursor.execute(f'SELECT * FROM t WHERE id IN ({marks})', ids)\n"
+    )
+    assert _d211_lines(tmp_path, "real_builtins.py", builtin) == []
+
+
+def test_a_builtin_rebound_only_in_another_scope_stays_trusted(tmp_path):
+    query = "cursor.execute('SELECT * FROM t WHERE id = ' + str(int(user)))\n"
+    code = (
+        "def other(len, int):\n"
+        "    return [str for str in len]\n"
+        "class Rows:\n"
+        "    int = 5\n"
+        "    def fetch(self, cursor, user):\n"
+        "        " + query
+        + "def f(cursor, user):\n"
+        "    " + query
+        + "def g(cursor, user):\n"
+        "    total = [(int := 1) for _ in user]\n"
+        "    " + query
+        + "def outer(int):\n"
+        "    def inner(cursor, user):\n"
+        "        " + query
+        + "    return inner\n"
+        "def h(cursor, user):\n"
+        "    names = [int for int in user]\n"
+        "    " + query
+    )
+    assert _d211_lines(tmp_path, "scopes.py", code) == [11, 14]
+
+
+def test_a_builtin_rebound_through_module_globals_is_not_trusted(tmp_path):
+    body = (
+        "def f(cursor, user):\n"
+        "    cursor.execute('SELECT * FROM t WHERE id = ' + int(user))\n"
+    )
+    rebinders = {
+        "global": "def setup():\n    global int\n    int = lambda value: value\n",
+        "globals": "globals()['int'] = lambda value: value\n",
+        "setattr": "import sys\nsetattr(sys.modules[__name__], 'int', print)\n",
+        "alias": "import builtins as b\nb.int = print\n",
+        "assigned": "import builtins\nmodule = builtins\nmodule.int = print\n",
+        "imported": "import importlib\nimportlib.import_module('builtins').int = print\n",
+        "namespace": "import builtins\nbuiltins.__dict__['int'] = print\n",
+        "vars": "import builtins\nvars(builtins)['int'] = print\n",
+        "exec": "exec('int = lambda value: value')\n",
+        "module_attribute": "import sys\nsys.modules[__name__].int = print\n",
+        "module_dict": "import sys\nsys.modules[__name__].__dict__['int'] = print\n",
+    }
+    for name, rebinder in rebinders.items():
+        code = rebinder + body
+        assert _d211_lines(tmp_path, f"globals_{name}.py", code) == [code.count("\n")], name
+    reader = "import builtins\nbuiltins.print('ready')\n" + body
+    assert _d211_lines(tmp_path, "builtins_read.py", reader) == []
+
+
+ESCAPED_LITERAL_SAFE = (
+    "import duckdb\n"
+    "import sqlite3\n"
+    "def attach(config):\n"
+    "    conn = duckdb.connect()\n"
+    "    target = str(config.path).replace(\"'\", \"''\")\n"
+    "    try:\n"
+    "        conn.execute(f\"ATTACH '{target}' AS store (STORAGE_VERSION 'v1.0.0')\")\n"
+    "    except duckdb.Error:\n"
+    "        conn.execute(f\"ATTACH '{target}' AS store\")\n"
+    "def lookup(path, name, limit):\n"
+    "    db = sqlite3.connect(path)\n"
+    "    cur = db.cursor()\n"
+    "    safe = str(name).replace('\\\\', '\\\\\\\\').replace(\"'\", \"''\")\n"
+    "    cur.execute(f\"SELECT * FROM t WHERE name = '{safe}' LIMIT {int(limit)}\")\n"
+    "def local_import(config):\n"
+    "    import duckdb as db\n"
+    "    conn = db.connect()\n"
+    "    target: str = f'{config.path}'.replace(\"'\", \"''\")\n"
+    "    conn.execute(f\"COPY t TO '{target}' (FORMAT parquet)\")\n"
+)
+
+
+def test_quote_doubled_value_inside_a_literal_on_sqlite_or_duckdb_is_not_sqli(tmp_path):
+    """serviette/indexer/prepare.py: ``target = str(vdb.path).replace("'", "''")``
+    then ``conn.execute(f"ATTACH '{target}' AS store")`` on duckdb.connect().
+    SQLite and DuckDB treat a backslash in a string literal as an ordinary
+    character, so a value whose quotes are doubled cannot leave the literal."""
+    assert _d211_lines(tmp_path, "escaped_literal.py", ESCAPED_LITERAL_SAFE) == []
+
+
+ESCAPE = "    target = str(user).replace(\"'\", \"''\")\n"
+ESCAPED_LITERAL_STILL_FLAGS = {
+    "mysql_backslash_escapes": (
+        "import pymysql\ndef f(user):\n    conn = pymysql.connect()\n" + ESCAPE
+        + "    conn.execute(f\"SELECT * FROM t WHERE a = '{target}'\")\n"
+    ),
+    "unknown_receiver": (
+        "def f(conn, user):\n" + ESCAPE
+        + "    conn.execute(f\"SELECT * FROM t WHERE a = '{target}'\")\n"
+    ),
+    "outside_the_literal": (
+        "import duckdb\ndef f(user):\n    conn = duckdb.connect()\n" + ESCAPE
+        + "    conn.execute(f\"SELECT * FROM {target}\")\n"
+    ),
+    "inside_a_quoted_identifier": (
+        "import duckdb\ndef f(user):\n    conn = duckdb.connect()\n" + ESCAPE
+        + "    conn.execute(f'SELECT * FROM \"{target}\"')\n"
+    ),
+    "backslash_escape_instead": (
+        "import duckdb\ndef f(user):\n    conn = duckdb.connect()\n"
+        "    target = str(user).replace(\"'\", \"\\\\'\")\n"
+        "    conn.execute(f\"SELECT * FROM t WHERE a = '{target}'\")\n"
+    ),
+    "double_quotes_doubled": (
+        "import duckdb\ndef f(user):\n    conn = duckdb.connect()\n"
+        "    target = str(user).replace('\"', '\"\"')\n"
+        "    conn.execute(f\"SELECT * FROM t WHERE a = '{target}'\")\n"
+    ),
+    "escape_string_prefix": (
+        "import duckdb\ndef f(user):\n    conn = duckdb.connect()\n" + ESCAPE
+        + "    conn.execute(f\"SELECT E'{target}'\")\n"
+    ),
+    "comment_hides_a_quote": (
+        "import duckdb\ndef f(user):\n    conn = duckdb.connect()\n" + ESCAPE
+        + "    conn.execute(f\"SELECT 1 -- it's\\n, '{target}'\")\n"
+    ),
+    "negative_number_starts_a_comment": (
+        "import duckdb\ndef f(user, n):\n    conn = duckdb.connect()\n" + ESCAPE
+        + "    conn.execute(f\"SELECT 1 -{int(n)} '{target}'\")\n"
+    ),
+    "repr_conversion": (
+        "import duckdb\ndef f(user):\n    conn = duckdb.connect()\n" + ESCAPE
+        + "    conn.execute(f\"SELECT '{target!r}'\")\n"
+    ),
+    "unclosed_literal": (
+        "import duckdb\ndef f(user):\n    conn = duckdb.connect()\n" + ESCAPE
+        + "    conn.execute(f\"SELECT '{target}\")\n"
+    ),
+    "path_replace_is_not_str_replace": (
+        "import duckdb\ndef f(config):\n    conn = duckdb.connect()\n"
+        "    target = config.path.replace(\"'\", \"''\")\n"
+        "    conn.execute(f\"SELECT * FROM t WHERE a = '{target}'\")\n"
+    ),
+    "shadowed_str": (
+        "import duckdb\nstr = lambda value: value\ndef f(user):\n"
+        "    conn = duckdb.connect()\n" + ESCAPE
+        + "    conn.execute(f\"SELECT * FROM t WHERE a = '{target}'\")\n"
+    ),
+    "shadowed_module": (
+        "import duckdb\ndef f(user, duckdb):\n    conn = duckdb.connect()\n" + ESCAPE
+        + "    conn.execute(f\"SELECT * FROM t WHERE a = '{target}'\")\n"
+    ),
+    "receiver_rebound": (
+        "import duckdb\ndef f(user, other):\n    conn = duckdb.connect()\n"
+        "    conn = other\n" + ESCAPE
+        + "    conn.execute(f\"SELECT * FROM t WHERE a = '{target}'\")\n"
+    ),
+    "value_rebound_after_escaping": (
+        "import duckdb\ndef f(user):\n    conn = duckdb.connect()\n" + ESCAPE
+        + "    target = user\n"
+        "    conn.execute(f\"SELECT * FROM t WHERE a = '{target}'\")\n"
+    ),
+    "value_rebound_in_a_branch": (
+        "import duckdb\ndef f(user, flag):\n    conn = duckdb.connect()\n" + ESCAPE
+        + "    if flag:\n        target = user\n"
+        "    conn.execute(f\"SELECT * FROM t WHERE a = '{target}'\")\n"
+    ),
+    "backtick_identifier_hides_a_quote": (
+        "import sqlite3\ndef f(user):\n    conn = sqlite3.connect('x.db')\n" + ESCAPE
+        + "    conn.execute(f\"SELECT ` '`, {target}, ` '` FROM t\")\n"
+    ),
+    "bracket_identifier_hides_a_quote": (
+        "import sqlite3\ndef f(user):\n    conn = sqlite3.connect('x.db')\n" + ESCAPE
+        + "    conn.execute(f\"SELECT [ '], {target}, [ '] FROM t\")\n"
+    ),
+    "dollar_quoted_text_hides_a_quote": (
+        "import duckdb\ndef f(user):\n    conn = duckdb.connect()\n" + ESCAPE
+        + "    conn.execute(f\"SELECT $$ '$$, {target}, $$ '$$\")\n"
+    ),
+    "prefixed_literal": (
+        "import duckdb\ndef f(user):\n    conn = duckdb.connect()\n" + ESCAPE
+        + "    conn.execute(f\"SELECT U&'{target}'\")\n"
+    ),
+    "unescaped_value_beside_escaped_one": (
+        "import duckdb\ndef f(user, other):\n    conn = duckdb.connect()\n" + ESCAPE
+        + "    conn.execute(f\"SELECT * FROM t WHERE a = '{target}' AND b = '{other}'\")\n"
+    ),
+}
+
+
+def test_quote_doubling_without_the_full_proof_still_flags(tmp_path):
+    """Each case fakes part of the proof: the dialect, the escape, the
+    literal position or the binding."""
+    for name, code in ESCAPED_LITERAL_STILL_FLAGS.items():
+        lines = _d211_lines(tmp_path, f"{name}.py", code)
+        assert lines == [code.count("\n")], name
+
+
+def test_a_file_too_deep_to_resolve_trusts_no_builtin(tmp_path):
+    import ast
+
+    from skylos.rules.danger.builtin_bindings import builtin_references
+
+    deep = "x = " + "(" * 3000 + "int(user)" + ")" * 3000
+    try:
+        tree = ast.parse(deep)
+    except (RecursionError, MemoryError, SyntaxError):
+        return
+    assert builtin_references(tree, {"int"}) == frozenset()
+
+
+def test_a_repeated_placeholder_needs_a_proven_count(tmp_path):
+    code = (
+        "def f(cursor, ids, count, user):\n"
+        "    marks = ','.join('?' * len(ids))\n"
+        "    cursor.execute(f'SELECT * FROM t WHERE id IN ({marks})', ids)\n"
+        "    rows = ', '.join(['%s'] * (len(ids) + 1))\n"
+        "    cursor.execute('INSERT INTO t VALUES (' + rows + ')', ids)\n"
+        "    shaped = ','.join('?' * user)\n"
+        "    cursor.execute(f'SELECT * FROM t WHERE id IN ({shaped})')\n"
+        "    listed = ','.join(['?'] * count)\n"
+        "    cursor.execute(f'SELECT * FROM t WHERE id IN ({listed})')\n"
+    )
+    assert _d211_lines(tmp_path, "repeat.py", code) == [7, 9]

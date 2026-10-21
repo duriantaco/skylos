@@ -193,13 +193,29 @@ environment. On any receiver, bound parameters, `text("... :id")` over a
 constant (also with `.bindparams(...)`), SQLAlchemy/SQLModel
 `select`/`insert`/`update`/`delete` constructs, and statements built from a
 locally proven SQLAlchemy Table object (`notes.insert().values(...)`,
-`notes.delete().where(...)`) are not findings. A Table constructor must resolve
+`notes.delete().where(...)`) are not findings. Neither is query text built only
+from string literals and numbers: a placeholder run such as
+`",".join("?" * len(ids))` or `", ".join(["%s"] * len(rows))`, `int()`,
+`float()` and `len()` values, or a name bound to such text in the same scope
+(not one rebound in a branch or by a closure's enclosing function). A call
+counts as the builtin only when that name resolves to the builtin under
+Python's scoping rules: not when a local, enclosing function or module binding
+shadows it, after a star import, or when the module writes to `builtins`
+(directly or through an alias), `globals()` or `setattr`.
+`executescript()` takes no parameters, so only a tainted or string-built
+script is reported there. A Table constructor must resolve
 to an unshadowed SQLAlchemy import; unresolved application imports and
 function parameters retain findings. A construct with a string-built clause
 (`.where(f"id = {x}")`) or a raw `request.*` value as a clause is still a
 finding. Formatted values passed to `.values(...)` remain bound parameters.
 A tainted `text()` inside `execute()` is reported once, on the
-`text()` call.
+`text()` call. On a SQLite or DuckDB connection (`sqlite3.connect()`,
+`duckdb.connect()` or its `.cursor()`, bound in the same scope), a `str` whose
+single quotes were doubled (`str(v).replace("'", "''")`) placed inside a plain
+single-quoted literal is not a finding: those engines do not treat a backslash
+as an escape. On other or unknown connections (MySQL and PostgreSQL can),
+outside a literal, inside a quoted identifier, after a prefix such as `E'`,
+with a `!r` conversion or next to a comment marker it still is.
 
 For Python D215, Starlette/FastAPI `FileResponse` and Flask/Werkzeug
 `send_file` are path sinks. `send_from_directory` is a sink only for its
@@ -277,6 +293,15 @@ setting imported from another module is trusted as is. A fixed-host URL that car
 query (`f"{RENDERER}/render?url={...}"`) is not reported. `urllib.parse.quote`
 with a `safe=` argument is not a URL sanitizer.
 
+TS/JS D216 (`fetch`, `axios`) reads a URL through names that can only hold
+one value: a `const`, or a `let`/`var` that is the name's only binding, found
+by lexical scope (also inside template substitutions and `+` chains). A URL
+built only from literals and such names (conditionals included when every
+branch is), or one whose literal `scheme://host/` prefix fixes the host, is not
+reported; a bound call, member, `||`/`??` or `new URL(...)` value is dynamic. A name assigned anywhere in the file, shadowed
+by a parameter, loop or `catch` variable, destructured, imported, hoisted by a
+`var` next to other bindings, or in a file using `eval`/`with` is not resolved.
+
 Go D216 and D212 (Go engine) also need untrusted input: an incoming `*http.Request` (URL, form, headers, decoded body; not `r.Context()`), a gin, echo or fiber request context, or network input (`net.Conn`, `Accept()`, `Read`/`Decode`/`Unmarshal` from such a reader), followed through locals, concatenation, `fmt.Sprintf`, calls and same-file helper parameters. Literals, loopback URLs, config structs, flags, `os.Args` and `os.Executable()` are the program's own inputs. D216 also needs the host to be choosable: a leading literal `scheme://host/` fixes it. D212 is CRITICAL for an untrusted program path or shell command string, HIGH for a shell (`sh -c`, `cmd /c`, PowerShell `-Command`) running a non-constant command that is not proven untrusted, and not reported for a constant or own program with argv elements (`exec.Command(os.Args[0], "run")`). Go D215 (file paths in `os.Open`/`ReadFile`/`WriteFile`/`Create`/`Remove`/`MkdirAll`..., `http.ServeFile`) uses the same sources and is not reported after a containment check on the path: `strings.HasPrefix` on a cleaned path (`filepath.Clean`/`Join`/`Abs`/`EvalSymlinks`), `filepath.Rel` with a `..` check, or `filepath.IsLocal`; `filepath.Base` and `securejoin.SecureJoin` sanitise. The Go engine's reliability checks follow their Python equivalent: unclosed resource (SKY-G260) and defer in a loop (SKY-G203) are MEDIUM like SKY-L008, and `unsafe` use (SKY-G206) is LOW like gosec G103; a defer followed by an unconditional `return` (or a `break` in an outermost loop) runs once and is not reported, and a handle that is closed explicitly, returned or stored in a field is not unclosed. Go D230 (open redirect) needs untrusted input that can choose where the redirect goes: data after a literal `?` or `#` cannot, and a same-origin check (`strings.HasPrefix(v, "/")` with a `"//"` check, `url.Parse` with a `.Host`/`IsAbs()` check, or an allowlist lookup) clears it. Go D211 is CRITICAL when request or network input reaches the query text, HIGH when the query is string-built from a non-constant value with no proven source (Python D211 reports that case too), and not reported for placeholders or constants; `QueryContext`/`ExecContext` are checked on their query argument. Go D210 (`InsecureSkipVerify: true`) is not reported in Go test-support code (a file that imports `testing` and takes a `testing.TB`/`*testing.T`/`B`/`F`/`M`), like D346 in Python test modules; `_test.go` files are not scanned by the Go engine. For L012, an external test file (`package pkg_test`) sees the exports of its own directory's internal test files (`package pkg`, the `export_test.go` convention), because `go test` compiles them into the package.
 
 `bleach.linkify` (it only adds links) and `cgi.escape` (it leaves quotes alone)
@@ -321,7 +346,7 @@ D339, and redundant `//`, `/./` and `..` segments do not hide one.
 
 | ID | Severity | Name | File Types | Details |
 |:---|:---|:---|:---|:---|
-| D260 | HIGH-CRITICAL | Prompt injection scanner | `.py`, `.md`, `.rst`, `.txt`, `.yaml`, `.yml`, `.json`, `.toml`, `.env` | Multi-file scanner with text canonicalization |
+| D260 | HIGH-CRITICAL | Prompt injection scanner | `.py`, `.md`, `.rst`, `.txt`, `.yaml`, `.yml`, `.json`, `.toml`, `.env` | Multi-file scanner with text canonicalization. In YAML and TOML, comments document settings and are not scanned. YAML comment boundaries come from PyYAML's scanner (a `#` inside any scalar, quoted, block or flow, is value text); TOML ones from a string-aware lexer checked by `tomllib`. A file that does not parse keeps every line except whole-line comments. Terminology about generated LLM response text is distinguished from credential disclosure. Access tokens, environment credentials and API keys remain covered by the disclosure patterns |
 
 Finding types:
 
@@ -341,7 +366,7 @@ Finding types:
 | D264 | HIGH | Excessive agent tool privilege | Python | Agent frameworks are granted shell, code execution, unrestricted HTTP, or broad file-management tools |
 | D265 | HIGH-CRITICAL | Unsafe ML model deserialization | Python | Pickle-backed model/checkpoint loading such as `torch.load`, `joblib.load`, or `numpy.load(..., allow_pickle=True)` |
 | D266 | CRITICAL | AI config instruction injection | Agent config and instruction files, AI code reviewer config files | D260-style hidden, obfuscated, or instruction-override payloads in AI assistant rule/config files. In AI code reviewers' own files (the SKY-A122 list, apart from `.github/copilot-instructions.md`, which stays a full agent instruction file), only HIGH signals become D266: instruction overrides, role changes, requests to reveal or send data, encoded payloads and invisible characters (an emoji joiner is not one). Reviewing vocabulary such as "do not flag" or "skip review" is what those files say, so it stays D260 at its usual severity, and a full scan that reaches a reviewer file inside a tool folder (`.gemini/`, `.cursor/`, `.github/`, `.greptile/`, `.macroscope/`), which it did not read before, reports only the HIGH signals there; a diff scan of a changed file reads it in full as before |
-| D267 | MEDIUM | Unbounded LLM consumption | Python | LLM calls or agent executors lack token, timeout, iteration, or obvious loop bounds |
+| D267 | MEDIUM | Unbounded LLM consumption | Python | LLM calls or agent executors lack token, timeout, iteration, or obvious loop bounds. Keys of a local dict unpacked into the call (`completion(**params)`) count as keywords when the dict is built and changed only where the checker can read it (a literal, `dict(...)`, `params["k"] = v`, `del`, `pop`, `setdefault`, `update`, `clear`, `|=`). A key counts only if it holds a value other than `None`/`False` on every path (`if`, loops, `try`, `match`); setting it under `if max_tokens:` or `if max_tokens is not None:` counts like passing `max_tokens=max_tokens`. When the mapping cannot be read (a parameter, an attribute, a call's result, a dict passed to another function, aliased or used by a nested function) a missing limit is not claimed |
 
 ### MCP Server Security
 

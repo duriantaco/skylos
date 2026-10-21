@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import re
 from pathlib import Path
 
@@ -26,6 +27,24 @@ MAX_SCANNABLE_FILE_BYTES = 1_000_000
 MAX_FINDINGS_PER_FILE = 128
 MAX_SCAN_FILES = 512
 MAX_SCAN_FINDINGS = 1024
+
+_DETERMINERS = r"(?:(?:all|the|your|any|every|those|these|my|our|their)\s+)*"
+_CREDENTIAL_TOKEN_KINDS = (
+    r"(?:access|auth|authentication|api|bearer|oauth|session|secret|refresh"
+    r"|github|gitlab|npm|pypi|aws|private|personal\s+access)"
+)
+_SECRET_STORE = (
+    r"(?:from|in|inside|within|stored\s+in|found\s+in|held\s+in)\s+"
+    r"(?:[\w.'-]+\s+){0,3}?"
+    r"(?:env\b|environment|\.env\b|keychain|keyring|vault|secrets?\b"
+    r"|credentials?\b|~/|\$HOME\b|\w*password(?:s|\s+manager)?\b"
+    r"|parameter\s+store|key\s+vault)"
+)
+_CLAUSE_START = (
+    r"(?:^[\s>*#\-\"'`(\[]*|[.!?;:,]\s*"
+    r"|\b(?:please|then|now|also|just|always|must|should|shall|will|can|could"
+    r"|would|may|might|to|you|(?<!input\s)and)\s+)"
+)
 
 _PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"ignore\s+(all\s+)?previous\s+instructions?", re.I), "HIGH"),
@@ -61,7 +80,13 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     (
         re.compile(
             r"(output|reveal|display|leak)\s+(all\s+)?"
-            r"(env\b|environment|secrets?|api.?keys?|tokens?|credentials?|passwords?)",
+            r"(env\b|environment|secrets?|api.?keys?|credentials?|passwords?)"
+            r"|(reveal|display|leak)\s+(all\s+)?tokens?"
+            rf"|output\s+all\s+tokens?"
+            rf"|output\s+{_DETERMINERS}{_CREDENTIAL_TOKEN_KINDS}[\s_-]+tokens?"
+            rf"|{_CLAUSE_START}output\s+{_DETERMINERS}tokens?\s+{_SECRET_STORE}"
+            rf"|{_CLAUSE_START}output\s+tokens?(?:\s*,\s*|\s+(?:and|or|&)\s+)(?:all\s+|the\s+|your\s+)*"
+            r"(?:secrets?|api.?keys?|credentials?|passwords?)",
             re.I,
         ),
         "HIGH",
@@ -222,7 +247,12 @@ def scan_file(
     segment_ext = ext
     if is_agent_instruction and ext not in SCANNABLE_EXTENSIONS:
         segment_ext = ".md"
-    segments = _extract_segments(source, segment_ext, filepath)
+    segments = _extract_segments(
+        source,
+        segment_ext,
+        filepath,
+        keep_comments=is_agent_instruction or is_reviewer_config,
+    )
 
     is_high_risk_file = basename.lower() in _HIGH_RISK_FILENAMES
     seen_findings: set[tuple[int, str]] = set()
@@ -359,8 +389,160 @@ def scan_directory(
     return findings
 
 
+def _close_basic_string(line: str, start: int) -> int | None:
+    index = start
+    while index < len(line):
+        char = line[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == '"':
+            return index + 1
+        index += 1
+    return None
+
+
+def _yaml_token_spans(source: str) -> list[tuple[int, int]] | None:
+    import yaml
+
+    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+    try:
+        tokens = list(yaml.scan(source, Loader=loader))
+    except (yaml.YAMLError, ValueError, RecursionError):
+        return None
+    return sorted(
+        (token.start_mark.index, token.end_mark.index)
+        for token in tokens
+        if token.end_mark.index > token.start_mark.index
+    )
+
+
+def _yaml_lines_without_comments(source: str) -> list[str] | None:
+    spans = _yaml_token_spans(source)
+    if spans is None:
+        return None
+    starts = [start for start, _end in spans]
+    lines = []
+    offset = 0
+    for line in source.splitlines(keepends=True):
+        lines.append(_yaml_line_before_comment(line, offset, spans, starts))
+        offset += len(line)
+    return lines
+
+
+def _yaml_line_before_comment(line, offset, spans, starts) -> str:
+    index = line.find("#")
+    while index >= 0:
+        position = offset + index
+        span = bisect.bisect_right(starts, position) - 1
+        inside = span >= 0 and spans[span][0] <= position < spans[span][1]
+        if not inside and (index == 0 or line[index - 1] in " \t"):
+            return line[:index]
+        index = line.find("#", index + 1)
+    return line
+
+
+def _toml_parses(source: str) -> bool:
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        try:
+            import tomli as tomllib
+        except ModuleNotFoundError:
+            return True
+    try:
+        tomllib.loads(source)
+    except (ValueError, RecursionError):
+        return False
+    return True
+
+
+class _TomlComments:
+    def __init__(self) -> None:
+        self.delimiter = ""
+
+    def strip(self, line: str) -> str:
+        index = 0
+        if self.delimiter:
+            index = self._close_multiline(line, 0)
+            if index is None:
+                return line
+        while index < len(line):
+            char = line[index]
+            if char == "#":
+                return line[:index]
+            if line.startswith(('"""', "'''"), index):
+                self.delimiter = line[index : index + 3]
+                close = self._close_multiline(line, index + 3)
+                if close is None:
+                    return line
+                index = close
+                continue
+            if char == '"':
+                close = _close_basic_string(line, index + 1)
+            elif char == "'":
+                close = line.find("'", index + 1) + 1
+                if close == 0:
+                    close = None
+            else:
+                index += 1
+                continue
+            if close is None:
+                return line
+            index = close
+        return line
+
+    def _close_multiline(self, line: str, start: int) -> int | None:
+        delimiter = self.delimiter
+        index = start
+        while index < len(line):
+            if delimiter == '"""' and line[index] == "\\":
+                index += 2
+                continue
+            if line.startswith(delimiter, index):
+                end = index + 3
+                while end < len(line) and end < index + 5 and line[end] == delimiter[0]:
+                    end += 1
+                self.delimiter = ""
+                return end
+            index += 1
+        return None
+
+
+def _toml_lines_without_comments(source: str) -> list[str] | None:
+    if not _toml_parses(source):
+        return None
+    comments = _TomlComments()
+    return [comments.strip(line) for line in source.splitlines(keepends=True)]
+
+
+def _config_segments(
+    source: str, ext: str, *, keep_comments: bool = False
+) -> list[tuple[str, int, str]]:
+    lines = None
+    if not keep_comments and ext in (".yaml", ".yml"):
+        lines = _yaml_lines_without_comments(source)
+    elif not keep_comments and ext == ".toml":
+        lines = _toml_lines_without_comments(source)
+    segments: list[tuple[str, int, str]] = []
+    for line_no, line in enumerate(source.splitlines(), 1):
+        if lines is None:
+            text = line.strip()
+            if text.startswith("#"):
+                continue
+        else:
+            text = lines[line_no - 1].strip()
+        if not text:
+            continue
+        segment_type = "config"
+        if _PROMPT_KEYS_RE.search(line):
+            segment_type = "prompt_field"
+        segments.append((text, line_no, segment_type))
+    return segments
+
+
 def _extract_segments(
-    source: str, ext: str, filepath: Path
+    source: str, ext: str, filepath: Path, *, keep_comments: bool = False
 ) -> list[tuple[str, int, str]]:
     segments: list[tuple[str, int, str]] = []
 
@@ -407,16 +589,7 @@ def _extract_segments(
                 segments.append((line, line_no, "prose"))
 
     elif ext in (".yaml", ".yml", ".json", ".toml"):
-        for line_no, line in enumerate(source.splitlines(), 1):
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-
-            segment_type = "config"
-            if _PROMPT_KEYS_RE.search(line):
-                segment_type = "prompt_field"
-
-            segments.append((stripped, line_no, segment_type))
+        segments.extend(_config_segments(source, ext, keep_comments=keep_comments))
 
     elif ext == ".env" or filepath.name.startswith(".env"):
         for line_no, line in enumerate(source.splitlines(), 1):
