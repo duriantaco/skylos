@@ -25,22 +25,26 @@ _WORKFLOW = (
     "    runs-on: ubuntu-latest\n"
     "    steps:\n"
     "      - uses: actions/checkout@v4\n"
+    "      - uses: someorg/build-action@v1\n"
     "      - run: echo hello\n"
-    "      - uses: actions/upload-artifact@0123456789012345678901234567890123456789\n"
-    "        with:\n"
-    "          path: .\n"
-    "          if-no-files-found: error\n"
+    "  release:\n"
+    "    runs-on: ubuntu-latest\n"
+    "    permissions:\n"
+    "      contents: write\n"
+    "    steps:\n"
+    "      - uses: actions/checkout@v4\n"
+    "      - uses: someorg/build-action@v1\n"
 )
 # Any security finding fails the gate: the point is that repository CI findings
 # reach it, whatever their severity (an unpinned GitHub-owned action is LOW).
 _CONFIG = "[tool.skylos]\n\n[tool.skylos.gate]\nmax_security = 0\n"
 _SOURCE = "answer = 42\nprint(answer)\n"
-_RULE_COUNTS = Counter({"SKY-D291": 2, "SKY-D292": 1, "SKY-D293": 1})
+_RULE_COUNTS = Counter({"SKY-D291": 1, "SKY-D292": 2, "SKY-D293": 1})
 _RECORD_SIGNATURES = {
     ("SKY-D291", "MEDIUM", 1),
-    ("SKY-D291", "MEDIUM", 6),
     ("SKY-D292", "LOW", 9),
-    ("SKY-D293", "MEDIUM", 9),
+    ("SKY-D292", "HIGH", 10),
+    ("SKY-D293", "MEDIUM", 17),
 }
 
 
@@ -138,7 +142,7 @@ def _workflow_records(result, repo: Path):
 
 def _assert_workflow(result, repo: Path) -> None:
     findings = _workflow_records(result, repo)
-    assert len(findings) == 4
+    assert len(findings) == len(_RECORD_SIGNATURES)
     assert Counter(item["rule_id"] for item in findings) == _RULE_COUNTS
     assert {
         (item["rule_id"], item["severity"], item["line"]) for item in findings
@@ -228,7 +232,7 @@ def test_repository_ci_does_not_expand_other_config_or_language_scopes(repositor
     # Prove the sibling workflow is a real finding rather than a harmless fixture.
     assert (
         len(_workflow_records(_analyze(repository / "sibling"), repository / "sibling"))
-        == 4
+        == len(_RECORD_SIGNATURES)
     )
     assert sibling_workflow.is_file()
     result = _analyze(repository / "src")
@@ -399,7 +403,7 @@ def _assert_repository_ci_parse_failure(result, malformed, valid):
     assert errors[0]["line"] == 1
     assert errors[0]["severity"] == "HIGH"
     records = [item for item in result.get("danger", []) if Path(item["file"]) == valid]
-    assert len(records) == 4
+    assert len(records) == len(_RECORD_SIGNATURES)
     assert Counter(item["rule_id"] for item in records) == _RULE_COUNTS
     assert {
         (item["rule_id"], item["severity"], item["line"]) for item in records

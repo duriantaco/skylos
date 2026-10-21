@@ -1,0 +1,54 @@
+{
+ "8398a7/action-slack": [
+  "custom_payload"
+ ],
+ "actions/github-script": [
+  "script"
+ ],
+ "addnab/docker-run-action": [
+  "run"
+ ],
+ "amadevus/pwsh-script": [
+  "script"
+ ],
+ "appleboy/ssh-action": [
+  "script"
+ ],
+ "azure/cli": [
+  "inlineScript"
+ ],
+ "azure/powershell": [
+  "inlineScript"
+ ],
+ "cardinalby/js-eval-action": [
+  "expression"
+ ],
+ "devorbitus/yq-action-output": [
+  "cmd"
+ ],
+ "gautamkrishnar/blog-post-workflow": [
+  "item_exec"
+ ],
+ "jannekem/run-python-script-action": [
+  "script"
+ ],
+ "lucasbento/auto-close-issues": [
+  "issue-close-message"
+ ],
+ "mikefarah/yq": [
+  "cmd"
+ ],
+ "roots/issue-closer-action": [
+  "issue-close-message",
+  "pr-close-message"
+ ],
+ "sergeysova/jq-action": [
+  "cmd"
+ ],
+ "tibdex/backport": [
+  "body_template",
+  "head_template",
+  "labels_template",
+  "title_template"
+ ]
+}

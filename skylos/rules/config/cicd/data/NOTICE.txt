@@ -1,0 +1,35 @@
+context_capabilities.json is generated from GitHub's webhook payload
+schemas as published by Octokit (https://github.com/octokit/webhooks,
+payload-schemas/api.github.com, commit
+aa80c24a3f55354465b8b1438d33dd5602956d0d). Each payload field is classified
+by its declared type: booleans, numbers, enums, date-times and documented
+commit SHAs are fixed; strings with a format (uri, email, ...) or a pattern
+are structured; other strings are arbitrary. The run-context keys
+(github.sha, runner.os, ...) follow GitHub's contexts reference.
+
+code_inputs.json lists action inputs whose value the action runs as code,
+each confirmed against the action's own action.yml and source.
+
+Octokit webhooks is distributed under this license:
+
+The MIT License
+
+Copyright (c) 2018 Gregor Martynus
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
