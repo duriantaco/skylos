@@ -3,6 +3,7 @@ import tempfile
 import os
 from pathlib import Path
 
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.security.canonicalize import (
     MAX_BASE64_TOKEN_CHARS,
     MAX_ZERO_WIDTH_HITS,
@@ -567,7 +568,7 @@ class TestScanHomoglyphs:
 
 def _d260_lines(tmp_path, name, content):
     path = tmp_path / name
-    path.write_text(content, encoding="utf-8")
+    assert write_text_no_symlink(path, content)
     return [f["line"] for f in scan_file(path) if f["rule_id"] == "SKY-D260"]
 
 

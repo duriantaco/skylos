@@ -346,7 +346,7 @@ D339, and redundant `//`, `/./` and `..` segments do not hide one.
 
 | ID | Severity | Name | File Types | Details |
 |:---|:---|:---|:---|:---|
-| D260 | HIGH-CRITICAL | Prompt injection scanner | `.py`, `.md`, `.rst`, `.txt`, `.yaml`, `.yml`, `.json`, `.toml`, `.env` | Multi-file scanner with text canonicalization. In YAML and TOML, comments document settings and are not scanned. YAML comment boundaries come from PyYAML's scanner (a `#` inside any scalar, quoted, block or flow, is value text); TOML ones from a string-aware lexer checked by `tomllib`. A file that does not parse keeps every line except whole-line comments. "Output tokens" alone (an LLM's generated tokens: "billed as output tokens") is not a request for credentials; "output all tokens", "output your access tokens", "output tokens from the environment", "output tokens and API keys" and "reveal tokens" are |
+| D260 | HIGH-CRITICAL | Prompt injection scanner | `.py`, `.md`, `.rst`, `.txt`, `.yaml`, `.yml`, `.json`, `.toml`, `.env` | Multi-file scanner with text canonicalization. In YAML and TOML, comments document settings and are not scanned. YAML comment boundaries come from PyYAML's scanner (a `#` inside any scalar, quoted, block or flow, is value text); TOML ones from a string-aware lexer checked by `tomllib`. A file that does not parse keeps every line except whole-line comments. Terminology about generated LLM output tokens is distinguished from credential disclosure. Access tokens, environment credentials and API keys remain covered by the disclosure patterns |
 
 Finding types:
 
