@@ -519,6 +519,7 @@ def test_publish_workflow_verifies_required_checks_before_publish():
         '["test", "analyzer-speed", "corpus", "quality-benchmark", "scan"]'
     )
     assert "gh api" in check_step["run"]
+    assert "--paginate --slurp" in check_step["run"]
     assert "check-runs?per_page=100&filter=all" in check_step["run"]
     assert "for attempt in {1..180}" in check_step["run"]
     assert 'run["id"]' in check_step["run"]
@@ -527,29 +528,60 @@ def test_publish_workflow_verifies_required_checks_before_publish():
     assert "Required release checks are not complete yet" in check_step["run"]
 
 
-def test_release_please_waits_for_required_ci_on_current_main():
+def test_release_please_rechecks_completed_ci_on_current_main():
     workflow = _release_please_workflow()
-    trigger = workflow.get("on", workflow.get(True))["push"]
+    triggers = workflow.get("on", workflow.get(True))
+    assert "push" not in triggers
+    trigger = triggers["workflow_run"]
     assert trigger["branches"] == ["main"]
+    assert trigger["types"] == ["completed"]
+    producers = [
+        "tests.yaml",
+        "analyzer-speed.yml",
+        "corpus.yml",
+        "quality-benchmark.yml",
+        "skylos.yaml",
+    ]
+    assert set(trigger["workflows"]) == {
+        yaml.safe_load((Path(".github/workflows") / name).read_text())["name"]
+        for name in producers
+    }
 
     job = workflow["jobs"]["release-please"]
     assert job["permissions"]["checks"] == "read"
-    assert job["timeout-minutes"] >= 75
+    assert job["timeout-minutes"] <= 15
+    assert job["concurrency"] == {
+        "group": "release-please-main",
+        "cancel-in-progress": False,
+        "queue": "max",
+    }
+    assert job["if"] == (
+        "github.event.workflow_run.event == 'push' && "
+        "github.event.workflow_run.head_branch == 'main' && "
+        "github.event.workflow_run.head_repository.full_name == github.repository && "
+        "github.event.workflow_run.head_sha == github.sha && "
+        "github.event.workflow_run.conclusion == 'success'"
+    )
     steps = job["steps"]
     head_step = next(s for s in steps if s.get("id") == "main_commit")
     check_step = next(s for s in steps if s.get("id") == "checks")
     release_step = next(s for s in steps if s.get("id") == "release")
     assert "git/ref/heads/main" in head_step["run"]
-    assert head_step["env"]["TESTED_SHA"] == "${{ github.sha }}"
+    tested_sha = "${{ github.event.workflow_run.head_sha }}"
+    assert head_step["env"]["TESTED_SHA"] == tested_sha
+    assert check_step["env"]["TESTED_SHA"] == tested_sha
+    checkout = next(s for s in steps if s.get("uses", "").startswith("actions/checkout@"))
+    assert checkout["with"]["ref"] == tested_sha
     assert "check_release_checks.py" in check_step["run"]
     assert "check-runs?per_page=100&filter=all" in check_step["run"]
-    assert "for attempt in {1..180}" in check_step["run"]
-    poll = check_step["run"].split("for attempt in {1..180}; do", 1)[1]
+    assert "--paginate --slurp" in check_step["run"]
+    assert "for attempt in 1 2 3" in check_step["run"]
+    poll = check_step["run"].split("for attempt in 1 2 3; do", 1)[1]
     before_check = poll.split("check-runs?per_page=100&filter=all", 1)[0]
     assert "git/ref/heads/main" in before_check
     assert 'if [[ "$TESTED_SHA" != "$main_sha" ]]; then' in before_check
     assert "exit 0" in before_check
-    assert "did not complete within one hour" in check_step["run"]
+    assert "Release deferred" in check_step["run"]
     assert release_step["if"] == "steps.checks.outputs.ready == 'true'"
     assert release_step["with"]["target-branch"] == "main"
     assert not {"SKY-D290", "SKY-D305"}.intersection(

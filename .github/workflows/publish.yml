@@ -124,10 +124,10 @@ jobs:
           # The push test suite currently takes over 25 minutes. A manual
           # dispatch may start before it finishes, so allow a full hour.
           for attempt in {1..180}; do
-            gh api \
+            gh api --paginate --slurp \
               -H "Accept: application/vnd.github+json" \
-              "/repos/${GITHUB_REPOSITORY}/commits/${release_sha}/check-runs?per_page=100&filter=all" \
-              > /tmp/skylos-release-checks.json
+              "/repos/${GITHUB_REPOSITORY}/commits/${release_sha}/check-runs?per_page=100&filter=all" |
+              jq '{check_runs: [.[].check_runs[]]}' > /tmp/skylos-release-checks.json
 
             set +e
             python - "$REQUIRED_RELEASE_CHECKS" /tmp/skylos-release-checks.json <<'PY'
