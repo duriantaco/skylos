@@ -3,6 +3,7 @@ import ast
 import re
 import sys
 from skylos.rules.danger.taint import TaintVisitor, PATH_SANITIZERS
+from skylos.rules.danger.module_namespace import attribute_write_names
 from skylos.rules.danger.danger_fs.closed_world import HELPER_PARAMETER_SOURCE
 from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
 from skylos.security.receiver_resolution import ReceiverResolver
@@ -19,6 +20,7 @@ SYMLINK_WRITE_RULE = "SKY-D324"
 SYMLINK_READ_RULE = "SKY-D325"
 ARCHIVE_EXTRACTION_RULE = "SKY-D326"
 OS_OPEN_WRITE_FLAGS = {"O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND"}
+OS_OPEN_EXCLUSIVE_FLAGS = {"O_CREAT", "O_EXCL"}
 PYTEST_TMP_FIXTURE_NAMES = {"tmp_path", "tmpdir"}
 FIRST_PATH_PARAMETERS = {
     "open": "file",
@@ -132,7 +134,25 @@ def _helper_parameter_message(rule_id, message):
     return message
 
 
-def _mark_helper_parameter(finding, evidence):
+def _path_operand_location(path_expr):
+    """Where the path operand sits, so a repository pass can find the same
+    expression again (``path_provenance``)."""
+    line = getattr(path_expr, "lineno", None)
+    col = getattr(path_expr, "col_offset", None)
+    if type(line) is not int or type(col) is not int:
+        return None
+    return {
+        "line": line,
+        "col": col,
+        "end_line": getattr(path_expr, "end_lineno", line),
+        "end_col": getattr(path_expr, "end_col_offset", col),
+    }
+
+
+def _mark_helper_parameter(finding, evidence, path_expr=None):
+    location = _path_operand_location(path_expr)
+    if location is not None:
+        finding.setdefault("metadata", {})["path_operand"] = location
     if isinstance(evidence, _HelperParameterEvidence):
         finding.setdefault("metadata", {})["path_source"] = HELPER_PARAMETER_SOURCE
         finding["message"] = _helper_parameter_message(finding["rule_id"], finding["message"])
@@ -398,12 +418,38 @@ def _mode_writes(mode):
     return any(char in mode for char in ("w", "a", "x", "+"))
 
 
+def _bit_or_leaves(node):
+    """Operands of an ``A | B | C`` expression of plain names, or None."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        left = _bit_or_leaves(node.left)
+        right = _bit_or_leaves(node.right)
+        if left is None or right is None:
+            return None
+        return left + right
+    if isinstance(node, (ast.Name, ast.Attribute)):
+        return [node]
+    return None
+
+
+def _exclusive_create_modes(modes):
+    """Every possible mode is ``x``: like ``O_CREAT | O_EXCL`` it creates a
+    new file and fails on an existing one, a symlink included."""
+    return bool(modes) and all("x" in mode for mode in modes)
+
+
 def _archive_call_name(node):
+    """``extract`` or ``extractall`` of an archive. ``ZipFile.extract`` and
+    ``TarFile.extract`` require a member, so a call that cannot pass one
+    (BeautifulSoup's ``tag.extract()``) is another API."""
     if not isinstance(node.func, ast.Attribute):
         return None
     if node.func.attr not in {"extract", "extractall"}:
         return None
     if node.func.attr == "extract":
+        if not node.args and not any(
+            keyword.arg in {"member", None} for keyword in node.keywords
+        ):
+            return None
         # ZIP/TAR extraction supports these keyword names. An incompatible
         # keyword proves this is another API (for example image features).
         if any(
@@ -414,6 +460,15 @@ def _archive_call_name(node):
         ):
             return None
     return node.func.attr
+
+
+def _unpack_filter_is_safe(node):
+    """``shutil.unpack_archive(..., filter="data")`` (or ``"tar"``) rejects
+    members that leave the destination or link outside it."""
+    for keyword in node.keywords:
+        if keyword.arg == "filter":
+            return isinstance(keyword.value, ast.Constant) and keyword.value.value in {"data", "tar"}
+    return False
 
 
 def _is_path_constructor_call(node):
@@ -491,6 +546,7 @@ class _PathFlowChecker(TaintVisitor):
         self.basename_sanitized_stack = [{}]
         self.symlink_sensitive_stack = [{}]
         self.os_open_write_flags_stack = [{}]
+        self.os_open_exclusive_stack = [{}]
         self.safety_stack = [
             {
                 "symlink_guard": False,
@@ -516,9 +572,14 @@ class _PathFlowChecker(TaintVisitor):
         self._receiver_proofs = {}
         self.path_open_modes = None
         self.update_handle_reads = None
+        self._attribute_writes = (frozenset(), True)
 
     def visit_Module(self, node):
         self.untrusted_sources = UntrustedSourceIndex(node, follow_local_calls=True)
+        try:
+            self._attribute_writes = attribute_write_names(node)
+        except RecursionError:
+            self._attribute_writes = (frozenset(), True)
         try:
             self.receiver_resolver = ReceiverResolver(node, self.file_path)
         except Exception:
@@ -575,6 +636,7 @@ class _PathFlowChecker(TaintVisitor):
         self.basename_sanitized_stack.append({})
         self.symlink_sensitive_stack.append({})
         self.os_open_write_flags_stack.append({})
+        self.os_open_exclusive_stack.append({})
         self.safety_stack.append(
             {
                 "symlink_guard": False,
@@ -603,6 +665,8 @@ class _PathFlowChecker(TaintVisitor):
             self.symlink_sensitive_stack.pop()
         if self.os_open_write_flags_stack:
             self.os_open_write_flags_stack.pop()
+        if self.os_open_exclusive_stack:
+            self.os_open_exclusive_stack.pop()
         if self.safety_stack:
             self.safety_stack.pop()
 
@@ -646,6 +710,17 @@ class _PathFlowChecker(TaintVisitor):
 
     def _get_os_open_write_flags(self, name):
         for env in reversed(self.os_open_write_flags_stack):
+            if name in env:
+                return env[name]
+        return False
+
+    def _set_os_open_exclusive(self, name, exclusive):
+        if not self.os_open_exclusive_stack:
+            self.os_open_exclusive_stack.append({})
+        self.os_open_exclusive_stack[-1][name] = bool(exclusive)
+
+    def _get_os_open_exclusive(self, name):
+        for env in reversed(self.os_open_exclusive_stack):
             if name in env:
                 return env[name]
         return False
@@ -778,6 +853,9 @@ class _PathFlowChecker(TaintVisitor):
                 self._set_os_open_write_flags(
                     tgt.id, _node_mentions(node.value, OS_OPEN_WRITE_FLAGS)
                 )
+                self._set_os_open_exclusive(
+                    tgt.id, self._exclusive_create_flags(node.value)
+                )
         self.generic_visit(node)
         for tgt in node.targets:
             self._track_serving_facts(tgt, node.value)
@@ -798,6 +876,9 @@ class _PathFlowChecker(TaintVisitor):
                 )
                 self._set_os_open_write_flags(
                     node.target.id, _node_mentions(node.value, OS_OPEN_WRITE_FLAGS)
+                )
+                self._set_os_open_exclusive(
+                    node.target.id, self._exclusive_create_flags(node.value)
                 )
         self.generic_visit(node)
         if node.value is not None:
@@ -1036,6 +1117,52 @@ class _PathFlowChecker(TaintVisitor):
             or self._is_symlink_sensitive_expr(node)
         )
 
+    def _locally_bound(self, name):
+        return any(name in env for env in self.env_stack)
+
+    def _os_flag(self, leaf):
+        """The ``os`` module flag a name or attribute is, or None: an
+        unshadowed ``os`` import, not a parameter or local of the same name,
+        and no attribute write that could replace it."""
+        flag = None
+        if isinstance(leaf, ast.Attribute) and isinstance(leaf.value, ast.Name):
+            if self.import_aliases.get(leaf.value.id) == "os" and not self._locally_bound(leaf.value.id):
+                flag = leaf.attr
+        elif isinstance(leaf, ast.Name):
+            qualified = self.import_aliases.get(leaf.id, "")
+            parts = qualified.split(".")
+            if len(parts) == 2 and parts[0] == "os" and not self._locally_bound(leaf.id):
+                flag = parts[1]
+        if flag is None:
+            return None
+        names, computed = self._attribute_writes
+        if computed or flag in names:
+            return None
+        return flag
+
+    def _exclusive_create_flags(self, node):
+        """``os.O_CREAT | os.O_EXCL``: the open fails on any existing final
+        component, a symlink included, so it never follows one."""
+        leaves = _bit_or_leaves(node)
+        if leaves is None:
+            return False
+        flags = set()
+        for leaf in leaves:
+            flag = self._os_flag(leaf)
+            if flag is not None:
+                flags.add(flag)
+        return OS_OPEN_EXCLUSIVE_FLAGS <= flags
+
+    def _os_open_is_exclusive(self, node):
+        flags = _bound_argument(node, 1, "flags")
+        if flags is None:
+            return False
+        if self._exclusive_create_flags(flags):
+            return True
+        if isinstance(flags, ast.Name):
+            return self._get_os_open_exclusive(flags.id)
+        return False
+
     def _os_open_uses_write_flags(self, node):
         flags = _bound_argument(node, 1, "flags")
         if flags is None:
@@ -1046,7 +1173,7 @@ class _PathFlowChecker(TaintVisitor):
             return self._get_os_open_write_flags(flags.id)
         return False
 
-    def _add_finding(self, node, rule_id, severity, message, evidence=None):
+    def _add_finding(self, node, rule_id, severity, message, evidence=None, path_expr=None):
         key = (rule_id, getattr(node, "lineno", 0), getattr(node, "col_offset", 0))
         if key in self._emitted:
             return
@@ -1062,7 +1189,7 @@ class _PathFlowChecker(TaintVisitor):
         }
         if evidence:
             finding["metadata"] = {"security_evidence": evidence}
-        _mark_helper_parameter(finding, evidence)
+        _mark_helper_parameter(finding, evidence, path_expr)
         self._attach_receiver_proof(node, finding)
         self.findings.append(finding)
 
@@ -1193,7 +1320,7 @@ class _PathFlowChecker(TaintVisitor):
             evidence = self._source_evidence(node, path_expr, sink)
         if evidence:
             finding["metadata"] = {"security_evidence": evidence}
-        _mark_helper_parameter(finding, evidence)
+        _mark_helper_parameter(finding, evidence, path_expr)
         self._attach_receiver_proof(node, finding)
         self.findings.append(finding)
 
@@ -1231,6 +1358,7 @@ class _PathFlowChecker(TaintVisitor):
             "HIGH",
             "Possible symlink-following write on attacker-controlled path; reject symlinks or open with O_NOFOLLOW and containment checks.",
             evidence,
+            path_expr,
         )
 
     def visit_With(self, node):
@@ -1264,7 +1392,7 @@ class _PathFlowChecker(TaintVisitor):
             if bounded
             else "Possible symlink-following or unbounded read on attacker-controlled path; require a regular in-root file and a size cap."
         )
-        self._add_finding(node, SYMLINK_READ_RULE, "MEDIUM", message, evidence)
+        self._add_finding(node, SYMLINK_READ_RULE, "MEDIUM", message, evidence, path_expr)
 
     def _flag_archive_extract_if_unsafe(self, node):
         if self._has_archive_guard():
@@ -1283,6 +1411,8 @@ class _PathFlowChecker(TaintVisitor):
                 modes = self.path_open_modes.modes(node, bound_method=bound_method)
             except Exception:
                 modes = None
+        if _exclusive_create_modes(modes):
+            return
         may_read = modes is None
         may_write = modes is None
         if modes is not None:
@@ -1340,6 +1470,8 @@ class _PathFlowChecker(TaintVisitor):
             self._flag_if_tainted_path(node, first_path)
 
         canonical = self._canonical_call_name(node)
+        if canonical == "shutil.unpack_archive" and not _unpack_filter_is_safe(node):
+            self._flag_archive_extract_if_unsafe(node)
         if canonical in FILE_RESPONSE_SINKS:
             self._flag_file_response(node, canonical)
 
@@ -1365,6 +1497,7 @@ class _PathFlowChecker(TaintVisitor):
             if (
                 not _node_mentions(node, {"O_NOFOLLOW"})
                 and not self._current_safety()["nofollow"]
+                and not self._os_open_is_exclusive(node)
             ):
                 if self._os_open_uses_write_flags(node):
                     self._flag_symlink_write_if_unsafe(node, first_path)
