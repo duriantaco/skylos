@@ -1367,10 +1367,7 @@ class Visitor(ast.NodeVisitor):
                     deco_name, current_definition=qualified_name
                 ):
                     self.add_ref(qualified_name)
-                elif (
-                    deco_name in self.local_registration_decorators
-                    or deco_name.split(".", 1)[0] in self.local_registration_decorators
-                ):
+                elif deco_name in self.local_registration_decorators:
                     self.add_ref(qualified_name)
 
         if self.current_function_scope and self.local_var_maps:
