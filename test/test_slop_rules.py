@@ -1025,13 +1025,13 @@ def test_catalog_standards_and_dictionary_describe_every_slop_rule():
 @pytest.mark.parametrize(
     "rule_id, reason",
     [
-        ("SKY-L038", None),
+        ("SKY-L038", "measurement"),
         ("SKY-L036", "measurement"),
         ("SKY-L037", "measurement"),
         ("SKY-L039", "measurement"),
     ],
 )
-def test_only_measured_slop_rules_are_listed_by_default(tmp_path, rule_id, reason):
+def test_style_advice_is_optional_by_default(tmp_path, rule_id, reason):
     from skylos.reporting.advice_policy import optional_advice_reason
 
     finding = {"rule_id": rule_id, "file": str(tmp_path / "app.py"), "line": 1}

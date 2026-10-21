@@ -1113,6 +1113,11 @@ target code; deliberate exception probes remain valid. Discarded comparisons,
 including ordering checks, still merit review for an intended assertion or
 branch; their diagnostic does not claim that overloaded operands are pure.
 
+SKY-L036 to SKY-L039 are optional style advice. Their complete records stay
+in JSON with listing metadata; `--all-advice` or an explicit rule selection
+shows them and includes them in the gate. Explicit gate rule configuration
+also includes them; they stay out of the default gate otherwise.
+
 SKY-L036 to SKY-L039 report roundabout code that has a direct
 form, and only when the file proves it and the suggested rewrite keeps the
 behaviour. A builtin (`str`, `repr`, `isinstance`, ...) counts only when
