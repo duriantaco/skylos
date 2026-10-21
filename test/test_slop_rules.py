@@ -10,6 +10,7 @@ import pytest
 
 from skylos.analyzer import analyze
 from skylos.core.linter import LinterVisitor
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.rules.catalog import get_rule_catalog
 from skylos.rules.quality.slop import (
     BooleanLiteralConditionalRule,
@@ -1038,17 +1039,15 @@ def test_only_measured_slop_rules_are_listed_by_default(tmp_path, rule_id, reaso
 
 
 def _analyze(tmp_path, source, *, ignore=()):
-    (
-        tmp_path / "app.py"
-    ).write_text(  # skylos: ignore[SKY-D324] pytest-owned temporary fixture path
+    assert write_text_no_symlink(
+        tmp_path / "app.py",
         textwrap.dedent(source),
         encoding="utf-8",
     )
     if ignore:
         rendered = ", ".join(f'"{rule_id}"' for rule_id in ignore)
-        (
-            tmp_path / "pyproject.toml"
-        ).write_text(  # skylos: ignore[SKY-D324] pytest-owned temporary fixture path
+        assert write_text_no_symlink(
+            tmp_path / "pyproject.toml",
             f"[tool.skylos]\nignore = [{rendered}]\n",
             encoding="utf-8",
         )
