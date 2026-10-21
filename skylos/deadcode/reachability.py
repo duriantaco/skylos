@@ -7,12 +7,20 @@ external-use evidence remain conservative. No target modules are imported.
 from __future__ import annotations
 
 import ast
+import fnmatch
+import re
+import textwrap
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
+from skylos.core.file_discovery import discover_source_files
 from skylos.core.grep_verify_common import _grep_line_number, _grep_line_path
+from skylos.core.safe_cache_io import read_text_no_symlink
+from skylos.analysis.known_patterns import PYTEST_HOOKS
+from skylos.deadcode.data_names import names_in_data
 from skylos.deadcode._reachability_bindings import (
     FUNCTION_NODES,
     FunctionNode,
@@ -53,9 +61,41 @@ _EXTERNAL_EVIDENCE = (
 )
 _MAX_FILES = 4096
 _MAX_NODES = 2_000_000
+_DATA_NAME_SUFFIXES = (
+    ".json",
+    ".jsonc",
+    ".json5",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".xml",
+    ".csv",
+    ".html",
+    ".htm",
+    ".jinja",
+    ".jinja2",
+    ".j2",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".ts",
+    ".tsx",
+    ".vue",
+    ".svelte",
+)
+_MAX_DATA_FILES = 20_000
+_MAX_DATA_FILE_BYTES = 512 * 1024
 _UNREACHABLE_REASON = (
     "No reachable entrypoint or unresolved external use; references occur only "
     "within unreachable Python function groups."
+)
+_DYNAMIC_LOOKUP_REASON = (
+    "Nothing in the project names it; only an opaque dynamic lookup (a runtime "
+    "name, exec/eval, import *) could reach it."
 )
 DefinitionLocations = dict[tuple[Path, int, str], list[tuple[str, "Definition"]]]
 
@@ -84,7 +124,11 @@ class PythonReachabilityReport:
         self.proven_reachable_keys: set[str] = set()
         self.protected_keys: set[str] = set()
         self.protected_callback_keys: set[str] = set()
+        self.dynamic_lookup_keys: set[str] = set()
         self.reasons: dict[str, str] = {}
+        self._data_names: frozenset[str] | None = None
+        self._cog_imports: frozenset[tuple[str, str]] | None = None
+        self._pytest_modules: dict[Path, bool] = {}
         self._definitions = definitions
         self.index = SourceIndex()
         self.graph = ReferenceGraph()
@@ -100,42 +144,116 @@ class PythonReachabilityReport:
             self._definitions = definitions
         roots, proven_roots = self._current_roots(additional_roots)
         candidates = self.index.candidates.keys()
-        reached = self.graph.traverse(roots, candidates, uncertainty=True)
+        reached = self.graph.traverse(
+            roots, candidates, uncertainty=True, expand_opaque=False
+        )
+        data_named: set[str] = set()
+        if self._has_opaque_lookup(reached):
+            names = self._names_held_as_data()
+            data_named = {
+                key
+                for key, definition in self.index.candidates.items()
+                if definition.simple_name in names
+            }
+            reached |= self.graph.traverse(
+                data_named, candidates, uncertainty=True, expand_opaque=False
+            )
+        spelled: set[str] = set()
+        for _ in range(8):
+            more = self._receiver_spelled_targets(reached) - spelled
+            if not more:
+                break
+            spelled |= more
+            reached |= self.graph.traverse(
+                more, candidates, uncertainty=True, expand_opaque=False
+            )
         self.reachable_keys = reached.intersection(candidates)
         self.proven_reachable_keys = self.graph.traverse(
             proven_roots,
             candidates,
             uncertainty=False,
         ).intersection(candidates)
-        exposed_receivers = set(self.graph.receiver_roots)
-        # An opaque reachable lookup can access arbitrary project callables.
-        # Preserve those as uncertainty, rather than leaving zero references
-        # that would be reported as unused despite conservative graph retention.
-        if self.graph.opaque_receiver_root or reached.intersection(
-            self.graph.opaque_receiver_owners
-        ):
-            exposed_receivers.update(candidates)
+        exposed_receivers = set(self.graph.receiver_roots) | data_named | spelled
         for owner in reached:
             exposed_receivers.update(self.graph.receiver_edges.get(owner, ()))
+        protected = self.graph.traverse(
+            exposed_receivers, candidates, uncertainty=True, expand_opaque=False
+        )
         self.protected_keys = (
-            self.graph.traverse(
-                exposed_receivers, candidates, uncertainty=True
-            ).intersection(candidates)
-            - self.proven_reachable_keys
+            protected.intersection(candidates) - self.proven_reachable_keys
         )
         # A nested callback can be used by a decorator or an unsupported
         # deferred owner (for example a lambda) without a proven invocation.
         callbacks = self.reachable_keys.intersection(self.index.nested_parents)
         callbacks -= self.proven_reachable_keys
         self.protected_callback_keys = (
-            self.graph.traverse(callbacks, candidates, uncertainty=True).intersection(
-                candidates
-            )
+            self.graph.traverse(
+                callbacks, candidates, uncertainty=True, expand_opaque=False
+            ).intersection(candidates)
             - self.proven_reachable_keys
         )
         self.unreachable_keys = set(candidates) - reached if self.complete else set()
-        self.reasons = {key: _UNREACHABLE_REASON for key in self.unreachable_keys}
+        opaque = self._has_opaque_lookup(reached | protected)
+        self.dynamic_lookup_keys = set()
+        if opaque:
+            self.dynamic_lookup_keys = set(self.unreachable_keys)
+        self.reasons = {
+            key: (
+                _DYNAMIC_LOOKUP_REASON
+                if key in self.dynamic_lookup_keys
+                else _UNREACHABLE_REASON
+            )
+            for key in self.unreachable_keys
+        }
         return self
+
+    def _receiver_spelled_targets(self, reached: set[str]) -> set[str]:
+        patterns = {
+            spelling
+            for owner in reached.intersection(self.graph.unbound_receiver_owners)
+            for spelling in self.graph.receiver_spellings.get(owner, ())
+            if spelling.strip("*")
+        }
+        if not patterns:
+            return set()
+        matcher = re.compile(
+            "|".join(f"(?:{fnmatch.translate(pattern)})" for pattern in sorted(patterns))
+        )
+        return {
+            key
+            for key, definition in self.index.candidates.items()
+            if matcher.fullmatch(definition.simple_name)
+        }
+
+    def _has_opaque_lookup(self, reached: set[str]) -> bool:
+        graph = self.graph
+        return (
+            graph.opaque_root
+            or graph.opaque_receiver_root
+            or bool(
+                reached.intersection(graph.opaque_owners | graph.opaque_receiver_owners)
+            )
+        )
+
+    def _names_held_as_data(self) -> frozenset[str]:
+        if self._data_names is None:
+            names: set[str] = set()
+            files = discover_source_files(
+                self.project_root,
+                _DATA_NAME_SUFFIXES,
+                exclude_folders=sorted(DEFAULT_EXCLUDE_FOLDERS),
+            )
+            for path in files[:_MAX_DATA_FILES]:
+                text = read_text_no_symlink(
+                    path,
+                    max_bytes=_MAX_DATA_FILE_BYTES,
+                    encoding="utf-8",
+                    errors="ignore",
+                )
+                if text:
+                    names.update(names_in_data(Path(path).suffix, text))
+            self._data_names = frozenset(names)
+        return self._data_names
 
     def _current_roots(self, additional: Iterable[str]) -> tuple[set[str], set[str]]:
         proven = self.graph.roots | set(additional)
@@ -147,7 +265,32 @@ class PythonReachabilityReport:
                 proven.add(key)
             if self._needs_conservative_root(key, definition, markers):
                 roots.add(key)
+            if self._is_pytest_hook(key, original) or self._is_cog_import(original):
+                proven.add(key)
         return roots | proven, proven
+
+    def _is_pytest_hook(self, key: str, definition: Definition) -> bool:
+        if definition.simple_name not in PYTEST_HOOKS:
+            return False
+        if key in self.index.method_classes or key in self.index.nested_parents:
+            return False
+        path = _path(str(getattr(definition, "filename", "")), self.project_root)
+        module = self.index.modules.get(path)
+        if module is None:
+            return False
+        if module.path.name == "conftest.py":
+            return True
+        if module.path not in self._pytest_modules:
+            self._pytest_modules[module.path] = _imports_pytest(module.tree)
+        return self._pytest_modules[module.path]
+
+    def _is_cog_import(self, definition: Definition) -> bool:
+        if self._cog_imports is None:
+            self._cog_imports = _cog_block_imports(self.project_root)
+        if not self._cog_imports:
+            return False
+        stem = Path(str(getattr(definition, "filename", ""))).stem
+        return (stem, definition.simple_name) in self._cog_imports
 
     def _needs_conservative_root(
         self,
@@ -429,3 +572,64 @@ def analyze_python_reachability(
     for module in report.index.modules.values():
         SourceVisitor(report.index, report.graph, module).visit(module.tree)
     return report.refresh()
+
+
+def _imports_pytest(tree: ast.Module) -> bool:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(alias.name.split(".", 1)[0] in ("pytest", "_pytest") for alias in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if node.module.split(".", 1)[0] in ("pytest", "_pytest"):
+                return True
+    return False
+
+
+_COG_SUFFIXES = (".rst", ".md", ".txt", ".html", ".py", ".cfg", ".toml", ".yml", ".yaml", ".in")
+
+
+def _cog_block_imports(root: Path) -> frozenset[tuple[str, str]]:
+    found: set[tuple[str, str]] = set()
+    files = discover_source_files(
+        root, _COG_SUFFIXES, exclude_folders=sorted(DEFAULT_EXCLUDE_FOLDERS)
+    )
+    for path in files[:_MAX_DATA_FILES]:
+        text = read_text_no_symlink(
+            path, max_bytes=_MAX_DATA_FILE_BYTES, encoding="utf-8", errors="ignore"
+        )
+        if not text or "[[[cog" not in text:
+            continue
+        for block in _cog_blocks(text):
+            try:
+                tree = ast.parse(block)
+            except (SyntaxError, ValueError, RecursionError):
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                    stem = node.module.rsplit(".", 1)[-1]
+                    for alias in node.names:
+                        found.add((stem, alias.name))
+    return frozenset(found)
+
+
+def _cog_blocks(text: str) -> list[str]:
+    blocks = []
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        start = lines[index].find("[[[cog")
+        if start < 0:
+            index += 1
+            continue
+        prefix = lines[index][:start]
+        body = []
+        index += 1
+        while index < len(lines) and "]]]" not in lines[index]:
+            line = lines[index]
+            if prefix.strip() and line.startswith(prefix):
+                line = line[len(prefix):]
+            body.append(line)
+            index += 1
+        blocks.append(textwrap.dedent("\n".join(body)))
+        index += 1
+    return blocks

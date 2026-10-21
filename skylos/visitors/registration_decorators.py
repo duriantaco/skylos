@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import sys
 
 
 _REGISTRATION_METHOD_NAMES = {
@@ -14,14 +15,108 @@ _REGISTRATION_METHOD_NAMES = {
 }
 
 
+_CONTAINER_FACTORIES = frozenset({"list", "set", "dict"})
+
+
 def collect_local_registration_decorators(node: ast.Module) -> set[str]:
     decorators = set()
     for stmt in node.body:
-        if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if _is_registration_decorator(stmt):
-            decorators.add(stmt.name)
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if _is_registration_decorator(stmt):
+                decorators.add(stmt.name)
+    decorators |= _bound_registration_methods(node)
+    decorators |= _imported_instances(node)
     return decorators
+
+
+def _imported_instances(node: ast.Module) -> set[str]:
+    opaque = set()
+    for stmt in node.body:
+        if isinstance(stmt, ast.Import):
+            for alias in stmt.names:
+                if not _is_standard_library(alias.name):
+                    opaque.add(alias.asname or alias.name.split(".", 1)[0])
+        elif isinstance(stmt, ast.ImportFrom) and stmt.level == 0 and stmt.module:
+            if not _is_standard_library(stmt.module):
+                for alias in stmt.names:
+                    opaque.add(alias.asname or alias.name)
+    assigned: dict[str, int] = {}
+    for stmt in node.body:
+        for target in _assigned_names(stmt):
+            assigned[target] = assigned.get(target, 0) + 1
+    instances = set()
+    for stmt in node.body:
+        target, value = _single_assignment(stmt)
+        if target is None or assigned.get(target) != 1 or not isinstance(value, ast.Call):
+            continue
+        root = value.func
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if isinstance(root, ast.Name) and root.id in opaque:
+            instances.add(target)
+    return instances
+
+
+def _is_standard_library(module: str) -> bool:
+    return module.split(".", 1)[0] in sys.stdlib_module_names
+
+
+def _assigned_names(stmt: ast.AST) -> list[str]:
+    names = []
+    for node in ast.walk(stmt):
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            names.append(node.id)
+    return names
+
+
+def _bound_registration_methods(node: ast.Module) -> set[str]:
+    containers = set()
+    assignments = []
+    for stmt in node.body:
+        target, value = _single_assignment(stmt)
+        if target is None:
+            continue
+        if _is_empty_container(value):
+            containers.add(target)
+        assignments.append((target, value))
+    bound = set()
+    for target, value in assignments:
+        if (
+            isinstance(value, ast.Attribute)
+            and value.attr in _REGISTRATION_METHOD_NAMES
+            and isinstance(value.value, ast.Name)
+            and value.value.id in containers
+        ):
+            bound.add(target)
+    return bound
+
+
+def _single_assignment(stmt: ast.AST) -> tuple[str | None, ast.AST | None]:
+    if (
+        isinstance(stmt, ast.Assign)
+        and len(stmt.targets) == 1
+        and isinstance(stmt.targets[0], ast.Name)
+    ):
+        return stmt.targets[0].id, stmt.value
+    if (
+        isinstance(stmt, ast.AnnAssign)
+        and isinstance(stmt.target, ast.Name)
+        and stmt.value is not None
+    ):
+        return stmt.target.id, stmt.value
+    return None, None
+
+
+def _is_empty_container(value: ast.AST) -> bool:
+    if isinstance(value, (ast.List, ast.Set, ast.Dict, ast.Tuple)):
+        return True
+    return (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id in _CONTAINER_FACTORIES
+        and not value.args
+        and not value.keywords
+    )
 
 
 def _is_registration_decorator(

@@ -919,3 +919,31 @@ def test_classes_found_by_subclass_discovery_are_live(tmp_path):
         unused
     )
     assert "plugins.extra.Unrelated" in unused
+
+
+def test_a_computed_string_without_literal_text_does_not_keep_functions(tmp_path):
+    _write(
+        tmp_path, 'app/mod.py',
+        """
+        def handle_refund():
+            return 1
+
+
+        def dead_helper(x):
+            return x
+
+
+        def dispatch(obj, action):
+            name = f"handle_{action}"
+            label = f"{obj}{action}"
+            message = "%s: %s" % (obj, action)
+            return getattr(obj, name)(), label, message
+
+
+        dispatch(None, "refund")
+        """,
+    )
+
+    unused = _names(_scan(tmp_path, conf=0), "unused_functions")
+    assert "app.mod.handle_refund" not in unused
+    assert "app.mod.dead_helper" in unused

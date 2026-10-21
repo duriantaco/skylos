@@ -16,6 +16,7 @@ from skylos.deadcode._reachability_bindings import (
     default_expressions,
     import_bindings,
     namespace_name,
+    relative_parent,
 )
 from skylos.deadcode._reachability_receivers import (
     CLASS_BINDING,
@@ -29,6 +30,65 @@ from skylos.deadcode._reachability_graph import (
 )
 
 _EXPORT_LIST = "__all__"
+
+
+def _single_module_function(tree: ast.Module, name: str):
+    found = [
+        statement
+        for statement in tree.body
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and statement.name == name
+    ]
+    if len(found) != 1 or bound_names(tree.body).counts[name] != 1:
+        return None
+    return found[0]
+
+
+def _arguments(args: ast.arguments) -> list[ast.arg]:
+    found = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+    if args.vararg is not None:
+        found.append(args.vararg)
+    if args.kwarg is not None:
+        found.append(args.kwarg)
+    return found
+
+
+def _own_nodes(function: ast.AST):
+    pending = list(ast.iter_child_nodes(function))
+    while pending:
+        node = pending.pop()
+        yield node
+        if not isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+        ):
+            pending.extend(ast.iter_child_nodes(node))
+
+
+def _is_star_exported(name: str, exported: set[str] | None) -> bool:
+    if exported is None:
+        return not name.startswith("_")
+    return name in exported
+
+
+def _literal_export_list(tree: ast.Module) -> set[str] | None:
+    """Names in a module-level literal ``__all__``, or None without one."""
+    for statement in tree.body:
+        if not (
+            isinstance(statement, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == _EXPORT_LIST
+                for target in statement.targets
+            )
+            and isinstance(statement.value, (ast.List, ast.Tuple))
+        ):
+            continue
+        names = set()
+        for element in statement.value.elts:
+            if not (isinstance(element, ast.Constant) and isinstance(element.value, str)):
+                return None
+            names.add(element.value)
+        return names
+    return None
 
 _DYNAMIC_NAMES = {
     "eval",
@@ -161,6 +221,10 @@ class SourceVisitor(ast.NodeVisitor):
         # module object to unknown code. A standalone module value does.
         base = self.index.resolve(node.value, self.module, self.local)
         if base and base[0] in RECEIVER_BINDINGS:
+            if self.owner is not None and isinstance(node.ctx, ast.Load):
+                self.graph.receiver_spellings[self.owner].add(
+                    self._attribute_pattern(ast.Constant(node.attr))
+                )
             member_name = namespace_name(
                 getattr(self.local, "class_name", ""), node.attr
             )
@@ -201,10 +265,36 @@ class SourceVisitor(ast.NodeVisitor):
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         if any(alias.name == "*" for alias in node.names):
-            self._opaque()
+            self._protect_star_exports(node)
         bindings = import_bindings(node, self.module)
         for alias in node.names:
             self._visit_import_alias(node, alias, bindings)
+
+    def _protect_star_exports(self, node: ast.ImportFrom) -> None:
+        source = node.module
+        if node.level:
+            source = relative_parent(node, self.module)
+        if source is None:
+            self._opaque()
+            return
+        if self.module.path.name != "__init__.py":
+            return
+        targets = set()
+        for module in self.index.module_names.get(source, ()):
+            exported = _literal_export_list(module.tree)
+            for key in module.functions.values():
+                definition = self.index.candidates.get(key)
+                if definition is None:
+                    continue
+                if _is_star_exported(definition.simple_name, exported):
+                    targets.add(key)
+        self.graph.protect(targets, self.owner)
+        destination = (
+            self.graph.receiver_roots
+            if self.owner is None
+            else self.graph.receiver_edges[self.owner]
+        )
+        destination.update(targets)
 
     def _visit_import_alias(
         self, node: ast.ImportFrom, alias: ast.alias, bindings: Bindings
@@ -230,13 +320,14 @@ class SourceVisitor(ast.NodeVisitor):
 
     def _opaque(self) -> None:
         if self.owner is None:
-            self.graph.uncertain_roots.update(self.index.candidates)
+            self.graph.opaque_root = True
         else:
             self.graph.opaque_owners.add(self.owner)
 
     def visit_Call(self, node: ast.Call) -> None:
         if self._visit_getattr_lookup(node):
             return
+        self._protect_namespace_lookup(node)
         self._mark_unknown_call_receivers(node)
         for argument in [*node.args, *(kw.value for kw in node.keywords)]:
             self._protect_value(argument)
@@ -257,6 +348,34 @@ class SourceVisitor(ast.NodeVisitor):
                 self._protect_binding((MODULE_BINDING, identity))
         self.generic_visit(node)
 
+    def _protect_namespace_lookup(self, node: ast.Call) -> None:
+        if not (
+            isinstance(node.func, ast.Name)
+            and node.func.id in {"globals", "locals", "vars"}
+            and not node.args
+            and not node.keywords
+            and node.func.id not in self.local
+            and node.func.id not in self.module.bindings
+        ):
+            return
+        if node.func.id != "globals" and self.owner is not None:
+            nested = {
+                key
+                for key, parent in self.index.nested_parents.items()
+                if parent == self.owner
+            }
+            self.graph.protect(nested, self.owner)
+            return
+        targets = set(self.module.functions.values())
+        for binding in self.module.bindings.values():
+            if binding and binding[0] == "qualified":
+                binding = self.index.qualified(binding[1])
+            if binding and binding[0] == "symbol":
+                targets.add(binding[1])
+            elif binding and binding[0] == CLASS_BINDING:
+                targets.update(self.index.escaped_symbols(binding))
+        self.graph.protect(targets, self.owner)
+
     def _mark_unknown_call_receivers(self, node: ast.Call) -> None:
         if (
             self._builtin_getattr(node)
@@ -267,6 +386,8 @@ class SourceVisitor(ast.NodeVisitor):
                 self.graph.opaque_receiver_root = True
             else:
                 self.graph.opaque_receiver_owners.add(self.owner)
+            if len(node.args) >= 2:
+                self._protect_spelled_targets(node.args[1])
 
         unbound_method = self._unbound_method(node.func)
         if unbound_method is not None:
@@ -283,9 +404,28 @@ class SourceVisitor(ast.NodeVisitor):
             ):
                 self._unknown_method_receiver(unbound_method)
 
+    def _protect_spelled_targets(self, attribute: ast.AST) -> None:
+        pattern = self._attribute_pattern(self._attribute_expression(attribute))
+        if not pattern.strip("*"):
+            return
+        matcher = re.compile(fnmatch.translate(pattern))
+        targets = {
+            key
+            for key, definition in self.index.candidates.items()
+            if matcher.fullmatch(definition.simple_name)
+        }
+        self.graph.protect(targets, self.owner)
+        destination = (
+            self.graph.receiver_roots
+            if self.owner is None
+            else self.graph.receiver_edges[self.owner]
+        )
+        destination.update(targets)
+
     def _unknown_method_receiver(self, method: str) -> None:
         self.graph.opaque_owners.add(method)
         self.graph.opaque_receiver_owners.add(method)
+        self.graph.unbound_receiver_owners.add(method)
 
     def _unbound_method(self, node: ast.AST) -> str | None:
         if not isinstance(node, ast.Attribute):
@@ -341,23 +481,53 @@ class SourceVisitor(ast.NodeVisitor):
         binding = self.index.resolve(node.args[0], self.module, self.local)
         if binding is None:
             binding = self._current_module_receiver(node.args[0])
+        if binding is None:
+            binding = self._module_returned_by_call(node.args[0])
         if binding and binding[0] in {MODULE_BINDING, *RECEIVER_BINDINGS}:
             return binding
         return None
 
-    def _current_module_receiver(self, node: ast.AST) -> Binding | None:
+    def _module_returned_by_call(self, node: ast.AST) -> Binding | None:
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and not node.args
+            and not node.keywords
+            and node.func.id not in self.local
+        ):
+            return None
+        helper = _single_module_function(self.module.tree, node.func.id)
+        if helper is None:
+            return None
+        local_names = set(bound_names(helper.body).counts)
+        local_names.update(argument.arg for argument in _arguments(helper.args))
+        if local_names & {"sys", "__name__"}:
+            return None
+        returned = set()
+        for statement in _own_nodes(helper):
+            if isinstance(statement, ast.Return):
+                if statement.value is None:
+                    return None
+                returned.add(self._current_module_receiver(statement.value, {}))
+        if len(returned) == 1 and None not in returned:
+            return returned.pop()
+        return None
+
+    def _current_module_receiver(self, node: ast.AST, local=None) -> Binding | None:
+        if local is None:
+            local = self.local
         if not (
             isinstance(node, ast.Subscript)
             and isinstance(node.value, ast.Attribute)
             and node.value.attr == "modules"
-            and self.index.resolve(node.value.value, self.module, self.local)
+            and self.index.resolve(node.value.value, self.module, local)
             == (MODULE_BINDING, "sys")
         ):
             return None
         if (
             isinstance(node.slice, ast.Name)
             and node.slice.id == "__name__"
-            and "__name__" not in self.local
+            and "__name__" not in local
             and "__name__" not in self.module.bindings
         ):
             return (MODULE_BINDING, min(self.module.names))
@@ -455,7 +625,10 @@ class SourceVisitor(ast.NodeVisitor):
         # fnmatch compiles wildcard runs using bounded matching rather
         # than repeated arbitrary regex groups that can backtrack badly.
         attribute_name = self._attribute_expression(node.args[1])
-        pattern = re.compile(fnmatch.translate(self._attribute_pattern(attribute_name)))
+        spelling = self._attribute_pattern(attribute_name)
+        if self.owner is not None:
+            self.graph.receiver_spellings[self.owner].add(spelling)
+        pattern = re.compile(fnmatch.translate(spelling))
         targets = {
             key
             for name, key in self.index.classes[binding[1]].methods.items()

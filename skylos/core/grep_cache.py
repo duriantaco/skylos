@@ -155,7 +155,7 @@ class GrepCache:
                 self._entries.clear()
                 self._result_chars = 0
             namespace = hashlib.sha256(
-                b"skylos-grep-process-local-v1\0" + os.fsencode(root)
+                b"c521ad4ce36d34e54947131e\0" + os.fsencode(root)
             ).hexdigest()[:20]
             self._fingerprint_root = root
             self._repository_fingerprint = namespace

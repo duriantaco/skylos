@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import ast
 import re
+from pathlib import Path
 
 from skylos.core.grep_search_state import grep_evidence_strategy, limit_grep_evidence
+from skylos.core.safe_cache_io import read_text_no_symlink
 
 from skylos.core.grep_verify_common import (
     _deduplicate_grep_results,
@@ -86,6 +89,74 @@ def _parameter_contract_search(
             )
 
     return _deduplicate_grep_results(results)
+
+
+_MAX_IMPORTER_BYTES = 512 * 1024
+_MAX_IMPORTER_FILES = 500
+
+
+def _parsed_hit_files(hits: list[str], project_root: str):
+    seen: set[str] = set()
+    for hit in hits:
+        path = _grep_line_path(hit)
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        file_path = Path(path)
+        if not file_path.is_absolute():
+            file_path = Path(project_root) / file_path
+        source = read_text_no_symlink(
+            file_path, max_bytes=_MAX_IMPORTER_BYTES, encoding="utf-8", errors="ignore"
+        )
+        if not source:
+            continue
+        try:
+            tree = ast.parse(source)
+        except (SyntaxError, ValueError, RecursionError):
+            continue
+        yield path, tree
+
+
+def _confirmed_from_imports(
+    hits: list[str], project_root: str, module_name: str, name: str
+) -> list[str]:
+    confirmed: list[str] = []
+    for path, tree in _parsed_hit_files(hits, project_root):
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.level == 0
+                and node.module == module_name
+                and any(alias.name == name for alias in node.names)
+            ):
+                confirmed.append(f"{path}:{node.lineno}: from {module_name} import {name}")
+                break
+    return confirmed
+
+
+def _confirmed_qualified_references(
+    hits: list[str], project_root: str, qualified: str
+) -> list[str]:
+    confirmed: list[str] = []
+    for path, tree in _parsed_hit_files(hits, project_root):
+        for node in ast.walk(tree):
+            if _dotted_name(node) == qualified or (
+                isinstance(node, ast.Constant) and node.value == qualified
+            ):
+                confirmed.append(f"{path}:{node.lineno}: {qualified}")
+                break
+    return confirmed
+
+
+def _dotted_name(node: ast.AST) -> str | None:
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not parts or not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return ".".join(reversed(parts))
 
 
 def multi_strategy_search(
@@ -197,6 +268,48 @@ def multi_strategy_search(
                     usages, max_per_strategy, strategy="qualified_references"
                 )
 
+    if kind == "import":
+        for module_name in module_names:
+            importers = _strategy_search(
+                "module_importers",
+                rf"from[[:space:]]+{re.escape(module_name)}[[:space:]]+import",
+                project_root,
+                use_regex=True,
+                include_globs=["*.py", "*.pyi"],
+                max_results=_MAX_IMPORTER_FILES,
+            )
+            importers = limit_grep_evidence(
+                importers or [], _MAX_IMPORTER_FILES, strategy="imports"
+            )
+            confirmed = _confirmed_from_imports(
+                importers, project_root, module_name, simple_name
+            )
+            if confirmed:
+                results["imports"] = confirmed[:max_per_strategy]
+                break
+        for module_name in module_names:
+            binding_refs = _strategy_search(
+                "qualified_references",
+                rf"\b{re.escape(module_name + '.' + simple_name)}\b",
+                project_root,
+                use_regex=True,
+                include_globs=["*.py", "*.pyi"],
+                max_results=max_per_strategy,
+            )
+            if not binding_refs:
+                continue
+            _defs, usages = filter_grep_results(binding_refs, finding)
+            usages = _confirmed_qualified_references(
+                usages, project_root, f"{module_name}.{simple_name}"
+            )
+            if usages:
+                results["qualified_references"] = limit_grep_evidence(
+                    results.get("qualified_references", []) + usages,
+                    max_per_strategy,
+                    strategy="qualified_references",
+                )
+                break
+
     if kind in ("method", "function"):
         call_pattern = rf"\.{re.escape(simple_name)}[[:space:]]*\("
         call_refs = _strategy_search(
@@ -242,15 +355,27 @@ def multi_strategy_search(
         rf"\.[[:alnum:]_]+[[:space:]]*\([[:space:]]*[{quote_chars}]{re.escape(simple_name)}[{quote_chars}]",
         rf"[{quote_chars}]{re.escape(simple_name)}[{quote_chars}][[:space:]]*:[[:space:]]*[[:alnum:]_]+[[:space:]]*\(",
     ]
-    for dp in dispatch_patterns:
+    own_module_only = kind == "import" and bool(file_path)
+    for index, dp in enumerate(dispatch_patterns):
+        dispatch_globs = ["*.py"]
+        if own_module_only and index:
+            dispatch_globs = [Path(file_path).name]
         dp_refs = _strategy_search(
             "string_dispatch",
             dp,
             project_root,
             use_regex=True,
-            include_globs=["*.py"],
+            include_globs=dispatch_globs,
             max_results=max_per_strategy,
         )
+        if dp_refs and own_module_only and index:
+            own = str(Path(file_path).resolve())
+            dp_refs = [
+                r
+                for r in dp_refs
+                if str((Path(project_root) / _grep_line_path(r)).resolve()) == own
+                or str(Path(_grep_line_path(r)).resolve()) == own
+            ]
         if dp_refs:
             dp_refs = [
                 r
@@ -338,14 +463,16 @@ def multi_strategy_search(
                             usages, max_per_strategy, strategy="cast_protocol"
                         )
 
-    test_refs = _strategy_search(
-        "test_references",
-        rf"\b{simple_name}\b",
-        project_root,
-        use_regex=True,
-        include_globs=["test_*.py", "*_test.py", "conftest.py"],
-        max_results=max_per_strategy,
-    )
+    test_refs = None
+    if kind != "import":
+        test_refs = _strategy_search(
+            "test_references",
+            rf"\b{simple_name}\b",
+            project_root,
+            use_regex=True,
+            include_globs=["test_*.py", "*_test.py", "conftest.py"],
+            max_results=max_per_strategy,
+        )
     if test_refs:
         test_refs = [r for r in test_refs if not is_substring_match(r, simple_name)]
         _defs, test_usages = filter_grep_results(test_refs, finding)
@@ -372,14 +499,16 @@ def multi_strategy_search(
                     usages, max_per_strategy, strategy="file_path_references"
                 )
 
-        config_refs = _strategy_search(
-            "config_references",
-            rel_file,
-            project_root,
-            fixed_string=True,
-            include_globs=["*.toml", "*.cfg", "*.ini", "*.yaml", "*.yml"],
-            max_results=max_per_strategy,
-        )
+        config_refs = None
+        if kind != "import":
+            config_refs = _strategy_search(
+                "config_references",
+                rel_file,
+                project_root,
+                fixed_string=True,
+                include_globs=["*.toml", "*.cfg", "*.ini", "*.yaml", "*.yml"],
+                max_results=max_per_strategy,
+            )
         if config_refs:
             _defs, usages = filter_grep_results(config_refs, finding)
             if usages:

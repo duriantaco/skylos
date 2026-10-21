@@ -2566,6 +2566,13 @@ class Skylos:
             reason = report.reasons[key]
             if reason not in defn.why_unused:
                 defn.why_unused.append(reason)
+        self._mark_dynamic_lookup_candidates(report)
+
+    def _mark_dynamic_lookup_candidates(self, report):
+        for key in report.dynamic_lookup_keys:
+            defn = self.defs.get(key)
+            if defn is not None and "dynamic_lookup" not in defn.confidence_factors:
+                defn.confidence_factors.append("dynamic_lookup")
 
     def _refresh_after_rescue(self):
         self._restore_transitive_dead_callees()
@@ -2583,6 +2590,7 @@ class Skylos:
         }
         report.refresh(self.defs, additional_roots=revived_roots)
         self._retain_reachability_uncertainty(report)
+        self._mark_dynamic_lookup_candidates(report)
         # An external callback or a later grep rescue may establish a real
         # caller. Its callees must be restored in this same scan.
         for key in previously_unreachable - report.unreachable_keys:

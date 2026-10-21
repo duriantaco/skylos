@@ -179,7 +179,6 @@ def test_counted_recursive_references_are_edges_not_roots(tmp_path):
     [
         "getattr(worker, requested)()",
         "vars(worker)",
-        "globals()[requested]()",
         "external(worker)",
     ],
 )
@@ -192,6 +191,20 @@ def test_reflection_and_module_escape_are_uncertain_roots(tmp_path, expression):
         },
     )
     assert "worker.leaf" not in report.unreachable_keys
+    assert "worker.leaf" not in report.proven_reachable_keys
+
+
+def test_namespace_lookup_keeps_its_own_module_and_imported_functions(tmp_path):
+    report = _report(
+        tmp_path,
+        {
+            "worker.py": "def leaf(): return 1\ndef imported(): return 2\n",
+            "app.py": "import worker\nfrom worker import imported\n"
+            "def own(): return 3\nglobals()[requested]()\n",
+        },
+    )
+    assert {"app.own", "worker.imported"}.isdisjoint(report.unreachable_keys)
+    assert "worker.leaf" in report.dynamic_lookup_keys
     assert "worker.leaf" not in report.proven_reachable_keys
 
 
@@ -428,10 +441,85 @@ def test_static_export_list_does_not_protect_unrelated_private_group(tmp_path):
         "namespace = __builtins__\nnamespace[requested](module, member)()",
     ],
 )
-def test_reflection_aliases_remain_uncertain(tmp_path, body):
+def test_reflection_aliases_are_dynamic_lookup_evidence(tmp_path, body):
     report = _report(tmp_path, {"worker.py": "def leaf(): return 1\n" + body + "\n"})
-    assert "worker.leaf" not in report.unreachable_keys
+    assert "worker.leaf" in report.dynamic_lookup_keys
     assert "worker.leaf" not in report.proven_reachable_keys
+
+
+def test_star_reexport_keeps_public_names_like_named_imports(tmp_path):
+    report = _report(
+        tmp_path,
+        {
+            "package/__init__.py": "from package.helpers import *\nfrom package.listed import *\n",
+            "package/helpers.py": "def public(): return 1\ndef _private(): return 2\n",
+            "package/listed.py": "__all__ = ['exported']\ndef exported(): return 3\ndef unlisted(): return 4\n",
+        },
+    )
+    assert {"package.helpers.public", "package.listed.exported"}.isdisjoint(
+        report.unreachable_keys
+    )
+    assert {"package.helpers._private", "package.listed.unlisted"} <= report.unreachable_keys
+    assert report.dynamic_lookup_keys == set()
+
+
+def test_star_import_in_a_plain_module_keeps_only_what_it_uses(tmp_path):
+    report = _report(
+        tmp_path,
+        {
+            "audio.py": "def used(): return 1\ndef unused(): return 2\n",
+            "model.py": "from audio import *\nused()\n",
+        },
+    )
+    assert "audio.used" not in report.unreachable_keys
+    assert "audio.unused" in report.unreachable_keys
+
+
+def test_opaque_lookup_keeps_callables_named_in_repository_data(tmp_path):
+    (tmp_path / "pipeline.json").write_text('{"steps": ["export_report"]}\n')
+    report = _report(
+        tmp_path,
+        {
+            "worker.py": "def export_report(): return 1\ndef never_named(): return 2\n"
+            "def run(receiver, step): return getattr(receiver, step)()\n"
+            "run(load(), load())\n"
+        },
+    )
+    assert "worker.export_report" not in report.unreachable_keys
+    assert report.dynamic_lookup_keys == {"worker.never_named"}
+
+
+def test_opaque_lookup_needs_a_whole_data_value_not_a_matching_word(tmp_path):
+    files = {
+        "pipeline.json": '{"steps": ["jobs.export_report"], "note": "sync_users runs nightly"}\n',
+        "settings.yaml": "handlers: plugins.cli:load_rows, prune_rows\nabout: call index_rows\n",
+        "setup.cfg": "[jobs]\nnightly =\n    tasks.archive_rows\n# old: drop_rows\n",
+        "web/app.js": (
+            "// keep \"comment_rows\" for later\n"
+            "function update_cache() { return send('fetch_rows') }\n"
+            "const state = { merge_rows: 1 };\n"
+        ),
+        "templates/page.html": (
+            "<p>Run compute_totals first.</p>\n"
+            "<button data-action=\"clear_rows\" onclick=\"go('tag_rows')\">x</button>\n"
+        ),
+    }
+    for name, text in files.items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text(text)
+    named = [
+        "export_report", "load_rows", "prune_rows", "archive_rows",
+        "fetch_rows", "clear_rows", "tag_rows",
+    ]
+    unnamed = [
+        "sync_users", "index_rows", "drop_rows", "comment_rows",
+        "update_cache", "merge_rows", "compute_totals",
+    ]
+    worker = "".join(f"def {name}(): return 1\n" for name in named + unnamed)
+    worker += "def run(receiver, step): return getattr(receiver, step)()\nrun(load(), load())\n"
+    report = _report(tmp_path, {"worker.py": worker})
+    assert {f"worker.{name}" for name in named}.isdisjoint(report.unreachable_keys)
+    assert report.dynamic_lookup_keys == {f"worker.{name}" for name in unnamed}
 
 
 def test_dynamic_module_attribute_preserves_its_returned_function(tmp_path):
@@ -712,3 +800,49 @@ def test_cli_keeps_real_package_and_top_level_module_distinct(tmp_path, package)
     unused = {row["full_name"] for row in result.get("unused_functions", [])}
     assert "worker.render_report" not in unused
     assert f"{package}.worker.render_report" in unused
+
+
+def test_opaque_lookup_reads_escaped_data_values(tmp_path):
+    (tmp_path / "pipeline.json").write_text('{"step": "export\\u005freport"}\n')
+    (tmp_path / "web.js").write_text("send('archive\\x5frows')\n")
+    report = _report(
+        tmp_path,
+        {
+            "worker.py": "def export_report(): return 1\ndef archive_rows(): return 2\n"
+            "def never_named(): return 3\n"
+            "def run(receiver, step): return getattr(receiver, step)()\n"
+            "run(load(), load())\n"
+        },
+    )
+    assert {"worker.export_report", "worker.archive_rows"}.isdisjoint(report.unreachable_keys)
+    assert report.dynamic_lookup_keys == {"worker.never_named"}
+
+
+def test_a_helper_returning_the_current_module_is_a_namespace_lookup(tmp_path):
+    report = _report(
+        tmp_path,
+        {
+            "worker.py": "import sys\n"
+            "def export_report(): return 1\n"
+            "def current_module():\n    return sys.modules[__name__]\n"
+            "def dispatch(name): return getattr(current_module(), name)()\n"
+            "dispatch(input())\n",
+            "other.py": "def unrelated(): return 2\n",
+        },
+    )
+    assert "worker.export_report" not in report.unreachable_keys
+    assert "other.unrelated" in report.unreachable_keys
+
+
+def test_undecodable_data_keeps_reachability_and_falls_back_to_words(tmp_path):
+    (tmp_path / "data.json5").write_text('{"step": "bad\\u{FFFFFF}", "next": "export_report"}\n')
+    report = _report(
+        tmp_path,
+        {
+            "worker.py": "def export_report(): return 1\ndef never_named(): return 2\n"
+            "def run(receiver, step): return getattr(receiver, step)()\n"
+            "run(load(), load())\n"
+        },
+    )
+    assert "worker.export_report" not in report.unreachable_keys
+    assert report.dynamic_lookup_keys == {"worker.never_named"}

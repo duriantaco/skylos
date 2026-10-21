@@ -390,6 +390,9 @@ def _is_stub_declaration(node: ast.AST) -> bool:
     )
 
 
+_NAME_PATTERN_RE = re.compile(r"[A-Za-z0-9_*]+")
+
+
 def _module_binds_name(module: ast.Module, target_name: str) -> bool:
     class BindingProbe(ast.NodeVisitor):
         def __init__(self) -> None:
@@ -680,6 +683,7 @@ class Visitor(ast.NodeVisitor):
         self.metaclass_classes = set()
         self.descriptor_classes = set()
         self._string_ref_patterns = []
+        self._deferred_global_loads = []
         self._complexity_stack = [0]
         self.class_bases = {}
         self._mro_cache = {}
@@ -780,6 +784,7 @@ class Visitor(ast.NodeVisitor):
         for stmt in node.body:
             self.visit(stmt)
         self._finalize_dunder_all_exports(node.body)
+        self._resolve_deferred_global_loads()
         self._credit_lazy_module_attributes(node)
 
     def _credit_lazy_module_attributes(self, node: ast.Module) -> None:
@@ -789,6 +794,23 @@ class Visitor(ast.NodeVisitor):
         for name, target in exports.items():
             if self.alias.get(name) == target:
                 self.add_ref(target)
+
+    def _resolve_deferred_global_loads(self) -> None:
+        for name, owner, lineno in self._deferred_global_loads:
+            target = self.alias.get(name)
+            if target is None:
+                continue
+            local_name = name
+            if self.mod:
+                local_name = f"{self.mod}.{name}"
+            if self.qual(name) != target or any(d.name == local_name for d in self.defs):
+                continue
+            self.first_read_lineno.setdefault(target, lineno)
+            self.refs.append((sys.intern(str(target)), self.file))
+            if owner:
+                self.call_graph[owner].add(target)
+                self.reverse_call_graph[target].add(owner)
+        self._deferred_global_loads = []
 
     def qual(self, name: str) -> str:
         if name in self.alias:
@@ -3342,6 +3364,10 @@ class Visitor(ast.NodeVisitor):
         qualified = self.qual(node.id)
         if not self.current_function_scope and self.cls is None:
             self.top_level_refs.add(qualified)
+        elif self.current_function_scope and node.id not in self.alias:
+            self._deferred_global_loads.append(
+                (node.id, self._current_function_qname, node.lineno)
+            )
         self.first_read_lineno.setdefault(qualified, node.lineno)
         self.add_ref(qualified)
 
@@ -3675,6 +3701,10 @@ class Visitor(ast.NodeVisitor):
 
     def _apply_string_patterns(self) -> None:
         for pattern in self._string_ref_patterns:
+            if not _NAME_PATTERN_RE.fullmatch(pattern) or not is_specific_name_pattern(
+                pattern
+            ):
+                continue
             regex_pattern = re.escape(pattern).replace(r"\*", ".*")
             try:
                 regex = re.compile(f"^{regex_pattern}$")
