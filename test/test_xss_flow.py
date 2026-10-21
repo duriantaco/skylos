@@ -838,3 +838,143 @@ def test_escaped_url_in_a_media_or_metadata_attribute_is_not_reported(template):
         return f'''{template}'''
     """
     assert _d228(src) == []
+
+
+def _url_rules(src: str):
+    findings = _scan_src(textwrap.dedent(src))
+    return [f for f in findings if f["rule_id"] in ("SKY-D226", "SKY-D228")]
+
+
+_URL_CHECKER = """
+    import re
+    import markupsafe
+
+    _HTTP_URL_RE = re.compile(r"https?://\\S+", re.IGNORECASE)
+
+    def _normalize_http_url(value):
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip()
+        if not _HTTP_URL_RE.fullmatch(normalized):
+            return None
+        return normalized
+"""
+
+_URL_CELL = """
+    class UrlColumn:
+        async def render_cell(self, value, request):
+            normalized = _normalize_http_url(value)
+            if normalized is None:
+                return markupsafe.escape(value)
+            escaped = markupsafe.escape(normalized)
+            return markupsafe.Markup(f'<a href="{escaped}">{escaped}</a>')
+"""
+
+
+def test_url_checked_by_a_regex_helper_is_not_reported():
+    assert _url_rules(_URL_CHECKER + _URL_CELL) == []
+
+
+@pytest.mark.parametrize(
+    "old, new",
+    [
+        ("https?://", "[a-z]+://"),
+        ("https?://", "(https?://)?"),
+        (".fullmatch(normalized)", ".search(normalized)"),
+        (".fullmatch(normalized)", ".fullmatch(value)"),
+        (".fullmatch(normalized)", ".match(normalized, 3)"),
+        ("        return None\n        normalized", "        return value\n        normalized"),
+        ("            return None\n        return normalized", "            return 'javascript:void(0)'\n        return normalized"),
+        ("        return normalized", "        normalized = value\n        return normalized"),
+        ("    def _normalize_http_url", "    @staticmethod\n    def _normalize_http_url"),
+        ("    import re\n", "    import re\n    re = object()\n"),
+    ],
+)
+def test_url_helper_without_a_real_scheme_check_still_reports(old, new):
+    checker = _URL_CHECKER.replace(old, new)
+    assert checker != _URL_CHECKER
+    assert _url_rules(checker + _URL_CELL)
+
+
+def test_url_pattern_rebound_at_module_level_still_reports():
+    assert _url_rules(_URL_CHECKER + "\n    _HTTP_URL_RE = re.compile('.*')\n" + _URL_CELL)
+
+
+def test_url_helper_shadowed_in_the_caller_still_reports():
+    cell = _URL_CELL.replace(
+        "            normalized = _normalize_http_url(value)",
+        "            _normalize_http_url = str\n            normalized = _normalize_http_url(value)",
+    )
+    assert _url_rules(_URL_CHECKER + cell)
+
+
+def test_deep_url_helper_chain_keeps_later_unsafe_sinks(capsys):
+    source = textwrap.dedent(_URL_CHECKER)
+    previous = "_normalize_http_url"
+    for index in range(350):
+        name = f"check{index}"
+        source += f"\ndef {name}(url):\n    return {previous}(url)\n"
+        previous = name
+    source += (
+        f"\ndef render(url):\n    checked = {previous}(url)\n"
+        "    return markupsafe.Markup(f'<a href=\"{markupsafe.escape(checked)}\">x</a>')\n"
+        "\ndef vulnerable(user):\n    return markupsafe.Markup(user)\n"
+    )
+    sink_line = len(source.splitlines())
+    assert any(row["line"] == sink_line for row in _url_rules(source))
+    assert "maximum recursion depth" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "guard",
+    [
+        "re.match(r'https?://', url)",
+        "re.fullmatch(r'https?://\\S+', url, flags=re.I | re.ASCII)",
+        "re.search(r'^(?:https?://|/)', url)",
+        "re.match(r'https?://', url) is not None",
+        "not re.match(r'https?://', url) is None",
+        "re.compile(r'(?i)https://').match(url.strip())",
+        "re.match(r'(?ui:httpſ://)', url, re.ASCII)",
+        "re.match(r'(?ai:javaſcript):', url)",
+    ],
+)
+def test_url_behind_a_regex_scheme_allowlist_is_not_reported(guard):
+    src = f"""
+    import re
+    from markupsafe import Markup, escape
+
+    def link(url):
+        if {guard}:
+            return Markup(f'<a href="{{escape(url)}}">x</a>')
+        return ""
+    """
+    assert _url_rules(src) == []
+
+
+@pytest.mark.parametrize(
+    "guard",
+    [
+        "re.search(r'https?://', url)",
+        "re.search(r'^https?://', url, re.M)",
+        "re.match(r'https?://', url) is None",
+        "re.match(r'.*', url)",
+        "re.match(r'(?:https?|data):', url)",
+        "re.match(r'https?://|', url)",
+        "re.fullmatch(r'https?://\\S+', url, flags)",
+        "re.match(pattern, url)",
+        "url.startswith('https://') is not None",
+        "re.match(r'(?ui:javaſcript):', url, re.ASCII)",
+        "re.match(r'(?u:javaſcript):', url, re.ASCII | re.I)",
+    ],
+)
+def test_url_behind_a_regex_that_lets_scripts_through_still_reports(guard):
+    src = f"""
+    import re
+    from markupsafe import Markup, escape
+
+    def link(url, flags, pattern):
+        if {guard}:
+            return Markup(f'<a href="{{escape(url)}}">x</a>')
+        return ""
+    """
+    assert _url_rules(src)
