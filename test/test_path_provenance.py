@@ -820,3 +820,186 @@ def test_public_function_of_a_package_is_unknown_even_with_constant_callers(tmp_
     provenance = _suppressed(_scan(root), "read_file")["SKY-D215"]["metadata"]["path_provenance"]
     assert provenance["status"] == "unknown"
     assert any("public in an importable package" in chain[0] for chain in provenance["unknown"])
+
+
+_CONTAINED_LOADER = (
+    "def _load(path):\n"
+    "    with open(path, 'rb') as handle:\n"
+    "        return handle.read()\n"
+)
+
+
+def _containment_view(guard, bind="full = (BASE / name).resolve().absolute()"):
+    return (
+        "from pathlib import Path\n\nfrom flask import abort, request\n\nfrom files import _load\n\n"
+        "BASE = Path('/srv/files')\n\n\n"
+        "@app.route('/f')\n"
+        "def view():\n"
+        "    name = request.args['name']\n"
+        f"    {bind}\n"
+        f"{guard}"
+        "    return _load(full)\n"
+    )
+
+
+_SAFE_CONTAINMENT_GUARDS = [
+    "    try:\n        full.relative_to(BASE.resolve())\n    except ValueError:\n        abort(404)\n",
+    "    try:\n        full.relative_to(BASE)\n    except ValueError:\n        return 'outside'\n",
+    "    full.relative_to(BASE)\n",
+    "    if not full.is_relative_to(BASE):\n        abort(404)\n",
+    "    if not str(full).startswith(str(BASE) + '/'):\n        raise PermissionError(name)\n",
+    "    if not str(full).startswith(str(BASE) + os.sep):\n        raise PermissionError(name)\n",
+    "    if os.path.commonpath([full, BASE]) != str(BASE):\n        abort(404)\n",
+    "    assert full.is_relative_to(BASE)\n",
+]
+
+
+def test_containment_check_in_the_caller_is_safe(tmp_path):
+    for index, guard in enumerate(_SAFE_CONTAINMENT_GUARDS):
+        root = _project(
+            tmp_path / str(index),
+            {"files.py": _CONTAINED_LOADER, "views.py": "import os\n" + _containment_view(guard)},
+        )
+        result = _scan(root)
+        assert _reported(result, "_load") == {}, guard
+        assert _status(_suppressed(result, "_load")["SKY-D215"]) == "safe", guard
+
+
+def test_containment_check_inside_an_if_around_the_call_is_safe(tmp_path):
+    view = (
+        "from pathlib import Path\n\nfrom flask import request\n\nfrom files import _load\n\n"
+        "BASE = Path('/srv/files')\n\n\n"
+        "@app.route('/f')\n"
+        "def view():\n"
+        "    full = (BASE / request.args['name']).resolve()\n"
+        "    if full.is_relative_to(BASE) and full.is_file():\n"
+        "        return _load(full)\n"
+        "    return ''\n"
+    )
+    root = _project(tmp_path, {"files.py": _CONTAINED_LOADER, "views.py": view})
+    assert _reported(_scan(root), "_load") == {}
+
+
+def test_containment_checks_that_prove_nothing_still_report(tmp_path):
+    cases = [
+        ("    try:\n        full.relative_to(BASE)\n    except ValueError:\n        pass\n", None),
+        ("    try:\n        full.relative_to(BASE)\n    except ValueError:\n        abort(404)\n", "full = BASE / name"),
+        ("    if not full.is_relative_to(BASE):\n        print('outside')\n", None),
+        ("    full.is_relative_to(BASE)\n", None),
+        ("    if not other.is_relative_to(BASE):\n        abort(404)\n", None),
+        ("    if not full.is_relative_to(BASE) and name:\n        abort(404)\n", None),
+        ("    if not full.is_relative_to(BASE):\n        abort(404)\n    full = BASE / name\n", None),
+        ("    if os.path.commonpath([full, BASE]) == str(BASE):\n        abort(404)\n", None),
+        ("    if not str(full).startswith(str(BASE)):\n        raise PermissionError(name)\n", None),
+        ("    if os.path.commonpath([full, BASE]) != '/':\n        abort(404)\n", None),
+        ("    full.relative_to(Path(request.args['base']).resolve())\n", None),
+        ("    if not full.is_relative_to(Path(request.args['base']).resolve()):\n        abort(404)\n", None),
+        ("    full.relative_to(BASE, walk_up=True)\n", None),
+        ("    if not str(full).startswith(str(BASE) + '/'):\n        abort(404)\n", "full = os.path.abspath(BASE / name)"),
+        ("    if not str(full).startswith(str(BASE) + '/'):\n        abort(404)\n", "full = os.path.normpath(BASE / name)"),
+    ]
+    for index, (guard, bind) in enumerate(cases):
+        view = _containment_view(guard)
+        if bind is not None:
+            view = _containment_view(guard, bind)
+        root = _project(
+            tmp_path / str(index),
+            {"files.py": _CONTAINED_LOADER, "views.py": "import os\nother = None\n" + view},
+        )
+        assert "SKY-D215" in _reported(_scan(root), "_load"), guard
+
+
+def test_containment_proof_requires_real_standard_library_bindings(tmp_path):
+    cases = [
+        (
+            "def resolve(value):\n    return value\n",
+            "full = resolve(str(BASE / name))",
+            "    if not full.startswith(str(BASE) + '/'):\n        abort(404)\n",
+        ),
+        (
+            "def commonpath(values):\n    return str(BASE)\n",
+            "full = (BASE / name).resolve()",
+            "    if commonpath([full, BASE]) != str(BASE):\n        abort(404)\n",
+        ),
+        (
+            "os.path.commonpath = lambda values: str(BASE)\n",
+            "full = (BASE / name).resolve()",
+            "    if os.path.commonpath([full, BASE]) != str(BASE):\n        abort(404)\n",
+        ),
+        (
+            "def abort(status):\n    return None\n",
+            "full = (BASE / name).resolve()",
+            "    if not full.is_relative_to(BASE):\n        abort(404)\n",
+        ),
+        (
+            "os.sep = ''\n",
+            "full = (BASE / name).resolve()",
+            "    if not str(full).startswith(str(BASE) + os.sep):\n        abort(404)\n",
+        ),
+    ]
+    for index, (setup, bind, guard) in enumerate(cases):
+        view = "import os\n" + _containment_view(guard, bind)
+        view = view.replace("@app.route('/f')", setup + "\n@app.route('/f')")
+        root = _project(tmp_path / str(index), {"files.py": _CONTAINED_LOADER, "views.py": view})
+        assert "SKY-D215" in _reported(_scan(root), "_load"), setup
+
+
+def _closure_root_view(calls):
+    return (
+        "from pathlib import Path\nfrom flask import request\nfrom files import _load\n\n"
+        "def make_handler(root):\n"
+        "    root = Path(root)\n"
+        "    def handler(request):\n"
+        "        full = (root / request.args['name']).resolve()\n"
+        "        full.relative_to(root.resolve())\n"
+        "        return _load(full)\n"
+        "    return handler\n\n"
+        + calls
+    )
+
+
+def test_configured_closure_root_preserves_unresolved_caller_evidence(tmp_path):
+    root = _project(
+        tmp_path,
+        {
+            "files.py": _CONTAINED_LOADER,
+            "application/__init__.py": "",
+            "application/views.py": _closure_root_view("handler = make_handler('/srv/files')\n"),
+        },
+    )
+    result = _scan(root)
+    assert _reported(result, "_load") == {}
+    record = _suppressed(result, "_load")["SKY-D215"]["metadata"]["path_provenance"]
+    assert record["status"] == "unknown"
+    explained = False
+    for chain in record["unknown"]:
+        for step in chain:
+            if "configured closure-root callers are only partly resolved" in step:
+                explained = True
+    assert explained
+
+
+def test_unknown_or_request_controlled_closure_roots_still_report(tmp_path):
+    callers = [
+        "",
+        "handler = make_handler(unknown_root / 'static')\n",
+        "handler = make_handler(request.args['base'])\n",
+        "handler = make_handler('/srv/files')\nunsafe = make_handler(request.args['base'])\n",
+    ]
+    for index, calls in enumerate(callers):
+        root = _project(
+            tmp_path / str(index),
+            {
+                "files.py": _CONTAINED_LOADER,
+                "application/__init__.py": "",
+                "application/views.py": _closure_root_view(calls),
+            },
+        )
+        assert "SKY-D215" in _reported(_scan(root), "_load"), calls
+
+
+def test_unknown_handler_base_is_not_a_containment_proof(tmp_path):
+    view = _containment_view("    full.relative_to(Path(base).resolve())\n")
+    view = view.replace("@app.route('/f')\n", "").replace("def view():", "def view(base):")
+    root = _project(tmp_path, {"files.py": _CONTAINED_LOADER, "views.py": view})
+    assert "SKY-D215" in _reported(_scan(root), "_load")

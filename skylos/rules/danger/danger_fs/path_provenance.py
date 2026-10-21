@@ -48,7 +48,7 @@ from skylos.rules.danger.danger_fs.closed_world import (
 )
 from skylos.rules.danger.danger_fs.path_flow import (
     _allowlist_names,
-    _body_terminates,
+    _commonpath_elements,
     _test_is_negative,
 )
 from skylos.rules.danger.module_namespace import module_name_for, module_rebinding
@@ -68,6 +68,11 @@ UNKNOWN = "unknown"
 INCOMPLETE = "incomplete"
 PARAMETER = "parameter"
 TRAVERSAL_RULE = "SKY-D215"
+ALLOWLIST_CHECK = "is checked against a constant allowlist"
+CONTAINMENT_CHECK = "is checked to stay inside a base directory"
+_PATH_CONSTRUCTORS = frozenset({"pathlib.Path", "pathlib.PosixPath", "pathlib.WindowsPath"})
+_REALPATH_FUNCTIONS = frozenset({"os.path.realpath", "posixpath.realpath", "ntpath.realpath"})
+_COMMONPATH_FUNCTIONS = frozenset({"os.path.commonpath", "posixpath.commonpath", "ntpath.commonpath"})
 SAFE_REASON = (
     "every caller in the project passes a value that cannot carry an attacker "
     "path (literal, module location, clock or number, temporary path, test "
@@ -2369,6 +2374,8 @@ class _Project:
                     return UNTRUSTED, _step(unit, fn, f"request object `{name}` of `{label}`")
         if name in REQUEST_NAMES and self.framework_context(unit):
             return UNTRUSTED, _step(unit, fn, f"request data `{name}` of `{label}` (web framework module)")
+        if name in REQUEST_NAMES and _reads_request_attributes(fn, name):
+            return UNTRUSTED, _step(unit, fn, f"request data `{name}` of `{label}` (reads HTTP request fields)")
         info = self.function_info.get(id(fn))
         owner = None
         if info is not None:
@@ -3029,28 +3036,35 @@ class _Tracer:
         facts = _Facts()
         for expr, expr_unit, expr_scope in self.project.bind_argument(fn, site, name):
             traced = self.trace(expr_unit, expr_scope, expr)
-            if traced.chains[UNTRUSTED] and self._guarded(site, expr):
-                traced = traced.moved(UNTRUSTED, SAFE, _step(site.unit, site.call, f"`{_describe(expr)}` is checked against a constant allowlist first"))
+            if traced.chains[UNTRUSTED]:
+                check = self._guarded(site, expr)
+                if check is not None:
+                    reason, status = check
+                    traced = traced.moved(UNTRUSTED, status, _step(site.unit, site.call, f"`{_describe(expr)}` {reason} first"))
             facts.add(traced.then(step))
         if facts.empty():
             return _Facts.leaf(SAFE, _step(site.unit, site.call, f"call `{_describe(site.call)}` passes nothing as `{name}`"))
         return facts
 
     def _guarded(self, site, expr):
-        """``expr`` is a name checked against a constant allowlist before the
-        call (``if name not in ALLOWED: return``, or the call inside
-        ``if name in ALLOWED:``) and not rebound between the check and the
-        call, so the checked value is the one that reaches it."""
+        """How ``expr`` is checked before the call, or None: a name checked
+        against a constant allowlist (``if name not in ALLOWED: return``, or
+        the call inside ``if name in ALLOWED:``) or a resolved path checked to
+        stay inside a base directory (``path.relative_to(base)``,
+        ``if not path.is_relative_to(base): return``), and not rebound between
+        the check and the call, so the checked value is the one that reaches
+        it."""
         if not isinstance(expr, ast.Name):
-            return False
+            return None
         unit = site.unit
         scope = site.scope
-        guard = self._guard_statement(unit, scope, site.call, expr.id)
-        if guard is None:
-            return False
+        guarded = self._guard_statement(unit, scope, site.call, expr.id)
+        if guarded is None:
+            return None
+        guard, check = guarded
         found = unit.lookup(scope, expr.id)
         if found is None:
-            return False
+            return None
         guard_line = guard.lineno
         call_line = site.call.lineno
         loop = self._enclosing_loop(unit, site.call, guard)
@@ -3059,10 +3073,10 @@ class _Tracer:
                 continue
             line = getattr(bind.node, "lineno", 0)
             if guard_line <= line <= call_line:
-                return False
+                return None
             if loop is not None and loop.lineno <= line <= getattr(loop, "end_lineno", line):
-                return False
-        return True
+                return None
+        return check
 
     @staticmethod
     def _enclosing_loop(unit, call, guard):
@@ -3076,15 +3090,18 @@ class _Tracer:
         return None
 
     def _guard_statement(self, unit, scope, call, name):
+        """``(statement, how it checks name)`` for the check that runs
+        before ``call``, or None."""
         child = call
         for node in unit.ancestors(call):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
                 return self._guard_in(unit, scope, node.body, child, name)
             if isinstance(node, ast.Lambda):
                 return None
-            if isinstance(node, ast.If) and child in node.body and not _test_is_negative(node.test):
-                if name in self._allowlisted(unit, scope, node.test):
-                    return node
+            if isinstance(node, ast.If) and child in node.body:
+                check = self._branch_check(unit, scope, node.test, name)
+                if check is not None:
+                    return node, check
             for block in ("body", "orelse", "finalbody"):
                 statements = getattr(node, block, None)
                 if isinstance(statements, list) and child in statements:
@@ -3094,18 +3111,374 @@ class _Tracer:
             child = node
         return None
 
+    def _branch_check(self, unit, scope, test, name):
+        """How ``test`` holding checks ``name`` for the body of its ``if``."""
+        if not _test_is_negative(test) and name in self._allowlisted(unit, scope, test):
+            return ALLOWLIST_CHECK, SAFE
+        status = self._contained(unit, scope, test, True, name)
+        if status is not None:
+            return self._containment_reason(status), status
+        return None
+
     def _guard_in(self, unit, scope, statements, child, name):
         found = None
         for statement in statements:
             if statement is child:
                 return found
-            if isinstance(statement, ast.If) and _test_is_negative(statement.test) and _body_terminates(statement.body):
-                if name in self._allowlisted(unit, scope, statement.test):
-                    found = statement
-            if isinstance(statement, ast.Assert) and not _test_is_negative(statement.test):
-                if name in self._allowlisted(unit, scope, statement.test):
-                    found = statement
+            check = self._statement_check(unit, scope, statement, name)
+            if check is not None:
+                found = (statement, check)
         return found
+
+    def _statement_check(self, unit, scope, statement, name):
+        """How ``statement`` stops the code after it unless ``name`` passed a
+        check, or None."""
+        if isinstance(statement, ast.If) and self._guard_terminates(unit, scope, statement.body):
+            if _test_is_negative(statement.test) and name in self._allowlisted(unit, scope, statement.test):
+                return ALLOWLIST_CHECK, SAFE
+            status = self._contained(unit, scope, statement.test, False, name)
+            if status is not None:
+                return self._containment_reason(status), status
+            return None
+        if isinstance(statement, ast.Assert):
+            return self._branch_check(unit, scope, statement.test, name)
+        status = self._raises_outside_base(unit, scope, statement, name)
+        if status is not None:
+            return self._containment_reason(status), status
+        if not isinstance(statement, ast.Try) or not statement.handlers:
+            return None
+        for handler in statement.handlers:
+            if not self._guard_terminates(unit, scope, handler.body):
+                return None
+        for inner in statement.body:
+            status = self._raises_outside_base(unit, scope, inner, name)
+            if status is not None:
+                return self._containment_reason(status), status
+        return None
+
+    def _guard_terminates(self, unit, scope, body):
+        if not body:
+            return False
+        last = body[-1]
+        if isinstance(last, (ast.Return, ast.Raise, ast.Continue, ast.Break)):
+            return True
+        if isinstance(last, ast.Expr) and isinstance(last.value, ast.Call):
+            return self._external_call(
+                unit, scope, last.value,
+                {"flask.abort", "werkzeug.exceptions.abort", "sys.exit", "os._exit", "builtins.exit"},
+            )
+        return False
+
+    def _raises_outside_base(self, unit, scope, statement, name):
+        """``statement`` is ``path.relative_to(base)`` on its own or as an
+        assigned value: it raises ValueError unless the resolved ``path`` is
+        inside ``base``."""
+        value = None
+        if isinstance(statement, (ast.Expr, ast.Assign, ast.AnnAssign)):
+            value = statement.value
+        if not isinstance(value, ast.Call):
+            return None
+        return self._containment_call(unit, scope, value, name, {"relative_to"})
+
+    def _contained(self, unit, scope, test, holds, name):
+        """``test`` coming out ``holds`` proves the resolved path ``name``
+        stays inside a base directory."""
+        if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+            return self._contained(unit, scope, test.operand, not holds, name)
+        if isinstance(test, ast.BoolOp):
+            needs_every_part = isinstance(test.op, ast.Or) == holds
+            status = None
+            for value in test.values:
+                part = self._contained(unit, scope, value, holds, name)
+                if part is None:
+                    if needs_every_part:
+                        return None
+                    continue
+                if part == SAFE and not needs_every_part:
+                    return SAFE
+                if status is None or part == UNKNOWN:
+                    status = part
+            return status
+        if isinstance(test, ast.Compare):
+            return self._commonpath_check(unit, scope, test, holds, name)
+        if not holds or not isinstance(test, ast.Call):
+            return None
+        return self._containment_call(unit, scope, test, name, {"is_relative_to", "startswith"})
+
+    def _commonpath_check(self, unit, scope, test, holds, name):
+        """``os.path.commonpath([path, base]) == base`` (or ``!=`` failing)."""
+        if len(test.ops) != 1 or not isinstance(test.ops[0], (ast.Eq, ast.NotEq)):
+            return None
+        if isinstance(test.ops[0], ast.Eq) != holds:
+            return None
+        pairs = ((test.left, test.comparators[0]), (test.comparators[0], test.left))
+        for call, comparator in pairs:
+            if not isinstance(call, ast.Call) or len(call.args) != 1 or call.keywords:
+                continue
+            if not self._external_call(unit, scope, call, _COMMONPATH_FUNCTIONS):
+                continue
+            elements = _commonpath_elements(call)
+            if len(elements) != 2:
+                continue
+            for index, element in enumerate(elements):
+                if not self._checked_path_name(unit, scope, element, name):
+                    continue
+                base = elements[1 - index]
+                if not self._same_path_expression(unit, scope, base, comparator):
+                    continue
+                return self._base_status(unit, scope, base)
+        return None
+
+    def _containment_call(self, unit, scope, call, name, methods):
+        if not isinstance(call.func, ast.Attribute) or call.func.attr not in methods:
+            return None
+        if len(call.args) != 1 or not self._checked_path_name(unit, scope, call.func.value, name):
+            return None
+        method = call.func.attr
+        for keyword in call.keywords:
+            if method != "relative_to" or keyword.arg != "walk_up":
+                return None
+            if not isinstance(keyword.value, ast.Constant) or keyword.value.value is not False:
+                return None
+        form = self._path_form(unit, scope, call.func.value)
+        if method == "startswith":
+            if form != "resolved_string":
+                return None
+            return self._prefix_status(unit, scope, call.args[0])
+        if form != "resolved_path":
+            return None
+        return self._base_status(unit, scope, call.args[0])
+
+    @staticmethod
+    def _containment_reason(status):
+        if status == UNKNOWN:
+            return CONTAINMENT_CHECK + "; configured closure-root callers are only partly resolved"
+        return CONTAINMENT_CHECK
+
+    def _base_status(self, unit, scope, base):
+        facts = self.trace(unit, scope, base)
+        if facts.chains[UNTRUSTED] or facts.chains[INCOMPLETE]:
+            return None
+        if facts.chains[UNKNOWN] or facts.chains[PARAMETER] or facts.empty():
+            if self._configured_closure_root(unit, scope, base):
+                return UNKNOWN
+            return None
+        return SAFE
+
+    def _configured_closure_root(self, unit, scope, base):
+        """An immutable Path captured before a handler, with a proven configured caller.
+
+        This proves the root's configuration role, not complete caller coverage:
+        unresolved public/dynamic callers remain UNKNOWN in the finding record.
+        """
+        if self._path_form(unit, scope, base) not in {"path", "resolved_path", "resolved_string"}:
+            return False
+        while isinstance(base, ast.Call):
+            operand = self._string_operand(unit, scope, base)
+            if operand is not base:
+                base = operand
+            elif isinstance(base.func, ast.Attribute) and base.func.attr in {"resolve", "absolute", "as_posix"}:
+                base = base.func.value
+            else:
+                return False
+        if not isinstance(base, ast.Name):
+            return False
+        found = unit.lookup(scope, base.id)
+        if found is None:
+            return False
+        owner, binds = found
+        if owner is scope or owner.kind != "function":
+            return False
+        assignments = []
+        for bind in binds:
+            if bind.kind != "param":
+                assignments.append(bind)
+        if len(assignments) != 1:
+            return False
+        bind = assignments[0]
+        if bind.kind != "assign" or bind.scope is not owner or not bind.top_level:
+            return False
+        if getattr(bind.node, "end_lineno", 0) >= getattr(scope.node, "lineno", 0):
+            return False
+        constructor = bind.value
+        while isinstance(constructor, ast.Call) and isinstance(constructor.func, ast.Attribute):
+            if constructor.func.attr not in {"resolve", "absolute"}:
+                break
+            constructor = constructor.func.value
+        if not isinstance(constructor, ast.Call) or len(constructor.args) != 1 or constructor.keywords:
+            return False
+        if not self._external_call(unit, owner, constructor, _PATH_CONSTRUCTORS):
+            return False
+        argument = constructor.args[0]
+        if not isinstance(argument, ast.Name):
+            return False
+        parameter = None
+        for candidate in _function_params(owner.node):
+            if candidate.arg == argument.id:
+                parameter = candidate
+                break
+        if parameter is None:
+            return False
+        for site in self.project.call_sites(unit, owner.node).resolved[:_MAX_SITES]:
+            for expr, expr_unit, expr_scope in self.project.bind_argument(owner.node, site, parameter.arg):
+                facts = self.trace(expr_unit, expr_scope, expr)
+                if facts.chains[UNTRUSTED] or facts.chains[INCOMPLETE]:
+                    continue
+                if self._configuration_evidence(expr_unit, expr_scope, expr):
+                    return True
+        return False
+
+    def _configuration_evidence(self, unit, scope, expr, depth=0):
+        """A literal suffix cannot make an otherwise unknown root configured."""
+        if depth > _MAX_VALUE_DEPTH:
+            return False
+        if isinstance(expr, ast.BinOp) and isinstance(expr.op, (ast.Div, ast.Add)):
+            return self._configuration_evidence(unit, scope, expr.left, depth + 1) and self._configuration_evidence(unit, scope, expr.right, depth + 1)
+        if isinstance(expr, ast.Name):
+            found = unit.lookup(scope, expr.id)
+            if found is not None:
+                binds = self._visible_binds(unit, found[0], found[1], expr)
+                assignments = []
+                for bind in binds:
+                    if bind.kind == "assign":
+                        assignments.append(bind)
+                if assignments:
+                    for bind in assignments:
+                        if not self._configuration_evidence(unit, bind.scope, bind.value, depth + 1):
+                            return False
+                    return True
+        if isinstance(expr, ast.Call):
+            if self._external_call(unit, scope, expr, _PATH_CONSTRUCTORS) and expr.args:
+                for argument in expr.args:
+                    if not self._configuration_evidence(unit, scope, argument, depth + 1):
+                        return False
+                return True
+            if isinstance(expr.func, ast.Attribute) and expr.func.attr in {"resolve", "absolute", "as_posix"}:
+                return self._configuration_evidence(unit, scope, expr.func.value, depth + 1)
+        if isinstance(expr, ast.Attribute) and expr.attr == "parent":
+            return self._configuration_evidence(unit, scope, expr.value, depth + 1)
+        facts = self.trace(unit, scope, expr)
+        return bool(facts.chains[SAFE] or facts.chains[OPERATOR])
+
+    def _external_call(self, unit, scope, call, names):
+        values = self.project.values(unit, scope, call.func)
+        if not values:
+            return False
+        for value in values:
+            if value.kind != "ext" or value.name not in names:
+                return False
+            if self._external_rebound(value.name):
+                return False
+        return True
+
+    def _external_rebound(self, name):
+        for member in name.split(".")[1:]:
+            for store_unit, target, _, _, store_scope in self.project.attr_stores.get(member, ()):
+                owners = self.project.values(store_unit, store_scope, target.value)
+                for owner in owners or ():
+                    if owner.kind not in {"ext", "extinst", "extattr"}:
+                        continue
+                    qualified = owner.name + "." + target.attr
+                    if name == qualified or name.startswith(qualified + "."):
+                        return True
+        return False
+
+    def _string_operand(self, unit, scope, node):
+        if isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords:
+            if self._external_call(unit, scope, node, {"builtins.str", "os.fspath"}):
+                return node.args[0]
+        return node
+
+    def _checked_path_name(self, unit, scope, node, name):
+        operand = self._string_operand(unit, scope, node)
+        if not isinstance(operand, ast.Name) or operand.id != name:
+            return False
+        return self._path_form(unit, scope, node) in {"resolved_path", "resolved_string"}
+
+    def _same_path_expression(self, unit, scope, left, right):
+        left = self._string_operand(unit, scope, left)
+        right = self._string_operand(unit, scope, right)
+        return ast.dump(left, include_attributes=False) == ast.dump(right, include_attributes=False)
+
+    def _prefix_status(self, unit, scope, prefix, depth=0):
+        """A string prefix must end at a directory separator, not a sibling's name."""
+        if depth > _MAX_VALUE_DEPTH:
+            return None
+        if isinstance(prefix, ast.Constant) and isinstance(prefix.value, str):
+            if prefix.value.endswith("/"):
+                return SAFE
+            return None
+        if isinstance(prefix, ast.BinOp) and isinstance(prefix.op, ast.Add):
+            separator = prefix.right
+            literal_separator = isinstance(separator, ast.Constant) and separator.value == "/"
+            values = self.project.values(unit, scope, separator)
+            system_separator = bool(values) and not self._external_rebound("os.sep")
+            for value in values or ():
+                if value.kind != "ext" or value.name != "os.sep":
+                    system_separator = False
+            if literal_separator or system_separator:
+                return self._base_status(unit, scope, prefix.left)
+            return None
+        if isinstance(prefix, ast.Name):
+            found = unit.lookup(scope, prefix.id)
+            if found is not None:
+                binds = self._visible_binds(unit, found[0], found[1], prefix)
+                if len(binds) == 1 and binds[0].kind == "assign":
+                    bind = binds[0]
+                    return self._prefix_status(unit, bind.scope, bind.value, depth + 1)
+        return None
+
+    def _path_form(self, unit, scope, node, depth=0):
+        """Prove the receiver is a real pathlib path or a canonical path string."""
+        if depth > _MAX_VALUE_DEPTH:
+            return None
+        if isinstance(node, ast.Name):
+            found = unit.lookup(scope, node.id)
+            if found is None:
+                return None
+            binds = self._visible_binds(unit, found[0], found[1], node)
+            form = None
+            for bind in binds:
+                if bind.kind != "assign":
+                    return None
+                current = self._path_form(unit, bind.scope, bind.value, depth + 1)
+                if current is None or form is not None and current != form:
+                    return None
+                form = current
+            return form
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            if self._path_form(unit, scope, node.left, depth + 1) in {"path", "resolved_path"}:
+                return "path"
+            return None
+        if not isinstance(node, ast.Call):
+            return None
+        if self._external_call(unit, scope, node, _PATH_CONSTRUCTORS):
+            return "path"
+        if self._external_call(unit, scope, node, _REALPATH_FUNCTIONS):
+            if len(node.args) == 1:
+                return "resolved_string"
+            return None
+        operand = self._string_operand(unit, scope, node)
+        if operand is not node:
+            form = self._path_form(unit, scope, operand, depth + 1)
+            if form in {"resolved_path", "resolved_string"}:
+                return "resolved_string"
+            return None
+        if not isinstance(node.func, ast.Attribute):
+            return None
+        form = self._path_form(unit, scope, node.func.value, depth + 1)
+        if form not in {"path", "resolved_path"}:
+            return None
+        if node.func.attr == "resolve":
+            for constructor in _PATH_CONSTRUCTORS:
+                if self._external_rebound(constructor + ".resolve"):
+                    return None
+            return "resolved_path"
+        if node.func.attr == "absolute" and not node.args and not node.keywords:
+            return form
+        if node.func.attr == "as_posix" and form == "resolved_path" and not node.args and not node.keywords:
+            return "resolved_string"
+        return None
 
     def _allowlisted(self, unit, scope, test):
         """Names ``test`` checks for membership in a collection of constants
@@ -3954,3 +4327,42 @@ def _classify(project, tracers, finding):
         chain = facts.chains[UNTRUSTED][0]
     record = _provenance_record(status, _function_name(unit, operand), facts, project, limits)
     return status, record, chain
+
+
+_HTTP_REQUEST_FIELDS = frozenset(
+    {
+        "GET",
+        "POST",
+        "FILES",
+        "COOKIES",
+        "META",
+        "args",
+        "form",
+        "files",
+        "values",
+        "json",
+        "get_json",
+        "data",
+        "headers",
+        "cookies",
+        "query_params",
+        "path_params",
+        "match_info",
+        "rel_url",
+        "query",
+        "body",
+    }
+)
+
+
+def _reads_request_attributes(fn, name):
+    for node in ast.walk(fn):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.ctx, ast.Load)
+            and node.attr in _HTTP_REQUEST_FIELDS
+            and isinstance(node.value, ast.Name)
+            and node.value.id == name
+        ):
+            return True
+    return False

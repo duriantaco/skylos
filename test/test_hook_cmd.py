@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -1611,7 +1612,9 @@ def test_post_edit_real_analyzer_qa_helpers_are_notes_not_blocks(tmp_path):
     }
     assert blocked == QA_BLOCKING_LINES
     assert "hook recheck app.py" in reason
-    assert "Skylos notes (not blocking" in reason
+    mentioned = {int(line) for line in re.findall(r"app\.py:(\d+)", reason)}
+    assert mentioned == QA_BLOCKING_LINES
+    assert "Skylos notes (not blocking" not in reason
     # One item per line: D203+D212 on line 36 is merged.
     assert reason.count("app.py:36") == 1
 
