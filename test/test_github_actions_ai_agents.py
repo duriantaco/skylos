@@ -1317,7 +1317,8 @@ def test_fixed_environment_is_noted_but_not_treated_as_approval(tmp_path):
             "ENV", "${{ github.event.issue.author_association == 'OWNER' && 'trusted' || 'needs-approval' }}"
         ),
     )
-    assert "SKY-D350" not in _by_rule(_agent_findings(tmp_path))
+    # Naming a different environment for outsiders does not establish reviewers.
+    assert "SKY-D350" in _by_rule(_agent_findings(tmp_path))
 
 
 def test_codex_sandbox_with_network_access_is_tools(tmp_path):

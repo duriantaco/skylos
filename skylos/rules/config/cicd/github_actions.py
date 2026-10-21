@@ -2712,16 +2712,26 @@ def _scan_privileged_job_timeouts(
     lines: list[str],
     findings: list[dict[str, Any]],
     ignore: set[str],
+    *,
+    root: Path | None = None,
 ) -> None:
+    """A privileged job lets outsider-controlled PR code consume its timeout.
+
+    The default job timeout is 360 minutes on hosted and self-hosted runners.
+    Only a reachable outsider PR-code path justifies this security advisory.
+    """
     rule_id = "SKY-D313"
     if rule_id in ignore:
         return
+
+    from skylos.rules.config.cicd.ai_agents import outsider_job_events
 
     trigger = _on_value(data)
     workflow_permissions = data.get("permissions")
     workflow_privileged = _is_release_like_workflow(
         trigger
     ) or _workflow_has_dangerous_trigger(trigger)
+    outsiders = outsider_job_events(data, path, root)
     for job_id, job in _jobs(data):
         if _is_reusable_job(job) or "timeout-minutes" in job:
             continue
@@ -2734,6 +2744,13 @@ def _scan_privileged_job_timeouts(
         )
         if not privileged:
             continue
+        if outsiders.get(str(job_id)) and _job_reads_pr_code(job):
+            reason = (
+                "it runs pull request code that accounts without write access "
+                f"can start ({', '.join(outsiders[str(job_id)])})"
+            )
+        else:
+            continue
         _add_finding(
             findings,
             lines,
@@ -2741,7 +2758,7 @@ def _scan_privileged_job_timeouts(
                 rule_id=rule_id,
                 name="github-actions-missing-timeout",
                 message=(
-                    f"Privileged or release-like job {job_id} has no timeout-minutes. "
+                    f"Privileged job {job_id} has no timeout-minutes and {reason}. "
                     "Set a bounded timeout to limit hung or compromised workflow runs."
                 ),
                 file=path,
@@ -2783,7 +2800,9 @@ def scan_github_actions_file(
         _scan_cache_poisoning(data, file_path, lines, findings, ignore)
         _scan_broad_secret_env(data, file_path, lines, findings, ignore)
         _scan_oidc_build_script_exposure(data, file_path, lines, findings, ignore)
-        _scan_privileged_job_timeouts(data, file_path, lines, findings, ignore)
+        _scan_privileged_job_timeouts(
+            data, file_path, lines, findings, ignore, root=root_path
+        )
         # Imported here: ai_agents builds on this module's helpers.
         from skylos.rules.config.cicd.ai_agents import scan_ai_agent_workflows
 

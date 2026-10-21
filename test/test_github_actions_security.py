@@ -457,7 +457,6 @@ jobs:
         "SKY-D310",
         "SKY-D311",
         "SKY-D312",
-        "SKY-D313",
     }.issubset(_rule_ids(findings))
 
 

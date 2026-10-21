@@ -965,7 +965,7 @@ _RULES = (
         "SKY-D313",
         "GitHub Actions privileged job missing timeout",
         "security",
-        "MEDIUM",
+        "LOW",
         finding_type="review",
     ),
     RuleCatalogEntry(

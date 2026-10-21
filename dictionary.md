@@ -447,7 +447,7 @@ that directory.
 | D310 | HIGH | OIDC token exposed to local build script | GitHub Actions |
 | D311 | MEDIUM | Lax artifact upload | GitHub Actions |
 | D312 | MEDIUM | JavaScript install scripts in CI | GitHub Actions |
-| D313 | MEDIUM | Privileged job missing timeout | GitHub Actions |
+| D313 | LOW | Privileged job missing a bounded timeout while reachable accounts without write access can run pull request code. The default is 360 minutes on both GitHub-hosted and self-hosted runners; trusted jobs and jobs that do not run PR code are not reported | GitHub Actions |
 | D350 | MEDIUM-CRITICAL | AI agent on an untrusted trigger with no actor gate | GitHub Actions |
 | D351 | MEDIUM-CRITICAL | AI agent action's write-access check widened (`*`) | GitHub Actions |
 | D352 | MEDIUM-HIGH | AI agent can run any shell command on an untrusted trigger | GitHub Actions |

@@ -1186,13 +1186,6 @@ def _job_routes_by_event(job: dict[str, Any] | None) -> bool:
     )
 
 
-def _approval_environment(job: dict[str, Any]) -> bool:
-    """An environment chosen per run, the documented way to require approval
-    for fork pull requests. A fixed name usually only scopes secrets."""
-    environment = job.get("environment")
-    if isinstance(environment, dict):
-        environment = environment.get("name")
-    return isinstance(environment, str) and "${{" in environment
 
 
 def _literal_environment(job: dict[str, Any]) -> str:
@@ -1205,9 +1198,7 @@ def _literal_environment(job: dict[str, Any]) -> str:
 
 
 def _job_authorizes(job: dict[str, Any]) -> bool:
-    """An approval environment or a permission check."""
-    if _approval_environment(job):
-        return True
+    """A recognized permission check; an environment name proves no approval."""
     steps = job.get("steps")
     return isinstance(steps, list) and any(
         isinstance(step, dict) and _step_checks_permission(step) for step in steps
@@ -1242,23 +1233,20 @@ class _Reach:
             return True
         inner = stack + (job_id,)
         result = True
-        if untrusted and _approval_environment(job):
-            result = False
-        else:
-            condition = parse_condition(job.get("if"))
-            if not has_status_override(condition):
-                for dep in _needs(job):
-                    if self._blocked(dep, event, untrusted, inner):
-                        result = False
-                        break
-            if result:
-                ctx = EvalContext(
-                    event,
-                    untrusted,
-                    lambda dep: self._blocked(dep, event, untrusted, inner),
-                    lambda dep: _job_routes_by_event(self.jobs.get(dep)),
-                )
-                result = evaluate(condition, ctx)[0]
+        condition = parse_condition(job.get("if"))
+        if not has_status_override(condition):
+            for dep in _needs(job):
+                if self._blocked(dep, event, untrusted, inner):
+                    result = False
+                    break
+        if result:
+            ctx = EvalContext(
+                event,
+                untrusted,
+                lambda dep: self._blocked(dep, event, untrusted, inner),
+                lambda dep: _job_routes_by_event(self.jobs.get(dep)),
+            )
+            result = evaluate(condition, ctx)[0]
         self._memo[key] = result
         return result
 
