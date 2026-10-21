@@ -53,6 +53,12 @@ from skylos.rules.quality.practices import (
     FrameworkPracticeRule,
     TypeAnnotationPracticeRule,
 )
+from skylos.rules.quality.slop import (
+    BooleanLiteralConditionalRule,
+    FormattedConversionCallRule,
+    RepeatedFunctionImportRule,
+    ReraiseOnlyHandlerRule,
+)
 from skylos.rules.quality.structure import ArgCountRule, FunctionLengthRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
 from skylos.rules.secrets import SECRET_CONFIG_SUFFIXES
@@ -157,6 +163,10 @@ LINTER_RULE_NODE_TYPES = {
     TypeAnnotationPracticeRule: (ast.Module,),
     FrameworkPracticeRule: (ast.Module,),
     OpaqueIdentifierRule: (ast.Module,),
+    RepeatedFunctionImportRule: (ast.Module,),
+    BooleanLiteralConditionalRule: (ast.Module,),
+    FormattedConversionCallRule: (ast.Module,),
+    ReraiseOnlyHandlerRule: (ast.Module,),
     DangerousCallsRule: (ast.Module, ast.Import, ast.ImportFrom, ast.Assign, ast.Call),
 }
 
@@ -234,6 +244,10 @@ def _build_builtin_quality_rules(cfg: dict) -> list:
             lambda: MissingNetworkTimeoutRule(vibe_dictionary=vibe_dictionary),
         ),
         ("SKY-L033", NoEffectStatementRule),
+        ("SKY-L036", RepeatedFunctionImportRule),
+        ("SKY-L037", BooleanLiteralConditionalRule),
+        ("SKY-L038", FormattedConversionCallRule),
+        ("SKY-L039", ReraiseOnlyHandlerRule),
     ]
 
     q_rules = [factory() for rule_id, factory in specs if _enabled(cfg, rule_id)]

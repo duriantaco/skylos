@@ -979,6 +979,10 @@ uses project ignores, not inline comments, consistently across supported files.
 | L033 | MEDIUM | No-effect statement | Python |
 | L034 | MEDIUM | Repeated mutable alias from sequence multiplication | Python |
 | L035 | HIGH | File-wide blanket ESLint disable | TS/JS |
+| L036 | LOW | Import repeated inside function | Python |
+| L037 | LOW | Conditional returning bool literals | Python |
+| L038 | LOW | Conversion call inside f-string | Python |
+| L039 | LOW | Except clause that only re-raises | Python |
 
 SKY-L006 accepts an explicit `return None` next to value returns (PEP 8); only a
 bare `return` is inconsistent. SKY-L014 does not treat raw `${NAME}` or
@@ -1037,6 +1041,42 @@ free of effects. Small literal expressions can be checked without executing
 target code; deliberate exception probes remain valid. Discarded comparisons,
 including ordering checks, still merit review for an intended assertion or
 branch; their diagnostic does not claim that overloaded operands are pure.
+
+SKY-L036 to SKY-L039 report roundabout code that has a direct
+form, and only when the file proves it and the suggested rewrite keeps the
+behaviour. A builtin (`str`, `repr`, `isinstance`, ...) counts only when
+the name resolves to the builtin in that scope, so a local `def str`, a
+parameter or an assignment turns the check off. Golden test fixtures (input
+and `# output` data a test reads as text) are not code and are skipped. When
+the project's nearest ruff configuration ignores the ruff rule that suggests
+the same rewrite (SIM103, SIM210 and SIM211 for L037, RUF010 for L038, TRY203
+for L039), globally or for the file, the maintainers have already declined it
+and the check stays silent; inline `noqa` comments still do not suppress these
+findings. SKY-L036 reports an import inside a function that repeats an earlier
+unconditional module-level import binding the same module object to the same
+name: `import m` (one object per module in `sys.modules`), or
+`from pkg import sub` when `sub` is a module file of a project package. A
+function, class or constant imported with `from m import n` is not reported,
+because a later import reads `m.n` again and tests patch it (`mock.patch`) on
+purpose. Imports under `if TYPE_CHECKING`, `try`/`except ImportError` or other
+blocks do not count, nor do names bound twice, declared `global`, exposed to
+`globals()`/`exec`, or bound again in the function or an enclosing one, nor
+modules this file writes through, passes to `setattr`-style calls or
+`reload`s. Test and sample code is not checked, nor is a file that reads
+function source (`inspect.getsource`), since it may run those functions
+elsewhere where module imports do not exist. SKY-L037 reports
+`True if c else False`, its negation and `if`/`else` blocks that return or
+assign opposite bool literals; links of an `elif` chain are left alone. It
+suggests `bool(c)` unless `c` is always a bool (`is`, `in`, `not`,
+`isinstance`, `hasattr`, `any`, ...): `==` and ordering comparisons can be
+overloaded to return other values (numpy arrays, SQLAlchemy expressions).
+`False if a == b else True` and other negated comparisons of that kind are not
+reported: `a != b` need not be the opposite, and `not (a == b)` is itself a
+lint finding. SKY-L038 reports `{str(x)}`, `{repr(x)}` and `{ascii(x)}`
+fields, which `!s`, `!r` and `!a` replace. SKY-L039 reports the trailing except
+clauses of a `try` whose only statement is `raise` (or `raise e` of the caught
+name); an earlier re-raise that keeps a later handler away is not reported, nor
+is `except*`, nor clauses with a comment in them (a documented placeholder).
 
 ## Quality, Structure, Architecture, and Performance
 

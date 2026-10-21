@@ -6,7 +6,10 @@ A threshold crossing is a measurement. The current default set retains:
   the same function: cyclomatic and cognitive, or cognitive and nesting
   (historical small samples do not establish a precision guarantee);
 * missing type annotations, as the annotation rule's typing-policy evidence
-  decides (SKY-T101/T102 report only what the project's policy requires).
+  decides (SKY-T101/T102 report only what the project's policy requires);
+* ``str()``/``repr()``/``ascii()`` calls inside f-string fields (SKY-L038):
+  blind labels found 7/7 useful on the ten measured repositories and 56/56 on
+  six repositories never used before (2026-10-21).
 
 Every other advice rule remains a complete, marked record and is counted under
 ``advice_visibility``; ``--all-advice`` lists it. Precision fixes do not promote
@@ -40,7 +43,8 @@ CORROBORATING_PAIRS = (
 )
 ARCHITECTURE_METRIC_RULES = frozenset({"SKY-Q701", "SKY-Q702", "SKY-Q804", "SKY-Q806"})
 TYPING_RULES = frozenset({"SKY-T101", "SKY-T102"})
-DEFAULT_ADVICE_RULES = FUNCTION_METRIC_RULES | TYPING_RULES
+PROVEN_IDIOM_RULES = frozenset({"SKY-L038"})
+DEFAULT_ADVICE_RULES = FUNCTION_METRIC_RULES | TYPING_RULES | PROVEN_IDIOM_RULES
 
 
 def corroborated(rule_ids) -> bool:
