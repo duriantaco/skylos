@@ -26,7 +26,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
     import tomli as tomllib
 
-from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
+from skylos.constants import DEFAULT_EXCLUDE_FOLDERS, get_non_library_dir_kind
 from skylos.core.file_discovery import discover_source_files
 from skylos.core.python_distributions import (
     NAMESPACE_ROOTS,
@@ -55,6 +55,14 @@ from skylos.rules.ai_defect.environment_dependencies import (
 from skylos.rules.ai_defect.installed_modules_cache import (
     installed_module_mapping,
     virtual_env_site_packages,
+)
+from skylos.rules.ai_defect.package_selection import pyproject_package_selection
+from skylos.rules.ai_defect.transitive_dependencies import (
+    LOCKFILE_NAMES,
+    MAX_LOCKFILE_BYTES,
+    installed_closure,
+    lockfile_closure,
+    parse_lockfile,
 )
 
 # ---------------------------------------------------------------------------
@@ -2314,6 +2322,89 @@ def _dependency_scope_for_file(
     return scope_cache[directory]
 
 
+_NO_MANIFEST = object()
+_OTHER_MANIFEST_NAMES = frozenset({"setup.py", "setup.cfg", "Pipfile", "requirements"})
+
+
+def _directory_package_selection(ctx, directory):
+    """``_NO_MANIFEST``; the explicit package selection of the directory's
+    pyproject; or None when another manifest sits there (a requirements file,
+    ``setup.py``/``setup.cfg``, a Pipfile) or the selection is unknown."""
+    path = _contained_directory(ctx["repo_root"], directory)
+    if path is None:
+        return None
+    has_pyproject = False
+    try:
+        with os.scandir(path) as entries:
+            for index, entry in enumerate(entries):
+                if index >= MAX_SERVICE_ROOT_ENTRIES:
+                    return None
+                name = entry.name
+                if name in _OTHER_MANIFEST_NAMES:
+                    return None
+                if name.startswith("requirements") and name.endswith(".txt"):
+                    return None
+                if name == "pyproject.toml":
+                    has_pyproject = True
+    except OSError:
+        return None
+    if not has_pyproject:
+        return _NO_MANIFEST
+    return pyproject_package_selection(
+        read_project_text_no_symlink(
+            ctx["repo_root"],
+            directory / "pyproject.toml",
+            max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+            encoding="utf-8",
+        )
+    )
+
+
+def _outside_packaged_sources(ctx, importer):
+    """Every Python manifest from the importer's directory up to the root is
+    a pyproject naming the packages it ships, and none ships the importer.
+
+    Those manifests declare their distributions' dependencies; a file no
+    distribution ships (a benchmark, a maintenance script) has no declared
+    dependency scope, so a missing declaration is not a finding there.
+    A hallucinated import still is.
+    """
+    if importer is None:
+        return False
+    cache = ctx.setdefault("package_selection_cache", {})
+    parts = importer.parent.parts
+    found = False
+    for depth in range(len(parts), -1, -1):
+        directory = Path(*parts[:depth])
+        if directory not in cache:
+            cache[directory] = _directory_package_selection(ctx, directory)
+        selection = cache[directory]
+        if selection is _NO_MANIFEST:
+            continue
+        if selection is None:
+            return False
+        if selection.packages(PurePosixPath(*importer.parts[depth:])):
+            return False
+        found = True
+    return found
+
+
+def _file_manifest_context(manifest_context, ctx, importer):
+    """The manifest context of one file.
+
+    None for test, example and benchmark code (``get_non_library_dir_kind``)
+    that no distribution ships, unless an environment definition in scope
+    (Pipfile, environment.yml, a setup script, a Dockerfile copying the
+    code) installs its dependencies. Other unshipped files, such as a
+    root-level ``app.py`` run in the project's environment, keep it.
+    """
+    if not manifest_context or ctx["environment_deps"] or importer is None:
+        return manifest_context
+    if get_non_library_dir_kind(importer.as_posix()) is None:
+        return manifest_context
+    return not _outside_packaged_sources(ctx, importer)
+
+
 def _normalized_dependency_names(dependencies):
     if isinstance(dependencies, str):
         dependencies = (dependencies,)
@@ -3250,12 +3341,18 @@ def _classify_import(
     # Environment evidence only explains a missing declaration of a package
     # known to exist; it never clears a (possible) hallucination, which an
     # install line of the same name does not make real.
-    if (
-        template["rule_id"] == RULE_ID_UNDECLARED
-        and _package_known_to_exist(mod, ctx)
-        and _environment_provides(mod, required_paths, from_imports, ctx)
+    if template["rule_id"] == RULE_ID_UNDECLARED and _package_known_to_exist(
+        mod, ctx
     ):
-        return None
+        if _environment_provides(mod, required_paths, from_imports, ctx):
+            return None
+        importer = None
+        if file_path is not None:
+            importer = _contained_importer_path(
+                ctx["repo_root"], file_path, diff_path=diff_path
+            )
+        if _transitively_provided(mod, required_paths, from_imports, ctx, importer):
+            return None
     return _check_declared_providers(
         mod, template, ctx, required_paths=required_paths, from_imports=from_imports
     )
@@ -3396,7 +3493,157 @@ def _environment_provides(mod, required_paths, from_imports, ctx):
     The same name mapping as for manifests decides; a distribution that
     merely shares a name token (``docker-pycreds`` vs ``docker``) does not.
     """
-    dists = ctx.get("environment_deps")
+    return _distributions_provide(
+        ctx.get("environment_deps"), mod, required_paths, from_imports, ctx
+    )
+
+
+def _installed_site_directories():
+    directories = virtual_env_site_packages()
+    try:
+        directories.extend(site.getsitepackages())
+        user_site = site.getusersitepackages()
+        if isinstance(user_site, str):
+            directories.append(user_site)
+    except (AttributeError, OSError):
+        pass
+    return list(dict.fromkeys(directories))
+
+
+def _metadata_requirements(metadata):
+    fields = {"Requires-Dist": []}
+    for line in metadata.splitlines():
+        if not line:
+            break
+        name, separator, value = line.partition(":")
+        if not separator:
+            continue
+        if name == "Requires-Dist":
+            fields["Requires-Dist"].append(value.strip())
+        elif name in ("Name", "Version") and name not in fields:
+            fields[name] = value.strip()
+    return fields
+
+
+def _build_installed_requirements():
+    """``Requires-Dist`` of every installed distribution, by normalized name:
+    ``{name: (version, requirement strings)}``. Metadata is read as text."""
+    requirements = {}
+    for directory in _installed_site_directories():
+        try:
+            candidates = Path(directory).glob("*.dist-info")
+            for index, dist_info in enumerate(candidates):
+                if index >= MAX_PYTHON_LAYOUT_CANDIDATES:
+                    break
+                metadata = read_project_text_no_symlink(
+                    directory,
+                    dist_info / "METADATA",
+                    max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+                    encoding="utf-8",
+                    errors="ignore",
+                )
+                if metadata is None:
+                    continue
+                fields = _metadata_requirements(metadata)
+                name = _normalize_name(fields.get("Name"))
+                if not name or name in requirements or not fields.get("Version"):
+                    continue
+                requirements[name] = (
+                    fields["Version"],
+                    tuple(fields["Requires-Dist"]),
+                )
+        except OSError:
+            continue
+    return requirements
+
+
+def _installed_requirements(ctx):
+    """Installed requirement records, limited to the distributions the
+    analysis' installed-module snapshot knows, so both describe one
+    environment."""
+    records = ctx.get("installed_requirements")
+    if records is None:
+        known = {
+            _normalize_name(dist)
+            for dists in ctx["installed_mapping"].values()
+            for dist in dists
+        }
+        records = {
+            name: record
+            for name, record in _build_installed_requirements().items()
+            if name in known
+        }
+        ctx["installed_requirements"] = records
+    return records
+
+
+def _lockfile_graphs(ctx, directory):
+    """Parsed lockfiles in one contained directory, and whether any exists."""
+    cache = ctx.setdefault("lockfile_graph_cache", {})
+    if directory not in cache:
+        graphs = []
+        found = False
+        for name in LOCKFILE_NAMES:
+            text = read_project_text_no_symlink(
+                ctx["repo_root"],
+                directory / name,
+                max_bytes=MAX_LOCKFILE_BYTES,
+                encoding="utf-8",
+            )
+            if text is None:
+                continue
+            found = True
+            graph = parse_lockfile(name, text)
+            if graph is not None:
+                graphs.append(graph)
+        cache[directory] = (found, tuple(graphs))
+    return cache[directory]
+
+
+def _transitive_dependencies(ctx, importer):
+    """Distributions the declared ones in scope bring along: by the nearest
+    lockfile at or above the importer, and by installed metadata.
+
+    The project's own entries are not roots: their locked or installed
+    requirements may be stale; only what its manifests declare counts, and
+    only declarations without a marker or URL whose version constraint the
+    locked or installed version satisfies.
+    """
+    declared = frozenset(ctx["declared_deps"])
+    project_names = frozenset(ctx["project_names"])
+    specs = frozenset(
+        (name, specifier)
+        for name, specifier in ctx["declared_specs"].items()
+        if name not in project_names
+    )
+    parts = ()
+    if importer is not None:
+        parts = importer.parent.parts
+    graphs = ()
+    for depth in range(len(parts), -1, -1):
+        found, graphs = _lockfile_graphs(ctx, Path(*parts[:depth]))
+        if found:
+            break
+    cache = ctx.setdefault("transitive_cache", {})
+    key = (declared, specs, graphs)
+    if key not in cache:
+        dists = set()
+        for graph in graphs:
+            dists |= lockfile_closure(graph, dict(specs))
+        dists |= installed_closure(dict(specs), _installed_requirements(ctx))
+        cache[key] = frozenset(dists - declared)
+    return cache[key]
+
+
+def _transitively_provided(mod, required_paths, from_imports, ctx, importer):
+    """A declared distribution requires, unconditionally, one that provides
+    every path the import needs (SKY-D223 only)."""
+    return _distributions_provide(
+        _transitive_dependencies(ctx, importer), mod, required_paths, from_imports, ctx
+    )
+
+
+def _distributions_provide(dists, mod, required_paths, from_imports, ctx):
     if not dists:
         return False
     cache = ctx.setdefault("environment_import_paths_cache", {})
@@ -3603,7 +3850,10 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
         ctx["project_names"] = own_names
         ctx["provider_unknown"] = unknown
         ctx["declared_deps"] = declared_deps | specs.keys()
-        ctx["manifest_context"] = manifest_context
+        importer = _contained_importer_path(root, file_path)
+        ctx["manifest_context"] = _file_manifest_context(
+            manifest_context, ctx, importer
+        )
         src = read_project_text_no_symlink(
             root,
             file_path,
@@ -3615,7 +3865,6 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
             continue
 
         direct_script = _has_direct_script_evidence(src)
-        importer = _contained_importer_path(root, file_path)
         local_fallbacks = _local_import_fallbacks(src, ctx, importer)
         optional_imports = _optional_import_roots(src)
         uncertain_imports = (
@@ -3722,7 +3971,11 @@ def scan_diff_added_imports(
         ctx["project_names"] = own_names
         ctx["provider_unknown"] = unknown
         ctx["declared_deps"] = declared_deps | specs.keys()
-        ctx["manifest_context"] = manifest_context
+        ctx["manifest_context"] = _file_manifest_context(
+            manifest_context,
+            ctx,
+            _contained_importer_path(root, file_label, diff_path=True),
+        )
 
         script_key = str(file_label)
         if script_key not in direct_script_cache:
