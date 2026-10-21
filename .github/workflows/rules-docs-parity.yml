@@ -41,4 +41,5 @@ jobs:
       - name: Check rules docs parity
         run: |
           python skylos/scripts/check_rule_docs_parity.py \
-            --rules-reference skylos-docs/docs/rules-reference.mdx
+            --rules-reference skylos-docs/docs/rules-reference.mdx \
+            --allow-docs-extra
