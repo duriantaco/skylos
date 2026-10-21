@@ -54,6 +54,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: someorg/lint-action@v1
       - run: echo "${{ github.event.pull_request.title }}"
 """.lstrip(),
         encoding="utf-8",
@@ -95,24 +98,24 @@ jobs:
   one:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: someorg/action@v1
   two:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: someorg/action@v1
 """.lstrip(),
         encoding="utf-8",
     )
 
     findings = scan_github_actions(tmp_path)
-    checkout_credentials = [
+    unpinned = [
         finding
         for finding in findings
-        if finding["rule_id"] == "SKY-D293"
-        and finding.get("value") == "actions/checkout@v4"
+        if finding["rule_id"] == "SKY-D292"
+        and finding.get("value") == "someorg/action@v1"
     ]
 
-    assert len(checkout_credentials) == 1
+    assert len(unpinned) == 1
 
 
 def test_github_actions_run_block_env_exfil_flags(tmp_path):
@@ -849,6 +852,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: someorg/build-action@v1
 """.lstrip(),
         encoding="utf-8",
     )

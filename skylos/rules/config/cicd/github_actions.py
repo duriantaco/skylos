@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 from collections.abc import Iterator
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
@@ -1016,6 +1017,17 @@ def _unpinned_uses_severity(value: str) -> str:
     return "HIGH"
 
 
+def _is_third_party_action(value: str) -> bool:
+    """A remote action whose code neither the repository nor GitHub owns."""
+    value = value.strip()
+    if not value or value.startswith(("./", "../")):
+        return False
+    if value.lower().startswith("docker://"):
+        return True
+    owner = value.partition("/")[0].lower()
+    return owner not in _GITHUB_OWNED_ACTION_OWNERS
+
+
 def _is_pinned_uses(value: str) -> bool:
     value = value.strip()
     if not value or value.startswith("./") or value.startswith("../"):
@@ -1194,6 +1206,11 @@ def _scan_triggers(
         )
 
 
+def _line_for_yaml_path(lines: list[str], path: tuple[Any, ...]) -> int | None:
+    source = _source_for_lines(lines)
+    return source.line_for_path(path) if source is not None else None
+
+
 def _scan_permissions(
     data: dict[str, Any],
     path: Path,
@@ -1349,27 +1366,326 @@ def _scan_uses(
                 ),
             )
 
-        if "SKY-D293" not in ignore and uses_value.lower().startswith(
-            "actions/checkout@"
-        ):
-            with_config = step.get("with") if isinstance(step.get("with"), dict) else {}
-            if not _is_false(with_config.get("persist-credentials")):
-                _add_finding(
-                    findings,
-                    lines,
-                    _finding(
-                        rule_id="SKY-D293",
-                        name="github-actions-checkout-credentials",
-                        message=(
-                            "actions/checkout leaves credentials persisted by default. "
-                            "Set persist-credentials: false unless later git pushes need it."
-                        ),
-                        file=path,
-                        line=_line_for_contains(lines, uses_value),
-                        severity="MEDIUM",
-                        value=uses_value,
-                    ),
+
+
+_UPLOAD_ARTIFACT_VERSION_RE = re.compile(r"^v(\d+)(?:\.(\d+)(?:\.\d+)?)?$")
+_WORKSPACE_PREFIX_RE = re.compile(
+    r"^(?:\$\{\{\s*github\.workspace\s*\}\}|\$\{?GITHUB_WORKSPACE\}?)(?:/|$)"
+)
+
+
+def _literal_action_input(value: Any) -> Any:
+    """Normalize only a complete, bounded scalar Actions literal expression."""
+    if not isinstance(value, str) or len(value) > 4096:
+        return value
+    match = re.fullmatch(
+        r"\$\{\{\s*(true|false|null|'(?:[^']|'')*')\s*\}\}",
+        value.strip(), re.IGNORECASE,
+    )
+    if match is None:
+        return value
+    literal = match.group(1)
+    if literal.lower() == "true":
+        return True
+    if literal.lower() == "false":
+        return False
+    if literal.lower() == "null":
+        return None
+    return literal[1:-1].replace("''", "'")
+
+
+def _action_input_reference(value: Any) -> str | None:
+    """Return an input's reference spelling, never an embedded credential value."""
+    if not isinstance(value, str) or len(value) > 512:
+        return None
+    match = re.fullmatch(
+        r"\$\{\{\s*((?:secrets|env|inputs|vars|steps|needs)"
+        r"(?:\.[A-Za-z_][A-Za-z0-9_-]*){1,5})\s*\}\}",
+        value.strip(), re.IGNORECASE,
+    )
+    if match is not None:
+        return match.group(1)
+    match = re.fullmatch(
+        r"\$\{\{\s*(secrets|env|inputs|vars)\[\s*'([A-Za-z_][A-Za-z0-9_-]*)'\s*\]"
+        r"\s*\}\}", value.strip(), re.IGNORECASE,
+    )
+    if match is not None:
+        return match.group(1) + "." + match.group(2)
+    return None
+
+
+def _workspace_relative(path: str) -> str:
+    """``path`` relative to the workspace, without ``./`` or a trailing slash."""
+    path = _WORKSPACE_PREFIX_RE.sub("", path.strip())
+    parts = [part for part in path.split("/") if part not in {"", "."}]
+    return "/".join(parts)
+
+
+def _upload_skips_hidden_files(uses_value: str, with_config: dict[str, Any]) -> bool:
+    """actions/upload-artifact leaves out hidden files such as ``.git`` from
+    v4.4.0 unless ``include-hidden-files`` is set. A floating ``@v4`` resolves
+    to the newest v4 release; a SHA pin's version is unknown."""
+    hidden = _literal_action_input(with_config.get("include-hidden-files"))
+    hidden_state = _actions_bool(hidden)
+    if hidden_state is True:
+        return False
+    if "include-hidden-files" in with_config and hidden_state is None:
+        # An input or expression may enable hidden files at runtime.
+        return False
+    ref = uses_value.rsplit("@", 1)[1].strip() if "@" in uses_value else ""
+    match = _UPLOAD_ARTIFACT_VERSION_RE.match(ref)
+    if match is None:
+        return False
+    major = int(match.group(1))
+    minor = int(match.group(2)) if match.group(2) is not None else None
+    return major > 4 or (major == 4 and (minor is None or minor >= 4))
+
+
+def _artifact_pattern_covers_file(
+    pattern: str, target: str, *, directory_only: bool = False
+) -> bool | None:
+    """Match the supported Actions glob syntax, including implicit descendants.
+
+    Unknown syntax cannot prove that a negative pattern excludes credentials.
+    Match path segments separately so ``*`` cannot consume a slash.
+    """
+    unsupported = ("$", "{", "}", "(", ")", "\\")
+    if len(pattern) > 4096 or any(char in pattern for char in unsupported):
+        return None
+    pattern_parts = pattern.split("/") if pattern else []
+    target_parts = target.split("/")
+    if len(pattern_parts) > 128 or len(target_parts) > 128:
+        return None
+    positions = {0}
+    for part in pattern_parts:
+        next_positions = set()
+        for position in positions:
+            if part == "**":
+                next_positions.update(range(position, len(target_parts) + 1))
+            elif position < len(target_parts) and fnmatchcase(
+                target_parts[position], part
+            ):
+                next_positions.add(position + 1)
+        positions = next_positions
+        if not positions:
+            return False
+    # A trailing separator matches directories, never the credential file itself.
+    if directory_only:
+        return any(position < len(target_parts) for position in positions)
+    # Actions glob includes descendants of matching directories by default.
+    return bool(positions)
+
+
+def _upload_includes_checkout(step: dict[str, Any], checkout_dir: str) -> str | None:
+    """The uploaded path that holds the checkout's ``.git`` directory, if any."""
+    uses_value = step.get("uses")
+    if not isinstance(uses_value, str) or not _uses_matches(
+        uses_value, "actions/upload-artifact"
+    ):
+        return None
+    with_config = step.get("with") if isinstance(step.get("with"), dict) else {}
+    upload = with_config.get("path")
+    if not isinstance(upload, str) or _upload_skips_hidden_files(uses_value, with_config):
+        return None
+    target = ".git/config"
+    if checkout_dir:
+        target = checkout_dir + "/" + target
+    included = None
+    for entry in upload.splitlines():
+        entry = entry.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        excluded = False
+        pattern = entry
+        while pattern.startswith("!"):
+            excluded = not excluded
+            pattern = pattern[1:].strip()
+        if not pattern:
+            continue
+        if excluded and pattern.startswith(("/", "~")):
+            # An absolute exclusion cannot be equated with a workspace-relative
+            # path. Only a recognized workspace prefix establishes that relation.
+            matched = None
+        else:
+            matched = _artifact_pattern_covers_file(
+                _workspace_relative(pattern), target,
+                directory_only=pattern.endswith("/"),
+            )
+        if excluded:
+            if matched is True:
+                included = None
+        elif matched is not False:
+            included = entry
+    return included
+
+
+def _checkout_credential(with_config: dict[str, Any]) -> tuple[str, bool]:
+    """The persisted credential and whether GITHUB_TOKEN scopes constrain it."""
+    if _literal_action_input(with_config.get("ssh-key")):
+        # Checkout v4 configures HTTP token auth as well as its SSH command.
+        token_config = dict(with_config)
+        del token_config["ssh-key"]
+        token_name, _ = _checkout_credential(token_config)
+        ssh_name = "the configured checkout SSH key"
+        reference = _action_input_reference(with_config.get("ssh-key"))
+        if reference is not None:
+            ssh_name += " from " + reference
+        return f"{token_name} and {ssh_name}", False
+    token = with_config.get("token")
+    if token is None:
+        return "GITHUB_TOKEN", True
+    if isinstance(token, str) and re.fullmatch(
+        r"\s*\$\{\{\s*(?:github\s*(?:\.\s*token|\[\s*'token'\s*\])"
+        r"|secrets\s*(?:\.\s*GITHUB_TOKEN|\[\s*'GITHUB_TOKEN'\s*\]))\s*\}\}\s*",
+        token, re.I,
+    ):
+        return "GITHUB_TOKEN", True
+    token_name = "the configured checkout token"
+    reference = _action_input_reference(token)
+    if reference is not None:
+        token_name += " from " + reference
+    return token_name, False
+
+
+def _token_write_scopes(job: dict[str, Any], workflow_permissions: Any) -> list[str]:
+    """GITHUB_TOKEN scopes the job is explicitly granted write on. ``id-token``
+    mints OIDC tokens and adds nothing to the persisted repository token."""
+    permissions = job.get("permissions", workflow_permissions)
+    if isinstance(permissions, str):
+        return ["write-all"] if permissions == "write-all" else []
+    if not isinstance(permissions, dict):
+        return []
+    return [
+        str(scope)
+        for scope, level in permissions.items()
+        if str(level).lower() == "write" and str(scope) != "id-token"
+    ]
+
+
+def _persisted_credential_exposure(
+    steps: list[Any],
+    index: int,
+    *,
+    write_scopes: list[str],
+    outsider_events: list[str],
+) -> str | None:
+    """Why the credential a checkout persists can reach someone
+    the job did not already hand it to, or None without such evidence.
+
+    zizmor's ``artipacked`` names the clearest path, an artifact that uploads
+    the checkout. The others: the checkout fetches a pull request's code in a
+    job that accounts without write access can start, so their code runs
+    beside the token, or a write-scoped token sits next to a later third-party
+    action. A step the repository or GitHub owns already holds the token, so
+    it is not a new reader; a token whose scope is undeclared is reported by
+    SKY-D291 instead.
+    """
+    checkout = steps[index]
+    with_config = checkout.get("with") if isinstance(checkout.get("with"), dict) else {}
+    credential, github_token = _checkout_credential(with_config)
+    checkout_path = with_config.get("path")
+    checkout_dir = _workspace_relative(checkout_path) if isinstance(checkout_path, str) else ""
+    later = [step for step in steps[index + 1 :] if isinstance(step, dict)]
+    for step in later:
+        uploaded = _upload_includes_checkout(step, checkout_dir)
+        if uploaded is not None:
+            return f"a later step uploads {uploaded} as an artifact, .git/config included"
+    target = " ".join(str(with_config.get(key, "")) for key in ("ref", "repository"))
+    if outsider_events and _PR_CODE_REF_RE.search(target):
+        return (
+            "it checks out pull request code in a job that accounts without "
+            f"write access can start ({', '.join(outsider_events)})"
+        )
+    if write_scopes or not github_token:
+        for step in later:
+            uses_value = step.get("uses")
+            if isinstance(uses_value, str) and _is_third_party_action(uses_value):
+                if github_token:
+                    return (
+                        f"the token has {', '.join(write_scopes)} write access and the "
+                        f"later third-party action {uses_value.strip()} can read it"
+                    )
+                return (
+                    f"the later third-party action {uses_value.strip()} can read "
+                    f"{credential}, whose access is not limited by GITHUB_TOKEN permissions"
                 )
+    return None
+
+
+def _scan_persisted_checkout_credentials(
+    data: dict[str, Any],
+    path: Path,
+    lines: list[str],
+    findings: list[dict[str, Any]],
+    ignore: set[str],
+    *,
+    is_workflow: bool,
+    root: Path | None,
+) -> None:
+    rule_id = "SKY-D293"
+    if rule_id in ignore:
+        return
+    if is_workflow:
+        from skylos.rules.config.cicd.ai_agents import outsider_job_events
+
+        outsiders = outsider_job_events(data, path, root)
+        workflow_permissions = data.get("permissions")
+        jobs = [
+            (job_id, job.get("steps"), _token_write_scopes(job, workflow_permissions))
+            for job_id, job in _jobs(data)
+        ]
+    else:
+        # A composite action runs in its caller's job: only an upload inside
+        # the action itself is evidence here.
+        runs = data.get("runs") if isinstance(data.get("runs"), dict) else {}
+        outsiders = {}
+        jobs = [(None, runs.get("steps"), [])]
+    for job_id, steps, write_scopes in jobs:
+        if not isinstance(steps, list):
+            continue
+        for index, step in enumerate(steps):
+            if not isinstance(step, dict):
+                continue
+            uses_value = step.get("uses")
+            if not isinstance(uses_value, str) or not _uses_matches(
+                uses_value, "actions/checkout"
+            ):
+                continue
+            with_config = step.get("with") if isinstance(step.get("with"), dict) else {}
+            if _is_false(_literal_action_input(with_config.get("persist-credentials"))):
+                continue
+            exposure = _persisted_credential_exposure(
+                steps,
+                index,
+                write_scopes=write_scopes,
+                outsider_events=outsiders.get(str(job_id), []),
+            )
+            if exposure is None:
+                continue
+            credential, _ = _checkout_credential(with_config)
+            step_path = (
+                ("jobs", job_id, "steps", index, "uses")
+                if is_workflow
+                else ("runs", "steps", index, "uses")
+            )
+            _add_finding(
+                findings,
+                lines,
+                _finding(
+                    rule_id=rule_id,
+                    name="github-actions-checkout-credentials",
+                    message=(
+                        f"actions/checkout persists {credential} for later git commands, and "
+                        f"{exposure}. Set persist-credentials: false unless a later "
+                        "git push needs it."
+                    ),
+                    file=path,
+                    line=_line_for_yaml_path(lines, step_path)
+                    or _line_for_contains(lines, uses_value),
+                    severity="MEDIUM",
+                    value=uses_value,
+                ),
+            )
 
 
 def _scan_run_blocks(
@@ -2476,6 +2792,9 @@ def scan_github_actions_file(
         )
 
     _scan_uses(data, file_path, lines, findings, ignore, is_workflow=is_workflow)
+    _scan_persisted_checkout_credentials(
+        data, file_path, lines, findings, ignore, is_workflow=is_workflow, root=root_path
+    )
     _scan_run_blocks(data, file_path, lines, findings, ignore, is_workflow=is_workflow)
     _scan_container_images(
         data, file_path, lines, findings, ignore, is_workflow=is_workflow

@@ -26,6 +26,10 @@ _WORKFLOW = (
     "    steps:\n"
     "      - uses: actions/checkout@v4\n"
     "      - run: echo hello\n"
+    "      - uses: actions/upload-artifact@0123456789012345678901234567890123456789\n"
+    "        with:\n"
+    "          path: .\n"
+    "          if-no-files-found: error\n"
 )
 # Any security finding fails the gate: the point is that repository CI findings
 # reach it, whatever their severity (an unpinned GitHub-owned action is LOW).

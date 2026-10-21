@@ -1283,6 +1283,26 @@ class _Reach:
         return True
 
 
+def outsider_job_events(
+    data: dict[str, Any], path: Path, root: Path | None
+) -> dict[str, list[str]]:
+    """For each job, the events on which an account without write access can
+    make it run: the workflow's untrusted triggers that the job's ``if``,
+    ``needs`` and recognized permission checks do not shut out. An
+    environment name does not prove required approval. Jobs no such event
+    reaches are omitted."""
+    events = _untrusted_events(data, path, root, {})
+    if not events:
+        return {}
+    reach = _Reach(data)
+    reachable = {}
+    for job_id in reach.jobs:
+        job_events = [event for event in events if reach.job_runs(job_id, event, True)]
+        if job_events:
+            reachable[job_id] = job_events
+    return reachable
+
+
 # ------------------------------------------------------------ privilege
 
 
