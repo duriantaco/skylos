@@ -34,6 +34,11 @@ def main() -> int:
         action="store_true",
         help="Allow catalog IDs that are not yet documented.",
     )
+    parser.add_argument(
+        "--allow-docs-extra",
+        action="store_true",
+        help="Allow documentation for rules from independently versioned branches.",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -64,8 +69,11 @@ def main() -> int:
     failed = False
 
     if missing_from_catalog:
-        failed = True
-        print("Docs IDs missing from catalog:")
+        if args.allow_docs_extra:
+            print("Additional documented IDs outside this catalog:")
+        else:
+            failed = True
+            print("Docs IDs missing from catalog:")
         for rule_id in missing_from_catalog:
             print(f"  {rule_id}")
 
@@ -82,7 +90,10 @@ def main() -> int:
     if failed:
         return 1
 
-    print("Rule catalog and docs are in parity.")
+    if missing_from_catalog and args.allow_docs_extra:
+        print("All catalog rule IDs are documented.")
+    else:
+        print("Rule catalog and docs are in parity.")
     return 0
 
 
