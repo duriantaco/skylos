@@ -2,6 +2,7 @@ from __future__ import annotations
 import ast
 import sys
 from collections import Counter
+from skylos.rules.danger.builtin_bindings import builtin_references
 from skylos.rules.danger.taint import TaintVisitor
 from skylos.rules.danger.danger_sql.sqlalchemy_provenance import (
     SQLAlchemyTextProvenance,
@@ -91,6 +92,11 @@ SQL_BUILDER_METHODS = frozenset(
         "on_duplicate_key_update",
     }
 )
+STANDARD_LITERAL_CONNECTIONS = frozenset({"sqlite3.connect", "duckdb.connect"})
+_LITERAL_CONNECTION = "connection"
+_LITERAL_ESCAPED = "escaped"
+_UNPROVEN_SQL_QUOTES = frozenset("`[]$")
+_LITERAL_OPENERS = frozenset(" \t\r\n(,='")
 _PROCESS_INPUT_ATTRS = frozenset({"sys.argv", "os.environ", "sys.stdin"})
 _PROCESS_INPUT_CALLS = frozenset(
     {"os.getenv", "os.environ.get", "sys.stdin.read", "sys.stdin.readline"}
@@ -171,6 +177,20 @@ def _is_interpolated_string(node):
     ):
         return not _is_static_string_expr(node)
     return False
+
+
+_NUMERIC_CALLS = frozenset({"int", "float", "len"})
+_TRUSTED_BUILTINS = _NUMERIC_CALLS | {"str"}
+
+
+def _is_literal_string_sequence(node: ast.AST) -> bool:
+    return isinstance(node, (ast.List, ast.Tuple)) and all(
+        _is_string_literal(element) for element in node.elts
+    )
+
+
+def _is_string_literal(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and isinstance(node.value, str)
 
 
 def _is_passthrough_return(node: ast.AST, param_names):
@@ -275,6 +295,9 @@ class _SQLFlowChecker(TaintVisitor):
         self.static_string_stack: list[dict[str, bool]] = [{}]
         self.sql_statement_stack: list[dict[str, bool]] = [{}]
         self.sql_table_stack: list[dict[str, bool]] = [{}]
+        self.sql_text_stack: list[dict[str, bool]] = [{}]
+        self.sql_literal_stack: list[dict[str, str | None]] = [{}]
+        self.builtin_names = builtin_references(tree, _TRUSTED_BUILTINS)
         bindings = Counter(
             node.id
             for node in ast.walk(tree)
@@ -299,6 +322,8 @@ class _SQLFlowChecker(TaintVisitor):
         self.static_string_stack.append({})
         self.sql_statement_stack.append({})
         self.sql_table_stack.append({})
+        self.sql_text_stack.append({})
+        self.sql_literal_stack.append({})
         self.db_receiver_alias_stack.append(set())
 
     def _pop(self):
@@ -308,6 +333,10 @@ class _SQLFlowChecker(TaintVisitor):
             self.sql_statement_stack.pop()
         if len(self.sql_table_stack) > 1:
             self.sql_table_stack.pop()
+        if len(self.sql_text_stack) > 1:
+            self.sql_text_stack.pop()
+        if len(self.sql_literal_stack) > 1:
+            self.sql_literal_stack.pop()
         if len(self.db_receiver_alias_stack) > 1:
             self.db_receiver_alias_stack.pop()
         super()._pop()
@@ -368,9 +397,254 @@ class _SQLFlowChecker(TaintVisitor):
     def _invalidate_sql_binding(self, name: str) -> None:
         self._set_sql_statement(name, False)
         self._set_sql_table(name, False)
+        self.sql_text_stack[-1][name] = False
+        self.sql_literal_stack[-1][name] = None
+
+    def _is_sql_safe_name(self, name: str) -> bool:
+        """A name proven to hold SQL-safe text in this scope, or a module-level
+        one bound once. Enclosing function scopes are not trusted: a closure
+        reads the name when it runs, possibly after a rebinding."""
+        scope = self.sql_text_stack[-1]
+        if name in scope:
+            return scope[name]
+        if len(self.sql_text_stack) > 1 and name not in self.rebound_global_sql_names:
+            return self.sql_text_stack[0].get(name, False)
+        return False
+
+    def _is_sql_safe_text(self, node: ast.AST) -> bool:
+        """Text that cannot carry data into SQL: string literals, numbers
+        (``int()``, ``float()``, ``len()``), and strings built only from those.
+        That covers placeholder runs such as ``",".join("?" * len(ids))`` or
+        ``", ".join(["%s"] * len(rows))``: the values travel as bound
+        parameters and only their count reaches the SQL text."""
+        if isinstance(node, ast.Constant):
+            return isinstance(node.value, (str, int, float)) or node.value is None
+        if isinstance(node, ast.Name):
+            return self._is_sql_safe_name(node.id)
+        if isinstance(node, ast.JoinedStr):
+            return all(
+                isinstance(value, ast.Constant)
+                or (
+                    isinstance(value, ast.FormattedValue)
+                    and self._is_sql_safe_text(value.value)
+                    and (value.format_spec is None or self._is_sql_safe_text(value.format_spec))
+                )
+                for value in node.values
+            )
+        if isinstance(node, ast.BinOp):
+            if isinstance(node.op, ast.Add):
+                return self._is_sql_safe_text(node.left) and self._is_sql_safe_text(
+                    node.right
+                )
+            if isinstance(node.op, ast.Mult):
+                return self._repeats_literal(node, _is_string_literal)
+            if isinstance(node.op, ast.Mod):
+                right = node.right
+                parts = [right]
+                if isinstance(right, ast.Tuple):
+                    parts = right.elts
+                return self._is_sql_safe_text(node.left) and all(
+                    self._is_sql_safe_text(part) for part in parts
+                )
+            return False
+        if not isinstance(node, ast.Call):
+            return False
+        builtin = self._builtin_called(node)
+        if builtin in _NUMERIC_CALLS:
+            return True
+        if builtin == "str":
+            return len(node.args) == 1 and not node.keywords and self._is_sql_safe_text(
+                node.args[0]
+            )
+        if not isinstance(node.func, ast.Attribute):
+            return False
+        if node.func.attr == "format":
+            return (
+                self._is_sql_safe_text(node.func.value)
+                and all(self._is_sql_safe_text(arg) for arg in node.args)
+                and all(self._is_sql_safe_text(kw.value) for kw in node.keywords)
+            )
+        if node.func.attr == "join" and len(node.args) == 1 and not node.keywords:
+            return self._is_sql_safe_text(node.func.value) and self._joins_sql_safe_text(
+                node.args[0]
+            )
+        return False
+
+    def _builtin_called(self, node: ast.Call) -> str | None:
+        func = node.func
+        if isinstance(func, ast.Name) and id(func) in self.builtin_names:
+            return func.id
+        return None
+
+    def _repeats_literal(self, node: ast.BinOp, is_literal) -> bool:
+        if is_literal(node.left) and self._is_count(node.right):
+            return True
+        return is_literal(node.right) and self._is_count(node.left)
+
+    def _is_count(self, node: ast.AST) -> bool:
+        if isinstance(node, ast.Constant):
+            return isinstance(node.value, int)
+        if isinstance(node, ast.Call):
+            return self._builtin_called(node) in ("int", "len")
+        if isinstance(node, ast.BinOp) and isinstance(
+            node.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv, ast.Mod)
+        ):
+            return self._is_count(node.left) and self._is_count(node.right)
+        return False
+
+    def _joins_sql_safe_text(self, node: ast.AST) -> bool:
+        """An iterable whose items are SQL-safe strings."""
+        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+            return all(self._is_sql_safe_text(element) for element in node.elts)
+        if (
+            isinstance(node, ast.BinOp)
+            and isinstance(node.op, ast.Mult)
+            and self._repeats_literal(node, _is_literal_string_sequence)
+        ):
+            return True
+        if isinstance(node, (ast.ListComp, ast.GeneratorExp, ast.SetComp)):
+            return _is_string_literal(node.elt)
+        return self._is_sql_safe_text(node)
+
+    def _sql_literal_fact_of(self, name: str) -> str | None:
+        """What ``name`` is known to hold for SQL literals in this scope (or a
+        module-level binding made once): a SQLite/DuckDB connection or cursor,
+        or text whose single quotes are doubled."""
+        scope = self.sql_literal_stack[-1]
+        if name in scope:
+            return scope[name]
+        if len(self.sql_literal_stack) > 1 and name not in self.rebound_global_sql_names:
+            return self.sql_literal_stack[0].get(name)
+        return None
+
+    def _is_str_expression(self, node: ast.AST) -> bool:
+        """An expression that evaluates to a ``str``: a string literal, an
+        f-string, the builtin ``str()``, or ``str.replace`` with literal
+        arguments on one of those."""
+        if _is_string_literal(node) or isinstance(node, ast.JoinedStr):
+            return True
+        if not isinstance(node, ast.Call):
+            return False
+        if self._builtin_called(node) == "str":
+            return len(node.args) <= 1 and not node.keywords
+        return (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "replace"
+            and len(node.args) == 2
+            and not node.keywords
+            and all(_is_string_literal(arg) for arg in node.args)
+            and self._is_str_expression(node.func.value)
+        )
+
+    def _sql_literal_fact(self, node: ast.AST) -> str | None:
+        """``sqlite3.connect()``/``duckdb.connect()`` (imported, unshadowed) or
+        ``.cursor()`` of one is a connection; ``text.replace("'", "''")`` on a
+        ``str`` is escaped text."""
+        if not isinstance(node, ast.Call):
+            return None
+        func = node.func
+        if isinstance(func, ast.Attribute) and not node.keywords:
+            if (
+                func.attr == "replace"
+                and len(node.args) == 2
+                and all(_is_string_literal(arg) for arg in node.args)
+                and [arg.value for arg in node.args] == ["'", "''"]
+                and self._is_str_expression(func.value)
+            ):
+                return _LITERAL_ESCAPED
+            if (
+                func.attr == "cursor"
+                and not node.args
+                and isinstance(func.value, ast.Name)
+                and self._sql_literal_fact_of(func.value.id) == _LITERAL_CONNECTION
+            ):
+                return _LITERAL_CONNECTION
+        name = _qualified_name_from_expr(func)
+        if not name:
+            return None
+        resolved = self.untrusted_sources.resolved_import(
+            self._current_function(), name
+        )
+        if resolved in STANDARD_LITERAL_CONNECTIONS:
+            return _LITERAL_CONNECTION
+        return None
+
+    def _literal_scan_value(self, value: ast.AST) -> str | None:
+        """The text a value contributes to the quote scan, when it is fixed or
+        numeric; None when it could be anything."""
+        if isinstance(value, ast.Constant) and isinstance(
+            value.value, (str, int, float)
+        ):
+            return str(value.value)
+        if isinstance(value, ast.Call) and self._builtin_called(value) in _NUMERIC_CALLS:
+            return "0"
+        return None
+
+    def _escaped_literal_query(self, node: ast.Call, query_expr: ast.AST) -> bool:
+        """``conn.execute(f"ATTACH '{path}' AS store")`` on a SQLite or DuckDB
+        connection, where ``path`` had its single quotes doubled and sits
+        inside a plain single-quoted literal; every other interpolation is a
+        fixed string or a number outside any literal or identifier.
+
+        The literal is proven by scanning the text: a single quote opens one
+        only after whitespace, ``(``, ``,``, ``=`` or a just-closed literal
+        (``''``), so a prefixed literal (``E'``, ``X'``, ``U&'``) never
+        qualifies; ``"`` identifiers are tracked; a backtick, bracket or
+        ``$`` (backtick/bracket identifiers, list or dollar-quoted text) or a
+        comment marker leaves the context unproven and the finding stays.
+
+        SQLite and DuckDB string literals treat a backslash as an ordinary
+        character, so doubling every single quote is a complete escape there.
+        MySQL (default sql_mode) and PostgreSQL without
+        standard_conforming_strings treat a backslash as an escape, so their
+        connections never qualify."""
+        if not (
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and self._sql_literal_fact_of(node.func.value.id) == _LITERAL_CONNECTION
+            and isinstance(query_expr, ast.JoinedStr)
+        ):
+            return False
+        quote = None
+        previous = " "
+        escaped = False
+        for value in query_expr.values:
+            if isinstance(value, ast.FormattedValue):
+                if value.conversion != -1 or value.format_spec is not None:
+                    return False
+                inner = value.value
+                if (
+                    quote == "'"
+                    and isinstance(inner, ast.Name)
+                    and self._sql_literal_fact_of(inner.id) == _LITERAL_ESCAPED
+                ):
+                    escaped = True
+                    continue
+                text = self._literal_scan_value(inner)
+                if text is None or quote is not None:
+                    return False
+                if previous in "-/" or text.startswith(("-", "*")):
+                    return False
+            else:
+                text = value.value
+            for position, char in enumerate(text):
+                if quote is not None:
+                    if char == quote:
+                        quote = None
+                        previous = char
+                    continue
+                pair = text[position : position + 2]
+                if pair in ("--", "/*") or char in _UNPROVEN_SQL_QUOTES:
+                    return False
+                if char == "'" and previous not in _LITERAL_OPENERS:
+                    return False
+                if char in "'\"":
+                    quote = char
+                previous = char
+        return escaped and quote is None
 
     def _is_static_query_expr(self, node: ast.AST) -> bool:
-        if _is_static_string_expr(node):
+        if _is_static_string_expr(node) or self._is_sql_safe_text(node):
             return True
         if isinstance(node, ast.Name):
             return self._is_static_string_name(node.id)
@@ -690,7 +964,11 @@ class _SQLFlowChecker(TaintVisitor):
         a plain helper parameter is never reported here.
         """
         query_expr = get_query_expression(node, names=("statement", "sql", "query"))
-        if query_expr is None or not self.is_tainted(query_expr):
+        if (
+            query_expr is None
+            or not self.is_tainted(query_expr)
+            or self._is_sql_safe_text(query_expr)
+        ):
             return
         if self._is_sql_statement(query_expr):
             return  # bound parameters, or reported on the text() call itself
@@ -840,9 +1118,13 @@ class _SQLFlowChecker(TaintVisitor):
         self.visit(node.test)
         statements = [scope.copy() for scope in self.sql_statement_stack]
         tables = [scope.copy() for scope in self.sql_table_stack]
+        texts = [scope.copy() for scope in self.sql_text_stack]
+        literals = [scope.copy() for scope in self.sql_literal_stack]
         for branch in (node.body, node.orelse):
             self.sql_statement_stack = [scope.copy() for scope in statements]
             self.sql_table_stack = [scope.copy() for scope in tables]
+            self.sql_text_stack = [scope.copy() for scope in texts]
+            self.sql_literal_stack = [scope.copy() for scope in literals]
             for child in branch:
                 self.visit(child)
         self._invalidate_branch_sql_bindings([*node.body, *node.orelse])
@@ -850,6 +1132,8 @@ class _SQLFlowChecker(TaintVisitor):
     def visit_For(self, node):
         statements = [scope.copy() for scope in self.sql_statement_stack]
         tables = [scope.copy() for scope in self.sql_table_stack]
+        texts = [scope.copy() for scope in self.sql_text_stack]
+        literals = [scope.copy() for scope in self.sql_literal_stack]
         self._invalidate_branch_sql_bindings(node.body)
         if isinstance(node, ast.While):
             self.visit(node.test)
@@ -860,6 +1144,8 @@ class _SQLFlowChecker(TaintVisitor):
             self.visit(child)
         self.sql_statement_stack = statements
         self.sql_table_stack = tables
+        self.sql_text_stack = texts
+        self.sql_literal_stack = literals
         self._invalidate_branch_sql_bindings([node])
         for child in node.orelse:
             self.visit(child)
@@ -871,6 +1157,8 @@ class _SQLFlowChecker(TaintVisitor):
     def visit_Try(self, node):
         statements = [scope.copy() for scope in self.sql_statement_stack]
         tables = [scope.copy() for scope in self.sql_table_stack]
+        texts = [scope.copy() for scope in self.sql_text_stack]
+        literals = [scope.copy() for scope in self.sql_literal_stack]
         for child in node.body:
             self.visit(child)
         # The else branch is reached only after the entire try body succeeds.
@@ -879,12 +1167,16 @@ class _SQLFlowChecker(TaintVisitor):
         for handler in node.handlers:
             self.sql_statement_stack = [scope.copy() for scope in statements]
             self.sql_table_stack = [scope.copy() for scope in tables]
+            self.sql_text_stack = [scope.copy() for scope in texts]
+            self.sql_literal_stack = [scope.copy() for scope in literals]
             self._invalidate_branch_sql_bindings(node.body)
             if handler.name:
                 self._invalidate_sql_binding(handler.name)
             self.visit(handler)
         self.sql_statement_stack = statements
         self.sql_table_stack = tables
+        self.sql_text_stack = texts
+        self.sql_literal_stack = literals
         self._invalidate_branch_sql_bindings([*node.body, *node.orelse, *node.handlers])
         for child in node.finalbody:
             self.visit(child)
@@ -897,18 +1189,26 @@ class _SQLFlowChecker(TaintVisitor):
         is_static = self._is_static_query_expr(node.value)
         is_statement = self._is_sql_statement(node.value)
         is_table = self._is_sql_table(node.value)
+        is_safe_text = self._is_sql_safe_text(node.value)
+        literal_fact = self._sql_literal_fact(node.value)
         super().visit_Assign(node)
         for target in node.targets:
             if isinstance(target, ast.Name):
                 self._set_static_string(target.id, is_static)
                 self._set_sql_statement(target.id, is_statement)
                 self._set_sql_table(target.id, is_table)
+                self.sql_text_stack[-1][target.id] = is_safe_text
+                self.sql_literal_stack[-1][target.id] = literal_fact
 
     def visit_AnnAssign(self, node):
         self._track_db_receiver_aliases([node.target], node.value)
         is_static = bool(node.value and self._is_static_query_expr(node.value))
         is_statement = bool(node.value and self._is_sql_statement(node.value))
         is_table = bool(node.value and self._is_sql_table(node.value))
+        is_safe_text = bool(node.value and self._is_sql_safe_text(node.value))
+        literal_fact = None
+        if node.value is not None:
+            literal_fact = self._sql_literal_fact(node.value)
         super().visit_AnnAssign(node)
         if node.value and isinstance(node.target, ast.Name):
             self._set_static_string(
@@ -920,6 +1220,8 @@ class _SQLFlowChecker(TaintVisitor):
                 is_statement,
             )
             self._set_sql_table(node.target.id, is_table)
+            self.sql_text_stack[-1][node.target.id] = is_safe_text
+            self.sql_literal_stack[-1][node.target.id] = literal_fact
 
     def visit_AugAssign(self, node):
         if isinstance(node.target, ast.Name):
@@ -930,6 +1232,11 @@ class _SQLFlowChecker(TaintVisitor):
                 and self._is_static_query_expr(node.value)
             )
             self._set_static_string(target_name, remains_static)
+            self.sql_text_stack[-1][target_name] = (
+                isinstance(node.op, ast.Add)
+                and self._is_sql_safe_name(target_name)
+                and self._is_sql_safe_text(node.value)
+            )
             self._set_sql_statement(target_name, False)
             self._set(
                 target_name, self._get(target_name) or self.is_tainted(node.value)
@@ -957,7 +1264,12 @@ class _SQLFlowChecker(TaintVisitor):
 
             query_expr = get_query_expression(node, names=("sql", "query", "statement"))
 
-            if query_expr is not None and not self._is_sql_statement(query_expr):
+            if (
+                query_expr is not None
+                and not self._is_sql_statement(query_expr)
+                and not self._is_sql_safe_text(query_expr)
+                and not self._escaped_literal_query(node, query_expr)
+            ):
                 sink = f"SQL text passed to .{node.func.attr}()"
                 if _is_interpolated_string(query_expr) or self.is_tainted(query_expr):
                     self._sqli_finding(
@@ -967,7 +1279,7 @@ class _SQLFlowChecker(TaintVisitor):
                         query_expr,
                         sink,
                     )
-                else:
+                elif node.func.attr != "executescript":
                     is_literal = self._is_static_query_expr(query_expr)
                     if not is_literal and not is_parameterized_query(node, query_expr):
                         self._sqli_finding(
@@ -987,8 +1299,10 @@ class _SQLFlowChecker(TaintVisitor):
         ):
             query_expr = get_query_expression(node, names=("sql", "query"))
 
-            if query_expr is not None and (
-                _is_interpolated_string(query_expr) or self.is_tainted(query_expr)
+            if (
+                query_expr is not None
+                and not self._is_sql_safe_text(query_expr)
+                and (_is_interpolated_string(query_expr) or self.is_tainted(query_expr))
             ):
                 self._sqli_finding(
                     node,
@@ -1017,8 +1331,10 @@ class _SQLFlowChecker(TaintVisitor):
             statement_expression = get_query_expression(
                 node, names=("statement", "sql", "query")
             )
-            if statement_expression is not None and not self._is_sql_statement(
-                statement_expression
+            if (
+                statement_expression is not None
+                and not self._is_sql_statement(statement_expression)
+                and not self._is_sql_safe_text(statement_expression)
             ):
                 if _is_interpolated_string(statement_expression) or self.is_tainted(
                     statement_expression
@@ -1036,6 +1352,8 @@ class _SQLFlowChecker(TaintVisitor):
 
         if self.sqlalchemy_text.is_text_call(node):
             for argument in node.args:
+                if self._is_sql_safe_text(argument):
+                    continue
                 if _is_interpolated_string(argument) or self.is_tainted(argument):
                     self._sqli_finding(
                         node,
