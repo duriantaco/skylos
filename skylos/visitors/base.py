@@ -780,6 +780,15 @@ class Visitor(ast.NodeVisitor):
         for stmt in node.body:
             self.visit(stmt)
         self._finalize_dunder_all_exports(node.body)
+        self._credit_lazy_module_attributes(node)
+
+    def _credit_lazy_module_attributes(self, node: ast.Module) -> None:
+        from skylos.deadcode.python_proofs import proven_lazy_exports
+
+        exports = proven_lazy_exports(node, str(self.file))
+        for name, target in exports.items():
+            if self.alias.get(name) == target:
+                self.add_ref(target)
 
     def qual(self, name: str) -> str:
         if name in self.alias:
@@ -2449,6 +2458,24 @@ class Visitor(ast.NodeVisitor):
                         (self._current_function_qname or "", keyword.arg, arg_type)
                     )
 
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "__subclasses__"
+            and not node.args
+        ):
+            base = self._resolve_callee_fqname(node.func.value)
+            if base:
+                self.pattern_tracker.discovered_subclass_bases.add(
+                    (
+                        base,
+                        self._current_function_qname or "",
+                        self.mod,
+                        node.lineno,
+                        "subclasses",
+                        "",
+                    )
+                )
+
         if isinstance(node.func, ast.Name) and node.func.id == "NewType":
             if (
                 node.args
@@ -2695,7 +2722,7 @@ class Visitor(ast.NodeVisitor):
                 and node.args
             ):
                 return node.args[0], True, node
-            if node.func.attr in ("keys", "items") and not node.args:
+            if node.func.attr in ("keys", "items", "values") and not node.args:
                 inner = node.func.value
                 namespace = None
                 if isinstance(inner, ast.Attribute) and inner.attr == "__dict__":
@@ -2910,6 +2937,18 @@ class Visitor(ast.NodeVisitor):
             self._pending_module_reflections.append(
                 (self.alias[subject.id], None, specs, bases)
             )
+        if bases and subject.id not in self.alias:
+            for base in bases:
+                self.pattern_tracker.discovered_subclass_bases.add(
+                    (
+                        base,
+                        self._current_function_qname or "",
+                        self.mod,
+                        getattr(iter_node, "lineno", 0),
+                        "members",
+                        subject.id,
+                    )
+                )
 
     def _record_module_call_args(self, callee: str, node: ast.Call) -> None:
         """Remember imported module-like names passed to calls.

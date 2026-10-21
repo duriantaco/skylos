@@ -700,8 +700,7 @@ def test_page_function_named_by_python_rendered_onclick_is_live(tmp_path):
         tmp_path, 'webapp/markdown.py',
         """
         def render_copy_button(builder):
-            with builder.div(class_="code-block__copy", onclick="copyCode(this)"):
-                return builder
+            return '<button class="code-block__copy" onclick="copyCode(this)">copy</button>'
 
 
         def render_link():
@@ -712,6 +711,7 @@ def test_page_function_named_by_python_rendered_onclick_is_live(tmp_path):
         render_link()
         """,
     )
+    _write(tmp_path, 'index.html', '<script src="public/assets/docs.js"></script>\n')
     _write(
         tmp_path, 'public/assets/docs.js',
         """
@@ -743,13 +743,13 @@ def test_commented_out_python_onclick_does_not_keep_a_page_function(tmp_path):
         """
         def render_copy_button(builder):
             # builder.div(onclick="retiredCopy(this)")
-            with builder.div(class_="code-block__copy", onclick="copyCode(this)"):
-                return builder
+            return '<button class="code-block__copy" onclick="copyCode(this)">copy</button>'
 
 
         render_copy_button(None)
         """,
     )
+    _write(tmp_path, 'index.html', '<script src="public/assets/docs.js"></script>\n')
     _write(
         tmp_path, 'public/assets/docs.js',
         """
@@ -768,3 +768,154 @@ def test_commented_out_python_onclick_does_not_keep_a_page_function(tmp_path):
     names = _js_function_names(result)
     assert "copyCode" not in names
     assert "retiredCopy" in names
+
+
+def test_page_functions_named_by_python_strings_are_live(tmp_path):
+    _write(
+        tmp_path,
+        "webui/ui.py",
+        """
+        import gradio as gr
+
+
+        def build(tab, name):
+            \"\"\"Docs may mention retiredHelper() without calling it.\"\"\"
+            button = gr.Button()
+            button.click(_js="submitForm")
+            button.click(_js="function(){ setSeed('" + name + "'); }")
+            button.click(_js=f"switch_to_{tab}")
+            button.click(_js="update_" + tab + "_tokens()")
+            return f"<script>applyTheme('{name}');</script>"
+
+
+        build("txt", "x")
+        """,
+    )
+    _write(tmp_path, "index.html", '<script src="javascript/ui.js"></script>\n')
+    _write(
+        tmp_path,
+        "javascript/ui.js",
+        """
+        function submitForm() { return 1; }
+        function setSeed(id) { return id; }
+        function switch_to_txt() { return 2; }
+        function update_txt_tokens() { return 3; }
+        function applyTheme(name) { return name; }
+        function retiredHelper() { return 4; }
+        function unusedHelper() { return 5; }
+        """,
+    )
+
+    names = _js_function_names(_scan(tmp_path, conf=0))
+    assert {
+        "submitForm",
+        "setSeed",
+        "switch_to_txt",
+        "update_txt_tokens",
+        "applyTheme",
+    }.isdisjoint(names)
+    assert {"retiredHelper", "unusedHelper"} <= names
+
+
+def test_python_strings_do_not_reach_module_script_functions(tmp_path):
+    _write(
+        tmp_path, 'webui/ui.py',
+        'def build(button):\n    button.click(_js="moduleOnly")\n\n\nbuild(None)\n',
+    )
+    _write(
+        tmp_path, 'web/app.js',
+        'import { x } from "./lib.js";\nfunction moduleOnly() { return x; }\n',
+    )
+    _write(tmp_path, 'web/lib.js', 'export const x = 1;\n')
+
+    assert "moduleOnly" in _js_function_names(_scan(tmp_path, conf=0))
+
+
+def test_scripts_rendered_from_a_python_folder_listing_are_loaded(tmp_path):
+    _write(
+        tmp_path,
+        "webui/head.py",
+        """
+        import os
+
+
+        def list_scripts(folder, extension):
+            return os.scandir(folder)
+
+
+        def javascript_html(root):
+            main = os.path.join(root, "script.js")
+            head = f'<script src="{main}"></script>'
+            for script in list_scripts("javascript", ".js"):
+                head += f'<script type="text/javascript" src="{script.path}"></script>'
+            return head
+
+
+        javascript_html(".")
+        """,
+    )
+    _write(tmp_path, "script.js", "var ready = 1;\n")
+    _write(tmp_path, "javascript/ui.js", "var ui = 1;\n")
+    _write(tmp_path, "extensions/zoom/javascript/zoom.js", "var zoom = 1;\n")
+    _write(tmp_path, "assets/stale.js", "var stale = 1;\n")
+
+    paths = _unused_file_paths(_scan(tmp_path, conf=60), tmp_path)
+    assert {"script.js", "javascript/ui.js"}.isdisjoint(paths)
+    assert {"assets/stale.js", "extensions/zoom/javascript/zoom.js"} <= paths
+
+
+def test_classes_found_by_subclass_discovery_are_live(tmp_path):
+    _write(
+        tmp_path,
+        "app/plugins.py",
+        """
+        import importlib
+        import inspect
+
+
+        class Plugin:
+            pass
+
+
+        class Upscaler:
+            pass
+
+
+        def load():
+            module = importlib.import_module("plugins.extra")
+            found = []
+            for value in module.__dict__.values():
+                if inspect.isclass(value) and issubclass(value, Plugin):
+                    found.append(value)
+            import plugins.extra
+            return found + [cls() for cls in Upscaler.__subclasses__()]
+
+
+        load()
+        """,
+    )
+    _write(
+        tmp_path,
+        "plugins/extra.py",
+        """
+        from app.plugins import Plugin, Upscaler
+
+
+        class ExtraPlugin(Plugin):
+            pass
+
+
+        class FastUpscaler(Upscaler):
+            pass
+
+
+        class Unrelated:
+            pass
+        """,
+    )
+
+    unused = _names(_scan(tmp_path, conf=0), "unused_classes")
+    assert {"plugins.extra.ExtraPlugin", "plugins.extra.FastUpscaler"}.isdisjoint(
+        unused
+    )
+    assert "plugins.extra.Unrelated" in unused

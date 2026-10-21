@@ -28,6 +28,7 @@ root.
 from __future__ import annotations
 
 import ast
+import fnmatch
 import json
 import os
 import re
@@ -39,6 +40,7 @@ from pathlib import Path
 import yaml
 
 from skylos.core.file_discovery import discover_source_files
+from skylos.deadcode.python_source_proofs import _PythonReferenceProof, _scope_nodes
 from skylos.core.safe_cache_io import read_text_no_symlink
 
 _JS_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs")
@@ -130,10 +132,14 @@ class _ScriptSources(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.paths = []
+        self.sources = []
 
     def handle_starttag(self, tag, attrs):
         if tag == "script":
-            self.paths.extend(value for name, value in attrs if name == "src" and value)
+            values = [value for name, value in attrs if name == "src" and value]
+            if len(values) == 1:
+                self.paths.append(values[0])
+                self.sources.append((values[0], attrs))
 
 
 _MODULE_SPECIFIER_CALLS = frozenset({"require", "import"})
@@ -478,6 +484,97 @@ def _config_load_paths(path: Path, source: str):
             pending.extend(value)
 
 
+def _python_script_tag_loads(
+    source: str, *, root: Path, source_file: Path, classic_only: bool = False
+):
+    """Resolve rendered script sources through actual directory-producing code.
+
+    Unknown providers, arguments, owners and roots produce no load evidence.
+    This deliberately does not infer a directory from a helper's spelling or
+    from arbitrary string arguments to that helper.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError):
+        return
+    proof = _PythonReferenceProof(tree, root, source_file)
+    for scope, bindings in proof.contexts():
+        loops = proof.loops(scope, bindings)
+        for node in _scope_nodes(scope):
+            if not isinstance(node, (ast.JoinedStr, ast.BinOp, ast.Constant)):
+                continue
+            for kind, value in _script_tag_sources(node, classic_only=classic_only):
+                if kind == "path":
+                    path = proof.path(ast.Constant(value), bindings)
+                    if path is not None:
+                        yield "path", str(path)
+                    continue
+                expression, prefix = value
+                yield from proof.script_values(expression, bindings, loops, prefix)
+
+
+def _script_tag_sources(node: ast.AST, *, classic_only: bool = False):
+    from skylos.deadcode.browser_refs import _CLASSIC_SCRIPT_TYPES
+
+    parts: list[ast.AST] = []
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        parts = [node]
+    elif isinstance(node, ast.JoinedStr):
+        for value in node.values:
+            if isinstance(value, ast.FormattedValue):
+                if value.conversion != -1 or value.format_spec is not None:
+                    parts.append(value)
+                else:
+                    parts.append(value.value)
+            else:
+                parts.append(value)
+    elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        pending = [node]
+        while pending:
+            current = pending.pop()
+            if isinstance(current, ast.BinOp) and isinstance(current.op, ast.Add):
+                pending.extend([current.right, current.left])
+            else:
+                parts.append(current)
+    text = ""
+    expressions = {}
+    for part in parts:
+        if isinstance(part, ast.Constant) and isinstance(part.value, str):
+            if "\x00" in part.value:
+                return
+            text += part.value
+            continue
+        marker = "\x00" + str(len(expressions)) + "\x00"
+        expressions[marker] = part
+        text += marker
+    if "<script" not in text.lower():
+        return
+    parser = _ScriptSources()
+    try:
+        parser.feed(text)
+        parser.close()
+    except (ValueError, RecursionError):
+        return
+    for value, attrs in parser.sources:
+        if classic_only:
+            types = [value for name, value in attrs if name == "type"]
+            if len(types) > 1:
+                continue
+            script_type = ""
+            if types:
+                script_type = (types[0] or "").strip().lower()
+            if script_type not in _CLASSIC_SCRIPT_TYPES:
+                continue
+        matched = [marker for marker in expressions if marker in value]
+        if not matched:
+            yield "path", value
+        elif len(matched) == 1 and value.count(matched[0]) == 1:
+            marker = matched[0]
+            prefix, suffix = value.split(marker)
+            if not suffix:
+                yield "expression", (expressions[marker], prefix)
+
+
 def _reference_texts(path: Path, source: str):
     suffix = path.suffix.lower()
     if suffix in _PYTHON_SUFFIXES:
@@ -666,6 +763,29 @@ def _iter_reference_files(project_root: Path, js_files: set[str], exclude_folder
                 yield candidate
 
 
+def _folder_targets(
+    root: str, targets: set[str], folder: str, pattern: str, recursive: bool
+):
+    """Match only files under the directory the source actually enumerates."""
+    directory = Path(folder)
+    try:
+        directory.relative_to(root)
+    except ValueError:
+        return set()
+    found = set()
+    for target in targets:
+        try:
+            relative = Path(target).relative_to(directory)
+        except ValueError:
+            continue
+        if not recursive and len(relative.parts) != 1:
+            continue
+        if not fnmatch.fnmatchcase(relative.name, pattern):
+            continue
+        found.add(target)
+    return found
+
+
 def collect_ts_path_references(
     project_root: str | os.PathLike[str],
     js_files: set[str],
@@ -693,16 +813,32 @@ def collect_ts_path_references(
     index = _FileIndex(root, js_files)
     names = _target_names(targets)
 
-    for file_path in _iter_reference_files(root_path, js_files, exclude_folders):
+    reference_files = list(_iter_reference_files(root_path, js_files, exclude_folders))
+    python_files = [
+        path for path in reference_files if path.suffix.lower() in _PYTHON_SUFFIXES
+    ]
+    if python_files:
+        from skylos.deadcode.python_browser_effects import project_script_entry_files
+        from skylos.deadcode.python_project_sources import ProjectSourceIndex
+
+        project_index = ProjectSourceIndex(root_path, python_files)
+        roots.update(
+            str(path)
+            for path in project_script_entry_files(project_index)
+            if str(path) in targets
+        )
+    for file_path in reference_files:
         source = read_text_no_symlink(
             file_path,
             max_bytes=_MAX_REFERENCE_FILE_BYTES,
             encoding="utf-8",
             errors="ignore",
         )
-        if not source or not any(name in source for name in names):
+        if not source:
             continue
         ref_dir = os.path.dirname(os.path.realpath(file_path))
+        if not any(name in source for name in names):
+            continue
         for text in _reference_texts(file_path, source):
             for token in _tokens(text, names):
                 target = _resolve_token(

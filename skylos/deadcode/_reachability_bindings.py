@@ -139,7 +139,7 @@ def bound_names(nodes: Iterable[ast.AST], *, class_name: str = "") -> BoundNames
     return collector
 
 
-def _relative_parent(node: ast.ImportFrom, module: ModuleInfo) -> str | None:
+def relative_parent(node: ast.ImportFrom, module: ModuleInfo) -> str | None:
     identities = {name for name in module.names if name}
     if len(identities) != 1:
         return None
@@ -159,7 +159,7 @@ def _relative_parent(node: ast.ImportFrom, module: ModuleInfo) -> str | None:
 def import_bindings(node: ast.Import | ast.ImportFrom, module: ModuleInfo) -> Bindings:
     if isinstance(node, ast.Import):
         return {_import_name(alias): _import_target(alias) for alias in node.names}
-    parent = _relative_parent(node, module) if node.level else node.module or ""
+    parent = relative_parent(node, module) if node.level else node.module or ""
     return _from_imports(node, parent)
 
 

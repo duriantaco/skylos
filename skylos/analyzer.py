@@ -3326,6 +3326,31 @@ class Skylos:
                 marked.add(defn.name)
         return len(marked)
 
+    def _mark_discovered_subclasses(self) -> int:
+        """Only reachable discovery of classes whose modules really load."""
+        from skylos.analysis.implicit_refs import pattern_tracker
+        from skylos.deadcode.subclass_proofs import discovered_classes
+
+        report = getattr(self, "_python_reachability_report", None)
+        discoveries = getattr(pattern_tracker, "discovered_subclass_bases", ())
+        if not discoveries or report is None or not report.complete:
+            return 0
+        found = discovered_classes(
+            discoveries,
+            report,
+            self.defs,
+            self._python_subclass_map(),
+        )
+        marked = 0
+        for name in found:
+            defn = self.defs.get(name)
+            if defn is None or defn.type != "class" or defn.references > 0:
+                continue
+            defn.references += 1
+            _mark_evidence_ref(defn, "dynamic_pattern")
+            marked += 1
+        return marked
+
     def _mark_call_arg_method_refs(self):
         param_method_refs = getattr(self, "_param_method_refs", {})
         call_arg_types = getattr(self, "_call_arg_types", {})
@@ -6113,6 +6138,8 @@ class Skylos:
         # callback cycles cannot become roots or consume ordinary references.
         self._apply_external_protocol_liveness(files)
         self._refresh_python_reachability()
+        if self._mark_discovered_subclasses():
+            self._refresh_python_reachability()
         self._suppress_standalone_orm_models()
 
         grep_verify_report = {

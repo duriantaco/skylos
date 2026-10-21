@@ -35,6 +35,12 @@ Factor                                  Cap   Why the evidence is weaker
 ``default_export``                       60   a module's default export is how
                                               routers, mailers, configs and
                                               story loaders consume it
+``deprecated_api``                       40   it (or its module, on import)
+                                              warns that it is deprecated,
+                                              or its docstring says so:
+                                              kept for callers on purpose
+                                              (8/8 such functions on the same
+                                              repos)
 ``experimental_language``                40   Rust dead code (trait methods,
                                               ``pub`` re-exports, macros) is
                                               not resolved; 0/15 true on
@@ -42,8 +48,9 @@ Factor                                  Cap   Why the evidence is weaker
                                               threshold, so off by default
 ======================================  ====  ==============================
 
-The default threshold is 60, so every factor except ``signature_parameter``
-and ``experimental_language`` keeps the finding visible by default; a scan
+The default threshold is 60, so every factor except ``signature_parameter``,
+``deprecated_api`` and ``experimental_language`` keeps the finding visible by
+default; a scan
 says how many parameters it did not list. Raising
 ``--confidence`` now removes the weakest symbol findings first, and
 ``skylos clean``'s non-interactive default (80) no longer deletes default
@@ -58,6 +65,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from skylos.deadcode.python_proofs import deprecation_facts
+
 CONFIDENCE_CAPS = {
     "public_name": 90,
     "exported_symbol": 85,
@@ -67,6 +76,7 @@ CONFIDENCE_CAPS = {
     "class_attribute": 80,
     "imported_only_by_unused_files": 65,
     "default_export": 60,
+    "deprecated_api": 40,
     "experimental_language": 40,
 }
 
@@ -79,6 +89,7 @@ FACTOR_LABELS = {
     "class_attribute": "class attribute (frameworks may read it)",
     "imported_only_by_unused_files": "only imported by unused files",
     "default_export": "default export (frameworks load modules by it)",
+    "deprecated_api": "deprecated, kept for existing callers",
     "experimental_language": "experimental language support",
 }
 
@@ -132,6 +143,15 @@ def _definition_factors(definition: Any, definitions: dict, demoted: set[int]):
     if id(definition) in demoted:
         factors.append("exported_symbol")
 
+    if (
+        kind in {"function", "method", "class"} and _is_deprecated_python(definition)
+    ) or (
+        suffix in _PYTHON_SUFFIXES
+        and kind in {"function", "class", "variable", "import"}
+        and _module_is_deprecated(str(definition.filename))
+    ):
+        factors.append("deprecated_api")
+
     if kind == "parameter":
         factors.append("signature_parameter")
     elif kind == "method":
@@ -150,6 +170,19 @@ def _definition_factors(definition: Any, definitions: dict, demoted: set[int]):
     ):
         factors.append("public_name")
     return list(dict.fromkeys(factors))
+
+
+def _is_deprecated_python(definition: Any) -> bool:
+    node = getattr(definition, "node", None)
+    if node is None:
+        return False
+    _module, definitions = deprecation_facts(str(definition.filename))
+    return (getattr(node, "lineno", None), getattr(node, "name", None)) in definitions
+
+
+def _module_is_deprecated(filename: str) -> bool:
+    deprecated, _definitions = deprecation_facts(filename)
+    return deprecated
 
 
 def _is_nested_python_name(name: str, definitions: dict) -> bool:
@@ -202,6 +235,7 @@ def experimental_hidden_counts(
 # Factors below the default threshold, and the flag that lists them.
 BELOW_THRESHOLD_SHOW_WITH = {
     "signature_parameter": f"--confidence {CONFIDENCE_CAPS['signature_parameter']}",
+    "deprecated_api": f"--confidence {CONFIDENCE_CAPS['deprecated_api']}",
     "experimental_language": (
         f"--confidence {CONFIDENCE_CAPS['experimental_language']}"
     ),
