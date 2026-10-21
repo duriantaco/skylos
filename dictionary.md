@@ -427,7 +427,7 @@ that directory.
 | D290 | HIGH | Dangerous trigger (`pull_request_target`, `workflow_run`) | GitHub Actions |
 | D291 | MEDIUM-HIGH | Missing or excessive permissions | GitHub Actions |
 | D292 | HIGH (LOW for GitHub-owned) | Unpinned action or reusable workflow. GitHub-owned `actions/*` and `github/*` at a tag or branch are LOW (GitHub runs the workflow and owns them; zizmor's default policy allows ref-pins for them); every other owner, dynamic `${{ }}` refs and refs with no `@` are HIGH | GitHub Actions |
-| D293 | MEDIUM | Checkout persists credentials | GitHub Actions |
+| D293 | MEDIUM | Checkout persists credentials where they can reach someone new: a later `actions/upload-artifact` of the checkout (`.git` included: before v4.4, or with `include-hidden-files: true`, or a SHA pin), a pull request's code checked out in a job accounts without write access can start, or an explicitly write-scoped token beside a later third-party action. GitHub-owned and local actions already hold the token; an undeclared token scope is D291's finding | GitHub Actions |
 | D294 | HIGH | Template injection from untrusted context | GitHub Actions |
 | D295 | HIGH | Self-hosted runner exposure | GitHub Actions |
 | D296 | MEDIUM | Unpinned container image | GitHub Actions |
@@ -447,7 +447,7 @@ that directory.
 | D310 | HIGH | OIDC token exposed to local build script | GitHub Actions |
 | D311 | MEDIUM | Lax artifact upload | GitHub Actions |
 | D312 | MEDIUM | JavaScript install scripts in CI | GitHub Actions |
-| D313 | MEDIUM | Privileged job missing timeout | GitHub Actions |
+| D313 | LOW | Privileged job missing a bounded timeout while reachable accounts without write access can run pull request code. The default is 360 minutes on both GitHub-hosted and self-hosted runners; trusted jobs and jobs that do not run PR code are not reported | GitHub Actions |
 | D350 | MEDIUM-CRITICAL | AI agent on an untrusted trigger with no actor gate | GitHub Actions |
 | D351 | MEDIUM-CRITICAL | AI agent action's write-access check widened (`*`) | GitHub Actions |
 | D352 | MEDIUM-HIGH | AI agent can run any shell command on an untrusted trigger | GitHub Actions |
