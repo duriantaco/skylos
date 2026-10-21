@@ -123,11 +123,12 @@ def test_custom_category_is_not_a_builtin_mirror_and_still_blocks_gate(tmp_path)
     assert not check_gate(result, {"gate": {"max_quality": 0}})[0]
 
 
-def test_all_advice_and_explicit_rules_keep_same_raw_records(tmp_path):
-    raw = {"quality": [_row(), _row("SKY-C303")]}
+@pytest.mark.parametrize("rule", ["SKY-L027", "SKY-L038"])
+def test_all_advice_and_explicit_rules_keep_same_raw_records(tmp_path, rule):
+    raw = {"quality": [_row(rule), _row("SKY-C303")]}
     focused = apply_advice_policy(raw, project_root=tmp_path)
     selected = apply_advice_policy(
-        raw, project_root=tmp_path, explicit_rules=["SKY-L027"]
+        raw, project_root=tmp_path, explicit_rules=[rule]
     )
     expanded = apply_advice_policy(raw, project_root=tmp_path, all_advice=True)
     for result in (focused, selected, expanded):
@@ -137,13 +138,14 @@ def test_all_advice_and_explicit_rules_keep_same_raw_records(tmp_path):
     assert all(is_listed(row, "quality") for row in expanded["quality"])
 
 
-def test_gate_uses_mark_and_explicit_config_override(tmp_path):
-    result = apply_advice_policy({"quality": [_row()]}, project_root=tmp_path)
+@pytest.mark.parametrize("rule", ["SKY-L027", "SKY-L038"])
+def test_gate_uses_mark_and_explicit_config_override(tmp_path, rule):
+    result = apply_advice_policy({"quality": [_row(rule)]}, project_root=tmp_path)
     assert check_gate(result, {"gate": {"max_quality": 0}})[0] is True
-    configured = {"gate": {"max_quality": 0, "rules": ["SKY-L027"]}}
+    configured = {"gate": {"max_quality": 0, "rules": [rule]}}
     passed, reasons = check_gate(result, configured)
     assert not passed and any("1 quality issue" in str(reason) for reason in reasons)
-    assert explicit_rule_ids(configured) == {"SKY-L027"}
+    assert explicit_rule_ids(configured) == {rule}
     assert result["quality"][0]["listing"]["listed"] is False
 
 
