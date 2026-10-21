@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.rules.config import scan_config_files
 from skylos.rules.config.cicd import actions_expressions as expressions
 from skylos.rules.config.cicd import workflow_audits as audits
@@ -1399,7 +1400,7 @@ def _materialize(tmp_path, files):
     for relative, text in files.items():
         target = tmp_path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text.lstrip("\n"), encoding="utf-8")
+        assert write_text_no_symlink(target, text.lstrip("\n"), encoding="utf-8")
 
 
 def _line_of(text, needle, nth=1):
