@@ -1,11 +1,15 @@
-"""Path findings on a production helper's parameter stay reported.
+"""Path findings on a production helper's parameter: what the callers show.
 
-A cross-file "every caller passes safe values" proof was tried and removed:
-independent adversarial review found real traversals it hid (dispatch by
-computed name, mutable module state, CGI/SSH environment, subprocess argv,
-symlinked archive members). These cases pin that production helpers keep
-their finding whatever their visible callers pass; only test code is exempt
-(test_path_closed_world.py).
+These cases first pinned that a helper finding stayed reported whatever its
+visible callers passed, because an earlier cross-file "every caller is safe"
+proof hid real traversals (dispatch by computed name, mutable module state,
+CGI environment, subprocess argv). ``path_provenance`` now resolves the
+callers and models those cases instead of trusting them: a finding is
+reported when a resolved chain starts at untrusted input, and recorded as
+``safe`` or ``unknown`` in ``suppressed`` otherwise. Unknown callers are
+neither proof of an attack nor of safety, so they no longer produce a report.
+The adversarial cases below still report; the others now assert the recorded
+provenance, and each says why its expectation changed.
 """
 
 import json
@@ -50,10 +54,37 @@ def _reported(root: Path) -> set[tuple[str, str]]:
     }
 
 
+def _provenance(root: Path, name: str, symbol: str) -> list[dict]:
+    """Provenance of the suppressed (not reported) path findings."""
+    result = json.loads(analyze(str(root), enable_danger=True))
+    assert not any(
+        Path(f["file"]).name == name and f.get("symbol") == symbol
+        for f in result.get("danger") or []
+        if f.get("rule_id") in PATH_RULES
+    )
+    found = [
+        f["metadata"]["path_provenance"]
+        for f in result.get("suppressed") or []
+        if f.get("rule_id") in PATH_RULES
+        and Path(f["file"]).name == name
+        and f.get("symbol") == symbol
+    ]
+    assert found
+    return found
+
+
+def _steps(provenance: dict, kind: str) -> list[str]:
+    return [step for chain in provenance.get(kind, []) for step in chain]
+
+
 # ------------------------------------- visible callers pass safe values
 
 
-def test_helper_called_only_with_internal_values_is_kept(tmp_path):
+def test_helper_called_only_with_internal_values_is_not_reported(tmp_path):
+    """Changed: the only caller passes a literal. ``read_file`` is public in
+    the ``app`` package, so importers outside the project stay unknown; that
+    is recorded, not reported.
+    """
     root = _project(
         tmp_path,
         {
@@ -63,10 +94,17 @@ def test_helper_called_only_with_internal_values_is_kept(tmp_path):
             "def build():\n    return read_file('summary.txt')\n",
         },
     )
-    assert ("reader.py", "read_file") in _reported(root)
+    for provenance in _provenance(root, "reader.py", "read_file"):
+        assert provenance["status"] == "unknown"
+        assert "app/report.py:5 literal" in _steps(provenance, "safe")
+        assert any("public in an importable package" in step for step in _steps(provenance, "unknown"))
 
 
-def test_helper_called_with_cli_arguments_across_modules_is_kept(tmp_path):
+def test_helper_called_with_cli_arguments_across_modules_is_not_reported(tmp_path):
+    """Changed: argparse arguments are the operator's input, as for a direct
+    ``open(args.name)`` in one file. No process launch in the project passes
+    untrusted arguments (that case stays unknown, test_path_provenance.py).
+    """
     root = _project(
         tmp_path,
         {
@@ -80,10 +118,15 @@ def test_helper_called_with_cli_arguments_across_modules_is_kept(tmp_path):
             "    print(read_file(args.name))\n",
         },
     )
-    assert ("reader.py", "read_file") in _reported(root)
+    for provenance in _provenance(root, "reader.py", "read_file"):
+        assert provenance["status"] == "unknown"
+        assert any("CLI arguments" in step for step in _steps(provenance, "operator"))
 
 
-def test_chain_of_helpers_ending_in_internal_values_is_kept(tmp_path):
+def test_chain_of_helpers_ending_in_internal_values_is_not_reported(tmp_path):
+    """Changed: a hex digest joined to a literal cannot carry a path; the chain
+    through ``load`` is followed and recorded.
+    """
     root = _project(
         tmp_path,
         {
@@ -97,10 +140,15 @@ def test_chain_of_helpers_ending_in_internal_values_is_kept(tmp_path):
             "    return load(key + '.json')\n",
         },
     )
-    assert ("reader.py", "read_file") in _reported(root)
+    for provenance in _provenance(root, "reader.py", "read_file"):
+        assert not provenance.get("untrusted")
+        assert any("hex digest from `hashlib.sha256.hexdigest`" in step for step in _steps(provenance, "safe"))
 
 
-def test_method_run_in_an_executor_with_internal_values_is_kept(tmp_path):
+def test_method_run_in_an_executor_with_internal_values_is_not_reported(tmp_path):
+    """Changed: ``POOL.submit(self.load, 'index.json')`` is followed as a call
+    that passes a literal.
+    """
     root = _project(
         tmp_path,
         {
@@ -116,7 +164,9 @@ def test_method_run_in_an_executor_with_internal_values_is_kept(tmp_path):
             "    return Store().load_index()\n",
         },
     )
-    assert ("store.py", "load") in _reported(root)
+    for provenance in _provenance(root, "store.py", "load"):
+        assert not provenance.get("untrusted")
+        assert "app/store.py:12 literal" in _steps(provenance, "safe")
 
 
 def test_partial_is_kept_because_it_may_get_more_arguments_later(tmp_path):
@@ -188,7 +238,12 @@ def test_executor_call_with_request_data_is_kept(tmp_path):
     assert ("reader.py", "read_file") in _reported(root)
 
 
-def test_lambda_handler_shape_without_callers_is_kept(tmp_path):
+def test_lambda_handler_shape_without_callers_is_not_reported(tmp_path):
+    """Changed: an ``(event, context)`` signature alone does not show that a
+    platform invokes it. A deployment file naming it as a handler does (test
+    _path_closed_world.py::test_lambda_handler_named_only_in_terraform_is_ke
+    pt).
+    """
     root = _project(
         tmp_path,
         {
@@ -197,7 +252,9 @@ def test_lambda_handler_shape_without_callers_is_kept(tmp_path):
             "    return open(os.path.join('/var/task', event['file'])).read()\n",
         },
     )
-    assert ("handler.py", "handle") in _reported(root)
+    for provenance in _provenance(root, "handler.py", "handle"):
+        assert provenance["status"] == "unknown"
+        assert any("no call of `handle`" in step for step in _steps(provenance, "unknown"))
 
 
 def test_module_importing_a_web_framework_without_callers_is_kept(tmp_path):
@@ -213,7 +270,11 @@ def test_module_importing_a_web_framework_without_callers_is_kept(tmp_path):
     assert ("views.py", "download") in _reported(root)
 
 
-def test_framework_handler_subclass_method_without_callers_is_kept(tmp_path):
+def test_framework_handler_subclass_method_without_callers_is_not_reported(tmp_path):
+    """Changed: tornado calls ``get``/``post``... with URL arguments, which is
+    reported below; ``serve`` has no caller, and what the external base may
+    call stays unknown.
+    """
     root = _project(
         tmp_path,
         {
@@ -223,10 +284,30 @@ def test_framework_handler_subclass_method_without_callers_is_kept(tmp_path):
             "        return (Path('/srv') / name).read_text()\n",
         },
     )
-    assert ("server.py", "serve") in _reported(root)
+    for provenance in _provenance(root, "server.py", "serve"):
+        assert provenance["status"] == "unknown"
+        assert any("extends `tornado.web.RequestHandler`" in step for step in _steps(provenance, "unknown"))
 
 
-def test_helper_registered_as_a_callback_is_kept(tmp_path):
+def test_framework_handler_verb_argument_is_kept(tmp_path):
+    root = _project(
+        tmp_path,
+        {
+            "server.py": "from pathlib import Path\n\nimport tornado.web\n\n\n"
+            "class FileHandler(tornado.web.RequestHandler):\n"
+            "    def get(self, name):\n"
+            "        self.write(_read(name))\n\n\n"
+            "def _read(name):\n"
+            "    return (Path('/srv') / name).read_text()\n",
+        },
+    )
+    assert ("server.py", "_read") in _reported(root)
+
+
+def test_helper_registered_as_a_callback_is_not_reported(tmp_path):
+    """Changed: the callers of a function stored in a table are not visible;
+    the escape is recorded as unknown, not as an attack.
+    """
     root = _project(
         tmp_path,
         {
@@ -236,10 +317,16 @@ def test_helper_registered_as_a_callback_is_kept(tmp_path):
             "HANDLERS = {'read': read_file}\n",
         },
     )
-    assert ("reader.py", "read_file") in _reported(root)
+    for provenance in _provenance(root, "reader.py", "read_file"):
+        assert provenance["status"] == "unknown"
+        assert any("app/plugins.py:3 `read_file` is passed as a value" in step for step in _steps(provenance, "unknown"))
 
 
-def test_helper_dispatched_by_name_is_kept(tmp_path):
+def test_helper_dispatched_by_name_is_not_reported(tmp_path):
+    """Changed: ``getattr(reader, 'read_file')`` resolves to the helper, but
+    ``run`` is never called, so what reaches ``arg`` is unknown. Dispatch
+    with request data is reported (test_dispatch_by_computed_name_...).
+    """
     root = _project(
         tmp_path,
         {
@@ -249,10 +336,16 @@ def test_helper_dispatched_by_name_is_kept(tmp_path):
             "def run(action, arg):\n    return getattr(reader, 'read_file')(arg)\n",
         },
     )
-    assert ("reader.py", "read_file") in _reported(root)
+    for provenance in _provenance(root, "reader.py", "read_file"):
+        assert provenance["status"] == "unknown"
+        assert any(step.startswith("app/dispatch.py:5 call `getattr(...)(...)` binds `name`") for step in _steps(provenance, "unknown"))
 
 
-def test_argument_from_object_state_is_kept(tmp_path):
+def test_argument_from_object_state_is_not_reported(tmp_path):
+    """Changed: ``self.name`` is followed to ``Job.__init__``; nothing
+    constructs a ``Job``, so its argument is unknown. A constructor called
+    with request data is reported (test_path_provenance.py).
+    """
     root = _project(
         tmp_path,
         {
@@ -264,10 +357,15 @@ def test_argument_from_object_state_is_kept(tmp_path):
             "    def run(self):\n        return read_file(self.name)\n",
         },
     )
-    assert ("reader.py", "read_file") in _reported(root)
+    for provenance in _provenance(root, "reader.py", "read_file"):
+        assert provenance["status"] == "unknown"
+        assert any("assigns `self.name`" in step for step in _steps(provenance, "unknown"))
 
 
 def test_same_name_on_another_module_is_not_a_caller(tmp_path):
+    """Changed: with no caller the finding is unknown, recorded rather than
+    reported.
+    """
     # ``json.load`` must not count as a call of the project's own ``load``,
     # which nothing calls, inside a module a framework imports.
     root = _project(
@@ -281,10 +379,17 @@ def test_same_name_on_another_module_is_not_a_caller(tmp_path):
             "def read_config(handle):\n    return json.load(handle)\n",
         },
     )
-    assert ("files.py", "load") in _reported(root)
+    for provenance in _provenance(root, "files.py", "load"):
+        steps = _steps(provenance, "unknown") + _steps(provenance, "safe")
+        assert not any(step.startswith("app/config.py") for step in steps)
+        assert not provenance.get("untrusted")
+        assert any("public in an importable package" in step for step in steps)
 
 
-def test_subdirectory_scan_keeps_findings(tmp_path):
+def test_subdirectory_scan_does_not_prove_safety(tmp_path):
+    """Changed: a scan of part of the project cannot see every caller, so a
+    literal-only caller leaves the finding unknown, not safe.
+    """
     root = _project(
         tmp_path,
         {
@@ -295,10 +400,17 @@ def test_subdirectory_scan_keeps_findings(tmp_path):
         },
     )
     result = json.loads(analyze(str(root / "app"), enable_danger=True))
-    assert any(
+    assert not any(
         f.get("symbol") == "read_file" and f.get("rule_id") in PATH_RULES
         for f in result.get("danger") or []
     )
+    provenances = [
+        f["metadata"]["path_provenance"]
+        for f in result.get("suppressed") or []
+        if f.get("symbol") == "read_file" and f.get("rule_id") in PATH_RULES
+    ]
+    assert provenances
+    assert all(p["status"] == "unknown" and p["complete_project"] is False for p in provenances)
 
 
 # Adversarial cases from independent review: a visible safe call must not
