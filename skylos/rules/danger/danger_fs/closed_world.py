@@ -10,11 +10,13 @@ module): test code is not deployed, so its values come from the tests.
 Comments in non-test files are not evidence: a comment can mention a module or
 a folder but never imports or loads one.
 
-Everywhere else the finding is kept. Proving that no outside input reaches a
-production helper needs whole-program taint tracking with framework models
-(dispatch by name, mutable module state, environment set by CGI or CI,
-subprocess argv, symlinked archive members); partial proofs hid real
-traversals, so none is attempted here.
+Every other helper-parameter finding goes to ``path_provenance``, which
+resolves the helper's callers in the scanned source. It reports a finding
+only when a resolved caller passes untrusted input and records the steps; a
+caller it cannot resolve leaves the finding ``unknown``, which is not a claim
+of an attack or of safety. Dispatch by computed name, mutable module state,
+CGI request variables and process launches with untrusted arguments are
+modelled there rather than assumed safe.
 """
 
 from __future__ import annotations
@@ -150,12 +152,25 @@ def drop_closed_world_helper_findings(
 
     Dropped findings are appended to ``suppressed`` with the reason.
     """
+    from skylos.rules.danger.danger_fs.path_provenance import (
+        needs_provenance,
+        resolve_helper_parameter_findings,
+    )
+
+    if not any(needs_provenance(f) for f in findings):
+        return findings
     candidates = [f for f in findings if is_helper_parameter_finding(f)]
-    if not candidates:
-        return findings
     root = _closed_world_root(scan_path)
-    if root is None or not any(_in_test_code(root, f) for f in candidates):
-        return findings
+    if root is not None and any(_in_test_code(root, f) for f in candidates):
+        findings = _drop_unreferenced_test_helpers(findings, root, suppressed)
+    return resolve_helper_parameter_findings(
+        findings, scan_path=scan_path, project_root=root, suppressed=suppressed
+    )
+
+
+def _drop_unreferenced_test_helpers(
+    findings: list[dict], root: Path, suppressed: list[dict]
+) -> list[dict]:
     index = _ProjectIndex.build(root)
     if index is None:
         return findings

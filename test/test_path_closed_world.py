@@ -5,6 +5,13 @@ Per-file analysis keeps a helper parameter as a possible remote source
 (test_path_traversal.py pins that). A scan of the complete repository can
 prove the module is never imported, named or registered with a framework, so
 every caller is in the file the per-file analysis already followed.
+
+A finding this test-code proof does not drop goes on to ``path_provenance``,
+which resolves the helper's callers: it is reported when a resolved caller
+passes untrusted input, and otherwise recorded in ``suppressed`` as ``safe``
+or ``unknown`` (test_path_provenance.py). Several cases here used to assert
+that such a finding stayed reported; they now assert that the test-code proof
+still refuses it (``_classified`` is not None) and what provenance found.
 """
 
 import json
@@ -14,7 +21,10 @@ import pytest
 
 from skylos.analyzer import analyze
 from skylos.core.safe_cache_io import write_text_no_symlink
-from skylos.rules.danger.danger_fs.closed_world import _has_computed_loader_call
+from skylos.rules.danger.danger_fs.closed_world import (
+    TEST_MODULE_REASON,
+    _has_computed_loader_call,
+)
 
 PATH_RULES = {"SKY-D215", "SKY-D324", "SKY-D325"}
 
@@ -57,6 +67,21 @@ def _path_findings(result: dict, key: str = "danger") -> set[tuple[str, str, str
     }
 
 
+def _classified(result: dict, key: tuple[str, str, str]) -> str | None:
+    """What ``path_provenance`` made of a finding the test-code proof kept:
+    ``reported``, ``safe`` or ``unknown``. None when the finding is missing
+    or was dropped as unreferenced test code."""
+    if key in _path_findings(result):
+        return "reported"
+    for finding in result.get("suppressed") or []:
+        if (Path(finding["file"]).name, finding.get("symbol"), finding["rule_id"]) != key:
+            continue
+        if finding.get("reason") == TEST_MODULE_REASON:
+            return None
+        return finding["metadata"]["path_provenance"]["status"]
+    return None
+
+
 def test_unimported_test_module_helpers_are_dropped(tmp_path):
     root = _project(
         tmp_path,
@@ -87,6 +112,10 @@ def test_unimported_test_module_helpers_are_dropped(tmp_path):
 
 
 def test_script_helpers_are_kept(tmp_path):
+    """Outside test code the test-code proof never applies. Changed: the
+    callers now decide. ``sys.argv`` is the operator's input, and nothing
+    calls ``_write_doc``, so neither is reported.
+    """
     root = _project(
         tmp_path,
         {
@@ -96,14 +125,13 @@ def test_script_helpers_are_kept(tmp_path):
         },
     )
 
-    # Outside test code, helper findings are kept whatever the callers pass.
-    assert {
-        ("prepare-release.py", "_read_doc", "SKY-D325"),
-        ("prepare-release.py", "_write_doc", "SKY-D324"),
-    } <= _path_findings(_scan(root))
+    result = _scan(root)
+    assert _classified(result, ("prepare-release.py", "_read_doc", "SKY-D325")) == "safe"
+    assert _classified(result, ("prepare-release.py", "_write_doc", "SKY-D324")) == "unknown"
 
 
 def test_helper_imported_by_a_route_module_is_kept(tmp_path):
+    """Nothing calls _write_doc. Changed: an unknown caller is not reported."""
     root = _project(
         tmp_path,
         {
@@ -124,8 +152,9 @@ def test_helper_imported_by_a_route_module_is_kept(tmp_path):
         ("files.py", "_read_doc", "SKY-D215"),
         ("files.py", "_read_doc", "SKY-D325"),
     } <= findings
-    # Nothing calls _write_doc: its caller cannot be shown, so it is kept.
-    assert {("files.py", "_write_doc", "SKY-D215"), ("files.py", "_write_doc", "SKY-D324")} <= findings
+    result = _scan(root)
+    assert _classified(result, ("files.py", "_write_doc", "SKY-D215")) == "unknown"
+    assert _classified(result, ("files.py", "_write_doc", "SKY-D324")) == "unknown"
 
 
 def test_relative_import_counts_as_an_importer(tmp_path):
@@ -143,6 +172,9 @@ def test_relative_import_counts_as_an_importer(tmp_path):
 
 
 def test_module_named_in_a_string_is_kept(tmp_path):
+    """Changed: the helper is not test code; nothing calls it, so provenance
+    leaves it unknown rather than reported.
+    """
     root = _project(
         tmp_path,
         {
@@ -153,10 +185,13 @@ def test_module_named_in_a_string_is_kept(tmp_path):
         },
     )
 
-    assert ("reader.py", "_read_doc", "SKY-D325") in _path_findings(_scan(root))
+    assert _classified(_scan(root), ("reader.py", "_read_doc", "SKY-D325")) == "unknown"
 
 
 def test_module_named_in_config_is_kept(tmp_path):
+    """Changed: the config names ``handler``, which does not exist; nothing
+    calls ``_read_doc``, so it is unknown rather than reported.
+    """
     root = _project(
         tmp_path,
         {
@@ -165,10 +200,13 @@ def test_module_named_in_config_is_kept(tmp_path):
         },
     )
 
-    assert ("reader.py", "_read_doc", "SKY-D325") in _path_findings(_scan(root))
+    assert _classified(_scan(root), ("reader.py", "_read_doc", "SKY-D325")) == "unknown"
 
 
 def test_module_with_framework_registration_decorator_is_kept(tmp_path):
+    """Changed: ``process`` is only reached through the Celery decorator, whose
+    callers are not visible, so ``_read`` is unknown rather than reported.
+    """
     root = _project(
         tmp_path,
         {
@@ -183,7 +221,14 @@ def test_module_with_framework_registration_decorator_is_kept(tmp_path):
         },
     )
 
-    assert ("worker.py", "_read", "SKY-D325") in _path_findings(_scan(root))
+    result = _scan(root)
+    assert _classified(result, ("worker.py", "_read", "SKY-D325")) == "unknown"
+    provenance = next(
+        f["metadata"]["path_provenance"]
+        for f in result["suppressed"]
+        if f.get("symbol") == "_read" and f["rule_id"] == "SKY-D325"
+    )
+    assert any("decorated with `celery_app.task`" in chain[0] for chain in provenance["unknown"])
 
 
 def test_module_importing_a_web_framework_is_kept(tmp_path):
@@ -203,11 +248,12 @@ def test_module_importing_a_web_framework_is_kept(tmp_path):
 
 
 def test_subdirectory_scan_is_not_a_closed_world(tmp_path):
+    """Changed: not dropped as test code (the scan is partial); provenance
+    cannot see every caller either, so it is unknown rather than reported.
+    """
     root = _project(tmp_path, {"tests/test_docs.py": HELPERS})
 
-    assert ("test_docs.py", "_read_doc", "SKY-D325") in _path_findings(
-        _scan(root / "tests")
-    )
+    assert _classified(_scan(root / "tests"), ("test_docs.py", "_read_doc", "SKY-D325")) == "unknown"
 
 
 def test_remote_source_in_the_same_file_is_kept(tmp_path):
@@ -313,6 +359,7 @@ def test_plugin_loaded_by_pkgutil_is_kept(tmp_path):
 
 
 def test_library_function_is_kept(tmp_path):
+    """Changed: that is unknown, which is recorded rather than reported."""
     root = _project(
         tmp_path,
         {
@@ -327,10 +374,11 @@ def test_library_function_is_kept(tmp_path):
 
     # Its only visible caller passes a constant, but callers outside the
     # repository (or unseen ones) may not.
-    assert ("storage.py", "read_asset", "SKY-D215") in _path_findings(_scan(root))
+    assert _classified(_scan(root), ("storage.py", "read_asset", "SKY-D215")) == "unknown"
 
 
 def test_script_helper_passed_as_a_callback_is_kept(tmp_path):
+    """Changed: a callback's callers are not visible, so it is unknown."""
     root = _project(
         tmp_path,
         {
@@ -342,10 +390,13 @@ def test_script_helper_passed_as_a_callback_is_kept(tmp_path):
         },
     )
 
-    assert ("serve.py", "_read_doc", "SKY-D325") in _path_findings(_scan(root))
+    assert _classified(_scan(root), ("serve.py", "_read_doc", "SKY-D325")) == "unknown"
 
 
 def test_script_helper_reached_through_main_is_kept(tmp_path):
+    """Changed: ``build(sys.argv[1])`` passes the operator's CLI argument and
+    nothing calls ``_write_doc``; neither is reported.
+    """
     root = _project(
         tmp_path,
         {
@@ -359,9 +410,9 @@ def test_script_helper_reached_through_main_is_kept(tmp_path):
         },
     )
 
-    findings = _path_findings(_scan(root))
-    assert ("report.py", "_read_doc", "SKY-D325") in findings
-    assert ("report.py", "_write_doc", "SKY-D324") in findings
+    result = _scan(root)
+    assert _classified(result, ("report.py", "_read_doc", "SKY-D325")) == "safe"
+    assert _classified(result, ("report.py", "_write_doc", "SKY-D324")) == "unknown"
 
 
 # Dynamic loaders block the proof only when they can point at the module.
@@ -396,6 +447,9 @@ def test_loader_for_another_folder_named_tests_does_not_block(tmp_path):
 
 
 def test_loader_naming_the_module_folder_path_blocks(tmp_path):
+    """Changed: the only caller passes ``sys.argv``, so provenance finds it
+    safe.
+    """
     root = _project(
         tmp_path,
         {
@@ -408,10 +462,13 @@ def test_loader_naming_the_module_folder_path_blocks(tmp_path):
         },
     )
 
-    assert ("validate.py", "_read_doc", "SKY-D325") in _path_findings(_scan(root))
+    assert _classified(_scan(root), ("validate.py", "_read_doc", "SKY-D325")) == "safe"
 
 
 def test_loader_in_the_same_folder_blocks(tmp_path):
+    """Changed: the only caller passes ``sys.argv``, so provenance finds it
+    safe.
+    """
     root = _project(
         tmp_path,
         {
@@ -423,10 +480,11 @@ def test_loader_in_the_same_folder_blocks(tmp_path):
         },
     )
 
-    assert ("validate.py", "_read_doc", "SKY-D325") in _path_findings(_scan(root))
+    assert _classified(_scan(root), ("validate.py", "_read_doc", "SKY-D325")) == "safe"
 
 
 def test_helper_in_a_test_package_imported_by_non_test_code_is_kept(tmp_path):
+    """Changed: not dropped as test code; ``show`` has no caller, so unknown."""
     # ``tests/__init__.py`` defines the helper; app code imports the package.
     root = _project(
         tmp_path,
@@ -437,10 +495,11 @@ def test_helper_in_a_test_package_imported_by_non_test_code_is_kept(tmp_path):
         },
     )
 
-    assert ("__init__.py", "_read_doc", "SKY-D325") in _path_findings(_scan(root))
+    assert _classified(_scan(root), ("__init__.py", "_read_doc", "SKY-D325")) == "unknown"
 
 
 def test_helper_reexported_by_a_test_package_is_kept(tmp_path):
+    """Changed: not dropped as test code; ``show`` has no caller, so unknown."""
     # ``tests/__init__.py`` re-exports from a submodule app code never names.
     root = _project(
         tmp_path,
@@ -452,10 +511,13 @@ def test_helper_reexported_by_a_test_package_is_kept(tmp_path):
         },
     )
 
-    assert ("docs_support.py", "_read_doc", "SKY-D325") in _path_findings(_scan(root))
+    assert _classified(_scan(root), ("docs_support.py", "_read_doc", "SKY-D325")) == "unknown"
 
 
 def test_relative_import_of_a_nested_test_package_is_kept(tmp_path):
+    """Changed: not dropped as test code; ``show`` is public API with no
+    visible caller, so unknown.
+    """
     root = _project(
         tmp_path,
         {
@@ -467,7 +529,7 @@ def test_relative_import_of_a_nested_test_package_is_kept(tmp_path):
         },
     )
 
-    assert ("support.py", "_read_doc", "SKY-D325") in _path_findings(_scan(root))
+    assert _classified(_scan(root), ("support.py", "_read_doc", "SKY-D325")) == "unknown"
 
 
 def test_test_package_import_from_test_code_still_drops(tmp_path):
@@ -486,6 +548,9 @@ def test_test_package_import_from_test_code_still_drops(tmp_path):
 
 
 def test_test_module_run_with_exec_by_app_code_is_kept(tmp_path):
+    """Changed: not dropped as test code; computed ``exec`` code may call it,
+    so it is unknown.
+    """
     root = _project(
         tmp_path,
         {
@@ -498,10 +563,11 @@ def test_test_module_run_with_exec_by_app_code_is_kept(tmp_path):
         },
     )
 
-    assert ("test_docs.py", "_read_doc", "SKY-D325") in _path_findings(_scan(root))
+    assert _classified(_scan(root), ("test_docs.py", "_read_doc", "SKY-D325")) == "unknown"
 
 
 def test_production_module_named_like_a_test_is_kept(tmp_path):
+    """Changed: not dropped as test code; nothing calls them, so unknown."""
     # An Airflow DAG and a Django command: test-like names, no tests in them.
     root = _project(
         tmp_path,
@@ -511,12 +577,13 @@ def test_production_module_named_like_a_test_is_kept(tmp_path):
         },
     )
 
-    findings = _path_findings(_scan(root))
-    assert ("model_ab_test.py", "_read_doc", "SKY-D325") in findings
-    assert ("smoke_test.py", "_read_doc", "SKY-D325") in findings
+    result = _scan(root)
+    assert _classified(result, ("model_ab_test.py", "_read_doc", "SKY-D325")) == "unknown"
+    assert _classified(result, ("smoke_test.py", "_read_doc", "SKY-D325")) == "unknown"
 
 
 def test_backslash_continued_import_of_a_test_module_is_kept(tmp_path):
+    """Changed: not dropped as test code; ``show`` has no caller, so unknown."""
     root = _project(
         tmp_path,
         {
@@ -528,7 +595,7 @@ def test_backslash_continued_import_of_a_test_module_is_kept(tmp_path):
         },
     )
 
-    assert ("fsutil.py", "_read_doc", "SKY-D325") in _path_findings(_scan(root))
+    assert _classified(_scan(root), ("fsutil.py", "_read_doc", "SKY-D325")) == "unknown"
 
 
 LOADER_APP = (
@@ -609,12 +676,15 @@ TEST_DOCS = HELPERS + "\n\ndef test_roundtrip(tmp_path):\n    _write_doc(tmp_pat
     ],
 )
 def test_computed_dynamic_import_in_shipped_code_keeps_test_helpers(tmp_path, loader):
+    """Changed: the finding still escapes the test-code proof, and provenance
+    then classifies it (unknown when a computed call may reach it).
+    """
     # A loader whose module name or source is computed can load tests/ too.
     root = _project(
         tmp_path, {"app.py": LOADER_APP + loader, "tests/test_docs.py": TEST_DOCS}
     )
 
-    assert ("test_docs.py", "_write_doc", "SKY-D324") in _path_findings(_scan(root))
+    assert _classified(_scan(root), ("test_docs.py", "_write_doc", "SKY-D324")) is not None
 
 
 @pytest.mark.parametrize(
@@ -717,5 +787,4 @@ def test_deep_expression_in_a_loader_file_does_not_stop_the_scan(tmp_path):
         },
     )
     computed = _scan(computed_root)
-    assert ("test_docs.py", "_write_doc", "SKY-D324") in _path_findings(computed)
-    assert ("test_docs.py", "_write_doc", "SKY-D324") not in _path_findings(computed, "suppressed")
+    assert _classified(computed, ("test_docs.py", "_write_doc", "SKY-D324")) is not None

@@ -211,11 +211,37 @@ rejecting branch; a membership check against a constant allowlist;
 count as a guard.
 
 Python D215, D324 and D325 check tainted paths from web routes, MCP/agent
-tools, request data, standard input, and helper parameters. A helper may
-receive untrusted data from a caller in another module, so an unknown caller
-does not suppress a finding. A path whose only proven source is the program
-operator (a CLI argument or environment variable) is suppressed. Test files
-are scanned too; the literal pytest parameter proof below still applies.
+tools, request data and standard input. A path built from a helper's
+parameter is followed through the scanned source (imports, assignments,
+calls, returns, constructor and dataclass bindings, aliases,
+`functools.partial`, executors, lambdas, containers and their local aliases,
+JSON/YAML decoding, Celery `delay`/`apply_async` and RQ `enqueue` arguments)
+to every caller that can be resolved. It is reported when a resolved chain
+starts at request data, a route or MCP tool argument, a Django class-based
+view registered by a URL pattern or DRF router, a FastAPI `Depends`
+dependency of a resolved route, a function a deployment file names as a
+server or handler, standard input, a CGI request variable, a network response,
+asyncio stream or `recv_into` buffer, a downloaded file's content or an
+archive member name; `metadata.path_provenance` lists the steps. A parameter
+named `request`/`req` counts as request data only in a module that imports a
+web framework, and a `@<group>.command` decorator counts as a CLI when the
+group resolves to Click/Typer or the function has Click/Typer parameter
+decorators; findings resting on these conventions or on no source at all are
+traced the same way. When a caller budget, depth limit, file size budget or
+analysis error cuts a chain off, the finding stays reported as `incomplete`.
+Otherwise it moves to `suppressed` as `safe` (complete scan, no hidden caller,
+and every caller passes literals, the module's location, clock or numeric
+values, temporary paths, test values or operator input) or `unknown` (a
+caller, receiver, callback, decorator, external base class or public package
+API that cannot be resolved); unknown is neither proof of an attack nor of
+safety. A path whose only proven source is the program operator (a CLI
+argument or environment variable) is suppressed, unless a project process
+launch passes untrusted arguments. An exclusive create (`open(p, "x")`,
+`os.open` with the `os` module's `O_CREAT | O_EXCL`) cannot follow a final
+symlink, so D324/D325 skip it while D215 still checks it. D326 needs an
+`extract` call that can pass a member (BeautifulSoup's `tag.extract()`
+cannot) and reports `shutil.unpack_archive` without `filter="data"`. Test
+files are scanned too; the literal pytest parameter proof below still applies.
 
 Python D211, D215, D217, D324 and D325 findings reached by such a source carry
 `metadata.security_evidence` (`source`, `sink`, `path`), which SARIF output

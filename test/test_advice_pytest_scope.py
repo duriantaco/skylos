@@ -556,6 +556,10 @@ def test_configured_glob_cannot_classify_a_file_outside_the_project(tmp_path):
 def test_quality_collection_config_does_not_change_security_classification(
     tmp_path, monkeypatch
 ):
+    """``check_write`` has no caller, so path_provenance records it as unknown
+    instead of reporting it (it used to be reported). The quality config
+    must not change that classification or treat the file as test code.
+    """
     from skylos.analyzer import analyze
     from skylos.rules.quality._test_code import is_python_test_file
 
@@ -578,7 +582,16 @@ def test_quality_collection_config_does_not_change_security_classification(
             if row["rule_id"] in {"SKY-D215", "SKY-D324", "SKY-D325"}
         }
 
+    def provenance(result):
+        return {
+            (row["rule_id"], row["line"], row.get("symbol"), row.get("reason"),
+             row["metadata"]["path_provenance"]["status"])
+            for row in result.get("suppressed", [])
+            if row["rule_id"] in {"SKY-D215", "SKY-D324", "SKY-D325"}
+        }
+
     assert not is_python_test_file(path, tmp_path, source)
-    assert any(row[0] == "SKY-D324" for row in path_findings(before))
+    assert any(row[0] == "SKY-D324" and row[4] == "unknown" for row in provenance(before))
     assert path_findings(after) == path_findings(before)
-    assert not path_findings(after, "suppressed")
+    assert provenance(after) == provenance(before)
+    assert not any("test code" in str(row[3]) for row in provenance(after))
