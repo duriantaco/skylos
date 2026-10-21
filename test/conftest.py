@@ -280,6 +280,18 @@ def _no_pypi_wheel_lookups(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_installed_requirement_records(monkeypatch):
+    """Dependency checks must not read the test interpreter's Requires-Dist.
+
+    Tests that cover transitive providers stub
+    ``_build_installed_requirements`` with the records they need.
+    """
+    from skylos.rules.ai_defect import dependency_hallucination
+
+    monkeypatch.setattr(dependency_hallucination, "_build_installed_requirements", dict)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_cloud_uploads(monkeypatch, tmp_path_factory):
     """Keep upload retries fast and their side effects out of the checkout.
 

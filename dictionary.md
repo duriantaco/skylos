@@ -916,10 +916,25 @@ Additional Python environment definitions can supply positive declaration
 evidence: plain Pipfile `[packages]` entries, `environment.yml`/`environment.yaml`
 dependencies, supported straight-line setup-script installs and the unambiguous
 final Dockerfile stage that copies the code. A nearer Python manifest sets the
-environment boundary. Conditional shell execution, install-target changes,
-ambiguous build stages and lockfile-only transitive packages do not establish
-that an import is provided. These files are read as bounded text, never executed
-or installed; unsupported shapes retain the normal import check.
+environment boundary. Conditional shell execution, install-target changes and
+ambiguous build stages do not establish that an import is provided. These files
+are read as bounded text, never executed or installed; unsupported shapes
+retain the normal import check.
+
+A distribution that a declared one requires unconditionally also provides its
+imports (SKY-D223 only, never a hallucination): an edge recorded in the nearest
+`uv.lock`, `poetry.lock` or `pdm.lock` (with the extras the lockfile's project
+entry requests), or the `Requires-Dist` of an installed declared distribution
+whose version satisfies the declaration. A locked package no such edge reaches,
+an edge under a marker, an extra nobody requests and the project's own lock
+entry do not count. Test, example and benchmark code that an explicit pyproject
+package selection (setuptools `packages`/`packages.find`/`py-modules`, hatch
+wheel `packages`/`only-include`, Poetry `packages`) does not ship has no
+declared dependency scope, so a missing declaration there is not reported; a
+hallucinated import still is. Automatic discovery, glob patterns, a requirements
+file, `setup.py`/`setup.cfg` or an environment definition in scope keep the
+normal check, and so does unshipped code outside test, example and benchmark
+directories (a root-level `app.py`).
 
 SKY-D224 rejects explicit keyword arguments that are not parameters of the
 installed API's known signature (for example `jwt.encode(..., expires_in=...)`
