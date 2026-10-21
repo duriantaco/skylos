@@ -10,12 +10,13 @@ location of their path operand for the repository provenance pass.
 
 from pathlib import Path
 
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.rules.danger.danger import scan_ctx
 
 
 def _scan(tmp_path: Path, code: str, name: str = "mod.py"):
     path = tmp_path / name
-    path.write_text(code, encoding="utf-8")
+    assert write_text_no_symlink(path, code, encoding="utf-8")
     return scan_ctx(tmp_path, [path])
 
 
