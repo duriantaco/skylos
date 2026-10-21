@@ -352,6 +352,34 @@ _RULES = (
         "SKY-L035", "Blanket ESLint disable", "quality", "HIGH", finding_type="review"
     ),
     RuleCatalogEntry(
+        "SKY-L036",
+        "Import repeated inside function",
+        "quality",
+        "LOW",
+        finding_type="advice",
+    ),
+    RuleCatalogEntry(
+        "SKY-L037",
+        "Conditional returning bool literals",
+        "quality",
+        "LOW",
+        finding_type="advice",
+    ),
+    RuleCatalogEntry(
+        "SKY-L038",
+        "Conversion call inside f-string",
+        "quality",
+        "LOW",
+        finding_type="advice",
+    ),
+    RuleCatalogEntry(
+        "SKY-L039",
+        "Except clause that only re-raises",
+        "quality",
+        "LOW",
+        finding_type="advice",
+    ),
+    RuleCatalogEntry(
         "SKY-P401", "Potential unbounded read", "quality", finding_type="advice"
     ),
     RuleCatalogEntry(
