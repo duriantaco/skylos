@@ -12,6 +12,7 @@ from skylos.rules.danger.danger_web.html_context import (
     safe_url_prefix,
     split_parts,
 )
+from skylos.rules.danger.danger_web.url_patterns import FLAG_NAMES, url_pattern_is_safe
 from skylos.rules.danger.taint import TaintVisitor, XSS_SANITIZERS
 from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
 
@@ -47,6 +48,7 @@ _NAME_FIELDS = {
 _DISPLAYS = (ast.List, ast.Tuple, ast.Set, ast.Dict)
 _COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 _MAX_HELPER_ROUNDS = 6
+_REGEX_TESTS = frozenset({"match", "fullmatch", "search"})
 
 
 def _qualified_name_from_call(node: ast.Call):
@@ -331,6 +333,9 @@ class _XSSFlowChecker(TaintVisitor):
         self._summaries: dict = {}
         self._in_progress: set = set()
         self._checked_cache: dict = {}
+        self._local_counts: dict = {}
+        self._url_checkers: dict = {}
+        self._checking_urls: set = set()
 
     def _template_source_arg(self, node: ast.Call, qn: str):
         last = qn.split(".")[-1]
@@ -652,18 +657,96 @@ class _XSSFlowChecker(TaintVisitor):
         strength = TEXT_SAFE
         if self._escapes_quotes(node, sanitizer):
             strength = ATTR_SAFE
-            root = self._url_text_root(node.args[0])
-            if root is not None and root in self._scheme_checked(node, scope.func):
+            if self._scheme_safe(node.args[0], node, scope.func):
                 strength = URL_SAFE
         return max(strength, self._level(node.args[0], scope))
 
-    def _url_text_root(self, node: ast.AST):
-        """The parameter behind ``str(p)``, ``p.strip()``, ``p.lower()`` and
-        similar, which keep where a URL's scheme or path starts."""
+    def _scheme_safe(self, value: ast.AST, node: ast.AST, func: ast.AST | None) -> bool:
+        """``value``, read at ``node``, cannot start with a scheme that runs
+        script: a name a scheme allowlist guards there, a local bound once to
+        a URL-checking helper's result, or a call to such a helper."""
+        base = self._url_text_base(value)
+        if isinstance(base, ast.Name):
+            if base.id in self._scheme_checked(node, func):
+                return True
+            binding = self._single_local_binding(base.id, func)
+            if binding is None:
+                return False
+            base = self._url_text_base(binding.value)
+        return self._returns_checked_url(base, func)
+
+    def _returns_checked_url(self, call: ast.AST, func: ast.AST | None) -> bool:
+        """``call`` runs a module-level helper whose every ``return`` gives
+        None, a constant that cannot run script, or a scheme-checked value."""
+        if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
+            return False
+        name = call.func.id
+        helper = self._module_helpers().get(name)
+        if not isinstance(helper, ast.FunctionDef):
+            return False
+        if func is not None and self._function_counts(func).get(name):
+            return False
+        if not self._import_names_are_stable(name):
+            return False
+        key = id(helper)
+        if key in self._url_checkers:
+            return self._url_checkers[key]
+        if key in self._checking_urls or len(self._checking_urls) >= _MAX_HELPER_DEPTH:
+            return False
+        self._checking_urls.add(key)
+        try:
+            verdict = all(
+                self._returns_safe_url(node, helper)
+                for node in _own_nodes(helper)
+                if isinstance(node, ast.Return)
+            )
+        finally:
+            self._checking_urls.discard(key)
+        self._url_checkers[key] = verdict
+        return verdict
+
+    def _returns_safe_url(self, node: ast.Return, helper: ast.AST) -> bool:
+        if node.value is None:
+            return True
+        if isinstance(node.value, ast.Constant):
+            return safe_url_prefix(str(node.value.value))
+        return self._scheme_safe(node.value, node, helper)
+
+    def _function_counts(self, func: ast.AST) -> dict[str, int]:
+        key = id(func)
+        if key not in self._local_counts:
+            self._local_counts[key] = _binding_counts(func)
+        return self._local_counts[key]
+
+    def _single_local_binding(self, name: str, func: ast.AST | None):
+        """The one plain assignment to ``name`` in ``func`` when nothing else
+        binds it there (no parameter, loop target, ``global`` or nested
+        definition of that name)."""
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+        if self._function_counts(func).get(name) != 1:
+            return None
+        for node in _own_nodes(func):
+            if _assigns_only(node, name):
+                return node
+        return None
+
+    def _url_text_base(self, node: ast.AST) -> ast.AST:
+        """``node`` without ``str(...)``, ``.strip()``, ``.lower()`` and
+        similar wrappers, which keep where a URL's scheme or path starts."""
         while isinstance(node, ast.Call):
-            node = self._same_start_operand(node)
-        if isinstance(node, ast.Name):
-            return node.id
+            inner = self._same_start_operand(node)
+            if inner is None:
+                return node
+            node = inner
+        return node
+
+    def _url_text_root(self, node: ast.AST):
+        """The name behind ``str(p)``, ``p.strip()``, ``p.lower()`` and
+        similar, which keep where a URL's scheme or path starts."""
+        base = self._url_text_base(node)
+        if isinstance(base, ast.Name):
+            return base.id
         return None
 
     def _same_start_operand(self, call: ast.Call):
@@ -679,20 +762,27 @@ class _XSSFlowChecker(TaintVisitor):
             return func.value
         return None
 
-    def _guard_names(self, test: ast.AST, holds: bool) -> set[str]:
+    def _guard_names(self, test: ast.AST, holds: bool, func: ast.AST | None) -> set[str]:
         """Names a ``test`` that came out ``holds`` proves start with a
         scheme or path that cannot run script (``url.startswith(("https://",
-        "/"))``). Blocklists such as ``not url.startswith("javascript:")``
-        prove nothing."""
+        "/"))``, ``URL_RE.fullmatch(url)``). Blocklists such as
+        ``not url.startswith("javascript:")`` prove nothing."""
         if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
-            return self._guard_names(test.operand, not holds)
+            return self._guard_names(test.operand, not holds, func)
         if isinstance(test, ast.BoolOp):
-            groups = [self._guard_names(value, holds) for value in test.values]
+            groups = [self._guard_names(value, holds, func) for value in test.values]
             if isinstance(test.op, ast.And) == holds:
                 return set().union(*groups)
             return set.intersection(*groups)
+        if isinstance(test, ast.Compare):
+            return self._match_object_guard(test, holds, func)
+        if not holds:
+            return set()
+        regex = self._regex_test(test, func)
+        if regex is not None:
+            return self._regex_guard(*regex)
         prefixes = _startswith_prefixes(test)
-        if not holds or not prefixes:
+        if not prefixes:
             return set()
         if not all(safe_url_prefix(prefix) for prefix in prefixes):
             return set()
@@ -700,6 +790,122 @@ class _XSSFlowChecker(TaintVisitor):
         if root is None:
             return set()
         return {root}
+
+    def _match_object_guard(self, test: ast.Compare, holds: bool, func: ast.AST | None) -> set[str]:
+        """``URL_RE.match(url) is not None`` and ``... is None``: a regex test
+        gives a match object or None, so comparing it with None is the test."""
+        if len(test.ops) != 1 or not _is_none(test.comparators[0]):
+            return set()
+        if self._regex_test(test.left, func) is None:
+            return set()
+        if isinstance(test.ops[0], ast.IsNot):
+            return self._guard_names(test.left, holds, func)
+        if isinstance(test.ops[0], ast.Is):
+            return self._guard_names(test.left, not holds, func)
+        return set()
+
+    def _regex_guard(self, pattern: str, flags: int, method: str, subject: ast.AST) -> set[str]:
+        if not url_pattern_is_safe(pattern, flags, method):
+            return set()
+        root = self._url_text_root(subject)
+        if root is None:
+            return set()
+        return {root}
+
+    def _regex_test(self, test: ast.AST, func: ast.AST | None):
+        """``(pattern, flags, method, subject)`` for ``re.match(p, s)``-style
+        calls and ``compiled.match(s)`` on a pattern compiled from a
+        constant, else None."""
+        if not isinstance(test, ast.Call):
+            return None
+        if any(isinstance(arg, ast.Starred) for arg in test.args):
+            return None
+        method = _call_tail(test.func)
+        if method not in _REGEX_TESTS:
+            return None
+        if isinstance(test.func, ast.Attribute):
+            compiled = self._compiled_pattern(test.func.value, func)
+            if compiled is not None:
+                if len(test.args) != 1 or test.keywords:
+                    return None
+                return compiled[0], compiled[1], method, test.args[0]
+        if self._re_member(test.func, func) != f"re.{method}":
+            return None
+        args = _regex_arguments(test, ("pattern", "string", "flags"))
+        if args is None or "pattern" not in args or "string" not in args:
+            return None
+        pattern = _const_str_value(args["pattern"])
+        flags = self._regex_flags(args.get("flags"), func)
+        if pattern is None or flags is None:
+            return None
+        return pattern, flags, method, args["string"]
+
+    def _compiled_pattern(self, node: ast.AST, func: ast.AST | None):
+        """``(pattern, flags)`` of ``re.compile(constant, flags)``, written
+        in place or bound once at module level to a name ``func`` does not
+        rebind."""
+        if isinstance(node, ast.Call):
+            return self._compile_call(node, func)
+        if not isinstance(node, ast.Name):
+            return None
+        if func is not None and self._function_counts(func).get(node.id):
+            return None
+        if self._module_binding_counts().get(node.id) != 1:
+            return None
+        if not self._import_names_are_stable(node.id):
+            return None
+        for stmt in getattr(self._tree, "body", []):
+            if _assigns_only(stmt, node.id) and isinstance(stmt.value, ast.Call):
+                return self._compile_call(stmt.value, None)
+        return None
+
+    def _compile_call(self, call: ast.Call, func: ast.AST | None):
+        if self._re_member(call.func, func) != "re.compile":
+            return None
+        if any(isinstance(arg, ast.Starred) for arg in call.args):
+            return None
+        args = _regex_arguments(call, ("pattern", "flags"))
+        if args is None or "pattern" not in args:
+            return None
+        pattern = _const_str_value(args["pattern"])
+        flags = self._regex_flags(args.get("flags"), func)
+        if pattern is None or flags is None:
+            return None
+        return pattern, flags
+
+    def _re_member(self, node: ast.AST, func: ast.AST | None):
+        """The ``re`` module member ``node`` names through an import the
+        module cannot swap out, else None."""
+        dotted = _dotted_name(node)
+        if not dotted:
+            return None
+        resolved = self.untrusted_sources.resolved_import(func, dotted)
+        if not resolved or resolved.split(".")[0] != "re" or resolved.count(".") != 1:
+            return None
+        if not self._import_names_are_stable(dotted):
+            return None
+        if not self._sanitizer_is_unpatched(resolved):
+            return None
+        return resolved
+
+    def _regex_flags(self, node: ast.AST | None, func: ast.AST | None):
+        """The flags ``node`` spells with ``re.I``-style names joined by
+        ``|``; None for anything else."""
+        if node is None:
+            return 0
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            left = self._regex_flags(node.left, func)
+            right = self._regex_flags(node.right, func)
+            if left is None or right is None:
+                return None
+            return left | right
+        member = self._re_member(node, func)
+        if member is None:
+            return None
+        name = member.split(".")[1]
+        if name not in FLAG_NAMES:
+            return None
+        return int(getattr(re, name))
 
     def _parent_map(self) -> dict:
         if self._parents is None:
@@ -710,24 +916,26 @@ class _XSSFlowChecker(TaintVisitor):
             }
         return self._parents
 
-    def _guards_at(self, child: ast.AST, parent: ast.AST) -> set[str]:
-        """Names guarded at ``child`` by ``parent``: the branch of an ``if``
-        it sits in, and earlier ``if`` statements that return or raise."""
-        names: set[str] = set()
+    def _guards_at(self, child: ast.AST, parent: ast.AST, func: ast.AST) -> set:
+        """``(name, where the test is)`` for names guarded at ``child`` by
+        ``parent``: the branch of an ``if`` it sits in, and earlier ``if``
+        statements that return or raise."""
+        guarded = set()
         if isinstance(parent, (ast.If, ast.IfExp)):
             if any(item is child for item in _as_list(parent.body)):
-                names |= self._guard_names(parent.test, True)
+                guarded |= _placed(self._guard_names(parent.test, True, func), parent.test)
             elif any(item is child for item in _as_list(parent.orelse)):
-                names |= self._guard_names(parent.test, False)
+                guarded |= _placed(self._guard_names(parent.test, False, func), parent.test)
         for block in _blocks_holding(parent, child):
             for stmt in block[: _index_of(block, child)]:
                 holds = _exit_branch(stmt)
                 if holds is not None:
-                    names |= self._guard_names(stmt.test, holds)
-        return names
+                    guarded |= _placed(self._guard_names(stmt.test, holds, func), stmt.test)
+        return guarded
 
     def _scheme_checked(self, node: ast.AST, func: ast.AST | None) -> frozenset:
-        """Parameters of ``func`` that a scheme allowlist guards at ``node``."""
+        """Names in ``func`` that a scheme allowlist guards at ``node``: its
+        parameters, and locals bound once before the test."""
         if func is None:
             return frozenset()
         key = (id(node), id(func))
@@ -737,15 +945,25 @@ class _XSSFlowChecker(TaintVisitor):
 
     def _compute_scheme_checked(self, node: ast.AST, func: ast.AST) -> frozenset:
         parents = self._parent_map()
-        names: set[str] = set()
+        guarded = set()
         child = node
         while child is not func:
             parent = parents.get(id(child))
             if parent is None or (isinstance(parent, _NESTED_SCOPES) and parent is not func):
                 return frozenset()
-            names |= self._guards_at(child, parent)
+            guarded |= self._guards_at(child, parent, func)
             child = parent
-        return frozenset(name for name in names if self._is_unrebound_param(name, func))
+        return frozenset(
+            name
+            for name, position in guarded
+            if self._is_unrebound_param(name, func) or self._bound_before(name, func, position)
+        )
+
+    def _bound_before(self, name: str, func: ast.AST, position) -> bool:
+        binding = self._single_local_binding(name, func)
+        if binding is None:
+            return False
+        return (binding.lineno, binding.col_offset) < position
 
     def _is_unrebound_param(self, name: str, func: ast.AST) -> bool:
         arguments = func.args
@@ -965,6 +1183,49 @@ def _bind_keywords(arguments, call: ast.Call, kw_levels, bound: dict) -> bool:
     if arguments.kwarg is not None:
         bound[arguments.kwarg.arg] = min(extra, default=CLEAN)
     return True
+
+
+def _dotted_name(node: ast.AST):
+    """``a.b.c`` for a chain of attributes on a plain name, else None."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
+def _is_none(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and node.value is None
+
+
+def _assigns_only(node: ast.AST, name: str) -> bool:
+    """``node`` is ``name = value`` or ``name: T = value`` and binds nothing else."""
+    if isinstance(node, ast.Assign):
+        return len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id == name
+    if isinstance(node, ast.AnnAssign):
+        return node.value is not None and isinstance(node.target, ast.Name) and node.target.id == name
+    return False
+
+
+def _placed(names, test: ast.AST) -> set:
+    position = (test.lineno, test.col_offset)
+    return {(name, position) for name in names}
+
+
+def _regex_arguments(call: ast.Call, names):
+    """``call``'s arguments by parameter name, or None for an unknown or
+    repeated keyword or too many positional arguments."""
+    if len(call.args) > len(names):
+        return None
+    bound = dict(zip(names, call.args))
+    for kw in call.keywords:
+        if kw.arg is None or kw.arg not in names or kw.arg in bound:
+            return None
+        bound[kw.arg] = kw.value
+    return bound
 
 
 def _is_truth_value(node: ast.AST) -> bool:
