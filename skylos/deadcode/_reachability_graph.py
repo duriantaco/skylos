@@ -173,12 +173,17 @@ class ReferenceGraph:
         default_factory=lambda: defaultdict(set)
     )
     opaque_owners: set[str] = field(default_factory=set)
+    opaque_root: bool = False
     opaque_receiver_root: bool = False
     opaque_receiver_owners: set[str] = field(default_factory=set)
     roots: set[str] = field(default_factory=set)
     uncertain_roots: set[str] = field(default_factory=set)
     receiver_roots: set[str] = field(default_factory=set)
     receiver_edges: dict[str, set[str]] = field(
+        default_factory=lambda: defaultdict(set)
+    )
+    unbound_receiver_owners: set[str] = field(default_factory=set)
+    receiver_spellings: dict[str, set[str]] = field(
         default_factory=lambda: defaultdict(set)
     )
     observed: Counter[str] = field(default_factory=Counter)
@@ -230,11 +235,25 @@ class ReferenceGraph:
             self.edges[owner].add(target)
 
     def traverse(
-        self, roots: Iterable[str], candidates: Iterable[str], *, uncertainty: bool
+        self,
+        roots: Iterable[str],
+        candidates: Iterable[str],
+        *,
+        uncertainty: bool,
+        expand_opaque: bool = True,
     ) -> set[str]:
+        """Keys reachable from ``roots``.
+
+        With ``expand_opaque`` an opaque owner (or opaque module code) reaches
+        every candidate. Without it, traversal follows only edges that name
+        their target; the caller decides what an opaque lookup still means.
+        """
         reached = set()
         todo = list(roots)
         expanded_opaque = False
+        if uncertainty and expand_opaque and self.opaque_root:
+            todo.extend(candidates)
+            expanded_opaque = True
         while todo:
             key = todo.pop()
             if key in reached:
@@ -243,7 +262,7 @@ class ReferenceGraph:
             todo.extend(self.edges.get(key, ()))
             if uncertainty:
                 todo.extend(self.uncertain_edges.get(key, ()))
-                if key in self.opaque_owners and not expanded_opaque:
+                if expand_opaque and key in self.opaque_owners and not expanded_opaque:
                     todo.extend(candidates)
                     expanded_opaque = True
         return reached

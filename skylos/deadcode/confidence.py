@@ -35,6 +35,13 @@ Factor                                  Cap   Why the evidence is weaker
 ``default_export``                       60   a module's default export is how
                                               routers, mailers, configs and
                                               story loaders consume it
+``dynamic_lookup``                       70   nothing names it, but an opaque
+                                              lookup (a runtime attribute
+                                              name, exec/eval, import *)
+                                              could reach any callable; 18 of
+                                              20 such findings were dead on
+                                              5 repos, 11 of 12 on 3 unseen
+                                              repos (20 Oct 2026)
 ``deprecated_api``                       40   it (or its module, on import)
                                               warns that it is deprecated,
                                               or its docstring says so:
@@ -76,6 +83,7 @@ CONFIDENCE_CAPS = {
     "class_attribute": 80,
     "imported_only_by_unused_files": 65,
     "default_export": 60,
+    "dynamic_lookup": 70,
     "deprecated_api": 40,
     "experimental_language": 40,
 }
@@ -89,6 +97,7 @@ FACTOR_LABELS = {
     "class_attribute": "class attribute (frameworks may read it)",
     "imported_only_by_unused_files": "only imported by unused files",
     "default_export": "default export (frameworks load modules by it)",
+    "dynamic_lookup": "only an opaque dynamic lookup could reach it",
     "deprecated_api": "deprecated, kept for existing callers",
     "experimental_language": "experimental language support",
 }

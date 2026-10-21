@@ -168,6 +168,30 @@ def test_shadowed_sys_does_not_establish_a_known_module_receiver(tmp_path):
     [
         "def dispatch(receiver, name):\n    return getattr(receiver, name)()\ndispatch(input(), input())\n",
         "class Dispatcher(External):\n    def dispatch(self, name):\n        return getattr(self, name)()\nDispatcher().dispatch(input())\n",
+    ],
+)
+def test_runtime_name_lookup_reports_unnamed_callbacks_with_weaker_evidence(
+    tmp_path, source
+):
+    result, unused = _scan(
+        tmp_path,
+        {
+            "dispatch.py": "def callback():\n    return 1\n" + source,
+            "billing.py": "def obsolete():\n    return 2\n",
+        },
+    )
+    finding = next(
+        item
+        for item in result["unused_functions"]
+        if item["full_name"] == "dispatch.callback"
+    )
+    assert finding["confidence"] == 70
+    assert "dynamic_lookup" in finding["confidence_factors"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
         "class Dispatcher:\n    def __getattr__(self, name):\n        return callback\ngetattr(Dispatcher(), 'perform')()\n",
         "def getattr(receiver, name):\n    return callback\ngetattr(object(), 'perform')()\n",
     ],
@@ -203,9 +227,32 @@ def test_private_attribute_lookup_uses_actual_mangled_spelling(tmp_path):
     assert "dispatch.Dispatcher.obsolete" in unused
 
 
+@pytest.mark.parametrize("receiver", ["external_receiver()", "receivers[input()]"])
+def test_unknown_receiver_and_runtime_name_is_weaker_evidence(tmp_path, receiver):
+    result, unused = _scan(
+        tmp_path,
+        {
+            "dispatch.py": f"""
+                class Remote:
+                    def perform(self):
+                        return 1
+                remote = Remote()
+                getattr({receiver}, input())()
+            """
+        },
+    )
+    finding = next(
+        item
+        for item in result["unused_functions"]
+        if item["full_name"] == "dispatch.Remote.perform"
+    )
+    assert finding["confidence"] == 70
+    assert "dynamic_lookup" in finding["confidence_factors"]
+
+
 @pytest.mark.parametrize(
     "receiver",
-    ["external_receiver()", "receivers[input()]", "Remote() if input() else object()"],
+    ["Remote() if input() else object()"],
 )
 def test_unknown_receiver_expressions_keep_possible_targets_uncertain(
     tmp_path, receiver
