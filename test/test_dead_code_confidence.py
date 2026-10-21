@@ -87,9 +87,9 @@ def test_calibration_never_raises_existing_confidence_and_is_idempotent():
     assert definition.confidence_factors == ["public_name"]
 
 
-def test_only_parameters_and_experimental_languages_fall_below_the_default():
+def test_only_parameters_deprecations_and_experimental_languages_fall_below_the_default():
     for factor, cap in CONFIDENCE_CAPS.items():
-        if factor in {"experimental_language", "signature_parameter"}:
+        if factor in {"experimental_language", "signature_parameter", "deprecated_api"}:
             assert cap < 60, factor
         else:
             assert cap >= 60, factor
@@ -97,6 +97,31 @@ def test_only_parameters_and_experimental_languages_fall_below_the_default():
         CONFIDENCE_CAPS["experimental_language"]
         < CONFIDENCE_CAPS["signature_parameter"]
     )
+
+
+def test_deprecated_functions_are_hidden_by_default(tmp_path):
+    _write(
+        tmp_path / "app.py",
+        "import warnings\n"
+        "from typing_extensions import deprecated\n\n\n"
+        "def warns():\n"
+        "    warnings.warn('use other()', DeprecationWarning, stacklevel=2)\n\n\n"
+        "@deprecated('use other()')\n"
+        "def decorated():\n    return 1\n\n\n"
+        "def documented():\n    \"\"\"Deprecated, does nothing.\"\"\"\n\n\n"
+        "def compatibility():\n"
+        "    \"\"\"Old entry point kept for backwards compatibility.\"\"\"\n\n\n"
+        "def replacement():\n"
+        "    \"\"\"Replaces the deprecated documented().\"\"\"\n    return 2\n",
+    )
+
+    shown = _by_name(_scan(tmp_path), "unused_functions")
+    assert set(shown) == {"replacement"}
+
+    listed = _by_name(_scan(tmp_path, conf=40), "unused_functions")
+    for name in ("warns", "decorated", "documented", "compatibility"):
+        assert listed[name]["confidence"] == CONFIDENCE_CAPS["deprecated_api"]
+        assert "deprecated_api" in listed[name]["confidence_factors"]
 
 
 def test_confidence_detail_names_the_weakest_factor():

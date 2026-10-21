@@ -780,6 +780,16 @@ class Visitor(ast.NodeVisitor):
         for stmt in node.body:
             self.visit(stmt)
         self._finalize_dunder_all_exports(node.body)
+        self._credit_lazy_module_attributes(node)
+
+    def _credit_lazy_module_attributes(self, node: ast.Module) -> None:
+        from skylos.deadcode.python_proofs import proven_lazy_exports
+
+        exports = proven_lazy_exports(node, str(self.file))
+        for name, target in exports.items():
+            if self.alias.get(name) == target:
+                self.add_ref(target)
+
 
     def qual(self, name: str) -> str:
         if name in self.alias:
