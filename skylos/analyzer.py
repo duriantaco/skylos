@@ -5256,11 +5256,15 @@ class Skylos:
                             return False
                         if not resolved_path.is_file():
                             return False
-                        candidate_key = str(resolved_path)
+                        try:
+                            stat = resolved_path.stat()
+                        except OSError:
+                            return False
+                        candidate_key = (stat.st_dev, stat.st_ino)
                         if candidate_key in seen_injection_files:
                             return False
                         seen_injection_files.add(candidate_key)
-                        injection_candidates.append(candidate_path)
+                        injection_candidates.append(_with_on_disk_name(candidate_path))
                         return True
 
                     if changed_files is not None:
@@ -6402,6 +6406,21 @@ def proc_file(
         test_aware_visitor_class=TestAwareVisitor,
         framework_aware_visitor_class=FrameworkAwareVisitor,
     )
+
+
+def _with_on_disk_name(path: Path) -> Path:
+    """``path`` with its last component spelled as the directory lists it, for
+    a name that matched only because the filesystem ignores case."""
+    try:
+        names = os.listdir(path.parent)
+    except OSError:
+        return path
+    if path.name in names:
+        return path
+    folded = [name for name in names if name.lower() == path.name.lower()]
+    if len(folded) == 1:
+        return path.with_name(folded[0])
+    return path
 
 
 def analyze(
