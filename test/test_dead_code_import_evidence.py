@@ -3,6 +3,8 @@
 import json
 import textwrap
 
+import pytest
+
 from test.fixture_paths import write_fixture
 
 from skylos.analyzer import analyze
@@ -296,3 +298,499 @@ def test_pytest_plugin_hooks_and_cog_blocks_are_entry_points(tmp_path):
         "helper_nobody_calls",
         "unused_snippet",
     ]
+
+
+def _package(tmp_path, module_body):
+    _write(tmp_path, "pkg/__init__.py", "")
+    _write(
+        tmp_path,
+        "pkg/core.py",
+        "class Parameter:\n    pass\n\n\nclass Context:\n    pass\n\n\ndef fast(value):\n    return value\n",
+    )
+    _write(tmp_path, "pkg/mod.py", module_body)
+    _write(tmp_path, "main.py", "from pkg.mod import use\n\nuse()\n")
+
+
+def test_string_inside_an_annotation_is_a_forward_reference(tmp_path):
+    _package(
+        tmp_path,
+        """
+        from typing import TYPE_CHECKING, Callable, Optional, Union
+
+        if TYPE_CHECKING:
+            from pkg.core import Context, Parameter
+
+
+        def use(param: Union["Parameter", None] = None, hook: Optional[Callable[["Context"], None]] = None):
+            return param, hook
+        """,
+    )
+    assert _unused_imports(tmp_path) == set()
+
+
+def test_literal_and_annotated_metadata_strings_are_not_references(tmp_path):
+    _package(
+        tmp_path,
+        """
+        from typing import TYPE_CHECKING, Annotated, Literal
+
+        if TYPE_CHECKING:
+            from pkg.core import Context, Parameter
+
+
+        def use(mode: Literal["Parameter"] = "Parameter", size: Annotated[int, "Context"] = 1):
+            return mode, size
+        """,
+    )
+    assert _unused_imports(tmp_path) == {("mod.py", "Parameter"), ("mod.py", "Context")}
+
+
+def test_import_with_a_fallback_definition_on_another_path_is_used(tmp_path):
+    _package(
+        tmp_path,
+        """
+        import sys
+
+        try:
+            from pkg.core import fast
+        except ImportError:
+
+            def fast(value):
+                return value
+
+
+        if sys.platform == "win32":
+            from pkg.core import Parameter
+        else:
+
+            class Parameter:
+                pass
+
+
+        def use():
+            return fast(Parameter)
+        """,
+    )
+    assert _unused_imports(tmp_path) == set()
+
+
+def test_definition_that_overwrites_an_import_on_the_same_path_still_reports(tmp_path):
+    _package(
+        tmp_path,
+        """
+        from pkg.core import fast
+
+        try:
+            from pkg.core import Parameter
+        except ImportError:
+            pass
+        else:
+
+            class Parameter:
+                pass
+
+
+        def fast(value):
+            return value * 2
+
+
+        def use():
+            return fast(Parameter)
+        """,
+    )
+    assert _unused_imports(tmp_path) == {("mod.py", "fast"), ("mod.py", "Parameter")}
+
+
+def test_function_above_the_alternatives_uses_the_import(tmp_path):
+    _package(
+        tmp_path,
+        """
+        import sys
+
+
+        def use():
+            return fast(1)
+
+
+        if sys.platform == "win32":
+            from pkg.core import fast
+        else:
+
+            def fast(value):
+                return value
+        """,
+    )
+    assert _unused_imports(tmp_path) == set()
+
+
+def test_function_above_a_straight_overwrite_still_reports(tmp_path):
+    _package(
+        tmp_path,
+        """
+        def use():
+            return fast(1)
+
+
+        from pkg.core import fast
+
+
+        def fast(value):
+            return value
+        """,
+    )
+    assert _unused_imports(tmp_path) == {("mod.py", "fast")}
+
+
+@pytest.mark.parametrize(
+    "typing_import, annotation",
+    [
+        ("from typing import Literal as Choice", 'Choice["Parameter"]'),
+        ("from typing import Annotated as Metadata", 'Metadata[int, "Parameter"]'),
+    ],
+)
+def test_typing_alias_value_strings_do_not_use_an_import(
+    tmp_path, typing_import, annotation
+):
+    _package(
+        tmp_path,
+        f"{typing_import}\nfrom pkg.core import Parameter\n"
+        f"def use(value: {annotation} = None):\n    return value\n",
+    )
+    assert _unused_imports(tmp_path) == {("mod.py", "Parameter")}
+
+
+def test_a_fully_quoted_nested_type_keeps_its_import(tmp_path):
+    _package(
+        tmp_path,
+        """
+        from typing import Optional
+        from pkg.core import Parameter
+
+        def use(value: "Optional['Parameter']" = None):
+            return value
+        """,
+    )
+    assert _unused_imports(tmp_path) == set()
+
+
+def test_a_local_generic_named_literal_still_has_type_arguments(tmp_path):
+    _package(
+        tmp_path,
+        """
+        from typing import Generic, TypeVar
+        from pkg.core import Parameter
+
+        T = TypeVar("T")
+
+        class Literal(Generic[T]):
+            pass
+
+        def use(value: Literal["Parameter"] = None):
+            return value
+        """,
+    )
+    assert _unused_imports(tmp_path) == set()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        """
+        try:
+            from pkg.core import fast
+            raise ImportError("fallback after a successful import")
+        except ImportError:
+            def fast(value):
+                return value
+
+        def use():
+            return fast(1)
+        """,
+        """
+        try:
+            from pkg.core import fast
+        except ImportError:
+            def fast(value):
+                return value
+
+        def fast(value):
+            return value * 2
+
+        def use():
+            return fast(1)
+        """,
+        """
+        import sys
+
+        if sys.platform == "win32":
+            from pkg.core import fast
+        else:
+            def fast(value):
+                return value
+            fast(1)
+
+        def use():
+            return 1
+        """,
+    ],
+    ids=["try-prefix", "later-overwrite", "opposite-branch-read"],
+)
+def test_fallbacks_do_not_rescue_an_import_that_is_never_read(tmp_path, body):
+    _package(tmp_path, body)
+    assert _unused_imports(tmp_path) == {("mod.py", "fast")}
+
+
+def test_reversed_fallback_arms_keep_the_reachable_import(tmp_path):
+    _package(
+        tmp_path,
+        """
+        import sys
+
+        if sys.platform == "win32":
+            def fast(value):
+                return value
+        else:
+            from pkg.core import fast
+
+        def use():
+            return fast(1)
+        """,
+    )
+    assert _unused_imports(tmp_path) == set()
+
+
+def test_a_function_called_before_the_import_is_overwritten_keeps_it(tmp_path):
+    _package(
+        tmp_path,
+        """
+        from pkg.core import fast
+
+        def read():
+            return fast(1)
+
+        read()
+
+        def fast(value):
+            return value * 2
+
+        def use():
+            return fast(1)
+        """,
+    )
+    assert _unused_imports(tmp_path) == set()
+
+
+def test_a_function_called_only_after_the_overwrite_leaves_import_unused(tmp_path):
+    _package(
+        tmp_path,
+        """
+        from pkg.core import fast
+
+        def read():
+            return fast(1)
+
+        def fast(value):
+            return value * 2
+
+        def use():
+            return read()
+        """,
+    )
+    assert _unused_imports(tmp_path) == {("mod.py", "fast")}
+
+
+def test_a_function_defined_only_in_the_fallback_cannot_use_the_other_import(tmp_path):
+    _package(
+        tmp_path,
+        """
+        import sys
+
+        if sys.platform == "win32":
+            from pkg.core import fast
+        else:
+            def fast(value):
+                return value
+
+            def read():
+                return fast(1)
+
+            read()
+
+        def use():
+            return 1
+        """,
+    )
+    assert _unused_imports(tmp_path) == {("mod.py", "fast")}
+
+
+def test_a_conditional_function_can_read_an_import_bound_later_in_its_arm(tmp_path):
+    _package(
+        tmp_path,
+        """
+        import sys
+
+        if sys.platform == "win32":
+            def use():
+                return fast(1)
+
+            from pkg.core import fast
+        else:
+            def fast(value):
+                return value
+
+            def use():
+                return fast(1)
+        """,
+    )
+    assert _unused_imports(tmp_path) == set()
+
+
+def test_copying_a_fallback_binding_reads_the_import_before_assignment(tmp_path):
+    _package(
+        tmp_path,
+        """
+        try:
+            from pkg.core import fast
+        except ImportError:
+            def fast(value):
+                return value
+
+        fast = fast
+
+        def use():
+            return fast(1)
+        """,
+    )
+    assert _unused_imports(tmp_path) == set()
+
+
+def test_an_annotated_value_overwrites_the_import_but_a_declaration_does_not(tmp_path):
+    _package(
+        tmp_path,
+        """
+        import sys
+
+        if sys.platform == "win32":
+            from pkg.core import fast, Parameter
+        else:
+            def fast(value):
+                return value
+
+            class Parameter:
+                pass
+
+        fast: int = 1
+        Parameter: object
+
+        def use():
+            return fast, Parameter
+        """,
+    )
+    assert _unused_imports(tmp_path) == {("mod.py", "fast")}
+
+
+@pytest.mark.parametrize("fallback", [False, True], ids=["plain", "fallback"])
+@pytest.mark.parametrize(
+    "early_use",
+    [
+        """
+        class Base:
+            def read(self):
+                return fast(1)
+
+        class Reader(Base):
+            pass
+
+        reader = Reader()
+        reader.read()
+        """,
+        """
+        def read():
+            return fast(1)
+
+        reader = read
+        reader()
+        """,
+        """
+        def decorate(fn):
+            fast(1)
+            return fn
+
+        @decorate
+        def fast(value):
+            return value * 2
+        """,
+    ],
+    ids=["inherited-method", "callable-alias", "decorator"],
+)
+def test_proven_early_calls_keep_the_import_before_a_later_overwrite(
+    tmp_path, early_use, fallback
+):
+    header = "from pkg.core import fast\n"
+    if fallback:
+        header = (
+            "try:\n    from pkg.core import fast\n"
+            "except ImportError:\n    def fast(value):\n        return value\n"
+        )
+    _package(
+        tmp_path,
+        header + textwrap.dedent(early_use) + "\n"
+        "def fast(value):\n    return value * 2\n"
+        "def use():\n    return fast(1)\n",
+    )
+    assert _unused_imports(tmp_path) == set()
+
+
+@pytest.mark.parametrize(
+    "unrelated_call",
+    [
+        """
+        class Base:
+            def read(self):
+                return fast(1)
+
+        class Reader(Base):
+            def read(self):
+                return 1
+
+        reader = Reader()
+        reader.read()
+        """,
+        """
+        def read():
+            return fast(1)
+
+        def other():
+            return 1
+
+        reader = read
+        reader = other
+        reader()
+        """,
+        """
+        def decorate(fn):
+            fast(1)
+            return fn
+
+        def other(fn):
+            return fn
+
+        @other
+        def fast(value):
+            return value * 2
+        """,
+    ],
+    ids=["overridden-method", "rebound-alias", "unused-decorator"],
+)
+def test_unrelated_early_calls_cannot_keep_the_overwritten_import(
+    tmp_path, unrelated_call
+):
+    _package(
+        tmp_path,
+        "try:\n    from pkg.core import fast\n"
+        "except ImportError:\n    def fast(value):\n        return value\n"
+        + textwrap.dedent(unrelated_call) + "\n"
+        "def fast(value):\n    return value * 2\n"
+        "def use():\n    return fast(1)\n",
+    )
+    assert _unused_imports(tmp_path) == {("mod.py", "fast")}
