@@ -34,11 +34,15 @@ _MAX_TEXTS = 64
 _MAX_TEXT = 24
 _MAX_SET = 32
 _ZERO_WIDTH = frozenset({_codes.AT, _codes.ASSERT, _codes.ASSERT_NOT})
-_REPEATS = frozenset(
-    code
-    for code in (_codes.MAX_REPEAT, _codes.MIN_REPEAT, getattr(_codes, "POSSESSIVE_REPEAT", None))
-    if code is not None
-)
+def _repeat_codes():
+    codes = {_codes.MAX_REPEAT, _codes.MIN_REPEAT}
+    possessive = getattr(_codes, "POSSESSIVE_REPEAT", None)
+    if possessive is not None:
+        codes.add(possessive)
+    return frozenset(codes)
+
+
+_REPEATS = _repeat_codes()
 _ATOMIC = getattr(_codes, "ATOMIC_GROUP", None)
 _START_ANCHORS = frozenset({_codes.AT_BEGINNING, _codes.AT_BEGINNING_STRING})
 
@@ -78,7 +82,9 @@ def _variants(code: int, folded: bool, ascii_only: bool) -> frozenset:
         if ascii_only:
             flags |= re.ASCII
         pattern = re.escape(char)
-        found.update(letter for letter in string.ascii_letters if re.fullmatch(pattern, letter, flags))
+        for letter in string.ascii_letters:
+            if re.fullmatch(pattern, letter, flags):
+                found.add(letter)
     return frozenset(_lower_ascii(item) for item in found)
 
 

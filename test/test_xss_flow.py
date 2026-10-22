@@ -842,7 +842,11 @@ def test_escaped_url_in_a_media_or_metadata_attribute_is_not_reported(template):
 
 def _url_rules(src: str):
     findings = _scan_src(textwrap.dedent(src))
-    return [f for f in findings if f["rule_id"] in ("SKY-D226", "SKY-D228")]
+    matching = []
+    for finding in findings:
+        if finding["rule_id"] in ("SKY-D226", "SKY-D228"):
+            matching.append(finding)
+    return matching
 
 
 _URL_CHECKER = """
