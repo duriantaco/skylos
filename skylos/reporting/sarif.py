@@ -7,6 +7,10 @@ import re
 from skylos.cicd.evidence import sanitize_bounded_payload, sanitize_untrusted_text
 from skylos.core.evidence_contract import finding_evidence_contract
 from skylos.deadcode.finding_evidence import dead_code_finding_evidence_payload
+from skylos.reporting.metadata_paths import (
+    EXTERNAL_PATH_PREFIX,
+    relativize_contract_traces,
+)
 
 
 _MAX_SARIF_MESSAGE_LENGTH = 4_000
@@ -95,6 +99,14 @@ def _positive_sarif_integer(value, default=1):
     except (TypeError, ValueError, OverflowError):
         return default
     return number if number >= 1 else default
+
+
+def _location_root():
+    """The folder SARIF locations are relative to, as in the function below."""
+    try:
+        return os.getcwd()
+    except OSError:
+        return None
 
 
 def normalize_file_path_for_sarif(file_path=None):
@@ -423,6 +435,9 @@ class SarifExporter:
                 analyzer_owned=self.analyzer_owned,
             )
             if evidence_contract is not None:
+                evidence_contract = relativize_contract_traces(
+                    evidence_contract, _location_root()
+                )
                 safe_contract = _sanitize_sarif_payload(evidence_contract)
                 if safe_contract:
                     properties["skylos_evidence_contract"] = safe_contract
@@ -503,6 +518,14 @@ class SarifExporter:
 
     def _secondary_uri(self, raw_file):
         if self.location_uri is not None:
+            # Masked external evidence is descriptive metadata, not a path
+            # inside the uploaded repository. Keep the existing fallback to
+            # the finding's own location for these code-flow steps.
+            if isinstance(raw_file, str) and (
+                raw_file == EXTERNAL_PATH_PREFIX
+                or raw_file.startswith(EXTERNAL_PATH_PREFIX + "/")
+            ):
+                return None
             return self.location_uri(raw_file)
         return normalize_file_path_for_sarif(raw_file)
 
