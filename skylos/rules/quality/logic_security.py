@@ -1,4 +1,5 @@
 import ast
+import os
 import io
 import re
 import tokenize
@@ -1995,28 +1996,31 @@ class StaleMockRule(SkylosRule):
 
     @staticmethod
     def _resolve_module(project_root, module_parts):
-        pkg_path = project_root / "/".join(module_parts) / "__init__.py"
-        if pkg_path.is_file():
-            return pkg_path
-
-        mod_path = (
-            project_root / "/".join(module_parts[:-1]) / (module_parts[-1] + ".py")
-            if len(module_parts) > 1
-            else project_root / (module_parts[0] + ".py")
-        )
-        if mod_path.is_file():
-            return mod_path
-
-        if len(module_parts) >= 2:
-            flat_path = project_root / ("/".join(module_parts) + ".py")
-            if Path(flat_path).is_file():
-                return Path(flat_path)
-
-        direct = project_root / ("/".join(module_parts) + ".py")
-        if Path(direct).is_file():
-            return Path(direct)
-
+        """The module file a dotted patch target names, matched with exact case:
+        on a case-insensitive filesystem ``Pipeline.py`` would otherwise open
+        ``pipeline.py`` and read a class name as a module."""
+        candidates = [Path(*module_parts) / "__init__.py"]
+        if len(module_parts) > 1:
+            candidates.append(Path(*module_parts[:-1]) / (module_parts[-1] + ".py"))
+        else:
+            candidates.append(Path(module_parts[0] + ".py"))
+        for relative in candidates:
+            if _exists_with_exact_case(project_root, relative):
+                return project_root / relative
         return None
+
+
+def _exists_with_exact_case(root, relative):
+    current = Path(root)
+    for part in relative.parts:
+        try:
+            entries = os.listdir(current)
+        except OSError:
+            return False
+        if part not in entries:
+            return False
+        current = current / part
+    return current.is_file()
 
 
 def _module_patch_bindings(tree):

@@ -42,11 +42,11 @@ def _scan(files):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(textwrap.dedent(content), encoding="utf-8")
         findings = scan_repo_phantom_security_references(root, sorted(root.rglob("*.py")))
-        return sorted(
-            (f["rule_id"], f["name"])
-            for f in findings
-            if f["rule_id"] in PHANTOM_RULES
-        )
+        found = []
+        for finding in findings:
+            if finding["rule_id"] in PHANTOM_RULES:
+                found.append((finding["rule_id"], finding["name"]))
+        return sorted(found)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 

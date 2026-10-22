@@ -346,10 +346,15 @@ class SarifExporter:
                     max_length=40,
                 ),
             }
-            from skylos.reporting.listing import is_listed, listing_decision
+            from skylos.reporting.listing import (
+                is_listed,
+                listing_decision,
+                map_listing_paths,
+            )
 
             listing = listing_decision(finding)
             if listing is not None:
+                listing = map_listing_paths(listing, self._secondary_uri)
                 properties["listing"] = {**listing, "listed": is_listed(finding, category)}
             if category == "PUBLISHER_CHANGE":
                 properties["review_only"] = True
@@ -386,6 +391,8 @@ class SarifExporter:
                     else _MAX_SARIF_METADATA_ITEMS
                 )
                 metadata_input = dict(metadata)
+                if listing is not None and "listing" in metadata_input:
+                    metadata_input["listing"] = dict(properties["listing"])
                 located_trace = metadata_input.pop("security_trace", None)
                 safe_metadata = _sanitize_sarif_payload(
                     metadata_input, max_items=metadata_items

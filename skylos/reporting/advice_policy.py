@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from skylos.reporting.advice_display import (
     _advice_identity,
     _compatible_names,
+    _rule_id,
     standalone_function_advice,
 )
 from skylos.reporting.advice_evidence import (
@@ -365,22 +366,105 @@ def apply_advice_policy(
         }
 
     view = map_finding_rows(result, mark)
+    if not all_advice:
+        view = _combine_same_location_advice(view)
     view["listing_policy_version"] = LISTING_VERSION
     return refresh_listing_summary(view)
+
+
+def _combine_same_location_advice(view):
+    """List one issue per function or module location.
+
+    Checks at one location (cyclomatic, cognitive, nesting, length, returns)
+    describe one problem with one fix. The most severe of them stays listed
+    and names the others in ``listing.combines``; each other is unlisted with
+    reason ``combined`` and points at it in ``listing.lead``, so gates, the
+    assessment and uploads count the location once while every record stays in
+    the report. Only checks at the same line are grouped, so a line filter
+    keeps or drops a group whole. Explicitly selected rules remain independently
+    listed, including when a later rule filter removes other measurements."""
+    from skylos.reporting.advice_display import (
+        SEVERITY_RANK,
+        same_location_advice_groups,
+    )
+    from skylos.reporting.finding_types import _finding_key
+    from skylos.reporting.listing import COMBINED_REASON, is_listed, map_finding_rows
+
+    rows = []
+    for category, row in iter_result_findings(view):
+        if get_finding_type(row, category) != "advice":
+            continue
+        if not is_listed(row, category):
+            continue
+        if row["listing"]["reason"] == "explicit_rule":
+            continue
+        rows.append((category, row))
+
+    def severity_rank(member):
+        severity = str(member[1].get("severity") or "").strip().upper()
+        return SEVERITY_RANK.get(severity, len(SEVERITY_RANK))
+
+    marks = {}
+    for indices in same_location_advice_groups(rows):
+        members = []
+        for index in indices:
+            members.append(rows[index])
+        lead_category, lead = min(members, key=severity_rank)
+        reference = {
+            "rule_id": _rule_id(lead),
+            "file": lead.get("file") or lead.get("file_path"),
+            "line": lead.get("line"),
+        }
+        others = []
+        for member in members:
+            if member[1] is not lead:
+                others.append(member)
+        combines = []
+        for _category, row in others:
+            combines.append({"rule_id": _rule_id(row), "line": row.get("line")})
+        marks.setdefault(_finding_key(lead_category, lead), []).append(
+            (lead, {"combines": combines})
+        )
+        for category, row in others:
+            update = {
+                "listed": False,
+                "reason": COMBINED_REASON,
+                "lead": reference,
+            }
+            marks.setdefault(_finding_key(category, row), []).append((row, update))
+    if not marks:
+        return view
+
+    def apply(row, category):
+        if not isinstance(row, Mapping) or not isinstance(row.get("listing"), Mapping):
+            return row
+        for original, update in marks.get(_finding_key(category, row), ()):
+            if original is row or original == row:
+                return {**row, "listing": {**row["listing"], **update}}
+        return row
+
+    return map_finding_rows(view, apply)
 
 
 def refresh_listing_summary(result, *, preserve_assessment=False):
     """Refresh counts after scope filters without changing listing decisions."""
     from skylos.reporting.finding_types import summarize_finding_types
-    from skylos.reporting.listing import LISTING_VERSION, is_listed, listed_result
+    from skylos.reporting.listing import (
+        LISTING_VERSION,
+        is_combined,
+        is_listed,
+        listed_result,
+    )
 
     if result.get("listing_policy_version") != LISTING_VERSION:
         return result
     view = dict(result)
     canonical = list(iter_result_findings(view))
-    omitted = [
-        (category, row) for category, row in canonical if not is_listed(row, category)
-    ]
+    omitted = []
+    for category, row in canonical:
+        if not is_listed(row, category) and not is_combined(row):
+            omitted.append((category, row))
+    combined = sum(is_combined(row) for _category, row in canonical)
     total = sum(
         get_finding_type(row, category) == "advice" for category, row in canonical
     )
@@ -395,6 +479,7 @@ def refresh_listing_summary(result, *, preserve_assessment=False):
     view["advice_visibility"] = {
         "total_checks": visibility.total_checks,
         "omitted_checks": visibility.omitted_checks,
+        "combined_checks": combined,
         "reasons": dict(visibility.reasons),
         "rules": dict(visibility.rules),
         "include_with": "--all-advice",
@@ -426,7 +511,9 @@ def prepare_advice_view(result, *, project_root=None, all_advice=False):
         )
         if all_advice:
             return result, AdviceVisibility(total)
-        return listed_result(result), _recorded_visibility(result) or AdviceVisibility(
+        return listed_result(result, include_combined=True), _recorded_visibility(
+            result
+        ) or AdviceVisibility(
             total
         )
     return _prepare_unmarked_advice_view(

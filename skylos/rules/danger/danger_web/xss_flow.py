@@ -695,11 +695,11 @@ class _XSSFlowChecker(TaintVisitor):
             return False
         self._checking_urls.add(key)
         try:
-            verdict = all(
-                self._returns_safe_url(node, helper)
-                for node in _own_nodes(helper)
-                if isinstance(node, ast.Return)
-            )
+            verdict = True
+            for node in _own_nodes(helper):
+                if isinstance(node, ast.Return) and not self._returns_safe_url(node, helper):
+                    verdict = False
+                    break
         finally:
             self._checking_urls.discard(key)
         self._url_checkers[key] = verdict
@@ -953,11 +953,11 @@ class _XSSFlowChecker(TaintVisitor):
                 return frozenset()
             guarded |= self._guards_at(child, parent, func)
             child = parent
-        return frozenset(
-            name
-            for name, position in guarded
-            if self._is_unrebound_param(name, func) or self._bound_before(name, func, position)
-        )
+        checked = set()
+        for name, position in guarded:
+            if self._is_unrebound_param(name, func) or self._bound_before(name, func, position):
+                checked.add(name)
+        return frozenset(checked)
 
     def _bound_before(self, name: str, func: ast.AST, position) -> bool:
         binding = self._single_local_binding(name, func)

@@ -500,7 +500,9 @@ def test_tampered_package_binding_is_rebuilt(tmp_path, binding):
     cache = tmp_path / mfi.CACHE_PATH
     data = json.loads(cache.read_text(encoding="utf-8"))
     for entry in data["entries"].values():
-        payload = entry.get("facts") if isinstance(entry, dict) else None
+        payload = None
+        if isinstance(entry, dict):
+            payload = entry.get("facts")
         if isinstance(payload, dict) and payload.get("pb"):
             payload["pb"] = {"component": binding}
     cache.write_text(json.dumps(data), encoding="utf-8")

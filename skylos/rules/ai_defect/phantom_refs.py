@@ -1087,7 +1087,10 @@ def _child_of_package(module_name, package):
 
 def _walrus_names(expressions):
     names = set()
-    stack = [node for node in expressions if node is not None]
+    stack = []
+    for node in expressions:
+        if node is not None:
+            stack.append(node)
     while stack:
         node = stack.pop()
         if isinstance(node, ast.Lambda):

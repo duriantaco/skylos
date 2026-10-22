@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import re
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from collections import defaultdict
 from skylos.analysis.control_flow import (
@@ -475,6 +476,89 @@ def _exception_type_leaf_names(exc_type: ast.expr | None) -> set[str]:
     return set()
 
 
+def _module_alternative_import_names(node: ast.Module) -> set[str]:
+    imports = set()
+    definitions = set()
+    pending = list(node.body)
+    while pending:
+        statement = pending.pop()
+        if isinstance(statement, ast.Import):
+            for alias in statement.names:
+                name = alias.asname
+                if not name:
+                    name = alias.name.split(".", 1)[0]
+                imports.add(name)
+        elif isinstance(statement, ast.ImportFrom):
+            for alias in statement.names:
+                name = alias.asname
+                if not name:
+                    name = alias.name
+                imports.add(name)
+        elif isinstance(
+            statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            definitions.add(statement.name)
+        else:
+            for child in ast.iter_child_nodes(statement):
+                if isinstance(child, (ast.stmt, ast.ExceptHandler)):
+                    pending.append(child)
+    return imports & definitions
+
+
+def _nested_forward_references(node: ast.expr, resolve_origin) -> list:
+    """String constants inside a type expression that name types, as in
+    ``Union["Parameter", None]`` or ``Callable[["Context"], None]``: forward
+    references (PEP 484). ``Literal[...]`` values and the metadata after the
+    first argument of ``Annotated[...]`` are values, not types."""
+    references = []
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, ast.Constant):
+            if current is not node and isinstance(current.value, str):
+                references.append(current.value)
+        elif isinstance(current, ast.Subscript):
+            origin = resolve_origin(current.value)
+            if origin in {"typing.Literal", "typing_extensions.Literal"}:
+                continue
+            stack.append(current.value)
+            if (
+                origin in {"typing.Annotated", "typing_extensions.Annotated"}
+                and isinstance(current.slice, ast.Tuple)
+                and current.slice.elts
+            ):
+                stack.append(current.slice.elts[0])
+            else:
+                stack.append(current.slice)
+        elif isinstance(current, (ast.Tuple, ast.List)):
+            stack.extend(current.elts)
+        elif isinstance(current, ast.BinOp):
+            stack.append(current.left)
+            stack.append(current.right)
+    return references
+
+
+def _import_regions_overlap(first: tuple, second: tuple) -> bool:
+    for left, right in zip(first, second):
+        if left == right:
+            continue
+        if left[0] != right[0]:
+            return True
+        labels = {left[1], right[1]}
+        if labels == {"if-body", "if-else"}:
+            return False
+        handlers = []
+        for label in labels:
+            if label.startswith("handler:"):
+                handlers.append(label)
+        if len(handlers) == 2:
+            return False
+        if handlers and "try-else" in labels:
+            return False
+        return True
+    return True
+
+
 class Definition:
     __slots__ = (
         "name",
@@ -646,6 +730,12 @@ class Visitor(ast.NodeVisitor):
         self._param_stack = []
         self._typed_dict_stack = []
         self._shadowed_module_aliases = {}
+        self._alternative_import_names: set[str] = set()
+        self._module_import_bindings: dict[str, set[str]] = {}
+        self._module_import_loads: list[tuple[str, str, int, tuple]] = []
+        self._module_binding_path: list = []
+        self._module_import_regions: dict[tuple, dict] = {}
+        self._module_callable_bindings: dict[str, str] = {}
         self._in_protocol_class = False
         self.protocol_classes = set()
         self._in_overload = False
@@ -774,6 +864,7 @@ class Visitor(ast.NodeVisitor):
         )
         self._type_checking_function_ids = type_checking_function_ids(node)
         self._module_shadows_getattr = _module_binds_name(node, "getattr")
+        self._alternative_import_names = _module_alternative_import_names(node)
         for stmt in node.body:
             if (
                 isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -785,7 +876,126 @@ class Visitor(ast.NodeVisitor):
             self.visit(stmt)
         self._finalize_dunder_all_exports(node.body)
         self._resolve_deferred_global_loads()
+        self._resolve_module_import_loads(self._module_import_bindings)
         self._credit_lazy_module_attributes(node)
+
+    def _copy_module_import_bindings(self) -> dict[str, set[str]]:
+        copied = {}
+        for name, targets in self._module_import_bindings.items():
+            copied[name] = set(targets)
+        return copied
+
+    def _merge_module_import_bindings(self, states: list[dict]) -> None:
+        merged = {}
+        for state in states:
+            for name, targets in state.items():
+                merged.setdefault(name, set()).update(targets)
+        self._module_import_bindings = merged
+
+    def _note_module_import_binding(self, name: str, target: str | None) -> None:
+        if self.current_function_scope or self.cls:
+            return
+        self._module_callable_bindings.pop(self.qual(name), None)
+        if name not in self._alternative_import_names:
+            return
+        targets = set()
+        if target:
+            targets.add(target)
+        self._module_import_bindings[name] = targets
+        path = tuple(self._module_binding_path)
+        for region, bindings in self._module_import_regions.items():
+            if not _import_regions_overlap(path, region):
+                continue
+            if region[: len(path)] == path:
+                bindings[name] = set(targets)
+            elif target:
+                bindings.setdefault(name, set()).add(target)
+
+    @contextmanager
+    def _module_import_region(self, node: ast.AST, label: str):
+        if (
+            not self._alternative_import_names
+            or self.current_function_scope
+            or self.cls
+        ):
+            yield
+            return
+        self._module_binding_path.append((id(node), label))
+        try:
+            yield
+        finally:
+            path = tuple(self._module_binding_path)
+            self._module_import_regions[path] = self._copy_module_import_bindings()
+            self._module_binding_path.pop()
+
+    def _forget_module_import_target(self, target: ast.expr) -> None:
+        pending = [target]
+        while pending:
+            current = pending.pop()
+            if isinstance(current, ast.Name):
+                self._note_module_import_binding(current.id, None)
+            elif isinstance(current, (ast.Tuple, ast.List)):
+                pending.extend(current.elts)
+            elif isinstance(current, ast.Starred):
+                pending.append(current.value)
+
+    def _resolve_module_import_loads(
+        self, bindings: dict, owner: str | None = None
+    ) -> None:
+        for name, read_owner, lineno, path in self._module_import_loads:
+            if owner is not None and read_owner != owner:
+                continue
+            targets = set(bindings.get(name, ()))
+            if path in self._module_import_regions:
+                targets.intersection_update(
+                    self._module_import_regions[path].get(name, ())
+                )
+            for target in targets:
+                self.first_read_lineno.setdefault(target, lineno)
+                self.refs.append((sys.intern(str(target)), self.file))
+                if read_owner:
+                    self.call_graph[read_owner].add(target)
+                    self.reverse_call_graph[target].add(read_owner)
+
+    def _credit_module_call_imports(self, callee: str) -> None:
+        if not self._module_import_loads:
+            return
+        pending = [callee]
+        visited = set()
+        while pending:
+            owner = pending.pop()
+            owner = self._module_callable_bindings.get(owner, owner)
+            if owner in visited:
+                continue
+            visited.add(owner)
+            if not any(d.name == owner for d in self.defs):
+                class_name, separator, method = owner.rpartition(".")
+                if separator and class_name in self.class_bases:
+                    for base in self._module_import_class_mro(class_name)[1:]:
+                        candidate = f"{base}.{method}"
+                        if any(d.name == candidate for d in self.defs):
+                            pending.append(candidate)
+                            break
+            self._resolve_module_import_loads(self._module_import_bindings, owner)
+            pending.extend(self.call_graph.get(owner, ()))
+
+    def _module_import_class_mro(self, name: str, visiting=()) -> list[str]:
+        from skylos.deadcode.signature_contracts import _merge_c3_mro
+
+        if name in visiting or name not in self.class_bases:
+            return []
+        parents = self.class_bases[name]
+        sequences = []
+        for parent in parents:
+            order = self._module_import_class_mro(parent, (*visiting, name))
+            if not order:
+                return []
+            sequences.append(order)
+        sequences.append(list(parents))
+        merged = _merge_c3_mro(sequences)
+        if merged is None:
+            return []
+        return [name, *merged]
 
     def _credit_lazy_module_attributes(self, node: ast.Module) -> None:
         from skylos.deadcode.python_proofs import proven_lazy_exports
@@ -803,7 +1013,10 @@ class Visitor(ast.NodeVisitor):
             local_name = name
             if self.mod:
                 local_name = f"{self.mod}.{name}"
-            if self.qual(name) != target or any(d.name == local_name for d in self.defs):
+            shadowed_locally = self.qual(name) != target or any(
+                d.name == local_name for d in self.defs
+            )
+            if shadowed_locally and name not in self._shadowed_module_aliases:
                 continue
             self.first_read_lineno.setdefault(target, lineno)
             self.refs.append((sys.intern(str(target)), self.file))
@@ -869,6 +1082,7 @@ class Visitor(ast.NodeVisitor):
             line = getattr(a, "lineno", node.lineno)
             self.alias[alias_name] = target
             self._alias_binding_lines[alias_name] = line
+            self._note_module_import_binding(alias_name, target)
             self.add_def(
                 target,
                 "import",
@@ -931,6 +1145,7 @@ class Visitor(ast.NodeVisitor):
             line = getattr(a, "lineno", node.lineno)
             self.alias[alias_name] = full
             self._alias_binding_lines[alias_name] = line
+            self._note_module_import_binding(alias_name, full)
             self.add_def(
                 full,
                 "import",
@@ -976,14 +1191,21 @@ class Visitor(ast.NodeVisitor):
             for statement in node.orelse:
                 self.visit(statement)
         else:
-            for statement in node.body:
-                if is_version_conditional:
-                    self._mark_version_conditional(statement)
-                self.visit(statement)
-            for statement in node.orelse:
-                if is_version_conditional:
-                    self._mark_version_conditional(statement)
-                self.visit(statement)
+            entry = self._copy_module_import_bindings()
+            with self._module_import_region(node, "if-body"):
+                for statement in node.body:
+                    if is_version_conditional:
+                        self._mark_version_conditional(statement)
+                    self.visit(statement)
+            body_state = self._copy_module_import_bindings()
+            self._module_import_bindings = entry
+            with self._module_import_region(node, "if-else"):
+                for statement in node.orelse:
+                    if is_version_conditional:
+                        self._mark_version_conditional(statement)
+                    self.visit(statement)
+            else_state = self._copy_module_import_bindings()
+            self._merge_module_import_bindings([body_state, else_state])
 
     def _mark_version_conditional(self, node: ast.AST) -> None:
         for child in ast.walk(node):
@@ -1065,7 +1287,39 @@ class Visitor(ast.NodeVisitor):
                             full_name = f"{stmt.module}.{alias.name}"
                             self.add_ref(full_name)
 
-        self.generic_visit(node)
+        entry = self._copy_module_import_bindings()
+        failure_states = [entry]
+        normal_exit = True
+        with self._module_import_region(node, "try-body"):
+            for statement in node.body:
+                if normal_exit:
+                    failure_states.append(self._copy_module_import_bindings())
+                self.visit(statement)
+                if isinstance(statement, ast.Raise):
+                    normal_exit = False
+        normal_state = self._copy_module_import_bindings()
+        self._merge_module_import_bindings(failure_states)
+        failure_state = self._copy_module_import_bindings()
+        exits = []
+        for index, handler in enumerate(node.handlers):
+            self._module_import_bindings = {}
+            for name, targets in failure_state.items():
+                self._module_import_bindings[name] = set(targets)
+            prefix = "handler"
+            if not isinstance(node, ast.Try):
+                prefix = "star-handler"
+            with self._module_import_region(node, f"{prefix}:{index}"):
+                self.visit(handler)
+            exits.append(self._copy_module_import_bindings())
+        self._module_import_bindings = normal_state
+        with self._module_import_region(node, "try-else"):
+            for statement in node.orelse:
+                self.visit(statement)
+        if normal_exit:
+            exits.append(self._copy_module_import_bindings())
+        self._merge_module_import_bindings(exits)
+        for statement in node.finalbody:
+            self.visit(statement)
 
     if hasattr(ast, "TryStar"):
         visit_TryStar = visit_Try
@@ -1266,10 +1520,14 @@ class Visitor(ast.NodeVisitor):
             decorators=decorator_names,
             is_descriptor=is_descriptor,
         )
-
         for d in node.decorator_list:
             self.visit(d)
             self._analyze_decorator_args(d)
+            if not self.current_function_scope and self.cls is None:
+                decorator = self._resolve_callee_fqname(d)
+                if decorator:
+                    self._credit_module_call_imports(decorator)
+        self._note_module_import_binding(node.name, None)
 
         FRAMEWORK_DECORATORS = {
             "fixture",
@@ -1642,6 +1900,7 @@ class Visitor(ast.NodeVisitor):
             node=node,
             module_shadows_getattr=self._module_shadows_getattr,
         )
+        self._note_module_import_binding(node.name, None)
 
         is_protocol = False
         for base in node.bases:
@@ -1995,6 +2254,22 @@ class Visitor(ast.NodeVisitor):
         self._process_textual_bindings(node)
         self._extract_string_refs(node.value)
         self.generic_visit(node)
+        callable_target = None
+        if (
+            self._alternative_import_names
+            and not self.current_function_scope
+            and self.cls is None
+            and not self._module_binding_path
+            and isinstance(node.value, (ast.Name, ast.Attribute))
+        ):
+            candidate = self._resolve_callee_fqname(node.value)
+            candidate = self._module_callable_bindings.get(candidate, candidate)
+            if any(d.name == candidate for d in self.defs):
+                callable_target = candidate
+        for target in node.targets:
+            self._forget_module_import_target(target)
+            if callable_target and isinstance(target, ast.Name):
+                self._module_callable_bindings[self.qual(target.id)] = callable_target
         self._track_instance_attr_types(node)
 
     def _record_orm_declarative_fields(self, targets, value) -> None:
@@ -2124,6 +2399,8 @@ class Visitor(ast.NodeVisitor):
                     _define(elt)
 
         _define(node.target)
+        if node.value is not None:
+            self._forget_module_import_target(node.target)
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
         if (
@@ -2186,7 +2463,8 @@ class Visitor(ast.NodeVisitor):
                 and (not self.cls)
                 and (name_simple in self.alias)
             ):
-                self._shadowed_module_aliases[name_simple] = var_name
+                if name_simple not in self._alternative_import_names:
+                    self._shadowed_module_aliases[name_simple] = var_name
 
         elif isinstance(target_node, (ast.Tuple, ast.List)):
             for elt in target_node.elts:
@@ -2463,6 +2741,7 @@ class Visitor(ast.NodeVisitor):
         callee = self._resolve_callee_fqname(node.func)
         if callee and not self.current_function_scope and self.cls is None:
             self.top_level_refs.add(callee)
+            self._credit_module_call_imports(callee)
         if callee:
             self._record_module_call_args(callee, node)
             for index, arg in enumerate(node.args):
@@ -3351,6 +3630,29 @@ class Visitor(ast.NodeVisitor):
         if self._is_active_type_parameter(node.id):
             return
 
+        if node.id in self._alternative_import_names:
+            qualified = self.qual(node.id)
+            if self.current_function_scope:
+                qualified = node.id
+                if self.mod:
+                    qualified = f"{self.mod}.{node.id}"
+            self.first_read_lineno.setdefault(qualified, node.lineno)
+            self.add_ref(qualified)
+            if self.current_function_scope:
+                self._module_import_loads.append(
+                    (
+                        node.id,
+                        self._current_function_qname or "",
+                        node.lineno,
+                        tuple(self._module_binding_path),
+                    )
+                )
+            else:
+                for target in self._module_import_bindings.get(node.id, ()):
+                    self.first_read_lineno.setdefault(target, node.lineno)
+                    self.add_ref(target)
+            return
+
         shadowed = self._shadowed_module_aliases.get(node.id)
         if shadowed:
             self.first_read_lineno.setdefault(shadowed, node.lineno)
@@ -3476,6 +3778,22 @@ class Visitor(ast.NodeVisitor):
                 self.visit_string_annotation(annotation_str)
             else:
                 self.visit(node)
+                for forward_reference in _nested_forward_references(
+                    node, self._annotation_origin
+                ):
+                    self.visit_string_annotation(forward_reference)
+
+    def _annotation_origin(self, node: ast.expr) -> str:
+        parts = []
+        current = node
+        while isinstance(current, ast.Attribute):
+            parts.append(current.attr)
+            current = current.value
+        if not isinstance(current, ast.Name):
+            return ""
+        parts.append(current.id)
+        parts.reverse()
+        return self._resolve_alias_prefix(".".join(parts))
 
     def _annotation_string_value(self, node: ast.expr) -> Optional[str]:
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -3493,7 +3811,7 @@ class Visitor(ast.NodeVisitor):
 
         try:
             parsed = ast.parse(annotation_str, mode="eval")
-            self.visit(parsed.body)
+            self.visit_annotation(parsed.body)
         except SyntaxError:
             IGNORE_ANN_TOKENS = {
                 "Any",
@@ -3651,6 +3969,7 @@ class Visitor(ast.NodeVisitor):
             if self.current_function_scope and self.local_var_maps:
                 self.local_var_maps[-1][nm] = var_name
             self.add_ref(var_name)
+            self._note_module_import_binding(nm, None)
 
     def visit_keyword(self, node: ast.keyword) -> None:
         self.visit(node.value)
@@ -3667,6 +3986,7 @@ class Visitor(ast.NodeVisitor):
         if node.name:
             var_name = self._compute_variable_name(node.name)
             self.add_def(var_name, "variable", node.lineno)
+            self._note_module_import_binding(node.name, None)
             if self.current_function_scope and self.local_var_maps:
                 self.local_var_maps[-1][node.name] = var_name
 

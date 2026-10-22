@@ -9,6 +9,7 @@ from skylos.reporting.finding_types import get_finding_type
 from skylos.reporting.rollups import FINDING_SECTIONS
 
 LISTING_VERSION = 1
+COMBINED_REASON = "combined"
 _RULE_ID = re.compile(r"SKY-[A-Z0-9]+\Z")
 
 
@@ -63,6 +64,12 @@ def listing_decision(finding):
     return mark
 
 
+def is_combined(finding):
+    """Listed as part of another issue at the same location (``listing.lead``)."""
+    mark = listing_decision(finding)
+    return mark is not None and not mark["listed"] and mark["reason"] == COMBINED_REASON
+
+
 def is_listed(finding, category=None, *, explicit_rules=()):
     """Unknown metadata and risk/custom findings remain visible and enforceable."""
     if (
@@ -75,6 +82,26 @@ def is_listed(finding, category=None, *, explicit_rules=()):
         return True
     mark = listing_decision(finding)
     return mark["listed"] if mark is not None else True
+
+
+def map_listing_paths(mark, normalize_path):
+    """Copy group references using the same path convention as their records."""
+    mapped = dict(mark)
+    lead = mark.get("lead")
+    if not isinstance(lead, Mapping):
+        return mapped
+    lead_path = lead.get("file") or lead.get("file_path")
+    if not isinstance(lead_path, str):
+        return mapped
+    normalized = normalize_path(lead_path)
+    if normalized is None:
+        mapped.pop("lead", None)
+        return mapped
+    mapped_lead = dict(lead)
+    mapped_lead["file"] = normalized
+    mapped_lead.pop("file_path", None)
+    mapped["lead"] = mapped_lead
+    return mapped
 
 
 def map_finding_rows(result, transform):
@@ -134,10 +161,15 @@ def map_finding_rows(result, transform):
     return view
 
 
-def listed_result(result, *, explicit_rules=()):
-    return map_finding_rows(
-        result,
-        lambda row, category: (
-            row if is_listed(row, category, explicit_rules=explicit_rules) else None
-        ),
-    )
+def listed_result(result, *, explicit_rules=(), include_combined=False):
+    """Rows consumers list; ``include_combined`` also keeps rows shown inside
+    their lead issue, for views that render the whole group."""
+
+    def keep(row, category):
+        if is_listed(row, category, explicit_rules=explicit_rules):
+            return row
+        if include_combined and is_combined(row):
+            return row
+        return None
+
+    return map_finding_rows(result, keep)
