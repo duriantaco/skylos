@@ -6239,6 +6239,11 @@ class Skylos:
             attach_security_traces(
                 all_dangers, project_root=project_root, files=files
             )
+        if enable_danger:
+            from skylos.reporting.metadata_paths import relativize_receiver_paths
+
+            relativize_receiver_paths(all_dangers, project_root)
+            relativize_receiver_paths(all_suppressed, project_root)
         result = self._build_result(
             files,
             thr,
