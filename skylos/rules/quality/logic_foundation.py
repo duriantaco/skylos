@@ -2626,6 +2626,7 @@ _CLOSING_RESOURCE_CONTEXTS = frozenset({
     "tempfile.SpooledTemporaryFile", "http.client.HTTPConnection",
     "http.client.HTTPSConnection",
 })
+_TRANSACTION_ONLY_CONTEXTS = frozenset({"sqlite3.connect", "psycopg2.connect"})
 
 
 def _closing_resource_context_call_ids(module):
@@ -2840,6 +2841,16 @@ def _call_matches_resource(call_node):
     return None
 
 
+def _cleanup_message(resource_name):
+    if resource_name in _TRANSACTION_ONLY_CONTEXTS:
+        return (
+            f"Resource '{resource_name}' is never closed. Its 'with' block only commits "
+            "or rolls back the transaction and leaves the connection open; call close() "
+            "in a finally block or wrap it in contextlib.closing()."
+        )
+    return f"Resource '{resource_name}' opened without 'with' statement. Use a context manager to ensure cleanup."
+
+
 class MissingResourceCleanupRule(SkylosRule):
     rule_id = "SKY-L008"
     name = "Missing Resource Cleanup"
@@ -3044,7 +3055,7 @@ class MissingResourceCleanupRule(SkylosRule):
             "simple_name": resource_name,
             "value": "no_cleanup",
             "threshold": 0,
-            "message": f"Resource '{resource_name}' opened without 'with' statement. Use a context manager to ensure cleanup.",
+            "message": _cleanup_message(resource_name),
             "file": context.get("filename"),
             "basename": Path(context.get("filename", "")).name,
             "line": node.lineno,

@@ -463,6 +463,32 @@ class TestMissingResourceCleanupConnectionAndFlowCases:
         assert len(findings) >= 1
         assert any(f["rule_id"] == "SKY-L008" for f in findings)
 
+    @pytest.mark.parametrize(
+        ("module", "resource"),
+        [("sqlite3", "sqlite3.connect"), ("psycopg2", "psycopg2.connect")],
+    )
+    def test_connection_message_does_not_recommend_a_non_closing_with(
+        self, module, resource
+    ):
+        code = f"""
+        import {module}
+        def foo():
+            conn = {resource}("db")
+            conn.execute("SELECT 1")
+        """
+        (finding,) = check_code(MissingResourceCleanupRule(), code)
+        assert "contextlib.closing()" in finding["message"]
+        assert "Use a context manager" not in finding["message"]
+
+    def test_file_message_still_recommends_with(self):
+        code = """
+        def foo():
+            handle = open("x")
+            return handle.read()
+        """
+        (finding,) = check_code(MissingResourceCleanupRule(), code)
+        assert "Use a context manager to ensure cleanup" in finding["message"]
+
 
 class TestMissingResourceCleanupAdditionalResourceCases:
     @pytest.mark.parametrize(
