@@ -27,7 +27,7 @@ _METRIC_NAMES = {
     "SKY-Q802": "Distance from main sequence",
     "SKY-Q803": "Architecture zone",
 }
-_SEVERITY_RANK = {
+SEVERITY_RANK = {
     "CRITICAL": 0,
     "HIGH": 1,
     "MEDIUM": 2,
@@ -236,16 +236,11 @@ def _advice_identity(category, finding):
     return (family, files[0], line), (names, columns, language)
 
 
-def combine_complexity_advice(
-    rows: Iterable[tuple[str, dict]],
-) -> list[tuple[str, dict]]:
-    """Combine unambiguous function or module advice for human display only.
-
-    A missing optional column/language can join agreeing known values. Conflicts
-    anywhere at the same location, duplicate checks, and evidence variants leave
-    the entire candidate group separate. Originals remain on display metadata.
-    """
-    rows = list(rows)
+def same_location_advice_groups(rows) -> list[list[int]]:
+    """Indices of advice signals one entry can stand for, each group in
+    rule-family order: two or more different checks at the same function or
+    module location, with agreeing names, column and language. Duplicate
+    checks and conflicting details at a location leave it ungrouped."""
     candidates = {}
     for index, (category, finding) in enumerate(rows):
         identity = _advice_identity(category, finding)
@@ -253,8 +248,7 @@ def combine_complexity_advice(
             location, details = identity
             candidates.setdefault(location, []).append((index, details))
 
-    replacements = {}
-    consumed = set()
+    groups = []
     for (family, _file, _line), candidates_at_location in candidates.items():
         indices = [index for index, _details in candidates_at_location]
         if len(indices) < 2:
@@ -279,7 +273,28 @@ def combine_complexity_advice(
         }
         if not _compatible_names(names) or len(columns) > 1 or len(languages) > 1:
             continue
-        originals = tuple(rows[by_rule[rule]][1] for rule in family if rule in by_rule)
+        group = []
+        for rule in family:
+            if rule in by_rule:
+                group.append(by_rule[rule])
+        groups.append(group)
+    return groups
+
+
+def combine_complexity_advice(
+    rows: Iterable[tuple[str, dict]],
+) -> list[tuple[str, dict]]:
+    """Combine unambiguous function or module advice for human display only.
+
+    A missing optional column/language can join agreeing known values. Conflicts
+    anywhere at the same location, duplicate checks, and evidence variants leave
+    the entire candidate group separate. Originals remain on display metadata.
+    """
+    rows = list(rows)
+    replacements = {}
+    consumed = set()
+    for indices in same_location_advice_groups(rows):
+        originals = tuple(rows[index][1] for index in indices)
         metadata = ComplexityDisplay(originals)
         view = dict(originals[0])
         view["rule_id"] = metadata.rule_ids[0]
@@ -287,7 +302,7 @@ def combine_complexity_advice(
         view["message"] = metadata.message
         view["severity"] = min(
             (str(finding.get("severity") or "MEDIUM").upper() for finding in originals),
-            key=lambda severity: _SEVERITY_RANK.get(severity, 99),
+            key=lambda severity: SEVERITY_RANK.get(severity, 99),
         )
         replacements[min(indices)] = ("quality", view)
         consumed.update(indices)
@@ -370,7 +385,7 @@ def _combine_file_annotations(rows):
         view["name"] = view["simple_name"] = Path(file).name
         view["severity"] = min(
             (str(finding.get("severity") or "LOW").upper() for finding in members),
-            key=lambda severity: _SEVERITY_RANK.get(severity, 99),
+            key=lambda severity: SEVERITY_RANK.get(severity, 99),
         )
         replacements[min(indices)] = ("quality", view)
         consumed.update(indices)
