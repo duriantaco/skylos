@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from collections import Counter
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -21,6 +22,8 @@ from skylos.rules.ai_defect.phantom_refs import (
     _module_has_member,
     _module_name,
     _resolve_local_module_member,
+    stored_package_binding,
+    local_star_export_names,
     _resolve_import_from_base,
     plain_module_facts,
     scan_repo_phantom_security_references,
@@ -126,6 +129,7 @@ def _inspect_python_coverage(
         load_reasons,
         possible,
         type_checking_possible,
+        package_bindings,
     ) = _load_module_facts(
         modules,
         local_modules,
@@ -158,6 +162,8 @@ def _inspect_python_coverage(
             state,
             module_dunder_attributes,
             possible_members=(possible, type_checking_possible),
+            package_bindings=package_bindings,
+            module_files=modules,
         )
 
     checked = state.verified + len(findings)
@@ -191,7 +197,13 @@ def _inspect_target_references(
     module_dunder_attributes: frozenset[str],
     *,
     possible_members: tuple[dict[str, set[str]], dict[str, set[str]]] = ({}, {}),
+    package_bindings: dict[str, tuple[dict, tuple]] | None = None,
+    module_files: dict[str, Path] | None = None,
 ) -> None:
+    if package_bindings is None:
+        package_bindings = {}
+    if module_files is None:
+        module_files = {}
     ast_index = _ast_index_for(tree)
     scope_infos = _scope_infos_for(
         tree, current_module, local_modules, current_module in package_modules
@@ -240,6 +252,12 @@ def _inspect_target_references(
             module_alias_exports=active_aliases,
             local_modules=local_modules,
             ensure_module_loaded=ensure_module_loaded,
+            binds_name=partial(
+                stored_package_binding,
+                package_bindings,
+                star_exports=partial(local_star_export_names, module_files=module_files),
+                aliases=active_aliases,
+            ),
         )
         if resolved is None:
             continue
@@ -481,10 +499,12 @@ def _load_module_facts(
     dict[str, str],
     dict[str, set[str]],
     dict[str, set[str]],
+    dict[str, tuple[dict, tuple]],
 ]:
     trees: dict[str, ast.AST] = {}
     possible: dict[str, set[str]] = {}
     type_checking_possible: dict[str, set[str]] = {}
+    package_bindings: dict[str, tuple[dict, tuple]] = {}
     members: dict[str, set[str]] = {}
     type_checking_members: dict[str, set[str]] = {}
     aliases: dict[str, dict[str, str]] = {}
@@ -524,6 +544,7 @@ def _load_module_facts(
         type_checking_members[module_name] = facts.type_checking_members
         possible[module_name] = facts.possible_members
         type_checking_possible[module_name] = facts.type_checking_possible_members
+        package_bindings[module_name] = (facts.package_bindings, facts.package_star)
         aliases[module_name] = {
             alias: target
             for alias, target in facts.exported_modules.items()
@@ -551,6 +572,7 @@ def _load_module_facts(
         reasons,
         possible,
         type_checking_possible,
+        package_bindings,
     )
 
 
