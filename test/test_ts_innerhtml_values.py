@@ -94,3 +94,51 @@ def test_inert_or_proven_sanitized_values_are_quiet(tmp_path, code):
 )
 def test_unknown_or_unproven_values_are_reported(tmp_path, code):
     assert _xss_count(tmp_path, code) == 1
+
+
+SVG_ICON = '<svg width="12" height="18" viewBox="0 0 12 18" fill="currentColor"><circle cx="3.5" cy="3.5" r="1.8"/></svg>'
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        f"el.innerHTML = `<span class=\"handle\">{SVG_ICON}</span>`;",
+        "el.innerHTML = `<form method=\"post\"><textarea name=\"sql\"></textarea><button>Run</button></form>`;",
+        f"const ICON = '{SVG_ICON}';\nel.innerHTML = ICON;",
+        "el.innerHTML = `<title>Create table</title><p>Pick columns</p>`;",
+    ],
+    ids=["svg_icon", "textarea_form", "svg_const", "title_text"],
+)
+def test_fixed_markup_with_svg_or_textarea_is_quiet(tmp_path, code):
+    assert _xss_count(tmp_path, code) == 0
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "el.innerHTML = '<svg onload=alert(1)></svg>';",
+        "el.innerHTML = '<svg/onload=alert(1)>';",
+        "el.innerHTML = '<svg><a href=\"&#106;avascript:alert(1)\"><text>x</text></a></svg>';",
+        "el.innerHTML = '<svg><a href=\"java\\tscript:alert(1)\"><text>x</text></a></svg>';",
+        "el.innerHTML = '<svg><set attributeName=\"onmouseover\" to=\"alert(1)\"/></svg>';",
+        "el.innerHTML = '<svg><foreignObject><iframe srcdoc=\"x\"></iframe></foreignObject></svg>';",
+        "el.innerHTML = '<svg><style>@import url(x)</style></svg>';",
+        "el.innerHTML = '<textarea></textarea><img src=x onerror=alert(1)>';",
+        "el.innerHTML = '<svg><animate attributeName=\"href\" values=\"javascript:alert(1)\"/></svg>';",
+        "el.innerHTML = '<svg><use href=\"data:image/svg+xml,x#y\"/></svg>';",
+    ],
+    ids=[
+        "svg_handler",
+        "svg_slash_handler",
+        "svg_entity_url",
+        "svg_tab_url",
+        "svg_set_handler",
+        "svg_foreign_iframe",
+        "svg_style",
+        "textarea_breakout",
+        "svg_animate_url",
+        "svg_use",
+    ],
+)
+def test_svg_and_textarea_that_can_run_script_still_report(tmp_path, code):
+    assert _xss_count(tmp_path, code) == 1

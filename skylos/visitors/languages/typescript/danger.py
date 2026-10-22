@@ -1068,7 +1068,35 @@ class _LiteralHtml(HTMLParser):
         self.executable = True
 
 
+_SCRIPT_CAPABLE_TAG_TEXT = re.compile(
+    r"<\s*/?\s*(?:script|style|iframe|frame|frameset|object|embed|applet|param|portal"
+    r"|foreignobject|set|animate\w*|use|base|math|handler|listener|meta|link)\b",
+    re.IGNORECASE,
+)
+_EVENT_HANDLER_TEXT = re.compile(r"\bon[a-z]+\s*=", re.IGNORECASE)
+_SCRIPT_URL_SCHEMES = ("javascript:", "vbscript:")
+
+
+def _text_proves_inert(value: str) -> bool:
+    """A fixed string that cannot run script however a browser tokenizes it.
+
+    Every way for markup to run script needs one of these somewhere in its
+    text: an ``on...=`` attribute, a script-capable or embedding element, or a
+    ``javascript:``/``vbscript:`` URL (URL parsers drop tab, CR and LF, so
+    those are removed before looking). Without ``&`` no character reference
+    can spell one, so the answer does not depend on the parsing state that
+    ``<svg>`` or ``<textarea>`` would put a browser in."""
+    if "&" in value or "\0" in value:
+        return False
+    if _EVENT_HANDLER_TEXT.search(value) or _SCRIPT_CAPABLE_TAG_TEXT.search(value):
+        return False
+    flat = re.sub(r"[\t\n\r]", "", value).lower()
+    return not any(scheme in flat for scheme in _SCRIPT_URL_SCHEMES)
+
+
 def _html_literal_can_execute(value: str) -> bool:
+    if _text_proves_inert(value):
+        return False
     # HTMLParser is not an HTML5 tree builder. Do not establish safety for
     # abrupt/nested comments on which its tokenization differs from browsers.
     cursor = 0
