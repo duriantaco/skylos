@@ -3283,6 +3283,14 @@ class TestUndefinedConfig:
         ]
 
 
+def _rule_findings(findings, rule_id):
+    matching = []
+    for finding in findings:
+        if finding["rule_id"] == rule_id:
+            matching.append(finding)
+    return matching
+
+
 def _check_stale_mock(test_code, module_path, module_code):
     import shutil
 
@@ -3404,6 +3412,51 @@ class TestStaleMock:
         )
         l024 = [f for f in findings if f["rule_id"] == "SKY-L024"]
         assert len(l024) == 0
+
+    def test_class_attribute_target_is_not_read_as_a_module(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n")
+        package = tmp_path / "app" / "pipeline"
+        package.mkdir(parents=True)
+        (tmp_path / "app" / "__init__.py").write_text("")
+        (package / "__init__.py").write_text("from app.pipeline.pipeline import Pipeline\n")
+        (package / "pipeline.py").write_text(
+            "class Base:\n    def show(self):\n        pass\n\n\nclass Pipeline(Base):\n    pass\n"
+        )
+        source = textwrap.dedent(
+            """
+            from unittest.mock import patch
+
+            @patch("app.pipeline.Pipeline.show")
+            def test_show(mock_show):
+                pass
+            """
+        )
+        test_file = tmp_path / "test_x.py"
+        test_file.write_text(source)
+        rule = StaleMockRule()
+        context = {"filename": str(test_file), "mod": "test_x"}
+        findings = []
+        for node in ast.walk(ast.parse(source)):
+            findings.extend(rule.visit_node(node, context) or [])
+        assert _rule_findings(findings, "SKY-L024") == []
+
+    def test_missing_module_attribute_still_reports_next_to_a_same_named_class(self):
+        findings = _check_stale_mock(
+            test_code="""
+            from unittest.mock import patch
+
+            @patch("app.pipeline.missing_helper")
+            def test_helper(mock_helper):
+                pass
+            """,
+            module_path="app.pipeline",
+            module_code="""
+            class Pipeline:
+                pass
+            """,
+        )
+        l024 = _rule_findings(findings, "SKY-L024")
+        assert [f["simple_name"] for f in l024] == ["missing_helper"]
 
     def test_mock_targets_class(self):
         findings = _check_stale_mock(
