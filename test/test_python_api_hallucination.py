@@ -1498,3 +1498,40 @@ def test_broad_exception_handler_does_not_hide_a_phantom_call(tmp_path, handler)
     )
 
     assert _phantom_names(findings) == {"auth.verify_signature"}
+
+
+_SUBMODULE = "class _C:\n    def output_types(self):\n        return 1\n\ncomponent = _C()\n\ndef helper():\n    return 1\n"
+
+
+@pytest.mark.parametrize(
+    ("init", "app"),
+    [
+        (
+            "class Obj:\n    pass\n\ncomponent = Obj()\n",
+            "import pkg.core.component\n\ndef f():\n    return pkg.core.component.missing()\n",
+        ),
+        (
+            "from pkg import other as component\n",
+            "from pkg.core import component\n\ndef f():\n    return component.missing()\n",
+        ),
+        (
+            "component: object\n",
+            "from pkg.core import component\n\ndef f():\n    return component.missing()\n",
+        ),
+    ],
+    ids=["submodule_import_replaces_object", "alias_to_other_module", "bare_annotation"],
+)
+def test_python_local_api_check_fails_when_the_package_name_is_a_module(tmp_path, init, app):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/core/__init__.py": init,
+            "pkg/core/component.py": _SUBMODULE,
+            "pkg/other.py": "def real():\n    return 1\n",
+            "pkg/app.py": app,
+        },
+        targets=["pkg/app.py"],
+    )
+    assert check["outcome"] == "fail"
+    assert [finding["simple_name"] for finding in findings] == ["missing"]
