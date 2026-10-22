@@ -507,8 +507,10 @@ def run_cicd_command(
     )
 
     from skylos.commands.risk_review_cmd import add_risk_review_parser
+    from skylos.cicd.agent_review import add_agent_review_parser
 
     add_risk_review_parser(cicd_sub)
+    add_agent_review_parser(cicd_sub)
 
     if not argv:
         cicd_parser.print_help()
@@ -519,6 +521,11 @@ def run_cicd_command(
 
     if cicd_args.cicd_cmd == "init":
         return _run_cicd_init(cicd_args, console)
+
+    if cicd_args.cicd_cmd == "agent-review":
+        from skylos.cicd.agent_review import run_agent_review_command
+
+        return run_agent_review_command(cicd_args, console=console)
 
     if cicd_args.cicd_cmd == "risk-review":
         from skylos.commands.risk_review_cmd import run_risk_review
