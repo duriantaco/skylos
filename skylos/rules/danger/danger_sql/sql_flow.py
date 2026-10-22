@@ -1140,6 +1140,8 @@ class _SQLFlowChecker(TaintVisitor):
         else:
             self.visit(node.iter)
             self.visit(node.target)
+            if isinstance(node.target, ast.Name) and self._joins_sql_safe_text(node.iter):
+                self.sql_text_stack[-1][node.target.id] = True
         for child in node.body:
             self.visit(child)
         self.sql_statement_stack = statements

@@ -329,3 +329,45 @@ def test_receiver_metadata_is_deterministic_and_preserves_taint_evidence(tmp_pat
     evidence = first[0]["metadata"]["security_evidence"]
     assert evidence["source"]
     assert evidence["sink"]
+
+
+@pytest.mark.parametrize(
+    "iterable",
+    ['("FTS5", "FTS4", "FTS3")', '["a", "b"]', '{"x", "y"}', '(1, 2)'],
+)
+def test_loop_over_literal_constants_is_safe_sql_text(tmp_path, iterable):
+    assert not _check(
+        tmp_path,
+        f"""
+        import sqlite3
+
+        def probe():
+            conn = sqlite3.connect(":memory:")
+            for name in {iterable}:
+                conn.execute(f"CREATE VIRTUAL TABLE v{{name}} USING {{name}} (data)")
+        """,
+    )
+
+
+_LOOP_HEADER = (
+    "import sqlite3\n"
+    "from flask import request\n"
+    "\n"
+    "\n"
+    "def probe(names):\n"
+    "    user = request.args['q']\n"
+    "    conn = sqlite3.connect(':memory:')\n"
+)
+
+
+@pytest.mark.parametrize(
+    "loop",
+    [
+        "    for name in ('FTS5', user):\n        conn.execute(f'SELECT {name}')\n",
+        "    for name in names:\n        conn.execute(f'SELECT {name}')\n",
+        "    for name in ('FTS5',):\n        name = user\n        conn.execute(f'SELECT {name}')\n",
+        "    for name in ('FTS5',):\n        pass\n    conn.execute(f'SELECT {user}')\n",
+    ],
+)
+def test_loop_that_can_carry_input_still_reports(tmp_path, loop):
+    assert _check(tmp_path, _LOOP_HEADER + loop)
