@@ -145,10 +145,19 @@ function demo_submit(array &$form, FormStateInterface $form_state) {
     $values = $form_state->getValues();
     $build = ['#markup' => Markup::create($values['title'])];
     $input = Markup::create($form_state->getUserInput()['body']);
+    $card = [
+        '#type' => 'inline_template',
+        '#template' => '<h2>' . $values['title'] . '</h2>',
+    ];
+    $safe = [
+        '#type' => 'inline_template',
+        '#template' => '<h2>{{ title }}</h2>',
+        '#context' => ['title' => $values['title']],
+    ];
 }
 """,
     )
-    assert [f["rule_id"] for f in findings] == ["SKY-D226"] * 2
+    assert [f["rule_id"] for f in findings] == ["SKY-D226"] * 2 + ["SKY-D349"]
 
 
 def test_drupal_placeholders_and_escaping_do_not_flag(tmp_path):

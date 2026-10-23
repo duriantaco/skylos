@@ -218,6 +218,21 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
             }:
                 check_drupal_sinks(child, tainted_vars)
 
+            # Render array ['#type' => 'inline_template', '#template' => ...]:
+            # Twig compiles the value as template source.
+            if child.type == "array_element_initializer":
+                parts = child.named_children
+                if (
+                    len(parts) == 2
+                    and text(parts[0]).strip("'\"") == "#template"
+                    and is_tainted_expr(parts[1], tainted_vars)
+                ):
+                    add_finding(
+                        "SKY-D349",
+                        "Request-controlled data is compiled as an inline Twig template; pass it in #context instead.",
+                        child,
+                    )
+
             if child.type == "function_call_expression":
                 name_node = child_by_type(child, "name")
                 call_name = text(name_node).strip().lstrip("\\") if name_node else ""
