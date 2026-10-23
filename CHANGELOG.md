@@ -1,6 +1,6 @@
 ## Changelog
 
-## [4.51.0](https://github.com/duriantaco/skylos/compare/v4.50.1...v4.51.0) (2026-10-20)
+## [5.0.0](https://github.com/duriantaco/skylos/compare/v4.50.1...v5.0.0) (2026-10-23)
 
 
 ### Features
