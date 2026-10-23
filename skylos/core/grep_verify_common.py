@@ -36,7 +36,7 @@ _TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
 _GO_EXTS = {".go"}
 _JAVA_EXTS = {".java"}
 _CPP_EXTS = {".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx"}
-_PHP_EXTS = {".php"}
+_PHP_EXTS = {".php", ".module", ".install", ".inc", ".theme", ".profile", ".engine"}
 _RUST_EXTS = {".rs"}
 _DART_EXTS = {".dart"}
 _KOTLIN_EXTS = {".kt", ".kts"}
@@ -60,6 +60,12 @@ _ALL_SOURCE_GLOBS = [
     "*.hxx",
     "*.h",
     "*.php",
+    "*.module",
+    "*.install",
+    "*.inc",
+    "*.theme",
+    "*.profile",
+    "*.engine",
     "*.rs",
     "*.dart",
     "*.kt",

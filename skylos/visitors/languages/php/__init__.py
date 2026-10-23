@@ -8,6 +8,18 @@ from .danger import scan_danger
 from .drupal import drupal_entrypoint_lines
 from .laravel import laravel_convention_class_lines
 
+# Drupal keeps procedural PHP in .module, .install, .inc, .theme, .profile
+# and .engine files.
+PHP_SOURCE_EXTS = (
+    ".php",
+    ".module",
+    ".install",
+    ".inc",
+    ".theme",
+    ".profile",
+    ".engine",
+)
+
 
 class DummyVisitor:
     def __init__(
@@ -76,7 +88,7 @@ def scan_php_file(
 
     try:
         path = Path(file_path)
-        if path.suffix.lower() != ".php":
+        if path.suffix.lower() not in PHP_SOURCE_EXTS:
             raise ValueError("unsupported PHP path")
         source = path.read_bytes()
     except Exception:
@@ -116,4 +128,4 @@ def scan_php_file(
     )
 
 
-__all__ = ["scan_php_file"]
+__all__ = ["PHP_SOURCE_EXTS", "scan_php_file"]

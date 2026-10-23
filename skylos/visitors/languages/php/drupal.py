@@ -12,7 +12,13 @@ Classes in ``src/ProxyClass/`` (generated for lazy services) and
 ``src/<Module>ServiceProvider.php`` and the ``FooValidator`` next to each
 ``Foo`` constraint (Symfony's ``validatedBy()`` default). The update system
 calls every function of ``*.post_update.php`` and Drush every function of
-``*.deploy.php``; ``*.api.php`` files only document hooks.
+``*.deploy.php``; ``*.api.php`` files only document hooks. In the procedural
+files (``.module``, ``.install``, ``.inc``, ``.theme``, ``.profile``,
+``.engine``) the hook system calls functions by name: every function named
+after one of the extension's machine names (``mymodule_form_alter``,
+``mymodule_update_10001``) or ``template_preprocess_*`` is a root. Functions
+starting with an underscore are private helpers by convention, so they still
+need a caller.
 
 The rules apply only inside a Drupal extension, a directory holding a
 ``<name>.info.yml`` file, and read only that extension's own YAML files. The
@@ -36,6 +42,7 @@ _DISCOVERY_DIRS = ("src/Plugin/", "src/Entity/", "src/Drush/Commands/")
 _CONVENTION_DIRS = ("src/ProxyClass/", "src/Install/Requirements/")
 _ALL_FUNCTIONS_SUFFIXES = (".api.php", ".post_update.php", ".deploy.php")
 _HOOK_ATTRIBUTES = {"Hook", "LegacyHook"}
+_PROCEDURAL_SUFFIXES = (".module", ".install", ".inc", ".theme", ".profile", ".engine")
 _INFO_SUFFIX = ".info.yml"
 
 # A class in YAML: Drupal\module\Name, optionally ::method (routes, callbacks)
@@ -244,10 +251,27 @@ def drupal_entrypoint_lines(file_path: str, defs, root_node, source: bytes) -> s
     # Hook documentation, post-update and deploy functions: called by name.
     if relative.endswith(_ALL_FUNCTIONS_SUFFIXES):
         return {d.line for d in defs if d.type == "function"}
+    hook_lines = set()
+    if relative.endswith(_PROCEDURAL_SUFFIXES):
+        prefixes = (
+            *(f"{name}_" for name in _machine_names(root)),
+            "template_preprocess_",
+        )
+        hook_lines = {
+            d.line
+            for d in defs
+            if d.type == "function" and d.simple_name.startswith(prefixes)
+        }
     if root_node is None:
+        return hook_lines
         return set()
 
     yaml_names = _yaml_references(root)
     class_lines, lines = _attribute_root_lines(root_node, source, relative)
     classes = _root_classes(defs, class_lines, yaml_names, root, relative)
-    return lines | set(classes.values()) | _root_method_lines(defs, classes, yaml_names)
+    return (
+        hook_lines
+        | lines
+        | set(classes.values())
+        | _root_method_lines(defs, classes, yaml_names)
+    )

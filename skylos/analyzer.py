@@ -37,6 +37,7 @@ from skylos.constants import (
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.visitors.languages.cpp import CPP_HEADER_EXTS, CPP_SOURCE_EXTS
+from skylos.visitors.languages.php import PHP_SOURCE_EXTS
 from skylos.visitors.languages.shell import SHELL_SOURCE_EXTS
 from skylos.visitors.languages.typescript.analysis import (
     build_ts_import_graph,
@@ -608,7 +609,7 @@ _TS_JS_SOURCE_EXTS = (
     ".mjs",
     ".cjs",
 )
-_PHP_SOURCE_EXTS = (".php",)
+_PHP_SOURCE_EXTS = PHP_SOURCE_EXTS
 _RUST_SOURCE_EXTS = (".rs",)
 _CPP_SOURCE_EXTS = CPP_SOURCE_EXTS + CPP_HEADER_EXTS
 _DART_SOURCE_EXTS = (".dart",)
@@ -1892,7 +1893,7 @@ class Skylos:
         ".mjs": "JavaScript",
         ".cjs": "JavaScript",
         ".java": "Java",
-        ".php": "PHP",
+        **dict.fromkeys(PHP_SOURCE_EXTS, "PHP"),
         ".rs": "Rust",
         ".cpp": "C++",
         ".cc": "C++",

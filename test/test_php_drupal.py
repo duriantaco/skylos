@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+from skylos.analyzer import analyze
 from skylos.visitors.languages.php import scan_php_file
 
 
@@ -141,6 +143,48 @@ def test_files_whose_functions_drupal_calls_by_name(tmp_path):
             "demo_helper",
         }, relative
     assert _roots(root, "src/functions.php", code)[0] == set()
+
+
+def test_procedural_hooks_are_roots(tmp_path):
+    root = _extension(tmp_path)
+    code = (
+        "<?php\nfunction demo_form_alter(&$form): void {}\n"
+        "function template_preprocess_demo_card(&$variables): void {}\n"
+        "function _demo_helper(): void {}\nfunction other_thing(): void {}\n"
+    )
+    for relative in (
+        "demo.module",
+        "demo.install",
+        "demo.theme",
+        "demo.profile",
+        "includes/demo.pages.inc",
+    ):
+        assert _roots(root, relative, code)[0] == {
+            "demo_form_alter",
+            "template_preprocess_demo_card",
+        }, relative
+
+
+def test_procedural_files_are_scanned(tmp_path):
+    root = _extension(tmp_path)
+    (root / "src").mkdir()
+    (root / "src" / "Helper.php").write_text(
+        "<?php\nnamespace Drupal\\demo;\nclass Helper {\n"
+        "    public static function build(): array { return []; }\n}\n",
+        encoding="utf-8",
+    )  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+    (root / "demo.module").write_text(
+        "<?php\nuse Drupal\\demo\\Helper;\n"
+        "function demo_page_attachments(array &$page): void {\n"
+        "    $page[] = Helper::build();\n}\n"
+        "function _demo_unused(): void {}\n",
+        encoding="utf-8",
+    )  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+
+    result = json.loads(analyze(str(tmp_path), grep_cache=False))
+
+    assert "Drupal.demo.Helper" not in {d["name"] for d in result["unused_classes"]}
+    assert {d["name"] for d in result["unused_functions"]} == {"_demo_unused"}
 
 
 def test_convention_classes(tmp_path):
