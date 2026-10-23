@@ -203,6 +203,12 @@ Pull request checks do not depend on it.
 3. Push to your default branch (or merge any pull request). The **Skylos Cloud
    upload** job should print `✓ Scan uploaded` and a link to the scan.
 
+For a local scan with Cloud results, run `skylos . -a --gate --upload`.
+After a confirmed upload, follow the printed link to that scan's gate and
+results, signing in if asked. Formatted output keeps the link on stderr so
+stdout remains machine-readable; JSON also includes it in `upload.url`.
+`--gate` without `--upload` stays local.
+
 Uploads from CI use GitHub OIDC, so there is no `SKYLOS_TOKEN` secret to add.
 Scans uploaded with your laptop's `skylos login` key are stored as unverified
 and do not publish GitHub checks.

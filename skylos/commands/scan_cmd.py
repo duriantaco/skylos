@@ -1122,6 +1122,10 @@ def _run_scan_command(
                     "error": "Cloud upload returned no usable receipt",
                 }
             receipt = _public_upload_receipt(upload_resp)
+            if receipt["status"] == "uploaded" and receipt.get("url"):
+                # Keep formatted stdout parseable and leave the exact saved
+                # scan reachable even when the Cloud gate exits below.
+                print(f"View Cloud gate and results: {receipt['url']}", file=sys.stderr)
             delivery_exit = upload_resp.get("gitlab_delivery_exit_code", 0)
             if "gitlab_delivery_exit_code" in upload_resp:
                 print(upload_resp.get("gitlab_delivery_message", ""), file=sys.stderr)
