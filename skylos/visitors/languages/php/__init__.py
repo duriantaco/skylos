@@ -5,6 +5,7 @@ from pathlib import Path
 from .blade import blade_template_refs
 from .core import PhpCore
 from .danger import scan_danger
+from .drupal import drupal_entrypoint_lines
 from .laravel import laravel_convention_class_lines
 
 
@@ -43,6 +44,27 @@ def _empty_result(config: dict) -> tuple:
     )
 
 
+def _framework_visitor(file_path: str, core: PhpCore, source: bytes) -> DummyVisitor:
+    """Lines the framework (Laravel, Drupal) calls without a PHP reference."""
+    framework = DummyVisitor()
+    for name, lines in (
+        (
+            "laravel",
+            laravel_convention_class_lines(
+                file_path, core.defs, core.class_typed_first_parameter_methods
+            ),
+        ),
+        (
+            "drupal",
+            drupal_entrypoint_lines(file_path, core.defs, core.root_node, source),
+        ),
+    ):
+        if lines:
+            framework.detected_frameworks.add(name)
+            framework.framework_decorated_lines.update(lines)
+    return framework
+
+
 def scan_php_file(
     file_path: str,
     config: dict | None = None,
@@ -72,13 +94,7 @@ def scan_php_file(
         is_test_file=core.is_test_file,
         test_decorated_lines=core.test_decorated_lines,
     )
-    framework = DummyVisitor()
-    convention_lines = laravel_convention_class_lines(
-        str(path), core.defs, core.class_typed_first_parameter_methods
-    )
-    if convention_lines:
-        framework.detected_frameworks.add("laravel")
-        framework.framework_decorated_lines.update(convention_lines)
+    framework = _framework_visitor(str(path), core, source)
     findings = (
         scan_danger(core.root_node, str(path), source) if enable_danger_rules else []
     )
