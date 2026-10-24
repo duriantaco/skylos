@@ -142,6 +142,8 @@ class _ModuleEvidence:
     # ``from x import *`` targets anywhere at module level (also under
     # ``if``/``try``), so a settings package can reach ``settings.base``.
     star_imports: set = field(default_factory=set)
+    # ``from sat import LOGGING`` / other UPPER settings — module that defines them.
+    setting_imports: dict = field(default_factory=dict)
     # UPPER_CASE names assigned at module level, with their values.
     module_settings: dict = field(default_factory=dict)
     # Values added to those names in place (``MIDDLEWARE.append(path)``) at
@@ -245,12 +247,18 @@ class _WebScanner:
         if self.evidence.path.name != "__init__.py":
             package = package.rpartition(".")[0]
         for statement in _module_level_statements(self.tree.body):
-            if isinstance(statement, ast.ImportFrom) and any(
-                alias.name == "*" for alias in statement.names
-            ):
-                target = _resolve_from_module(statement, package)
-                if target:
-                    self.evidence.star_imports.add(target)
+            if isinstance(statement, ast.ImportFrom):
+                if any(alias.name == "*" for alias in statement.names):
+                    target = _resolve_from_module(statement, package)
+                    if target:
+                        self.evidence.star_imports.add(target)
+                    continue
+                source = _resolve_from_module(statement, package)
+                if source:
+                    for alias in statement.names:
+                        imported = alias.name
+                        if imported != "*" and imported.isupper():
+                            self.evidence.setting_imports[imported] = source
                 continue
             for name, value in _setting_mutations(statement):
                 self.evidence.setting_mutations.setdefault(name, []).append(value)
@@ -1013,14 +1021,20 @@ def find_web_framework_targets(
     *,
     exclude_folders: Iterable[str] | None = None,
 ) -> list[tuple[Any, str]]:
-    if not any(
-        name.split(".", 1)[0] in {"django", "flask"} - index.shadowed
-        for _, name in index.imports
-    ):
-        return []
+    from skylos.deadcode.django_framework_liveness import _looks_like_settings
+
     executed = _executed_definitions(index)
     modules = [_WebScanner(index, module, executed).collect() for module in parsed]
     scanners = {module.module: module for module in modules}
+    has_framework_import = any(
+        name.split(".", 1)[0] in {"django", "flask"} - index.shadowed
+        for _, name in index.imports
+    )
+    has_settings = any(_looks_like_settings(scanner) for scanner in scanners.values())
+    # Settings modules often configure Django without importing it
+    # (``INSTALLED_APPS`` + ``SECRET_KEY`` / ``ROOT_URLCONF``).
+    if not has_framework_import and not has_settings:
+        return []
     classes = {
         name: info for module in modules for name, info in module.classes.items()
     }
@@ -1029,9 +1043,10 @@ def find_web_framework_targets(
         (definition, "flask_app_factory") for definition in _flask_app_factories(index)
     )
     targets.extend(_blueprint_targets(modules))
-    targets.extend(
-        find_django_targets(
-            index, scanners, classes, root, exclude_folders=exclude_folders
+    if "django" not in index.shadowed:
+        targets.extend(
+            find_django_targets(
+                index, scanners, classes, root, exclude_folders=exclude_folders
+            )
         )
-    )
     return targets

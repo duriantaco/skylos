@@ -868,6 +868,10 @@ class FrameworkAwareVisitor:
         attr = call.func.attr
         frameworks = self.detected_frameworks
 
+        # django.utils.autoreload.run_with_reloader(callback, *args)
+        if "django" in frameworks and attr == "run_with_reloader" and call.args:
+            return call.args[0]
+
         if frameworks.intersection({"fastapi", "starlette"}):
             if attr == "add_exception_handler":
                 target = self._get_keyword_arg(call, "handler")
