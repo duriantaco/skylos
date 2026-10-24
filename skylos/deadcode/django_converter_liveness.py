@@ -430,12 +430,6 @@ def find_django_converter_classes(definitions, files, root):
     return registered
 
 
-def find_django_converter_registration_targets(definitions, files, root):
-    """Module-level wrappers that perform register_converter(...) are roots."""
-    _, entrypoints = _scan_django_converters(definitions, files, root)
-    return entrypoints
-
-
 def find_django_converter_method_targets(definitions, class_keys):
     """Only registered conversion methods become roots for helper reachability."""
     if not class_keys:
