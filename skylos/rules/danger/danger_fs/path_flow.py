@@ -19,6 +19,13 @@ from skylos.rules.danger.untrusted_sources import (
 SYMLINK_WRITE_RULE = "SKY-D324"
 SYMLINK_READ_RULE = "SKY-D325"
 ARCHIVE_EXTRACTION_RULE = "SKY-D326"
+ARCHIVE_CONSTRUCTORS = {
+    "zipfile.ZipFile": "zip",
+    "zipfile.PyZipFile": "zip",
+    "tarfile.open": "tar",
+    "tarfile.TarFile": "tar",
+    "tarfile.TarFile.open": "tar",
+}
 OS_OPEN_WRITE_FLAGS = {"O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND"}
 OS_OPEN_EXCLUSIVE_FLAGS = {"O_CREAT", "O_EXCL"}
 PYTEST_TMP_FIXTURE_NAMES = {"tmp_path", "tmpdir"}
@@ -437,6 +444,21 @@ def _exclusive_create_modes(modes):
     return bool(modes) and all("x" in mode for mode in modes)
 
 
+def _class_method_spans(module):
+    spans = []
+    for node in ast.walk(module):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        methods = {
+            item.name
+            for item in node.body
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        bases = tuple(_expr_name(base) or "" for base in node.bases)
+        spans.append((node.lineno, getattr(node, "end_lineno", node.lineno), methods, bases))
+    return tuple(spans)
+
+
 def _archive_call_name(node):
     """``extract`` or ``extractall`` of an archive. ``ZipFile.extract`` and
     ``TarFile.extract`` require a member, so a call that cannot pass one
@@ -543,6 +565,7 @@ class _PathFlowChecker(TaintVisitor):
     def __init__(self, file_path, findings, sanitizers=None):
         super().__init__(file_path, findings, sanitizers=sanitizers)
         self.path_like_stack = [{}]
+        self.archive_kind_stack = [{}]
         self.basename_sanitized_stack = [{}]
         self.symlink_sensitive_stack = [{}]
         self.os_open_write_flags_stack = [{}]
@@ -573,6 +596,7 @@ class _PathFlowChecker(TaintVisitor):
         self.path_open_modes = None
         self.update_handle_reads = None
         self._attribute_writes = (frozenset(), True)
+        self._class_methods = ()
 
     def visit_Module(self, node):
         self.untrusted_sources = UntrustedSourceIndex(node, follow_local_calls=True)
@@ -590,6 +614,7 @@ class _PathFlowChecker(TaintVisitor):
         except Exception:
             self.path_open_modes = None
         self._constant_sizes = _module_constant_sizes(node)
+        self._class_methods = _class_method_spans(node)
         try:
             self.update_handle_reads = UpdateHandleReads(node, self.receiver_resolver)
         except Exception:
@@ -633,6 +658,7 @@ class _PathFlowChecker(TaintVisitor):
         self.validated_stack.append(set())
         self.file_object_stack.append(set())
         self.path_like_stack.append({})
+        self.archive_kind_stack.append({})
         self.basename_sanitized_stack.append({})
         self.symlink_sensitive_stack.append({})
         self.os_open_write_flags_stack.append({})
@@ -659,6 +685,8 @@ class _PathFlowChecker(TaintVisitor):
                 stack.pop()
         if self.path_like_stack:
             self.path_like_stack.pop()
+        if self.archive_kind_stack:
+            self.archive_kind_stack.pop()
         if self.basename_sanitized_stack:
             self.basename_sanitized_stack.pop()
         if self.symlink_sensitive_stack:
@@ -669,6 +697,61 @@ class _PathFlowChecker(TaintVisitor):
             self.os_open_exclusive_stack.pop()
         if self.safety_stack:
             self.safety_stack.pop()
+
+    def _set_archive_kind(self, name, kind):
+        if not self.archive_kind_stack:
+            self.archive_kind_stack.append({})
+        self.archive_kind_stack[-1][name] = kind
+
+    def _archive_kind(self, expr):
+        """``zip`` or ``tar`` when ``expr`` is built by the standard archive
+        constructors, directly or through a local binding; otherwise None."""
+        if isinstance(expr, ast.Name):
+            for env in reversed(self.archive_kind_stack):
+                if expr.id in env:
+                    return env[expr.id]
+            return None
+        if not isinstance(expr, ast.Call):
+            return None
+        return ARCHIVE_CONSTRUCTORS.get(self._canonical_call_name(expr) or "")
+
+    def _archive_call_target(self, node):
+        """Whose ``extract``/``extractall`` this is: ``zip``, ``tar``,
+        ``project`` (a method the project defines) or ``unknown``."""
+        kind = self._archive_kind(node.func.value)
+        if kind:
+            return kind
+        if self._calls_own_class_method(node):
+            return "project"
+        proof = self._receiver_proof(node)
+        if proof.get("status") == "resolved" and proof.get("file"):
+            return "project"
+        return "unknown"
+
+    def _calls_own_class_method(self, node):
+        """``self.extract(...)`` inside a class that defines ``extract`` and
+        does not inherit from an archive class."""
+        receiver = node.func.value
+        if not (isinstance(receiver, ast.Name) and receiver.id in ("self", "cls")):
+            return False
+        line = getattr(node, "lineno", 0)
+        owner = None
+        for start, end, methods, bases in self._class_methods:
+            if start <= line <= end and (owner is None or start > owner[0]):
+                owner = (start, end, methods, bases)
+        if owner is None or node.func.attr not in owner[2]:
+            return False
+        return not any(base.endswith(("TarFile", "ZipFile")) for base in owner[3])
+
+    def _archive_extraction_is_reportable(self, node):
+        """``zipfile`` strips absolute paths and ``..`` from member names and
+        never creates links, and a project's own ``extract`` method is not
+        archive extraction. A tar archive or an unresolved receiver without
+        a safe ``filter`` can write outside the destination."""
+        target = self._archive_call_target(node)
+        if target in ("zip", "project"):
+            return False
+        return not _unpack_filter_is_safe(node)
 
     def _set_path_like(self, name, path_like):
         if not self.path_like_stack:
@@ -840,10 +923,12 @@ class _PathFlowChecker(TaintVisitor):
         self._record_safety_tokens(node)
         t = self.is_tainted(node.value)
         path_like = self._is_path_like_expr(node.value)
+        archive_kind = self._archive_kind(node.value)
         for tgt in node.targets:
             if isinstance(tgt, ast.Name):
                 self._set(tgt.id, t)
                 self._set_path_like(tgt.id, path_like)
+                self._set_archive_kind(tgt.id, archive_kind)
                 self._set_basename_sanitized(
                     tgt.id, self._is_basename_sanitized_expr(node.value)
                 )
@@ -1198,12 +1283,7 @@ class _PathFlowChecker(TaintVisitor):
         if proof is not None:
             finding.setdefault("metadata", {})["receiver_resolution"] = proof
 
-    def _method_path_operand(self, node):
-        """A proven wrapper's file argument differs from a Path receiver.
-
-        Unknown implementations retain the old conservative check. Only a
-        resolved non-Path implementation with no filesystem effect is skipped.
-        """
+    def _receiver_proof(self, node):
         proof = self._receiver_proofs.get(id(node))
         if self.receiver_resolver is not None:
             try:
@@ -1217,6 +1297,15 @@ class _PathFlowChecker(TaintVisitor):
                 "limitations": ["Receiver resolution unavailable."],
             }
         self._receiver_proofs[id(node)] = proof
+        return proof
+
+    def _method_path_operand(self, node):
+        """A proven wrapper's file argument differs from a Path receiver.
+
+        Unknown implementations retain the old conservative check. Only a
+        resolved non-Path implementation with no filesystem effect is skipped.
+        """
+        proof = self._receiver_proof(node)
         if proof.get("status") != "resolved" or not proof.get("receiver_is_non_path"):
             return node.func.value, True
         effect = proof.get("effects", {}).get("filesystem")
@@ -1371,6 +1460,10 @@ class _PathFlowChecker(TaintVisitor):
 
     def _record_bounded_handles(self, node):
         for item in node.items:
+            if isinstance(item.optional_vars, ast.Name):
+                self._set_archive_kind(
+                    item.optional_vars.id, self._archive_kind(item.context_expr)
+                )
             if isinstance(item.context_expr, ast.Call) and _handle_reads_bounded(
                 item.optional_vars, node.body, self._constant_sizes
             ):
@@ -1455,7 +1548,7 @@ class _PathFlowChecker(TaintVisitor):
         if qn in FIRST_PATH_PARAMETERS:
             first_path = _bound_argument(node, 0, FIRST_PATH_PARAMETERS[qn])
 
-        if archive_method:
+        if archive_method and self._archive_extraction_is_reportable(node):
             self._flag_archive_extract_if_unsafe(node)
 
         if (

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import bisect
 import re
+import unicodedata
 from pathlib import Path
 
 from skylos.security.canonicalize import (
@@ -210,6 +211,15 @@ def scan_file(
     for index, (char_hex, line_no) in enumerate(zero_width_hits):
         if index == 0 and leading_bom:
             continue
+        if (
+            not is_agent_instruction
+            and not is_reviewer_config
+            and char_hex in _ORTHOGRAPHIC_JOINERS
+            and _only_orthographic_joiners(
+                source_lines, line_no, _ORTHOGRAPHIC_JOINERS[char_hex]
+            )
+        ):
+            continue
         hidden_severity, hidden_rule = high_signal("HIGH")
         if (
             is_reviewer_config
@@ -330,6 +340,61 @@ def scan_file(
                 break
 
     return findings
+
+
+_ORTHOGRAPHIC_JOINERS = {"U+200C": "\u200c", "U+200D": "\u200d"}
+_JOINING_SCRIPTS = (
+    "ARABIC",
+    "SYRIAC",
+    "THAANA",
+    "NKO",
+    "MONGOLIAN",
+    "DEVANAGARI",
+    "BENGALI",
+    "GURMUKHI",
+    "GUJARATI",
+    "ORIYA",
+    "TAMIL",
+    "TELUGU",
+    "KANNADA",
+    "MALAYALAM",
+    "SINHALA",
+    "MYANMAR",
+    "KHMER",
+)
+
+
+def _joins_script_letters(char: str) -> bool:
+    if not char or unicodedata.category(char)[0] not in ("L", "M"):
+        return False
+    return unicodedata.name(char, "").startswith(_JOINING_SCRIPTS)
+
+
+def _only_orthographic_joiners(lines: list[str], line_no: int, joiner: str) -> bool:
+    """Every ``joiner`` on the line sits where spelling needs it: between
+    letters of a script that uses ZWNJ/ZWJ (for example, Persian), or a
+    ZWJ inside an emoji sequence. Such a character hides nothing."""
+    if not 1 <= line_no <= len(lines):
+        return False
+    line = lines[line_no - 1]
+    found = False
+    for index, char in enumerate(line):
+        if char != joiner:
+            continue
+        found = True
+        before = ""
+        if index > 0:
+            before = line[index - 1]
+        after = ""
+        if index + 1 < len(line):
+            after = line[index + 1]
+        if _joins_script_letters(before) and _joins_script_letters(after):
+            continue
+        emoji_pair = bool(before and after) and _is_pictographic(before) and _is_pictographic(after)
+        if joiner == "\u200d" and emoji_pair:
+            continue
+        return False
+    return found
 
 
 def _is_pictographic(char: str) -> bool:

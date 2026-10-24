@@ -90,6 +90,115 @@ def is_reference(value: str) -> bool:
     )
 
 
+_CALL_VALUE_RE = re.compile(r"[A-Za-z_][\w.]*\s*\(.*\)")
+_ENV_READ_PREFIXES = ("process.env.", "os.environ", "import.meta.env.")
+
+
+_QUOTED_ARGUMENT_RE = re.compile(r"""(["'])(.*?)\1""")
+_ENV_NAME_ARGUMENT_RE = re.compile(r"[A-Z][A-Z0-9_]*")
+
+
+def is_indirect_value(value: str) -> bool:
+    """``os.getenv("API_KEY")``, ``process.env.TOKEN``: code that reads the
+    secret at run time. A call that also carries a literal
+    (``getenv("API_KEY", "sk_live_…")``) still holds a secret."""
+    stripped = value.strip()
+    if stripped.startswith(_ENV_READ_PREFIXES):
+        return True
+    if not _CALL_VALUE_RE.fullmatch(stripped):
+        return False
+    return all(
+        _ENV_NAME_ARGUMENT_RE.fullmatch(match.group(2))
+        for match in _QUOTED_ARGUMENT_RE.finditer(stripped)
+    )
+
+
+_IDENTIFIER_LABEL_RE = re.compile(
+    r"(?P<label>[A-Za-z][A-Za-z0-9_]*)\s*[\"']?\s*[:=]\s*[\"']?\s*$"
+)
+_IDENTIFIER_SUFFIXES = ("id", "ids", "uuid", "guid", "identifier")
+_CREDENTIAL_WORDS = ("session", "secret", "token", "key", "pass", "auth", "cred")
+_QUERY_PARAMETER_RE = re.compile(
+    r"(?:^|[?&;\s\"'`])(?P<name>[A-Za-z][A-Za-z0-9_.\-]{0,40})=$"
+)
+_CREDENTIAL_PARAMETER_NAMES = frozenset(
+    {
+        "token",
+        "accesstoken",
+        "authtoken",
+        "refreshtoken",
+        "idtoken",
+        "apikey",
+        "key",
+        "secret",
+        "clientsecret",
+        "password",
+        "passwd",
+        "pwd",
+        "pass",
+        "sig",
+        "signature",
+        "auth",
+        "authorization",
+        "bearer",
+        "session",
+        "sessionid",
+        "sid",
+        "privatekey",
+        "credential",
+        "credentials",
+    }
+)
+_CREDENTIAL_NAME_RE = re.compile(r"(?i)key|secret|token|passw|auth|cred")
+_EVIDENCE_WINDOW = 160
+
+
+def names_a_credential(text: str) -> bool:
+    """The text before a value names a credential (``API_KEY =``)."""
+    return bool(_CREDENTIAL_NAME_RE.search(text))
+
+
+def public_identifier_evidence(lines: list[str], line: str, token: str, start: int) -> str | None:
+    """Why an unkeyed high-entropy value looks like a public identifier, or
+    None. This is evidence for hiding a finding by default, never for
+    dropping it: each signal is context that code could fabricate."""
+    before = line[max(0, start - _EVIDENCE_WINDOW) : start]
+    match = _IDENTIFIER_LABEL_RE.search(before)
+    if match is not None:
+        label = match.group("label").lower()
+        if label.endswith(_IDENTIFIER_SUFFIXES) and not any(
+            word in label for word in _CREDENTIAL_WORDS
+        ):
+            return f"introduced as an identifier ('{match.group('label')}')"
+    parameter = _QUERY_PARAMETER_RE.search(before)
+    if parameter is not None:
+        name = parameter.group("name")
+        if re.sub(r"[^a-z0-9]", "", name.lower()) not in _CREDENTIAL_PARAMETER_NAMES:
+            return f"value of the non-credential parameter '{name}'"
+    if is_character_table(token):
+        return "each character appears once: an encoding alphabet"
+    path_segment = re.compile(
+        r"https?://[^\s'\"`?#]*/" + re.escape(token) + r"(?=$|[/?#'\"`\s])"
+    )
+    if any(token in other and path_segment.search(other) for other in lines):
+        return "a path segment of a URL in this file"
+    return None
+
+
+def is_character_table(token: str) -> bool:
+    """``ABC…xyz0123+/`` shuffled: an encoding alphabet. A random secret of
+    32 or more characters rarely uses each character once."""
+    return len(token) >= 32 and len(set(token)) == len(token)
+
+
+def is_prose(token: str) -> bool:
+    """Three or more words separated by spaces: a sentence or label whose
+    entropy comes from the variety of letters, not from randomness. Callers
+    apply it only to values that no credential key names, because a keyed
+    phrase can be a passphrase."""
+    return len(token.split()) >= 3
+
+
 def is_env_name_list(value: str) -> bool:
     """``GH_TOKEN,NPM_TOKEN``: environment variable names, not values."""
     stripped = value.strip()

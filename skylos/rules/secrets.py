@@ -704,6 +704,24 @@ def _keyed_generic_candidates(
 _RANDOM_COMPONENT_RE = re.compile(r"[A-Za-z0-9_-]{20,}")
 
 
+_HEX_CREDENTIAL_RE = re.compile(r"[0-9a-f]{20,64}|[0-9A-F]{20,64}")
+_HEX_ALPHABET_MIN_ENTROPY = 3.0
+
+
+def _is_keyed_hex_credential(value: str, entropy: float) -> bool:
+    """``access_token = "f6785418..."``: many API keys and tokens are hex,
+    whose 16 symbols cap entropy at 4.0, under the general bar. A hex value
+    assigned to a credential name is judged against a hex-sized bar, as
+    detect-secrets does; unnamed hex (checksums, commit ids) is not."""
+    if _HEX_CREDENTIAL_RE.fullmatch(value) is None:
+        return False
+    letters = sum(char.isalpha() for char in value)
+    digits = sum(char.isdigit() for char in value)
+    if letters < 4 or digits < 4:
+        return False
+    return entropy >= _HEX_ALPHABET_MIN_ENTROPY
+
+
 def _has_random_component(value: str) -> bool:
     return any(
         _has_bare_token_charset_mix(part) and _entropy(part) >= DEFAULT_MIN_ENTROPY
@@ -3556,13 +3574,28 @@ def _is_explicit_server_client_context(normalized: str, basename: str) -> bool:
     )
 
 
+_BROWSER_LOADED_SUFFIXES = (
+    *JS_TS_SUFFIXES,
+    ".vue",
+    ".svelte",
+    ".astro",
+    ".html",
+    ".htm",
+)
+
+
 def _is_named_client_context(normalized: str, basename: str) -> bool:
-    return bool(
+    """``client.js`` or ``account.client.ts`` runs in the browser; a Python
+    ``client.py`` is an HTTP client on the server, so the name only counts
+    for files a browser loads."""
+    named = (
         ".client." in basename
         or ".browser." in basename
         or basename.startswith(("client.", "browser."))
-        or any(segment in normalized for segment in CLIENT_PATHS)
     )
+    if named and basename.endswith(_BROWSER_LOADED_SUFFIXES):
+        return True
+    return any(segment in normalized for segment in CLIENT_PATHS)
 
 
 def _client_exposure_context_with_status(
@@ -4018,6 +4051,8 @@ def _config_credential_candidates(line_content: str):
         value = _unquote_config_value(raw_value)
         if _is_placeholder_credential(value) or _keyed_value_is_not_secret(key, value):
             continue
+        if secret_shapes.is_indirect_value(value):
+            continue
         if generic_key:
             if not _looks_like_generic_key_value(value):
                 continue
@@ -4399,13 +4434,16 @@ def scan_ctx(
                 file_lines, line_number, clean_token, col_pos, public_pem
             ):
                 continue
+            if not keyed and secret_shapes.is_prose(clean_token):
+                continue
 
             if _is_obvious_placeholder(clean_token):
                 continue
             tok_entropy = _entropy(clean_token)
 
             if not (tok_entropy >= min_entropy and len(clean_token) >= 20):
-                continue
+                if not (keyed and _is_keyed_hex_credential(clean_token, tok_entropy)):
+                    continue
             if is_bare and _bare_candidate_is_complete_ordered_character_set(
                 line_content,
                 start=col_pos,
@@ -4426,6 +4464,12 @@ def scan_ctx(
                 "preview": _mask(clean_token),
                 "entropy": round(tok_entropy, 2),
             }
+            if not keyed:
+                evidence = secret_shapes.public_identifier_evidence(
+                    file_lines, line_content, clean_token, col_pos
+                )
+                if evidence:
+                    generic_finding["public_identifier_evidence"] = evidence
             if not keyed and first_secret_name_at == -1:
                 first_secret_name = _SECRET_NAME_NEARBY_RE.search(line_content)
                 first_secret_name_at = (

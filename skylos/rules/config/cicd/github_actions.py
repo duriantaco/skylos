@@ -997,6 +997,40 @@ def _unpinned_uses_severity(value: str) -> str:
     return "HIGH"
 
 
+_VERSION_TAG_RE = re.compile(r"v?\d+(?:\.\d+){0,2}")
+
+
+def _github_owned_version_tag(value: str) -> str | None:
+    """``actions/checkout@v4``: a GitHub-owned action at a release tag, which
+    GitHub's hardening guide accepts from verified creators. Third-party
+    actions, branch refs such as ``@main`` and expressions return None."""
+    if _unpinned_uses_severity(value) != "LOW":
+        return None
+    ref = value.strip().rpartition("@")[2].strip()
+    if _VERSION_TAG_RE.fullmatch(ref) is None:
+        return None
+    return ref
+
+
+def _unpinned_uses_finding(message: str, path: Path, lines: list[str], value: str):
+    finding = _finding(
+        rule_id="SKY-D292",
+        name="github-actions-unpinned-uses",
+        message=message,
+        file=path,
+        line=_line_for_contains(lines, value),
+        severity=_unpinned_uses_severity(value),
+        value=value,
+    )
+    tag = _github_owned_version_tag(value)
+    if tag is not None:
+        finding["low_risk_context"] = {
+            "reason": "github-owned-action-tag",
+            "detail": f"GitHub-owned action pinned to release tag {tag}",
+        }
+    return finding
+
+
 def _is_third_party_action(value: str) -> bool:
     """A remote action whose code neither the repository nor GitHub owns."""
     value = value.strip()
@@ -1322,14 +1356,11 @@ def _scan_uses(
             _add_finding(
                 findings,
                 lines,
-                _finding(
-                    rule_id="SKY-D292",
-                    name="github-actions-unpinned-uses",
-                    message="Reusable workflow reference is not pinned to a full commit SHA.",
-                    file=path,
-                    line=_line_for_contains(lines, job_uses),
-                    severity=_unpinned_uses_severity(job_uses),
-                    value=job_uses,
+                _unpinned_uses_finding(
+                    "Reusable workflow reference is not pinned to a full commit SHA.",
+                    path,
+                    lines,
+                    job_uses,
                 ),
             )
 
@@ -1342,14 +1373,11 @@ def _scan_uses(
             _add_finding(
                 findings,
                 lines,
-                _finding(
-                    rule_id="SKY-D292",
-                    name="github-actions-unpinned-uses",
-                    message="Action reference is not pinned to a full commit SHA.",
-                    file=path,
-                    line=_line_for_contains(lines, uses_value),
-                    severity=_unpinned_uses_severity(uses_value),
-                    value=uses_value,
+                _unpinned_uses_finding(
+                    "Action reference is not pinned to a full commit SHA.",
+                    path,
+                    lines,
+                    uses_value,
                 ),
             )
 
@@ -2149,6 +2177,43 @@ def _scan_overprovisioned_secrets(
         )
 
 
+_CREDENTIAL_NAME_PARTS = frozenset(
+    {
+        "KEY",
+        "TOKEN",
+        "SECRET",
+        "PASSWORD",
+        "PASS",
+        "PASSWD",
+        "PASSPHRASE",
+        "PAT",
+        "AUTH",
+        "CREDENTIAL",
+        "CREDENTIALS",
+        "CERT",
+        "CERTIFICATE",
+        "PRIVATE",
+        "SIGNING",
+        "WEBHOOK",
+        "COOKIE",
+        "SESSION",
+        "DSN",
+    }
+)
+_NON_CREDENTIAL_NAME_ENDINGS = frozenset(
+    {"URL", "URI", "HOST", "HOSTNAME", "ENDPOINT", "DOMAIN", "REGION", "MODEL", "PORT"}
+)
+
+
+def _names_non_credential_secret(name: str) -> bool:
+    """``OPENAI_BASE_URL``: a secret named for a location or setting. Any
+    credential word in the name keeps it reported."""
+    parts = [part for part in re.split(r"[^A-Z0-9]+", name.upper()) if part]
+    if not parts or parts[-1] not in _NON_CREDENTIAL_NAME_ENDINGS:
+        return False
+    return not any(part in _CREDENTIAL_NAME_PARTS for part in parts)
+
+
 def _scan_secrets_outside_env(
     data: dict[str, Any],
     path: Path,
@@ -2182,23 +2247,25 @@ def _scan_secrets_outside_env(
                 secret_name = match.group(1)
                 if secret_name.upper() == "GITHUB_TOKEN":
                     continue
-                _add_finding(
-                    findings,
-                    lines,
-                    _finding(
-                        rule_id=rule_id,
-                        name="github-actions-secrets-outside-environment",
-                        message=(
-                            f"Job {job_id} references secret {secret_name} without a "
-                            "dedicated GitHub environment, and accounts without "
-                            f"write access can start it ({', '.join(events)})."
-                        ),
-                        file=path,
-                        line=_line_for_value(lines, text),
-                        severity="MEDIUM",
-                        value=f"{job_id}:{secret_name}",
+                finding = _finding(
+                    rule_id=rule_id,
+                    name="github-actions-secrets-outside-environment",
+                    message=(
+                        f"Job {job_id} references secret {secret_name} without a "
+                        "dedicated GitHub environment, and accounts without "
+                        f"write access can start it ({', '.join(events)})."
                     ),
+                    file=path,
+                    line=_line_for_value(lines, text),
+                    severity="MEDIUM",
+                    value=f"{job_id}:{secret_name}",
                 )
+                if _names_non_credential_secret(secret_name):
+                    finding["low_risk_context"] = {
+                        "reason": "non-credential-secret",
+                        "detail": f"{secret_name} names a location or setting, not a credential",
+                    }
+                _add_finding(findings, lines, finding)
 
 
 def _run_line_writes_env_unsafely(line: str) -> bool:
