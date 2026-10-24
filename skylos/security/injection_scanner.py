@@ -372,7 +372,7 @@ def _joins_script_letters(char: str) -> bool:
 
 def _only_orthographic_joiners(lines: list[str], line_no: int, joiner: str) -> bool:
     """Every ``joiner`` on the line sits where spelling needs it: between
-    letters of a script that uses ZWNJ/ZWJ (the Persian ``می‌کند``), or a
+    letters of a script that uses ZWNJ/ZWJ (for example, Persian), or a
     ZWJ inside an emoji sequence. Such a character hides nothing."""
     if not 1 <= line_no <= len(lines):
         return False

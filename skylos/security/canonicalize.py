@@ -149,8 +149,8 @@ def decode_base64_blobs(
 def detect_homoglyphs(text: str) -> list[tuple[str, str, int]]:
     """Lookalike letters that disguise a word, judged per run of letters.
 
-    A word that mixes Latin letters with a non-Latin lookalike (``pаypal``
-    with a Cyrillic ``а``) is a disguise. So is a word made only of
+    A word that mixes Latin letters with a non-Latin lookalike (Cyrillic
+    U+0430 in place of Latin 'a') is a disguise. So is a word made only of
     lookalikes in a line of otherwise Latin words. A word written wholly in
     another script, as in translated documentation, is ordinary text.
     """
