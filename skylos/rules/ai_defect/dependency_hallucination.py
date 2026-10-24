@@ -180,6 +180,7 @@ SEV_MEDIUM = "MEDIUM"
 
 IMPORT_RE = re.compile(r"^\s*import\s+([A-Za-z_][\w\.]*)", re.MULTILINE)
 FROM_RE = re.compile(r"^\s*from\s+([A-Za-z_][\w\.]*)\s+import\b", re.MULTILINE)
+_IMPORT_LINE_RE = re.compile(r"^\s*(?:import|from)\s+([A-Za-z_]\w*)(?=\.|\s|$)")
 
 REQ_LINE_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)")
 
@@ -1098,41 +1099,50 @@ def _optional_import_paths(src, *, allow_uncertain=False):
     """Paths whose imports can fail without raising or later unguarded use."""
     if not src or "except" not in src:
         return frozenset()
-    try:
-        tree = ast.parse(src)
-    except (MemoryError, RecursionError, SyntaxError, ValueError):
+    tree = _parse_import_source(src)
+    if tree is None:
         return frozenset()
+    return _optional_import_paths_from_nodes(
+        tuple(ast.walk(tree)), allow_uncertain=allow_uncertain
+    )
+
+
+def _parse_import_source(src):
+    try:
+        return ast.parse(src or "")
+    except (MemoryError, RecursionError, SyntaxError, ValueError):
+        return None
+
+
+def _optional_import_paths_from_nodes(nodes, *, allow_uncertain=False):
+    """Apply the optional-import proof to an already parsed source file."""
 
     # A catcher that is shadowed by project code cannot prove that a failed
     # import is handled. Be conservative across scopes rather than executing
     # or guessing which binding reaches a handler.
     shadowed = {
         node.id
-        for node in ast.walk(tree)
+        for node in nodes
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
     }
-    shadowed.update(node.arg for node in ast.walk(tree) if isinstance(node, ast.arg))
+    shadowed.update(node.arg for node in nodes if isinstance(node, ast.arg))
     shadowed.update(
         node.name
-        for node in ast.walk(tree)
+        for node in nodes
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
     )
     shadowed.update(
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ExceptHandler) and node.name
+        node.name for node in nodes if isinstance(node, ast.ExceptHandler) and node.name
     )
     shadowed.update(
         node.name
-        for node in ast.walk(tree)
+        for node in nodes
         if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name
     )
     shadowed.update(
-        node.rest
-        for node in ast.walk(tree)
-        if isinstance(node, ast.MatchMapping) and node.rest
+        node.rest for node in nodes if isinstance(node, ast.MatchMapping) and node.rest
     )
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             shadowed.update(
                 alias.asname or alias.name.split(".")[0] for alias in node.names
@@ -1280,7 +1290,7 @@ def _optional_import_paths(src, *, allow_uncertain=False):
 
     statement_blocks = {
         id(child): value
-        for parent in ast.walk(tree)
+        for parent in nodes
         for _field, value in ast.iter_fields(parent)
         if isinstance(value, list)
         for child in value
@@ -1403,7 +1413,7 @@ def _optional_import_paths(src, *, allow_uncertain=False):
     guarded = set()
     protected_uses = {}
     guarded_bindings = {}
-    for statement in ast.walk(tree):
+    for statement in nodes:
         if not isinstance(statement, ast.Try):
             continue
         handler = next(
@@ -1453,20 +1463,24 @@ def _optional_import_paths(src, *, allow_uncertain=False):
     if not guarded:
         return frozenset()
     statements_by_root = {}
-    for node in ast.walk(tree):
+    imports_by_id = {}
+    loads_by_name = {}
+    for node in nodes:
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            loads_by_name.setdefault(node.id, set()).add(id(node))
         if not isinstance(node, (ast.Import, ast.ImportFrom)):
             continue
+        imports_by_id[id(node)] = node
         for root in _import_node_paths(node):
             statements_by_root.setdefault(root, set()).add(id(node))
     optional = set()
-    for root, nodes in statements_by_root.items():
-        if not nodes <= guarded:
+    for root, import_ids in statements_by_root.items():
+        if not import_ids <= guarded:
             continue
         aliases = set()
         protected = set()
-        for node in ast.walk(tree):
-            if id(node) not in nodes:
-                continue
+        for node_id in import_ids:
+            node = imports_by_id[node_id]
             # Import failure also skips assignments, functions and classes in
             # the try body. A later use of those bindings needs a proof just as
             # a later use of the imported module does.
@@ -1481,29 +1495,29 @@ def _optional_import_paths(src, *, allow_uncertain=False):
                 for alias in node.names
             )
             protected.update(protected_uses[id(node)])
-        if any(
-            isinstance(node, ast.Name)
-            and isinstance(node.ctx, ast.Load)
-            and node.id in aliases
-            and id(node) not in protected
-            for node in ast.walk(tree)
-        ):
+        if any(not loads_by_name.get(alias, set()) <= protected for alias in aliases):
             continue
         optional.add(root)
     return frozenset(optional)
 
 
 def _optional_import_roots(src, *, allow_uncertain=False):
-    paths = _optional_import_paths(src, allow_uncertain=allow_uncertain)
-    if not paths:
+    if not src or "except" not in src:
         return frozenset()
-    try:
-        tree = ast.parse(src)
-    except (SyntaxError, ValueError, MemoryError, RecursionError):
+    tree = _parse_import_source(src)
+    if tree is None:
+        return frozenset()
+    nodes = tuple(ast.walk(tree))
+    paths = _optional_import_paths_from_nodes(nodes, allow_uncertain=allow_uncertain)
+    return _optional_roots_from_nodes(nodes, paths)
+
+
+def _optional_roots_from_nodes(nodes, paths):
+    if not paths:
         return frozenset()
     required_roots = {
         path.split(".")[0]
-        for node in ast.walk(tree)
+        for node in nodes
         if isinstance(node, (ast.Import, ast.ImportFrom))
         for path in _import_node_paths(node)
         if path not in paths
@@ -3226,36 +3240,88 @@ def _namespace_distribution(mod, submodules, ctx):
 
 
 def _imported_submodules(src, mod):
-    submodules = set()
+    return _index_imported_submodules(src).get(mod, frozenset())
+
+
+def _index_imported_submodules(src):
+    """Keep regex candidate semantics, including source that cannot be parsed."""
+    submodules = {}
     for pattern in (IMPORT_RE, FROM_RE):
         for match in pattern.finditer(src or ""):
             root, _, rest = match.group(1).partition(".")
-            if root == mod and rest:
-                submodules.add(rest.split(".")[0])
-    return frozenset(submodules)
+            portions = submodules.setdefault(root, set())
+            if rest:
+                portions.add(rest.split(".")[0])
+    return {root: frozenset(portions) for root, portions in submodules.items()}
 
 
 def _import_module_requirements(src, mod):
     """Paths imports require, without guessing whether imported names are classes."""
-    try:
-        tree = ast.parse(src or "")
-    except (SyntaxError, ValueError, RecursionError, MemoryError):
+    tree = _parse_import_source(src)
+    if tree is None:
         return frozenset({mod}), ()
-    paths = set()
-    from_imports = []
-    optional_paths = _optional_import_paths(src)
-    for node in ast.walk(tree):
+    nodes = tuple(ast.walk(tree))
+    optional_paths = frozenset()
+    if src and "except" in src:
+        optional_paths = _optional_import_paths_from_nodes(nodes)
+    return _requirements_by_root(nodes, optional_paths).get(mod, (frozenset({mod}), ()))
+
+
+def _requirements_by_root(nodes, optional_paths):
+    paths = {}
+    from_imports = {}
+    for node in nodes:
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name.split(".")[0] == mod and alias.name not in optional_paths:
-                    paths.add(alias.name)
+                if alias.name not in optional_paths:
+                    root = alias.name.split(".")[0]
+                    paths.setdefault(root, set()).add(alias.name)
         elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
-            if node.module.split(".")[0] == mod and node.module not in optional_paths:
-                paths.add(node.module)
-                from_imports.append(
+            if node.module not in optional_paths:
+                root = node.module.split(".")[0]
+                paths.setdefault(root, set()).add(node.module)
+                from_imports.setdefault(root, []).append(
                     (node.module, tuple(alias.name for alias in node.names))
                 )
-    return frozenset(paths or {mod}), tuple(from_imports)
+    return {
+        root: (frozenset(required), tuple(from_imports.get(root, ())))
+        for root, required in paths.items()
+    }
+
+
+class _SourceImportAnalysis:
+    """Import facts for one source snapshot; no source or AST is retained."""
+
+    def __init__(self, src, *, submodules=None):
+        if submodules is None:
+            submodules = _index_imported_submodules(src)
+        self.submodules = submodules
+        self.modules = frozenset(self.submodules)
+        self.lines = {}
+        for line_no, line in enumerate((src or "").splitlines(), start=1):
+            match = _IMPORT_LINE_RE.match(line)
+            if match:
+                self.lines.setdefault(match.group(1), line_no)
+
+        nodes = ()
+        tree = _parse_import_source(src)
+        if tree is not None:
+            nodes = tuple(ast.walk(tree))
+        optional_paths = frozenset()
+        uncertain_paths = frozenset()
+        if src and "except" in src:
+            optional_paths = _optional_import_paths_from_nodes(nodes)
+            uncertain_paths = _optional_import_paths_from_nodes(
+                nodes, allow_uncertain=True
+            )
+        self.optional_imports = _optional_roots_from_nodes(nodes, optional_paths)
+        self.uncertain_imports = (
+            _optional_roots_from_nodes(nodes, uncertain_paths) - self.optional_imports
+        )
+        self._requirements = _requirements_by_root(nodes, optional_paths)
+
+    def requirements(self, mod):
+        return self._requirements.get(mod, (frozenset({mod}), ()))
 
 
 def _undeclared_template(mod, message):
@@ -3864,25 +3930,25 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
         if src is None:
             continue
 
+        submodules = _index_imported_submodules(src)
+        if not submodules:
+            continue
         direct_script = _has_direct_script_evidence(src)
         local_fallbacks = _local_import_fallbacks(src, ctx, importer)
-        optional_imports = _optional_import_roots(src)
-        uncertain_imports = (
-            _optional_import_roots(src, allow_uncertain=True) - optional_imports
-        )
-        for mod in sorted(_extract_imports(src)):
+        analysis = _SourceImportAnalysis(src, submodules=submodules)
+        for mod in sorted(analysis.modules):
             if _is_build_backend_import(file_path, mod):
                 continue
-            required_paths, from_imports = _import_module_requirements(src, mod)
+            required_paths, from_imports = analysis.requirements(mod)
             template = _classify_import(
                 mod,
                 ctx,
                 file_path,
                 direct_script=direct_script,
                 local_fallbacks=local_fallbacks,
-                submodules=_imported_submodules(src, mod),
-                optional_imports=optional_imports,
-                uncertain_imports=uncertain_imports,
+                submodules=analysis.submodules.get(mod, frozenset()),
+                optional_imports=analysis.optional_imports,
+                uncertain_imports=analysis.uncertain_imports,
                 required_paths=required_paths,
                 from_imports=from_imports,
             )
@@ -3893,7 +3959,7 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
 
             finding = dict(template)
             finding["file"] = str(file_path)
-            finding["line"] = _find_import_line(src, mod)
+            finding["line"] = analysis.lines.get(mod, 1)
             findings.append(finding)
 
     unverified = ctx.get("unverified_imports", {})
@@ -3946,9 +4012,7 @@ def scan_diff_added_imports(
     seen = set()
     direct_script_cache = {}
     local_fallback_cache = {}
-    source_cache = {}
-    optional_cache = {}
-    uncertain_cache = {}
+    analysis_cache = {}
     for file_label, line_no, module_name in added_imports:
         mod = str(module_name).split(".")[0].strip()
         if (file_label, mod) in seen or _is_build_backend_import(file_label, mod):
@@ -3978,11 +4042,7 @@ def scan_diff_added_imports(
         )
 
         script_key = str(file_label)
-        if script_key not in direct_script_cache:
-            direct_script_cache[script_key] = _diff_file_has_direct_script_evidence(
-                root, file_label
-            )
-        if script_key not in local_fallback_cache:
+        if script_key not in analysis_cache:
             importer = _contained_importer_path(root, file_label, diff_path=True)
             source = read_project_text_no_symlink(
                 root,
@@ -3991,20 +4051,18 @@ def scan_diff_added_imports(
                 encoding="utf-8",
                 errors="ignore",
             )
-            source_cache[script_key] = source
-            optional_cache[script_key] = _optional_import_roots(source)
-            uncertain_cache[script_key] = (
-                _optional_import_roots(source, allow_uncertain=True)
-                - optional_cache[script_key]
-            )
-            local_fallback_cache[script_key] = (
-                _local_import_fallbacks(source, ctx, importer)
-                if source is not None
-                else frozenset()
-            )
-        required_paths, from_imports = _import_module_requirements(
-            source_cache[script_key], mod
-        )
+            analysis_cache[script_key] = _SourceImportAnalysis(source)
+            direct_script_cache[script_key] = False
+            local_fallback_cache[script_key] = frozenset()
+            if source is not None:
+                direct_script_cache[script_key] = (
+                    importer is not None and _has_direct_script_evidence(source)
+                )
+                local_fallback_cache[script_key] = _local_import_fallbacks(
+                    source, ctx, importer
+                )
+        analysis = analysis_cache[script_key]
+        required_paths, from_imports = analysis.requirements(mod)
         if "." in str(module_name):
             required_paths |= frozenset({str(module_name)})
         template = _classify_import(
@@ -4014,10 +4072,10 @@ def scan_diff_added_imports(
             diff_path=True,
             direct_script=direct_script_cache[script_key],
             local_fallbacks=local_fallback_cache[script_key],
-            submodules=_imported_submodules(source_cache[script_key], mod)
+            submodules=analysis.submodules.get(mod, frozenset())
             | _imported_submodules(f"import {module_name}", mod),
-            optional_imports=optional_cache[script_key],
-            uncertain_imports=uncertain_cache[script_key],
+            optional_imports=analysis.optional_imports,
+            uncertain_imports=analysis.uncertain_imports,
             required_paths=required_paths,
             from_imports=from_imports,
         )
