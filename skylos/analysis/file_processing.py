@@ -73,7 +73,7 @@ from skylos.visitors.languages.dart import scan_dart_file
 from skylos.visitors.languages.go import scan_go_file
 from skylos.visitors.languages.java import scan_java_file
 from skylos.visitors.languages.kotlin import scan_kotlin_file
-from skylos.visitors.languages.php import scan_php_file
+from skylos.visitors.languages.php import PHP_SOURCE_EXTS, scan_php_file
 from skylos.visitors.languages.rust import scan_rust_file
 from skylos.visitors.languages.shell import SHELL_SOURCE_EXTS, scan_shell_file
 from skylos.visitors.languages.typescript import scan_typescript_file
@@ -426,6 +426,7 @@ def _scan_php_file(file, cfg, *, enable_danger_rules: bool, **_options):
         file,
         cfg,
         enable_danger_rules=enable_danger_rules,
+        _reuse_framework_cache=True,
     )
 
 
@@ -514,7 +515,7 @@ NON_PYTHON_SCANNERS = (
     (TS_JS_SOURCE_EXTS, _scan_typescript_like_file),
     ((".go",), _scan_go_file),
     ((".java",), _scan_java_like_file),
-    ((".php",), _scan_php_file),
+    (PHP_SOURCE_EXTS, _scan_php_file),
     ((".rs",), _scan_rust_file),
     (CPP_ANALYSIS_EXTS, _scan_cpp_file),
     ((".dart",), _scan_dart_file),

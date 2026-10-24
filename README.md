@@ -571,6 +571,9 @@ repo and PR checker that puts several common review checks behind one CLI.
 - **Framework-aware dead code detection:** FastAPI, Django, Flask, pytest,
   SQLAlchemy, Next.js (App/Pages Router files and metadata routes), React,
   Laravel (auto-discovered commands, listeners, components, factories, seeders),
+  Drupal (classes named in an extension's YAML, discovered plugins, OOP hooks,
+  procedural hooks in `.module`/`.install`/`.inc`/`.theme` files, post-update
+  functions),
   tool config files, package entrypoints, and common plugin patterns.
 - **PR-focused output:** diff scanning, CI thresholds, GitHub annotations, and
   baselines for existing findings.
@@ -817,7 +820,7 @@ how many in one line of output. Set `include_generated = true` under
 | TypeScript / JavaScript | Yes | Yes | Yes | Supported | Tree-sitter parsing, package graph reachability, framework conventions |
 | Java | Yes | Yes | Yes | Supported | Tree-sitter parsing, structured security-flow analysis, conservative static-member proof |
 | Go | Yes¹ | Partial¹ | Partial | Supported | native engine status remains separate from deterministic workspace API proof |
-| PHP | Yes | Yes | No | Unsupported | PHP parser coverage, type and docblock references, Laravel conventions, plus taint-style security sinks and sources |
+| PHP | Yes | Yes | No | Unsupported | PHP parser coverage, type and docblock references, Laravel and Drupal conventions (including `.module`/`.install`/`.inc`/`.theme` files), plus taint-style security sinks and sources (Drupal request and Form API input into SQL strings, `Markup::create()` and inline Twig templates) |
 | Rust | Experimental⁴ | Yes | No | Unsupported | Rust parser coverage plus security sink/source checks |
 | Dart | Yes³ | Yes³ | No | Unsupported | Dart parser coverage plus selected security sinks and sources |
 | C# | Partial | Partial | Partial | Partial | C# symbols, direct-block unreachable code, selected security sinks, and direct NuGet inventory |

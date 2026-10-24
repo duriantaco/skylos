@@ -118,3 +118,63 @@ class Demo {
 """,
     )
     assert _rule_ids(findings) == {"SKY-D204"}
+
+
+def test_drupal_request_input_built_into_sql_flags(tmp_path):
+    findings = _scan_php_findings(
+        tmp_path,
+        """<?php
+class Page {
+    public function view(Request $request) {
+        $name = $request->query->get('name');
+        $this->database->query("SELECT nid FROM node WHERE title = '$name'");
+        \\Drupal::database()->where('title = ' . \\Drupal::request()->request->get('t'));
+        db_query('SELECT 1 FROM users WHERE name = ' . $name);
+    }
+}
+""",
+    )
+    assert [f["rule_id"] for f in findings] == ["SKY-D211"] * 3
+
+
+def test_drupal_form_values_marked_safe_flag(tmp_path):
+    findings = _scan_php_findings(
+        tmp_path,
+        """<?php
+function demo_submit(array &$form, FormStateInterface $form_state) {
+    $values = $form_state->getValues();
+    $build = ['#markup' => Markup::create($values['title'])];
+    $input = Markup::create($form_state->getUserInput()['body']);
+    $card = [
+        '#type' => 'inline_template',
+        '#template' => '<h2>' . $values['title'] . '</h2>',
+    ];
+    $safe = [
+        '#type' => 'inline_template',
+        '#template' => '<h2>{{ title }}</h2>',
+        '#context' => ['title' => $values['title']],
+    ];
+}
+""",
+    )
+    assert [f["rule_id"] for f in findings] == ["SKY-D226"] * 2 + ["SKY-D349"]
+
+
+def test_drupal_placeholders_and_escaping_do_not_flag(tmp_path):
+    findings = _scan_php_findings(
+        tmp_path,
+        """<?php
+function demo_page(Request $request, $form_state) {
+    $name = $request->query->get('name');
+    $nid = (int) $request->query->get('nid');
+    \\Drupal::database()->query('SELECT nid FROM node WHERE title = :t', [':t' => $name]);
+    \\Drupal::database()->query("SELECT title FROM node WHERE nid = $nid");
+    $index->query(['keys' => $name]);
+    $safe = Markup::create(Html::escape($name));
+    $filtered = Markup::create(Xss::filterAdmin($form_state->getValue('body')));
+    $other = $config->get('name');
+    \\Drupal::database()->query("SELECT 1 FROM node WHERE title = '$other'");
+}
+""",
+    )
+    assert findings == []

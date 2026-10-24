@@ -24,6 +24,7 @@ from skylos.analyzer import (
     _go_engine_analysis_report,
     _resolve_analysis_root,
 )
+from skylos.visitors.languages.php import PHP_SOURCE_EXTS
 from skylos.visitors.languages.shell import SHELL_SOURCE_EXTS
 
 
@@ -391,7 +392,7 @@ class TestSkylos:
                 ".hpp",
                 ".hh",
                 ".hxx",
-                ".php",
+                *PHP_SOURCE_EXTS,
                 ".rs",
                 ".dart",
                 ".cs",

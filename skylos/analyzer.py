@@ -37,6 +37,7 @@ from skylos.constants import (
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.visitors.languages.cpp import CPP_HEADER_EXTS, CPP_SOURCE_EXTS
+from skylos.visitors.languages.php import PHP_SOURCE_EXTS
 from skylos.visitors.languages.shell import SHELL_SOURCE_EXTS
 from skylos.visitors.languages.typescript.analysis import (
     build_ts_import_graph,
@@ -60,6 +61,7 @@ from skylos.analysis.ast_cache import (
     releases_python_ast_cache,
 )
 from skylos.visitors.languages.go import clear_go_cache
+from skylos.visitors.languages.php.drupal import clear_drupal_cache
 
 from skylos.rules.secrets import (
     SECRET_CONFIG_SUFFIXES as _SECRET_CONFIG_SUFFIXES,
@@ -608,7 +610,7 @@ _TS_JS_SOURCE_EXTS = (
     ".mjs",
     ".cjs",
 )
-_PHP_SOURCE_EXTS = (".php",)
+_PHP_SOURCE_EXTS = PHP_SOURCE_EXTS
 _RUST_SOURCE_EXTS = (".rs",)
 _CPP_SOURCE_EXTS = CPP_SOURCE_EXTS + CPP_HEADER_EXTS
 _DART_SOURCE_EXTS = (".dart",)
@@ -1892,7 +1894,7 @@ class Skylos:
         ".mjs": "JavaScript",
         ".cjs": "JavaScript",
         ".java": "Java",
-        ".php": "PHP",
+        **dict.fromkeys(PHP_SOURCE_EXTS, "PHP"),
         ".rs": "Rust",
         ".cpp": "C++",
         ".cc": "C++",
@@ -3917,6 +3919,7 @@ class Skylos:
             self._reset_run_state()
         self._has_analyzed = True
         clear_go_cache()
+        clear_drupal_cache()
         self._sca_coverage = None
 
         raw_first = Path(
