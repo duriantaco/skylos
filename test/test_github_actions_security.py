@@ -543,8 +543,14 @@ def test_release_please_rechecks_completed_ci_on_current_main():
         "quality-benchmark.yml",
         "skylos.yaml",
     ]
+    # Workflow-name filters are globs, including '+' as a quantifier.
+    escape_globs = str.maketrans(
+        {character: "\\" + character for character in r"\*?[]+!"}
+    )
     assert set(trigger["workflows"]) == {
-        yaml.safe_load((Path(".github/workflows") / name).read_text())["name"]
+        yaml.safe_load((Path(".github/workflows") / name).read_text())["name"].translate(
+            escape_globs
+        )
         for name in producers
     }
 
