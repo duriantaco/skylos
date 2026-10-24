@@ -1,5 +1,26 @@
 ## Changelog
 
+## [5.1.0](https://github.com/duriantaco/skylos/compare/v5.0.0...v5.1.0) (2026-10-24)
+
+
+### Features
+
+* **php:** drupal entrypoints ([#1055](https://github.com/duriantaco/skylos/issues/1055)) ([12f44dc](https://github.com/duriantaco/skylos/commit/12f44dcc3c06161322de51da6e5a5b5e27399dad))
+
+
+### Bug Fixes
+
+* **ci:** escape test workflow name in release trigger ([#1061](https://github.com/duriantaco/skylos/issues/1061)) ([4c55a08](https://github.com/duriantaco/skylos/commit/4c55a0844d4f84721598bff29b508378db4589de))
+* **dead-code:** report hidden unused locals and imports ([#1062](https://github.com/duriantaco/skylos/issues/1062)) ([8e4ee19](https://github.com/duriantaco/skylos/commit/8e4ee19c8dd9b27165ff7d0d4f95b03f00f8177a))
+* **deadcode:** preserve proven Django and test entrypoints ([#1059](https://github.com/duriantaco/skylos/issues/1059)) ([e03d668](https://github.com/duriantaco/skylos/commit/e03d668edeb4750ae4ee0e44aee878ddb61255ad))
+* **deadcode:** prove django hooks and signal registration ([#1060](https://github.com/duriantaco/skylos/issues/1060)) ([3d064e8](https://github.com/duriantaco/skylos/commit/3d064e81ee9f49ad91fdec73a6b2e32e04afcb9c))
+* **security:** cut FPs and demote low-risk findings ([#1063](https://github.com/duriantaco/skylos/issues/1063)) ([b4c6856](https://github.com/duriantaco/skylos/commit/b4c6856373a30a131f5f1fa273083b7477e3b013))
+
+
+### Performance Improvements
+
+* **ai-defects:** reuse per-file dependency import analysis ([#1058](https://github.com/duriantaco/skylos/issues/1058)) ([adfa12d](https://github.com/duriantaco/skylos/commit/adfa12ddd2a876b2fec01769b837fc096b3967f1))
+
 ## [5.0.0](https://github.com/duriantaco/skylos/compare/v4.50.1...v5.0.0) (2026-10-23)
 
 
