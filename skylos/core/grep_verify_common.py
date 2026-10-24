@@ -21,6 +21,8 @@ from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from skylos.core.notebook_sources import is_notebook, notebook_code_names
+
 from skylos.core.file_discovery import (
     _exclude_candidates,
     list_git_visible_files,
@@ -2952,6 +2954,8 @@ def _python_line_has_name_token(grep_line: str, simple_name: str) -> bool:
 
 def _is_python_source_reference(grep_line: str, simple_name: str) -> bool:
     path = _grep_line_path(grep_line)
+    if path and is_notebook(path):
+        return simple_name in notebook_code_names(path)
     if path and Path(path).suffix.lower() not in _PYTHON_EXTS:
         return False
     return _python_line_has_name_token(grep_line, simple_name)

@@ -41,6 +41,7 @@ from skylos.deadcode.confidence import (
 )
 
 from .conventions import convention_reason, is_dev_convention_file
+from .site_generators import site_generator_entry
 from .file_references import collect_ts_path_references
 from .tool_configs import RUNNER_CONFIG_FILES as _PLAYWRIGHT_CONFIG_FILES
 from .tool_configs import TOOL_CONFIG_FILES as _CONFIG_FILES
@@ -491,6 +492,8 @@ def _is_ts_entry_or_infra(sf: str) -> bool:
     if basename in _CONFIG_FILES:
         return True
     if is_nextjs_project_entry_file(sf):
+        return True
+    if site_generator_entry(sf) is not None:
         return True
     return convention_reason(sf) is not None
 

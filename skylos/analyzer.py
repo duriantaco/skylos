@@ -1613,6 +1613,11 @@ def _index_grep_verify_candidates(entries: dict) -> dict:
     return indexed
 
 
+def _is_function_local_definition(defn, definitions: dict) -> bool:
+    owner = definitions.get(defn.name.rsplit(".", 1)[0])
+    return owner is not None and owner.type in ("function", "method")
+
+
 def _apply_grep_verify_verdicts(candidate_defs: dict, verdicts: dict) -> int:
     rescued = 0
     for full_name, verdict in verdicts.items():
@@ -3228,7 +3233,11 @@ class Skylos:
                     continue
                 if defn.type == "function":
                     pass
-                elif defn.type == "variable" and "." in defn.name:
+                elif (
+                    defn.type == "variable"
+                    and "." in defn.name
+                    and not _is_function_local_definition(defn, self.defs)
+                ):
                     pass
                 else:
                     continue

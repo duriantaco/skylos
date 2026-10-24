@@ -103,6 +103,23 @@ PYTHON_BUILTINS = {
 }
 
 DYNAMIC_PATTERNS = {"getattr", "globals", "eval", "exec"}
+_FRAME_INTROSPECTION_CALLS = {
+    ("sys", "_getframe"),
+    ("inspect", "currentframe"),
+    ("inspect", "stack"),
+    ("inspect", "trace"),
+}
+
+
+def _reads_locals_dynamically(node: ast.Call) -> bool:
+    func = node.func
+    if isinstance(func, ast.Name):
+        if func.id in ("locals", "eval", "exec"):
+            return True
+        return func.id == "vars" and not node.args
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+        return (func.value.id, func.attr) in _FRAME_INTROSPECTION_CALLS
+    return False
 IMPORT_FALLBACK_EXCEPTIONS = {"ImportError", "ModuleNotFoundError"}
 
 OVERRIDE_DECORATORS = {
@@ -719,6 +736,7 @@ class Visitor(ast.NodeVisitor):
         self.current_function_scope = []
         self.current_function_params = []
         self.local_var_maps = []
+        self._local_import_maps = []
         self.in_cst_class = 0
         self.local_type_maps = []
         self._dataclass_stack = []
@@ -749,6 +767,7 @@ class Visitor(ast.NodeVisitor):
         self.orm_declarative_fields = set()
         self._class_base_simple_names: dict[str, tuple[str, ...]] = {}
         self.type_alias_names = set()
+        self.dynamic_local_functions = set()
         self.all_exports = set()
         self.abc_classes = set()
         self.abstract_methods = {}
@@ -1068,6 +1087,38 @@ class Visitor(ast.NodeVisitor):
 
         return targets
 
+    def _note_local_import_binding(self, alias_name: str, target: str) -> None:
+        if not self.current_function_scope or not self._local_import_maps:
+            return
+        self._local_import_maps[-1].setdefault(alias_name, []).append(target)
+
+    def _credit_local_import_read(self, node: ast.Name) -> bool:
+        if not self.current_function_scope:
+            return False
+        for scope_map in reversed(self._local_import_maps):
+            targets = scope_map.get(node.id)
+            if not targets:
+                continue
+            for target in targets:
+                self.first_read_lineno.setdefault(target, node.lineno)
+                self.add_ref(target)
+            return True
+        return False
+
+    def _credit_rebinding_reads(self, node: ast.Assign) -> None:
+        if not self.current_function_scope:
+            return
+        names = {t.id for t in node.targets if isinstance(t, ast.Name)}
+        if not names:
+            return
+        for sub in ast.walk(node.value):
+            if (
+                isinstance(sub, ast.Name)
+                and isinstance(sub.ctx, ast.Load)
+                and sub.id in names
+            ):
+                self.visit_Name(sub)
+
     def visit_Import(self, node: ast.Import) -> None:
         for a in node.names:
             full = a.name
@@ -1080,6 +1131,7 @@ class Visitor(ast.NodeVisitor):
                 target = head
 
             line = getattr(a, "lineno", node.lineno)
+            self._note_local_import_binding(alias_name, target)
             self.alias[alias_name] = target
             self._alias_binding_lines[alias_name] = line
             self._note_module_import_binding(alias_name, target)
@@ -1143,6 +1195,7 @@ class Visitor(ast.NodeVisitor):
                 full = a.name
 
             line = getattr(a, "lineno", node.lineno)
+            self._note_local_import_binding(alias_name, full)
             self.alias[alias_name] = full
             self._alias_binding_lines[alias_name] = line
             self._note_module_import_binding(alias_name, full)
@@ -1638,6 +1691,7 @@ class Visitor(ast.NodeVisitor):
         self.current_function_scope.append(node.name)
         self._function_node_stack.append(node)
         self.local_var_maps.append({})
+        self._local_import_maps.append({})
         self.local_type_maps.append({})
         self.local_constants.append({})
 
@@ -1742,6 +1796,7 @@ class Visitor(ast.NodeVisitor):
         self._function_node_stack.pop()
         self.current_function_params = self._param_stack.pop()
         self.local_var_maps.pop()
+        self._local_import_maps.pop()
         self.local_type_maps.pop()
         self.local_constants.pop()
         if type_parameter_names:
@@ -2242,6 +2297,7 @@ class Visitor(ast.NodeVisitor):
             and not self.current_function_scope
             and _is_stub_declaration(node)
         )
+        self._credit_rebinding_reads(node)
         for target in node.targets:
             self._process_target_for_def(target, declaration_only=declaration_only)
         self._record_orm_declarative_fields(node.targets, node.value)
@@ -2737,6 +2793,8 @@ class Visitor(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         self.generic_visit(node)
+        if self._current_function_qname and _reads_locals_dynamically(node):
+            self.dynamic_local_functions.add(self._current_function_qname)
         callee = self._resolve_callee_fqname(node.func)
         if callee and not self.current_function_scope and self.cls is None:
             self.top_level_refs.add(callee)
@@ -3625,6 +3683,9 @@ class Visitor(ast.NodeVisitor):
                     self.first_read_lineno.setdefault(fq, node.lineno)
                     self.add_ref(fq)
                     return
+
+        if self._credit_local_import_read(node):
+            return
 
         if self._is_active_type_parameter(node.id):
             return
