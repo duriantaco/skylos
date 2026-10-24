@@ -88,6 +88,7 @@ from skylos.core.safe_cache_io import read_project_text_no_symlink
 from skylos.core.linter import LinterVisitor
 from skylos.core.review_context import build_analysis_review_context
 from skylos.deadcode.signature_contracts import mark_signature_contract_parameters
+from skylos.deadcode.django_converter_liveness import find_django_converter_classes
 
 from skylos.rules.quality.policy import analyze_repo_policy
 from skylos.rules.vibe_dictionary import build_vibe_dictionary
@@ -2741,6 +2742,9 @@ class Skylos:
                     "excluded_folders"
                 ),
                 module_names=getattr(self, "_module_names_by_file", None),
+                django_converter_classes=getattr(
+                    self, "_global_django_path_converter_classes", None
+                ),
             )
             self._dead_code_liveness_report = report
             if report.rescued:
@@ -5067,7 +5071,9 @@ class Skylos:
         self._global_abc_implementers = {}
         self._global_protocol_implementers = {}
         self._global_protocol_method_names = {}
-        self._global_django_path_converter_classes = set()
+        self._global_django_path_converter_classes = find_django_converter_classes(
+            self.defs, files, root
+        )
         self._global_dependency_alias_names = set()
 
         for defs, test_flags, framework_flags, file, mod, cfg in file_contexts:
@@ -5108,10 +5114,6 @@ class Skylos:
                 if cls not in self._global_protocol_method_names:
                     self._global_protocol_method_names[cls] = set()
                 self._global_protocol_method_names[cls].update(methods)
-
-            self._global_django_path_converter_classes.update(
-                getattr(framework_flags, "django_path_converter_classes", set())
-            )
 
         self._duck_typed_implementers = set()
 

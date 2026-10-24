@@ -147,6 +147,14 @@ class _ModuleEvidence:
     # Values added to those names in place (``MIDDLEWARE.append(path)``) at
     # import time, including inside functions the module calls while loading.
     setting_mutations: dict = field(default_factory=dict)
+    # Final source bindings distinguish a configured class from an earlier
+    # declaration that the module has replaced.
+    bindings: dict = field(default_factory=dict)
+    class_member_overrides: dict = field(default_factory=dict)
+    authentication_backend_assignments: list = field(default_factory=list)
+    authentication_backend_mutations: list = field(default_factory=list)
+    authentication_backend_invalidations: list = field(default_factory=list)
+    protocol_methods: set = field(default_factory=set)
 
     def definition(self, name: str, *, line=None, kind=None):
         candidates = [
@@ -183,11 +191,13 @@ class _WebScanner:
         self.path_values = {}
         self.settings_module = None
         self.executed_definitions = executed_definitions
+        self.authentication_calls = defaultdict(list)
         self._imports = _FrameworkScanner(module, index)._imports
 
     def collect(self):
         module_bindings = {}
         self.suite(self.tree.body, module_bindings)
+        self.evidence.bindings = module_bindings.copy()
         self._collect_module_level()
         self._collect_callback_signatures(module_bindings)
         return self.evidence
@@ -216,6 +226,21 @@ class _WebScanner:
                 self._flask_signature(definition, call.func.attr)
 
     def _collect_module_level(self):
+        for statement in _possible_module_statements(self.tree.body):
+            if _authentication_backend_invalidates(statement):
+                self.evidence.authentication_backend_invalidations.append(
+                    (statement.lineno, statement.col_offset)
+                )
+            for value in _authentication_backend_mutations(statement):
+                self.evidence.authentication_backend_mutations.append(
+                    (value, (statement.lineno, statement.col_offset))
+                )
+            targets, value = _assigned(statement)
+            if value is not None and any(
+                isinstance(target, ast.Name) and target.id == "AUTHENTICATION_BACKENDS"
+                for target in targets
+            ):
+                self.evidence.authentication_backend_assignments.append(value)
         package = self.evidence.module
         if self.evidence.path.name != "__init__.py":
             package = package.rpartition(".")[0]
@@ -251,6 +276,20 @@ class _WebScanner:
         for statement in self.tree.body:
             if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
+            if (
+                statement.lineno in self.authentication_calls
+                and _uses_global_authentication_backends(statement)
+            ):
+                for node in _possible_module_statements(statement.body):
+                    if _authentication_backend_invalidates(node):
+                        self.evidence.authentication_backend_invalidations.extend(
+                            self.authentication_calls[statement.lineno]
+                        )
+                    for value in _authentication_backend_mutations(node):
+                        for position in self.authentication_calls[statement.lineno]:
+                            self.evidence.authentication_backend_mutations.append(
+                                (value, position)
+                            )
             if statement.name not in called:
                 continue
             module_names = set(self.evidence.module_settings) | {
@@ -281,8 +320,42 @@ class _WebScanner:
         return True
 
     def _invalidate(self, statement, bindings, _owner):
+        self._class_member_overrides(statement, bindings)
         for name in _bound_names(statement):
             bindings[name] = None
+
+    def _class_member_overrides(self, statement, bindings):
+        for node in _eager_nodes(statement):
+            if isinstance(node, ast.Attribute) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
+                name = _qualified(node, bindings)
+                if name is not None:
+                    self.evidence.class_member_overrides[name] = statement
+            elif isinstance(node, ast.Call) and len(node.args) >= 2:
+                function = _qualified(node.func, bindings)
+                builtin = (
+                    isinstance(node.func, ast.Name)
+                    and node.func.id in {"setattr", "delattr"}
+                    and node.func.id not in bindings
+                )
+                if not builtin and function not in {
+                    "builtins.setattr",
+                    "builtins.delattr",
+                }:
+                    continue
+                if function in self.evidence.class_member_overrides:
+                    continue
+                owner = _qualified(node.args[0], bindings)
+                if owner is None:
+                    continue
+                member = _literal(node.args[1])
+                if isinstance(member, str):
+                    self.evidence.class_member_overrides[owner + "." + member] = (
+                        statement
+                    )
+                else:
+                    self.evidence.class_member_overrides[owner] = statement
 
     def _scan_import(self, statement, bindings, _owner):
         self._imports(statement, bindings)
@@ -325,10 +398,19 @@ class _WebScanner:
         definition = self.evidence.at(statement, "class")
         if definition is not None and owner is None:
             members, model_bindings = self._class_members(statement, bindings)
-            bases = {_qualified(base, bindings) for base in statement.bases}
+            bases = []
+            for base in statement.bases:
+                qualified = _qualified(base, bindings)
+                if (
+                    isinstance(base, ast.Name)
+                    and base.id == "object"
+                    and base.id not in bindings
+                ):
+                    qualified = "builtins.object"
+                bases.append(qualified)
             self.evidence.classes[definition.name] = (
                 definition,
-                bases,
+                tuple(bases),
                 members,
                 model_bindings,
             )
@@ -340,6 +422,13 @@ class _WebScanner:
         class_bindings = bindings.copy()
         model_bindings = bindings.copy()
         for member in statement.body:
+            if isinstance(member, ast.AnnAssign) and member.value is None:
+                continue
+            if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)) and all(
+                _protocol_method_decorator(decorator, class_bindings)
+                for decorator in member.decorator_list
+            ):
+                self.evidence.protocol_methods.add(member)
             names = _bound_names(member)
             if "model" in names:
                 model_bindings = class_bindings.copy()
@@ -360,10 +449,13 @@ class _WebScanner:
                 self.evidence.admins.add(name)
 
     def _scan_assignment(self, statement, bindings, owner):
+        self._class_member_overrides(statement, bindings)
         targets, value = _assigned(statement)
         if value is None:
             self._invalidate(statement, bindings, owner)
             return
+        if owner is None:
+            self._authentication_calls(value, bindings)
         routes = owner is None and any(
             isinstance(target, ast.Name) and target.id == "urlpatterns"
             for target in targets
@@ -420,8 +512,33 @@ class _WebScanner:
             if definition is not None:
                 self.evidence.targets.append((definition, "django_web_application"))
 
-    def _scan_expression(self, statement, bindings, _owner):
+    def _scan_expression(self, statement, bindings, owner):
+        self._class_member_overrides(statement, bindings)
+        if owner is None:
+            self._authentication_calls(statement.value, bindings)
         self._calls(statement.value, bindings)
+
+    def _authentication_calls(self, expression, bindings):
+        for call in _eager_nodes(expression):
+            if not isinstance(call, ast.Call):
+                continue
+            definition = self.evidence.definition(
+                _qualified(call.func, bindings), kind="function"
+            )
+            if (
+                definition is not None
+                and isinstance(getattr(definition, "node", None), ast.FunctionDef)
+                and not any(
+                    isinstance(node, (ast.Yield, ast.YieldFrom))
+                    for statement in definition.node.body
+                    for node in _eager_nodes(statement)
+                )
+                and self.index._resolve_path(Path(definition.filename))
+                == self.evidence.path
+            ):
+                self.authentication_calls[definition.node.lineno].append(
+                    (call.lineno, call.col_offset)
+                )
 
     def _flask_callback(self, node, bindings, definition):
         if definition is None or "flask" in self.index.shadowed:
@@ -558,6 +675,174 @@ class _WebScanner:
 
 
 _SETTING_MUTATORS = {"append", "extend", "insert", "add", "update", "setdefault"}
+_SCOPES_FOR_SETTINGS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+
+def _protocol_method_decorator(decorator, bindings):
+    if (
+        isinstance(decorator, ast.Name)
+        and decorator.id in {"classmethod", "staticmethod"}
+        and decorator.id not in bindings
+    ):
+        return True
+    return _qualified(decorator, bindings) in {
+        "builtins.classmethod",
+        "builtins.staticmethod",
+    }
+
+
+def _authentication_backend_invalidates(statement):
+    """Destructive or escaped list state needs a later full assignment."""
+    if isinstance(statement, ast.Delete):
+        return any(
+            _setting_root(target) == "AUTHENTICATION_BACKENDS"
+            for target in statement.targets
+        )
+    if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        targets, expression = _assigned(statement)
+        if any(
+            isinstance(target, ast.Subscript)
+            and _setting_root(target) == "AUTHENTICATION_BACKENDS"
+            for target in targets
+        ):
+            return True
+    elif isinstance(statement, ast.AugAssign):
+        if _setting_root(
+            statement.target
+        ) == "AUTHENTICATION_BACKENDS" and not isinstance(statement.op, ast.Add):
+            return True
+        expression = statement.value
+    elif isinstance(statement, ast.Expr):
+        expression = statement.value
+    elif isinstance(statement, (ast.If, ast.While)):
+        expression = statement.test
+    else:
+        return False
+    if expression is None:
+        return False
+    for node in _eager_nodes(expression):
+        if not isinstance(node, ast.Call):
+            continue
+        if (
+            isinstance(node.func, ast.Attribute)
+            and _setting_root(node.func.value) == "AUTHENTICATION_BACKENDS"
+            and node.func.attr not in {"append", "extend", "insert"}
+        ):
+            return True
+        if any(
+            isinstance(argument, ast.Name) and argument.id == "AUTHENTICATION_BACKENDS"
+            for argument in (*node.args, *(keyword.value for keyword in node.keywords))
+        ):
+            return True
+    return False
+
+
+def _authentication_backend_mutations(statement):
+    """Only direct list operations can register an authentication backend."""
+    if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
+        call = statement.value
+        if not isinstance(call.func, ast.Attribute) or call.keywords:
+            return
+        receiver = call.func.value
+        if (
+            not isinstance(receiver, ast.Name)
+            or receiver.id != "AUTHENTICATION_BACKENDS"
+        ):
+            return
+        if call.func.attr == "append" and len(call.args) == 1:
+            if isinstance(call.args[0], ast.Constant):
+                yield call.args[0]
+        elif call.func.attr == "extend" and len(call.args) == 1:
+            if isinstance(call.args[0], (ast.List, ast.Tuple)):
+                yield call.args[0]
+        elif call.func.attr == "insert" and len(call.args) == 2:
+            if isinstance(call.args[1], ast.Constant):
+                yield call.args[1]
+    elif (
+        isinstance(statement, ast.AugAssign)
+        and isinstance(statement.op, ast.Add)
+        and isinstance(statement.target, ast.Name)
+        and statement.target.id == "AUTHENTICATION_BACKENDS"
+    ):
+        if isinstance(statement.value, (ast.List, ast.Tuple)):
+            yield statement.value
+    elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        targets, value = _assigned(statement)
+        for target in targets:
+            if (
+                isinstance(target, ast.Subscript)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "AUTHENTICATION_BACKENDS"
+            ):
+                if isinstance(target.slice, ast.Constant) and isinstance(
+                    target.slice.value, int
+                ):
+                    if isinstance(value, ast.Constant):
+                        yield value
+                elif isinstance(target.slice, ast.Slice) and isinstance(
+                    value, (ast.List, ast.Tuple)
+                ):
+                    yield value
+
+
+def _uses_global_authentication_backends(function):
+    name = "AUTHENTICATION_BACKENDS"
+    statements = list(_module_level_statements(function.body))
+    globals_ = {
+        item
+        for statement in statements
+        if isinstance(statement, ast.Global)
+        for item in statement.names
+    }
+    if name in globals_:
+        return True
+    arguments = [
+        *function.args.posonlyargs,
+        *function.args.args,
+        *function.args.kwonlyargs,
+        function.args.vararg,
+        function.args.kwarg,
+    ]
+    if any(argument is not None and argument.arg == name for argument in arguments):
+        return False
+    return not any(name in _bound_names(statement) for statement in statements)
+
+
+def _possible_module_statements(statements):
+    """Import-time statements on possible paths, excluding literal dead arms."""
+    for statement in statements:
+        if isinstance(statement, _SCOPES_FOR_SETTINGS):
+            continue
+        yield statement
+        if isinstance(statement, (ast.Return, ast.Raise)):
+            return True
+        if isinstance(statement, ast.If):
+            if isinstance(statement.test, ast.Constant):
+                if statement.test.value:
+                    terminated = yield from _possible_module_statements(statement.body)
+                else:
+                    terminated = yield from _possible_module_statements(
+                        statement.orelse
+                    )
+                if terminated:
+                    return True
+            else:
+                body_terminated = yield from _possible_module_statements(statement.body)
+                else_terminated = yield from _possible_module_statements(
+                    statement.orelse
+                )
+                if body_terminated and else_terminated:
+                    return True
+            continue
+        for name in ("body", "orelse", "finalbody"):
+            children = getattr(statement, name, None)
+            if isinstance(children, list):
+                yield from _possible_module_statements(children)
+        for handler in getattr(statement, "handlers", None) or ():
+            yield from _possible_module_statements(handler.body)
+        for case in getattr(statement, "cases", None) or ():
+            yield from _possible_module_statements(case.body)
+    return False
 
 
 def _setting_root(node):
