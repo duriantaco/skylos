@@ -243,6 +243,7 @@ def collect_browser_event_handler_refs(
     seen_names: set[str] = set()
     source_cache: dict[Path, str] = {}
     template_files: list[Path] = []
+    external_summaries = {}
     template_names: dict[Path, set[str]] = {}
     monorepo_resolver = _build_ts_monorepo_resolver(root)
     source_files = list(source_files)
@@ -280,6 +281,16 @@ def collect_browser_event_handler_refs(
 
     script_names: dict[Path, set[str]] = {}
     for template_file in template_files:
+        _, inline_refs = _template_inline_script_effects(
+            root,
+            template_file,
+            source_cache,
+            scanned_scripts,
+            static_asset_index,
+            external_summaries,
+        )
+        for name, target in inline_refs:
+            _append_ref(refs, seen_refs, name, target)
         global_scripts = _collect_template_script_files(
             root,
             [template_file],
@@ -774,14 +785,674 @@ def collect_browser_script_entry_files(
         _HTML_TEMPLATE_SUFFIXES,
         exclude_folders=exclude_folders,
     )
-    return _collect_template_script_files(
+    source_cache: dict[Path, str] = {}
+    static_asset_index = _build_static_asset_index(root, scanned_scripts)
+    external_summaries = {}
+    entries = _collect_template_script_files(
         root,
         list(template_files),
-        {},
+        source_cache,
         include_modules=True,
-        static_asset_index=_build_static_asset_index(root, scanned_scripts),
+        static_asset_index=static_asset_index,
         allowed_files=scanned_scripts,
     )
+    for template_file in template_files:
+        inline_entries, _ = _template_inline_script_effects(
+            root,
+            template_file,
+            source_cache,
+            scanned_scripts,
+            static_asset_index,
+            external_summaries,
+        )
+        entries.update(inline_entries)
+    return entries
+
+
+class _TemplateScripts(HTMLParser):
+    """Keep executable inline bodies separate from text and inert markup."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.scripts = []
+        self.current = None
+        self.inert_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {"template", "noscript"}:
+            self.inert_depth += 1
+        if tag != "script" or self.inert_depth:
+            return
+        names = [name for name, _ in attrs]
+        if len(names) != len(set(names)):
+            return
+        attributes = dict(attrs)
+        self.current = (attributes, [])
+
+    def handle_endtag(self, tag):
+        if tag == "script" and self.current is not None:
+            attributes, chunks = self.current
+            self.scripts.append((attributes, "".join(chunks)))
+            self.current = None
+        if tag in {"template", "noscript"} and self.inert_depth:
+            self.inert_depth -= 1
+
+    def handle_data(self, data):
+        if self.current is not None:
+            self.current[1].append(data)
+
+
+class _InlineScriptConsumers:
+    """Prove calls and DOM callbacks without walking uninvoked callables."""
+
+    _CALLABLES = {
+        "function_declaration",
+        "function_expression",
+        "arrow_function",
+    }
+    _GENERATORS = {"generator_function_declaration", "generator_function"}
+    _BLOCK_SCOPES = {
+        "statement_block",
+        "for_statement",
+        "for_in_statement",
+        "catch_clause",
+        "switch_statement",
+    }
+
+    def __init__(self, source, resolve_import, inherited_bindings):
+        from skylos.visitors.languages.typescript.file_references import _TS_PARSER
+
+        self.text = source.encode("utf-8")
+        self.root = None
+        self.imports = {}
+        self.import_bound = set()
+        self.entries = set()
+        self.names = set()
+        self.refs = set()
+        self.writes = set()
+        self.visited = {}
+        self.module_syntax = False
+        self.supported = False
+        self.inherited_bindings = inherited_bindings
+        if _TS_PARSER is None:
+            return
+        try:
+            root = _TS_PARSER.parse(self.text).root_node
+        except (ValueError, RecursionError):
+            return
+        if root.has_error:
+            return
+        self.root = root
+        self.supported = not self.unmodeled_completion(root)
+        for statement in root.named_children:
+            if statement.type in {"import_statement", "export_statement"}:
+                self.module_syntax = True
+            if statement.type != "import_statement":
+                continue
+            source_node = statement.child_by_field_name("source")
+            if source_node is None or source_node.type != "string":
+                continue
+            literal = self.value(source_node)
+            if len(literal) < 2 or "\\" in literal:
+                continue
+            target = resolve_import(literal[1:-1])
+            if target is not None:
+                self.entries.add(target)
+            pending = list(statement.named_children)
+            while pending:
+                child = pending.pop()
+                if child.type == "import_specifier":
+                    name = child.child_by_field_name("name")
+                    alias = child.child_by_field_name("alias")
+                    if name is None:
+                        continue
+                    if alias is None:
+                        alias = name
+                    local = self.value(alias)
+                    self.import_bound.add(local)
+                    if target is not None:
+                        self.imports[local] = (target, self.value(name))
+                elif child.type == "namespace_import":
+                    identifiers = [
+                        node
+                        for node in child.named_children
+                        if node.type == "identifier"
+                    ]
+                    if identifiers:
+                        local = self.value(identifiers[-1])
+                        self.import_bound.add(local)
+                        if target is not None:
+                            self.imports[local] = (target, "*")
+                elif child.type == "import_clause":
+                    for node in child.named_children:
+                        if node.type == "identifier":
+                            self.import_bound.add(self.value(node))
+                    pending.extend(child.named_children)
+                else:
+                    pending.extend(child.named_children)
+
+    def value(self, node):
+        return self.text[node.start_byte : node.end_byte].decode("utf-8")
+
+    def unmodeled_completion(self, root):
+        """Decline call-use proof where completion paths are not modeled.
+
+        Static import declarations still prove file loading. A direct function
+        return is handled by the sequence walker; nested returns, exceptions,
+        switch dispatch and loop jumps retain the prior static findings.
+        """
+        pending = [root]
+        while pending:
+            node = pending.pop()
+            if node.type in self._GENERATORS | {"class", "class_declaration"}:
+                continue
+            if node.type in {
+                "try_statement",
+                "switch_statement",
+                "throw_statement",
+                "break_statement",
+                "continue_statement",
+            }:
+                return True
+            if node.type == "return_statement":
+                parent = node.parent
+                if parent is None or parent.type != "statement_block":
+                    return True
+                function = parent.parent
+                if function is None or function.type not in self._CALLABLES:
+                    return True
+            pending.extend(node.named_children)
+        return False
+
+    def bindings(self, scope):
+        bound = set()
+        callables = {}
+        if scope.type == "catch_clause":
+            bound.update(self.written_names(scope.child_by_field_name("parameter")))
+        pending = list(scope.named_children)
+        while pending:
+            node = pending.pop()
+            if node.type in self._BLOCK_SCOPES:
+                continue
+            if (
+                node.type in self._CALLABLES | self._GENERATORS
+                or node.type == "class_declaration"
+            ):
+                name = node.child_by_field_name("name")
+                if name is not None:
+                    bound.add(self.value(name))
+                    if node.type in self._CALLABLES:
+                        callables[self.value(name)] = node
+                continue
+            if node.type == "variable_declarator":
+                name = node.child_by_field_name("name")
+                if name is not None and name.type == "identifier":
+                    bound.add(self.value(name))
+                elif name is not None:
+                    children = list(name.named_children)
+                    while children:
+                        child = children.pop()
+                        if child.type in {
+                            "identifier",
+                            "shorthand_property_identifier_pattern",
+                        }:
+                            bound.add(self.value(child))
+                        children.extend(child.named_children)
+            pending.extend(node.named_children)
+        return bound, callables
+
+    def written_names(self, node):
+        if node is None:
+            return set()
+        if node.type == "identifier":
+            return {self.value(node)}
+        if node.type == "member_expression":
+            receiver = node.child_by_field_name("object")
+            attribute = node.child_by_field_name("property")
+            if (
+                receiver is not None
+                and attribute is not None
+                and self.value(receiver) == "window"
+            ):
+                return {self.value(attribute), self.value(node)}
+            return {self.value(node)}
+        if node.type == "subscript_expression":
+            receiver = node.child_by_field_name("object")
+            index = node.child_by_field_name("index")
+            if (
+                receiver is not None
+                and index is not None
+                and self.value(receiver) == "window"
+                and index.type == "string"
+            ):
+                literal = self.value(index)
+                if "\\" not in literal and len(literal) > 2:
+                    return {literal[1:-1]}
+            return set()
+        names = set()
+        for child in node.named_children:
+            names.update(self.written_names(child))
+        return names
+
+    def consume(self, node, bound, callables, *, deferred=False):
+        if node.type == "parenthesized_expression" and len(node.named_children) == 1:
+            self.consume(node.named_children[0], bound, callables, deferred=deferred)
+            return
+        if node.type in self._CALLABLES:
+            self.invoke(node, bound, callables, propagate=not deferred)
+            return
+        if node.type == "identifier":
+            name = self.value(node)
+            if name in callables:
+                self.invoke(callables[name], bound, callables, propagate=not deferred)
+            elif name not in bound:
+                if name in self.imports:
+                    target, exported = self.imports[name]
+                    if exported != "*":
+                        self.refs.add((exported, str(target)))
+                elif name not in self.import_bound:
+                    self.names.add(name)
+            return
+        if node.type != "member_expression":
+            return
+        if self.value(node) in bound:
+            return
+        receiver = node.child_by_field_name("object")
+        attribute = node.child_by_field_name("property")
+        if receiver is None or attribute is None or receiver.type != "identifier":
+            return
+        owner = self.value(receiver)
+        name = self.value(attribute)
+        if owner in bound:
+            return
+        if owner == "window" and owner not in self.import_bound and name not in bound:
+            self.names.add(name)
+        elif owner in self.imports:
+            target, exported = self.imports[owner]
+            if exported == "*":
+                self.refs.add((name, str(target)))
+
+    def invoke(self, node, bound, callables, *, propagate=True):
+        identity = (node.start_byte, node.end_byte, frozenset(bound), propagate)
+        if identity in self.visited:
+            if propagate:
+                bound.update(self.visited[identity])
+            return
+        # Repeated/recursive local calls cannot turn a bounded template read
+        # into an unbounded call-graph exploration.
+        if len(self.visited) >= 128:
+            return
+        self.visited[identity] = set()
+        body = node.child_by_field_name("body")
+        if body is None:
+            return
+        local, functions = self.bindings(body)
+        parameters = node.child_by_field_name("parameters")
+        if parameters is None:
+            parameters = node.child_by_field_name("parameter")
+        if parameters is not None:
+            pending = [parameters]
+            while pending:
+                child = pending.pop()
+                if child.type == "identifier":
+                    local.add(self.value(child))
+                pending.extend(child.named_children)
+        inherited = {
+            name: function for name, function in callables.items() if name not in local
+        }
+        inherited.update(functions)
+        nested = bound | local
+        self.walk(body, nested, inherited)
+        self.visited[identity] = nested - local
+        if propagate:
+            bound.update(nested - local)
+
+    def dom_listener(self, function, bound):
+        if function.type != "member_expression":
+            return False
+        if self.value(function) in bound:
+            return False
+        receiver = function.child_by_field_name("object")
+        attribute = function.child_by_field_name("property")
+        if (
+            receiver is None
+            or attribute is None
+            or self.value(attribute) != "addEventListener"
+        ):
+            return False
+        if receiver.type == "identifier":
+            name = self.value(receiver)
+            return (
+                name in {"document", "window"} and name not in bound | self.import_bound
+            )
+        if receiver.type != "call_expression":
+            return False
+        selector = receiver.child_by_field_name("function")
+        if selector is None or selector.type != "member_expression":
+            return False
+        owner = selector.child_by_field_name("object")
+        method = selector.child_by_field_name("property")
+        return (
+            owner is not None
+            and method is not None
+            and self.value(owner) == "document"
+            and "document" not in bound | self.import_bound
+            and self.value(method) in {"getElementById", "querySelector"}
+            and self.value(selector) not in bound
+        )
+
+    def truth(self, node):
+        if node is None:
+            return None
+        if node.type == "parenthesized_expression" and len(node.named_children) == 1:
+            return self.truth(node.named_children[0])
+        if node.type == "true":
+            return True
+        if node.type in {"false", "null"}:
+            return False
+        if node.type == "number":
+            literal = self.value(node).replace("_", "").removesuffix("n")
+            try:
+                return bool(int(literal, 0))
+            except ValueError:
+                try:
+                    return bool(float(literal))
+                except ValueError:
+                    return None
+        if node.type == "string":
+            literal = self.value(node)
+            if "\\" not in literal:
+                return len(literal) > 2
+        if node.type == "unary_expression":
+            operator = node.child_by_field_name("operator")
+            argument = node.child_by_field_name("argument")
+            value = self.truth(argument)
+            if value is not None and operator is not None:
+                if operator.type == "!":
+                    return not value
+                if operator.type in {"+", "-"}:
+                    return value
+        return None
+
+    @staticmethod
+    def join(bound, callables, alternatives):
+        bound.clear()
+        bound.update(set.intersection(*(state[0] for state in alternatives)))
+        common = dict(alternatives[0][1])
+        for _, functions in alternatives[1:]:
+            common = {
+                name: node
+                for name, node in common.items()
+                if functions.get(name) == node
+            }
+        callables.clear()
+        callables.update(common)
+
+    def walk_loop(self, node, bound, callables):
+        local, functions = self.bindings(node)
+        loop_bound = bound | local
+        loop_functions = {
+            name: function for name, function in callables.items() if name not in local
+        }
+        loop_functions.update(functions)
+        initializer = node.child_by_field_name("initializer")
+        condition = node.child_by_field_name("condition")
+        body = node.child_by_field_name("body")
+        increment = node.child_by_field_name("increment")
+        if node.type == "for_in_statement":
+            initializer = node.child_by_field_name("right")
+            loop_bound.update(self.written_names(node.child_by_field_name("left")))
+        if initializer is not None:
+            self.walk(initializer, loop_bound, loop_functions)
+        if condition is not None:
+            self.walk(condition, loop_bound, loop_functions)
+        if self.truth(condition) is False:
+            bound.update(loop_bound - local)
+            return
+        zero = (set(loop_bound), dict(loop_functions))
+        if body is not None:
+            self.walk(body, loop_bound, loop_functions)
+        if increment is not None:
+            self.walk(increment, loop_bound, loop_functions)
+        self.join(
+            loop_bound, loop_functions, [zero, (set(loop_bound), dict(loop_functions))]
+        )
+        bound.update(loop_bound - local)
+        for name in list(callables):
+            if name not in local and name not in loop_functions:
+                callables.pop(name, None)
+
+    def walk(self, node, bound, callables):
+        if node.type in self._CALLABLES | self._GENERATORS or node.type in {
+            "class_declaration",
+            "class",
+        }:
+            return
+        if node.type == "binary_expression":
+            operator = node.child_by_field_name("operator")
+            left = node.child_by_field_name("left")
+            right = node.child_by_field_name("right")
+            if (
+                operator is not None
+                and operator.type in {"&&", "||"}
+                and left is not None
+                and right is not None
+            ):
+                self.walk(left, bound, callables)
+                known = self.truth(left)
+                if (operator.type == "&&" and known is False) or (
+                    operator.type == "||" and known is True
+                ):
+                    return
+                if known is None:
+                    skipped = (set(bound), dict(callables))
+                    self.walk(right, bound, callables)
+                    self.join(
+                        bound, callables, [skipped, (set(bound), dict(callables))]
+                    )
+                else:
+                    self.walk(right, bound, callables)
+                return
+        if node.type == "if_statement":
+            condition = node.child_by_field_name("condition")
+            consequence = node.child_by_field_name("consequence")
+            alternative = node.child_by_field_name("alternative")
+            if condition is not None:
+                self.walk(condition, bound, callables)
+            known = self.truth(condition)
+            if known is not None:
+                selected = consequence
+                if known is False:
+                    selected = alternative
+                if selected is not None:
+                    self.walk(selected, bound, callables)
+                return
+            states = []
+            for branch in (consequence, alternative):
+                nested = set(bound)
+                functions = dict(callables)
+                if branch is not None:
+                    self.walk(branch, nested, functions)
+                states.append((nested, functions))
+            self.join(bound, callables, states)
+            return
+        if node.type in {"while_statement", "for_statement", "for_in_statement"}:
+            self.walk_loop(node, bound, callables)
+            return
+        if node.type in self._BLOCK_SCOPES:
+            local, functions = self.bindings(node)
+            nested = bound | local
+            inherited = {
+                name: function
+                for name, function in callables.items()
+                if name not in local
+            }
+            inherited.update(functions)
+            for child in node.named_children:
+                self.walk(child, nested, inherited)
+                if child.type in {"return_statement", "throw_statement"}:
+                    break
+            bound.update(nested - local)
+            for name in list(callables):
+                if name not in local and name not in inherited:
+                    callables.pop(name, None)
+            return
+        if node.type in {
+            "variable_declarator",
+            "assignment_expression",
+            "augmented_assignment_expression",
+        }:
+            name = node.child_by_field_name("name")
+            value = node.child_by_field_name("value")
+            if name is None:
+                name = node.child_by_field_name("left")
+                value = node.child_by_field_name("right")
+            if value is not None:
+                self.walk(value, bound, callables)
+                for written in self.written_names(name):
+                    bound.add(written)
+                    callables.pop(written, None)
+                    if node.type != "variable_declarator":
+                        self.writes.add(written)
+                if (
+                    name is not None
+                    and name.type == "identifier"
+                    and value.type in self._CALLABLES
+                ):
+                    callables[self.value(name)] = value
+            return
+        if node.type == "update_expression":
+            argument = node.child_by_field_name("argument")
+            for written in self.written_names(argument):
+                bound.add(written)
+                callables.pop(written, None)
+                self.writes.add(written)
+            return
+        if node.type == "call_expression":
+            function = node.child_by_field_name("function")
+            arguments = node.child_by_field_name("arguments")
+            if function is not None:
+                self.consume(function, bound, callables)
+                if arguments is not None and self.dom_listener(function, bound):
+                    values = arguments.named_children
+                    if len(values) >= 2 and values[0].type == "string":
+                        self.consume(values[1], bound, callables, deferred=True)
+        for child in node.named_children:
+            self.walk(child, bound, callables)
+            if node.type in {"program", "statement_block"} and child.type in {
+                "return_statement",
+                "throw_statement",
+            }:
+                break
+
+    def collect(self):
+        if self.root is None or not self.supported:
+            return set()
+        bound, functions = self.bindings(self.root)
+        active = bound | (self.inherited_bindings - self.import_bound)
+        self.walk(self.root, active, functions)
+        return active
+
+
+def _external_classic_summary(source):
+    """Immutable source facts; resolution and inline page state stay separate."""
+    if not _is_classic_script(source):
+        return True, frozenset(), frozenset()
+    external = _InlineScriptConsumers(source, lambda path: None, set())
+    if not external.supported:
+        return False, frozenset(), frozenset()
+    try:
+        external.collect()
+    except RecursionError:
+        return None
+    return (
+        True,
+        frozenset(_top_level_browser_names(source) - external.writes),
+        frozenset(external.writes),
+    )
+
+
+def _template_inline_script_effects(
+    root,
+    template_file,
+    source_cache,
+    scanned_scripts,
+    static_asset_index,
+    external_summaries,
+):
+    # Component single-file formats compile their scripts as modules, rather
+    # than executing them with the browser's HTML script-tag semantics.
+    if template_file.suffix.lower() not in {".html", ".htm"}:
+        return set(), set()
+    source = _read_text(root, template_file, source_cache)
+    if source is None:
+        return set(), set()
+    parser = _TemplateScripts()
+    try:
+        parser.feed(_strip_template_comments(source))
+        parser.close()
+    except (ValueError, RecursionError):
+        return set(), set()
+    entries = set()
+    refs = set()
+    globals_by_name = {}
+    page_bindings = set()
+
+    def resolve_import(path):
+        resolved = _resolve_script_src(
+            root, template_file.parent, path, static_asset_index=static_asset_index
+        )
+        if resolved in scanned_scripts:
+            return resolved
+        return None
+
+    for attributes, code in parser.scripts:
+        script_type = (attributes.get("type") or "").strip().lower()
+        is_module = script_type == "module"
+        if not is_module and script_type not in _CLASSIC_SCRIPT_TYPES:
+            continue
+        if "src" in attributes:
+            if is_module or "defer" in attributes or "async" in attributes:
+                continue
+            target = resolve_import(attributes["src"] or "")
+            if target is None:
+                continue
+            script_source = _read_text(root, target, source_cache)
+            if script_source is not None:
+                if target not in external_summaries:
+                    external_summaries[target] = _external_classic_summary(
+                        script_source
+                    )
+                summary = external_summaries[target]
+                if summary is None:
+                    continue
+                supported, names, writes = summary
+                if not supported:
+                    globals_by_name.clear()
+                    continue
+                for name in writes:
+                    globals_by_name.pop(name, None)
+                page_bindings.update(writes)
+                for name in names:
+                    globals_by_name.setdefault(name, set()).add(target)
+            continue
+        proof = _InlineScriptConsumers(code, resolve_import, page_bindings)
+        if not is_module and proof.module_syntax:
+            continue
+        try:
+            bindings = proof.collect()
+        except RecursionError:
+            continue
+        if is_module:
+            entries.update(proof.entries)
+            refs.update(proof.refs)
+        else:
+            page_bindings.update(bindings)
+        for name in proof.names:
+            targets = globals_by_name.get(name, set())
+            if len(targets) == 1:
+                refs.add((name, str(next(iter(targets)))))
+    return entries, refs
 
 
 def _strip_markdown_code(source: str) -> str:

@@ -19,6 +19,11 @@ from skylos.deadcode.string_references import (
 )
 from skylos.deadcode.framework_liveness import find_framework_entrypoint_targets
 from skylos.deadcode.external_protocols import find_external_protocol_callbacks
+from skylos.deadcode.unittest_liveness import find_unittest_entrypoint_targets
+from skylos.deadcode.django_converter_liveness import (
+    find_django_converter_classes,
+    find_django_converter_method_targets,
+)
 from skylos.analysis.ast_cache import releases_python_ast_cache
 from skylos.constants import AUTO_CALLED
 from skylos.deadcode.python_ast import ParsedPythonFile, parse_python_files
@@ -118,6 +123,7 @@ def apply_dead_code_liveness(
     *,
     exclude_folders: Iterable[str] | None = None,
     module_names: dict[str, str] | None = None,
+    django_converter_classes: frozenset[tuple[str, str]] | None = None,
 ) -> LivenessReport:
 
     report = LivenessReport()
@@ -145,6 +151,18 @@ def apply_dead_code_liveness(
     _rescue_registration_methods(classes, class_methods, report)
     for target, reason in find_framework_entrypoint_targets(
         definitions, parsed_files, root, exclude_folders=exclude_folders
+    ):
+        _mark(target, reason, report)
+    for target, reason in find_unittest_entrypoint_targets(
+        definitions, parsed_files, root
+    ):
+        _mark(target, reason, report)
+    if django_converter_classes is None:
+        django_converter_classes = find_django_converter_classes(
+            definitions, py_files, root
+        )
+    for target, reason in find_django_converter_method_targets(
+        definitions, django_converter_classes
     ):
         _mark(target, reason, report)
     for target in find_literal_plugin_registry_targets(definitions, parsed_files):
@@ -323,6 +341,8 @@ def _mark(defn: Any, reason: str, report: LivenessReport) -> None:
         refs[f"dead_code_liveness:{reason}"] = 1.0
         if reason.startswith(("flask_web_", "django_web_")):
             refs["framework_root"] = 1.0
+        if reason == "unittest_discovery":
+            refs["test_entrypoint"] = 1.0
     signals = getattr(defn, "framework_signals", None)
     if signals is not None and reason not in signals:
         signals.append(reason)

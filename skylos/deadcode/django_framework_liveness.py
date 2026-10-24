@@ -66,6 +66,25 @@ _MODEL_OVERRIDES = {
     "get_template_names",
 }
 _ADMIN_CONFIGS = {"django.contrib.admin", "django.contrib.admin.apps.AdminConfig"}
+# Django dispatches these methods on the instances in AUTHENTICATION_BACKENDS.
+# Merely looking like a backend, or appearing in another setting, is not proof.
+_AUTH_BACKEND_METHODS = {
+    "authenticate",
+    "aauthenticate",
+    "get_user",
+    "aget_user",
+    "get_user_permissions",
+    "aget_user_permissions",
+    "get_group_permissions",
+    "aget_group_permissions",
+    "get_all_permissions",
+    "aget_all_permissions",
+    "has_perm",
+    "ahas_perm",
+    "has_module_perms",
+    "ahas_module_perms",
+    "with_perm",
+}
 
 
 @dataclass
@@ -209,6 +228,179 @@ def _settings_activation(scanners, classes):
         apps = {_app_name(app, classes) for app in configured}
         activation.apps.update(app for app in apps if isinstance(app, str))
     return activation, targets
+
+
+def _auth_backend_names(scanner):
+    """Literal backend entries, excluding superseded straight-line settings."""
+    final = scanner.values.get("AUTHENTICATION_BACKENDS")
+    boundary = (getattr(final, "lineno", 0), getattr(final, "col_offset", 0))
+    if any(
+        position >= boundary
+        for position in scanner.authentication_backend_invalidations
+    ):
+        return set()
+    names = set()
+    for value in scanner.authentication_backend_assignments:
+        if (value.lineno, value.col_offset) >= boundary:
+            names.update(_member_names(value))
+    for value, position in scanner.authentication_backend_mutations:
+        if position < boundary:
+            continue
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            names.add(value.value)
+        else:
+            names.update(_member_names(value))
+    return {name for name in names if len(name) <= 300 and _DOTTED_PATH.fullmatch(name)}
+
+
+def _auth_class_binding(name, scanners, classes):
+    """Resolve import/assignment aliases to a module's surviving class object."""
+    seen = set()
+    while name not in seen and len(seen) < 32:
+        seen.add(name)
+        module, _, local = name.rpartition(".")
+        scanner = scanners.get(module)
+        if scanner is None:
+            return None
+        binding = scanner.bindings.get(local)
+        if binding == name:
+            if name in classes:
+                definition = scanner.definition(name, kind="class")
+                if definition is not None and _auth_plain_class(definition):
+                    return name
+            return None
+        if binding is None:
+            return None
+        name = binding
+    return None
+
+
+def _auth_plain_class(definition):
+    node = getattr(definition, "node", None)
+    return (
+        isinstance(node, ast.ClassDef) and not node.decorator_list and not node.keywords
+    )
+
+
+def _auth_class_mro(name, scanners, classes, trail=(), cache=None):
+    """C3 preserves which implementation Django actually obtains by getattr."""
+    if cache is None:
+        cache = {}
+    if name in cache:
+        cached = cache[name]
+        if cached is None:
+            return None
+        return list(cached)
+    if name in trail or len(trail) >= 32:
+        return None
+    if name not in classes:
+        return [name]
+    definition, bases, _, _ = classes[name]
+    if not _auth_plain_class(definition):
+        return None
+    module = definition.name.rpartition(".")[0]
+    scanner = scanners.get(module)
+    if scanner is None or scanner.definition(name, kind="class") is None:
+        return None
+    parents = []
+    sequences = []
+    for base in bases:
+        if base is None:
+            return None
+        if base not in classes:
+            resolved = _auth_class_binding(base, scanners, classes)
+            if resolved is not None:
+                base = resolved
+        parent_mro = _auth_class_mro(base, scanners, classes, (*trail, name), cache)
+        if parent_mro is None:
+            cache[name] = None
+            return None
+        parents.append(base)
+        sequences.append(parent_mro)
+    sequences.append(parents)
+    result = [name]
+    while any(sequences):
+        sequences = [sequence for sequence in sequences if sequence]
+        candidate = None
+        for sequence in sequences:
+            head = sequence[0]
+            if not any(head in other[1:] for other in sequences):
+                candidate = head
+                break
+        if candidate is None:
+            cache[name] = None
+            return None
+        result.append(candidate)
+        for sequence in sequences:
+            if sequence[0] == candidate:
+                sequence.pop(0)
+    cache[name] = tuple(result)
+    return result
+
+
+def _auth_backend_targets(activation, scanners, classes):
+    configured = {
+        backend
+        for name in activation.settings
+        if name in scanners
+        for backend in _auth_backend_names(scanners[name])
+    }
+    bindings = {}
+    for configured_name in configured:
+        name = _auth_class_binding(configured_name, scanners, classes)
+        if name is not None:
+            bindings[configured_name] = name
+    if not bindings:
+        return []
+    loaded = _loaded_modules(
+        activation.loaded
+        | {name.rpartition(".")[0] for name in (*bindings, *bindings.values())},
+        scanners,
+    )
+    overrides = {
+        member
+        for module in loaded
+        if module in scanners
+        for member in scanners[module].class_member_overrides
+    }
+    names = {
+        name
+        for configured_name, name in bindings.items()
+        if configured_name not in overrides and name not in overrides
+    }
+    targets = []
+    mros = {}
+    for name in names:
+        definition = classes[name][0]
+        targets.append((definition, "django_web_setting_reference"))
+        mro = _auth_class_mro(name, scanners, classes, cache=mros)
+        if mro is None:
+            continue
+        for method in _AUTH_BACKEND_METHODS:
+            for owner in mro:
+                if owner == "builtins.object":
+                    continue
+                if owner not in classes:
+                    # An opaque external base can own this attribute. Do not
+                    # claim a later local implementation is the selected one.
+                    break
+                if owner + "." + method in overrides:
+                    break
+                node = classes[owner][2].get(method)
+                if node is None:
+                    continue
+                module = owner.rpartition(".")[0]
+                if (
+                    isinstance(node, _FUNCTIONS)
+                    and node in scanners[module].protocol_methods
+                ):
+                    target = scanners[module].definition(
+                        owner + "." + method, line=node.lineno, kind="method"
+                    )
+                    if target is not None:
+                        targets.append((target, "django_web_auth_backend"))
+                break
+    return targets
 
 
 def _route_modules(activation, scanners):
@@ -414,6 +606,7 @@ def find_django_targets(
     activation.loaded = _loaded_modules(
         activation.settings | routes | launchers, scanners
     )
+    targets.extend(_auth_backend_targets(activation, scanners, classes))
     targets.extend(_admin_targets(activation, scanners, classes))
     project = _DjangoProject(
         index,

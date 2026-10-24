@@ -443,7 +443,6 @@ class FrameworkAwareVisitor:
             cls_name = self._simple_name(node.args[0])
             if cls_name:
                 self.django_path_converter_classes.add(cls_name)
-                self._mark_classes.add(cls_name)
                 self.is_framework_file = True
                 self.detected_frameworks.add("django")
 

@@ -275,11 +275,6 @@ _DJANGO_URLCONF_HANDLER_VARS = {
     "handler500",
 }
 
-_DJANGO_PATH_CONVERTER_METHODS = {
-    "to_python",
-    "to_url",
-}
-
 _GUNICORN_CONFIG_SETTINGS = {
     "access_log_format",
     "accesslog",
@@ -681,53 +676,20 @@ def _parent_simple_name(def_obj):
     return parent.split(".")[-1]
 
 
-def _class_declares_django_path_converter_protocol(analyzer, class_name):
-    has_regex = False
-    has_to_python = False
-    has_to_url = False
-
-    for candidate in getattr(analyzer, "defs", {}).values():
-        if "." not in str(getattr(candidate, "name", "")):
-            continue
-        if _parent_simple_name(candidate) != class_name:
-            continue
-        if candidate.type == "variable" and candidate.simple_name == "regex":
-            has_regex = True
-        elif candidate.type == "method" and candidate.simple_name == "to_python":
-            has_to_python = True
-        elif candidate.type == "method" and candidate.simple_name == "to_url":
-            has_to_url = True
-
-    return has_regex and has_to_python and has_to_url
-
-
 def _check_django_path_converter(def_obj, analyzer, framework):
-    converter_classes = set(
-        getattr(analyzer, "_global_django_path_converter_classes", set())
-    )
-    converter_classes.update(getattr(framework, "django_path_converter_classes", set()))
+    converter_classes = getattr(analyzer, "_global_django_path_converter_classes", set())
     if not converter_classes:
         return None
-
-    if def_obj.type == "class":
-        class_name = def_obj.simple_name
-    else:
-        class_name = _parent_simple_name(def_obj)
-    if class_name not in converter_classes:
+    if def_obj.type != "class" and not (
+        def_obj.type == "variable" and def_obj.simple_name == "regex"
+    ):
         return None
-    if not _class_declares_django_path_converter_protocol(analyzer, class_name):
+    key = str(Path(def_obj.filename).resolve()), def_obj.name
+    if key not in converter_classes:
         return None
-
     if def_obj.type == "class":
         return _suppress(def_obj, "Django path converter class")
-    if def_obj.type == "variable" and def_obj.simple_name == "regex":
-        return _suppress(def_obj, "Django path converter regex")
-    if (
-        def_obj.type == "method"
-        and def_obj.simple_name in _DJANGO_PATH_CONVERTER_METHODS
-    ):
-        return _suppress(def_obj, "Django path converter method")
-    return None
+    return _suppress(def_obj, "Django path converter regex")
 
 
 def _is_gunicorn_config_path(filename):
