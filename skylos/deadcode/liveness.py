@@ -22,7 +22,7 @@ from skylos.deadcode.external_protocols import find_external_protocol_callbacks
 from skylos.deadcode.unittest_liveness import find_unittest_entrypoint_targets
 from skylos.deadcode.django_signal_liveness import find_django_signal_targets
 from skylos.deadcode.django_converter_liveness import (
-    find_django_converter_classes,
+    _scan_django_converters,
     find_django_converter_method_targets,
 )
 from skylos.analysis.ast_cache import releases_python_ast_cache
@@ -161,9 +161,17 @@ def apply_dead_code_liveness(
     ):
         _mark(target, reason, report)
     if django_converter_classes is None:
-        django_converter_classes = find_django_converter_classes(
+        django_converter_classes, registration_targets = _scan_django_converters(
             definitions, py_files, root
         )
+    else:
+        # Classes may already be computed for framework penalties; still need
+        # uncalled registration wrappers from the same scan shape.
+        _, registration_targets = _scan_django_converters(
+            definitions, py_files, root
+        )
+    for target, reason in registration_targets:
+        _mark(target, reason, report)
     for target, reason in find_django_converter_method_targets(
         definitions, django_converter_classes
     ):

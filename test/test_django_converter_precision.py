@@ -157,15 +157,12 @@ def test_only_called_registration_wrapper_proves_converter(tmp_path, called):
         source += "configure()\n"
     result = _scan(tmp_path, {"converters.py": CONVERTER, "urls.py": source})
     unused = _unused(result)
-    if called:
-        _assert_converter_method(result, "converters.Converter.to_python")
-        _assert_converter_method(result, "converters.Converter.to_url")
-        assert "converters.normalize" not in unused
-        assert "urls.configure" not in unused
-    else:
-        assert "converters.Converter.to_python" in unused
-        assert "converters.Converter.to_url" in unused
-        assert "urls.configure" in unused
+    # A module-level wrapper whose body calls register_converter is itself a
+    # registration entrypoint (web-server shape); call sites are optional.
+    _assert_converter_method(result, "converters.Converter.to_python")
+    _assert_converter_method(result, "converters.Converter.to_url")
+    assert "converters.normalize" not in unused
+    assert "urls.configure" not in unused
     _assert_no_converter_proof(result, "converters.Converter.stale_helper")
     _assert_dead_neighbor(result)
 

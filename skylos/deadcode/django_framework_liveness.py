@@ -85,6 +85,31 @@ _AUTH_BACKEND_METHODS = {
     "ahas_module_perms",
     "with_perm",
 }
+# Django storage backends loaded from STORAGES / DEFAULT_FILE_STORAGE.
+_STORAGE_BACKEND_METHODS = {
+    "save",
+    "delete",
+    "exists",
+    "open",
+    "listdir",
+    "path",
+    "size",
+    "url",
+    "generate_filename",
+    "get_valid_name",
+    "get_available_name",
+    "get_accessed_time",
+    "get_created_time",
+    "get_modified_time",
+}
+# Classes constructed from LOGGING \"()\" / \"class\" paths.
+_LOGGING_FACTORY_METHODS = {
+    "filter",
+    "format",
+    "formatTime",
+    "formatException",
+    "formatStack",
+}
 
 
 @dataclass
@@ -180,8 +205,11 @@ def _looks_like_settings(scanner):
 
 
 def _settings_closure(roots, scanners):
-    """Settings modules plus the modules they star-import, and settings
-    variants (``settings/production.py``) that star-import them."""
+    """Settings modules plus modules they pull settings from.
+
+    Follows ``import *`` and named UPPER imports such as
+    ``from package.settings_logging import LOGGING`` (web-server shape).
+    """
     settings = set(roots)
     pending = list(roots)
     while pending:
@@ -189,6 +217,10 @@ def _settings_closure(roots, scanners):
         if scanner is None:
             continue
         for name in getattr(scanner, "star_imports", ()):
+            if name in scanners and name not in settings:
+                settings.add(name)
+                pending.append(name)
+        for name in getattr(scanner, "setting_imports", {}).values():
             if name in scanners and name not in settings:
                 settings.add(name)
                 pending.append(name)
@@ -201,6 +233,9 @@ def _settings_closure(roots, scanners):
             ):
                 continue
             if set(getattr(scanner, "star_imports", ())) & settings:
+                settings.add(name)
+                changed = True
+            if set(getattr(scanner, "setting_imports", {}).values()) & settings:
                 settings.add(name)
                 changed = True
     return settings
@@ -338,13 +373,31 @@ def _auth_class_mro(name, scanners, classes, trail=(), cache=None):
     return result
 
 
-def _auth_backend_targets(activation, scanners, classes):
-    configured = {
-        backend
-        for name in activation.settings
-        if name in scanners
-        for backend in _auth_backend_names(scanners[name])
-    }
+def _storage_backend_names(scanner):
+    """Literal storage backend class paths from STORAGES / DEFAULT_FILE_STORAGE."""
+    names = set()
+    for setting in ("DEFAULT_FILE_STORAGE", "STATICFILES_STORAGE"):
+        value = scanner.values.get(setting)
+        literal = _literal(value)
+        if isinstance(literal, str):
+            names.add(literal)
+    for values in getattr(scanner, "module_settings", {}).get("STORAGES", ()):
+        for node in ast.walk(values):
+            if not isinstance(node, ast.Dict):
+                continue
+            for key, value in zip(node.keys, node.values):
+                if (
+                    isinstance(key, ast.Constant)
+                    and key.value == "BACKEND"
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, str)
+                ):
+                    names.add(value.value)
+    return {name for name in names if len(name) <= 300 and _DOTTED_PATH.fullmatch(name)}
+
+
+def _protocol_method_targets(configured, scanners, classes, methods, reason, loaded):
+    """Mark bounded protocol methods on settings-wired plain classes."""
     bindings = {}
     for configured_name in configured:
         name = _auth_class_binding(configured_name, scanners, classes)
@@ -353,8 +406,7 @@ def _auth_backend_targets(activation, scanners, classes):
     if not bindings:
         return []
     loaded = _loaded_modules(
-        activation.loaded
-        | {name.rpartition(".")[0] for name in (*bindings, *bindings.values())},
+        loaded | {name.rpartition(".")[0] for name in (*bindings, *bindings.values())},
         scanners,
     )
     overrides = {
@@ -376,13 +428,11 @@ def _auth_backend_targets(activation, scanners, classes):
         mro = _auth_class_mro(name, scanners, classes, cache=mros)
         if mro is None:
             continue
-        for method in _AUTH_BACKEND_METHODS:
+        for method in methods:
             for owner in mro:
                 if owner == "builtins.object":
                     continue
                 if owner not in classes:
-                    # An opaque external base can own this attribute. Do not
-                    # claim a later local implementation is the selected one.
                     break
                 if owner + "." + method in overrides:
                     break
@@ -398,9 +448,78 @@ def _auth_backend_targets(activation, scanners, classes):
                         owner + "." + method, line=node.lineno, kind="method"
                     )
                     if target is not None:
-                        targets.append((target, "django_web_auth_backend"))
+                        targets.append((target, reason))
                 break
     return targets
+
+
+def _auth_backend_targets(activation, scanners, classes):
+    configured = {
+        backend
+        for name in activation.settings
+        if name in scanners
+        for backend in _auth_backend_names(scanners[name])
+    }
+    return _protocol_method_targets(
+        configured,
+        scanners,
+        classes,
+        _AUTH_BACKEND_METHODS,
+        "django_web_auth_backend",
+        activation.loaded,
+    )
+
+
+def _storage_backend_targets(activation, scanners, classes):
+    configured = {
+        backend
+        for name in activation.settings
+        if name in scanners
+        for backend in _storage_backend_names(scanners[name])
+    }
+    return _protocol_method_targets(
+        configured,
+        scanners,
+        classes,
+        _STORAGE_BACKEND_METHODS,
+        "django_web_storage_backend",
+        activation.loaded,
+    )
+
+
+def _logging_factory_names(scanner):
+    """Dotted class paths from LOGGING dict ``()`` / ``class`` entries."""
+    names = set()
+    for values in getattr(scanner, "module_settings", {}).get("LOGGING", ()):
+        for node in ast.walk(values):
+            if not isinstance(node, ast.Dict):
+                continue
+            for key, value in zip(node.keys, node.values):
+                if (
+                    isinstance(key, ast.Constant)
+                    and key.value in {"()", "class"}
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, str)
+                ):
+                    names.add(value.value)
+    return {name for name in names if len(name) <= 300 and _DOTTED_PATH.fullmatch(name)}
+
+
+def _logging_factory_targets(activation, scanners, classes):
+    configured = {
+        factory
+        for name in activation.settings
+        if name in scanners
+        for factory in _logging_factory_names(scanners[name])
+    }
+    return _protocol_method_targets(
+        configured,
+        scanners,
+        classes,
+        _LOGGING_FACTORY_METHODS,
+        "django_web_logging_factory",
+        activation.loaded,
+    )
 
 
 def _route_modules(activation, scanners):
@@ -607,6 +726,8 @@ def find_django_targets(
         activation.settings | routes | launchers, scanners
     )
     targets.extend(_auth_backend_targets(activation, scanners, classes))
+    targets.extend(_storage_backend_targets(activation, scanners, classes))
+    targets.extend(_logging_factory_targets(activation, scanners, classes))
     targets.extend(_admin_targets(activation, scanners, classes))
     project = _DjangoProject(
         index,

@@ -352,7 +352,11 @@ def _export_read_by_loading_tool(defn) -> bool:
 
 
 def demote_unconsumed_ts_exports(
-    defs, consumed_exports, lifecycle_entry_points=None, bundle_entry_points=None
+    defs,
+    consumed_exports,
+    lifecycle_entry_points=None,
+    bundle_entry_points=None,
+    browser_entry_points=None,
 ):
     lifecycle_entry_points = {
         os.path.realpath(str(path)) for path in lifecycle_entry_points or ()
@@ -361,6 +365,11 @@ def demote_unconsumed_ts_exports(
     # on a dynamically imported esbuild bundle), not module-internal API.
     bundle_entry_points = {
         os.path.realpath(str(path)) for path in bundle_entry_points or ()
+    }
+    # Django ``{% static %}`` / HTML script src entries load the file in the
+    # browser; their exports are page entrypoints even without an ES import.
+    browser_entry_points = {
+        os.path.realpath(str(path)) for path in browser_entry_points or ()
     }
     demoted = []
     for _name, defn in defs.items():
@@ -390,6 +399,8 @@ def demote_unconsumed_ts_exports(
             continue
 
         if os.path.realpath(str(defn.filename)) in bundle_entry_points:
+            continue
+        if os.path.realpath(str(defn.filename)) in browser_entry_points:
             continue
         if _export_read_by_loading_tool(defn):
             continue
