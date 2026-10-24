@@ -4,6 +4,11 @@ from typing import Any, Optional, NamedTuple
 from skylos.constants import PENALTIES, get_non_library_dir_kind, is_test_path
 from skylos.config import is_whitelisted
 from skylos.deadcode.config_entrypoints import configured_entrypoint_reason
+from skylos.deadcode.django_hook_proofs import (
+    django_clean_field,
+    django_hook_ancestry,
+    django_method_hook,
+)
 from skylos.analysis.known_patterns import (
     HARD_ENTRYPOINTS,
     PYTEST_HOOKS,
@@ -719,7 +724,7 @@ def _check_gunicorn_config(def_obj):
     return None
 
 
-def _check_django_drf_structural(def_obj, framework):
+def _check_django_drf_structural(def_obj, framework, analyzer=None):
     detected = getattr(framework, "detected_frameworks", set())
     simple_name = def_obj.simple_name
     _DJANGO_DRF_FRAMEWORKS = {
@@ -747,6 +752,17 @@ def _check_django_drf_structural(def_obj, framework):
         parent = def_obj.name.rsplit(".", 1)[0].split(".")[-1]
         for base in _class_base_names(parent, framework):
             if simple_name in _FRAMEWORK_CLASS_ATTRS.get(base, ()):
+                family = None
+                if base in DJANGO_MODEL_BASES:
+                    family = "model"
+                elif base in DJANGO_FORM_BASES:
+                    family = "form"
+                elif base in DJANGO_COMMAND_BASES:
+                    family = "command"
+                if family is not None and django_hook_ancestry(
+                    def_obj, analyzer, family
+                ) is False:
+                    continue
                 return _suppress(def_obj, f"{base} attribute read by the framework")
 
     if def_obj.type == "class" and (
@@ -775,20 +791,35 @@ def _check_django_drf_structural(def_obj, framework):
             return _suppress(def_obj)
 
     if def_obj.type == "variable" and simple_name in _DJANGO_COMMAND_ATTRS:
-        if _name_parent_has_base(def_obj, DJANGO_COMMAND_BASES, framework):
+        status = django_hook_ancestry(def_obj, analyzer, "command")
+        if status is True or (
+            status is None
+            and _name_parent_has_base(def_obj, DJANGO_COMMAND_BASES, framework)
+        ):
             return _suppress(def_obj, "Django management command attribute")
 
     if def_obj.type == "class":
         class_bases = _class_base_names(simple_name, framework)
 
+        proven_families = {
+            family: django_hook_ancestry(def_obj, analyzer, family)
+            for family in ("model", "form", "command")
+        }
+        if True in proven_families.values():
+            return _suppress(def_obj, "Django framework class")
+
+        legacy_bases = DJANGO_VIEW_BASES | DJANGO_ADMIN_BASES | DJANGO_APPCONFIG_BASES | DJANGO_MIDDLEWARE_BASES
+        uncertain_bases = set()
+        for family, bases in (
+            ("model", DJANGO_MODEL_BASES),
+            ("form", DJANGO_FORM_BASES),
+            ("command", DJANGO_COMMAND_BASES),
+        ):
+            if proven_families[family] is None:
+                uncertain_bases.update(bases)
+
         if "django" in detected and class_bases.intersection(
-            DJANGO_MODEL_BASES
-            | DJANGO_VIEW_BASES
-            | DJANGO_ADMIN_BASES
-            | DJANGO_FORM_BASES
-            | DJANGO_COMMAND_BASES
-            | DJANGO_APPCONFIG_BASES
-            | DJANGO_MIDDLEWARE_BASES
+            legacy_bases | uncertain_bases
         ):
             return _suppress(def_obj, "Django framework class")
 
@@ -829,39 +860,55 @@ def _is_django_migration_class(def_obj, framework):
 
 def _check_django_methods(def_obj, framework, analyzer=None):
     detected = getattr(framework, "detected_frameworks", set())
-    if "django" not in detected:
-        return None
-
     simple_name = def_obj.simple_name
 
     _DJANGO_CHECKS = [
-        (DJANGO_MODEL_METHODS, DJANGO_MODEL_BASES),
-        (DJANGO_VIEW_METHODS, DJANGO_VIEW_BASES),
-        (DJANGO_ADMIN_METHODS, DJANGO_ADMIN_BASES),
-        (DJANGO_FORM_METHODS, DJANGO_FORM_BASES),
-        (DJANGO_COMMAND_METHODS, DJANGO_COMMAND_BASES),
-        (DJANGO_APPCONFIG_METHODS, DJANGO_APPCONFIG_BASES),
-        (DJANGO_MIDDLEWARE_METHODS, DJANGO_MIDDLEWARE_BASES),
+        (DJANGO_MODEL_METHODS, DJANGO_MODEL_BASES, "model"),
+        (DJANGO_VIEW_METHODS, DJANGO_VIEW_BASES, None),
+        (DJANGO_ADMIN_METHODS, DJANGO_ADMIN_BASES, None),
+        (DJANGO_FORM_METHODS, DJANGO_FORM_BASES, "form"),
+        (DJANGO_COMMAND_METHODS, DJANGO_COMMAND_BASES, "command"),
+        (DJANGO_APPCONFIG_METHODS, DJANGO_APPCONFIG_BASES, None),
+        (DJANGO_MIDDLEWARE_METHODS, DJANGO_MIDDLEWARE_BASES, None),
     ]
 
-    for methods, bases in _DJANGO_CHECKS:
-        if simple_name in methods and has_base_class(def_obj, bases, framework):
+    for methods, bases, family in _DJANGO_CHECKS:
+        if simple_name not in methods or def_obj.type != "method":
+            continue
+        status = None
+        if family is not None:
+            status = django_method_hook(def_obj, analyzer)
+        if status is True:
+            return _suppress(def_obj, "Django framework hook")
+        if status is False:
+            continue
+        if "django" in detected and has_base_class(def_obj, bases, framework):
+            return _suppress(def_obj)
+
+    if def_obj.type == "method" and simple_name.startswith("clean_"):
+        status = django_hook_ancestry(def_obj, analyzer, "form")
+        if status is True:
+            if django_clean_field(def_obj, analyzer) is not False:
+                return _suppress(def_obj, "Django form field cleaning hook")
+        elif status is None and "django" in detected and has_base_class(
+            def_obj, DJANGO_FORM_BASES, framework
+        ):
             return _suppress(def_obj)
 
     if def_obj.type == "parameter" and "." in def_obj.name:
         parts = def_obj.name.split(".")
         parent_method = parts[-2] if len(parts) >= 2 else ""
-        if parent_method in DJANGO_COMMAND_METHODS and _name_parent_has_base(
-            def_obj,
-            DJANGO_COMMAND_BASES,
-            framework,
-        ):
-            return _suppress(def_obj, "Django management command parameter")
+        if parent_method in DJANGO_COMMAND_METHODS:
+            status = django_hook_ancestry(def_obj, analyzer, "command")
+            if status is True:
+                return _suppress(def_obj, "Django management command parameter")
+            if status is None and "django" in detected and _name_parent_has_base(
+                def_obj, DJANGO_COMMAND_BASES, framework
+            ):
+                return _suppress(def_obj, "Django management command parameter")
 
-    if simple_name.startswith("clean_") and has_base_class(
-        def_obj, DJANGO_FORM_BASES, framework
-    ):
-        return _suppress(def_obj)
+    if "django" not in detected:
+        return None
 
     if def_obj.type == "variable" and simple_name in _ADMIN_ATTRS:
         if "." in def_obj.name:
@@ -1671,7 +1718,7 @@ def apply_penalties(
     if _check_django_path_converter(def_obj, analyzer, framework) is True:
         return
 
-    if _check_django_drf_structural(def_obj, framework) is True:
+    if _check_django_drf_structural(def_obj, framework, analyzer) is True:
         return
 
     if _check_django_methods(def_obj, framework, analyzer) is True:
