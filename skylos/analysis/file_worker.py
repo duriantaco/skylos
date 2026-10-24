@@ -292,6 +292,7 @@ def _copy_framework_metadata(framework_visitor, visitor) -> None:
         ("orm_model_classes", set()),
         ("orm_declarative_fields", set()),
         ("type_alias_names", set()),
+        ("dynamic_local_functions", set()),
         ("abc_classes", set()),
         ("abstract_methods", {}),
         ("abc_implementers", {}),

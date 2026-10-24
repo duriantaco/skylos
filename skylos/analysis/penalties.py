@@ -1374,6 +1374,13 @@ def _check_settings_config(def_obj):
     return None
 
 
+def _is_function_local(def_obj, analyzer):
+    if "." not in def_obj.name:
+        return False
+    owner = analyzer.defs.get(def_obj.name.rsplit(".", 1)[0])
+    return owner is not None and owner.type in ("function", "method")
+
+
 def _check_data_model_fields(def_obj, analyzer, framework):
     simple_name = def_obj.simple_name
     _is_ts = str(def_obj.filename).endswith((".ts", ".tsx", ".js", ".jsx"))
@@ -1485,6 +1492,12 @@ def _check_data_model_fields(def_obj, analyzer, framework):
         fr = getattr(framework, "first_read_lineno", {}).get(def_obj.name)
         if fr is not None and fr >= def_obj.line:
             return _suppress(def_obj)
+
+    if def_obj.type == "variable" and _is_function_local(def_obj, analyzer):
+        owner = def_obj.name.rsplit(".", 1)[0]
+        if owner in getattr(framework, "dynamic_local_functions", ()):
+            return _suppress(def_obj, "function reads its locals dynamically")
+        return None
 
     if def_obj.type == "variable" and "." in def_obj.name:
         _, attr = def_obj.name.rsplit(".", 1)

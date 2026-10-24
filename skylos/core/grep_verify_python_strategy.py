@@ -6,6 +6,8 @@ from pathlib import Path
 
 from skylos.core.grep_search_state import grep_evidence_strategy, limit_grep_evidence
 from skylos.core.safe_cache_io import read_text_no_symlink
+from skylos.core.notebook_sources import is_notebook, notebook_tree
+from skylos.core.python_local_bindings import local_binding_reads
 
 from skylos.core.grep_verify_common import (
     _deduplicate_grep_results,
@@ -25,6 +27,9 @@ from skylos.core.grep_verify_strategies import (
     _MAX_RESULTS_PER_STRATEGY,
     _STRONG_ALIVE_STRATEGIES,
 )
+
+
+_PYTHON_REFERENCE_GLOBS = ["*.py", "*.pyi", "*.ipynb"]
 
 
 def _strategy_search(strategy, *args, **kwargs):
@@ -110,6 +115,11 @@ def _parsed_hit_files(hits: list[str], project_root: str):
         )
         if not source:
             continue
+        if is_notebook(file_path):
+            tree = notebook_tree(source)
+            if tree is not None:
+                yield path, tree
+            continue
         try:
             tree = ast.parse(source)
         except (SyntaxError, ValueError, RecursionError):
@@ -157,6 +167,45 @@ def _dotted_name(node: ast.AST) -> str | None:
         return None
     parts.append(node.id)
     return ".".join(reversed(parts))
+
+
+def _local_variable_evidence(
+    finding: dict,
+    project_root: str,
+    *,
+    simple_name: str,
+    file_path: str,
+    max_per_strategy: int,
+) -> dict[str, list[str]] | None:
+    """Complete evidence for a function-local variable, or None if not local.
+
+    Reads come from the owning function's syntax tree; other frames can read
+    the local only through ``f_locals`` with its name as a string.
+    """
+    line = finding.get("line")
+    reads = local_binding_reads(file_path, simple_name, line)
+    if reads is None:
+        return None
+    results: dict[str, list[str]] = {}
+    if reads:
+        results["references"] = [
+            f"{file_path}:{number}:{simple_name}" for number in reads[:max_per_strategy]
+        ]
+        return results
+    quotes = "\"'"
+    frame_reads = _strategy_search(
+        "string_dispatch",
+        rf"f_locals.*[{quotes}]{re.escape(simple_name)}[{quotes}]",
+        project_root,
+        use_regex=True,
+        include_globs=["*.py"],
+        max_results=max_per_strategy,
+    )
+    if frame_reads:
+        results["string_dispatch"] = limit_grep_evidence(
+            frame_reads, max_per_strategy, strategy="string_dispatch"
+        )
+    return results
 
 
 def multi_strategy_search(
@@ -207,6 +256,17 @@ def multi_strategy_search(
             max_per_strategy=max_per_strategy,
         )
 
+    if kind == "variable" and file_path:
+        local = _local_variable_evidence(
+            finding,
+            project_root,
+            simple_name=simple_name,
+            file_path=file_path,
+            max_per_strategy=max_per_strategy,
+        )
+        if local is not None:
+            return local
+
     def _should_early_exit() -> bool:
         if not stop_after_strong_evidence:
             return False
@@ -223,7 +283,7 @@ def multi_strategy_search(
             boundary_pattern,
             project_root,
             use_regex=True,
-            include_globs=["*.py", "*.pyi"],
+            include_globs=_PYTHON_REFERENCE_GLOBS,
             max_results=max_per_strategy * 2,
         )
         if refs:
@@ -247,13 +307,13 @@ def multi_strategy_search(
     if _should_early_exit():
         return _deduplicate_grep_results(results)
 
-    if full_name and full_name != simple_name:
+    if full_name and full_name != simple_name and kind != "import":
         qualified_refs = _strategy_search(
             "qualified_references",
             rf"\b{re.escape(full_name)}\b",
             project_root,
             use_regex=True,
-            include_globs=["*.py", "*.pyi"],
+            include_globs=_PYTHON_REFERENCE_GLOBS,
             max_results=max_per_strategy,
         )
         if qualified_refs:
@@ -275,7 +335,7 @@ def multi_strategy_search(
                 rf"from[[:space:]]+{re.escape(module_name)}[[:space:]]+import",
                 project_root,
                 use_regex=True,
-                include_globs=["*.py", "*.pyi"],
+                include_globs=_PYTHON_REFERENCE_GLOBS,
                 max_results=_MAX_IMPORTER_FILES,
             )
             importers = limit_grep_evidence(
@@ -293,7 +353,7 @@ def multi_strategy_search(
                 rf"\b{re.escape(module_name + '.' + simple_name)}\b",
                 project_root,
                 use_regex=True,
-                include_globs=["*.py", "*.pyi"],
+                include_globs=_PYTHON_REFERENCE_GLOBS,
                 max_results=max_per_strategy,
             )
             if not binding_refs:
@@ -317,10 +377,15 @@ def multi_strategy_search(
             call_pattern,
             project_root,
             use_regex=True,
-            include_globs=["*.py"],
+            include_globs=_PYTHON_REFERENCE_GLOBS,
             max_results=max_per_strategy,
         )
         if call_refs:
+            call_refs = [
+                ref
+                for ref in call_refs
+                if _is_python_source_reference(ref, simple_name)
+            ]
             call_refs = _filter_other_owner_same_method_calls(call_refs, finding)
             _defs, usages = filter_grep_results(call_refs, finding)
             if usages:
