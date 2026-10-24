@@ -163,6 +163,13 @@ FASTAPI_DEPENDENCY_CALLS = {"Depends", "Security"}
 FASTAPI_APP_FACTORIES = {"FastAPI"}
 FASTAPI_ROUTER_FACTORIES = {"APIRouter"}
 ANNOTATED_NAMES = {"Annotated"}
+_DJANGO_SIGNAL_MODULES = {
+    "django.core.signals",
+    "django.db.models.signals",
+    "django.db.backends.signals",
+    "django.contrib.auth.signals",
+    "django.test.signals",
+}
 
 
 class FrameworkAwareVisitor:
@@ -204,6 +211,13 @@ class FrameworkAwareVisitor:
         self._django_register_converter_names = set()
         self._django_urls_aliases = set()
         self._django_root_aliases = set()
+        self._django_signal_names = set()
+        self._django_signal_modules = set(_DJANGO_SIGNAL_MODULES)
+        self._django_signal_factories = set()
+        self._django_dispatch_modules = {
+            "django.dispatch",
+            "django.dispatch.dispatcher",
+        }
         self._function_depth = 0
         self._class_depth = 0
 
@@ -228,6 +242,13 @@ class FrameworkAwareVisitor:
         for alias in node.names:
             name = alias.name.lower()
             bound_name = alias.asname or alias.name.split(".", 1)[0]
+            if alias.name in _DJANGO_SIGNAL_MODULES and alias.asname:
+                self._django_signal_modules.add(alias.asname)
+            if (
+                alias.name in {"django.dispatch", "django.dispatch.dispatcher"}
+                and alias.asname
+            ):
+                self._django_dispatch_modules.add(alias.asname)
 
             if name == "django":
                 self._django_root_aliases.add(bound_name)
@@ -248,6 +269,18 @@ class FrameworkAwareVisitor:
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         if node.module:
+            for alias in node.names:
+                if node.module in _DJANGO_SIGNAL_MODULES:
+                    self._django_signal_names.add(alias.asname or alias.name)
+                if node.module + "." + alias.name in _DJANGO_SIGNAL_MODULES:
+                    self._django_signal_modules.add(alias.asname or alias.name)
+                if (
+                    node.module in {"django.dispatch", "django.dispatch.dispatcher"}
+                    and alias.name == "Signal"
+                ):
+                    self._django_signal_factories.add(alias.asname or alias.name)
+                if node.module == "django" and alias.name == "dispatch":
+                    self._django_dispatch_modules.add(alias.asname or alias.name)
             module_name = node.module.split(".")[0].lower()
             if module_name in FRAMEWORK_IMPORTS:
                 self.is_framework_file = True
@@ -298,11 +331,6 @@ class FrameworkAwareVisitor:
                 self.framework_decorated_lines.add(node.lineno)
                 is_route = True
 
-            if self._decorator_base_name_is(deco, "receiver"):
-                self.framework_decorated_lines.add(node.lineno)
-                self.is_framework_file = True
-                is_route = True
-
             if isinstance(deco, ast.Call):
                 dependencies = self._get_keyword_arg(deco, "dependencies")
                 if dependencies is not None:
@@ -342,6 +370,9 @@ class FrameworkAwareVisitor:
     visit_AsyncFunctionDef = visit_FunctionDef
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        for base in node.bases:
+            if self._is_django_signal_factory(base):
+                self._django_signal_factories.add(node.name)
         self.class_defs[node.name] = node
         for item in node.body:
             if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -387,6 +418,8 @@ class FrameworkAwareVisitor:
             self._class_depth -= 1
 
     def visit_Assign(self, node: ast.Assign) -> None:
+        for target in node.targets:
+            self._record_django_signal_alias(target, node.value)
         if isinstance(node.value, ast.Call):
             for target in node.targets:
                 if isinstance(target, ast.Name):
@@ -411,6 +444,7 @@ class FrameworkAwareVisitor:
         self.generic_visit(node)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        self._record_django_signal_alias(node.target, node.value)
         self._record_fastapi_dependency_alias(node.target, node.value)
         self.generic_visit(node)
 
@@ -458,6 +492,7 @@ class FrameworkAwareVisitor:
             isinstance(node.func, ast.Attribute)
             and node.func.attr == "connect"
             and node.args
+            and not self._is_django_signal_expression(node.func.value)
         ):
             func_name = self._simple_name(node.args[0])
             if func_name:
@@ -472,6 +507,31 @@ class FrameworkAwareVisitor:
                 self.objects_passed_as_args.add(kw.value.id)
 
         self.generic_visit(node)
+
+    def _is_django_signal_expression(self, node):
+        if isinstance(node, ast.Name):
+            return node.id in self._django_signal_names
+        if isinstance(node, ast.Attribute):
+            return self._expr_to_str(node.value) in self._django_signal_modules
+        return False
+
+    def _record_django_signal_alias(self, target, value):
+        if not isinstance(target, ast.Name):
+            return
+        if self._is_django_signal_expression(value):
+            self._django_signal_names.add(target.id)
+        if self._is_django_signal_factory(value):
+            self._django_signal_factories.add(target.id)
+        if isinstance(value, ast.Call):
+            if self._is_django_signal_factory(value.func):
+                self._django_signal_names.add(target.id)
+
+    def _is_django_signal_factory(self, node):
+        if isinstance(node, ast.Name):
+            return node.id in self._django_signal_factories
+        if isinstance(node, ast.Attribute) and node.attr == "Signal":
+            return self._expr_to_str(node.value) in self._django_dispatch_modules
+        return False
 
     def _record_drf_method_fields(self, node: ast.ClassDef) -> None:
         """``x = serializers.SerializerMethodField()`` makes DRF call

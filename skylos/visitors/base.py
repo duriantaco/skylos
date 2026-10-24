@@ -1538,7 +1538,6 @@ class Visitor(ast.NodeVisitor):
             "subscriber",
             "listener",
             "handler",
-            "receiver",
             "command",
             "route",
             "get",

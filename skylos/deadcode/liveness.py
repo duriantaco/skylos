@@ -20,6 +20,7 @@ from skylos.deadcode.string_references import (
 from skylos.deadcode.framework_liveness import find_framework_entrypoint_targets
 from skylos.deadcode.external_protocols import find_external_protocol_callbacks
 from skylos.deadcode.unittest_liveness import find_unittest_entrypoint_targets
+from skylos.deadcode.django_signal_liveness import find_django_signal_targets
 from skylos.deadcode.django_converter_liveness import (
     find_django_converter_classes,
     find_django_converter_method_targets,
@@ -152,6 +153,8 @@ def apply_dead_code_liveness(
     for target, reason in find_framework_entrypoint_targets(
         definitions, parsed_files, root, exclude_folders=exclude_folders
     ):
+        _mark(target, reason, report)
+    for target, reason in find_django_signal_targets(definitions, parsed_files, root):
         _mark(target, reason, report)
     for target, reason in find_unittest_entrypoint_targets(
         definitions, parsed_files, root
