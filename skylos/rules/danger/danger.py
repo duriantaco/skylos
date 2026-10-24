@@ -26,7 +26,9 @@ from skylos.security.command_guard import (
 from .calls import (
     DANGEROUS_CALLS,
     _is_test_module,
+    _call_low_risk_context,
     _call_severity,
+    _tls_verification_disabled,
     _matches_rule,
     _declares_non_security_use,
     _kw_equals,
@@ -175,20 +177,44 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                     if _declares_non_security_use(node):
                         continue
 
-                self.findings.append(
-                    {
-                        "rule_id": rule_id,
-                        "severity": _call_severity(node, severity, opts),
-                        "message": message,
-                        "file": str(self.file_path),
-                        "line": node.lineno,
-                        "col": node.col_offset,
-                        "symbol": self._current_symbol(),
-                    }
+                finding = {
+                    "rule_id": rule_id,
+                    "severity": _call_severity(node, severity, opts),
+                    "message": message,
+                    "file": str(self.file_path),
+                    "line": node.lineno,
+                    "col": node.col_offset,
+                    "symbol": self._current_symbol(),
+                }
+                low_risk = _call_low_risk_context(
+                    node, finding["severity"], severity, opts
                 )
+                if low_risk is not None:
+                    finding["low_risk_context"] = low_risk
+                self.findings.append(finding)
                 break
+            else:
+                self._append_tls_finding(name, node)
 
         self.generic_visit(node)
+
+    def _append_tls_finding(self, name: str, node: ast.Call) -> None:
+        if _is_test_module(self.file_path):
+            return
+        message = _tls_verification_disabled(node, name)
+        if message is None:
+            return
+        self.findings.append(
+            {
+                "rule_id": "SKY-D210",
+                "severity": "HIGH",
+                "message": message,
+                "file": str(self.file_path),
+                "line": node.lineno,
+                "col": node.col_offset,
+                "symbol": self._current_symbol(),
+            }
+        )
 
     def _append_shell_command_findings(self, name: str, node: ast.Call) -> None:
         if name == "os.system":

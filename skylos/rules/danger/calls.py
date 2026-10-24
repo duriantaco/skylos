@@ -2,6 +2,7 @@ import ast
 import re
 from skylos.rules.base import SkylosRule
 from skylos.security.command_guard import scan_shell_command
+from skylos.security.sensitive_data import first_sensitive_name
 from skylos.security.command_guard_types import (
     DATA_EXFIL_RULE,
     DESTRUCTIVE_RULE,
@@ -99,7 +100,7 @@ DANGEROUS_CALLS = {
         "SKY-D209",
         "HIGH",
         "subprocess call with shell=True",
-        {"kw_equals": {"shell": True}},
+        {"kw_equals": {"shell": True}, "constant_command_severity": "LOW"},
     ),
     # TLS verification off is a deployment hazard: like D346 (debug mode),
     # it is not reported in test modules (``production_only``), where it is
@@ -108,6 +109,12 @@ DANGEROUS_CALLS = {
         "SKY-D210",
         "HIGH",
         "requests call with verify=False",
+        {"kw_equals": {"verify": False}, "production_only": True},
+    ),
+    "httpx.*": (
+        "SKY-D210",
+        "HIGH",
+        "httpx call with verify=False",
         {"kw_equals": {"verify": False}, "production_only": True},
     ),
     "ssl._create_unverified_context": (
@@ -287,6 +294,205 @@ def _call_severity(node: ast.Call, severity: str, opts) -> str:
     ):
         return severity
     return lowered
+
+
+def _call_low_risk_context(node: ast.Call, severity: str, rule_severity: str, opts):
+    """Evidence that a true call finding is low-risk where it occurs: a fixed
+    shell command (Bandit rates these low), or a weak hash over data that is
+    neither a credential nor an identity (CodeQL reports only those)."""
+    if not opts:
+        return None
+    if opts.get("constant_command_severity") and severity != rule_severity:
+        return {
+            "reason": "constant-shell-command",
+            "detail": "the command is a fixed string with no input",
+        }
+    if opts.get("security_optout"):
+        names = _hash_input_names(node)
+        if names is None:
+            return None
+        sensitive = first_sensitive_name(names)
+        if sensitive is None:
+            return {
+                "reason": "non-sensitive-hash-input",
+                "detail": "the hashed data is not a credential, identity or certificate",
+            }
+    return None
+
+
+def _expression_names(node: ast.AST | None) -> list[str]:
+    names = []
+    if node is None:
+        return names
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name):
+            names.append(child.id)
+        elif isinstance(child, ast.Attribute):
+            names.append(child.attr)
+        elif isinstance(child, ast.Subscript):
+            key = child.slice
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                names.append(key.value)
+        elif isinstance(child, ast.Call):
+            for arg in child.args[:1]:
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    if (
+                        isinstance(child.func, ast.Attribute)
+                        and child.func.attr == "get"
+                    ):
+                        names.append(arg.value)
+    return names
+
+
+def _enclosing_scope(node: ast.AST) -> ast.AST | None:
+    current = getattr(node, "parent", None)
+    last = node
+    while current is not None:
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            return current
+        last = current
+        current = getattr(current, "parent", None)
+    return last
+
+
+def _bound_value_names(scope: ast.AST, name: str) -> list[str]:
+    names = []
+    for child in ast.walk(scope):
+        if isinstance(child, ast.Assign):
+            targets = child.targets
+        elif isinstance(child, (ast.AugAssign, ast.AnnAssign)):
+            targets = [child.target]
+        else:
+            continue
+        if any(isinstance(t, ast.Name) and t.id == name for t in targets):
+            names.extend(_expression_names(child.value))
+    return names
+
+
+def _hash_object_name(node: ast.Call) -> str | None:
+    parent = getattr(node, "parent", None)
+    if isinstance(parent, ast.Assign) and len(parent.targets) == 1:
+        target = parent.targets[0]
+        if isinstance(target, ast.Name):
+            return target.id
+    return None
+
+
+def _hash_input_names(node: ast.Call) -> list[str] | None:
+    """Names that feed the hashed bytes: the call's data argument, values
+    assigned to those names in the same scope, and ``.update()`` arguments on
+    the hash object. None when the data cannot be read from the code."""
+    data = list(node.args[:1])
+    for kw in node.keywords:
+        if kw.arg in {"string", "data"}:
+            data.append(kw.value)
+    scope = _enclosing_scope(node)
+    parent = getattr(node, "parent", None)
+    if (
+        isinstance(parent, ast.Attribute)
+        and parent.attr == "update"
+        and isinstance(getattr(parent, "parent", None), ast.Call)
+    ):
+        data.extend(parent.parent.args[:1])
+    hash_object = _hash_object_name(node)
+    if hash_object is not None and scope is not None:
+        for child in ast.walk(scope):
+            if (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and child.func.attr == "update"
+                and isinstance(child.func.value, ast.Name)
+                and child.func.value.id == hash_object
+            ):
+                data.extend(child.args[:1])
+    if not data:
+        return None
+    names = []
+    for expression in data:
+        names.extend(_expression_names(expression))
+    if scope is not None:
+        for name in list(names):
+            names.extend(_bound_value_names(scope, name))
+    return names
+
+
+_UNVERIFIED_SSL_PROTOCOLS = frozenset(
+    {
+        "PROTOCOL_TLS",
+        "PROTOCOL_SSLv23",
+        "PROTOCOL_SSLv2",
+        "PROTOCOL_SSLv3",
+        "PROTOCOL_TLSv1",
+        "PROTOCOL_TLSv1_1",
+        "PROTOCOL_TLSv1_2",
+    }
+)
+_VERIFYING_CONTEXT_SETUP = frozenset({"verify_mode", "check_hostname"})
+
+
+def _protocol_name(node: ast.AST | None) -> str | None:
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Name):
+        return node.id
+    return None
+
+
+def _context_is_configured(node: ast.Call) -> bool:
+    """The context is later given a verification mode, or a certificate to
+    serve, which makes it a server context that does not verify peers."""
+    target = _hash_object_name(node)
+    scope = _enclosing_scope(node)
+    if target is None or scope is None:
+        return False
+    for child in ast.walk(scope):
+        if isinstance(child, ast.Assign):
+            for assigned in child.targets:
+                if (
+                    isinstance(assigned, ast.Attribute)
+                    and assigned.attr in _VERIFYING_CONTEXT_SETUP
+                    and isinstance(assigned.value, ast.Name)
+                    and assigned.value.id == target
+                ):
+                    return True
+        if (
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and child.func.attr == "load_cert_chain"
+            and isinstance(child.func.value, ast.Name)
+            and child.func.value.id == target
+        ):
+            return True
+    return False
+
+
+def _tls_verification_disabled(node: ast.Call, name: str) -> str | None:
+    """``ssl.SSLContext(ssl.PROTOCOL_TLS)`` starts with ``CERT_NONE`` and no
+    hostname check (only ``PROTOCOL_TLS_CLIENT`` verifies by default), and
+    ``ignore_https_errors=True`` makes a browser accept any certificate."""
+    for kw in node.keywords:
+        if (
+            kw.arg == "ignore_https_errors"
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value is True
+        ):
+            return "Browser accepts any TLS certificate (ignore_https_errors=True)"
+    if name != "ssl.SSLContext":
+        return None
+    protocol = None
+    if node.args:
+        protocol = node.args[0]
+    for kw in node.keywords:
+        if kw.arg == "protocol":
+            protocol = kw.value
+    if (
+        protocol is not None
+        and _protocol_name(protocol) not in _UNVERIFIED_SSL_PROTOCOLS
+    ):
+        return None
+    if _context_is_configured(node):
+        return None
+    return "TLS context does not verify certificates or host names"
 
 
 def _kw_equals(node: ast.Call, requirements):
@@ -609,17 +815,33 @@ class DangerousCallsRule(SkylosRule):
                 if _declares_non_security_use(node):
                     continue
 
-            findings.append(
-                {
-                    "rule_id": rule_id,
-                    "severity": _call_severity(node, severity, opts),
-                    "message": message,
-                    "file": context.get("filename"),
-                    "line": node.lineno,
-                    "col": node.col_offset,
-                }
-            )
+            finding = {
+                "rule_id": rule_id,
+                "severity": _call_severity(node, severity, opts),
+                "message": message,
+                "file": context.get("filename"),
+                "line": node.lineno,
+                "col": node.col_offset,
+            }
+            low_risk = _call_low_risk_context(node, finding["severity"], severity, opts)
+            if low_risk is not None:
+                finding["low_risk_context"] = low_risk
+            findings.append(finding)
             break
+
+        if not findings and not _is_test_module(context.get("filename")):
+            unverified = _tls_verification_disabled(node, name)
+            if unverified is not None:
+                findings.append(
+                    {
+                        "rule_id": "SKY-D210",
+                        "severity": "HIGH",
+                        "message": unverified,
+                        "file": context.get("filename"),
+                        "line": node.lineno,
+                        "col": node.col_offset,
+                    }
+                )
 
         if not findings and _is_flask_style_debug_run(
             node, name, context.get("filename")

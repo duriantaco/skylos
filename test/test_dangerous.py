@@ -721,7 +721,26 @@ def unpack(archive, destination, member):
     assert archive_findings[0]["line"] == 7
 
 
-def test_archive_extract_recognizes_short_handle_from_zipfile(tmp_path):
+def test_archive_extract_recognizes_short_handle_from_tarfile(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_tar_extract.py",
+        """
+import tarfile
+
+def unpack(upload, destination, member):
+    with tarfile.open(upload) as tf:
+        tf.extract(member, path=destination)
+        tf.extract(member)
+""",
+    )
+    archive_findings = [
+        finding for finding in out if finding.get("rule_id") == "SKY-D326"
+    ]
+    assert [finding["line"] for finding in archive_findings] == [6, 7]
+
+
+def test_zipfile_short_handle_is_not_unsafe_extraction(tmp_path):
     out = _scan_one(
         tmp_path,
         "a_zip_extract.py",
@@ -734,10 +753,7 @@ def unpack(upload, destination, member):
         zf.extract(member)
 """,
     )
-    archive_findings = [
-        finding for finding in out if finding.get("rule_id") == "SKY-D326"
-    ]
-    assert [finding["line"] for finding in archive_findings] == [6, 7]
+    assert "SKY-D326" not in _rule_ids(out)
 
 
 def test_archive_extract_in_helper_keeps_one_arg_call(tmp_path):

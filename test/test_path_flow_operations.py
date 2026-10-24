@@ -40,6 +40,20 @@ def test_beautifulsoup_extract_without_member_is_not_archive_extraction(tmp_path
 def test_archive_extract_with_a_member_or_mapping_is_still_reported(tmp_path):
     out = _scan(
         tmp_path,
+        "import tarfile\n\n\n"
+        "def unpack(upload, member, options):\n"
+        "    with tarfile.open(upload) as tf:\n"
+        "        tf.extract(member)\n"
+        "        tf.extract(member=member)\n"
+        "        tf.extract(**options)\n"
+        "        tf.extractall()\n",
+    )
+    assert _lines(out, "SKY-D326") == [6, 7, 8, 9]
+
+
+def test_zipfile_extraction_cannot_escape_the_destination(tmp_path):
+    out = _scan(
+        tmp_path,
         "import zipfile\n\n\n"
         "def unpack(upload, member, options):\n"
         "    with zipfile.ZipFile(upload) as zf:\n"
@@ -48,7 +62,7 @@ def test_archive_extract_with_a_member_or_mapping_is_still_reported(tmp_path):
         "        zf.extract(**options)\n"
         "        zf.extractall()\n",
     )
-    assert _lines(out, "SKY-D326") == [6, 7, 8, 9]
+    assert _lines(out, "SKY-D326") == []
 
 
 def test_exclusive_create_mode_is_not_a_symlink_following_write(tmp_path):

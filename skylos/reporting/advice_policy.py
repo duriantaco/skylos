@@ -314,6 +314,7 @@ def apply_advice_policy(
     from skylos.reporting.finding_types import _finding_key
     from skylos.reporting.listing import (
         LISTING_VERSION,
+        demotion_reason,
         map_finding_rows,
         normalize_rule_ids,
     )
@@ -352,6 +353,9 @@ def apply_advice_policy(
         rule = str(row.get("rule_id") or row.get("id") or "").upper()
         if get_finding_type(decision_row, decision_category) != "advice":
             reason, listed = "finding", True
+            demoted = demotion_reason(decision_row)
+            if demoted and not all_advice and rule not in explicit_rules:
+                reason, listed = demoted, False
         elif rule in explicit_rules:
             reason, listed = "explicit_rule", True
         elif all_advice:
@@ -368,8 +372,80 @@ def apply_advice_policy(
     view = map_finding_rows(result, mark)
     if not all_advice:
         view = _combine_same_location_advice(view)
+        view = _combine_package_advisories(view, explicit_rules)
     view["listing_policy_version"] = LISTING_VERSION
     return refresh_listing_summary(view)
+
+
+def _combine_package_advisories(view, explicit_rules=()):
+    """List one dependency issue per installed package version.
+
+    Every advisory against one package version in one lockfile is fixed by the
+    same upgrade, so the worst one stays listed and names the others in
+    ``listing.combines``; each other is unlisted as ``combined`` with a
+    ``listing.lead`` reference, as the terminal table already prints them.
+    Gates read the raw advisories, and every record stays in the report."""
+    from skylos.reporting.advice_display import SEVERITY_RANK
+    from skylos.reporting.listing import COMBINED_REASON, SCA_RULE_PREFIX, is_listed
+
+    rows = view.get("dependency_vulnerabilities")
+    if not isinstance(rows, list):
+        return view
+    groups = {}
+    for index, row in enumerate(rows):
+        if not isinstance(row, Mapping) or not isinstance(row.get("listing"), Mapping):
+            continue
+        rule = _rule_id(row).upper()
+        if not rule.startswith(SCA_RULE_PREFIX) or rule in explicit_rules:
+            continue
+        if not is_listed(row, "dependency_vulnerabilities"):
+            continue
+        meta = row.get("metadata")
+        if not isinstance(meta, Mapping) or not meta.get("package_name"):
+            continue
+        key = (
+            str(row.get("file") or row.get("file_path") or ""),
+            str(meta.get("ecosystem") or ""),
+            str(meta.get("package_name")).lower(),
+            str(meta.get("package_version") or ""),
+        )
+        groups.setdefault(key, []).append(index)
+
+    def rank(index):
+        severity = str(rows[index].get("severity") or "").strip().upper()
+        return (SEVERITY_RANK.get(severity, len(SEVERITY_RANK)), index)
+
+    updated = list(rows)
+    for indices in groups.values():
+        if len(indices) < 2:
+            continue
+        lead_index = min(indices, key=rank)
+        lead = rows[lead_index]
+        reference = {
+            "rule_id": _rule_id(lead),
+            "file": lead.get("file") or lead.get("file_path"),
+            "line": lead.get("line"),
+        }
+        combines = []
+        for index in indices:
+            if index == lead_index:
+                continue
+            row = rows[index]
+            combines.append({"rule_id": _rule_id(row), "line": row.get("line")})
+            updated[index] = {
+                **row,
+                "listing": {
+                    **row["listing"],
+                    "listed": False,
+                    "reason": COMBINED_REASON,
+                    "lead": reference,
+                },
+            }
+        updated[lead_index] = {
+            **lead,
+            "listing": {**lead["listing"], "combines": combines},
+        }
+    return {**view, "dependency_vulnerabilities": updated}
 
 
 def _combine_same_location_advice(view):

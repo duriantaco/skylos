@@ -10,6 +10,18 @@ from skylos.reporting.rollups import FINDING_SECTIONS
 
 LISTING_VERSION = 1
 COMBINED_REASON = "combined"
+PUBLIC_IDENTIFIER_REASON = "likely-public-identifier"
+LOW_RISK_REASON = "low-risk-context"
+SCA_RULE_PREFIX = "SKY-SCA-"
+SCA_LOW_RISK_REASONS = frozenset({"dev-only-dependency"})
+LOW_RISK_REASONS = {
+    "SKY-D292": frozenset({"github-owned-action-tag"}),
+    "SKY-D299": frozenset({"non-credential-secret"}),
+    "SKY-D203": frozenset({"constant-shell-command"}),
+    "SKY-D209": frozenset({"constant-shell-command"}),
+    "SKY-D207": frozenset({"non-sensitive-hash-input"}),
+    "SKY-D208": frozenset({"non-sensitive-hash-input"}),
+}
 _RULE_ID = re.compile(r"SKY-[A-Z0-9]+\Z")
 
 
@@ -70,14 +82,69 @@ def is_combined(finding):
     return mark is not None and not mark["listed"] and mark["reason"] == COMBINED_REASON
 
 
-def is_listed(finding, category=None, *, explicit_rules=()):
-    """Unknown metadata and risk/custom findings remain visible and enforceable."""
-    if (
-        not isinstance(finding, Mapping)
-        or get_finding_type(finding, category) != "advice"
+def is_demoted_secret(finding):
+    """A secret candidate the scanner saw as a public identifier: hidden from
+    the default list only. Gates count raw secrets, so it stays enforced."""
+    if not isinstance(finding, Mapping) or not finding.get(
+        "public_identifier_evidence"
     ):
+        return False
+    return str(finding.get("rule_id") or "").upper() == "SKY-S101"
+
+
+def low_risk_context(finding):
+    """The detector's evidence that a true risk finding is low-risk where it
+    occurs, or None. Only the reasons a rule's own detector can prove count,
+    so a finding cannot be hidden by a reason another rule defines."""
+    if not isinstance(finding, Mapping):
+        return None
+    context = finding.get("low_risk_context")
+    if not isinstance(context, Mapping):
+        return None
+    rule = str(finding.get("rule_id") or "").upper()
+    if rule.startswith(SCA_RULE_PREFIX):
+        allowed = SCA_LOW_RISK_REASONS
+    else:
+        allowed = LOW_RISK_REASONS.get(rule, frozenset())
+    if context.get("reason") in allowed:
+        return context
+    return None
+
+
+def demotion_reason(finding):
+    """The listing reason a risk finding is hidden under by default, or None."""
+    if is_demoted_secret(finding):
+        return PUBLIC_IDENTIFIER_REASON
+    if low_risk_context(finding) is not None:
+        return LOW_RISK_REASON
+    return None
+
+
+def is_combined_advisory(finding):
+    """One advisory of a package version that lists once under its lead."""
+    if not is_combined(finding):
+        return False
+    return str(finding.get("rule_id") or "").upper().startswith(SCA_RULE_PREFIX)
+
+
+def is_listed(finding, category=None, *, explicit_rules=()):
+    """Unknown metadata and risk/custom findings remain visible. A risk
+    finding is hidden only for a demotion its detector proved (a likely
+    public identifier, a low-risk context) or as one advisory of a package
+    already listed; gates count raw results, so it stays enforced."""
+    if not isinstance(finding, Mapping):
         return True
     rule = str(finding.get("rule_id") or finding.get("id") or "").upper()
+    if get_finding_type(finding, category) != "advice":
+        if rule in explicit_rules:
+            return True
+        mark = listing_decision(finding)
+        if mark is None or mark["listed"]:
+            return True
+        if is_combined_advisory(finding):
+            return False
+        reason = demotion_reason(finding)
+        return reason is None or mark["reason"] != reason
     if rule in explicit_rules:
         return True
     mark = listing_decision(finding)

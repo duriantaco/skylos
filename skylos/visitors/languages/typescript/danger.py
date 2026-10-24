@@ -14,10 +14,13 @@ from skylos.constants import (
     get_non_library_dir_kind,
 )
 from skylos.rules.secrets import (
+    _looks_like_ordered_character_set,
     is_client_exposure_context,
     is_public_client_env_name,
     iter_sensitive_client_env_references,
 )
+from skylos.rules import secret_shapes
+from skylos.security.sensitive_data import first_sensitive_name
 from skylos.security.command_guard import findings_for_command, is_external_url
 from skylos.visitors.languages.statement_scan import iter_semicolon_assignments
 from skylos.visitors.languages.typescript.security_flow import build_security_flow
@@ -392,6 +395,8 @@ _SERVER_GLOBAL_RE = re.compile(
     r"\b(?:process\.env|require\s*\(|module\.exports|exports\.|"
     r"createServer|express\s*\(|fastify\s*\(|app\.(?:get|post|put|patch|delete))\b"
 )
+
+
 
 
 def _shannon_entropy(s: str) -> float:
@@ -2453,17 +2458,29 @@ def scan_danger(
                     and len(text) >= MIN_LONG_SECRET_LENGTH
                     and all(c in _BASE64_CHARS for c in text)
                     and _shannon_entropy(text) > ENTROPY_THRESHOLD
-                ):
-                    findings.append(
-                        {
-                            "rule_id": "SKY-S101",
-                            "severity": "HIGH",
-                            "message": "High-entropy string detected — possible hardcoded secret. Use environment variables instead.",
-                            "file": str(file_path),
-                            "line": node.start_point[0] + 1,
-                            "col": 0,
-                        }
+                    and not _looks_like_ordered_character_set(
+                        text, min_entropy=ENTROPY_THRESHOLD
                     )
+                ):
+                    entropy_finding = {
+                        "rule_id": "SKY-S101",
+                        "severity": "HIGH",
+                        "message": "High-entropy string detected — possible hardcoded secret. Use environment variables instead.",
+                        "file": str(file_path),
+                        "line": node.start_point[0] + 1,
+                        "col": 0,
+                    }
+                    line_start = source_bytes.rfind(b"\n", 0, node.start_byte) + 1
+                    prefix = source_bytes[line_start : node.start_byte].decode(
+                        "utf-8", "replace"
+                    )
+                    if secret_shapes.is_character_table(
+                        text
+                    ) and not secret_shapes.names_a_credential(prefix):
+                        entropy_finding["public_identifier_evidence"] = (
+                            "each character appears once: an encoding alphabet"
+                        )
+                    findings.append(entropy_finding)
 
             # Hardcoded internal URL (SKY-D248)
             if not is_test_file and len(text) >= MIN_SECRET_LENGTH:
@@ -2526,16 +2543,21 @@ def scan_danger(
                 text = _get_text(source_bytes, child).strip("'\"")
                 if text in ("md5", "sha1"):
                     rule = "SKY-D207" if text == "md5" else "SKY-D208"
-                    findings.append(
-                        {
-                            "rule_id": rule,
-                            "severity": "MEDIUM",
-                            "message": f"Weak hash algorithm {text.upper()}. Use SHA-256 or better.",
-                            "file": str(file_path),
-                            "line": node.start_point[0] + 1,
-                            "col": 0,
+                    weak_hash = {
+                        "rule_id": rule,
+                        "severity": "MEDIUM",
+                        "message": f"Weak hash algorithm {text.upper()}. Use SHA-256 or better.",
+                        "file": str(file_path),
+                        "line": node.start_point[0] + 1,
+                        "col": 0,
+                    }
+                    hashed = _chained_hash_input_names(node, source_bytes)
+                    if hashed and first_sensitive_name(hashed) is None:
+                        weak_hash["low_risk_context"] = {
+                            "reason": "non-sensitive-hash-input",
+                            "detail": "the hashed data is not a credential, identity or certificate",
                         }
-                    )
+                    findings.append(weak_hash)
                 break
 
     # --- Open redirect (SKY-D230) ---
@@ -11475,6 +11497,51 @@ def _run_batch(root_node, lang: Language, key: str, pattern: str) -> dict[str, l
     except Exception:
         return {}
 
+
+
+def _identifiers_in(node, source_bytes) -> list[str]:
+    names = []
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type in ("identifier", "property_identifier", "shorthand_property_identifier"):
+            names.append(_get_text(source_bytes, current))
+        stack.extend(current.children)
+    return names
+
+
+def _declared_value_names(name: str, source_bytes) -> list[str]:
+    source = source_bytes.decode("utf-8", errors="replace")
+    pattern = re.compile(
+        r"\b(?:const|let|var)\s+" + re.escape(name) + r"\s*=\s*([^;\n]{1,400})"
+    )
+    names = []
+    for match in pattern.finditer(source):
+        names.extend(re.findall(r"[A-Za-z_$][A-Za-z0-9_$]*", match.group(1)))
+    return names
+
+
+def _chained_hash_input_names(hash_args, source_bytes) -> list[str] | None:
+    """``createHash('md5').update(data)``: the names that feed the hash,
+    with one step back through ``const data = ...``. None when the data is
+    not chained onto the call."""
+    create_call = hash_args.parent
+    member = getattr(create_call, "parent", None)
+    if member is None or member.type != "member_expression":
+        return None
+    prop = member.child_by_field_name("property")
+    if prop is None or _get_text(source_bytes, prop) != "update":
+        return None
+    update_call = member.parent
+    if update_call is None or update_call.type != "call_expression":
+        return None
+    arguments = update_call.child_by_field_name("arguments")
+    if arguments is None:
+        return None
+    names = _identifiers_in(arguments, source_bytes)
+    for name in list(names):
+        names.extend(_declared_value_names(name, source_bytes))
+    return names
 
 def _first_real_arg(args_node) -> object | None:
     for child in args_node.children:
