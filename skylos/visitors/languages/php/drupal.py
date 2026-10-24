@@ -35,6 +35,10 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
+import yaml
+
+from .core import PhpCore
+
 _MAX_YAML_BYTES = 1_000_000
 _MAX_YAML_FILES = 2_000
 _SKIPPED_DIRS = {".git", "node_modules", "vendor"}
@@ -51,7 +55,15 @@ _INFO_SUFFIX = ".info.yml"
 _YAML_CLASS_RE = re.compile(
     r"\\?(Drupal(?:\\[A-Za-z_][A-Za-z0-9_]*)+)(?:::?([A-Za-z_][A-Za-z0-9_]*))?"
 )
-_ANNOTATION_RE = re.compile(r"@[A-Z][A-Za-z0-9_\\]*\s*\(")
+_ANNOTATION_RE = re.compile(r"@([A-Z\\][A-Za-z0-9_\\]*)\s*\(")
+_PLUGIN_METADATA_BASES = {
+    "Drupal.Component.Plugin.Attribute.AttributeBase",
+    "Drupal.Component.Plugin.Attribute.AttributeInterface",
+    "Drupal.Component.Plugin.Attribute.Plugin",
+    "Drupal.Component.Plugin.Attribute.PluginID",
+    "Drupal.Component.Annotation.AnnotationInterface",
+    "Drupal.Component.Annotation.Plugin",
+}
 
 
 @lru_cache(maxsize=4096)
@@ -79,7 +91,9 @@ def _is_convention_class(root: str, relative: str, name: str) -> bool:
         return True
     if relative == f"src/{name}.php" and name in _service_provider_names(root):
         return True
-    constraint = name[: -len("Validator")] if name.endswith("Validator") else ""
+    constraint = ""
+    if name.endswith("Validator"):
+        constraint = name[: -len("Validator")]
     return bool(constraint) and os.path.isfile(
         os.path.join(root, os.path.dirname(relative), f"{constraint}.php")
     )
@@ -110,12 +124,39 @@ def _yaml_files(root: str):
 
 def _read_yaml(path: str) -> str:
     try:
-        data = Path(path).read_bytes()[
-            :_MAX_YAML_BYTES
-        ]  # skylos: ignore[SKY-D215] analyzer reads the scanned extension's YAML
+        with (
+            open(path, "rb") as handle
+        ):  # skylos: ignore[SKY-D215] analyzer reads the scanned extension's metadata
+            data = handle.read(_MAX_YAML_BYTES + 1)
     except OSError:
         return ""
+    if len(data) > _MAX_YAML_BYTES:
+        return ""
     return data.decode("utf-8", errors="replace")
+
+
+def _yaml_scalars(text: str):
+    # Compose nodes rather than constructing Python objects. A visited set
+    # bounds recursive aliases and avoids expanding aliases into a large tree.
+    try:
+        document = yaml.compose(text, Loader=yaml.SafeLoader)
+    except (yaml.YAMLError, RecursionError):
+        return
+    pending = []
+    if document is not None:
+        pending.append(document)
+    seen: set[int] = set()
+    while pending:
+        node = pending.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        if isinstance(node, yaml.ScalarNode) and node.tag == "tag:yaml.org,2002:str":
+            yield node.value
+        elif isinstance(node, yaml.MappingNode):
+            pending.extend(child for pair in node.value for child in pair)
+        elif isinstance(node, yaml.SequenceNode):
+            pending.extend(node.value)
 
 
 @lru_cache(maxsize=256)
@@ -125,12 +166,34 @@ def _yaml_references(root: str) -> frozenset[str]:
     for count, path in enumerate(_yaml_files(root)):
         if count >= _MAX_YAML_FILES:
             break
-        for match in _YAML_CLASS_RE.finditer(_read_yaml(path).replace("\\\\", "\\")):
+        for value in _yaml_scalars(_read_yaml(path)):
+            match = _YAML_CLASS_RE.fullmatch(value.strip())
+            if match is None:
+                continue
             dotted = match.group(1).replace("\\", ".")
             names.add(dotted)
             if match.group(2):
                 names.add(f"{dotted}.{match.group(2)}")
     return frozenset(names)
+
+
+def clear_drupal_cache() -> None:
+    """Discard project metadata between analyzer runs."""
+    _machine_names.cache_clear()
+    _yaml_references.cache_clear()
+    _local_metadata_classes.cache_clear()
+
+
+@lru_cache(maxsize=2048)
+def _local_metadata_classes(path: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Immutable local class inheritance summaries, reused within one scan."""
+    core = PhpCore(path, _read_yaml(path).encode("utf-8"))
+    core.scan()
+    return tuple(
+        (definition.name, tuple(getattr(definition, "base_classes", ())))
+        for definition in core.defs
+        if definition.type == "class"
+    )
 
 
 def _text(node, source: bytes) -> str:
@@ -152,65 +215,326 @@ def _attribute_names(node, source: bytes) -> set[str]:
     for attribute_list in (c for c in node.children if c.type == "attribute_list"):
         for attribute in _descendants(attribute_list, "attribute"):
             name = next(
-                (c for c in attribute.children if c.type in {"name", "qualified_name"}),
+                (
+                    c
+                    for c in attribute.children
+                    if c.type in {"name", "qualified_name", "relative_name"}
+                ),
                 None,
             )
             if name is not None:
-                names.add(_text(name, source).rpartition("\\")[2])
+                names.add(_text(name, source))
     return names
 
 
-def _has_annotation(node, source: bytes) -> bool:
+def _annotation_names(node, source: bytes) -> set[str]:
     previous = node.prev_named_sibling
     if previous is None or previous.type != "comment":
-        return False
+        return set()
     text = _text(previous, source)
-    return text.startswith("/**") and bool(_ANNOTATION_RE.search(text))
+    if text.startswith("/**"):
+        return set(_ANNOTATION_RE.findall(text))
+    return set()
+
+
+def _class_aliases(class_node, source: bytes) -> dict[str, str]:
+    """Class imports in this namespace, including grouped use declarations."""
+    scope = class_node.parent
+    while scope is not None and scope.type not in {"program", "compound_statement"}:
+        scope = scope.parent
+    if scope is None:
+        return {}
+    siblings = scope.named_children
+    if scope.type == "program":
+        # Semicolon namespaces share the program node but never their imports.
+        boundaries = [
+            index
+            for index, child in enumerate(siblings)
+            if child.type == "namespace_definition"
+        ]
+        start = max(
+            (
+                index
+                for index in boundaries
+                if siblings[index].start_byte < class_node.start_byte
+            ),
+            default=-1,
+        )
+        end = next((index for index in boundaries if index > start), len(siblings))
+        siblings = siblings[start + 1 : end]
+    aliases: dict[str, str] = {}
+    for declaration in siblings:
+        if declaration.type != "namespace_use_declaration":
+            continue
+        declaration_kind = declaration.child_by_field_name("type")
+        if declaration_kind is not None:
+            continue
+        prefix_node = next(
+            (child for child in declaration.children if child.type == "namespace_name"),
+            None,
+        )
+        prefix = ""
+        if prefix_node is not None:
+            prefix = _text(prefix_node, source) + "\\"
+        for clause in _descendants(declaration, "namespace_use_clause"):
+            if clause.child_by_field_name("type") is not None:
+                continue
+            target_node = clause.child_by_field_name("name") or next(
+                (
+                    child
+                    for child in clause.children
+                    if child.type in {"qualified_name", "name"}
+                ),
+                None,
+            )
+            if target_node is None:
+                continue
+            target = prefix + _text(target_node, source)
+            alias_node = clause.child_by_field_name("alias")
+            if alias_node is not None:
+                alias = _text(alias_node, source)
+            else:
+                alias = target.rpartition("\\")[2]
+            aliases[alias.casefold()] = target.lstrip("\\").replace("\\", ".")
+    return aliases
+
+
+def _resolve_metadata(name: str, aliases: dict[str, str], namespace: str) -> str | None:
+    if name.startswith("\\"):
+        return name.lstrip("\\").replace("\\", ".")
+    first, _, rest = name.partition("\\")
+    if first == "namespace":
+        return ".".join(part for part in (namespace, rest.replace("\\", ".")) if part)
+    if first.casefold() in aliases:
+        return ".".join(
+            part
+            for part in (aliases[first.casefold()], rest.replace("\\", "."))
+            if part
+        )
+    if "\\" in name:
+        return ".".join(part for part in (namespace, name.replace("\\", ".")) if part)
+    return None
+
+
+def _is_plugin_type(qualified: str, root: str, seen: set[str] | None = None) -> bool:
+    if qualified in _PLUGIN_METADATA_BASES:
+        return True
+    parts = qualified.split(".")
+    if len(parts) < 3 or parts[0] != "Drupal":
+        return False
+    metadata_namespace = bool({"Attribute", "Annotation"}.intersection(parts[2:-1]))
+    if parts[1] not in _machine_names(root):
+        # The provider's source is outside this extension (core or contrib).
+        return metadata_namespace
+    if seen is None and not metadata_namespace:
+        return False
+    path = Path(root, "src", *parts[2:]).with_suffix(".php")
+    if not path.is_file():
+        return False
+    if seen is None:
+        seen = set()
+    if qualified in seen or len(seen) >= 16:
+        return False
+    seen.add(qualified)
+    bases = dict(_local_metadata_classes(str(path))).get(qualified)
+    if bases is None:
+        return False
+    return any(_is_plugin_type(base, root, seen) for base in bases)
+
+
+def _is_plugin_metadata(
+    name: str,
+    aliases: dict[str, str],
+    root: str,
+    relative: str,
+    kind: str,
+    namespace: str,
+    local_classes: dict,
+) -> bool:
+    qualified = _resolve_metadata(name, aliases, namespace)
+    local_name = qualified
+    if local_name is None:
+        local_name = ".".join(part for part in (namespace, name) if part)
+    if local_name in local_classes:
+        return _is_local_plugin_type(local_name, local_classes, root, set())
+    if qualified is not None:
+        return _is_plugin_type(qualified, root)
+    # Legacy annotations omit use statements: their manager supplies the
+    # provider namespace. Prefer a local definition when it is available.
+    for machine in _machine_names(root):
+        path = Path(root, "src", kind, f"{name}.php")
+        if path.is_file():
+            return _is_plugin_type(f"Drupal.{machine}.{kind}.{name}", root)
+    # Preserve the conventional short spellings used without imported core
+    # metadata, but a generic annotation is never discovery evidence.
+    if relative.startswith("src/Entity/"):
+        return name in {"EntityType", "ContentEntityType", "ConfigEntityType"}
+    parts = [
+        re.sub(r"[_-]", "", part).casefold()
+        for part in relative.removeprefix("src/Plugin/").split("/")[:-1]
+    ]
+    normalized_name = re.sub(r"[_-]", "", name).casefold()
+    for start in range(len(parts)):
+        joined = ""
+        for part in parts[start:]:
+            joined += part
+            if normalized_name in {joined, joined + "plugin"}:
+                return True
+    return False
+
+
+def _is_local_plugin_type(
+    qualified: str, local_classes: dict, root: str, seen: set[str]
+) -> bool:
+    """Honor actual class bindings before applying short metadata conventions."""
+    bases = local_classes.get(qualified)
+    if bases is None:
+        return _is_plugin_type(qualified, root, seen)
+    if qualified in seen or len(seen) >= 16:
+        return False
+    seen.add(qualified)
+    return any(_is_local_plugin_type(base, local_classes, root, seen) for base in bases)
+
+
+def _hook_attributes(
+    node,
+    source: bytes,
+    aliases: dict[str, str],
+    namespace: str,
+    local_classes: dict,
+    root: str,
+) -> bool:
+    hook_types = {
+        f"Drupal.Core.Hook.Attribute.{attribute}" for attribute in _HOOK_ATTRIBUTES
+    }
+    for name in _attribute_names(node, source):
+        qualified = _resolve_metadata(name, aliases, namespace)
+        local_name = qualified
+        if local_name is None:
+            local_name = ".".join(part for part in (namespace, name) if part)
+        binding = _local_hook_binding(local_name, local_classes, root, set())
+        if binding is not None:
+            if binding:
+                return True
+            continue
+        if qualified in hook_types:
+            return True
+        if name in _HOOK_ATTRIBUTES and name.casefold() not in aliases:
+            return True
+    return False
+
+
+def _local_hook_binding(
+    qualified: str, local_classes: dict, root: str, seen: set[str]
+) -> bool | None:
+    """Return an actual local Hook inheritance proof, or None without source."""
+    if qualified in seen or len(seen) >= 16:
+        return False
+    bases = local_classes.get(qualified)
+    if bases is None:
+        if qualified == "Drupal.Core.Hook.Attribute.Hook":
+            return True
+        parts = qualified.split(".")
+        if (
+            len(parts) < 3
+            or parts[0] != "Drupal"
+            or parts[1] not in _machine_names(root)
+        ):
+            return None
+        path = Path(root, "src", *parts[2:]).with_suffix(".php")
+        if not path.is_file():
+            return None
+        definitions = dict(_local_metadata_classes(str(path)))
+        bases = definitions.get(qualified)
+        if bases is None:
+            return False
+        local_classes = {**local_classes, **definitions}
+    seen.add(qualified)
+    return any(
+        _local_hook_binding(base, local_classes, root, seen) is True for base in bases
+    )
 
 
 def _name_line(node) -> int | None:
     name = next((c for c in node.children if c.type == "name"), None)
-    return name.start_point[0] + 1 if name is not None else None
+    if name is None:
+        return None
+    return name.start_point[0] + 1
 
 
-def _hook_method_lines(class_node, source: bytes) -> set[int]:
+def _hook_method_lines(
+    class_node,
+    source: bytes,
+    aliases: dict[str, str],
+    namespace: str,
+    local_classes: dict,
+    root: str,
+) -> set[int]:
     body = next((c for c in class_node.children if c.type == "declaration_list"), None)
-    methods = (
-        (c for c in body.children if c.type == "method_declaration") if body else ()
-    )
+    if body is None:
+        return set()
+    methods = (c for c in body.children if c.type == "method_declaration")
     return {
         line
         for method in methods
-        if _attribute_names(method, source) & _HOOK_ATTRIBUTES
+        if _hook_attributes(method, source, aliases, namespace, local_classes, root)
         and (line := _name_line(method)) is not None
     }
 
 
-def _is_discovered(class_node, source: bytes, relative: str) -> bool:
+def _is_discovered(
+    class_node,
+    source: bytes,
+    relative: str,
+    root: str,
+    aliases: dict[str, str],
+    namespace: str,
+    local_classes: dict,
+) -> bool:
     """A class a plugin manager, Drush or the hook system finds on its own."""
     attributes = _attribute_names(class_node, source)
-    if attributes & _HOOK_ATTRIBUTES:
+    if _hook_attributes(class_node, source, aliases, namespace, local_classes, root):
         return True
     if not relative.startswith(_DISCOVERY_DIRS):
         return False
     return (
-        bool(attributes)
-        or relative.startswith("src/Drush/")
-        or _has_annotation(class_node, source)
+        relative.startswith("src/Drush/")
+        or any(
+            _is_plugin_metadata(
+                name, aliases, root, relative, "Attribute", namespace, local_classes
+            )
+            for name in attributes
+        )
+        or any(
+            _is_plugin_metadata(
+                name, aliases, root, relative, "Annotation", namespace, local_classes
+            )
+            for name in _annotation_names(class_node, source)
+        )
     )
 
 
-def _attribute_root_lines(root_node, source: bytes, relative: str):
+def _attribute_root_lines(root_node, source: bytes, relative: str, root: str, defs):
     """``(lines of discovered classes, lines of #[Hook] methods)``."""
     classes: set[int] = set()
     hooks: set[int] = set()
+    class_names = {d.line: d.name for d in defs if d.type == "class"}
+    local_classes = {
+        d.name: tuple(getattr(d, "base_classes", ())) for d in defs if d.type == "class"
+    }
     for node in _descendants(root_node, "class_declaration"):
         line = _name_line(node)
         if line is None:
             continue
-        methods = _hook_method_lines(node, source)
+        aliases = _class_aliases(node, source)
+        namespace = class_names.get(line, "").rpartition(".")[0]
+        methods = _hook_method_lines(
+            node, source, aliases, namespace, local_classes, root
+        )
         hooks |= methods
-        if methods or _is_discovered(node, source, relative):
+        if methods or _is_discovered(
+            node, source, relative, root, aliases, namespace, local_classes
+        ):
             classes.add(line)
     return classes, hooks
 
@@ -264,10 +588,9 @@ def drupal_entrypoint_lines(file_path: str, defs, root_node, source: bytes) -> s
         }
     if root_node is None:
         return hook_lines
-        return set()
 
     yaml_names = _yaml_references(root)
-    class_lines, lines = _attribute_root_lines(root_node, source, relative)
+    class_lines, lines = _attribute_root_lines(root_node, source, relative, root, defs)
     classes = _root_classes(defs, class_lines, yaml_names, root, relative)
     return (
         hook_lines

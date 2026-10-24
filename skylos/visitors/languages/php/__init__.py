@@ -5,7 +5,7 @@ from pathlib import Path
 from .blade import blade_template_refs
 from .core import PhpCore
 from .danger import scan_danger
-from .drupal import drupal_entrypoint_lines
+from .drupal import clear_drupal_cache, drupal_entrypoint_lines
 from .laravel import laravel_convention_class_lines
 
 # Drupal keeps procedural PHP in .module, .install, .inc, .theme, .profile
@@ -82,7 +82,9 @@ def scan_php_file(
     config: dict | None = None,
     *,
     enable_danger_rules: bool = True,
+    _reuse_framework_cache: bool = False,
 ) -> tuple:
+    """Scan PHP, refreshing Drupal metadata for standalone calls."""
     if config is None:
         config = {}
 
@@ -93,6 +95,10 @@ def scan_php_file(
         source = path.read_bytes()
     except Exception:
         return _empty_result(config)
+
+    # Analyzer runs clear metadata once before scanning their source files.
+    if not _reuse_framework_cache:
+        clear_drupal_cache()
 
     core = PhpCore(str(path), source)
     core.scan()
@@ -107,9 +113,10 @@ def scan_php_file(
         test_decorated_lines=core.test_decorated_lines,
     )
     framework = _framework_visitor(str(path), core, source)
-    findings = (
-        scan_danger(core.root_node, str(path), source) if enable_danger_rules else []
-    )
+    if enable_danger_rules:
+        findings = scan_danger(core.root_node, str(path), source)
+    else:
+        findings = []
 
     return (
         core.defs,

@@ -61,6 +61,7 @@ from skylos.analysis.ast_cache import (
     releases_python_ast_cache,
 )
 from skylos.visitors.languages.go import clear_go_cache
+from skylos.visitors.languages.php.drupal import clear_drupal_cache
 
 from skylos.rules.secrets import (
     SECRET_CONFIG_SUFFIXES as _SECRET_CONFIG_SUFFIXES,
@@ -3918,6 +3919,7 @@ class Skylos:
             self._reset_run_state()
         self._has_analyzed = True
         clear_go_cache()
+        clear_drupal_cache()
         self._sca_coverage = None
 
         raw_first = Path(
