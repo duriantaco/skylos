@@ -137,15 +137,14 @@ class _DefinitionIndex:
                     self.by_location[(path, node.lineno)] = definition
                     self.by_name[definition.name].append(definition)
                     self.modules[path] = definition.name.rsplit(".", 1)[0]
-        if any(
-            name.split(".", 1)[0] in {"django", "flask"} - self.shadowed
-            for _, name in self.imports
-        ):
-            for definition in definitions.values():
-                path = self._resolve_path(Path(definition.filename))
-                if path in self.modules:
-                    self.all_by_name[definition.name].append(definition)
-                    self.all_by_location[(path, definition.line)].append(definition)
+        # Always index definitions for location/name lookup. Gating on a
+        # django/flask import left settings-only trees and local
+        # ``register_converter`` shims unable to resolve classes/functions.
+        for definition in definitions.values():
+            path = self._resolve_path(Path(definition.filename))
+            if path in self.modules:
+                self.all_by_name[definition.name].append(definition)
+                self.all_by_location[(path, definition.line)].append(definition)
         # A dotted setting names the module's final binding, not a stale function.
         for module in parsed:
             path = self._resolve_path(module.path)
