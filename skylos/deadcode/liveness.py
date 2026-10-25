@@ -8,7 +8,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-from skylos.deadcode.plugin_registry import find_literal_plugin_registry_targets
+from skylos.deadcode.plugin_registry import (
+    find_literal_plugin_registry_targets,
+    find_nested_dict_getattr_targets,
+)
 from skylos.deadcode.registration_liveness import (
     find_method_registered_targets,
     find_patched_instance_methods,
@@ -170,6 +173,8 @@ def apply_dead_code_liveness(
         _mark(target, reason, report)
     for target in find_literal_plugin_registry_targets(definitions, parsed_files):
         _mark(target, "literal_plugin_registry", report)
+    for target in find_nested_dict_getattr_targets(definitions, parsed_files):
+        _mark(target, "nested_dict_getattr_registry", report)
     for target in find_dynamic_module_attribute_targets(definitions, parsed_files):
         _mark(target, "dynamic_module_attribute", report)
     for target in find_registered_decorator_targets(
@@ -342,7 +347,9 @@ def _mark(defn: Any, reason: str, report: LivenessReport) -> None:
     refs = getattr(defn, "heuristic_refs", None)
     if refs is not None:
         refs[f"dead_code_liveness:{reason}"] = 1.0
-        if reason.startswith(("flask_web_", "django_web_")):
+        if reason.startswith(("flask_web_", "django_web_")) or reason.startswith(
+            "celery_"
+        ):
             refs["framework_root"] = 1.0
         if reason == "unittest_discovery":
             refs["test_entrypoint"] = 1.0

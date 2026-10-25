@@ -604,3 +604,142 @@ def _import_module_arg_name(node: ast.AST, import_ctx: _ImportContext) -> str:
     if isinstance(func, ast.Name) and func.id in import_ctx.import_module_names:
         return first_arg.id
     return ""
+
+
+def find_nested_dict_getattr_targets(
+    definitions: dict[str, Any],
+    parsed_files: Sequence[ParsedPythonFile],
+) -> list[Any]:
+    """Mark handlers named in nested string tables and loaded via ``getattr``.
+
+    Covers registries like ``HANDLERS[kind]["options_method"] = "get_schema"``
+    paired with ``getattr(form_schemas, options_method_name)`` where the name
+    was assigned from ``.get("options_method")`` / ``["options_method"]``.
+    """
+    resolved_files: dict[Path, str] = {}
+    definitions_by_name = _definitions_by_name(definitions)
+    key_values = _nested_registry_key_values(parsed_files)
+    if not key_values:
+        return []
+
+    targets: list[Any] = []
+    seen: set[str] = set()
+    for parsed in parsed_files:
+        import_ctx = _collect_import_context(parsed.tree)
+        module_aliases = dict(import_ctx.module_aliases)
+        module_aliases.update(
+            {
+                local: target
+                for local, target in import_ctx.name_aliases.items()
+                if "." in target
+            }
+        )
+        for function in (
+            node
+            for node in ast.walk(parsed.tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ):
+            get_keys = _getattr_name_keys(function)
+            if not get_keys:
+                continue
+            for module_local, keys in get_keys.items():
+                module_path = module_aliases.get(module_local)
+                if not module_path:
+                    continue
+                # Imported module object: ``from rpc import mutations`` → mutations
+                # binds to ``rpc.mutations``; bare name may be a package.
+                for key in keys:
+                    for handler in key_values.get(key, ()):
+                        qname = f"{module_path}.{handler}"
+                        target = definitions_by_name.get(qname)
+                        if target is None:
+                            continue
+                        if getattr(target, "type", None) not in {
+                            "class",
+                            "function",
+                            "method",
+                        }:
+                            continue
+                        name = str(getattr(target, "name", ""))
+                        if name in seen:
+                            continue
+                        seen.add(name)
+                        targets.append(target)
+    return targets
+
+
+def _nested_registry_key_values(
+    parsed_files: Sequence[ParsedPythonFile],
+) -> dict[str, set[str]]:
+    """Map nested-dict keys to string handler names across module registries."""
+    values: dict[str, set[str]] = {}
+    for parsed in parsed_files:
+        for stmt in parsed.tree.body:
+            if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+                target, value = stmt.targets[0], stmt.value
+            elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+                target, value = stmt.target, stmt.value
+            else:
+                continue
+            if not isinstance(target, ast.Name) or not isinstance(value, ast.Dict):
+                continue
+            for nested in value.values:
+                if not isinstance(nested, ast.Dict):
+                    continue
+                for key, item in zip(nested.keys, nested.values):
+                    if not (
+                        isinstance(key, ast.Constant)
+                        and isinstance(key.value, str)
+                        and isinstance(item, ast.Constant)
+                        and isinstance(item.value, str)
+                    ):
+                        continue
+                    values.setdefault(key.value, set()).add(item.value)
+    return values
+
+
+def _getattr_name_keys(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> dict[str, set[str]]:
+    """``module_local -> registry keys`` used as ``getattr(module, name)``."""
+    name_keys: dict[str, str] = {}
+    for node in ast.walk(function):
+        for target, value in _iter_simple_assignments(node):
+            if not isinstance(target, ast.Name):
+                continue
+            key = _dict_get_key(value)
+            if key is not None:
+                name_keys[target.id] = key
+    modules: dict[str, set[str]] = {}
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Call) or len(node.args) < 2:
+            continue
+        if not (isinstance(node.func, ast.Name) and node.func.id in {"getattr", "hasattr"}):
+            continue
+        module_arg, name_arg = node.args[0], node.args[1]
+        if not isinstance(module_arg, ast.Name) or not isinstance(name_arg, ast.Name):
+            continue
+        key = name_keys.get(name_arg.id)
+        if key is None:
+            continue
+        modules.setdefault(module_arg.id, set()).add(key)
+    return modules
+
+
+def _dict_get_key(value: ast.AST) -> str | None:
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Attribute)
+        and value.func.attr == "get"
+        and value.args
+        and isinstance(value.args[0], ast.Constant)
+        and isinstance(value.args[0].value, str)
+    ):
+        return value.args[0].value
+    if (
+        isinstance(value, ast.Subscript)
+        and isinstance(value.slice, ast.Constant)
+        and isinstance(value.slice.value, str)
+    ):
+        return value.slice.value
+    return None

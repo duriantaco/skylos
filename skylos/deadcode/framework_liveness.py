@@ -183,6 +183,26 @@ class _DefinitionIndex:
             return candidates[0]
         return None
 
+    def class_or_function(self, name):
+        """Resolve a dotted class/function path (e.g. Celery ``module:Class``)."""
+        if not name:
+            return None
+        candidates = [
+            item
+            for item in self.by_name.get(name, ())
+            if getattr(item, "type", "") in {"class", "function"}
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+        all_matches = [
+            item
+            for item in self.all_by_name.get(name, ())
+            if getattr(item, "type", "") in {"class", "function"}
+        ]
+        if len(all_matches) == 1:
+            return all_matches[0]
+        return None
+
 
 class _FrameworkScanner:
     def __init__(self, parsed: ParsedPythonFile, index: _DefinitionIndex):
@@ -191,6 +211,8 @@ class _FrameworkScanner:
         self.index = index
         self.targets = []
         self.routes: dict[str, tuple[ast.AST, dict[str, str | None]]] = {}
+        # Celery result_backend / similar string class paths on a live app.
+        self.backend_paths: set[str] = set()
         self.bindings: dict[str, str | None] = {}
 
     def collect(self):
@@ -208,7 +230,18 @@ class _FrameworkScanner:
                 if definition is not None:
                     self.targets.append((definition, "celery_task_router"))
                     self._parameters(definition, 4, "celery_task_router", celery=True)
+        for path in self.backend_paths:
+            definition = self.index.class_or_function(path)
+            if definition is not None:
+                self.targets.append((definition, "celery_result_backend"))
         return self.targets
+
+    def _record_backend_path(self, value):
+        if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+            return
+        path = value.value.strip().replace(":", ".")
+        if path and len(path) <= 300 and "." in path:
+            self.backend_paths.add(path)
 
     def _suite(self, statements, bindings, *, class_body=False):
         for statement in statements:
@@ -314,11 +347,26 @@ class _FrameworkScanner:
             app, _, attribute = qualified.partition(".")
             if attribute == "conf.task_routes":
                 self.routes[app] = (value, bindings.copy())
+            elif attribute == "conf.result_backend":
+                self._record_backend_path(value)
             elif attribute == "conf":
                 self.routes.pop(app, None)
                 for name, binding in list(bindings.items()):
                     if binding == app:
                         bindings[name] = None
+        if (
+            not class_body
+            and isinstance(target, ast.Subscript)
+            and isinstance(target.slice, ast.Constant)
+            and target.slice.value == "result_backend"
+        ):
+            container = _qualified(target.value, bindings)
+            if (
+                container
+                and container.startswith("@celery:")
+                and container.endswith(".conf")
+            ):
+                self._record_backend_path(value)
         if not isinstance(target, ast.Name):
             for name in _bound_names(target):
                 self._invalidate(name, bindings)
@@ -336,6 +384,8 @@ class _FrameworkScanner:
             for keyword in value.keywords:
                 if keyword.arg == "task_routes":
                     self.routes[resolved] = (keyword.value, bindings.copy())
+                elif keyword.arg == "result_backend":
+                    self._record_backend_path(keyword.value)
         bindings[target.id] = resolved
 
     def _conf_update(self, call, bindings):
@@ -356,11 +406,15 @@ class _FrameworkScanner:
                     self.routes.pop(app, None)
                 elif key.value == "task_routes":
                     self.routes[app] = (value, bindings.copy())
+                elif key.value == "result_backend":
+                    self._record_backend_path(value)
         for keyword in call.keywords:
             if keyword.arg is None:
                 self.routes.pop(app, None)
             elif keyword.arg == "task_routes":
                 self.routes[app] = (keyword.value, bindings.copy())
+            elif keyword.arg == "result_backend":
+                self._record_backend_path(keyword.value)
 
     def _calls(self, expression, bindings):
         if "django" in self.index.shadowed:
