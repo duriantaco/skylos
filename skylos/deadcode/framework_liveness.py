@@ -74,6 +74,85 @@ def _eager_nodes(node: ast.AST):
         yield from _eager_nodes(child)
 
 
+def _literal_nonempty(node):
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        if any(not isinstance(item, ast.Starred) for item in node.elts):
+            return True
+        return None if node.elts else False
+    if isinstance(node, ast.Dict):
+        if any(key is not None for key in node.keys):
+            return True
+        return None if node.keys else False
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
+        return bool(node.value)
+    return None
+
+
+def _literal_truth(node):
+    inverted = False
+    while isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        inverted = not inverted
+        node = node.operand
+    result = (
+        bool(node.value) if isinstance(node, ast.Constant) else _literal_nonempty(node)
+    )
+    return None if result is None else result != inverted
+
+
+def _backend_access_nodes(node, definite=True, shadowed=frozenset()):
+    if isinstance(node, _SCOPES):
+        return
+    yield node, definite, shadowed
+    if isinstance(node, ast.GeneratorExp):
+        # Creating a generator evaluates its outer iterator, not its body.
+        yield from _backend_access_nodes(node.generators[0].iter, definite, shadowed)
+    elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp)):
+        for generator in node.generators:
+            yield from _backend_access_nodes(generator.iter, definite, shadowed)
+            nonempty = _literal_nonempty(generator.iter)
+            if nonempty is False:
+                return
+            if nonempty is None:
+                definite = False
+            target = generator.target
+            names = (
+                {target.id} if isinstance(target, ast.Name) else _bound_names(target)
+            )
+            shadowed = shadowed | names
+            for condition in generator.ifs:
+                yield from _backend_access_nodes(condition, definite, shadowed)
+                truth = _literal_truth(condition)
+                if truth is False:
+                    return
+                if truth is None:
+                    definite = False
+        values = (
+            (node.key, node.value) if isinstance(node, ast.DictComp) else (node.elt,)
+        )
+        for value in values:
+            yield from _backend_access_nodes(value, definite, shadowed)
+    elif isinstance(node, ast.BoolOp):
+        for value in node.values:
+            yield from _backend_access_nodes(value, definite, shadowed)
+            truth = _literal_truth(value)
+            if truth is None:
+                definite = False
+            elif truth == isinstance(node.op, ast.Or):
+                break
+    elif isinstance(node, ast.IfExp):
+        yield from _backend_access_nodes(node.test, definite, shadowed)
+        truth = _literal_truth(node.test)
+        if truth is not None:
+            chosen = node.body if truth else node.orelse
+            yield from _backend_access_nodes(chosen, definite, shadowed)
+        else:
+            yield from _backend_access_nodes(node.body, False, shadowed)
+            yield from _backend_access_nodes(node.orelse, False, shadowed)
+    else:
+        for child in ast.iter_child_nodes(node):
+            yield from _backend_access_nodes(child, definite, shadowed)
+
+
 def _qualified(node: ast.AST | None, bindings: dict[str, str | None]) -> str | None:
     if isinstance(node, ast.Name):
         return bindings.get(node.id)
@@ -107,6 +186,8 @@ class _DefinitionIndex:
         self.shadowed = set()
         self.all_by_name = defaultdict(list)
         self.all_by_location = defaultdict(list)
+        self._backend_modules = list(parsed)
+        self._backend_exports = None
         for module in parsed:
             path = self._resolve_path(module.path)
             self.modules[path] = _module_name(path, root)
@@ -183,24 +264,89 @@ class _DefinitionIndex:
         return None
 
     def class_or_function(self, name):
-        """Resolve a dotted class/function path (e.g. Celery ``module:Class``)."""
-        if not name:
+        """Resolve a backend's current export, preserving captured local aliases."""
+        if self._backend_exports is None:
+            self._backend_exports = {}
+            for module in self._backend_modules:
+                self._backend_module_exports(module)
+        seen = set()
+        value = name
+        while isinstance(value, str) and value not in seen:
+            seen.add(value)
+            value = self._backend_exports.get(value)
+        return value if getattr(value, "type", "") in {"class", "function"} else None
+
+    def _backend_module_exports(self, module):
+        path = self._resolve_path(module.path)
+        module_name = self.modules[path]
+        bindings = {}
+
+        def selected(node):
+            if isinstance(node, ast.Name):
+                return bindings.get(node.id)
+            if isinstance(node, ast.Attribute):
+                owner = selected(node.value)
+                if isinstance(owner, str):
+                    return f"{owner}.{node.attr}"
             return None
-        candidates = [
-            item
-            for item in self.by_name.get(name, ())
-            if getattr(item, "type", "") in {"class", "function"}
-        ]
-        if len(candidates) == 1:
-            return candidates[0]
-        all_matches = [
-            item
-            for item in self.all_by_name.get(name, ())
-            if getattr(item, "type", "") in {"class", "function"}
-        ]
-        if len(all_matches) == 1:
-            return all_matches[0]
-        return None
+
+        pending = list(reversed(module.tree.body))
+        while pending:
+            statement = pending.pop()
+            if isinstance(statement, ast.If) and isinstance(
+                statement.test, ast.Constant
+            ):
+                body = statement.body if statement.test.value else statement.orelse
+                pending.extend(reversed(body))
+                continue
+            if isinstance(statement, (*_FUNCTIONS, ast.ClassDef)):
+                matches = [
+                    definition
+                    for definition in self.all_by_location.get(
+                        (path, statement.lineno), ()
+                    )
+                    if getattr(definition, "type", "") in {"class", "function"}
+                ]
+                bindings[statement.name] = matches[0] if len(matches) == 1 else None
+            elif isinstance(statement, ast.Import):
+                for alias in statement.names:
+                    local = alias.asname or alias.name.split(".", 1)[0]
+                    bindings[local] = alias.name if alias.asname else local
+            elif isinstance(statement, ast.ImportFrom):
+                source = statement.module or ""
+                if statement.level:
+                    package = module_name.split(".")
+                    if path.name != "__init__.py":
+                        package = package[:-1]
+                    package = package[: len(package) - statement.level + 1]
+                    source = ".".join([*package, *([source] if source else [])])
+                for alias in statement.names:
+                    if alias.name == "*":
+                        bindings = dict.fromkeys(bindings)
+                    else:
+                        bindings[alias.asname or alias.name] = f"{source}.{alias.name}"
+            elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                if statement.value is None:
+                    continue
+                value = selected(statement.value)
+                targets = (
+                    statement.targets
+                    if isinstance(statement, ast.Assign)
+                    else [statement.target]
+                )
+                for target in targets:
+                    names = (
+                        {target.id}
+                        if isinstance(target, ast.Name)
+                        else _bound_names(target)
+                    )
+                    for name in names:
+                        bindings[name] = value if isinstance(target, ast.Name) else None
+            else:
+                for name in _bound_names(statement):
+                    bindings[name] = None
+        for name, value in bindings.items():
+            self._backend_exports[f"{module_name}.{name}"] = value
 
 
 class _FrameworkScanner:
@@ -210,8 +356,9 @@ class _FrameworkScanner:
         self.index = index
         self.targets = []
         self.routes: dict[str, tuple[ast.AST, dict[str, str | None]]] = {}
-        # Celery result_backend / similar string class paths on a live app.
-        self.backend_paths: set[str] = set()
+        self.backend_paths: dict[str, str] = {}
+        self.loaded_backend_paths: dict[str, str | None] = {}
+        self.possible_backend_paths: set[str] = set()
         self.bindings: dict[str, str | None] = {}
 
     def collect(self):
@@ -229,18 +376,28 @@ class _FrameworkScanner:
                 if definition is not None:
                     self.targets.append((definition, "celery_task_router"))
                     self._parameters(definition, 4, "celery_task_router", celery=True)
-        for path in self.backend_paths:
+        paths = {path for path in self.loaded_backend_paths.values() if path} | {
+            path
+            for app, path in self.backend_paths.items()
+            if app in self.bindings.values() and app not in self.loaded_backend_paths
+        }
+        for path in paths:
             definition = self.index.class_or_function(path)
             if definition is not None:
                 self.targets.append((definition, "celery_result_backend"))
+        for path in self.possible_backend_paths - paths:
+            definition = self.index.class_or_function(path)
+            if definition is not None:
+                self.targets.append((definition, "possible_celery_result_backend"))
         return self.targets
 
-    def _record_backend_path(self, value):
+    def _record_backend_path(self, app, value):
+        self.backend_paths.pop(app, None)
         if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
             return
         path = value.value.strip().replace(":", ".")
         if path and len(path) <= 300 and "." in path:
-            self.backend_paths.add(path)
+            self.backend_paths[app] = path
 
     def _suite(self, statements, bindings, *, class_body=False):
         for statement in statements:
@@ -294,14 +451,78 @@ class _FrameworkScanner:
                 if not class_body and isinstance(statement.value, ast.Call):
                     self._conf_update(statement.value, bindings)
                 continue
+            if isinstance(statement, ast.Delete) and not class_body:
+                for target in statement.targets:
+                    qualified = _qualified(target, bindings)
+                    if qualified and qualified.startswith("@celery:"):
+                        app, _, attribute = qualified.partition(".")
+                        if attribute in {"conf", "conf.result_backend"}:
+                            self.backend_paths.pop(app, None)
+                        if attribute in {"conf", "conf.task_routes"}:
+                            self.routes.pop(app, None)
+                    elif isinstance(target, ast.Subscript):
+                        container = _qualified(target.value, bindings)
+                        if (
+                            container
+                            and container.startswith("@celery:")
+                            and container.endswith(".conf")
+                        ):
+                            app = container.split(".", 1)[0]
+                            self.backend_paths.pop(app, None)
+                            self.routes.pop(app, None)
+                    names = (
+                        {target.id}
+                        if isinstance(target, ast.Name)
+                        else _bound_names(target)
+                    )
+                    for name in names:
+                        self._invalidate(name, bindings)
+                continue
             # Unknown control flow must not establish framework provenance.
             for name in _bound_names(statement):
                 self._invalidate(name, bindings)
             for child in () if class_body else _eager_nodes(statement):
+                if isinstance(child, (ast.Attribute, ast.Subscript)) and isinstance(
+                    child.ctx, (ast.Store, ast.Del)
+                ):
+                    qualified = _qualified(child, bindings)
+                    if qualified and qualified.startswith("@celery:"):
+                        app, _, attribute = qualified.partition(".")
+                        if attribute in {"conf", "conf.result_backend"}:
+                            self.backend_paths.pop(app, None)
+                    elif isinstance(child, ast.Subscript):
+                        container = _qualified(child.value, bindings)
+                        if (
+                            container
+                            and container.startswith("@celery:")
+                            and container.endswith(".conf")
+                        ):
+                            self.backend_paths.pop(container.split(".", 1)[0], None)
+                elif isinstance(child, ast.Call):
+                    qualified = _qualified(child.func, bindings)
+                    if qualified and qualified.startswith("@celery:"):
+                        app, _, attribute = qualified.partition(".")
+                        updates_backend = any(
+                            keyword.arg in {None, "result_backend"}
+                            for keyword in child.keywords
+                        ) or any(
+                            not isinstance(argument, ast.Dict)
+                            or any(
+                                not isinstance(key, ast.Constant)
+                                or key.value == "result_backend"
+                                for key in argument.keys
+                            )
+                            for argument in child.args
+                        )
+                        if attribute.startswith("config_from_") or (
+                            attribute == "conf.update" and updates_backend
+                        ):
+                            self.backend_paths.pop(app, None)
                 if isinstance(child, (ast.Attribute, ast.Name)):
                     qualified = _qualified(child, bindings)
                     if qualified and qualified.startswith("@celery:"):
-                        self.routes.pop(qualified.split(".", 1)[0], None)
+                        app = qualified.split(".", 1)[0]
+                        self.routes.pop(app, None)
 
     def _imports(self, node, bindings):
         for alias in node.names:
@@ -331,6 +552,7 @@ class _FrameworkScanner:
             and previous not in bindings.values()
         ):
             self.routes.pop(previous, None)
+            self.backend_paths.pop(previous, None)
 
     def _assignment(self, target, value, bindings, class_body):
         qualified = _qualified(target, bindings)
@@ -342,30 +564,19 @@ class _FrameworkScanner:
                 and container.endswith(".conf")
             ):
                 self.routes.pop(container.split(".", 1)[0], None)
+                self.backend_paths.pop(container.split(".", 1)[0], None)
         if qualified and qualified.startswith("@celery:") and not class_body:
             app, _, attribute = qualified.partition(".")
             if attribute == "conf.task_routes":
                 self.routes[app] = (value, bindings.copy())
             elif attribute == "conf.result_backend":
-                self._record_backend_path(value)
+                self._record_backend_path(app, value)
             elif attribute == "conf":
                 self.routes.pop(app, None)
+                self.backend_paths.pop(app, None)
                 for name, binding in list(bindings.items()):
                     if binding == app:
                         bindings[name] = None
-        if (
-            not class_body
-            and isinstance(target, ast.Subscript)
-            and isinstance(target.slice, ast.Constant)
-            and target.slice.value == "result_backend"
-        ):
-            container = _qualified(target.value, bindings)
-            if (
-                container
-                and container.startswith("@celery:")
-                and container.endswith(".conf")
-            ):
-                self._record_backend_path(value)
         if not isinstance(target, ast.Name):
             for name in _bound_names(target):
                 self._invalidate(name, bindings)
@@ -383,8 +594,8 @@ class _FrameworkScanner:
             for keyword in value.keywords:
                 if keyword.arg == "task_routes":
                     self.routes[resolved] = (keyword.value, bindings.copy())
-                elif keyword.arg == "result_backend":
-                    self._record_backend_path(keyword.value)
+                elif keyword.arg in {"backend", "result_backend"}:
+                    self._record_backend_path(resolved, keyword.value)
         bindings[target.id] = resolved
 
     def _conf_update(self, call, bindings):
@@ -395,27 +606,47 @@ class _FrameworkScanner:
         if attribute != "conf.update":
             if attribute.startswith("config_from_"):
                 self.routes.pop(app, None)
+                self.backend_paths.pop(app, None)
             return
         for argument in call.args:
             if not isinstance(argument, ast.Dict):
                 self.routes.pop(app, None)
+                self.backend_paths.pop(app, None)
                 continue
             for key, value in zip(argument.keys, argument.values):
                 if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
                     self.routes.pop(app, None)
+                    self.backend_paths.pop(app, None)
                 elif key.value == "task_routes":
                     self.routes[app] = (value, bindings.copy())
                 elif key.value == "result_backend":
-                    self._record_backend_path(value)
+                    self._record_backend_path(app, value)
         for keyword in call.keywords:
             if keyword.arg is None:
                 self.routes.pop(app, None)
+                self.backend_paths.pop(app, None)
             elif keyword.arg == "task_routes":
                 self.routes[app] = (keyword.value, bindings.copy())
             elif keyword.arg == "result_backend":
-                self._record_backend_path(keyword.value)
+                self._record_backend_path(app, keyword.value)
 
     def _calls(self, expression, bindings):
+        for node, definite, shadowed in _backend_access_nodes(expression):
+            if not isinstance(node, ast.Attribute) or node.attr != "backend":
+                continue
+            local = {
+                name: value for name, value in bindings.items() if name not in shadowed
+            }
+            qualified = _qualified(node, local)
+            if qualified and qualified.startswith("@celery:"):
+                app, _, attribute = qualified.partition(".")
+                if attribute == "backend":
+                    path = self.backend_paths.get(app)
+                    if definite:
+                        # Only an eager load can exclude a later configured provider.
+                        self.loaded_backend_paths.setdefault(app, path)
+                    elif app not in self.loaded_backend_paths and path:
+                        self.possible_backend_paths.add(path)
         if "django" in self.index.shadowed:
             return
         for call in _eager_nodes(expression):

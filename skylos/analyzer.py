@@ -1732,7 +1732,9 @@ def _is_loaded_root(defn) -> bool:
 
 
 # Penalty codes for methods kept because their base class dispatches to them.
-_DISPATCHED_OVERRIDE_CODES = frozenset({"parent_override", "protocol_override"})
+_DISPATCHED_OVERRIDE_CODES = frozenset(
+    {"parent_override", "protocol_override", "drf_hook"}
+)
 
 
 def _is_dispatched_override(defn) -> bool:
@@ -1740,14 +1742,12 @@ def _is_dispatched_override(defn) -> bool:
 
     The penalty pass already keeps it out of the report; treating it as dead
     here would report the methods only it calls (``self.helper`` callbacks).
-    That includes DRF ``validate_<field>`` / ``has_permission`` hooks, which
-    suppress with confidence 0 even when they do not set ``suppression_code``.
+    Reporting confidence alone is not dispatch evidence: ordinary dunders and
+    ignored methods may also have confidence zero without ever being called.
     """
     if getattr(defn, "type", None) != "method":
         return False
-    if getattr(defn, "suppression_code", None) in _DISPATCHED_OVERRIDE_CODES:
-        return True
-    return getattr(defn, "confidence", None) == 0
+    return getattr(defn, "suppression_code", None) in _DISPATCHED_OVERRIDE_CODES
 
 
 def _annotate_dead_code_evidence_sources(defs, test_flags, framework_flags) -> None:

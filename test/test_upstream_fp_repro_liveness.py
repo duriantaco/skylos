@@ -9,8 +9,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from skylos.analyzer import analyze
 
 
@@ -366,6 +364,160 @@ REGISTERED_MODELS = [
 """,
     "rpc/factory.py": """\
 from handlers import form_schemas, mutations, queries
+from rpc.registry import REGISTERED_MODELS
+
+
+def create_viewset_class(config):
+    class Meta:
+        # Nested class body: must not abort autoreload / liveness scanning.
+        fields = ("id",)
+
+    queryset_method_name = config.get("queryset_method")
+    custom_create_method = config.get("create_method")
+    custom_update_method = config.get("update_method")
+    custom_destroy_method = config.get("destroy_method")
+    options_method_name = config.get("options_method")
+
+    def get_queryset(self):
+        if hasattr(self, "_queryset_method_name") and self._queryset_method_name:
+            if hasattr(queries, self._queryset_method_name):
+                query_func = getattr(queries, self._queryset_method_name)
+                return query_func(self.request)
+        return []
+
+    def create(self, request):
+        if custom_create_method and hasattr(mutations, custom_create_method):
+            return getattr(mutations, custom_create_method)(request)
+        return None
+
+    def update(self, request):
+        if custom_update_method and hasattr(mutations, custom_update_method):
+            return getattr(mutations, custom_update_method)(request)
+        return None
+
+    def destroy(self, request):
+        if custom_destroy_method and hasattr(mutations, custom_destroy_method):
+            return getattr(mutations, custom_destroy_method)(request)
+        return None
+
+    def options(self, request):
+        if options_method_name and hasattr(form_schemas, options_method_name):
+            return getattr(form_schemas, options_method_name)(request)
+        return {}
+
+    class_dict = {
+        "_queryset_method_name": queryset_method_name,
+        "get_queryset": get_queryset,
+        "create": create,
+        "update": update,
+        "destroy": destroy,
+        "options": options,
+    }
+    return type("DynamicViewSet", (object,), class_dict)
+
+
+def build_related(relation_config):
+    queryset_method_name = relation_config.get("queryset_method")
+    create_method_name = relation_config.get("create_method")
+
+    def related_action(self, request):
+        if create_method_name and hasattr(mutations, create_method_name):
+            getattr(mutations, create_method_name)(request)
+        if queryset_method_name and hasattr(queries, queryset_method_name):
+            return getattr(queries, queryset_method_name)(request)
+        return []
+
+    return related_action
+
+
+for _model, config in REGISTERED_MODELS:
+    View = create_viewset_class(config)
+    view = View()
+    view.request = object()
+    view.get_queryset()
+    for relation in (config.get("related_models") or {}).values():
+        Related = create_viewset_class(relation)
+        related = Related()
+        related.request = object()
+        related.get_queryset()
+        related.create(object())
+        related.update(object())
+        related.destroy(object())
+        related.options(object())
+        action = build_related(relation)
+        action(None, object())
+""",
+    "handlers/__init__.py": "",
+    "handlers/form_schemas.py": """\
+def get_game_form_schema(request, **kwargs):
+    return {"fields": []}
+
+
+def unused_schema():
+    return {}
+""",
+    "handlers/mutations.py": """\
+def create_game(request, **kwargs):
+    return {"id": 1}
+
+
+def update_game(request, **kwargs):
+    return {"id": 1}
+
+
+def delete_game_safely(request, **kwargs):
+    return {"ok": True}
+
+
+def create_practice(request, **kwargs):
+    return {"id": 2}
+
+
+def unused_mutation():
+    return None
+""",
+    "handlers/queries.py": """\
+def get_user_teams(request):
+    return []
+
+
+def get_team_schedule(request):
+    return []
+
+
+def get_team_practices(request):
+    return []
+
+
+def get_team_roster(request):
+    return []
+
+
+def unused_query():
+    return []
+""",
+}
+
+
+def test_p2_registry_getattr_handlers_are_live(tmp_path):
+    result = _scan(tmp_path, _REGISTRY_GETATTR)
+    _assert_quiet(
+        result,
+        "get_game_form_schema",
+        "create_game",
+        "update_game",
+        "delete_game_safely",
+        "create_practice",
+        "get_user_teams",
+        "get_team_schedule",
+        "get_team_practices",
+        "get_team_roster",
+    )
+
+
+# Keep the original unexecuted factory as a negative proof control. Merely
+# declaring a lookup in a factory, or iterating an empty input, registers nothing.
+_UNEXECUTED_REGISTRY_FACTORY = """from handlers import form_schemas, mutations, queries
 
 
 def create_viewset_class(config):
@@ -435,73 +587,15 @@ for _model, config in []:
     create_viewset_class(config)
     for relation in (config.get("related_models") or {}).values():
         build_related(relation)
-""",
-    "handlers/__init__.py": "",
-    "handlers/form_schemas.py": """\
-def get_game_form_schema(request, **kwargs):
-    return {"fields": []}
+"""
 
 
-def unused_schema():
-    return {}
-""",
-    "handlers/mutations.py": """\
-def create_game(request, **kwargs):
-    return {"id": 1}
-
-
-def update_game(request, **kwargs):
-    return {"id": 1}
-
-
-def delete_game_safely(request, **kwargs):
-    return {"ok": True}
-
-
-def create_practice(request, **kwargs):
-    return {"id": 2}
-
-
-def unused_mutation():
-    return None
-""",
-    "handlers/queries.py": """\
-def get_user_teams(request):
-    return []
-
-
-def get_team_schedule(request):
-    return []
-
-
-def get_team_practices(request):
-    return []
-
-
-def get_team_roster(request):
-    return []
-
-
-def unused_query():
-    return []
-""",
-}
-
-
-def test_p2_registry_getattr_handlers_are_live(tmp_path):
-    result = _scan(tmp_path, _REGISTRY_GETATTR)
-    _assert_quiet(
-        result,
-        "get_game_form_schema",
-        "create_game",
-        "update_game",
-        "delete_game_safely",
-        "create_practice",
-        "get_user_teams",
-        "get_team_schedule",
-        "get_team_practices",
-        "get_team_roster",
-    )
+def test_unexecuted_registry_factory_does_not_supply_lookup_evidence(tmp_path):
+    sources = dict(_REGISTRY_GETATTR)
+    sources["rpc/factory.py"] = _UNEXECUTED_REGISTRY_FACTORY
+    result = _scan(tmp_path, sources)
+    rescues = result["analysis_summary"]["dead_code_liveness"]["rescued"]
+    assert not any(item["reason"] == "nested_dict_getattr_registry" for item in rescues)
 
 
 # --- P2.5: custom form Field class attached to a live Form -------------------
