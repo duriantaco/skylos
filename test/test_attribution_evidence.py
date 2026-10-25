@@ -28,7 +28,9 @@ def git(root, *args):
 
 
 @pytest.fixture
-def repository(tmp_path):
+def repository(tmp_path, monkeypatch):
+    # This repository has its own main base, independent of the CI checkout.
+    monkeypatch.setenv("GITHUB_BASE_REF", "main")
     git(tmp_path, "init", "-b", "main")
     git(tmp_path, "config", "user.name", "Test User")
     git(tmp_path, "config", "user.email", "test@example.com")
