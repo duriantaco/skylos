@@ -30,8 +30,8 @@ test surface, and security guardrails.
 - Pre-deployment agent verification (`skylos discover` / `skylos defend`),
   evidence reports, attestation digests, and OWASP LLM/Agentic coverage: see
   the defend entry in `references/cli.md` and `docs/agent-verification.md`.
-- GitHub Actions, SARIF, repo map Pages, CI gates, docs deploy, and generated
-  workflows: read `references/ci.md`.
+- GitHub Actions and other CI platforms, SARIF, repo map Pages, CI gates, docs
+  deploy, and generated workflows: read `references/ci.md`.
 
 Read only the reference needed for the current task.
 

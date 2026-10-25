@@ -37,6 +37,11 @@ git checkout -b add-skylos-gate
 skylos cicd init
 ```
 
+This guide is for GitHub Actions. For GitLab CI, Jenkins, Bitbucket Pipelines,
+Azure Pipelines or CircleCI, see [Skylos on any CI](./ci-platforms.md). A
+repository with one of those CI files and no `.github/workflows/` gets that
+CI's gate; run `skylos cicd init --ci github` to follow this guide instead.
+
 Expected, for a repository with pytest tests:
 
 ```text
