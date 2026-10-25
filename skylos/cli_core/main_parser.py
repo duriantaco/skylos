@@ -353,7 +353,8 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         help="Only report findings in lines changed since BASE_REF (e.g. --diff origin/main), "
         "including staged, unstaged and untracked changes (--diff HEAD = uncommitted work). "
         "Use --diff without a value to auto-detect the PR target branch "
-        "(GITHUB_BASE_REF, Bitbucket or Azure Pipelines PR target) or origin/main.",
+        "(GitHub Actions, GitLab CI, Jenkins, Bitbucket, Azure Pipelines, "
+        "Buildkite, Travis CI, Drone, Woodpecker) or origin/main.",
     )
     parser.add_argument(
         "--diff-mode",
