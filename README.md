@@ -129,6 +129,7 @@ current directory. `suite` and `defend` require a directory; `verify` and
 |:---|:---|:---|
 | What problems are in this source tree? | `skylos PATH` | Source files and project configuration; dead code by default, every main source analyzer with `-a` |
 | Did the agent really finish this branch? | `skylos done --base main` | The branch's changes since its merge base with `main`: Skylos runs your tests (pytest automatically; other runners need `test_command` in `[tool.skylos.done]`) and compares the tests, test settings and CI steps with the base; writes a receipt to `.skylos/receipts/` |
+| What does this change touch, and what should I read first? | `skylos done map --base main` | Each changed Python or TypeScript/JavaScript function since the merge base, with old and new code, calls added and removed, its callers and removed security checks; computed from the code, so the same commit gives the same map |
 | Does this code contain AI-code mistakes? | `skylos verify [PATH]` | AI-defect checks over the selected file or tree, plus a separate Git HEAD behavior comparison for supported Python working changes |
 | Should a model review static dead-code findings? | `skylos agent verify [PATH]` | LLM by default; optional [Jev-only or Jev-plus-LLM review](./docs/dead-code-review.md) |
 | What does the combined repo suite report? | `skylos suite [DIRECTORY]` | Static analysis, technical debt, AI defense, and provenance; local findings are report-only by default |
@@ -380,6 +381,8 @@ every command. See [what they don't do](./docs/agent-hooks.md#what-it-doesnt-do)
 | Combined repo report | `skylos suite .` | Reports static findings, technical debt, AI defense, and provenance; SCA can query OSV, and findings alone exit `0` | [CLI Reference](https://docs.skylos.dev/cli-reference) |
 | Optional Python linting | `pip install "skylos[lint]" && skylos lint .` | Runs Ruff with its native configuration, output, fixes, and exit codes through the Skylos CLI | [Python linting](./docs/python-linting.md) |
 | Agent branch done check | `skylos done --base origin/main` | Runs your tests and flags deleted, skipped or weakened tests, loosened test settings and CI test steps, silenced checks, and test-only special cases; writes a receipt | [Done gate](./docs/done-gate.md) |
+| Change map for review | `skylos done map --base origin/main` | Old and new code of each changed Python or TypeScript/JavaScript function, calls added and removed, who calls it and whether those callers were updated, removed auth checks, breaking signatures, and the changes to read first; `--format json` for a review agent | [Change map](./docs/change-map.md) |
+| MCP change map | `change_map` MCP tool | Gives a review agent the change map as JSON before it reads the diff. Requires a free Skylos API key (`SKYLOS_API_KEY`). `skylos done map` needs no key | [Change map](./docs/change-map.md#in-the-agent-loop) |
 | Risks that need a human approval | `skylos cicd risk-review --base origin/main` | Lists deleted or weakened tests, removed auth checks, added or changed dependencies, weakened CI, silenced checks, added secrets, guardrail setting edits, migration changes and very large diffs. As a required GitHub check (`skylos cicd init --risk-review`) it fails until a person with write access approves the head commit; bot approvals do not count | [Risk review](./docs/risk-review.md) |
 | PR gate | `skylos cicd init --no-upload` | Sets up the pull request gate for your CI. On GitHub Actions it writes a workflow that gates pull requests and runs `skylos done` when your tests can run; drop `--no-upload` to also upload default-branch scans to Skylos Cloud with GitHub OIDC, and that job fails until the Skylos GitHub App is installed on the repository. GitLab CI, Jenkins, Bitbucket Pipelines, Azure Pipelines and CircleCI get a gate for that CI | [First gated PR](./docs/first-gated-pr.md), [Skylos on any CI](./docs/ci-platforms.md) |
 | GitLab merge request report | `skylos . --format gitlab -o gl-code-quality-report.json` | Exports a native Code Quality report for GitLab CI artifacts | [GitLab Code Quality](./docs/gitlab-code-quality.md) |
@@ -1199,6 +1202,7 @@ See [container-image scanning](./docs/container-image-reports.md#scan-an-image-w
 | AI defense checks and LLM guardrails | [AI Defense](https://docs.skylos.dev/ai-defense) |
 | Claude Code, Codex, and Cursor hooks | [Agent-loop hooks](./docs/agent-hooks.md) |
 | Done gate for agent changes (`skylos done`) | [Done gate](./docs/done-gate.md) |
+| What a change touches and what to read first (`skylos done map`) | [Change map](./docs/change-map.md) |
 | Risks a pull request should not merge on a bot's approval (`skylos cicd risk-review`) | [Risk review](./docs/risk-review.md) |
 | First gated pull request with GitHub Actions | [Your first gated PR](./docs/first-gated-pr.md) |
 | MCP server setup | [MCP Server](https://docs.skylos.dev/mcp-server) |

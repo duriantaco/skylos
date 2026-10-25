@@ -689,3 +689,11 @@ def test_receipt_is_at_most_three_printable_lines(branch, default, source, trust
     assert lines[1].startswith("Branch: ")
     assert all(char.isprintable() for line in lines for char in line)
     assert sum("/scans/" in line for line in lines) == 0
+
+
+def test_upload_contents_line_names_the_symbol_map():
+    from skylos.cloud.upload_destination import UPLOAD_CONTENTS_LINE
+
+    assert "a map of your functions and classes" in UPLOAD_CONTENTS_LINE
+    assert "which calls which" in UPLOAD_CONTENTS_LINE
+    assert UPLOAD_CONTENTS_LINE.endswith("Not your repository.")

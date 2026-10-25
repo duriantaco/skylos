@@ -87,6 +87,43 @@ def _closing_summary(result: dict, uncertainty_count) -> str | None:
     return closing_summary(result, uncertainty_count=uncertainty_count)
 
 
+def _ci_workflow_exists(project_root) -> bool:
+    return (project_root / ".github" / "workflows" / "skylos.yml").exists()
+
+
+def _print_cloud_upload_start(console) -> None:
+    from skylos.api import _print_pending_upload_reminder
+
+    _print_pending_upload_reminder()
+    console.print("[muted]Uploading findings to Skylos Cloud…[/muted]")
+
+
+def _print_cloud_gate_exit(console, args) -> None:
+    flag = "--gate"
+    if getattr(args, "strict", False):
+        flag = "--strict"
+    console.print(
+        "\n[bad]Exiting with code 1 because the Skylos Cloud quality gate "
+        f"failed ({flag}).[/bad]"
+    )
+
+
+def _print_cloud_receipt(
+    console, project_root, destination, upload_resp, *, in_ci: bool
+) -> None:
+    from skylos.api import BASE_URL
+    from skylos.cloud.cloud_receipt import cloud_receipt_lines
+
+    lines = cloud_receipt_lines(
+        destination,
+        upload_resp,
+        BASE_URL,
+        ci_configured=in_ci or _ci_workflow_exists(project_root),
+    )
+    for line in lines:
+        console.print(escape(line), soft_wrap=True)
+
+
 def _print_failed_gate_exit_note(console, args, passed) -> None:
     if passed is not False:
         return
@@ -312,7 +349,13 @@ def _exit_on_missing_scan_paths(args, *, cli_module) -> None:
     raise SystemExit(2)
 
 
-def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
+def run_scan_command(
+    argv: Sequence[str],
+    *,
+    cli_module: ModuleType,
+    cloud: bool = False,
+    cloud_gate: bool = False,
+) -> None:
     """Keep compared gates and impact scans on one immutable policy."""
     import os
 
@@ -320,6 +363,8 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
     parser = cli_module._build_main_parser()
     args = cli_module._parse_main_cli_args(parser, argv)
+    args._cloud_command = cloud
+    args._cloud_gate = cloud_gate
     _exit_on_missing_scan_paths(args, cli_module=cli_module)
     base = (
         (getattr(args, "diff_base", None) or getattr(args, "diff", None))
@@ -1746,7 +1791,7 @@ def _run_scan_command(
         from skylos.ui.tui import run_tui
 
         run_tui(output_result, root_path=project_root)
-    elif not args.upload:
+    elif not args.upload or getattr(args, "_cloud_command", False):
         display_result = output_result
         _cli_limit = getattr(args, "limit", None)
         advice_options = {}
@@ -2013,13 +2058,18 @@ def _run_scan_command(
             raise SystemExit(1)
 
         # Uploads never cost credits, so the CLI never checks the balance first.
-        _print_main_upload_manifest(console, args, result)
+        if not getattr(args, "_cloud_command", False):
+            _print_main_upload_manifest(console, args, result)
         _attach_upload_project_context(result, project_root)
         if done_receipt is not None:
             result["done_receipt"] = done_receipt
+        cloud_command = getattr(args, "_cloud_command", False)
+        if cloud_command:
+            _print_cloud_upload_start(console)
         upload_resp = upload_report(
             result,
             is_forced=args.force,
+            quiet=cloud_command,
             strict=False,
             analyzer_owned=True,
             gitlab_full_scan=gitlab_full_scan,
@@ -2030,6 +2080,16 @@ def _run_scan_command(
             _check_managed_gitlab_delivery(upload_resp)
             _render_upload_failure(console, upload_resp)
             if getattr(args, "_explicit_upload_requested", False):
+                raise SystemExit(1)
+        elif cloud_command:
+            _check_managed_gitlab_delivery(upload_resp)
+            _print_cloud_receipt(
+                console, project_root, upload_destination, upload_resp, in_ci=_is_ci()
+            )
+            cloud_passed = upload_resp.get("quality_gate_passed")
+            cloud_gate = getattr(args, "_cloud_gate", False)
+            if cloud_passed is False and (args.strict or cloud_gate) and not args.force:
+                _print_cloud_gate_exit(console, args)
                 raise SystemExit(1)
         else:
             _check_managed_gitlab_delivery(upload_resp)
