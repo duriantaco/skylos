@@ -88,8 +88,8 @@ STEPS = [
             "[bold]Get help on any command:[/bold]\n"
             "  [bold cyan]skylos <command> --help[/bold cyan]\n"
             "\n"
-            "[bold]Connect to Skylos Cloud:[/bold]\n"
-            "  [bold cyan]skylos login[/bold cyan]\n"
+            "[bold]Track results per branch on Skylos Cloud:[/bold]\n"
+            "  [bold cyan]skylos cloud[/bold cyan]\n"
             "\n"
             "[bold]Docs:[/bold] [blue]github.com/duriantaco/skylos[/blue]"
         ),

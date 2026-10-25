@@ -624,8 +624,8 @@ def cmd_connect(token_arg: str | None = None) -> None:
     print(f"Link file:   {link_path}")
     print(f"\nToken saved to {creds_path}")
     print("\nYou can now run:")
-    print("  skylos .           # Scan locally")
-    print("  skylos . --upload  # Scan and upload")
+    print("  skylos .      # Scan locally; findings stay on your machine")
+    print("  skylos cloud  # Scan with every check and upload to Skylos Cloud")
 
 
 def cmd_status() -> None:

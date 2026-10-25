@@ -10,10 +10,24 @@ from skylos.cloud.upload_destination import (
     with_cloud_destination,
 )
 
+LOCAL_NEXT_STEPS = (
+    (
+        "skylos cloud",
+        "track these per branch on Skylos Cloud (sends findings, not your repository)",
+    ),
+    ("skylos cicd init", "check every pull request in CI"),
+)
+
 FAILED_NEXT_STEP = (
     "  Next: fix the issues behind the failed gate, then run skylos cloud again."
 )
 CI_NEXT_STEP = "  Next: skylos cicd init — adds a Skylos check to every pull request."
+
+
+def local_next_steps(*, ci_configured: bool) -> list[tuple[str, str]]:
+    if ci_configured:
+        return [LOCAL_NEXT_STEPS[0]]
+    return list(LOCAL_NEXT_STEPS)
 
 
 def _gate_reasons(upload_resp: dict) -> list[str]:

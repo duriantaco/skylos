@@ -48,8 +48,29 @@ prüfen möchtest auf:
 
 ```bash
 pip install skylos
-skylos .
+skylos .            # Probleme finden; Code und Funde bleiben auf deinem Rechner
+skylos cloud        # optional: Ergebnisse pro Branch in Skylos Cloud verfolgen
+skylos cicd init    # jedem Pull Request eine Skylos-Prüfung hinzufügen
 ```
+
+`skylos cloud` führt alle Prüfungen aus, zeigt die Funde, lädt sie hoch und
+zeigt das Quality Gate dieses Branches mit einem Link:
+
+```text
+✗ Quality gate on feat/login: FAILED (was PASSED on 24 Oct 15:38 UTC, 1ba9895) · 1 critical security issue
+  Open: https://skylos.dev/dashboard/projects/<project>?branch=feat%2Flogin
+  Next: fix the issues behind the failed gate, then run skylos cloud again.
+```
+
+Beim ersten Mal öffnet sich der Browser zum Anmelden und zur Projektauswahl.
+Gesendet werden die Funde mit Dateipfaden und Codeausschnitten von bis zu 7
+Zeilen (keine bei Secrets), Branch, Commit, die Git-Autor-E-Mail jeder
+markierten Zeile und eine Übersicht deiner Funktionen und Klassen (Namen,
+Dateien, Zeilen, Größe, wer wen aufruft). Nicht dein Repository. Der Exit-Code
+ist auch bei fehlgeschlagenem Skylos-Cloud-Gate `0`; mit `--gate` ist er `1`
+(für CI). Einen Schlüssel
+zum Bestehen des Gates brauchst du nie: Behebe die Funde, die es blockieren.
+Mehr dazu: [Skylos Cloud](../skylos-cloud.md).
 
 Der Standardscan fokussiert sich auf toten Code. Mit `-a` aktivierst du
 zusätzlich Security-, Secret-, Quality- und Dependency-Prüfungen:

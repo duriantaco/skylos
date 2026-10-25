@@ -332,8 +332,8 @@ def _print_connected_result(result, console=None):
         if result.repo_subpath:
             console.print(f"  Project root: {result.repo_subpath}")
         console.print(
-            "\n  Nothing is uploaded automatically. Add [bold]--upload[/bold] "
-            "to a scan to send it to this project."
+            "\n  Nothing is uploaded automatically. [bold]skylos cloud[/bold] "
+            "scans with every check and sends the findings to this project."
         )
         console.print(f"\n  [dim]{mcp_hint}[/dim]")
     else:
@@ -344,8 +344,8 @@ def _print_connected_result(result, console=None):
         if result.repo_subpath:
             print(f"  Project root: {result.repo_subpath}")
         print(
-            "\n  Nothing is uploaded automatically. Add --upload "
-            "to a scan to send it to this project."
+            "\n  Nothing is uploaded automatically. skylos cloud "
+            "scans with every check and sends the findings to this project."
         )
         print(f"\n  {mcp_hint}")
 
