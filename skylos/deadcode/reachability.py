@@ -303,6 +303,7 @@ class PythonReachabilityReport:
             for attr in _EXTERNAL_EVIDENCE
             if key not in self.index.nested_parents
             or attr not in {"is_closure", "decorators"}
+            if attr != "decorators" or not getattr(definition, "_fastapi_inactive", False)
         )
         class_key = self.index.method_classes.get(key)
         if class_key is not None:
@@ -498,7 +499,9 @@ def _bind_function(
     index = report.index
     index.add_function(module, node, key, definition)
     module.bindings[node.name] = ("symbol", key)
-    if node.decorator_list or node.name in {"__getattr__", "__dir__"}:
+    if (
+        node.decorator_list and not getattr(definition, "_fastapi_inactive", False)
+    ) or node.name in {"__getattr__", "__dir__"}:
         report.graph.uncertain_roots.add(key)
 
 

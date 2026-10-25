@@ -1753,7 +1753,12 @@ def _annotate_dead_code_evidence_sources(defs, test_flags, framework_flags) -> N
     is_test_file = bool(getattr(test_flags, "is_test_file", False))
 
     for defn in defs:
-        if getattr(defn, "line", None) in framework_lines:
+        is_fastapi_parameter = (
+            getattr(defn, "type", None) == "parameter"
+            and getattr(defn, "line", None)
+            in getattr(framework_flags, "fastapi_candidate_lines", ())
+        )
+        if getattr(defn, "line", None) in framework_lines and not is_fastapi_parameter:
             _mark_evidence_ref(defn, "framework_root")
             signals = getattr(defn, "framework_signals", None)
             if isinstance(signals, list) and "framework_decorator" not in signals:
@@ -5086,6 +5091,12 @@ class Skylos:
         )
         self._global_dependency_alias_names = set()
 
+        from skylos.deadcode.fastapi_evidence import reconcile_fastapi_evidence
+
+        self._fastapi_liveness_report = reconcile_fastapi_evidence(
+            self.defs, file_contexts, self.refs, files, root
+        )
+
         for defs, test_flags, framework_flags, file, mod, cfg in file_contexts:
             self._global_dependency_alias_names.update(
                 getattr(framework_flags, "dependency_alias_names", set())
@@ -6105,6 +6116,15 @@ class Skylos:
         for top_level_ref in all_top_level_refs:
             defn = self.defs.get(top_level_ref)
             if defn is not None:
+                if self._fastapi_liveness_report is not None:
+                    from skylos.deadcode.fastapi_evidence import (
+                        suppress_synthetic_fastapi_execution,
+                    )
+
+                    if suppress_synthetic_fastapi_execution(
+                        defn, self._fastapi_liveness_report
+                    ):
+                        continue
                 _mark_evidence_ref(defn, "top_level_execution")
 
         if progress_callback:

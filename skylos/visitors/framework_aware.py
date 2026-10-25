@@ -1113,6 +1113,10 @@ def detect_framework_usage(
 ) -> int | None:
     if not visitor:
         return None
+    if definition.type == "parameter" and definition.line in getattr(
+        visitor, "fastapi_candidate_lines", ()
+    ):
+        return None
     if definition.line in visitor.framework_decorated_lines:
         objects_with_routes = getattr(visitor, "objects_with_routes", None)
         if isinstance(objects_with_routes, dict) and objects_with_routes:
