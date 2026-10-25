@@ -31,8 +31,24 @@ Skylos 是一款面向 Python、TypeScript、JavaScript、Java、Go、PHP、Rust
 
 ```bash
 pip install skylos
-skylos .
+skylos .            # 查找问题；代码和发现的问题都留在本机
+skylos cloud        # 可选：在 Skylos Cloud 上按分支跟踪结果
+skylos cicd init    # 为每个拉取请求添加 Skylos 检查
 ```
+
+`skylos cloud` 运行全部检查，显示发现的问题并上传，然后打印当前分支的质量门结果和一个链接：
+
+```text
+✗ Quality gate on feat/login: FAILED (was PASSED on 24 Oct 15:38 UTC, 1ba9895) · 1 critical security issue
+  Open: https://skylos.dev/dashboard/projects/<project>?branch=feat%2Flogin
+  Next: fix the issues behind the failed gate, then run skylos cloud again.
+```
+
+第一次运行会打开浏览器登录并为此仓库选择项目。它发送的是发现的问题：文件路径、最多
+7 行的代码片段（密钥类问题不带片段）、分支、提交、每个被标记行的 git 作者邮箱，以及函数和类的
+概览（名称、文件、行号、大小、调用关系）。不会发送你的仓库。即使 Skylos Cloud 质量门失败，退出码
+也是 `0`；加上 `--gate` 时退出码为 `1`（用于 CI）。通过质量门永远不需要密钥：修复导致失败的问题即可。详见
+[Skylos Cloud](../skylos-cloud.md)。
 
 加入安全、密钥、质量和依赖检查：
 
