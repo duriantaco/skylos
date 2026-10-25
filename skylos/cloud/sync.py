@@ -391,6 +391,15 @@ def save_token(
     data["token"] = token
     data["saved_at"] = now
     data["plan"] = (plan or data.get("plan") or "free").lower()
+    for key, value in (
+        ("project_id", project_id),
+        ("project_name", project_name),
+        ("org_name", org_name),
+    ):
+        if value:
+            data[key] = str(value)
+        else:
+            data.pop(key, None)
 
     if project_id:
         tokens = data.get("tokens") or {}
@@ -488,8 +497,11 @@ def api_get(endpoint: str, token: str | None) -> dict[str, Any]:
     if resp.status_code == 401:
         reason = _cloud_reason(resp)
         if token and str(token).startswith(("oidc:", "gitlab_oidc:")):
-            raise AuthError(reason or "Skylos Cloud rejected this CI identity token")
-        raise AuthError(reason or "Invalid API token")
+            raise AuthError(
+                reason
+                or "Skylos Cloud rejected this GitHub Actions or GitLab CI identity"
+            )
+        raise AuthError(reason or "Invalid Skylos token")
 
     if resp.status_code >= 400:
         raise AuthError(
@@ -563,11 +575,11 @@ def cmd_connect(token_arg: str | None = None) -> None:
         token = token_arg or env_token
 
     if not token:
-        print("API token required. To get one:")
+        print("Project token required. To get one:")
         print("  1. Get one at: https://skylos.dev/settings/api-keys")
-        print("  2. Create a project and copy the API key")
+        print("  2. Create a project and copy its project token")
         print()
-        print("Enter your API token:")
+        print("Enter your project token:")
         try:
             token = input("> ").strip()
         except (KeyboardInterrupt, EOFError):

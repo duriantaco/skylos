@@ -877,7 +877,7 @@ def test_managed_gitlab_post_is_unchanged(monkeypatch):
         (
             Resp(401, text="Unauthorized"),
             "INVALID_TOKEN",
-            "Invalid API token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
+            "Invalid Skylos token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
             False,
         ),
         (

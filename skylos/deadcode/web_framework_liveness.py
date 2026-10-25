@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from skylos.deadcode.django_framework_liveness import find_django_targets
+from skylos.deadcode.django_setting_bindings import collect_setting_bindings
 from skylos.deadcode.django_template_liveness import _path_expression
 from skylos.deadcode.framework_liveness import (
     _FrameworkScanner,
@@ -142,11 +143,15 @@ class _ModuleEvidence:
     # ``from x import *`` targets anywhere at module level (also under
     # ``if``/``try``), so a settings package can reach ``settings.base``.
     star_imports: set = field(default_factory=set)
+    # Final possible sources of named settings imports and aliases.
+    setting_bindings: dict = field(default_factory=dict)
     # UPPER_CASE names assigned at module level, with their values.
     module_settings: dict = field(default_factory=dict)
     # Values added to those names in place (``MIDDLEWARE.append(path)``) at
     # import time, including inside functions the module calls while loading.
     setting_mutations: dict = field(default_factory=dict)
+    # AST values may be defined inside an earlier function but applied later.
+    setting_mutation_positions: dict = field(default_factory=dict)
     # Final source bindings distinguish a configured class from an earlier
     # declaration that the module has replaced.
     bindings: dict = field(default_factory=dict)
@@ -244,16 +249,19 @@ class _WebScanner:
         package = self.evidence.module
         if self.evidence.path.name != "__init__.py":
             package = package.rpartition(".")[0]
-        for statement in _module_level_statements(self.tree.body):
-            if isinstance(statement, ast.ImportFrom) and any(
-                alias.name == "*" for alias in statement.names
-            ):
-                target = _resolve_from_module(statement, package)
-                if target:
-                    self.evidence.star_imports.add(target)
+        for statement in _possible_module_statements(self.tree.body):
+            if isinstance(statement, ast.ImportFrom):
+                if any(alias.name == "*" for alias in statement.names):
+                    target = _resolve_from_module(statement, package)
+                    if target:
+                        self.evidence.star_imports.add(target)
+                    continue
                 continue
             for name, value in _setting_mutations(statement):
                 self.evidence.setting_mutations.setdefault(name, []).append(value)
+                self.evidence.setting_mutation_positions.setdefault(
+                    id(value), []
+                ).append((statement.lineno, statement.col_offset))
             targets, value = _assigned(statement)
             if value is None:
                 continue
@@ -262,23 +270,19 @@ class _WebScanner:
                     self.evidence.module_settings.setdefault(target.id, []).append(
                         value
                     )
+        self.evidence.setting_bindings = collect_setting_bindings(
+            self.tree.body, self.evidence.module, package, _resolve_from_module
+        )
         self._collect_import_time_setting_mutations()
 
     def _collect_import_time_setting_mutations(self):
         """Mutations inside module functions the module calls while loading
         (``HEADER = _parse_remote_user_settings()``)."""
-        called = {
-            node.func.id
-            for statement in _module_level_statements(self.tree.body)
-            for node in ast.walk(statement)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-        }
         for statement in self.tree.body:
             if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            if (
-                statement.lineno in self.authentication_calls
-                and _uses_global_authentication_backends(statement)
+            if statement.lineno in self.authentication_calls and _uses_global_setting(
+                statement, "AUTHENTICATION_BACKENDS"
             ):
                 for node in _possible_module_statements(statement.body):
                     if _authentication_backend_invalidates(node):
@@ -290,7 +294,8 @@ class _WebScanner:
                             self.evidence.authentication_backend_mutations.append(
                                 (value, position)
                             )
-            if statement.name not in called:
+            positions = self.authentication_calls.get(statement.lineno, ())
+            if not positions:
                 continue
             module_names = set(self.evidence.module_settings) | {
                 name
@@ -298,12 +303,15 @@ class _WebScanner:
                 if isinstance(node, ast.Global)
                 for name in node.names
             }
-            for node in ast.walk(statement):
+            for node in _possible_module_statements(statement.body):
                 for name, value in _setting_mutations(node):
-                    if name in module_names:
+                    if name in module_names and _uses_global_setting(statement, name):
                         self.evidence.setting_mutations.setdefault(name, []).append(
                             value
                         )
+                        self.evidence.setting_mutation_positions.setdefault(
+                            id(value), []
+                        ).extend(positions)
 
     def suite(self, statements, bindings, *, owner=None):
         for statement in statements:
@@ -785,8 +793,7 @@ def _authentication_backend_mutations(statement):
                     yield value
 
 
-def _uses_global_authentication_backends(function):
-    name = "AUTHENTICATION_BACKENDS"
+def _uses_global_setting(function, name):
     statements = list(_module_level_statements(function.body))
     globals_ = {
         item
@@ -805,7 +812,7 @@ def _uses_global_authentication_backends(function):
     ]
     if any(argument is not None and argument.arg == name for argument in arguments):
         return False
-    return not any(name in _bound_names(statement) for statement in statements)
+    return not any(name in _bound_names(statement) for statement in function.body)
 
 
 def _possible_module_statements(statements):
@@ -1013,14 +1020,20 @@ def find_web_framework_targets(
     *,
     exclude_folders: Iterable[str] | None = None,
 ) -> list[tuple[Any, str]]:
-    if not any(
-        name.split(".", 1)[0] in {"django", "flask"} - index.shadowed
-        for _, name in index.imports
-    ):
-        return []
+    from skylos.deadcode.django_framework_liveness import _looks_like_settings
+
     executed = _executed_definitions(index)
     modules = [_WebScanner(index, module, executed).collect() for module in parsed]
     scanners = {module.module: module for module in modules}
+    has_framework_import = any(
+        name.split(".", 1)[0] in {"django", "flask"} - index.shadowed
+        for _, name in index.imports
+    )
+    has_settings = any(_looks_like_settings(scanner) for scanner in scanners.values())
+    # Settings modules often configure Django without importing it
+    # (``INSTALLED_APPS`` + ``SECRET_KEY`` / ``ROOT_URLCONF``).
+    if not has_framework_import and not has_settings:
+        return []
     classes = {
         name: info for module in modules for name, info in module.classes.items()
     }
@@ -1029,9 +1042,10 @@ def find_web_framework_targets(
         (definition, "flask_app_factory") for definition in _flask_app_factories(index)
     )
     targets.extend(_blueprint_targets(modules))
-    targets.extend(
-        find_django_targets(
-            index, scanners, classes, root, exclude_folders=exclude_folders
+    if "django" not in index.shadowed:
+        targets.extend(
+            find_django_targets(
+                index, scanners, classes, root, exclude_folders=exclude_folders
+            )
         )
-    )
     return targets

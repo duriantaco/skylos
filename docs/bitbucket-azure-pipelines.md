@@ -44,7 +44,7 @@ pull request checks only for Azure Repos.
 
 ## `bitbucket-pipelines.yml`
 
-Add `SKYLOS_TOKEN` (a Skylos project API key) as a **secured repository
+Add `SKYLOS_TOKEN` (a Skylos project token) as a **secured repository
 variable**.
 
 ```yaml

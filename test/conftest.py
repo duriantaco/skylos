@@ -314,6 +314,9 @@ def _isolate_cloud_uploads(monkeypatch, tmp_path_factory):
 
     home_guard = tmp_path_factory.mktemp("no-real-home") / ".skylos" / "pending-uploads"
     monkeypatch.setattr(_pending_uploads, "default_pending_root", lambda: home_guard)
+    import skylos.cli
+
+    monkeypatch.setattr(skylos.cli, "_resolve_upload_destination", lambda _root: None)
     yield
 
 

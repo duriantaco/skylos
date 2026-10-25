@@ -1,5 +1,6 @@
 import os  # skylos: ignore[SKY-Q502] package facade is being split incrementally
 import contextlib
+import contextvars
 import logging
 import requests
 import signal
@@ -1439,8 +1440,11 @@ def _finalize_report_upload(
     new_violations = quality_gate.get("new_violations", 0)
     plan = data.get("plan", "free")
     replayed = (not gitlab_managed) and _is_idempotent_replay(response, data)
+    result = _report_upload_success_result(data, scan_id, passed, plan)
 
     if not quiet:
+        from skylos.cloud.gate_status import gate_context
+
         _print_report_upload_success(
             grade_data=grade_data,
             assessment_data=assessment_data,
@@ -1453,8 +1457,8 @@ def _finalize_report_upload(
             finding_warnings=data.get("finding_warnings"),
             gate_message=quality_gate.get("message"),
             trust_notice=data.get("upload_trust_notice"),
+            gate_context=gate_context(result, BASE_URL),
         )
-    result = _report_upload_success_result(data, scan_id, passed, plan)
     if replayed:
         result["replayed"] = True
     if gitlab_managed:
@@ -1497,6 +1501,7 @@ def _print_report_upload_success(
     finding_warnings=None,
     gate_message=None,
     trust_notice=None,
+    gate_context=None,
 ) -> None:
     if replayed:
         print(
@@ -1520,9 +1525,11 @@ def _print_report_upload_success(
         print(assessment_coverage_text(assessment_data))
     else:
         _print_report_grade(grade_data)
-    _print_quality_gate_result(passed, new_violations, plan, gate_message)
+    _print_quality_gate_result(passed, new_violations, plan, gate_message, gate_context)
     _print_upload_trust_notice(trust_notice)
-    if scan_id:
+    if gate_context is not None:
+        print(f"\n🔗 View details: {gate_context.details_url}")
+    elif scan_id:
         print(f"\n🔗 View the scan: {BASE_URL}/dashboard/scans/{scan_id}")
     _print_credit_balance_after_upload(credits_left)
 
@@ -1547,6 +1554,7 @@ def _print_report_grade(grade_data) -> None:
 
 
 _GATE_FAILED_PREFIX = "Quality Gate Failed!"
+_FAILED_GATE_NOTE = contextvars.ContextVar("skylos_failed_gate_note", default=True)
 
 
 def _quality_gate_reasons(message) -> list[str]:
@@ -1574,19 +1582,30 @@ def _quality_gate_reasons(message) -> list[str]:
 
 
 def _print_quality_gate_result(
-    passed: bool, new_violations: int, plan: str, message=None
+    passed: bool, new_violations: int, plan: str, message=None, context=None
 ) -> None:
+    subject = "Quality gate"
+    history = None
+    if context is not None:
+        subject = context.subject
+        history = context.history
+    history_suffix = ""
+    if history:
+        history_suffix = f" ({history})"
     if passed:
-        print("✅ PASS Quality gate: PASSED")
+        print(f"✅ PASS {subject}: PASSED{history_suffix}")
         return
     reasons = _quality_gate_reasons(message)
     if reasons:
-        print("❌ FAIL Quality gate: FAILED because of")
+        print(f"❌ FAIL {subject}: FAILED{history_suffix} because of")
         for reason in reasons:
             print(f"   - {reason}")
     else:
         suffix = "" if new_violations == 1 else "s"
-        print(f"❌ FAIL Quality gate: FAILED ({new_violations} new violation{suffix})")
+        detail = f"{new_violations} new issue{suffix}"
+        if history:
+            detail = f"{detail}; {history}"
+        print(f"❌ FAIL {subject}: FAILED ({detail})")
     if plan == "free":
         print("\n⚠️  Quality gate failed but continuing (Free plan)")
         print("💡 The Workspace plan blocks commits and CI on a failed gate")
@@ -1617,8 +1636,12 @@ def _enforce_report_quality_gate(
         if not quiet:
             print("\n Commit blocked by quality gate")
         sys.exit(1)
-    if not quiet:
-        print("\n⚠️ Quality gate failed, but not enforcing in local mode.")
+    if quiet or not _FAILED_GATE_NOTE.get():
+        return
+    if strict:
+        print("\n⚠️ Quality gate failed; --force stops it from failing this command.")
+        return
+    print("\n⚠️ Quality gate failed, but this command does not fail because of it.")
 
 
 def _report_upload_success_result(
@@ -1627,6 +1650,12 @@ def _report_upload_success_result(
     passed: bool,
     plan: str,
 ) -> dict:
+    from skylos.cloud.gate_status import (
+        clean_new_issue_baseline,
+        clean_pr_number,
+        clean_previous_gate,
+    )
+
     result = {
         "success": True,
         "scan_id": scan_id,
@@ -1650,6 +1679,21 @@ def _report_upload_success_result(
     # Older servers do not report it; only verified uploads publish checks.
     if isinstance(data.get("upload_trust"), str):
         result["upload_trust"] = data["upload_trust"]
+    destination = data.get("destination")
+    if isinstance(destination, dict):
+        result["destination"] = {
+            key: destination[key]
+            for key in ("project_id", "branch", "default_branch", "default_branch_source")
+            if isinstance(destination.get(key), str)
+        }
+        pr_number = clean_pr_number(destination.get("pr_number"))
+        if pr_number is not None:
+            result["destination"]["pr_number"] = pr_number
+    if "previous_gate" in data:
+        result["previous_gate"] = clean_previous_gate(data["previous_gate"])
+    new_issue_baseline = clean_new_issue_baseline(data.get("explain"))
+    if new_issue_baseline is not None:
+        result["new_issue_baseline"] = new_issue_baseline
     return result
 
 
@@ -2402,6 +2446,7 @@ def upload_report(
     scan_bundle_id=None,
     analyzer_owned=False,
     gitlab_full_scan=False,
+    failed_gate_note=True,
 ) -> dict:
     token = get_project_token()
     if not token:
@@ -2441,14 +2486,18 @@ def upload_report(
     else:
         _print_preflight_notice(prepared, quiet=quiet)
 
-    return _send_prepared_upload(
-        token,
-        prepared,
-        kind="report",
-        quiet=quiet,
-        strict=strict,
-        is_forced=is_forced,
-    )
+    note = _FAILED_GATE_NOTE.set(bool(failed_gate_note))
+    try:
+        return _send_prepared_upload(
+            token,
+            prepared,
+            kind="report",
+            quiet=quiet,
+            strict=strict,
+            is_forced=is_forced,
+        )
+    finally:
+        _FAILED_GATE_NOTE.reset(note)
 
 
 def upload_debt_report(
@@ -3142,7 +3191,7 @@ def _defense_upload_error_result(response, quiet: bool) -> dict | None:
     if response.status_code == 401:
         return {
             "success": False,
-            "error": "Invalid API token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
+            "error": "Invalid Skylos token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
         }
     return {
         "success": False,

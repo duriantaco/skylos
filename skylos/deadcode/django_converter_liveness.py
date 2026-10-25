@@ -22,6 +22,42 @@ from skylos.deadcode.web_framework_liveness import (
 
 _REGISTER_CONVERTER = "django.urls.register_converter"
 _CONVERTER_METHODS = {"to_python", "to_url"}
+
+
+def _registration_converter(call, bindings):
+    """Class passed to a proven register_converter(Class, name) call, if any.
+
+    Accepts ``django.urls.register_converter`` and imported Name aliases whose
+    binding ends with ``.register_converter`` (including local ``django_urls``
+    shims). Rejects attribute calls on replaced providers
+    (``routes.register_converter`` after ``routes = Registry()``).
+    """
+    if not isinstance(call, ast.Call) or not call.args:
+        return None
+    # The name can be computed; protocol evidence depends on the provider and
+    # converter class, not on spelling the registration name as a literal.
+    target = _qualified(call.func, bindings)
+    if target == _REGISTER_CONVERTER:
+        return _qualified(call.args[0], bindings)
+    # Imported Name aliases only (``from django_urls import register_converter as x``).
+    # Reject shadowed locals (``register_converter = noop``) and attribute calls on
+    # replaced providers (``routes.register_converter``).
+    if (
+        isinstance(call.func, ast.Name)
+        and target is not None
+        and target.endswith(".register_converter")
+    ):
+        # Preserve the narrower legacy shim allowance; computed names gain
+        # protocol evidence only through the actual Django provider above.
+        if len(call.args) >= 2 and not (
+            isinstance(call.args[1], ast.Constant)
+            and isinstance(call.args[1].value, str)
+        ):
+            return None
+        return _qualified(call.args[0], bindings)
+    return None
+
+
 _CORE_CONVERTERS = {
     "django.urls.converters.IntConverter": "builtins.object",
     "django.urls.converters.StringConverter": "builtins.object",
@@ -147,10 +183,10 @@ class _ConverterScanner(_WebScanner):
         for call in _eager_nodes(expression):
             if not isinstance(call, ast.Call):
                 continue
-            target = _qualified(call.func, bindings)
-            if target == _REGISTER_CONVERTER and call.args:
-                candidate = _qualified(call.args[0], bindings)
+            candidate = _registration_converter(call, bindings)
+            if candidate is not None:
                 self.registry.register(candidate)
+            target = _qualified(call.func, bindings)
             scanner, function = self.registry.function(target)
             if scanner is not None:
                 scanner.invoke(function, call, bindings)
@@ -311,13 +347,7 @@ class _ConverterRegistry:
                 self.registered.add(key)
 
 
-def find_django_converter_classes(definitions, files, root):
-    """Return exact registered class and selected protocol-member identities."""
-    if not any(
-        definition.type == "import" and definition.name.split(".", 1)[0] == "django"
-        for definition in definitions.values()
-    ):
-        return frozenset()
+def _converter_scan_paths(definitions, files, root):
     root = Path(root).resolve()
     if root.is_file():
         root = root.parent
@@ -331,12 +361,34 @@ def find_django_converter_classes(definitions, files, root):
         except (OSError, ValueError):
             continue
         paths.append(path)
-    if not paths:
-        return frozenset()
+    return root, paths
+
+
+def _project_may_register_converters(definitions, paths):
+    if any(
+        definition.type == "import" and definition.name.split(".", 1)[0] == "django"
+        for definition in definitions.values()
+    ):
+        return True
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if "register_converter" in text:
+            return True
+    return False
+
+
+def _scan_django_converters(definitions, files, root):
+    """Collect converter identities from registrations whose owners execute."""
+    root, paths = _converter_scan_paths(definitions, files, root)
+    if not paths or not _project_may_register_converters(definitions, paths):
+        return frozenset(), []
     parsed = parse_python_files(paths)
     index = _DefinitionIndex(definitions, parsed, root)
     if "django" in index.shadowed:
-        return frozenset()
+        return frozenset(), []
     registry = _ConverterRegistry(index, parsed)
     for scanner in registry.scanners.values():
         scanner.collect()
@@ -346,7 +398,13 @@ def find_django_converter_classes(definitions, files, root):
             _, definition = function
             if id(definition) in executed and id(definition) not in scanner.invoked:
                 scanner.invoke(function)
-    return frozenset(registry.registered)
+    return frozenset(registry.registered), []
+
+
+def find_django_converter_classes(definitions, files, root):
+    """Return exact registered class and selected protocol-member identities."""
+    registered, _ = _scan_django_converters(definitions, files, root)
+    return registered
 
 
 def find_django_converter_method_targets(definitions, class_keys):
@@ -356,6 +414,14 @@ def find_django_converter_method_targets(definitions, class_keys):
     targets = []
     paths = {}
     for definition in definitions.values():
+        if definition.type == "class":
+            filename = str(definition.filename)
+            if filename not in paths:
+                paths[filename] = str(Path(filename).resolve())
+            key = paths[filename], definition.name
+            if key in class_keys:
+                targets.append((definition, "django_web_converter_method"))
+            continue
         if (
             definition.type != "method"
             or definition.simple_name not in _CONVERTER_METHODS

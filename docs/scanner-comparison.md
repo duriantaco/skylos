@@ -27,7 +27,7 @@ the incumbent gate:
 skylos compare . --against incumbent.sarif --upload
 ```
 
-Cloud upload is always explicit. It uses the normal Skylos project API key or
+Cloud upload is always explicit. It uses the normal Skylos project token or
 GitHub OIDC identity, sends a bounded comparison receipt, and leaves the local
 comparison advisory. The Cloud receipt keeps aggregate evidence and
 repository-relative review metadata; scanner messages, fingerprints, local

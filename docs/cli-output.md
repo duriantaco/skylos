@@ -43,6 +43,20 @@ The default table report shows separate assessment readouts rather than a
 blended score badge. New source scans do not produce a codebase A–F grade.
 See [scan assessment](#scan-assessment).
 
+A scan that ran more than dead-code checks (for example `-a`) ends with one
+issue count. It counts the listed findings by category: the records an upload
+marks as listed (`listed_finding_count`), which Skylos Cloud lists by default:
+
+```text
+Found 4 issues: security 1, secrets 2, quality 1. 8 more advice findings are hidden by default; --all-advice lists and counts them.
+```
+
+Advice hidden by default is named after the count and never added to it.
+`--all-advice` marks it listed for the terminal, the upload and the gate
+alike, so the same scan then reads `Found 12 issues: security 1, secrets 2,
+quality 9.` A dead-code-only scan keeps
+`No dead-code candidates found at current settings.` or its dead-code count.
+
 Use `pretty` when you want a compact, file-grouped terminal report:
 
 ```bash
@@ -377,6 +391,136 @@ it. A scan with only coverage gaps uploads; its scan-coverage receipt says
 `complete: false` with reason `analysis_incomplete`, so Skylos Cloud never
 treats a missing finding from that scan as fixed.
 
+### Where an upload goes
+
+Before sending, rich output names the destination: the Skylos Cloud project
+(as Skylos Cloud reports it for the token), which token is used (a project
+token from `SKYLOS_TOKEN`, the login token for the project in this repo's
+`.skylos/link.json`, or your saved login token), and the branch and commit
+being uploaded:
+
+```text
+Skylos Cloud project: hatchpoint-dronecode
+  Token:  your saved login token; this repo is not linked (skylos project use links it)
+  Branch: feat/lidar @ 1acce90
+```
+
+A project token is created in the project's Settings in Skylos Cloud; mark it
+for CI only when it is stored as a CI secret. A login token is what
+`skylos login` saves on your machine; its uploads are unverified. After a successful upload, one line shows the branch
+Skylos Cloud stored the scan under, whether it is the project's default branch,
+and links to the project Overview and Issues list for that branch (with
+`?branch=<branch>` unless it is the default branch). The scan link is printed
+once, on the gate result above it (see below). At most one more sentence
+follows, only when something is unusual: the branch is not the default branch,
+a login-token upload on the default branch is unverified, or Skylos Cloud did not
+report or only assumed the default branch.
+
+```text
+Branch: feat/x @ 64960ed (not the default branch, main) · Overview: https://skylos.dev/dashboard/projects/<project>?branch=feat%2Fx · Issues: https://skylos.dev/dashboard/projects/<project>/issues?branch=feat%2Fx
+This is not main: Overview shows its gate when you pick feat/x in the branch menu, but the project verdict follows main only.
+```
+
+The default branch comes from Skylos Cloud, never from local `origin/HEAD`:
+Cloud reads it from the connected GitHub or GitLab repository, and otherwise
+treats `main` as the default; the line then says `the assumed default branch`.
+
+| Upload | Effect in Skylos Cloud |
+|---|---|
+| Any branch | The scan page shows it with its gate result. Its issues are listed under that branch on the Issues page, which opens on the default branch; each issue row shows the branch and commit of the scan that last found it. |
+| A branch other than the default | Overview shows its gate when you pick the branch in the branch menu. The project verdict follows the default branch only. |
+| The default branch, CI (OIDC or a CI project token) | Sets the project verdict. Issues this complete scan no longer finds are marked fixed. |
+| The default branch, login token (`skylos login`) | Stored as unverified: it does not set the verdict, mark issues fixed, or publish GitHub checks. |
+
+An issue found on another branch is marked fixed after that branch is merged
+and a CI-verified scan of the default branch no longer finds it.
+
+When your saved login token belongs to a project connected to a different
+repository than this checkout's `origin` (host and path compared without
+regard to letter case), the upload is refused with exit `1`
+and nothing is sent. Link this repository with `skylos project use`, or upload
+with a project token of that project in `SKYLOS_TOKEN`. A linked project or `SKYLOS_TOKEN`
+with a different repository only prints a warning. With `--json` or another
+machine format, the destination line and any refusal go to stderr.
+
+### Cloud gate result after an upload
+
+After a successful upload, Skylos prints the Skylos Cloud gate result for the
+branch and how it changed since the previous complete scan of that branch,
+then one link to the scan page:
+
+```text
+✅ PASS Quality gate on main: PASSED (was FAILED on 21 Oct 14:05 UTC, abc1234)
+
+🔗 View details: https://skylos.dev/dashboard/projects/<project>/scans/<scan>
+```
+
+| Previous run on the branch | Text after the result |
+|---|---|
+| Different result | `(was PASSED on 21 Oct 14:05 UTC, abc1234)` or `(was FAILED ...)` |
+| Same result | `(same as last run on 21 Oct 14:05 UTC, abc1234)` |
+| Its failed gate was overridden | `(was OVERRIDDEN on 21 Oct 14:05 UTC, abc1234)` |
+| None | `(first result on this branch)` |
+| Result unknown | nothing |
+| The previous run was an unverified upload | `, unverified upload` at the end, e.g. `(was PASSED on 21 Oct 14:05 UTC, abc1234, unverified upload)` |
+
+A failed gate keeps its reasons, for example
+`❌ FAIL Quality gate on main: FAILED (was PASSED on 21 Oct 14:05 UTC, abc1234) because of`
+followed by one `   - <reason>` line each; without reasons it reads
+`FAILED (2 new issues; was PASSED ...)`. A pull-request scan names it:
+`Quality gate on feat/x (PR #12): ...`. Times are in UTC; the commit
+is the first 7 characters of the previous scan's commit. Branch names and
+other text from Skylos Cloud are printed without control characters, and the
+link is built from the validated project and scan IDs, never from a URL in the
+response. Without a project ID the link is `/dashboard/scans/<scan>`.
+
+Below the link, a rich `skylos . --upload` names Skylos Cloud's new-issue
+count and what it compared against, the same number as the gate's "New
+issues" condition. New means not in the latest passing (or overridden) scan
+of this branch, otherwise of the default branch; a first scan has none. An
+unchanged re-upload of a feature branch can therefore still show new issues:
+
+| Skylos Cloud compared with | Line |
+|---|---|
+| A passing scan of `main` | `  5 new issues (not in the last passing scan of main)` |
+| A pull request's changed lines | `  2 new issues (on lines this pull request changed)` |
+| Not reported (older Skylos Cloud) | `  5 new issues` |
+
+A failed gate then says what it does to this command's exit code:
+
+| Flags | Line |
+|---|---|
+| none | `⚠️ The failed quality gate does not change this command's exit code; add --gate to make it fail.` |
+| `--strict` | `Exiting with code 1 because the Skylos Cloud quality gate failed (--strict).` |
+| `--strict --force` | `⚠️ --force: the failed quality gate does not change this command's exit code.` |
+| `--gate` | `Quality Gate: FAILED (Skylos Cloud quality gate for this upload; reasons above)`, exit `1` |
+| `--gate --force` | `⚠️ Quality gate failed, but this command does not fail because of it.` |
+
+Other upload commands that do not fail on a failed Skylos Cloud gate print
+`⚠️ Quality gate failed, but this command does not fail because of it.`
+(formerly `not enforcing in local mode`).
+
+If Skylos Cloud does not report the branch, the line stays
+`✅ PASS Quality gate: PASSED`. An older Skylos Cloud that does not report the
+previous result prints exactly the earlier lines, `✅ PASS Quality gate: PASSED`
+and `🔗 View the scan: https://skylos.dev/dashboard/scans/<scan>`.
+
+With `--json` or another machine format, stdout stays one machine-readable
+document and the same result is one stderr line:
+
+```text
+Quality gate on main: FAILED (was PASSED on 21 Oct 14:05 UTC, abc1234) — View details: https://skylos.dev/dashboard/projects/<project>/scans/<scan>
+```
+
+An older Skylos Cloud keeps the earlier stderr line
+`View Cloud gate and results: <url>`. The JSON `upload` receipt adds
+`previous_gate` (`scan_id`, `created_at`, `commit`, `passed`, `overridden`, and
+`trusted` when Skylos Cloud reports it, or `null` for the first result) when
+Skylos Cloud sends it; values that fail
+validation become `null` (`overridden` becomes `false`). Gate enforcement and exit codes do not change: a
+failed Cloud gate still exits `1` with `--gate` or `--strict` unless `--force`
+is set.
+
 When grep verification exceeds `SKYLOS_GREP_BUDGET` (120 seconds by default)
 or a search cannot finish safely, Skylos keeps the result of every candidate
 it did verify: candidates with a usage stay rescued, and candidates verified
@@ -668,7 +812,7 @@ The separate `skylos debt` and `skylos defend` scores retain their own contracts
 | Readout | Meaning |
 |---|---|
 | Risk | Highest unresolved severity and counts among Defect and Review findings, excluding dead-code candidates. Correctness findings in `quality` are included. |
-| Maintainability | Advice counts and groups, affected code units where measurable, and observed values against their rule limits. |
+| Maintainability | Advice counts and groups, affected code units where measurable, and observed values against their rule limits. The row reads e.g. `0 advice findings · 5 rules checked · 0 affected files`: listed Advice, the maintainability rules that measured code, and the files with listed Advice. |
 | Dead code | Candidate counts, confidence and evidence for deciding what to review or remove. |
 | Gate | PASS or FAIL against the configured policy when a gate is evaluated, INCOMPLETE when required analysis did not finish; otherwise not evaluated. JSON: the top-level `gate` object ([Gate verdict](#gate-verdict)). |
 
@@ -713,6 +857,8 @@ Coverage stays alongside the readouts. Disabled checks are **not assessed**;
 failed or unavailable checks are **incomplete**. Known findings remain visible
 when another check fails. Zero findings describes only the checks and scope
 that completed. It does not prove a repository safe or certify a release.
+The coverage line names unfinished checks and says so in plain words, e.g.
+`Coverage: incomplete; not fully checked: dependencies; some issues may not be reported`.
 
 Display grouping, expansion and severity/category/file views cannot improve
 the assessment. True changes in analysis scope, such as exact rule selection
@@ -1072,7 +1218,7 @@ the CLI prints `Scan was already saved by an earlier attempt`.
 to support, never as a raw response body:
 
 ```text
-Upload failed: Invalid API token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.
+Upload failed: Invalid Skylos token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.
 Upload failed: Skylos Cloud had a temporary problem (HTTP 503). The scan was saved; run 'skylos upload --retry' to send it. (ref: req_8f2c)
 ```
 

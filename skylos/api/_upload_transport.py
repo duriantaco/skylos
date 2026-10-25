@@ -326,7 +326,7 @@ class UploadFailure(str):
 
 
 _INVALID_TOKEN = (
-    "Invalid API token.",
+    "Invalid Skylos token.",
     "Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
 )
 _NO_CREDITS = (
