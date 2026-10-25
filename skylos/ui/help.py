@@ -325,26 +325,37 @@ COMMANDS = [
         "group": "CI/CD",
     },
     {
+        "name": "skylos cloud [PATH]",
+        "desc": "Scan with every check, upload the findings (not the repository) and show this branch's gate and link",
+        "details": [
+            "Logs you in through the browser the first time",
+            "Accepts the same scan flags as skylos PATH; name checks (e.g. --danger) to run only those",
+            "--gate exits 1 when the Skylos Cloud gate fails; skylos . --gate uses your local limits instead",
+            "skylos . stays local: your code and findings are not sent",
+        ],
+        "group": "Skylos Cloud",
+    },
+    {
         "name": "skylos login",
         "desc": "Connect or switch Skylos Cloud project",
-        "group": "Account",
+        "group": "Skylos Cloud",
     },
     {
         "name": "skylos whoami",
         "desc": "Show connected account info",
-        "group": "Account",
+        "group": "Skylos Cloud",
     },
     {
         "name": "skylos project <command>",
         "desc": "Manage the active project for this repo",
-        "group": "Account",
+        "group": "Skylos Cloud",
     },
     {
         "name": "skylos key [list|add|remove]",
         "desc": "Manage local model-provider API keys",
         "group": "Account",
     },
-    {"name": "skylos credits", "desc": "Check credit balance", "group": "Account"},
+    {"name": "skylos credits", "desc": "Check credit balance", "group": "Skylos Cloud"},
     {
         "name": "skylos upload --retry",
         "desc": "Resend scans whose upload to Skylos Cloud did not finish",
@@ -353,7 +364,7 @@ COMMANDS = [
             "Each scan is resent with its original idempotency key, so Cloud never saves it twice",
             "Use skylos upload --list to see saved scans; they expire after 7 days",
         ],
-        "group": "Account",
+        "group": "Skylos Cloud",
     },
     {
         "name": "skylos init",
@@ -437,7 +448,7 @@ COMMANDS = [
     {
         "name": "skylos sync",
         "desc": "Sync config with Skylos Cloud",
-        "group": "Utility",
+        "group": "Skylos Cloud",
     },
     {
         "name": "skylos sonar import [properties_file]",
@@ -527,10 +538,15 @@ COMMANDS = [
 
 # The common path, shown first by `skylos --help` and `skylos commands`.
 START_HERE = (
-    ("skylos .", "Find dead code in this directory."),
+    ("skylos .", "Find dead code in this directory. Your code and findings stay here."),
     (
         "skylos . -a",
         "Run all checks: dead code, security, secrets, quality and dependencies.",
+    ),
+    (
+        "skylos cloud",
+        "Run all checks, upload the findings (not the repository) and see "
+        "this branch's gate on Skylos Cloud.",
     ),
     (
         "skylos done --base main",
@@ -620,7 +636,14 @@ def print_flat_commands(console):
     table.add_column("Description", style="dim")
     table.add_column("Group", style="yellow")
 
-    group_order = ("Core Analysis", "CI/CD", "AI Agent", "Release", "Account")
+    group_order = (
+        "Core Analysis",
+        "Skylos Cloud",
+        "CI/CD",
+        "AI Agent",
+        "Release",
+        "Account",
+    )
     for cmd in sorted(
         COMMANDS,
         key=lambda c: (
