@@ -148,6 +148,14 @@ Full scans skip generated/vendored files (Django migrations, `static/**/lib`,
   hybrid static and LLM analysis, requiring `[llm]` extras and provider config.
 - `skylos rules init|validate|list`: local YAML rule packs.
 - `skylos cicd init`: generate CI workflow.
+- `skylos done map [PATH] [--base REF] [--format text|json|markdown]`: the
+  change map. Per changed Python or TS/JS function, method or class: old and
+  new code, calls added/removed/moved, callers (`in_change`, `is_test`),
+  removed security checks, breaking or compatible signatures and the callers
+  they break, and `read_first` / `flagged` ids. Deterministic; no model, no
+  network. `--base` defaults to HEAD (uncommitted changes only). Exit 0
+  shown, 2 could not run. `skylos done --map` prints it after the verdict
+  without changing it. MCP tool: `change_map`. Details: `docs/change-map.md`.
 - `skylos baseline .`: save current findings baseline.
 - `skylos clean`: interactively remove or comment dead code.
 - `skylos cache stats|clear`: manage cache data.

@@ -76,6 +76,41 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="CLIENT",
         help="Agent that made the change, e.g. claude-code, codex, cursor (default: unknown)",
     )
+    parser.add_argument(
+        "--map",
+        action="store_true",
+        help=(
+            "Also print the change map (what the change touches, riskiest first) after the "
+            "verdict, in text or markdown. It never changes the verdict, receipt or exit code. "
+            "For JSON use `skylos done map --format json`."
+        ),
+    )
+    return parser
+
+
+def build_map_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="skylos done map",
+        description=(
+            "Show what a change touches: every changed Python or TypeScript/JavaScript function "
+            "with its old and new code, calls added and removed, who calls it, removed security "
+            "checks, and what to read first. Computed from the code, not by a model. "
+            "Exit 0 shown, 2 could not run."
+        ),
+    )
+    parser.add_argument("path", nargs="?", default=".", help="Repository (default: .)")
+    parser.add_argument(
+        "--base",
+        metavar="REF",
+        default="HEAD",
+        help="Compare with the merge base of REF, e.g. origin/main (default: HEAD, uncommitted changes only)",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("text", "json", "markdown"),
+        default="text",
+        help="Output format (default: text)",
+    )
     return parser
 
 
@@ -97,6 +132,8 @@ def build_receipt_parser() -> argparse.ArgumentParser:
 def run_done_command(argv: list[str], *, console: Console | None = None) -> int:
     if argv and argv[0] == "receipt":
         return _run_receipt_command(argv[1:], console=console)
+    if argv and argv[0] == "map":
+        return _run_map_command(argv[1:], console=console)
     args = build_parser().parse_args(argv)
     out = console or Console(highlight=False)
     err = Console(stderr=True, highlight=False)
@@ -173,9 +210,60 @@ def run_done_command(argv: list[str], *, console: Console | None = None) -> int:
                     style="dim",
                 )
             )
+        if args.map:
+            _print_change_map(out, args.path, args.base, "text")
+    if args.map and args.format == "markdown":
+        _print_change_map(out, args.path, args.base, "markdown")
 
     _write_step_summary(lambda: render_markdown(receipt))
     return EXIT_PASS if receipt["verdict"] == "pass" else EXIT_BLOCKED
+
+
+def _change_map_text(path: str, base: str | None, fmt: str) -> str:
+    from skylos import changemap
+
+    change_map = changemap.build_change_map(path, base or "HEAD")
+    if fmt == "markdown":
+        return changemap.render_markdown(change_map)
+    return changemap.render_text(change_map)
+
+
+def _print_change_map(out: Console, path: str, base: str | None, fmt: str) -> None:
+    try:
+        text = _change_map_text(path, base, fmt)
+    except Exception as exc:
+        logger.debug("change map failed", exc_info=True)
+        out.print(Text(f"Change map unavailable: {exc}", style="yellow"))
+        return
+    if fmt == "markdown":
+        print(text)
+        return
+    out.print()
+    out.print(Text(text.rstrip("\n")), soft_wrap=True)
+
+
+def _run_map_command(argv: list[str], *, console: Console | None) -> int:
+    from skylos import changemap
+
+    args = build_map_parser().parse_args(argv)
+    out = console or Console(highlight=False)
+    err = Console(stderr=True, highlight=False)
+    try:
+        change_map = changemap.build_change_map(args.path, args.base)
+    except ValueError as exc:
+        err.print(Text(f"skylos done map: {exc}", style="red"))
+        return EXIT_ERROR
+    except Exception:
+        logger.debug("change map failed", exc_info=True)
+        err.print(Text("skylos done map: the change map could not be built", style="red"))
+        return EXIT_ERROR
+    if args.format == "json":
+        print(json.dumps(change_map, indent=2))
+    elif args.format == "markdown":
+        print(changemap.render_markdown(change_map))
+    else:
+        out.print(Text(changemap.render_text(change_map).rstrip("\n")), soft_wrap=True)
+    return EXIT_PASS
 
 
 def _invalidate_latest_receipt(path: str | Path, err: Console) -> None:

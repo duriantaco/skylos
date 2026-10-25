@@ -2034,6 +2034,35 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
+    @_tool("Map what a change touches")
+    def change_map(
+        path: RepoPathParam = ".",
+        base: Annotated[
+            str,
+            Field(
+                description=(
+                    "Compare with the merge base of this git ref, e.g. origin/main. "
+                    "Default HEAD: only uncommitted changes."
+                )
+            ),
+        ] = "HEAD",
+    ) -> str:
+        """Map what a code change touches, to review it: every changed Python or TypeScript/JavaScript function, method or class with its old and new code, calls added and removed, calls that only moved into a helper, its callers (with call lines, and whether each caller was updated), removed security checks and access checks, breaking or compatible signature changes, changed module values and the functions using them, and the top symbols to read first. Flags list what a person must look at.
+
+        Computed from the code, not by a model: the same commit gives the same map. Returns JSON. Read-only and local."""
+        gate_err = _gate("change_map")
+        if gate_err:
+            return gate_err
+
+        try:
+            from skylos.changemap import build_change_map
+
+            result = build_change_map(path, base)
+            _store_result(result, "change_map", path)
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
     @mcp.resource("skylos://results/latest")
     def get_latest_result() -> str:
         """Complete JSON result, including every Advice record; of the most recent stored Skylos tool run."""
