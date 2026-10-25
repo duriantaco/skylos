@@ -128,6 +128,7 @@ current directory. `suite` and `defend` require a directory; `verify` and
 | Question | Command | Input checked |
 |:---|:---|:---|
 | What problems are in this source tree? | `skylos PATH` | Source files and project configuration; dead code by default, every main source analyzer with `-a` |
+| How is this branch doing on Skylos Cloud? | `skylos cloud [PATH]` | Every main source analyzer, then the findings are uploaded and the branch's quality gate is printed with one link |
 | Did the agent really finish this branch? | `skylos done --base main` | The branch's changes since its merge base with `main`: Skylos runs your tests (pytest automatically; other runners need `test_command` in `[tool.skylos.done]`) and compares the tests, test settings and CI steps with the base; writes a receipt to `.skylos/receipts/` |
 | Does this code contain AI-code mistakes? | `skylos verify [PATH]` | AI-defect checks over the selected file or tree, plus a separate Git HEAD behavior comparison for supported Python working changes |
 | Should a model review static dead-code findings? | `skylos agent verify [PATH]` | LLM by default; optional [Jev-only or Jev-plus-LLM review](./docs/dead-code-review.md) |
@@ -166,8 +167,31 @@ The report commands have different gate and network behavior:
 
 ```bash
 pip install skylos
-skylos .
+skylos .            # find problems; your code and findings stay on your machine
+skylos cloud        # optional: track results per branch on Skylos Cloud
+skylos cicd init    # add a Skylos check to every pull request
 ```
+
+That is the whole path. When `skylos .` finds issues, it ends by naming the
+next command.
+
+`skylos cloud` runs every check, shows the findings, uploads them and prints
+this branch's quality gate with one link to it:
+
+```text
+✗ Quality gate on feat/login: FAILED (was PASSED on 24 Oct 15:38 UTC, 1ba9895) · 1 critical security issue
+  Open: https://skylos.dev/dashboard/projects/<project>?branch=feat%2Flogin
+  Next: fix the issues behind the failed gate, then run skylos cloud again.
+```
+
+The first run opens your browser to log in and pick the project for this repo.
+It sends findings with file paths and code snippets of up to 7 lines (none for
+secrets), the branch, the commit, the git author email of each flagged line,
+and a map of your functions and classes (names, files, lines, sizes, which
+calls which). Not your repository. It exits `0` even when the Skylos Cloud gate
+fails; add `--gate` to exit `1` (use that in CI). You never need a key to pass
+the gate: fix the issues that fail it. See [Skylos Cloud](./docs/skylos-cloud.md) for the other
+Cloud commands.
 
 Before 4.47.2, `pip install skylos` also installs a Dart parser that builds
 from source and needs a C compiler. From 4.47.2, Dart support is the optional
@@ -608,7 +632,7 @@ repo and PR checker that puts several common review checks behind one CLI.
 ## What Leaves Your Machine
 
 **Skylos sends nothing to Skylos Cloud unless the command or flag you ran says
-it talks to Skylos Cloud:** `--upload`, `skylos login`, `whoami`, `project`,
+it talks to Skylos Cloud:** `skylos cloud`, `--upload`, `skylos login`, `whoami`, `project`,
 `sync`, `credits`, `upload`, `ingest claude-security`, `verify-verdict`,
 `feedback`, or the `--verify` scan option. A token on its own (`SKYLOS_TOKEN`, a saved
 `skylos login`, a CI OIDC token) never makes a command upload a scan,
@@ -1141,7 +1165,7 @@ outcomes and the maintainers' reasons.
 | MCP server | [MCP setup](https://docs.skylos.dev/mcp-server) | expose Skylos scans to AI agents and coding assistants; `analyze` works without a token (five calls per rolling 24 hours), other tools need a free Skylos project token; authenticated scans can use credits |
 | Ruff | [Python linting](./docs/python-linting.md) | optional Python linting through `skylos lint` |
 | Docker image | [Installation](https://docs.skylos.dev/installation) | run Skylos without a local Python install |
-| Skylos Cloud | [Cloud workflow](https://docs.skylos.dev/cloud-workflow) | optional upload and dashboard workflows |
+| Skylos Cloud | [Skylos Cloud](./docs/skylos-cloud.md) | `skylos cloud`: upload findings, see each branch's quality gate and how it changed |
 
 Generate a GitHub Actions workflow from the CLI:
 
@@ -1195,6 +1219,7 @@ See [container-image scanning](./docs/container-image-reports.md#scan-an-image-w
 | Baselines, filtering, suppressions, and whitelists | [Configuration](https://docs.skylos.dev/configuration) |
 | Smart tracing | [Smart Tracing](https://docs.skylos.dev/smart-tracing) |
 | Rule families and language support | [Rules Reference](https://docs.skylos.dev/rules-reference) |
+| `skylos cloud`, what it sends, and the other Cloud commands | [Skylos Cloud](./docs/skylos-cloud.md) |
 | Cloud uploads and dashboard flow | [CLI to Dashboard](https://docs.skylos.dev/cloud-workflow) |
 | Every network request the CLI can make, and how to turn each off | [What leaves your machine](./docs/privacy-and-network.md) |
 | VS Code extension | [VS Code Extension](https://docs.skylos.dev/vscode) |

@@ -203,12 +203,14 @@ Pull request checks do not depend on it.
 3. Push to your default branch (or merge any pull request). The **Skylos Cloud
    upload** job should print `✓ Scan uploaded` and a link to the scan.
 
-For a local scan with Cloud results, run `skylos . -a --gate --upload`.
-After a confirmed upload, Skylos prints the Cloud gate result for the branch
-and how it changed since the last run, for example
-`✅ PASS Quality gate on main: PASSED (was FAILED on 21 Oct 14:05 UTC, abc1234)`.
-Follow the printed link to that scan's gate and
-results, signing in if asked. Formatted output keeps the link on stderr so
+For a local scan with Cloud results, run `skylos cloud` (it runs every
+check and uploads; add `--gate` to exit `1` on a failed gate). It prints the
+Cloud gate result for the branch, how it changed since the last run, and one
+link, for example
+`✓ Quality gate on main: PASSED (was FAILED on 21 Oct 14:05 UTC, abc1234)`.
+Follow the link to the branch's gate and results, signing in if asked. The
+manual form, `skylos . -a --gate --upload`, uploads the same scan with the
+full upload output. Formatted output keeps the link on stderr so
 stdout remains machine-readable; JSON also includes it in `upload.url`.
 `--gate` without `--upload` stays local.
 
