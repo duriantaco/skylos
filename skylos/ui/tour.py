@@ -68,7 +68,7 @@ STEPS = [
         "title": "CI/CD Integration",
         "step": 5,
         "body": (
-            "[bold]Generate GitHub Actions workflow[/bold] (30-second setup):\n"
+            "[bold]Set up a pull request gate for your CI[/bold] (GitHub, GitLab, Jenkins, ...):\n"
             "  [bold cyan]skylos cicd init[/bold cyan]\n"
             "\n"
             "[bold]Quality gate[/bold] (fail CI on findings):\n"
