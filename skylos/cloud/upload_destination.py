@@ -204,8 +204,9 @@ def destination_lines(dest: UploadDestination) -> list[str]:
 
 UPLOAD_CONTENTS_LINE = (
     "  Sends:  findings with file paths and code snippets of up to 7 lines "
-    "(none for secrets), the branch, the commit and the git author email of "
-    "each flagged line. Not your repository."
+    "(none for secrets), the branch, the commit, the git author email of "
+    "each flagged line, and a map of your functions and classes (names, files, "
+    "lines, sizes, which calls which). Not your repository."
 )
 
 

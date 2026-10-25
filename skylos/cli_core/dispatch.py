@@ -25,6 +25,7 @@ EARLY_COMMAND_HANDLERS = {
     "feedback": "_run_feedback_command",
     "whoami": "_run_whoami_command",
     "login": "_run_login_command",
+    "cloud": "_run_cloud_command",
     "sync": "_run_sync_command",
     "project": "_run_project_command",
     "sonar": "_run_sonar_command",
@@ -55,6 +56,7 @@ EARLY_COMMAND_HANDLERS = {
 NATIVE_HELP_COMMANDS = frozenset(
     {
         "clean",
+        "cloud",
         "defend",
         "done",
         "explain",

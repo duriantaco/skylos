@@ -1148,6 +1148,40 @@ the recorded agent counts.
 
 ## Uploading To Skylos Cloud
 
+`skylos cloud [PATH] [scan flags]` is the short way: it runs `skylos PATH -a
+--upload` (or only the checks you name, such as `--danger`), prints the
+findings tables like a local scan, and a short receipt instead of the full
+upload output.
+Without a token it opens the browser login before scanning in an interactive
+terminal; without a terminal (outside CI) it stops before scanning with
+`Not connected to Skylos Cloud. Run skylos login in a terminal, or set
+SKYLOS_TOKEN to a project token.` and exit `1`. `--no-upload` is refused with
+exit `2`.
+
+After the destination lines, `skylos cloud` prints
+`Uploading findings to Skylos Cloud…` and then:
+
+```text
+✗ Quality gate on feat/login: FAILED (was PASSED on 24 Oct 15:38 UTC, 1ba9895) · 1 critical security issue
+  Open: https://skylos.dev/dashboard/projects/<project>?branch=feat%2Flogin
+  Next: fix the issues behind the failed gate, then run skylos cloud again.
+```
+
+| Line | When |
+|---|---|
+| `✓ Quality gate on <branch>: PASSED (<history>)` or `✗ … FAILED (<history>) · <reasons>` | Skylos Cloud reported a gate result; history is as in [Cloud gate result after an upload](#cloud-gate-result-after-an-upload); without reasons the new-issue count follows the `·` |
+| `✓ Uploaded to Skylos Cloud (no quality gate result was reported)` | Skylos Cloud reported no gate result |
+| `  Open: <url>` | Always: the project Overview, with `?branch=` for a branch that is not the default branch; the scan page when no project ID is known |
+| `  This is main, but a login-token upload is unverified: …` | Default branch, login-token upload |
+| `  Next: fix the issues behind the failed gate, then run skylos cloud again.` | The gate failed |
+| `  Next: skylos cicd init — adds a Skylos check to every pull request.` | The gate passed, this is not a CI run, and `.github/workflows/skylos.yml` does not exist |
+
+`skylos cloud` exits `0` on a failed gate. `--gate` or `--strict` exits `1` and
+adds `Exiting with code 1 because the Skylos Cloud quality gate failed (--gate).`
+(or `(--strict)`). Its `--gate` is the Skylos Cloud gate only: the local
+`[tool.skylos.gate]` limits are not evaluated and the scan output is the same
+as without `--gate`. Machine formats behave exactly as with `--upload`.
+
 `skylos . --upload` (and `skylos debt . --upload`) sends the scan to Skylos
 Cloud. The upload follows a versioned contract shared with the server
 (`skylos/api/upload_contract/v1.json`).

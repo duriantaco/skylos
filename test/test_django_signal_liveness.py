@@ -685,3 +685,19 @@ def test_source_owned_method_resolves_before_unknown_external_ancestry(
         assert "shop.signals.Handlers.on_save" not in _signal_targets(
             result, "django_web_signal_receiver"
         )
+
+
+def test_unresolved_class_base_does_not_abort_signal_liveness(tmp_path):
+    """A Call/expr base stores None in the MRO; that must not crash the pass.
+
+    Large apps hit this shape; an uncaught error previously discarded every
+    dead-code liveness rescue after framework entrypoints (signals, registries).
+    """
+    source = _IMPORTS + (
+        "def base_factory():\n    return object\n"
+        "class OddSignal(base_factory()):\n    pass\n"
+        "odd = OddSignal()\n"
+        "@receiver(post_save)\n" + _BODY
+    )
+    result = _scan(tmp_path, _sources(source))
+    _assert_registered(result, loaded=True)

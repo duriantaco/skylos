@@ -390,27 +390,20 @@ def test_repro_15_template_only_model_methods_are_live(tmp_path):
     )
 
 
-# --- 16: duck-typed provider contract method -----------------------------------
+# --- 16: duck-typed provider methods (no base declaration) ---------------------
 
 _PROVIDER_IFACE = {
     "provider_iface/__init__.py": "",
     "provider_iface/provider.py": '''\
-"""Provider interface — duck-typed calls on base type.
-
-schedule_dates is part of the live provider contract but never named at the
-call site below.
-"""
+"""Sibling providers — schedule_dates is not on the base (production shape)."""
 
 
 class Provider:
-    def schedule_dates(self, season: int):
-        raise NotImplementedError
-
     def scoreboard(self, day: str):
         raise NotImplementedError
 
 
-class ConcreteProvider(Provider):
+class NcaaProvider(Provider):
     def schedule_dates(self, season: int):
         return [f"{season}-01-01"]
 
@@ -418,22 +411,39 @@ class ConcreteProvider(Provider):
         return {"day": day, "games": []}
 
 
-def fetch_day(provider: Provider, day: str):
-    return provider.scoreboard(day)
+class NjcaaProvider(Provider):
+    def schedule_dates(self, season: int):
+        return [f"{season}-02-01"]
+
+    def scoreboard(self, day: str):
+        return {"day": day, "games": []}
 
 
-# Entry keeps ConcreteProvider / scoreboard live; schedule_dates stays contract-only.
-RESULT = fetch_day(ConcreteProvider(), "2026-10-23")
+def get_provider(slug: str):
+    if slug == "ncaa":
+        return NcaaProvider()
+    return NjcaaProvider()
+''',
+    "provider_iface/pipeline.py": '''\
+from provider_iface.provider import get_provider
+
+
+def import_month(slug: str, season: int):
+    client = get_provider(slug)
+    return client.schedule_dates(season)
+
+
+RESULT = import_month("ncaa", 2026)
 ''',
 }
 
 
 def test_repro_16_provider_contract_method_is_live(tmp_path):
     result = _scan(tmp_path, _PROVIDER_IFACE)
-    # Concrete implementer method must stay live; abstract base may still look unused.
     unused = _unused_names(result)
-    assert "ConcreteProvider.schedule_dates" not in unused
-    assert "provider_iface.provider.ConcreteProvider.schedule_dates" not in unused
+    assert "NcaaProvider.schedule_dates" not in unused
+    assert "NjcaaProvider.schedule_dates" not in unused
+    assert "provider_iface.provider.NcaaProvider.schedule_dates" not in unused
 
 
 # --- 18: satellite LOGGING "()" factories --------------------------------------
@@ -519,62 +529,49 @@ def test_repro_18_satellite_logging_factories_are_live(tmp_path):
     _assert_quiet(result, "JSONFormatter", "ExtraAdder", "ExtraAdder.filter", "filter")
 
 
-# --- 19: importlib processor registry ------------------------------------------
+# --- 19: docstring-only class name stays reported (consumer canary shape) ------
+# Production only mentions IntegrateSessions inside a task docstring — there is
+# no importlib PROCESSORS registry. Inventing one greenwashes the canary.
 
-_PROCESSOR_PLUGIN = {
+_DOCSTRING_ONLY_PROCESSOR = {
     "processor_plugin/__init__.py": "",
-    "processor_plugin/plugins/__init__.py": "",
-    "processor_plugin/loader.py": '''\
-"""Convention loader: processor path chosen by name string only.
+    "processor_plugin/tasks.py": '''\
+"""Background tasks.
 
-No module-level RESULT= that proves IntegrateSessions live — the class is only
-reachable when a runtime name selects the dotted path.
+Then its integrated with other data sets via : IntegrateSessions
 """
 
-from importlib import import_module
 
-# Registry of logical name → module path (class name is conventional).
-PROCESSORS = {
-    "integrate_sessions": "processor_plugin.plugins.integrate",
-}
+def run_import(session_id: int):
+    return {"session_id": session_id}
 
 
-def load_processor(name: str):
-    module_path = PROCESSORS[name]
-    module = import_module(module_path)
-    return getattr(module, "IntegrateSessions")
-
-
-def run_named(name: str, session):
-    cls = load_processor(name)
-    return cls(session).process()
+RESULT = run_import(1)
 ''',
+    "processor_plugin/plugins/__init__.py": "",
     "processor_plugin/plugins/integrate.py": '''\
-"""Bare processor class — product convention load, no static importers of the class."""
-
-
 class IntegrateSessions:
     def __init__(self, session, debug=False, **kwargs):
         self.session = session
-        self.debug = debug
 
     def process(self):
-        return {"session": self.session, "integrated": True}
+        return {"session": self.session}
 ''',
 }
 
 
-def test_repro_19_importlib_processor_is_live(tmp_path):
-    result = _scan(tmp_path, _PROCESSOR_PLUGIN)
-    _assert_quiet(result, "IntegrateSessions")
+def test_repro_19_docstring_only_processor_stays_reported(tmp_path):
+    result = _scan(tmp_path, _DOCSTRING_ONLY_PROCESSOR)
+    unused = _unused_names(result)
+    assert "IntegrateSessions" in unused
 
 
-# --- 20: ModelChoiceField.label_from_instance ----------------------------------
+# --- 20: ModelChoiceField.label_from_instance on a live Form -------------------
 
 _DJANGO_FORM_FIELD = {
     "django_form_field/__init__.py": "",
     "django_form_field/fields.py": '''\
-"""Custom ModelChoiceField — mirrors modernstat.msfacility.fields.FacilityChoiceField."""
+"""Custom ModelChoiceField on a live Form declaration."""
 
 from django import forms
 
@@ -604,3 +601,40 @@ def test_repro_20_label_from_instance_is_live(tmp_path):
         "label_from_instance",
         "FacilityChoiceField.label_from_instance",
     )
+
+
+# --- 20b: FacilityChoiceField only inside a comment stays reported -------------
+
+_COMMENTED_FORM_FIELD = {
+    "django_form_field/__init__.py": "",
+    "django_form_field/fields.py": '''\
+from django import forms
+
+
+class FacilityChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, obj):
+        return getattr(obj, "scoreboard_name", str(obj))
+''',
+    "django_form_field/forms.py": '''\
+from django import forms
+
+
+class BoardForm(forms.Form):
+    title = forms.CharField()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        """
+        self.fields["group_facility"] = FacilityChoiceField(
+            queryset=None,
+            required=False,
+        )
+        """
+''',
+}
+
+
+def test_repro_20b_commented_form_field_stays_reported(tmp_path):
+    result = _scan(tmp_path, _COMMENTED_FORM_FIELD)
+    unused = _unused_names(result)
+    assert "FacilityChoiceField" in unused
