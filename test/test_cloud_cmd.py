@@ -312,6 +312,17 @@ def test_cloud_scan_prints_the_short_receipt_only(monkeypatch, capsys, tmp_path)
     assert "Unused function: unused" in out.split("Uploading findings")[0]
 
 
+def test_cloud_scan_in_ci_does_not_suggest_ci_setup(monkeypatch, capsys, tmp_path):
+    _cloud_scan(monkeypatch, tmp_path, _response(True), command=["cloud"])
+    monkeypatch.setattr(cli, "_is_ci", lambda: True)
+
+    assert _main_exit() == 0
+
+    out = capsys.readouterr().out
+    assert "✓ Quality gate on feat/add-endpoint: PASSED" in out
+    assert "skylos cicd init" not in out
+
+
 def test_cloud_scan_with_gate_exits_one_on_a_failed_gate(monkeypatch, capsys, tmp_path):
     _cloud_scan(monkeypatch, tmp_path, _response(False), command=["cloud", "--gate"])
     monkeypatch.setattr(cli, "run_gate_interaction", _no_scan)

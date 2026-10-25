@@ -108,7 +108,9 @@ def _print_cloud_gate_exit(console, args) -> None:
     )
 
 
-def _print_cloud_receipt(console, project_root, destination, upload_resp) -> None:
+def _print_cloud_receipt(
+    console, project_root, destination, upload_resp, *, in_ci: bool
+) -> None:
     from skylos.api import BASE_URL
     from skylos.cloud.cloud_receipt import cloud_receipt_lines
 
@@ -116,7 +118,7 @@ def _print_cloud_receipt(console, project_root, destination, upload_resp) -> Non
         destination,
         upload_resp,
         BASE_URL,
-        ci_configured=_ci_workflow_exists(project_root),
+        ci_configured=in_ci or _ci_workflow_exists(project_root),
     )
     for line in lines:
         console.print(escape(line), soft_wrap=True)
@@ -2081,7 +2083,9 @@ def _run_scan_command(
                 raise SystemExit(1)
         elif cloud_command:
             _check_managed_gitlab_delivery(upload_resp)
-            _print_cloud_receipt(console, project_root, upload_destination, upload_resp)
+            _print_cloud_receipt(
+                console, project_root, upload_destination, upload_resp, in_ci=_is_ci()
+            )
             cloud_passed = upload_resp.get("quality_gate_passed")
             cloud_gate = getattr(args, "_cloud_gate", False)
             if cloud_passed is False and (args.strict or cloud_gate) and not args.force:

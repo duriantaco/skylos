@@ -1174,7 +1174,7 @@ After the destination lines, `skylos cloud` prints
 | `  Open: <url>` | Always: the project Overview, with `?branch=` for a branch that is not the default branch; the scan page when no project ID is known |
 | `  This is main, but a login-token upload is unverified: …` | Default branch, login-token upload |
 | `  Next: fix the issues behind the failed gate, then run skylos cloud again.` | The gate failed |
-| `  Next: skylos cicd init — adds a Skylos check to every pull request.` | The gate passed and `.github/workflows/skylos.yml` does not exist |
+| `  Next: skylos cicd init — adds a Skylos check to every pull request.` | The gate passed, this is not a CI run, and `.github/workflows/skylos.yml` does not exist |
 
 `skylos cloud` exits `0` on a failed gate. `--gate` or `--strict` exits `1` and
 adds `Exiting with code 1 because the Skylos Cloud quality gate failed (--gate).`
