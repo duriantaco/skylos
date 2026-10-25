@@ -1171,13 +1171,24 @@ class FastAPIProject:
         return None
 
     def _truth(self, expression, bindings, module):
-        node, local, source = self.resolve_node(expression, bindings, module)
-        if isinstance(node, ast.Constant):
-            return bool(node.value)
-        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-            inner = self._truth(node.operand, local, source)
-            return None if inner is None else not inner
-        return None
+        seen = set()
+        inverted = False
+        while True:
+            self._step()
+            node, local, source = self.resolve_node(expression, bindings, module)
+            state = id(node), id(local), id(source)
+            # A rebound alias can revisit its captured expression; keep it unknown.
+            if state in seen:
+                return None
+            seen.add(state)
+            if isinstance(node, ast.Constant):
+                result = bool(node.value)
+                return not result if inverted else result
+            if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+                inverted = not inverted
+                expression, bindings, module = node.operand, local, source
+                continue
+            return None
 
     def collect(self):
         for module in self.modules.values():
