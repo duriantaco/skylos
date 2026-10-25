@@ -61,6 +61,7 @@ git push
 | PR 门控 | `skylos cicd init` | 生成带注释和失败阈值的 GitHub Actions 工作流 | [CI/CD 指南](https://docs.skylos.dev/ci-cd) |
 | 更易读的终端报告 | `skylos . --format pretty` | 按文件分组展示发现，包含严重级别标记、代码片段和可复制的 `file:line` 位置 | [CLI Output Modes](../cli-output.md) |
 | 可选择的终端界面 | `skylos . --tui` | 打开键盘驱动的分类列表、发现列表和详情面板 | [CLI Output Modes](../cli-output.md) |
+| 审查用的变更地图 | `skylos done map --base origin/main` | 列出每个改动的 Python 或 TypeScript/JavaScript 函数：新旧代码、新增和删除的调用、调用者、被删除的安全检查，以及应该先读哪些改动；由代码计算得出，不是模型生成 | [Change map](../change-map.md) |
 | 只审查变更行 | `skylos . -a --diff origin/main` | 聚焦当前 PR，避免被历史债务淹没 | [质量门控](https://docs.skylos.dev/quality-gate) |
 | 运行时辅助死代码检测 | `skylos . --trace` | 用测试运行轨迹降低动态代码误报 | [Smart Tracing](https://docs.skylos.dev/smart-tracing) |
 | AI 辅助审查 | `skylos agent scan .` | 静态分析加可选 LLM 审查和修复建议 | [AI Features](https://docs.skylos.dev/ai-features) |
@@ -185,6 +186,7 @@ Skylos 辅助的死代码清理 PR 已被
 | Rule ID 前缀和产品术语 | [Rule Dictionary](../../dictionary.md) |
 | Agent 扫描、验证、修复和模型设置 | [AI Features](https://docs.skylos.dev/ai-features) |
 | AI 防御和 LLM guardrails | [AI Defense](https://docs.skylos.dev/ai-defense) |
+| 一次改动影响了什么、先读什么（`skylos done map`） | [Change map](../change-map.md) |
 | MCP server 设置 | [MCP Server](https://docs.skylos.dev/mcp-server) |
 | 基线、过滤、抑制和白名单 | [Configuration](https://docs.skylos.dev/configuration) |
 | 智能追踪 | [Smart Tracing](https://docs.skylos.dev/smart-tracing) |

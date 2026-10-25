@@ -15,10 +15,15 @@ skylos done                     # uncommitted changes, compared with HEAD
 skylos done --session SESSION   # all changes since the agent session began
 skylos done --base origin/main  # a pull request, compared with its merge base
 skylos done receipt             # print the latest receipt again
+skylos done map --base origin/main  # what the change touches, riskiest first
 ```
 
 Exit codes: `0` pass, `1` a blocking check failed or did not finish, `2`
 Skylos could not run (for example, the base is not fetched).
+
+To review the change itself, `skylos done map` lists each changed function
+with its old and new code, its callers and removed security checks; `--map`
+prints it after the verdict without changing it. See [Change map](./change-map.md).
 
 To make a pull request with any of these findings wait for a human approval
 before it merges, use the [risk review](./risk-review.md). It reuses these
