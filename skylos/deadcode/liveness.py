@@ -21,6 +21,7 @@ from skylos.deadcode.framework_liveness import find_framework_entrypoint_targets
 from skylos.deadcode.external_protocols import find_external_protocol_callbacks
 from skylos.deadcode.unittest_liveness import find_unittest_entrypoint_targets
 from skylos.deadcode.django_signal_liveness import find_django_signal_targets
+from skylos.deadcode.django_autoreload_liveness import find_django_autoreload_targets
 from skylos.deadcode.django_converter_liveness import (
     find_django_converter_classes,
     find_django_converter_method_targets,
@@ -155,6 +156,10 @@ def apply_dead_code_liveness(
     ):
         _mark(target, reason, report)
     for target, reason in find_django_signal_targets(definitions, parsed_files, root):
+        _mark(target, reason, report)
+    for target, reason in find_django_autoreload_targets(
+        definitions, parsed_files, root
+    ):
         _mark(target, reason, report)
     for target, reason in find_unittest_entrypoint_targets(
         definitions, parsed_files, root
@@ -714,8 +719,7 @@ def _sphinx_documented_method_keys(
 ) -> set[tuple[str, str]]:
     referenced: set[tuple[str, str]] = set()
     role_targets = [
-        match.group(1)
-        for match in re.finditer(r"(?=:meth:`([^`]*)`)", text)
+        match.group(1) for match in re.finditer(r"(?=:meth:`([^`]*)`)", text)
     ]
     for method_name, keys in by_method.items():
         if any(target.endswith(method_name) for target in role_targets):
