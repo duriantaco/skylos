@@ -278,7 +278,7 @@ skylos cache stats
 
 <a id="cicd"></a>
 
-Gate pull requests with GitHub Actions. No Skylos account or API key is
+Gate pull requests with GitHub Actions. No Skylos account or token is
 needed:
 
 ```bash
@@ -400,11 +400,11 @@ every command. See [what they don't do](./docs/agent-hooks.md#what-it-doesnt-do)
 | Verification-backed remediation | `skylos agent remediate .` | Scans and fixes supported findings, then re-scans them and records proof-test metadata when available | [AI features](https://docs.skylos.dev/ai-features) |
 | Agent-loop hooks | `skylos agent install-hooks [--codex\|--cursor]` | Verifies every agent edit, blocks secret reads, hallucinated package installs and git-hook bypasses, asks before unverifiable installs, and holds "done" while new issues are open | [Agent-loop hooks](./docs/agent-hooks.md) |
 | Project standards for agents | `skylos agent install-standards --enforce SKY-L002` | Gives Codex, Claude Code, and Cursor a project skill and selects measurable quality rules for hook and CI checks | [Project standards](./docs/agent-standards.md) |
-| MCP agent verification | `verify_change` MCP tool | Lets Claude, Cursor, and other MCP clients verify an edited file/range with the same schema as `skylos verify`. Requires a free Skylos API key (`SKYLOS_API_KEY`). `skylos verify` and agent-loop hooks need no key | [MCP server](https://docs.skylos.dev/mcp-server) |
+| MCP agent verification | `verify_change` MCP tool | Lets Claude, Cursor, and other MCP clients verify an edited file/range with the same schema as `skylos verify`. Requires a free Skylos project token (`SKYLOS_API_KEY`). `skylos verify` and agent-loop hooks need no token | [MCP server](https://docs.skylos.dev/mcp-server) |
 | LLM integration inventory | `skylos discover .` | Maps recognized LLM calls, agent tools, prompt sites, and input sources in Python and TypeScript/JavaScript | [Agent verification](./docs/agent-verification.md) |
 | Pre-deployment agent verification | `skylos defend . --format md -o evidence.md` | Verifies agent guardrails, scores OWASP LLM/Agentic coverage, and emits an attested evidence report | [Agent verification](./docs/agent-verification.md) |
 | Agent verification CI gate | `skylos defend . --fail-on critical` | Blocks deploys with unguarded LLM integrations; SARIF for code scanning via `--format sarif` | [Agent verification](./docs/agent-verification.md) |
-| MCP agent pre-flight | `verify_agent` MCP tool | Lets coding agents statically verify the agents they build — scores, failed checks, attestation digest. Requires a free Skylos API key (`SKYLOS_API_KEY`). `skylos defend` needs no key | [MCP server](https://docs.skylos.dev/mcp-server) |
+| MCP agent pre-flight | `verify_agent` MCP tool | Lets coding agents statically verify the agents they build — scores, failed checks, attestation digest. Requires a free Skylos project token (`SKYLOS_API_KEY`). `skylos defend` needs no token | [MCP server](https://docs.skylos.dev/mcp-server) |
 | Technical debt triage | `skylos debt .` | Ranks hotspots and debt trends | [Technical debt](https://docs.skylos.dev/technical-debt) |
 
 ## What Skylos Catches
@@ -1135,7 +1135,7 @@ outcomes and the maintainers' reasons.
 | Bitbucket Pipelines / Azure Pipelines | [Pipeline setup](./docs/bitbucket-azure-pipelines.md) | detects pull request context for Skylos Cloud checks; `--diff` uses the PR target branch |
 | VS Code extension | [VS Code extension](./editors/vscode/README.md) | in-editor findings and AI-assisted fixes |
 | Claude Code / Codex / Cursor hooks | [Agent-loop hooks](./docs/agent-hooks.md) | check each agent edit, file read, and package install locally |
-| MCP server | [MCP setup](https://docs.skylos.dev/mcp-server) | expose Skylos scans to AI agents and coding assistants; `analyze` works without a key (five calls per rolling 24 hours), other tools need a free Skylos API key; authenticated scans can use credits |
+| MCP server | [MCP setup](https://docs.skylos.dev/mcp-server) | expose Skylos scans to AI agents and coding assistants; `analyze` works without a token (five calls per rolling 24 hours), other tools need a free Skylos project token; authenticated scans can use credits |
 | Ruff | [Python linting](./docs/python-linting.md) | optional Python linting through `skylos lint` |
 | Docker image | [Installation](https://docs.skylos.dev/installation) | run Skylos without a local Python install |
 | Skylos Cloud | [Cloud workflow](https://docs.skylos.dev/cloud-workflow) | optional upload and dashboard workflows |

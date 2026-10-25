@@ -204,7 +204,10 @@ Pull request checks do not depend on it.
    upload** job should print `✓ Scan uploaded` and a link to the scan.
 
 For a local scan with Cloud results, run `skylos . -a --gate --upload`.
-After a confirmed upload, follow the printed link to that scan's gate and
+After a confirmed upload, Skylos prints the Cloud gate result for the branch
+and how it changed since the last run, for example
+`✅ PASS Quality gate on main: PASSED (was FAILED on 21 Oct 14:05 UTC, abc1234)`.
+Follow the printed link to that scan's gate and
 results, signing in if asked. Formatted output keeps the link on stderr so
 stdout remains machine-readable; JSON also includes it in `upload.url`.
 `--gate` without `--upload` stays local.
@@ -250,7 +253,7 @@ those; add yourself to the ruleset's bypass list to do it.
   `No verified GitHub App project is linked to owner/repo`: Skylos Cloud does
   not know this repository yet. Do step 7, or run
   `skylos cicd init --no-upload` and commit the result.
-- `Invalid API token` from the sync step, or `The GitHub Actions identity
+- `Invalid token` (or `Invalid API token`) from the sync step, or `The GitHub Actions identity
   token could not be verified` from the upload: the job lost
   `id-token: write`, or `--upload` was moved into a pull request job. Skylos
   Cloud accepts tokenless uploads only from default-branch pushes and from

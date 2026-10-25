@@ -205,7 +205,7 @@ def test_manual_login_warns_ci_keys_retain_authority_locally(
     )
     assert "can publish trusted uploads even from this machine" in output
     assert "any coding agent that can read it can use that authority" in output
-    assert "Keep CI keys in your CI secret store" in output
+    assert "Keep CI project tokens in your CI secret store" in output
     assert "saved as unverified and never publish checks" not in output
 
 

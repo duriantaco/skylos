@@ -2505,6 +2505,28 @@ def _python_dynamic_imports(tree: ast.AST) -> list[str] | None:
     return dynamic_modules
 
 
+def _python_primary_loader_is_static(
+    file_path: str,
+    source: str,
+    dependency_cache: dict[str, Any] | None,
+) -> bool:
+    cache_key = (
+        f"python-primary-loader:{file_path}:"
+        f"{hashlib.sha256(source.encode('utf-8', 'surrogatepass')).hexdigest()}"
+    )
+    if dependency_cache is not None and cache_key in dependency_cache:
+        return dependency_cache[cache_key]
+    try:
+        tree = ast.parse(source, type_comments=True)
+    except (MemoryError, RecursionError, SyntaxError, ValueError):
+        is_static = False
+    else:
+        is_static = _python_dynamic_imports(tree) is not None
+    if dependency_cache is not None:
+        dependency_cache[cache_key] = is_static
+    return is_static
+
+
 def _python_dependency_hash(
     project_root: str | Path,
     file_path: str,
@@ -2969,14 +2991,10 @@ def finding_identity(
                 semantic_cache[file_path] = semantic_source_hash
         local_dependency_hash = None
         if language == "python":
-            try:
-                primary_tree = ast.parse(source, type_comments=True)
-            except (MemoryError, RecursionError, SyntaxError, ValueError):
-                return None
             # A loader recovered from runtime state in the finding's own file
             # can change without any repository input changing.  Do not mint a
             # reusable identity for that case.
-            if _python_dynamic_imports(primary_tree) is None:
+            if not _python_primary_loader_is_static(file_path, source, dependency_cache):
                 return None
             local_dependency_hash = _python_dependency_hash(
                 project_root,

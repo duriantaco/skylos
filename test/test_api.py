@@ -809,7 +809,7 @@ class TestSkylosApi(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertEqual(
             result["error"],
-            "Invalid API token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
+            "Invalid Skylos token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
         )
         self.assertEqual(mock_post.call_count, 1)
 
@@ -2644,15 +2644,13 @@ def test_failed_gate_prints_the_reasons_from_skylos_cloud(capsys):
     assert "❌ FAIL Quality gate: FAILED because of" in out
     assert "   - 3 critical security issues\n" in out
     assert "   - 1 new exposed secret (the policy always blocks secrets)\n" in out
-    assert "0 new violations" not in out
+    assert "0 new issues" not in out
 
 
 def test_failed_gate_without_reasons_falls_back_to_the_new_violation_count(capsys):
     for message in (None, "Quality Gate Failed.", "", 42):
         api._print_quality_gate_result(False, 2, "pro", message)
-        assert (
-            "❌ FAIL Quality gate: FAILED (2 new violations)" in capsys.readouterr().out
-        )
+        assert "❌ FAIL Quality gate: FAILED (2 new issues)" in capsys.readouterr().out
 
 
 def test_passed_gate_ignores_the_message(capsys):

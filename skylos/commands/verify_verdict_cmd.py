@@ -57,10 +57,10 @@ _BUNDLE = "bundle"
 _CANT_PROVE = "so Skylos can't prove {what} came from this commit's code."
 
 _UPLOAD_IDENTITY_WORDS = {
-    "github_oidc": "GitHub OIDC without a verified repository id",
-    "gitlab_oidc": "GitLab OIDC",
-    "project_api_key": "a project API key",
-    "legacy_project_key": "a legacy project key",
+    "github_oidc": "a GitHub Actions identity without a verified repository id",
+    "gitlab_oidc": "a GitLab CI identity",
+    "project_api_key": "a project token",
+    "legacy_project_key": "a legacy project token",
     "session": "a signed-in session",
 }
 _LEVEL_NOTES = {
@@ -195,7 +195,7 @@ def _add_expectation_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help=(
             "Require an upload Skylos Cloud trusted: CI with GitHub or GitLab "
-            "OIDC, or a CI key the project trusts. Rejects skylos login uploads "
+            "OIDC, or a CI project token. Rejects login-token uploads "
             "and verdicts signed before trust was recorded."
         ),
     )
