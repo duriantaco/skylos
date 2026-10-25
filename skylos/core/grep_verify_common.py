@@ -923,7 +923,7 @@ def _grep_fallback_command(
     grep: str,
     target: str,
 ) -> list[str]:
-    grep_flags = ["-rn", "--null"]
+    grep_flags = ["-rn", "-H", "--null"]
     if request.fixed_string:
         grep_flags.append("-F")
     elif request.use_regex:

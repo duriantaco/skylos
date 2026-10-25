@@ -302,3 +302,21 @@ def test_backend_evidence_with_glob_ancestors_and_root_forms(
 
     paths = {Path(grep_common._split_grep_evidence(line)[0]) for line in lines}
     assert paths == {included}
+
+
+def test_grep_fallback_requests_filename_for_an_explicit_file(tmp_path):
+    target = tmp_path / "reference.py"
+    target.write_text("candidate.verdict()\n", encoding="utf-8")
+    request = _make_grep_request(
+        "candidate.verdict()",
+        str(target),
+        use_regex=False,
+        include_globs=["*.py"],
+        fixed_string=True,
+        max_results=20,
+    )
+
+    command = grep_common._grep_fallback_command(request, "grep", str(target))
+
+    # GNU grep otherwise omits the filename required by the NUL evidence parser.
+    assert "-H" in command
