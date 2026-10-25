@@ -2480,6 +2480,12 @@ def _run_login_command(_argv):
     return run_login_command()
 
 
+def _run_cloud_command(argv):
+    from skylos.commands.cloud_cmd import run_cloud_command
+
+    return run_cloud_command(argv, cli_module=sys.modules[__name__])
+
+
 def _run_sync_command(argv):
     from skylos.commands.sync_cmd import run_sync_command
 

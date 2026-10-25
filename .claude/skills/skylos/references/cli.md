@@ -124,6 +124,22 @@ Full scans skip generated/vendored files (Django migrations, `static/**/lib`,
   you mean" line.
 - `--format concise`: exits non-zero when findings exist.
 
+## Skylos Cloud
+
+`skylos cloud [PATH] [scan flags]` is the one Cloud command: it runs
+`skylos PATH -a --upload` (only the named checks when check flags are given)
+and prints the findings tables, logs in through the browser first when there is no
+token (in a terminal; outside CI without a terminal it exits 1 before
+scanning), and prints a short receipt: the branch gate line
+(`✓`/`✗ Quality gate on <branch>: PASSED|FAILED (<history>) · <reasons>`),
+`  Open: <project Overview URL, ?branch= for non-default branches>` and a
+`  Next:` line. Exit 0 on a failed gate unless `--gate`/`--strict`; its
+`--gate` is the Cloud gate only (no local `[tool.skylos.gate]` evaluation).
+`--no-upload` is refused (exit 2). It sends findings, not the repository.
+Plain `skylos . --upload` keeps its full upload output. Other Cloud commands
+(`login`, `whoami`, `project`, `upload --retry`, `sync`, `credits`) are for
+control.
+
 ## Useful Subcommands
 
 - `skylos commands`: list commands.

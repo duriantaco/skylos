@@ -8,7 +8,7 @@ heartbeat.
 ## The rule
 
 **Skylos sends nothing to Skylos Cloud unless the command or flag you ran says
-it talks to Skylos Cloud.** Those are `--upload`, `skylos login`,
+it talks to Skylos Cloud.** Those are `skylos cloud`, `--upload`, `skylos login`,
 `skylos whoami`, `skylos project`, `skylos sync`, `skylos credits`,
 `skylos upload`, `skylos ingest claude-security`, `skylos verify-verdict`,
 `skylos feedback` (a form it opens in your browser), and the `--verify` scan
@@ -81,6 +81,7 @@ server uses `SKYLOS_CLOUD_URL`).
 | `skylos credits` | `GET /api/credits/balance` | your token |
 | `skylos . --upload`, `skylos upload --retry`, `skylos debt --upload`, `skylos suite --upload`, `skylos defend --upload` | `GET /api/sync/whoami`; `GET /api/report/contract` (no token; `SKYLOS_UPLOAD_CONTRACT_CHECK=0` skips it); `POST /api/report`, or `/api/report/init`, an upload to the signed storage URL Cloud returns, and `/api/report/complete` | the scan report. `--no-upload` overrides `--upload` |
 | `skylos . --upload` with no token in an interactive terminal | starts `skylos login` first | as `skylos login` |
+| `skylos cloud` | as `skylos . -a --upload`. With no token it starts `skylos login` before the scan in an interactive terminal, and outside CI without a terminal it stops before the scan | the scan report; `-a` also makes the OSV dependency lookups below |
 | `skylos compare --upload` | `POST /api/shadow/reports` | the comparison report |
 | `skylos agent scan --upload` | the report upload above (when there are findings), then `POST /api/agent-runs` | the scan report; the run summary above |
 | `skylos agent verify --upload`, `skylos agent remediate --upload`, `skylos agent remediate --standards --upload` | `POST /api/agent-runs` | the run summary above |
