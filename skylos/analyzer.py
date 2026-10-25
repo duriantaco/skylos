@@ -1732,7 +1732,9 @@ def _is_loaded_root(defn) -> bool:
 
 
 # Penalty codes for methods kept because their base class dispatches to them.
-_DISPATCHED_OVERRIDE_CODES = frozenset({"parent_override", "protocol_override"})
+_DISPATCHED_OVERRIDE_CODES = frozenset(
+    {"parent_override", "protocol_override", "drf_hook"}
+)
 
 
 def _is_dispatched_override(defn) -> bool:
@@ -1740,11 +1742,12 @@ def _is_dispatched_override(defn) -> bool:
 
     The penalty pass already keeps it out of the report; treating it as dead
     here would report the methods only it calls (``self.helper`` callbacks).
+    Reporting confidence alone is not dispatch evidence: ordinary dunders and
+    ignored methods may also have confidence zero without ever being called.
     """
-    return (
-        getattr(defn, "type", None) == "method"
-        and getattr(defn, "suppression_code", None) in _DISPATCHED_OVERRIDE_CODES
-    )
+    if getattr(defn, "type", None) != "method":
+        return False
+    return getattr(defn, "suppression_code", None) in _DISPATCHED_OVERRIDE_CODES
 
 
 def _annotate_dead_code_evidence_sources(defs, test_flags, framework_flags) -> None:
@@ -2335,6 +2338,12 @@ class Skylos:
 
         def is_dead_caller(caller: str, callee_defn) -> bool:
             caller_key = key_for_caller(caller, callee_defn)
+            if caller_key is not None:
+                caller_defn = self.defs.get(caller_key)
+                # Framework-suppressed hooks stay live for their callees even
+                # when the owning class has no static references.
+                if caller_defn is not None and _is_dispatched_override(caller_defn):
+                    return False
             if caller_key in dead_set:
                 return True
             if "." not in caller:
