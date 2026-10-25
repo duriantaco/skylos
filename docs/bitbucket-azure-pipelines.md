@@ -1,7 +1,7 @@
 # Bitbucket Pipelines and Azure Pipelines
 
 Skylos detects Bitbucket Pipelines and Azure Pipelines by itself. When a scan
-runs with `--upload`, Skylos adds the pull request number, the commit and the
+uploads (`skylos cloud`, or a scan with `--upload`), Skylos adds the pull request number, the commit and the
 repository identity to the upload's `ci` object. Skylos Cloud uses these
 fields to post the `skylos-quality-gate` check on the pull request.
 
@@ -57,7 +57,7 @@ pipelines:
           name: Skylos quality gate
           script:
             - pip install --no-cache-dir skylos
-            - skylos . -a --upload
+            - skylos cloud
 ```
 
 ## `azure-pipelines.yml`
@@ -80,7 +80,7 @@ steps:
       versionSpec: '3.12'
   - script: pip install --no-cache-dir skylos
     displayName: Install Skylos
-  - script: skylos . -a --upload
+  - script: skylos cloud
     displayName: Skylos quality gate
     env:
       SKYLOS_TOKEN: $(SKYLOS_TOKEN)
@@ -118,5 +118,5 @@ on the `checkout: self` step; by default Azure removes the token after checkout.
 `skylos cicd init --ci bitbucket` and `skylos cicd init --ci azure` write a pull
 request pipeline that does this; see [Skylos on any CI](./ci-platforms.md).
 
-Diff-scoped reports cannot be uploaded. Use a separate full `skylos . -a
---upload` step for the pull request check.
+Diff-scoped reports cannot be uploaded. Use a separate full `skylos cloud`
+step for the pull request check.

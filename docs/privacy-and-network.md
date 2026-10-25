@@ -87,7 +87,7 @@ server uses `SKYLOS_CLOUD_URL`).
 | `skylos . --verify` | `GET /api/sync/whoami`, `POST /api/verify` | the scan findings to verify |
 | `skylos ingest claude-security` | `POST /api/report` **by default** | the normalized Claude Code Security findings. `--no-upload` keeps them local |
 | `skylos verify-verdict` without `--keys` | `GET https://skylos.dev/.well-known/skylos-verdict-keys.json` | nothing (public keys, no token). `--keys <file>` works offline |
-| The workflow from `skylos cicd init` | its upload job runs `skylos sync pull` and `skylos . --upload` on pushes to the default branch | the scan report. `skylos cicd init --no-upload` leaves the job out |
+| The workflow from `skylos cicd init` | its upload job runs `skylos sync pull` and `skylos cloud` (`skylos . --upload` when only dead code is checked) on pushes to the default branch | the scan report. `skylos cicd init --no-upload` leaves the job out |
 
 ## Other hosts
 

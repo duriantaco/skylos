@@ -226,8 +226,9 @@ def test_workflow_uploads_through_oidc_by_default():
     assert sync_lines[2:] == ["  exit 1", "fi"]
     assert "continue-on-error" not in sync_step
     upload_step = steps[names.index("Scan and Upload to Skylos Cloud")]
+    assert upload_step["run"].startswith("skylos cloud ")
     args = build_main_parser(version="test").parse_args(
-        shlex.split(upload_step["run"])[1:]
+        [*shlex.split(upload_step["run"])[2:], "--upload"]
     )
     assert args.upload and not args.no_upload and not args.force
     assert not args.diff and not args.diff_base
@@ -246,8 +247,17 @@ def test_workflow_upload_with_llm():
     llm_step = next(s for s in steps if s.get("name") == "Skylos Agent Review (LLM)")
     assert "SKYLOS_API_KEY" in llm_step["env"]
     upload_steps = parsed["jobs"]["cloud-upload"]["steps"]
-    assert any("--upload" in s.get("run", "") for s in upload_steps)
+    assert any(s.get("run", "").startswith("skylos cloud ") for s in upload_steps)
     assert all("SKYLOS_API_KEY" not in s.get("env", {}) for s in upload_steps)
+
+
+def test_dead_code_only_workflow_keeps_the_manual_upload():
+    content = generate_workflow(analysis_types=["dead-code"])
+    steps = yaml.safe_load(content)["jobs"]["cloud-upload"]["steps"]
+    upload_step = next(
+        s for s in steps if s.get("name") == "Scan and Upload to Skylos Cloud"
+    )
+    assert upload_step["run"] == "skylos . --baseline --upload"
 
 
 def test_workflow_defend_uploads_only_from_upload_job():
