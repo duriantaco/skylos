@@ -208,6 +208,14 @@ def _run_cicd_init(cicd_args, console) -> int:
         write_workflow,
     )
 
+    selected = _select_init_platform(cicd_args, console)
+    if selected is None:
+        return 1
+    platform, platform_name = selected
+    if platform.key != "github":
+        return _run_platform_init(cicd_args, console, platform, platform_name)
+    use_upload = cicd_args.upload is not False
+
     done_setup = detect_done_setup(_repo_root())
     use_done = done_setup.enabled if cicd_args.done is None else cicd_args.done
     default_branch = cicd_args.default_branch or _detect_default_branch()
@@ -220,7 +228,7 @@ def _run_cicd_init(cicd_args, console) -> int:
             use_llm=cicd_args.llm,
             model=cicd_args.model,
             use_claude_security=cicd_args.claude_security,
-            use_upload=cicd_args.upload,
+            use_upload=use_upload,
             use_defend=cicd_args.defend,
             advisory_gate=cicd_args.advisory_gate,
             scan_path=cicd_args.scan_path,
@@ -266,7 +274,7 @@ def _run_cicd_init(cicd_args, console) -> int:
         console,
         output_path=output_path,
         triggers=cicd_args.triggers,
-        upload=cicd_args.upload,
+        upload=use_upload,
         done_requested=cicd_args.done,
         done_setup=done_setup,
         push_branches=(
@@ -274,6 +282,165 @@ def _run_cicd_init(cicd_args, console) -> int:
         ),
         branch_detected=bool(default_branch),
         risk_review=cicd_args.risk_review and "pull_request" in cicd_args.triggers,
+    )
+    return 0
+
+
+_GITHUB_ONLY_INIT_FLAGS = (
+    ("llm", "--llm"),
+    ("model", "--model"),
+    ("claude_security", "--claude-security"),
+    ("defend", "--defend"),
+    ("risk_review", "--risk-review"),
+    ("advisory_gate", "--advisory-gate"),
+    ("force", "--force"),
+)
+
+
+def _select_init_platform(cicd_args, console):
+    """The CI `skylos cicd init` sets up, and the name to show for it.
+
+    Returns None when the repository has several CIs and --ci was not given.
+    """
+    from skylos.cicd.platforms import (
+        BY_KEY,
+        OTHER,
+        choose_platform,
+        platform_from_output,
+    )
+    from skylos.cicd.workflow import display_path
+
+    if cicd_args.ci == OTHER.key:
+        return OTHER, "your CI"
+    if cicd_args.ci:
+        platform = BY_KEY[cicd_args.ci]
+        return platform, platform.name
+    if cicd_args.output:
+        platform = platform_from_output(cicd_args.output)
+        return platform, platform.name
+    choice = choose_platform(_repo_root(), _git_output("remote", "get-url", "origin"))
+    if choice.platform is None:
+        listed = ", ".join(
+            f"{f.platform.name} ({display_path(f.path)})" for f in choice.found
+        )
+        keys = [f.platform.key for f in choice.found if f.platform.config]
+        console.print(
+            f"[yellow]Found more than one CI: {escape(listed)}.[/yellow]",
+            soft_wrap=True,
+        )
+        console.print(
+            "Nothing was written. Pick one with --ci, e.g. "
+            f"skylos cicd init --ci {keys[0]}",
+            soft_wrap=True,
+        )
+        return None
+    platform = choice.platform
+    name = platform.name
+    if platform.key == OTHER.key:
+        name = choice.found[0].platform.name
+    others = [f for f in choice.found if f.platform.key != platform.key]
+    if choice.reason and (platform.key != "github" or others):
+        console.print(
+            f"Setting up {escape(name)} ({escape(choice.reason)}).", soft_wrap=True
+        )
+    for found in others:
+        key = OTHER.key
+        if found.platform.config:
+            key = found.platform.key
+        console.print(
+            f"[dim]Also found {escape(display_path(found.path))} "
+            f"({escape(found.platform.name)}); for it run: "
+            f"skylos cicd init --ci {key}[/dim]",
+            soft_wrap=True,
+        )
+    return platform, name
+
+
+def _github_only_flags(cicd_args) -> list[str]:
+    flags = [flag for attr, flag in _GITHUB_ONLY_INIT_FLAGS if getattr(cicd_args, attr)]
+    if cicd_args.triggers != ["pull_request", "push"]:
+        flags.insert(0, "--triggers")
+    if cicd_args.done is not None:
+        flags.append("--done")
+    return flags
+
+
+def _run_platform_init(cicd_args, console, platform, platform_name) -> int:
+    """Write or print the pull request gate for a CI other than GitHub Actions.
+
+    A new CI file is written; an existing one is never edited, the block to
+    add is printed instead.
+
+    Calls: skylos/cicd/platforms.py render;
+        skylos/cicd/platforms.py print_platform_next_steps.
+
+    Called from: skylos/commands/cicd_cmd.py _run_cicd_init.
+    """
+    from skylos.cicd.platforms import Settings, print_platform_next_steps, render
+    from skylos.cicd.workflow import display_path, write_workflow
+
+    settings = Settings(
+        python_version=cicd_args.python_version,
+        analysis_types=tuple(cicd_args.analysis),
+        use_baseline=not cicd_args.no_baseline,
+        scan_path=cicd_args.scan_path,
+        default_branch=cicd_args.default_branch or _detect_default_branch(),
+    )
+    try:
+        rendered = render(platform, settings)
+    except ValueError as e:
+        console.print(
+            f"[bold red]Invalid workflow option: {escape(str(e))}[/bold red]"
+        )
+        return 1
+    ignored = _github_only_flags(cicd_args)
+    if ignored:
+        console.print(
+            f"[yellow]Not used for {escape(platform_name)} (GitHub Actions only): "
+            f"{', '.join(ignored)}[/yellow]",
+            soft_wrap=True,
+        )
+    written = None
+    if platform.config:
+        output_path = cicd_args.output or str(_repo_root() / platform.config)
+        shown = escape(display_path(output_path))
+        try:
+            existing = _existing_workflow_text(output_path)
+            if existing is None:
+                write_workflow(
+                    rendered.full, output_path, out=console, expected_existing=None
+                )
+                written = output_path
+            elif existing == rendered.full:
+                console.print(
+                    f"[green]Already up to date: {shown}[/green]", soft_wrap=True
+                )
+                written = output_path
+            else:
+                note = "Skylos does not edit it."
+                if "skylos" in existing.lower():
+                    note = "It already mentions skylos; compare it with the block below."
+                console.print(
+                    f"[yellow]{shown} already exists. {note}[/yellow]", soft_wrap=True
+                )
+        except OSError as exc:
+            console.print(
+                f"[bold red]Could not write {shown}: {escape(str(exc))}[/bold red]",
+                soft_wrap=True,
+            )
+            return 1
+    if written is None:
+        console.print()
+        console.print(rendered.where, markup=False, highlight=False, soft_wrap=True)
+        console.print()
+        console.print(rendered.snippet, markup=False, highlight=False, soft_wrap=True)
+    print_platform_next_steps(
+        console,
+        platform=platform,
+        name=platform_name,
+        rendered=rendered,
+        written=written,
+        upload_requested=cicd_args.upload is True,
     )
     return 0
 
@@ -338,11 +505,27 @@ def run_cicd_command(
 
     p_ci_init = cicd_sub.add_parser(
         "init",
-        help="Generate GitHub Actions workflow",
+        help="Set up a pull request gate for your CI",
         description=(
-            "Write .github/workflows/skylos.yml: a pull request gate (changed-line "
-            "scan, PR comments, `skylos done` when your tests can run) and a "
-            "default-branch upload to Skylos Cloud through GitHub OIDC."
+            "Set up a Skylos pull request gate for the CI this repository uses "
+            "(GitHub Actions, GitLab CI, Jenkins, Bitbucket Pipelines, Azure "
+            "Pipelines or CircleCI; other CIs get the commands to add). On "
+            "GitHub it writes .github/workflows/skylos.yml: a pull request gate "
+            "(changed-line scan, PR comments, `skylos done` when your tests can "
+            "run) and a default-branch upload to Skylos Cloud through GitHub "
+            "OIDC. Other CIs get a changed-line gate; an existing CI file is "
+            "never edited, Skylos prints the block to add instead."
+        ),
+    )
+    from skylos.cicd.platforms import CI_CHOICES
+
+    p_ci_init.add_argument(
+        "--ci",
+        choices=CI_CHOICES,
+        default=None,
+        help=(
+            "CI to set up (default: detected from the repository's CI files, "
+            "then from origin's host, else github)"
         ),
     )
     p_ci_init.add_argument("--python-version", default="3.12")
@@ -381,11 +564,12 @@ def run_cicd_command(
     p_ci_init.add_argument(
         "--upload",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=None,
         help=(
             "Upload full scans from default-branch pushes to Skylos Cloud with "
             "GitHub OIDC; no API key secret. Needs the Skylos GitHub App on the "
-            "repository (default: on; --no-upload for local-only CI)"
+            "repository (default: on for GitHub Actions; --no-upload for "
+            "local-only CI)"
         ),
     )
     p_ci_init.add_argument(
@@ -432,7 +616,10 @@ def run_cicd_command(
         "--output",
         "-o",
         default=None,
-        help="Output path (default: repo-root .github/workflows/skylos.yml)",
+        help=(
+            "Output path (default: the CI's own file at the repo root, e.g. "
+            ".github/workflows/skylos.yml or Jenkinsfile)"
+        ),
     )
     p_ci_init.add_argument(
         "--force",

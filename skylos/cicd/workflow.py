@@ -67,14 +67,26 @@ def _installed_skylos_version() -> str | None:
     return version or None
 
 
+def skylos_requirement(version: str | None = None, *, dart: bool = True) -> str:
+    """The shell-quoted pip requirement generated CI configs install.
+
+    The Dart grammar ships only as source, so ``dart`` needs a C compiler
+    wherever the config runs.
+    """
+    resolved = version if version is not None else _installed_skylos_version()
+    package = "skylos"
+    if dart:
+        package = "skylos[dart]"
+    if resolved and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.!+~-]*", resolved):
+        return shlex.quote(f"{package}=={resolved}")
+    return shlex.quote(package)
+
+
 def _skylos_install_command(version: str | None = None) -> str:
     # -I keeps a pull request's own files (e.g. a top-level pip/ directory)
     # off sys.path while pip runs after checkout. [dart] keeps Dart files
     # scanned; hosted runners have the C compiler its parser builds with.
-    resolved = version if version is not None else _installed_skylos_version()
-    if resolved and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.!+~-]*", resolved):
-        return f"python -I -m pip install {shlex.quote(f'skylos[dart]=={resolved}')}"
-    return f"python -I -m pip install {shlex.quote('skylos[dart]')}"
+    return f"python -I -m pip install {skylos_requirement(version)}"
 
 
 def _shell_path(path: str | Path | None) -> str:

@@ -290,7 +290,7 @@ COMMANDS = [
     },
     {
         "name": "skylos cicd init",
-        "desc": "Generate GitHub Actions workflow",
+        "desc": "Set up a PR gate for your CI (GitHub, GitLab, Jenkins, ...)",
         "group": "CI/CD",
     },
     {
@@ -553,7 +553,7 @@ START_HERE = (
         "Check a branch or PR, including one an AI agent wrote: Skylos runs "
         "the tests and flags deleted tests, loosened CI and test-only shortcuts.",
     ),
-    ("skylos cicd init", "Set up a GitHub Actions workflow that checks every PR."),
+    ("skylos cicd init", "Set up a check on every PR for your CI: GitHub, GitLab, Jenkins and more."),
 )
 
 MORE_COMMANDS = (

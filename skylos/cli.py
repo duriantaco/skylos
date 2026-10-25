@@ -3127,7 +3127,9 @@ def _gate_requested(args) -> bool:
     return bool(getattr(args, "gate", False) or getattr(args, "strict", False))
 
 
-def _announce_gate_stop(console, args, reason: str, *, exit_code: int, hint=None):
+def _announce_gate_stop(
+    console, args, reason: str, *, exit_code: int, hint=None, fetch_hint=None
+):
     """A --gate/--strict run that stopped early still ends with a verdict.
 
     Rich and pretty output print on the console; every other format prints on
@@ -3139,6 +3141,8 @@ def _announce_gate_stop(console, args, reason: str, *, exit_code: int, hint=None
     lines = [verdict, f"   • {reason}"]
     if hint:
         lines.append(f"       {hint}")
+    if fetch_hint:
+        lines.append(f"       {fetch_hint}")
     if console is None or _is_main_machine_output(args):
         sys.stdout.flush()
         print("\n".join(lines), file=sys.stderr)
@@ -3163,17 +3167,47 @@ def _exit_config_error(parser, args, message: str):
     parser.print_usage(sys.stderr)
     print(f"{parser.prog}: error: {message}", file=sys.stderr)
     hint = POLICY_BASE_HINT if "PR policy base" in message else None
-    _announce_gate_stop(None, args, message, exit_code=2, hint=hint)
+    fetch_hint = None
+    if hint:
+        fetch_hint = _base_fetch_hint(args)
+    _announce_gate_stop(
+        None, args, message, exit_code=2, hint=hint, fetch_hint=fetch_hint
+    )
     raise SystemExit(2)
+
+
+def _base_fetch_hint(args):
+    """The git command that fetches a missing `--diff` base, or None."""
+    base = getattr(args, "diff_base", None) or getattr(args, "diff", None)
+    if base == "auto":
+        base = auto_diff_base_ref()
+    try:
+        from skylos.cicd.platforms import missing_base_hint
+
+        return missing_base_hint(
+            base, _resolve_main_project_root(getattr(args, "path", None) or ["."])
+        )
+    except Exception:
+        return None
 
 
 def _exit_diff_unavailable(args, message: str):
     """Stop with exit 2 when the diff base cannot be read; gates say so."""
     reason = f"Skylos diff unavailable: {message}"
+    fetch_hint = _base_fetch_hint(args)
     if _gate_requested(args):
-        _announce_gate_stop(None, args, reason, exit_code=2, hint=DIFF_UNAVAILABLE_HINT)
+        _announce_gate_stop(
+            None,
+            args,
+            reason,
+            exit_code=2,
+            hint=DIFF_UNAVAILABLE_HINT,
+            fetch_hint=fetch_hint,
+        )
     else:
         print(reason, file=sys.stderr)
+        if fetch_hint:
+            print(fetch_hint, file=sys.stderr)
     raise SystemExit(2)
 
 
