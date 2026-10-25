@@ -138,7 +138,7 @@ scanning), and prints a short receipt: the branch gate line
 `--no-upload` is refused (exit 2). It sends findings, not the repository.
 Plain `skylos . --upload` keeps its full upload output. Other Cloud commands
 (`login`, `whoami`, `project`, `upload --retry`, `sync`, `credits`) are for
-control.
+control. Local rich scans with findings end with a `Next: skylos cloud` block.
 
 ## Useful Subcommands
 

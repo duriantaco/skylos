@@ -1494,54 +1494,6 @@ def _is_ci():
     )
 
 
-def _print_upload_cta(console: Console, project_root: Path):
-    if _is_ci():
-        return
-
-    has_link = _detect_link_file(project_root) is not None
-    has_env = bool(os.getenv("SKYLOS_TOKEN"))
-    connected = has_link or has_env
-
-    console.print()
-    if connected:
-        console.print(
-            Panel(
-                "\n".join(
-                    [
-                        "[bold]Not uploaded: this scan stayed on your machine.[/bold]",
-                        "Send it to Skylos Cloud:",
-                        "",
-                        "  [bold cyan]skylos . --upload[/bold cyan]",
-                        "",
-                        "  [dim]Dashboard:[/dim] https://skylos.dev/dashboard",
-                    ]
-                ),
-                title="[bold]☁️  Skylos Cloud[/bold]",
-                border_style="blue",
-                padding=(1, 2),
-            )
-        )
-    else:
-        console.print(
-            Panel(
-                "\n".join(
-                    [
-                        "[bold]Not uploaded: this scan stayed on your machine.[/bold]",
-                        "Send it to Skylos Cloud:",
-                        "",
-                        "  [bold cyan]skylos . --upload[/bold cyan]",
-                        "",
-                        "  [dim]Browser opens → pick project → done![/dim]",
-                        "  [dim]Dashboard:[/dim] https://skylos.dev",
-                    ]
-                ),
-                title="[bold]☁️  Skylos Cloud[/bold]",
-                border_style="blue",
-                padding=(1, 2),
-            )
-        )
-
-
 def interactive_selection(
     console: Console, unused_functions, unused_imports, root_path=None
 ):

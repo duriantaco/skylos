@@ -8,6 +8,7 @@ from skylos.cloud.cloud_receipt import (
     CI_NEXT_STEP,
     FAILED_NEXT_STEP,
     cloud_receipt_lines,
+    local_next_steps,
 )
 from skylos.cloud.upload_destination import UploadDestination
 from skylos.commands import cloud_cmd
@@ -162,6 +163,16 @@ def test_hostile_server_strings_never_reach_the_terminal():
     lines = cloud_receipt_lines(_dest(), response, BASE, ci_configured=True)
 
     assert not any("\x1b" in line or "\x07" in line for line in lines)
+
+
+def test_local_next_steps_drop_ci_setup_once_a_workflow_exists():
+    assert [command for command, _ in local_next_steps(ci_configured=False)] == [
+        "skylos cloud",
+        "skylos cicd init",
+    ]
+    assert [command for command, _ in local_next_steps(ci_configured=True)] == [
+        "skylos cloud"
+    ]
 
 
 def _no_scan(*_args, **_kwargs):
@@ -363,3 +374,20 @@ def test_plain_upload_keeps_todays_receipt(monkeypatch, capsys, tmp_path):
     assert "Uploading 1 cloud scan." in out
     assert "Uploading findings to Skylos Cloud" not in out
     assert "Open: " not in out
+
+
+def test_local_scan_with_findings_ends_with_one_next_block(
+    monkeypatch, capsys, tmp_path
+):
+    _configure(monkeypatch, tmp_path, "rich")
+    monkeypatch.setattr(cli, "_is_tty", lambda: True)
+    monkeypatch.setattr(cli, "_is_ci", lambda: False)
+
+    assert _main_exit() == 0
+
+    out = capsys.readouterr().out
+    assert "Next: skylos cloud" in out
+    assert "skylos cicd init  check every pull request in CI" in out
+    assert "skylos . --upload" not in out
+    assert "Set up CI/CD" not in out
+    assert "Not uploaded: this scan stayed on your machine." not in out

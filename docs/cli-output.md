@@ -57,6 +57,18 @@ alike, so the same scan then reads `Found 12 issues: security 1, secrets 2,
 quality 9.` A dead-code-only scan keeps
 `No dead-code candidates found at current settings.` or its dead-code count.
 
+In an interactive terminal, a local scan with findings ends with one block that
+names the next command:
+
+```text
+Next: skylos cloud      track these per branch on Skylos Cloud (sends findings, not your repository)
+      skylos cicd init  check every pull request in CI
+```
+
+The `skylos cicd init` line is left out once `.github/workflows/skylos.yml`
+exists. Runs without a terminal (CI included), machine formats,
+`--format pretty` and uploads print no block.
+
 Use `pretty` when you want a compact, file-grouped terminal report:
 
 ```bash

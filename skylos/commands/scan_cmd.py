@@ -91,6 +91,22 @@ def _ci_workflow_exists(project_root) -> bool:
     return (project_root / ".github" / "workflows" / "skylos.yml").exists()
 
 
+def _print_local_next_steps(console, project_root) -> None:
+    from skylos.cloud.cloud_receipt import local_next_steps
+
+    steps = local_next_steps(ci_configured=_ci_workflow_exists(project_root))
+    width = max(len(command) for command, _ in steps)
+    label = "Next:"
+    console.print()
+    for command, purpose in steps:
+        console.print(
+            f"[bold]{label:<5}[/bold] [brand]{escape(command.ljust(width))}[/brand]"
+            f"  [muted]{escape(purpose)}[/muted]",
+            soft_wrap=True,
+        )
+        label = ""
+
+
 def _print_cloud_upload_start(console) -> None:
     from skylos.api import _print_pending_upload_reminder
 
@@ -408,7 +424,6 @@ def _run_scan_command(
     Called from: skylos/cli.py _run_scan_command.
     """
     INTERACTIVE_AVAILABLE = cli_module.INTERACTIVE_AVAILABLE
-    Panel = cli_module.Panel
     Progress = cli_module.Progress
     Rule = cli_module.Rule
     SpinnerColumn = cli_module.SpinnerColumn
@@ -431,7 +446,6 @@ def _run_scan_command(
     )
     _print_main_scan_banner = cli_module._print_main_scan_banner
     _print_main_upload_manifest = cli_module._print_main_upload_manifest
-    _print_upload_cta = cli_module._print_upload_cta
     _print_upload_destination = cli_module._print_upload_destination
     _print_upload_receipt = cli_module._print_upload_receipt
     _refuse_mismatched_upload = cli_module._refuse_mismatched_upload
@@ -1960,26 +1974,7 @@ def _run_scan_command(
             total_findings += len(result.get(k, []) or [])
 
         if total_findings > 0:
-            workflow_path = project_root / ".github" / "workflows" / "skylos.yml"
-            if not workflow_path.exists():
-                console.print()
-                console.print(
-                    Panel.fit(
-                        "[bold cyan]💡 Tip:[/bold cyan] Catch these issues automatically on every PR\n\n"
-                        "[dim]Run:[/dim] [bold]skylos cicd init[/bold]\n"
-                        "[dim]Then:[/dim] [bold]git add .github/workflows/skylos.yml && git push[/bold]\n\n"
-                        "[muted]30-second setup for automated code analysis in CI/CD[/muted]",
-                        title="[cyan]Set up CI/CD[/cyan]",
-                        border_style="cyan",
-                    )
-                )
-
-            from skylos.ui.nudge import pick_nudge
-
-            nudge = pick_nudge(result, args, project_root)
-            if nudge:
-                console.print(f"\n  {nudge}")
-            _print_upload_cta(console, project_root)
+            _print_local_next_steps(console, project_root)
         elif not getattr(args, "diff", None) and changed_files is None:
             console.print()
             console.print("[good]No findings reported at current settings.[/good]")
