@@ -18,6 +18,7 @@ _IAD_RULES = ("SKY-Q802", "SKY-Q803")
 _MAX_SELECTED_RULES = 100
 _MAX_RULE_ID_LENGTH = 120
 _MAX_COUNT = 2_147_483_647
+_FINDING_COUNT_KEYS = frozenset({"defect", "review", "advice", "advice_groups"})
 
 
 def _selected_rules(summary: dict[str, Any]) -> tuple[list[str], bool]:
@@ -35,6 +36,77 @@ def _selected_rules(summary: dict[str, Any]) -> tuple[list[str], bool]:
             return [], False
         selected.append(rule.strip().upper())
     return selected, True
+
+
+def _complete_assessment(result: dict[str, Any], summary: dict[str, Any]) -> bool:
+    from skylos.reporting.finding_types import summarize_finding_types
+
+    assessment = result.get("assessment")
+    if (
+        not isinstance(assessment, dict)
+        or type(assessment.get("version")) is not int
+        or assessment["version"] != 1
+        or assessment.get("scope") != "all_analyzed_findings"
+        or summary.get("assessment_includes_filtered_findings") is True
+    ):
+        return False
+
+    def valid_counts(value):
+        return (
+            isinstance(value, dict)
+            and value.keys() == _FINDING_COUNT_KEYS
+            and all(type(count) is int and count >= 0 for count in value.values())
+        )
+
+    counts = assessment.get("finding_counts")
+    if not valid_counts(counts):
+        return False
+    raw_counts = summarize_finding_types(result)
+    recorded_raw = summary.get("finding_type_counts")
+    if "finding_type_counts" in summary and (
+        not valid_counts(recorded_raw) or recorded_raw != raw_counts
+    ):
+        return False
+    if counts == raw_counts:
+        # Preserve the original complete raw-count proof, including reports
+        # before shared listing or with every Advice finding explicitly listed.
+        if (
+            type(result.get("listing_policy_version")) is int
+            and result["listing_policy_version"] == 1
+            and "listed_finding_type_counts" in summary
+        ):
+            from skylos.reporting.listing import listed_result
+
+            recorded_listed = summary["listed_finding_type_counts"]
+            if not valid_counts(
+                recorded_listed
+            ) or recorded_listed != summarize_finding_types(listed_result(result)):
+                return False
+        return True
+    if (
+        type(result.get("listing_policy_version")) is not int
+        or result.get("listing_policy_version") != 1
+        or summary.get("assessment_scope") != "listed_findings"
+    ):
+        return False
+
+    from skylos.reporting.assessment import compute_assessment
+    from skylos.reporting.listing import listed_result
+
+    # Current reports retain optional Advice while assessment follows the
+    # shared listing decision. Prove both views against their original rows;
+    # missing or inconsistent summaries cannot establish absence coverage.
+    listed_counts = summarize_finding_types(listed_result(result))
+    recorded_listed = summary.get("listed_finding_type_counts")
+    return (
+        valid_counts(recorded_raw)
+        and valid_counts(recorded_listed)
+        and recorded_raw == raw_counts
+        and recorded_listed == listed_counts
+        and counts == listed_counts
+        and all(raw_counts[key] == listed_counts[key] for key in ("defect", "review"))
+        and assessment == compute_assessment(result)
+    )
 
 
 def scan_coverage_receipt(
@@ -89,18 +161,10 @@ def scan_coverage_receipt(
     ):
         reasons.append("missing_checks")
 
-    # Rule selection, baseline filtering and display filtering remove the
-    # aggregate grade. A grade-less finding set must not close old issues.
-    from skylos.reporting.finding_types import summarize_finding_types
-
+    # Legacy grades and current assessments provide completeness evidence;
+    # a genuinely filtered finding set must not close old issues.
     assessment = result.get("assessment")
-    complete_assessment = (
-        isinstance(assessment, dict)
-        and assessment.get("version") == 1
-        and assessment.get("scope") == "all_analyzed_findings"
-        and assessment.get("finding_counts") == summarize_finding_types(result)
-        and summary.get("assessment_includes_filtered_findings") is not True
-    )
+    complete_assessment = _complete_assessment(result, summary)
     has_report_receipt = (
         complete_assessment
         if assessment is not None

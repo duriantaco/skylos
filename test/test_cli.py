@@ -2706,8 +2706,20 @@ def test_main_json_upload_calls_upload_report_quiet(
         "analyzer_owned": True,
         "gitlab_full_scan": False,
     }
-    mock_print.assert_called_once()
-    printed_payload = json.loads(mock_print.call_args.args[0])
+    stdout_calls = [
+        call
+        for call in mock_print.call_args_list
+        if call.kwargs.get("file", sys.stdout) is sys.stdout
+    ]
+    assert len(stdout_calls) == 1
+    assert [
+        call.args[0]
+        for call in mock_print.call_args_list
+        if call.kwargs.get("file") is sys.stderr
+    ] == [
+        f"View Cloud gate and results: {BASE_URL.rstrip('/')}/dashboard/scans/fixture-scan"
+    ]
+    printed_payload = json.loads(stdout_calls[0].args[0])
     assert (
         printed_payload["analysis_summary"]
         == _with_finding_type_metadata(result)["analysis_summary"]
@@ -3608,8 +3620,24 @@ def test_main_json_sca_operational_status_controls_exit_and_upload(
             "quality_gate": {"passed": True},
         }
     )
-    mock_print.assert_called_once()
-    printed = json.loads(mock_print.call_args.args[0])
+    stdout_calls = [
+        call
+        for call in mock_print.call_args_list
+        if call.kwargs.get("file", sys.stdout) is sys.stdout
+    ]
+    assert len(stdout_calls) == 1
+    assert [
+        call.args[0]
+        for call in mock_print.call_args_list
+        if call.kwargs.get("file") is sys.stderr
+    ] == (
+        []
+        if expected_exit
+        else [
+            f"View Cloud gate and results: {BASE_URL.rstrip('/')}/dashboard/scans/fixture-sca-scan"
+        ]
+    )
+    printed = json.loads(stdout_calls[0].args[0])
     gate = printed.pop("gate", None)
     assert printed == expected
     if gate_args:

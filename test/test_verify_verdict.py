@@ -592,7 +592,7 @@ def test_unverified_upload_identity_is_called_out(capsys, tmp_path):
 
     assert code == 0
     assert out.splitlines()[1] == (
-        'The results were uploaded with a project API key "ci-deploy", so '
+        'The results were uploaded with a project token "ci-deploy", so '
         "Skylos can't prove they came from this commit's code."
     )
 
@@ -1212,7 +1212,7 @@ def test_require_trusted_upload_rejects_unverified_and_older_verdicts(
         keys,
         ["--require-trusted-upload"],
         "The verdict is not for a trusted upload "
-        "(CI with OIDC, or a CI key the project trusts).",
+        "(CI with OIDC, or a CI project token).",
     )
 
 
@@ -1299,5 +1299,5 @@ def test_trusted_upload_keyword_works_with_existing_positional_expectations(
     if trust != "trusted_api_key":
         assert result.reason == (
             "The verdict is not for a trusted upload "
-            "(CI with OIDC, or a CI key the project trusts)."
+            "(CI with OIDC, or a CI project token)."
         )

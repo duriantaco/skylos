@@ -38,7 +38,7 @@ def run_ingest_command(
     p_ccs.add_argument(
         "--token",
         default=None,
-        help="API token (falls back to SKYLOS_TOKEN / keyring)",
+        help="Project token (falls back to SKYLOS_TOKEN / keyring)",
     )
     p_ccs.add_argument(
         "--no-upload",

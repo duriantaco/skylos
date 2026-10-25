@@ -156,7 +156,7 @@ def test_focus_selection_matches_expanded_and_grouped_views(
     assert "Defect remains" in text and "Custom review remains" in text
     assert "SKY-Q301" in text and "SKY-Q306" in text and "SKY-C304" in text
     assert "FAIL · configured policy blocked this scan" in normalized
-    assert "8 total advice findings · 7 rules · 3 affected files" in normalized
+    assert "8 advice findings · 7 rules checked · 3 affected files" in normalized
     if all_advice:
         assert "5 advice entries (8 findings)" in normalized
         assert "SKY-Q802" in text and "SKY-Q803" in text and "SKY-Q302" in text

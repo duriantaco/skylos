@@ -77,8 +77,7 @@ SUMMARY_DISAGREES = "The summary and the signed statement disagree."
 OTHER_WORKSPACE = "The verdict belongs to a different workspace."
 NOT_REPOSITORY_VERIFIED = "The verdict is not bound to a verified repository upload."
 NOT_TRUSTED_UPLOAD = (
-    "The verdict is not for a trusted upload "
-    "(CI with OIDC, or a CI key the project trusts)."
+    "The verdict is not for a trusted upload (CI with OIDC, or a CI project token)."
 )
 INVALID_SIGNING_TIME = "The verdict has an invalid signing time."
 TOO_OLD = "The verdict is older than the allowed age."
