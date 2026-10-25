@@ -9,8 +9,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from skylos.analyzer import analyze
 
 
@@ -114,15 +112,22 @@ def register_converter(converter, name: str) -> None:
 }
 
 
-def test_repro_04_register_converter_wrapper_is_live(tmp_path):
+def test_repro_04_uncalled_register_converter_wrapper_is_unused(tmp_path):
     result = _scan(tmp_path, _CONVERTER)
+    _assert_reported(result, "04_django_url_converter.register_converter")
+
+
+def test_repro_04_called_register_converter_wrapper_is_live(tmp_path):
+    sources = dict(_CONVERTER)
+    sources["04_django_url_converter.py"] += "\nregister_converter()\n"
+    result = _scan(tmp_path, sources)
     _assert_quiet(result, "register_converter")
 
 
 # --- 07: {% static %} loaded ES export -----------------------------------------
 
 _TEMPLATE_STATIC_JS = {
-    "static/widget.js": "export function greet() {\n  return \"ok\";\n}\n",
+    "static/widget.js": 'export function greet() {\n  return "ok";\n}\n',
     "templates/page.html": """\
 {% load static %}
 <!doctype html>
@@ -135,9 +140,10 @@ _TEMPLATE_STATIC_JS = {
 }
 
 
-def test_repro_07_static_script_export_is_live(tmp_path):
+def test_repro_07_unconsumed_static_script_export_is_unused(tmp_path):
     result = _scan(tmp_path, _TEMPLATE_STATIC_JS)
-    _assert_quiet(result, "greet")
+    _assert_reported(result, "greet")
+    assert not result.get("unused_files")
 
 
 # --- 11: autoreload.run_with_reloader helper ------------------------------------

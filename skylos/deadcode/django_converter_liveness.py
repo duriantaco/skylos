@@ -25,7 +25,7 @@ _CONVERTER_METHODS = {"to_python", "to_url"}
 
 
 def _registration_converter(call, bindings):
-    """Class passed to a proven register_converter(Class, \"name\") call, if any.
+    """Class passed to a proven register_converter(Class, name) call, if any.
 
     Accepts ``django.urls.register_converter`` and imported Name aliases whose
     binding ends with ``.register_converter`` (including local ``django_urls``
@@ -34,10 +34,8 @@ def _registration_converter(call, bindings):
     """
     if not isinstance(call, ast.Call) or not call.args:
         return None
-    if len(call.args) >= 2:
-        name = call.args[1]
-        if not (isinstance(name, ast.Constant) and isinstance(name.value, str)):
-            return None
+    # The name can be computed; protocol evidence depends on the provider and
+    # converter class, not on spelling the registration name as a literal.
     target = _qualified(call.func, bindings)
     if target == _REGISTER_CONVERTER:
         return _qualified(call.args[0], bindings)
@@ -49,27 +47,17 @@ def _registration_converter(call, bindings):
         and target is not None
         and target.endswith(".register_converter")
     ):
+        # Preserve the narrower legacy shim allowance; computed names gain
+        # protocol evidence only through the actual Django provider above.
+        if len(call.args) >= 2 and not (
+            isinstance(call.args[1], ast.Constant)
+            and isinstance(call.args[1].value, str)
+        ):
+            return None
         return _qualified(call.args[0], bindings)
     return None
 
 
-def _function_registers_converter(statement):
-    """Cheap AST shape check before invoking an uncalled registration wrapper."""
-    for node in ast.walk(statement):
-        if not isinstance(node, ast.Call) or not node.args:
-            continue
-        # Only imported/local Name callees — not obj.register_converter(...).
-        if not isinstance(node.func, ast.Name):
-            continue
-        if not node.func.id.endswith("register_converter"):
-            continue
-        if len(node.args) >= 2 and not (
-            isinstance(node.args[1], ast.Constant)
-            and isinstance(node.args[1].value, str)
-        ):
-            continue
-        return True
-    return False
 _CORE_CONVERTERS = {
     "django.urls.converters.IntConverter": "builtins.object",
     "django.urls.converters.StringConverter": "builtins.object",
@@ -197,7 +185,6 @@ class _ConverterScanner(_WebScanner):
                 continue
             candidate = _registration_converter(call, bindings)
             if candidate is not None:
-                self.registry.registration_calls += 1
                 self.registry.register(candidate)
             target = _qualified(call.func, bindings)
             scanner, function = self.registry.function(target)
@@ -240,8 +227,6 @@ class _ConverterRegistry:
         self.index = index
         self.scanners = {}
         self.registered = set()
-        self.entrypoints = []
-        self.registration_calls = 0
         self.mro_cache = {}
         for module in parsed:
             scanner = _ConverterScanner(index, module, self)
@@ -396,7 +381,7 @@ def _project_may_register_converters(definitions, paths):
 
 
 def _scan_django_converters(definitions, files, root):
-    """Collect registered converter identities and registration wrappers."""
+    """Collect converter identities from registrations whose owners execute."""
     root, paths = _converter_scan_paths(definitions, files, root)
     if not paths or not _project_may_register_converters(definitions, paths):
         return frozenset(), []
@@ -410,18 +395,10 @@ def _scan_django_converters(definitions, files, root):
     executed = _executed_definitions(index)
     for scanner in registry.scanners.values():
         for function in tuple(scanner.functions.values()):
-            statement, definition = function
-            if id(definition) in scanner.invoked:
-                continue
-            registers = _function_registers_converter(statement)
-            if id(definition) in executed or registers:
-                before = registry.registration_calls
+            _, definition = function
+            if id(definition) in executed and id(definition) not in scanner.invoked:
                 scanner.invoke(function)
-                if id(definition) not in executed and registry.registration_calls > before:
-                    registry.entrypoints.append(
-                        (definition, "django_web_converter_registration")
-                    )
-    return frozenset(registry.registered), registry.entrypoints
+    return frozenset(registry.registered), []
 
 
 def find_django_converter_classes(definitions, files, root):

@@ -2243,7 +2243,6 @@ class Skylos:
             self.ts_consumed_exports,
             lifecycle_entry_points=lifecycle_entry_points,
             bundle_entry_points=bundle_entry_points,
-            browser_entry_points=getattr(self, "_browser_script_entry_files", ()),
         )
 
     def _find_dead_ts_files(self, files, exclude_folders, workspace_inventory=None):

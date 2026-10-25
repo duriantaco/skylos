@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from skylos.deadcode.django_setting_bindings import selected_setting_views
 from skylos.deadcode.django_template_liveness import (
     _configured_template_directories,
     _template_members,
@@ -120,6 +121,7 @@ class _Activation:
     url_roots: set = field(default_factory=set)
     routed: set = field(default_factory=set)
     loaded: set = field(default_factory=set)
+    setting_views: list = field(default_factory=list)
 
 
 @dataclass
@@ -146,7 +148,11 @@ _DOTTED_PATH = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$")
 
 
 def _setting_names(scanner):
-    names = set(scanner.values) | set(getattr(scanner, "module_settings", {}))
+    names = (
+        set(scanner.values)
+        | set(getattr(scanner, "module_settings", {}))
+        | set(getattr(scanner, "setting_bindings", {}))
+    )
     return {name for name in names if name.isupper()}
 
 
@@ -154,14 +160,14 @@ def _setting_targets(scanner):
     """Django reads every UPPER_CASE setting by name via django.conf.settings."""
     targets = []
     for setting in sorted(_setting_names(scanner)):
-        definition = scanner.definition(scanner.module + "." + setting, kind="variable")
+        source_name = getattr(scanner, "setting_source_names", {}).get(setting, setting)
+        qualified = scanner.module + "." + source_name
+        definition = scanner.definition(qualified, kind="variable")
         if definition is not None:
             targets.append((definition, "django_web_setting"))
         else:
             # Assigned more than once (e.g. under ``if DEBUG:``): mark each.
-            for candidate in scanner.index.all_by_name.get(
-                scanner.module + "." + setting, ()
-            ):
+            for candidate in scanner.index.all_by_name.get(qualified, ()):
                 if candidate.type == "variable":
                     targets.append((candidate, "django_web_setting"))
     return targets
@@ -205,11 +211,7 @@ def _looks_like_settings(scanner):
 
 
 def _settings_closure(roots, scanners):
-    """Settings modules plus modules they pull settings from.
-
-    Follows ``import *`` and named UPPER imports such as
-    ``from package.settings_logging import LOGGING``.
-    """
+    """Whole-settings imports retain their existing star-import closure."""
     settings = set(roots)
     pending = list(roots)
     while pending:
@@ -217,10 +219,6 @@ def _settings_closure(roots, scanners):
         if scanner is None:
             continue
         for name in getattr(scanner, "star_imports", ()):
-            if name in scanners and name not in settings:
-                settings.add(name)
-                pending.append(name)
-        for name in getattr(scanner, "setting_imports", {}).values():
             if name in scanners and name not in settings:
                 settings.add(name)
                 pending.append(name)
@@ -235,9 +233,6 @@ def _settings_closure(roots, scanners):
             if set(getattr(scanner, "star_imports", ())) & settings:
                 settings.add(name)
                 changed = True
-            if set(getattr(scanner, "setting_imports", {}).values()) & settings:
-                settings.add(name)
-                changed = True
     return settings
 
 
@@ -247,12 +242,16 @@ def _settings_activation(scanners, classes):
         name for name, scanner in scanners.items() if _looks_like_settings(scanner)
     }
     settings = _settings_closure(settings, scanners)
-    activation = _Activation(settings)
+    activation = _Activation(
+        settings, setting_views=selected_setting_views(settings, scanners)
+    )
     targets = []
     for name in settings:
         scanner = scanners.get(name)
         if scanner is None:
             continue
+        targets.extend(_setting_targets(scanner))
+    for scanner in activation.setting_views:
         targets.extend(_setting_targets(scanner))
         targets.extend(_setting_reference_targets(scanner))
         urlconf = _literal(scanner.values.get("ROOT_URLCONF"))
@@ -373,6 +372,26 @@ def _auth_class_mro(name, scanners, classes, trail=(), cache=None):
     return result
 
 
+def _effective_setting_values(scanner, name):
+    """Possible values since the last unconditional replacement of a setting."""
+    final = scanner.values.get(name)
+    boundary = (getattr(final, "lineno", 0), getattr(final, "col_offset", 0))
+    values = (
+        *getattr(scanner, "module_settings", {}).get(name, ()),
+        *getattr(scanner, "setting_mutations", {}).get(name, ()),
+    )
+    return tuple(
+        value
+        for value in values
+        if any(
+            position >= boundary
+            for position in getattr(scanner, "setting_mutation_positions", {}).get(
+                id(value), ((value.lineno, value.col_offset),)
+            )
+        )
+    )
+
+
 def _storage_backend_names(scanner):
     """Literal storage backend class paths from STORAGES / DEFAULT_FILE_STORAGE."""
     names = set()
@@ -381,7 +400,7 @@ def _storage_backend_names(scanner):
         literal = _literal(value)
         if isinstance(literal, str):
             names.add(literal)
-    for values in getattr(scanner, "module_settings", {}).get("STORAGES", ()):
+    for values in _effective_setting_values(scanner, "STORAGES"):
         for node in ast.walk(values):
             if not isinstance(node, ast.Dict):
                 continue
@@ -456,9 +475,8 @@ def _protocol_method_targets(configured, scanners, classes, methods, reason, loa
 def _auth_backend_targets(activation, scanners, classes):
     configured = {
         backend
-        for name in activation.settings
-        if name in scanners
-        for backend in _auth_backend_names(scanners[name])
+        for scanner in activation.setting_views
+        for backend in _auth_backend_names(scanner)
     }
     return _protocol_method_targets(
         configured,
@@ -473,9 +491,8 @@ def _auth_backend_targets(activation, scanners, classes):
 def _storage_backend_targets(activation, scanners, classes):
     configured = {
         backend
-        for name in activation.settings
-        if name in scanners
-        for backend in _storage_backend_names(scanners[name])
+        for scanner in activation.setting_views
+        for backend in _storage_backend_names(scanner)
     }
     return _protocol_method_targets(
         configured,
@@ -490,7 +507,7 @@ def _storage_backend_targets(activation, scanners, classes):
 def _logging_factory_names(scanner):
     """Dotted class paths from LOGGING dict ``()`` / ``class`` entries."""
     names = set()
-    for values in getattr(scanner, "module_settings", {}).get("LOGGING", ()):
+    for values in _effective_setting_values(scanner, "LOGGING"):
         for node in ast.walk(values):
             if not isinstance(node, ast.Dict):
                 continue
@@ -508,9 +525,8 @@ def _logging_factory_names(scanner):
 def _logging_factory_targets(activation, scanners, classes):
     configured = {
         factory
-        for name in activation.settings
-        if name in scanners
-        for factory in _logging_factory_names(scanners[name])
+        for scanner in activation.setting_views
+        for factory in _logging_factory_names(scanner)
     }
     return _protocol_method_targets(
         configured,
@@ -595,13 +611,10 @@ def _admin_targets(activation, scanners, classes):
 
 def _template_directories(activation, scanners):
     directories = set()
-    for name in activation.settings:
-        if name in scanners:
-            directories.update(
-                _configured_template_directories(
-                    scanners[name], activation.apps, scanners
-                )
-            )
+    for scanner in activation.setting_views:
+        directories.update(
+            _configured_template_directories(scanner, activation.apps, scanners)
+        )
     return directories
 
 

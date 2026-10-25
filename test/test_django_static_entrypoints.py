@@ -54,7 +54,7 @@ def test_literal_static_script_is_a_file_entrypoint(tmp_path, asset, script_type
 
 
 @pytest.mark.parametrize("script_type", ["", ' type="module"'])
-def test_loading_script_keeps_export_as_browser_entrypoint(tmp_path, script_type):
+def test_loading_script_does_not_consume_unused_export(tmp_path, script_type):
     files = _sources(
         tmp_path,
         {
@@ -65,14 +65,12 @@ def test_loading_script_keeps_export_as_browser_entrypoint(tmp_path, script_type
     definition = Definition("greet", "function", files[0], 1)
     definition.is_exported = True
 
-    entries = _entries(tmp_path, files)
-    assert entries == {files[0]}
-    demoted = demote_unconsumed_ts_exports(
-        {"greet": definition}, {}, browser_entry_points=entries
-    )
+    assert _entries(tmp_path, files) == {files[0]}
+    demoted = demote_unconsumed_ts_exports({"greet": definition}, {})
 
-    assert demoted == []
-    assert definition.is_exported is True
+    assert demoted == [definition]
+    assert definition.references == 0
+    assert definition.is_exported is False
     assert browser_refs.collect_browser_event_handler_refs(tmp_path, files) == []
 
 
@@ -278,7 +276,7 @@ def test_analyzer_preserves_called_handler_and_reports_unused_helper(tmp_path):
 
 
 @pytest.mark.parametrize("script_type", ["", ' type="module"'])
-def test_analyzer_keeps_export_live_in_static_loaded_file(tmp_path, script_type):
+def test_analyzer_keeps_uncalled_export_unused_in_loaded_file(tmp_path, script_type):
     from skylos.analyzer import analyze
 
     files = _sources(
@@ -293,5 +291,46 @@ def test_analyzer_keeps_export_live_in_static_loaded_file(tmp_path, script_type)
     unused = {item["name"] for item in result.get("unused_functions", [])}
     unused_files = {Path(item["file"]) for item in result.get("unused_files", [])}
 
-    assert "greet" not in unused
+    assert "greet" in unused
+    assert files[0] not in unused_files
+
+
+@pytest.mark.parametrize("grep_verify", [False, True])
+@pytest.mark.parametrize(
+    "script_url", ["/static/widget.js", "{% static 'widget.js' %}"]
+)
+def test_loaded_module_exports_require_actual_consumers(
+    tmp_path, grep_verify, script_url
+):
+    from skylos.analyzer import analyze
+
+    files = _sources(
+        tmp_path,
+        {
+            "static/widget.js": (
+                "function activeHelper() { return 1; }\n"
+                "function retiredHelper() { return 2; }\n"
+                "function untouchedPrivate() { return 3; }\n"
+                "export function activeExport() { return activeHelper(); }\n"
+                "export function retiredExport() { return retiredHelper(); }\n"
+                "export class RetiredClass { oldMethod() { return 4; } }\n"
+                "export const retiredValue = 5;\n"
+                "document.addEventListener('DOMContentLoaded', activeExport);\n"
+            ),
+            "templates/page.html": f'<script type="module" src="{script_url}"></script>',
+        },
+    )
+
+    result = json.loads(analyze(str(tmp_path), conf=80, grep_verify=grep_verify))
+    assert not result.get("analysis_errors")
+    unused_functions = {item["name"] for item in result.get("unused_functions", [])}
+    unused_classes = {item["name"] for item in result.get("unused_classes", [])}
+    unused_variables = {item["name"] for item in result.get("unused_variables", [])}
+    unused_files = {Path(item["file"]) for item in result.get("unused_files", [])}
+
+    assert "activeExport" not in unused_functions
+    assert "activeHelper" not in unused_functions
+    assert {"retiredExport", "retiredHelper", "untouchedPrivate"} <= unused_functions
+    assert "RetiredClass" in unused_classes
+    assert "retiredValue" in unused_variables
     assert files[0] not in unused_files

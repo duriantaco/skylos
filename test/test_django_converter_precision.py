@@ -89,6 +89,130 @@ def test_real_converter_registration_keeps_exact_protocol_and_callees(
 @pytest.mark.parametrize(
     "provider,registration",
     [
+        ("from django.urls import register_converter", "register_converter"),
+        ("from django.urls import register_converter as register", "register"),
+        ("import django.urls as routes", "routes.register_converter"),
+        ("from django import urls as routes", "routes.register_converter"),
+        ("import django as framework", "framework.urls.register_converter"),
+        ("import django.urls", "django.urls.register_converter"),
+    ],
+)
+@pytest.mark.parametrize(
+    "argument",
+    ["CONVERTER_NAME", "'cus' + 'tom'", "type_name=CONVERTER_NAME"],
+    ids=["bound-name", "computed-name", "keyword-name"],
+)
+def test_converter_name_expression_preserves_registered_protocol(
+    tmp_path, provider, registration, argument
+):
+    result = _scan(
+        tmp_path,
+        {
+            "converters.py": CONVERTER,
+            "urls.py": provider + "\nfrom django.urls import path\n"
+            "from django.http import HttpResponse\n"
+            "from converters import Converter\n"
+            "CONVERTER_NAME = 'custom'\n"
+            + registration
+            + "(Converter, "
+            + argument
+            + ")\n"
+            "def view(request, value):\n    return HttpResponse(value)\n"
+            "urlpatterns = [path('<custom:value>/', view)]\n",
+        },
+    )
+    _assert_converter_method(result, "converters.Converter.to_python")
+    _assert_converter_method(result, "converters.Converter.to_url")
+    assert "converters.Converter.regex" not in _unused(result, "unused_variables")
+    assert "converters.normalize" not in _unused(result)
+    _assert_no_converter_proof(result, "converters.Converter.stale_helper")
+    _assert_dead_neighbor(result)
+
+
+@pytest.mark.parametrize("grep_verify", [False, True])
+@pytest.mark.parametrize("called", [False, True])
+def test_wrapper_execution_controls_converter_findings_at_default_confidence(
+    tmp_path, called, grep_verify
+):
+    import json
+
+    from skylos.analyzer import analyze
+
+    (tmp_path / "converters.py").write_text(CONVERTER, encoding="utf-8")
+    source = (
+        "from django.urls import register_converter\n"
+        "from converters import Converter\n"
+        "def configure():\n    register_converter(Converter, 'custom')\n"
+    )
+    if called:
+        source += "configure()\n"
+    (tmp_path / "urls.py").write_text(source, encoding="utf-8")
+
+    result = json.loads(analyze(str(tmp_path), conf=80, grep_verify=grep_verify))
+    assert not result.get("analysis_errors")
+    unused = _unused(result)
+    assert ("urls.configure" in unused) is not called
+    assert ("converters.Converter.to_python" in unused) is not called
+    assert ("converters.Converter.to_url" in unused) is not called
+    if called:
+        _assert_converter_method(result, "converters.Converter.to_python")
+        assert "converters.Converter.regex" not in _unused(result, "unused_variables")
+    else:
+        _assert_no_converter_proof(result, "converters.Converter.to_python")
+        _assert_no_converter_proof(result, "converters.Converter.regex")
+    _assert_dead_neighbor(result)
+
+
+@pytest.mark.parametrize("grep_verify", [False, True])
+def test_bound_registration_name_keeps_regex_at_default_confidence(
+    tmp_path, grep_verify
+):
+    import json
+
+    from skylos.analyzer import analyze
+
+    (tmp_path / "converters.py").write_text(CONVERTER, encoding="utf-8")
+    (tmp_path / "urls.py").write_text(
+        "from django.urls import register_converter, path\n"
+        "from django.http import HttpResponse\n"
+        "from converters import Converter\n"
+        "CONVERTER_NAME = 'custom'\n"
+        "register_converter(Converter, CONVERTER_NAME)\n"
+        "def view(request, value):\n    return HttpResponse(value)\n"
+        "urlpatterns = [path('<custom:value>/', view)]\n",
+        encoding="utf-8",
+    )
+
+    result = json.loads(analyze(str(tmp_path), conf=80, grep_verify=grep_verify))
+    assert not result.get("analysis_errors")
+    assert "converters.Converter.regex" not in _unused(result, "unused_variables")
+    _assert_converter_method(result, "converters.Converter.to_python")
+    _assert_converter_method(result, "converters.Converter.to_url")
+    _assert_no_converter_proof(result, "converters.Converter.stale_helper")
+    _assert_dead_neighbor(result)
+
+
+def test_nonliteral_name_does_not_add_evidence_for_a_suffix_only_provider(tmp_path):
+    result = _scan(
+        tmp_path,
+        {
+            "converters.py": CONVERTER,
+            "codec.py": "def register_converter(cls, name):\n    return None\n",
+            "urls.py": "from codec import register_converter\n"
+            "from converters import Converter\n"
+            "CONVERTER_NAME = 'custom'\n"
+            "register_converter(Converter, CONVERTER_NAME)\n",
+        },
+    )
+    _assert_no_converter_proof(result, "converters.Converter.to_python")
+    _assert_no_converter_proof(result, "converters.Converter.regex")
+    assert "converters.Converter.regex" in _unused(result, "unused_variables")
+    _assert_dead_neighbor(result)
+
+
+@pytest.mark.parametrize(
+    "provider,registration",
+    [
         (
             "from django.urls import register_converter\n"
             "def noop(cls, name):\n    return None\n"
@@ -157,12 +281,15 @@ def test_only_called_registration_wrapper_proves_converter(tmp_path, called):
         source += "configure()\n"
     result = _scan(tmp_path, {"converters.py": CONVERTER, "urls.py": source})
     unused = _unused(result)
-    # A module-level wrapper whose body calls register_converter is itself a
-    # registration entrypoint; call sites are optional.
-    _assert_converter_method(result, "converters.Converter.to_python")
-    _assert_converter_method(result, "converters.Converter.to_url")
-    assert "converters.normalize" not in unused
-    assert "urls.configure" not in unused
+    if called:
+        _assert_converter_method(result, "converters.Converter.to_python")
+        _assert_converter_method(result, "converters.Converter.to_url")
+        assert "converters.normalize" not in unused
+        assert "urls.configure" not in unused
+    else:
+        assert "converters.Converter.to_python" in unused
+        assert "converters.Converter.to_url" in unused
+        assert "urls.configure" in unused
     _assert_no_converter_proof(result, "converters.Converter.stale_helper")
     _assert_dead_neighbor(result)
 
