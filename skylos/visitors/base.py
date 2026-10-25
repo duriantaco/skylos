@@ -607,6 +607,8 @@ class Definition:
         "why_unused",
         "why_confidence_reduced",
         "_attr_name_ref_count",
+        "_framework_decorator_ref_count",
+        "_fastapi_inactive",
         "conditional_import",
         "suppression_code",
         "folder_role",
@@ -652,6 +654,8 @@ class Definition:
         self.why_unused = []
         self.why_confidence_reduced = []
         self._attr_name_ref_count = 0
+        self._framework_decorator_ref_count = 0
+        self._fastapi_inactive = False
         self.conditional_import = False
         self.suppression_code = None
         self.folder_role = None
@@ -1673,6 +1677,13 @@ class Visitor(ast.NodeVisitor):
                     keyword in deco_name.lower() for keyword in FRAMEWORK_DECORATORS
                 ):
                     self.add_ref(qualified_name)
+                    for definition in reversed(self.defs):
+                        if (
+                            definition.name == qualified_name
+                            and definition.line == node.lineno
+                        ):
+                            definition._framework_decorator_ref_count += 1
+                            break
                 elif isinstance(d, ast.Call) and self._is_numba_overload_decorator(
                     deco_name, current_definition=qualified_name
                 ):

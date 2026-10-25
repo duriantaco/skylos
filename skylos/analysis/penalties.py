@@ -625,6 +625,10 @@ def _check_non_library_path(def_obj, analyzer, cfg):
 
 
 def _check_framework_decorations(def_obj, framework):
+    if def_obj.type == "parameter" and def_obj.line in getattr(
+        framework, "fastapi_candidate_lines", ()
+    ):
+        return None
     if def_obj.line in getattr(framework, "framework_decorated_lines", set()):
         return _suppress(def_obj)
     return None
@@ -1360,6 +1364,13 @@ def _check_dependency_injected_parameter(def_obj, analyzer, framework):
     if def_obj.type != "parameter":
         return None
     key = (def_obj.line, def_obj.simple_name)
+    if key in getattr(framework, "fastapi_callback_parameters", ()):
+        return _suppress(def_obj, "FastAPI callback parameter")
+    precise = getattr(framework, "fastapi_dependency_parameters", None)
+    if precise is not None:
+        if key in precise:
+            return _suppress(def_obj, "FastAPI dependency parameter (Depends/Security)")
+        return None
     if key in getattr(framework, "dependency_injected_params", set()):
         return _suppress(def_obj, "FastAPI dependency parameter (Depends/Security)")
     alias = getattr(framework, "param_annotation_aliases", {}).get(key)
