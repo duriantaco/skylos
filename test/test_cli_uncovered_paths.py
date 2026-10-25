@@ -302,7 +302,11 @@ def test_get_git_changed_files_includes_untracked_supported_files(tmp_path):
     assert files == [root / "tracked.py", root / "untracked.kt"]
 
 
-def test_get_git_changed_files_unions_worktree_and_branch_changes(tmp_path):
+def test_get_git_changed_files_unions_worktree_and_branch_changes(
+    tmp_path, monkeypatch
+):
+    # The mocked repository below has origin/main, independent of the host CI.
+    monkeypatch.setenv("GITHUB_BASE_REF", "main")
     root = tmp_path
     for name in ("working.py", "untracked.py", "committed.py"):
         (root / name).write_text("x=1", encoding="utf-8")
