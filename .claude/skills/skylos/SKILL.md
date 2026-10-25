@@ -39,6 +39,8 @@ Read only the reference needed for the current task.
 
 - Prefer `skylos . -a --format json` for agent-readable scans.
 - Use `skylos . --diff origin/main --format json` for PR-focused review.
+- Use `skylos done map --base origin/main --format json` to see what a change
+  touches (callers, removed checks, what to read first) before reading its diff.
 - Parse JSON arrays with `.get(key, [])`; empty arrays may be omitted.
 - Use focused tests before full suites.
 - Keep changes narrow and preserve unrelated user edits.

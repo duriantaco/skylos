@@ -521,6 +521,10 @@ class _SignalRegistry(_ConverterRegistry):
         return None
 
     def linearization(self, qualified, active=()):
+        # Unresolved bases are stored as None; treat them like the converter
+        # registry so a single odd class cannot abort all signal proofs.
+        if not isinstance(qualified, str) or not qualified:
+            return None
         if qualified in self.mro_cache:
             return self.mro_cache[qualified]
         if qualified in active or len(active) >= 24:
@@ -535,6 +539,8 @@ class _SignalRegistry(_ConverterRegistry):
             parents = ("builtins.object",)
         sequences = []
         for parent in parents:
+            if parent is None:
+                return None
             inherited = self.linearization(parent, (*active, qualified))
             if inherited is None:
                 return None

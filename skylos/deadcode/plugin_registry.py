@@ -604,3 +604,13 @@ def _import_module_arg_name(node: ast.AST, import_ctx: _ImportContext) -> str:
     if isinstance(func, ast.Name) and func.id in import_ctx.import_module_names:
         return first_arg.id
     return ""
+
+
+def find_nested_dict_getattr_targets(
+    definitions: dict[str, Any],
+    parsed_files: Sequence[ParsedPythonFile],
+) -> list[Any]:
+    """Retain only source-bound registry values used by executing consumers."""
+    from skylos.deadcode.nested_registry_proofs import collect_nested_registry_targets
+
+    return collect_nested_registry_targets(definitions, parsed_files).targets

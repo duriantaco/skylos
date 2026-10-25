@@ -4,8 +4,38 @@ import argparse
 from collections.abc import Callable, Sequence
 
 
+class _ScanArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        prefix = "unrecognized arguments: "
+        if not message.startswith(prefix):
+            super().error(message)
+        hint = _closest_option(self, message[len(prefix) :].split())
+        if hint:
+            message = f"{message} (did you mean {hint}?)"
+        self.exit(
+            2, f"{self.prog}: error: {message}\nSee the scan flags: skylos . --help\n"
+        )
+
+
+def _closest_option(parser: argparse.ArgumentParser, unknown: list[str]):
+    import difflib
+
+    options = [
+        option for option in parser._option_string_actions if option.startswith("--")
+    ]
+    for token in unknown:
+        if not token.startswith("--"):
+            continue
+        matches = difflib.get_close_matches(
+            token.split("=", 1)[0], options, n=1, cutoff=0.75
+        )
+        if matches:
+            return matches[0]
+    return None
+
+
 def build_main_parser(*, version: str) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _ScanArgumentParser(
         description=(
             "Find dead code, secrets, and risky flows in Python, JS/TS, Go, "
             "Java, Kotlin, PHP, Rust, Dart, and C#"
@@ -234,7 +264,9 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
     )
     parser.add_argument(
         "--danger",
+        "--security",
         action="store_true",
+        dest="danger",
         help="Scan for security issues. Off by default.",
     )
     parser.add_argument(
@@ -353,7 +385,8 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         help="Only report findings in lines changed since BASE_REF (e.g. --diff origin/main), "
         "including staged, unstaged and untracked changes (--diff HEAD = uncommitted work). "
         "Use --diff without a value to auto-detect the PR target branch "
-        "(GITHUB_BASE_REF, Bitbucket or Azure Pipelines PR target) or origin/main.",
+        "(GitHub Actions, GitLab CI, Jenkins, Bitbucket, Azure Pipelines, "
+        "Buildkite, Travis CI, Drone, Woodpecker) or origin/main.",
     )
     parser.add_argument(
         "--diff-mode",
