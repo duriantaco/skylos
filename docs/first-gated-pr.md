@@ -206,7 +206,9 @@ Pull request checks do not depend on it.
    GitHub App** on this repository. In an organization, an owner may have to
    approve the install.
 3. Push to your default branch (or merge any pull request). The **Skylos Cloud
-   upload** job should print `✓ Scan uploaded` and a link to the scan.
+   upload** job runs `skylos cloud` and should end with the gate for your
+   default branch, for example `✓ Quality gate on main: PASSED`, and an
+   `Open:` link to it.
 
 For a local scan with Cloud results, run `skylos . -a --gate --upload`.
 After a confirmed upload, Skylos prints the Cloud gate result for the branch

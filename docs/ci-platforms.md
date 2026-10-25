@@ -148,8 +148,9 @@ skylos . --danger --quality --ai-defects --secrets --sca --baseline --gate --dif
 ## Skylos Cloud
 
 `skylos cicd init` adds Cloud uploads only for GitHub Actions, through GitHub
-OIDC. On other CIs, add a separate full scan with `--upload` and a
-`SKYLOS_TOKEN` secret, as shown in [Bitbucket and Azure Pipelines](./bitbucket-azure-pipelines.md).
+OIDC; that job runs `skylos cloud`. On other CIs, add one step on your default
+branch that runs `skylos cloud` with a `SKYLOS_TOKEN` secret (a CI project
+token), as shown in [Bitbucket and Azure Pipelines](./bitbucket-azure-pipelines.md).
 For GitLab, see [GitLab managed uploads](./gitlab-managed-uploads.md).
 Diff-scoped reports cannot be uploaded.
 
