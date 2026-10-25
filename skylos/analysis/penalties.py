@@ -4,6 +4,7 @@ from typing import Any, Optional, NamedTuple
 from skylos.constants import PENALTIES, get_non_library_dir_kind, is_test_path
 from skylos.config import is_whitelisted
 from skylos.deadcode.config_entrypoints import configured_entrypoint_reason
+from skylos.deadcode._reachability_bindings import bound_names
 from skylos.deadcode.django_hook_proofs import (
     django_clean_field,
     django_hook_ancestry,
@@ -956,6 +957,88 @@ def _check_django_methods(def_obj, framework, analyzer=None):
     return None
 
 
+def _drf_validation_field_is_declared(def_obj, graph, owner):
+    field_name = def_obj.simple_name.removeprefix("validate_")
+    ancestors, _ = graph.ancestry(owner)
+    for candidate in (owner, *ancestors):
+        node = getattr(candidate, "node", None)
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for statement in reversed(node.body):
+            if isinstance(statement, ast.Assign):
+                targets, value = statement.targets, statement.value
+            elif isinstance(statement, ast.AnnAssign):
+                targets, value = [statement.target], statement.value
+            else:
+                targets, value = (), None
+            if not any(
+                isinstance(target, ast.Name) and target.id == field_name
+                for target in targets
+            ):
+                if field_name in bound_names([statement]).counts:
+                    return False
+                continue
+            if not isinstance(value, ast.Call) or not isinstance(
+                value.func, (ast.Name, ast.Attribute)
+            ):
+                return False
+            reference = ast.unparse(value.func)
+            root = reference.split(".", 1)[0]
+            if root in bound_names(node.body[: node.body.index(statement)]).counts:
+                return False
+            module = candidate.name.rsplit(".", 1)[0]
+            while getattr(graph.defs.get(module), "type", None) == "class":
+                module = module.rsplit(".", 1)[0]
+            binding = graph.defs.get(f"{module}.{root}")
+            if binding is not None and binding.type != "import":
+                return False
+            provider = graph.resolve_reference(candidate.filename, reference)
+            return provider.startswith(
+                (
+                    "rest_framework.serializers.",
+                    "rest_framework.fields.",
+                    "rest_framework.relations.",
+                )
+            ) and provider.rsplit(".", 1)[-1].endswith("Field")
+    return False
+
+
+def _drf_dispatch_hook_reason(def_obj, analyzer):
+    """Prove DRF dispatch separately from a method's reporting confidence."""
+    if def_obj.type != "method":
+        return None
+    name = def_obj.simple_name
+    serializer_hook = name in DRF_SERIALIZER_METHODS or name.startswith("validate_")
+    roles = []
+    if serializer_hook:
+        roles.append((DRF_SERIALIZER_BASES, "DRF serializer hook"))
+    if name in DRF_VIEWSET_METHODS:
+        roles.append((DRF_VIEWSET_BASES, "DRF view hook"))
+    if name in DRF_PERMISSION_METHODS:
+        roles.append((DRF_PERMISSION_BASES, "DRF permission hook"))
+    if name in _DRF_BACKEND_METHODS:
+        roles.append((_DRF_BACKEND_BASES, "DRF backend hook"))
+    if not roles:
+        return None
+    graph = project_class_graph(analyzer)
+    owner = graph.owner_class(def_obj)
+    if owner is None:
+        return None
+    _, external = graph.ancestry(owner)
+    for qualified in external:
+        if not qualified.startswith("rest_framework."):
+            continue
+        base = qualified.rsplit(".", 1)[-1]
+        for bases, reason in roles:
+            if base in bases:
+                if name.startswith(
+                    "validate_"
+                ) and not _drf_validation_field_is_declared(def_obj, graph, owner):
+                    continue
+                return reason
+    return None
+
+
 def _check_drf_methods(def_obj, framework):
     detected = getattr(framework, "detected_frameworks", set())
     if "rest_framework" not in detected:
@@ -1746,6 +1829,11 @@ def apply_penalties(
         return
 
     if _check_django_methods(def_obj, framework, analyzer) is True:
+        return
+
+    drf_dispatch_reason = _drf_dispatch_hook_reason(def_obj, analyzer)
+    if drf_dispatch_reason is not None:
+        _suppress(def_obj, drf_dispatch_reason, code="drf_hook")
         return
 
     if _check_drf_methods(def_obj, framework) is True:

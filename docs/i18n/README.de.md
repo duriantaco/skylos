@@ -102,6 +102,7 @@ Mehr Befehle stehen in der [CLI Reference](https://docs.skylos.dev/cli-reference
 | Lesbarer Terminalreport | `skylos . --format pretty` | Gruppiert Findings nach Datei, mit Severity, Snippets und kopierbaren `file:line`-Positionen | [CLI output modes](../cli-output.md) |
 | Interaktive Terminaltriage | `skylos . --tui` | Öffnet eine tastaturgesteuerte Ansicht für Kategorien, Findings und Details | [CLI output modes](../cli-output.md) |
 | IDE- und Testscript-Ausgabe | `skylos --format concise src/test.py` | Gibt nur `file:line`-Findings aus und endet mit Non-Zero-Exit, wenn Findings existieren | [CLI Reference](https://docs.skylos.dev/cli-reference) |
+| Change Map fürs Review | `skylos done map --base origin/main` | Zeigt jede geänderte Python- oder TypeScript/JavaScript-Funktion mit altem und neuem Code, hinzugefügten und entfernten Aufrufen, ihren Aufrufern, entfernten Sicherheitsprüfungen und dem, was zuerst zu lesen ist; aus dem Code berechnet, nicht von einem Modell geschrieben | [Change map](../change-map.md) |
 | Review geänderter Zeilen | `skylos . -a --diff origin/main` | Fokussiert Findings auf aktive Arbeit statt auf Legacy-Schulden | [Quality gate docs](https://docs.skylos.dev/quality-gate) |
 | Laufzeitgestützter Dead-Code-Check | `skylos . --trace` | Nutzt Runtime-Traces, um False Positives bei dynamischem Code zu reduzieren | [Smart tracing](https://docs.skylos.dev/smart-tracing) |
 | Lokales Rule-Pack | `skylos rules init` | Erstellt YAML-Regeln für projektspezifische Security- und Quality-Prüfungen | [Custom rules](https://docs.skylos.dev/custom-rules) |
@@ -290,6 +291,7 @@ Branch-Metadaten und unterstützt Monorepo-Subprojekte über `--scan-path`.
 | Rule-ID-Präfixe und Produktterminologie | [Rule Dictionary](../../dictionary.md) |
 | Agent Scan, Verifikation, Remediation und Modellsetup | [AI Features](https://docs.skylos.dev/ai-features) |
 | AI-Defense-Prüfungen und LLM-Guardrails | [AI Defense](https://docs.skylos.dev/ai-defense) |
+| Was eine Änderung berührt und was zuerst zu lesen ist (`skylos done map`) | [Change map](../change-map.md) |
 | MCP-Server-Setup | [MCP Server](https://docs.skylos.dev/mcp-server) |
 | Real-world gemergte Cleanup-PRs | [Real-World Results](../../REAL_WORLD_RESULTS.md) |
 | Baselines, Filtering, Suppressions und Whitelists | [Configuration](https://docs.skylos.dev/configuration) |

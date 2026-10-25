@@ -34,7 +34,7 @@ secrets, quality, and SCA checks.
 
 Individual check flags:
 
-- `--danger`: security and dangerous flows.
+- `--danger` (alias `--security`): security and dangerous flows.
 - `--secrets`: leaked secret patterns.
 - `--quality`: maintainability and AI-code mistakes.
 - `--sca`: dependency CVEs through OSV.dev.
@@ -124,6 +124,22 @@ Full scans skip generated/vendored files (Django migrations, `static/**/lib`,
   you mean" line.
 - `--format concise`: exits non-zero when findings exist.
 
+## Skylos Cloud
+
+`skylos cloud [PATH] [scan flags]` is the one Cloud command: it runs
+`skylos PATH -a --upload` (only the named checks when check flags are given)
+and prints the findings tables, logs in through the browser first when there is no
+token (in a terminal; outside CI without a terminal it exits 1 before
+scanning), and prints a short receipt: the branch gate line
+(`✓`/`✗ Quality gate on <branch>: PASSED|FAILED (<history>) · <reasons>`),
+`  Open: <project Overview URL, ?branch= for non-default branches>` and a
+`  Next:` line. Exit 0 on a failed gate unless `--gate`/`--strict`; its
+`--gate` is the Cloud gate only (no local `[tool.skylos.gate]` evaluation).
+`--no-upload` is refused (exit 2). It sends findings, not the repository.
+Plain `skylos . --upload` keeps its full upload output. Other Cloud commands
+(`login`, `whoami`, `project`, `upload --retry`, `sync`, `credits`) are for
+control.
+
 ## Useful Subcommands
 
 - `skylos commands`: list commands.
@@ -150,6 +166,14 @@ Full scans skip generated/vendored files (Django migrations, `static/**/lib`,
 - `skylos cicd init`: set up the pull request gate for the detected CI
   (`--ci github|gitlab|jenkins|bitbucket|azure|circleci|other`); writes a new
   CI file or prints the block for an existing one.
+- `skylos done map [PATH] [--base REF] [--format text|json|markdown]`: the
+  change map. Per changed Python or TS/JS function, method or class: old and
+  new code, calls added/removed/moved, callers (`in_change`, `is_test`),
+  removed security checks, breaking or compatible signatures and the callers
+  they break, and `read_first` / `flagged` ids. Deterministic; no model, no
+  network. `--base` defaults to HEAD (uncommitted changes only). Exit 0
+  shown, 2 could not run. `skylos done --map` prints it after the verdict
+  without changing it. MCP tool: `change_map`. Details: `docs/change-map.md`.
 - `skylos baseline .`: save current findings baseline.
 - `skylos clean`: interactively remove or comment dead code.
 - `skylos cache stats|clear`: manage cache data.

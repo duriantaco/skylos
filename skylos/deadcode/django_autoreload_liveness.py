@@ -48,7 +48,13 @@ class _AutoreloadScanner(_ConverterScanner):
         definition = self.evidence.at(statement, "class")
         if definition is None or statement.decorator_list or statement.keywords:
             return
-        members = self.evidence.classes[definition.name][2]
+        # Nested classes (e.g. Meta inside a factory) may have a Definition
+        # without a matching evidence.classes entry; skip rather than aborting
+        # the whole dead-code liveness pass.
+        info = self.evidence.classes.get(definition.name)
+        if info is None:
+            return
+        members = info[2]
         local = bindings.copy()
         for member in statement.body:
             if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
