@@ -26,9 +26,41 @@ Review these files for CI changes:
 - `scripts/skylos_gate.py`
 - `test/test_cicd_*.py`
 - `test/test_gatekeeper.py`
+- `skylos/core/ci_env.py`
+- `test/test_ci_platforms.py`
+- `test/test_ci_bitbucket_azure.py`
+- `docs/ci-platforms.md`
 
 Generated workflows should be deterministic, least-privilege, and explicit
 about which events receive secrets.
+
+## Other CI Platforms
+
+`skylos cicd init` picks the CI from the repository (`skylos/cicd/platforms.py`):
+
+- `.github/workflows/` keeps the GitHub workflow; other CI files found get a
+  `--ci` hint.
+- Otherwise one of `.gitlab-ci.yml`, `Jenkinsfile`, `bitbucket-pipelines.yml`,
+  `azure-pipelines.yml` or `.circleci/config.yml` gets that CI's template; two
+  or more write nothing until `--ci` is given.
+- `--ci other` and Buildkite/Travis/Drone/Woodpecker/TeamCity print commands.
+- An existing CI file is never edited; the block to add is printed.
+
+`--diff` with no value reads the pull request target branch per CI in
+`skylos/core/ci_env.py`. Each variable counts only inside its own CI and only on
+a pull request build; the table is in `docs/ci-platforms.md`.
+
+When changing templates:
+
+- Keep the GitHub workflow byte-identical unless the task changes it; compare
+  `cicd init` output with HEAD across its flags.
+- Jenkins and "other" install plain `skylos`: `skylos[dart]` builds from
+  source and stock Jenkins agents have no C compiler. The `python:3.12`
+  templates keep `[dart]`.
+- Jenkins with no configured URL sets no `JENKINS_URL`; detection also uses
+  `JENKINS_HOME` or a `jenkins-` `BUILD_TAG`.
+- Test template changes in a CI container with a wheel of the working tree,
+  not the PyPI version the template pins.
 
 ## Repo Map And Pages
 

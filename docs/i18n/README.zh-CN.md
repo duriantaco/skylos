@@ -49,6 +49,9 @@ git commit -m "Add Skylos CI gate"
 git push
 ```
 
+使用 GitLab CI、Jenkins、Bitbucket Pipelines、Azure Pipelines 或 CircleCI？同一条
+`skylos cicd init` 会为该 CI 设置 PR 门控，详见 [Skylos on any CI](../ci-platforms.md)。
+
 需要更多命令？阅读 [CLI Reference](https://docs.skylos.dev/cli-reference)。
 
 ## 选择你的工作流
@@ -58,7 +61,7 @@ git push
 | 第一次死代码扫描 | `skylos .` | 发现未使用的函数、类、导入、文件和框架入口点问题 | [死代码文档](https://docs.skylos.dev/dead-code-detection) |
 | 安全与质量审计 | `skylos . -a` | 增加危险数据流、密钥、依赖和质量检查 | [安全文档](https://docs.skylos.dev/security-analysis) |
 | 可选 Python lint | `pip install "skylos[lint]" && skylos lint .` | 通过 Skylos CLI 运行 Ruff，并保留其原生配置、输出、修复和退出码 | [Python linting](../python-linting.md) |
-| PR 门控 | `skylos cicd init` | 生成带注释和失败阈值的 GitHub Actions 工作流 | [CI/CD 指南](https://docs.skylos.dev/ci-cd) |
+| PR 门控 | `skylos cicd init` | 为你的 CI 设置 PR 门控：生成带注释和失败阈值的 GitHub Actions 工作流，或为 GitLab CI、Jenkins、Bitbucket Pipelines、Azure Pipelines 和 CircleCI 生成门控配置 | [CI/CD 指南](https://docs.skylos.dev/ci-cd) |
 | 更易读的终端报告 | `skylos . --format pretty` | 按文件分组展示发现，包含严重级别标记、代码片段和可复制的 `file:line` 位置 | [CLI Output Modes](../cli-output.md) |
 | 可选择的终端界面 | `skylos . --tui` | 打开键盘驱动的分类列表、发现列表和详情面板 | [CLI Output Modes](../cli-output.md) |
 | 只审查变更行 | `skylos . -a --diff origin/main` | 聚焦当前 PR，避免被历史债务淹没 | [质量门控](https://docs.skylos.dev/quality-gate) |

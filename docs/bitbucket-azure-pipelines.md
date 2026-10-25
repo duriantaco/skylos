@@ -111,5 +111,12 @@ git fetch origin "+refs/heads/$TARGET:refs/remotes/origin/$TARGET"
 skylos . -a --diff
 ```
 
+On a private Azure repository, that `git fetch` needs `persistCredentials: true`
+on the `checkout: self` step; by default Azure removes the token after checkout.
+`fetchDepth: 0` avoids the separate fetch.
+
+`skylos cicd init --ci bitbucket` and `skylos cicd init --ci azure` write a pull
+request pipeline that does this; see [Skylos on any CI](./ci-platforms.md).
+
 Diff-scoped reports cannot be uploaded. Use a separate full `skylos . -a
 --upload` step for the pull request check.
