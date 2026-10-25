@@ -26,7 +26,8 @@ Examples:
   skylos cloud src --exclude build
 
 Local scans, no findings sent:  skylos .   or   skylos . -a
-                                (-a asks OSV.dev about package versions)
+                                (-a looks up package names online: OSV.dev for
+                                known CVEs, PyPI/npm for packages that don't exist)
 Other Cloud commands:           skylos login (switch project), skylos whoami,
                                 skylos upload --retry (resend unfinished uploads)
 """
