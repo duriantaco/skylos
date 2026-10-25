@@ -34,7 +34,7 @@ secrets, quality, and SCA checks.
 
 Individual check flags:
 
-- `--danger`: security and dangerous flows.
+- `--danger` (alias `--security`): security and dangerous flows.
 - `--secrets`: leaked secret patterns.
 - `--quality`: maintainability and AI-code mistakes.
 - `--sca`: dependency CVEs through OSV.dev.
