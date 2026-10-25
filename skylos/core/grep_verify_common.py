@@ -400,7 +400,7 @@ def _ripgrep_command(request: GrepRequest, rg: str) -> list[str]:
         cmd.append("-F")
     for glob in request.include_globs:
         cmd.extend(["-g", glob])
-    for directory in (*_GREP_EXCLUDE_DIRS, *_scope_prune_names()):
+    for directory in _backend_prune_names(request.project_root):
         cmd.extend(["-g", f"!**/{directory}/**"])
     return cmd
 
@@ -545,6 +545,18 @@ def _scope_prune_names() -> tuple[str, ...]:
     return scope.prune_names if scope is not None else ()
 
 
+def _backend_prune_names(project_root: str) -> tuple[str, ...]:
+    # Backends run from a trusted binary directory and match absolute paths.
+    # An ancestor collision would prune the explicit target itself; leave
+    # these exclusions to the scope-aware result filter instead.
+    target = os.path.abspath(project_root).replace("\\", "/").rstrip("/") + "/"
+    return tuple(
+        directory
+        for directory in (*_GREP_EXCLUDE_DIRS, *_scope_prune_names())
+        if not fnmatch.fnmatchcase(target, "*/" + directory.replace("\\", "/") + "/**")
+    )
+
+
 _GREP_PRUNE_DEPTH = 3
 _GLOB_METACHARACTERS = frozenset("*?[]{}\\")
 
@@ -654,8 +666,17 @@ def grep_verification_scope(
 
 
 def _is_ignored_grep_path(path: str) -> bool:
+    scope = _GREP_SCOPE.get()
+    ignored_path = path
+    if scope is not None:
+        try:
+            ignored_path = str(Path(path).relative_to(scope.root))
+        except ValueError:
+            pass
     components = [
-        component for component in path.replace("\\", "/").split("/") if component
+        component
+        for component in ignored_path.replace("\\", "/").split("/")
+        if component
     ]
     ignored_names = {
         ".git",
@@ -673,7 +694,6 @@ def _is_ignored_grep_path(path: str) -> bool:
         for component in components
     ):
         return True
-    scope = _GREP_SCOPE.get()
     return scope is not None and scope.excludes(path)
 
 
@@ -903,7 +923,7 @@ def _grep_fallback_command(
     grep: str,
     target: str,
 ) -> list[str]:
-    grep_flags = ["-rn", "--null"]
+    grep_flags = ["-rn", "-H", "--null"]
     if request.fixed_string:
         grep_flags.append("-F")
     elif request.use_regex:
@@ -913,8 +933,9 @@ def _grep_fallback_command(
     for glob in request.include_globs:
         includes.extend(["--include", glob])
     excludes: list[str] = []
-    scope_names = (name for name in _scope_prune_names() if "/" not in name)
-    for directory in (*_GREP_EXCLUDE_DIRS, *scope_names):
+    for directory in _backend_prune_names(target):
+        if "/" in directory:
+            continue
         excludes.extend(["--exclude-dir", directory])
     return [
         grep,
