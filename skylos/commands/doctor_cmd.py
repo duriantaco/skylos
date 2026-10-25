@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import platform
 from pathlib import Path
 
@@ -292,7 +293,10 @@ def _print_cloud_status(console: Console) -> None:
             "  [yellow]--[/yellow]  Cloud not connected [dim](optional: skylos login)[/dim]"
         )
         return
-    console.print("  [green]OK[/green]  Cloud connected (SKYLOS_TOKEN set)")
+    source = "saved login"
+    if os.environ.get("SKYLOS_TOKEN"):
+        source = "SKYLOS_TOKEN set"
+    console.print(f"  [green]OK[/green]  Cloud connected ({source})")
     _print_credit_status(console, token)
 
 

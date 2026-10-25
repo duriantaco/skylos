@@ -786,6 +786,13 @@ def cmd_project_unlink() -> None:
         print("No repo link found.")
 
 
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(Path.cwd()))
+    except ValueError:
+        return str(path)
+
+
 def cmd_pull(*, dry_run: bool = False, output_format: str = "text") -> None:
     from skylos.cloud.sync_state import activate_sync_files, validate_sync_paths
     from skylos.core.review_decisions import (
@@ -883,7 +890,7 @@ def cmd_pull(*, dry_run: bool = False, output_format: str = "text") -> None:
             ))
         else:
             for filename in files:
-                progress(f"  {'Would write' if dry_run else '✓'} {skylos_dir / filename}")
+                progress(f"  {'Would write' if dry_run else '✓'} {_display_path(skylos_dir / filename)}")
             progress(
                 "\n✓ Dry run complete; no files or trust state changed."
                 if dry_run else "\n✓ Sync complete!"

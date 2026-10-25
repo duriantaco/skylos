@@ -26,7 +26,8 @@ Examples:
   skylos cloud src --exclude build
 
 Local scans, no findings sent:  skylos .   or   skylos . -a
-                                (-a asks OSV.dev about package versions)
+                                (-a looks up package names online: OSV.dev for
+                                known CVEs, PyPI/npm for packages that don't exist)
 Other Cloud commands:           skylos login (switch project), skylos whoami,
                                 skylos upload --retry (resend unfinished uploads)
 """
@@ -37,8 +38,8 @@ NOT_CONNECTED = (
     "Settings on skylos.dev)."
 )
 OPENING_LOGIN = (
-    "Not connected to Skylos Cloud yet. Opening your browser to log in and "
-    "pick this repo's project."
+    "Not connected to Skylos Cloud yet. Log in and pick this repo's project "
+    "in the browser; nothing is scanned or uploaded until you do."
 )
 LOGIN_CANCELLED = "Nothing was scanned or uploaded."
 NO_UPLOAD_REFUSAL = "skylos cloud always uploads; run skylos . for a local-only scan."
@@ -89,7 +90,7 @@ def _ensure_connected(cli_module: ModuleType, project_root) -> bool:
     if not cli_module._is_tty():
         console.print(f"[warn]{NOT_CONNECTED}[/warn]", soft_wrap=True)
         return False
-    console.print(f"\n[bold yellow]{OPENING_LOGIN}[/bold yellow]\n", soft_wrap=True)
+    console.print(f"\n[bold yellow]{OPENING_LOGIN}[/bold yellow]", soft_wrap=True)
     from skylos.cloud.login import run_login
 
     if run_login(console=console) is None:
