@@ -789,16 +789,31 @@ def _rescue_unique_external_attr_calls(
         calls_by_attr[call.attr].append(call)
 
     for method_name, owner_methods in method_by_simple.items():
-        if len(owner_methods) != 1:
-            continue
         if method_name in COMMON_UNTYPED_ATTR_CALLS:
             continue
         if call_count.get(method_name, 0) == 0:
             continue
-        _owner, method = owner_methods[0]
-        method_file = Path(getattr(method, "filename", "")).resolve()
-        if _has_external_framework_proxy_call(calls_by_attr[method_name], method_file):
-            _mark(method, "unique_external_attr_call", report)
+        calls = calls_by_attr[method_name]
+
+        if len(owner_methods) == 1:
+            _owner, method = owner_methods[0]
+            method_file = Path(getattr(method, "filename", "")).resolve()
+            if _has_external_framework_proxy_call(calls, method_file):
+                _mark(method, "unique_external_attr_call", report)
+            elif _has_external_non_self_attr_call(calls, {method_file}):
+                _mark(method, "unique_external_attr_call", report)
+            continue
+
+        # Duck-typed provider / strategy interfaces: several live classes in the
+        # same top-level package share an uncommon method name and some call
+        # site uses a non-self receiver (``client.schedule_dates``,
+        # ``factory().initialize_field_hardware``).
+        if not _owners_share_toplevel_package(owner_methods):
+            continue
+        if not _has_non_self_attr_call(calls):
+            continue
+        for _owner, method in owner_methods:
+            _mark(method, "shared_external_attr_call", report)
 
 
 def _has_external_framework_proxy_call(
@@ -812,3 +827,35 @@ def _has_external_framework_proxy_call(
             continue
         return True
     return False
+
+
+def _has_non_self_attr_call(calls: list[_AttrCall]) -> bool:
+    for call in calls:
+        if call.base_name != "self":
+            return True
+    return False
+
+
+def _has_external_non_self_attr_call(
+    calls: list[_AttrCall],
+    owner_files: set[Path],
+) -> bool:
+    for call in calls:
+        if call.base_name == "self":
+            continue
+        if call.file.resolve() in owner_files:
+            continue
+        return True
+    return False
+
+
+def _owners_share_toplevel_package(
+    owner_methods: list[tuple[str, Any]],
+) -> bool:
+    packages: set[str] = set()
+    for owner, _method in owner_methods:
+        top = owner.split(".", 1)[0]
+        if not top:
+            return False
+        packages.add(top)
+    return len(packages) == 1

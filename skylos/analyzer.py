@@ -1740,11 +1740,14 @@ def _is_dispatched_override(defn) -> bool:
 
     The penalty pass already keeps it out of the report; treating it as dead
     here would report the methods only it calls (``self.helper`` callbacks).
+    That includes DRF ``validate_<field>`` / ``has_permission`` hooks, which
+    suppress with confidence 0 even when they do not set ``suppression_code``.
     """
-    return (
-        getattr(defn, "type", None) == "method"
-        and getattr(defn, "suppression_code", None) in _DISPATCHED_OVERRIDE_CODES
-    )
+    if getattr(defn, "type", None) != "method":
+        return False
+    if getattr(defn, "suppression_code", None) in _DISPATCHED_OVERRIDE_CODES:
+        return True
+    return getattr(defn, "confidence", None) == 0
 
 
 def _annotate_dead_code_evidence_sources(defs, test_flags, framework_flags) -> None:
@@ -2330,6 +2333,12 @@ class Skylos:
 
         def is_dead_caller(caller: str, callee_defn) -> bool:
             caller_key = key_for_caller(caller, callee_defn)
+            if caller_key is not None:
+                caller_defn = self.defs.get(caller_key)
+                # Framework-suppressed hooks stay live for their callees even
+                # when the owning class has no static references.
+                if caller_defn is not None and _is_dispatched_override(caller_defn):
+                    return False
             if caller_key in dead_set:
                 return True
             if "." not in caller:

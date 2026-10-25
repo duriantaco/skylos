@@ -246,6 +246,8 @@ class _ConverterRegistry:
         return scanner, function
 
     def class_info(self, qualified):
+        if not isinstance(qualified, str) or not qualified:
+            return None
         module_name, _, _ = qualified.rpartition(".")
         scanner = self.scanners.get(module_name)
         if scanner is None:

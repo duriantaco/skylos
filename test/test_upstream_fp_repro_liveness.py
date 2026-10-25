@@ -186,8 +186,9 @@ class LegacyNoDbRunner(DiscoverRunner):
 def test_p1_test_runner_in_secondary_settings_is_live(tmp_path):
     result = _scan(tmp_path, _TEST_RUNNER_SECONDARY)
     _assert_quiet(result, "NoMigrateDiscoverRunner")
-    # Comment-only primary assignment is not AST evidence — may still report.
-    # LegacyNoDbRunner is intentionally unreferenced in live settings.
+    # Comment-only primary assignment is not AST evidence — must stay reported
+    # (consumer NoDbTestRunner canary is the same shape).
+    _assert_reported(result, "LegacyNoDbRunner")
 
 
 # --- P2.2: management command module helpers called only from handle ----------
@@ -221,41 +222,98 @@ def test_p2_management_command_helpers_from_handle_are_live(tmp_path):
     _assert_reported(result, "_unused_export_job")
 
 
-# --- P2.3: multi-method provider; call site uses base type only --------------
+# --- P2.3: duck-typed provider methods (no base declaration) -----------------
+# Production: BaseProviderClient does not declare schedule_dates; sibling
+# clients define it; pipeline calls client.schedule_dates after a factory.
+# Putting schedule_dates on the base greenwashes via parent_override.
 
 _PROVIDER_MULTI = {
     "college/__init__.py": "",
     "college/provider.py": """\
 class BaseProviderClient:
-    def schedule_dates(self, season: int):
-        raise NotImplementedError
-
     def scoreboard(self, day: str):
         raise NotImplementedError
 
-    def division_teams(self, season: int):
-        raise NotImplementedError
 
-
-class StatsClient(BaseProviderClient):
+class NcaaClient(BaseProviderClient):
     def schedule_dates(self, season: int):
         return self._graphql("dates", season)
 
     def scoreboard(self, day: str):
         return self._graphql("board", day)
 
-    def division_teams(self, season: int):
-        return self._graphql("teams", season)
+    def _graphql(self, kind: str, key):
+        return {"kind": kind, "key": key}
+
+
+class NjcaaClient(BaseProviderClient):
+    def schedule_dates(self, season: int):
+        return self._graphql("dates", season)
+
+    def scoreboard(self, day: str):
+        return self._graphql("board", day)
 
     def _graphql(self, kind: str, key):
         return {"kind": kind, "key": key}
 
 
-def fetch_day(client: BaseProviderClient, day: str):
-    return client.scoreboard(day)
+def get_provider_client(slug: str):
+    if slug == "ncaa":
+        return NcaaClient()
+    return NjcaaClient()
+""",
+    "college/pipeline.py": """\
+from college.provider import get_provider_client
 
 
-RESULT = fetch_day(StatsClient(), "2026-10-23")
+def import_month(slug: str, season: int):
+    client = get_provider_client(slug)
+    dates = client.schedule_dates(season)
+    return dates
+
+
+RESULT = import_month("ncaa", 2026)
+""",
+    "hw/__init__.py": "",
+    "hw/na.py": """\
+class NotApplicableProvider:
+    @staticmethod
+    def initialize_field_hardware(field):
+        return {"status": "error"}
+""",
+    "hw/tplink.py": """\
+class TPLinkProvider:
+    def initialize_field_hardware(self, field):
+        return {"status": "ok", "kind": "tplink"}
+""",
+    "hw/unifi.py": """\
+class UnifiProvider:
+    def initialize_field_hardware(self, field):
+        return {"status": "ok", "kind": "unifi"}
+""",
+    "hw/providers.py": """\
+from hw.na import NotApplicableProvider
+from hw.tplink import TPLinkProvider
+from hw.unifi import UnifiProvider
+
+
+def get_network_hardware_provider(key):
+    if key == "na":
+        return NotApplicableProvider()
+    if key == "tplink":
+        return TPLinkProvider()
+    return UnifiProvider()
+
+
+def initialize_field_hardware(field):
+    return get_network_hardware_provider(field.kind).initialize_field_hardware(field)
+
+
+class _Field:
+    kind = "tplink"
+
+
+RESULT = initialize_field_hardware(_Field())
 """,
 }
 
@@ -264,47 +322,119 @@ def test_p2_multi_method_provider_contract_methods_are_live(tmp_path):
     result = _scan(tmp_path, _PROVIDER_MULTI)
     _assert_quiet(
         result,
-        "StatsClient.schedule_dates",
-        "StatsClient.scoreboard",
-        "StatsClient.division_teams",
-        "_graphql",
+        "NcaaClient.schedule_dates",
+        "NjcaaClient.schedule_dates",
+        "initialize_field_hardware",
+        "NotApplicableProvider.initialize_field_hardware",
+        "TPLinkProvider.initialize_field_hardware",
+        "UnifiProvider.initialize_field_hardware",
     )
 
 
-# --- P2.4: registry dict bare names + getattr(module, name) ------------------
+# --- P2.4: list/tuple registry + factory class_dict + nested getattr ---------
+# Production shape: REGISTERED_MODELS = [(Model, {related_models: {...}})] and
+# a factory that stores method names on class_dict / closes over config.get
+# names inside nested ViewSet methods. Flat HANDLERS+dispatch is not enough.
 
 _REGISTRY_GETATTR = {
-    # Handlers live in a separate top-level package so a ``getattr`` mention
-    # in the factory does not dyn-mark the whole handler package.
     "rpc/__init__.py": "",
     "rpc/registry.py": """\
-HANDLERS = {
-    "games": {
-        "create_method": "create_game",
-        "options_method": "get_game_form_schema",
-        "destroy_method": "delete_game_safely",
-    }
-}
+REGISTERED_MODELS = [
+    (
+        object,
+        {
+            "queryset_method": "get_user_teams",
+            "related_models": {
+                "games": {
+                    "queryset_method": "get_team_schedule",
+                    "create_method": "create_game",
+                    "update_method": "update_game",
+                    "destroy_method": "delete_game_safely",
+                    "options_method": "get_game_form_schema",
+                },
+                "practices": {
+                    "queryset_method": "get_team_practices",
+                    "create_method": "create_practice",
+                },
+                "roster": {
+                    "queryset_method": "get_team_roster",
+                },
+            },
+        },
+    )
+]
 """,
     "rpc/factory.py": """\
-from handlers import form_schemas, mutations
-from rpc import registry
+from handlers import form_schemas, mutations, queries
 
 
-def dispatch(kind, request):
-    relation = registry.HANDLERS[kind]
-    create_name = relation.get("create_method")
-    options_name = relation.get("options_method")
-    destroy_name = relation.get("destroy_method")
-    if create_name:
-        getattr(mutations, create_name)(request)
-    if options_name and hasattr(form_schemas, options_name):
-        getattr(form_schemas, options_name)(request)
-    if destroy_name:
-        getattr(mutations, destroy_name)(request)
+def create_viewset_class(config):
+    class Meta:
+        # Nested class body: must not abort autoreload / liveness scanning.
+        fields = ("id",)
+
+    queryset_method_name = config.get("queryset_method")
+    custom_create_method = config.get("create_method")
+    custom_update_method = config.get("update_method")
+    custom_destroy_method = config.get("destroy_method")
+    options_method_name = config.get("options_method")
+
+    def get_queryset(self):
+        if hasattr(self, "_queryset_method_name") and self._queryset_method_name:
+            if hasattr(queries, self._queryset_method_name):
+                query_func = getattr(queries, self._queryset_method_name)
+                return query_func(self.request)
+        return []
+
+    def create(self, request):
+        if custom_create_method and hasattr(mutations, custom_create_method):
+            return getattr(mutations, custom_create_method)(request)
+        return None
+
+    def update(self, request):
+        if custom_update_method and hasattr(mutations, custom_update_method):
+            return getattr(mutations, custom_update_method)(request)
+        return None
+
+    def destroy(self, request):
+        if custom_destroy_method and hasattr(mutations, custom_destroy_method):
+            return getattr(mutations, custom_destroy_method)(request)
+        return None
+
+    def options(self, request):
+        if options_method_name and hasattr(form_schemas, options_method_name):
+            return getattr(form_schemas, options_method_name)(request)
+        return {}
+
+    class_dict = {
+        "_queryset_method_name": queryset_method_name,
+        "get_queryset": get_queryset,
+        "create": create,
+        "update": update,
+        "destroy": destroy,
+        "options": options,
+    }
+    return type("DynamicViewSet", (object,), class_dict)
 
 
-dispatch("games", object())
+def build_related(relation_config):
+    queryset_method_name = relation_config.get("queryset_method")
+    create_method_name = relation_config.get("create_method")
+
+    def related_action(self, request):
+        if create_method_name and hasattr(mutations, create_method_name):
+            getattr(mutations, create_method_name)(request)
+        if queryset_method_name and hasattr(queries, queryset_method_name):
+            return getattr(queries, queryset_method_name)(request)
+        return []
+
+    return related_action
+
+
+for _model, config in []:
+    create_viewset_class(config)
+    for relation in (config.get("related_models") or {}).values():
+        build_related(relation)
 """,
     "handlers/__init__.py": "",
     "handlers/form_schemas.py": """\
@@ -320,12 +450,40 @@ def create_game(request, **kwargs):
     return {"id": 1}
 
 
+def update_game(request, **kwargs):
+    return {"id": 1}
+
+
 def delete_game_safely(request, **kwargs):
     return {"ok": True}
 
 
+def create_practice(request, **kwargs):
+    return {"id": 2}
+
+
 def unused_mutation():
     return None
+""",
+    "handlers/queries.py": """\
+def get_user_teams(request):
+    return []
+
+
+def get_team_schedule(request):
+    return []
+
+
+def get_team_practices(request):
+    return []
+
+
+def get_team_roster(request):
+    return []
+
+
+def unused_query():
+    return []
 """,
 }
 
@@ -336,11 +494,14 @@ def test_p2_registry_getattr_handlers_are_live(tmp_path):
         result,
         "get_game_form_schema",
         "create_game",
+        "update_game",
         "delete_game_safely",
+        "create_practice",
+        "get_user_teams",
+        "get_team_schedule",
+        "get_team_practices",
+        "get_team_roster",
     )
-    # Opaque ``getattr(module, name)`` retains sibling helpers as uncertain
-    # (unresolved_receiver), not as validated unused — do not require them
-    # in unused_* buckets.
 
 
 # --- P2.5: custom form Field class attached to a live Form -------------------
@@ -397,7 +558,8 @@ def test_p2_form_field_class_on_live_form_is_live(tmp_path):
 
 # --- P3.1: same-module helper called from nested serializers -----------------
 # View is routed; serializers are only used from the view. Helper has no
-# module-level RESULT= root — only nested method callers (production shape).
+# Nested Serializer.validate_* → module helper. No direct View call of the
+# helper or validate_phone (that greenwashed an earlier fixture).
 
 _SAME_MODULE_HELPER = {
     "project/__init__.py": "",
@@ -415,30 +577,53 @@ urlpatterns = [path("order/", OrderView.as_view())]
     "checkout/__init__.py": "",
     "checkout/views.py": """\
 from django.views import View
+from rest_framework import serializers
 
 
 def _validate_phone(value):
     return bool(value) and str(value).isdigit()
 
 
-class CheckoutSerializer:
+class QuoteCustomerSerializer(serializers.Serializer):
+    phone = serializers.CharField()
+
     def validate_phone(self, value):
         return _validate_phone(value)
 
 
-class GuestSerializer:
+class AccountRequestSerializer(serializers.Serializer):
+    phone = serializers.CharField()
+
     def validate_phone(self, value):
         return _validate_phone(value)
 
 
 class OrderView(View):
     def post(self, request):
-        phone = request.POST.get("phone")
-        return CheckoutSerializer().validate_phone(phone)
+        ser = QuoteCustomerSerializer(data=request.POST)
+        ser.is_valid(raise_exception=True)
+        return ser.validated_data
+""",
+    "checkout/permissions.py": """\
+from rest_framework.permissions import BasePermission
+
+
+def _get_api_key_from_request(request):
+    return request.META.get("HTTP_AUTHORIZATION")
+
+
+class APIKeyScopePermission(BasePermission):
+    def has_permission(self, request, view):
+        return bool(_get_api_key_from_request(request))
 """,
 }
 
 
 def test_p3_same_module_helper_called_from_nested_methods_is_live(tmp_path):
     result = _scan(tmp_path, _SAME_MODULE_HELPER)
-    _assert_quiet(result, "_validate_phone", "OrderView")
+    _assert_quiet(
+        result,
+        "_validate_phone",
+        "_get_api_key_from_request",
+        "OrderView",
+    )

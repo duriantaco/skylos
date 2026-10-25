@@ -606,6 +606,18 @@ def _import_module_arg_name(node: ast.AST, import_ctx: _ImportContext) -> str:
     return ""
 
 
+# Registry config keys that name callables loaded via getattr(module, …).
+_REGISTRY_METHOD_KEYS = frozenset(
+    {
+        "queryset_method",
+        "create_method",
+        "update_method",
+        "destroy_method",
+        "options_method",
+    }
+)
+
+
 def find_nested_dict_getattr_targets(
     definitions: dict[str, Any],
     parsed_files: Sequence[ParsedPythonFile],
@@ -613,10 +625,11 @@ def find_nested_dict_getattr_targets(
     """Mark handlers named in nested string tables and loaded via ``getattr``.
 
     Covers registries like ``HANDLERS[kind]["options_method"] = "get_schema"``
-    paired with ``getattr(form_schemas, options_method_name)`` where the name
-    was assigned from ``.get("options_method")`` / ``["options_method"]``.
+    and list-of-tuple model registries with deeper ``related_models`` tables,
+    paired with factory code that binds ``config.get("create_method")`` in an
+    outer function and calls ``getattr(mutations, name)`` / ``getattr(queries,
+    self._queryset_method_name)`` inside nested methods or ``type(..., class_dict)``.
     """
-    resolved_files: dict[Path, str] = {}
     definitions_by_name = _definitions_by_name(definitions)
     key_values = _nested_registry_key_values(parsed_files)
     if not key_values:
@@ -634,20 +647,13 @@ def find_nested_dict_getattr_targets(
                 if "." in target
             }
         )
-        for function in (
-            node
-            for node in ast.walk(parsed.tree)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        ):
-            get_keys = _getattr_name_keys(function)
-            if not get_keys:
+        for function in parsed.tree.body:
+            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            for module_local, keys in get_keys.items():
+            for module_local, keys in _getattr_name_keys(function, {}).items():
                 module_path = module_aliases.get(module_local)
                 if not module_path:
                     continue
-                # Imported module object: ``from rpc import mutations`` → mutations
-                # binds to ``rpc.mutations``; bare name may be a package.
                 for key in keys:
                     for handler in key_values.get(key, ()):
                         qname = f"{module_path}.{handler}"
@@ -671,59 +677,81 @@ def find_nested_dict_getattr_targets(
 def _nested_registry_key_values(
     parsed_files: Sequence[ParsedPythonFile],
 ) -> dict[str, set[str]]:
-    """Map nested-dict keys to string handler names across module registries."""
+    """Map method-config keys to string handler names in any nested dict."""
     values: dict[str, set[str]] = {}
     for parsed in parsed_files:
-        for stmt in parsed.tree.body:
-            if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
-                target, value = stmt.targets[0], stmt.value
-            elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
-                target, value = stmt.target, stmt.value
-            else:
+        for node in ast.walk(parsed.tree):
+            if not isinstance(node, ast.Dict):
                 continue
-            if not isinstance(target, ast.Name) or not isinstance(value, ast.Dict):
-                continue
-            for nested in value.values:
-                if not isinstance(nested, ast.Dict):
+            for key, item in zip(node.keys, node.values):
+                if not (
+                    isinstance(key, ast.Constant)
+                    and isinstance(key.value, str)
+                    and isinstance(item, ast.Constant)
+                    and isinstance(item.value, str)
+                ):
                     continue
-                for key, item in zip(nested.keys, nested.values):
-                    if not (
-                        isinstance(key, ast.Constant)
-                        and isinstance(key.value, str)
-                        and isinstance(item, ast.Constant)
-                        and isinstance(item.value, str)
-                    ):
-                        continue
-                    values.setdefault(key.value, set()).add(item.value)
+                if (
+                    key.value not in _REGISTRY_METHOD_KEYS
+                    and not key.value.endswith("_method")
+                ):
+                    continue
+                values.setdefault(key.value, set()).add(item.value)
     return values
 
 
 def _getattr_name_keys(
     function: ast.FunctionDef | ast.AsyncFunctionDef,
+    enclosing_name_keys: dict[str, str],
 ) -> dict[str, set[str]]:
     """``module_local -> registry keys`` used as ``getattr(module, name)``."""
-    name_keys: dict[str, str] = {}
-    for node in ast.walk(function):
+    name_keys = dict(enclosing_name_keys)
+    for node in function.body:
         for target, value in _iter_simple_assignments(node):
             if not isinstance(target, ast.Name):
                 continue
             key = _dict_get_key(value)
             if key is not None:
                 name_keys[target.id] = key
+
     modules: dict[str, set[str]] = {}
     for node in ast.walk(function):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node is not function:
+            # Nested methods close over outer config.get bindings.
+            for module_local, keys in _getattr_name_keys(node, name_keys).items():
+                modules.setdefault(module_local, set()).update(keys)
+            continue
         if not isinstance(node, ast.Call) or len(node.args) < 2:
             continue
-        if not (isinstance(node.func, ast.Name) and node.func.id in {"getattr", "hasattr"}):
+        if not (
+            isinstance(node.func, ast.Name) and node.func.id in {"getattr", "hasattr"}
+        ):
             continue
         module_arg, name_arg = node.args[0], node.args[1]
-        if not isinstance(module_arg, ast.Name) or not isinstance(name_arg, ast.Name):
+        if not isinstance(module_arg, ast.Name):
             continue
-        key = name_keys.get(name_arg.id)
+        key = _registry_key_for_getattr_name(name_arg, name_keys)
         if key is None:
             continue
         modules.setdefault(module_arg.id, set()).add(key)
     return modules
+
+
+def _registry_key_for_getattr_name(
+    name_arg: ast.AST, name_keys: dict[str, str]
+) -> str | None:
+    if isinstance(name_arg, ast.Name):
+        return name_keys.get(name_arg.id)
+    if (
+        isinstance(name_arg, ast.Attribute)
+        and isinstance(name_arg.value, ast.Name)
+        and name_arg.value.id in {"self", "cls"}
+    ):
+        attr = name_arg.attr
+        for key in _REGISTRY_METHOD_KEYS:
+            if attr in {key, f"_{key}", f"_{key}_name"} or attr.endswith("_" + key):
+                return key
+    return None
 
 
 def _dict_get_key(value: ast.AST) -> str | None:
