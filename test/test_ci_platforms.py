@@ -10,7 +10,7 @@ import yaml
 import skylos.cli as cli
 from skylos.cicd import platforms
 from skylos.cicd.platforms import BY_KEY, OTHER, Settings
-from skylos.commands import cicd_cmd
+from skylos.commands import cicd_cmd, doctor_cmd
 from skylos.core import ci_env
 from skylos.reporting import provenance
 
@@ -601,3 +601,58 @@ def test_init_rejects_bad_options_without_writing(tmp_path, monkeypatch, argv):
 def test_other_has_no_file_to_write():
     assert OTHER.config is None
     assert "other" in platforms.CI_CHOICES
+
+
+def _doctor_lines(cwd):
+    console = Mock()
+    doctor_cmd._print_workflow_status(console, cwd)
+    return [str(call.args[0]) for call in console.print.call_args_list if call.args]
+
+
+def test_doctor_keeps_its_messages_without_other_ci(tmp_path):
+    assert _doctor_lines(tmp_path) == [
+        "  [yellow]--[/yellow]  No CI/CD workflow [dim](run: skylos cicd init)[/dim]"
+    ]
+    _tree(tmp_path, ".github/workflows/skylos.yml")
+    assert _doctor_lines(tmp_path) == ["  [green]OK[/green]  GitHub Actions workflow found"]
+
+
+def test_doctor_says_which_ci_does_not_run_skylos(tmp_path):
+    _tree(tmp_path, "Jenkinsfile", ".travis.yml")
+    lines = _doctor_lines(tmp_path)
+    assert lines == [
+        "  [yellow]--[/yellow]  Jenkins (Jenkinsfile) does not run Skylos "
+        "[dim](run: skylos cicd init --ci jenkins)[/dim]",
+        "  [yellow]--[/yellow]  Travis CI (.travis.yml) does not run Skylos "
+        "[dim](run: skylos cicd init --ci other)[/dim]",
+    ]
+
+
+def test_doctor_finds_skylos_in_any_ci_file(tmp_path):
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text(
+        "steps:\n  - run: skylos . --gate\n", encoding="utf-8"
+    )
+    (tmp_path / "Jenkinsfile").write_text("sh 'skylos . --gate'\n", encoding="utf-8")
+    assert _doctor_lines(tmp_path) == [
+        "  [green]OK[/green]  GitHub Actions runs Skylos (.github/workflows/ci.yml)",
+        "  [green]OK[/green]  Jenkins runs Skylos (Jenkinsfile)",
+    ]
+    report = doctor_cmd._ci_report(tmp_path)
+    assert report["status"] == "ok"
+    assert report["runtime"] is None
+    assert [p["key"] for p in report["platforms"]] == ["github", "jenkins"]
+
+
+def test_doctor_in_a_jenkins_pull_request_shows_the_base_and_fetch(
+    monkeypatch, origin, tmp_path
+):
+    clone = _clone(origin, tmp_path, "pr", "--single-branch", "--branch", "feature")
+    _set(monkeypatch, JENKINS_PR)
+    lines = _doctor_lines(clone)
+    assert "  [green]OK[/green]  Jenkins pull request: --diff compares with origin/develop" in lines
+    assert any("On Jenkins, run this before the scan: git fetch" in line for line in lines)
+    runtime = doctor_cmd._ci_report(clone)["runtime"]
+    assert runtime["name"] == "Jenkins"
+    assert runtime["pull_request"] is True
+    assert runtime["diff_base"] == "origin/develop"
