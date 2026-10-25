@@ -119,6 +119,7 @@ def _doctor_json_report(py_ver: str, py_ok: bool, go_status: dict) -> dict:
             ),
             "agent_hooks": agent_hooks,
             "config": _config_sources_report(Path.cwd()),
+            "ci": _ci_report(Path.cwd()),
         },
     }
 
@@ -353,13 +354,102 @@ def _print_project_config(console: Console, cwd: Path) -> None:
 
 
 def _print_workflow_status(console: Console, cwd: Path) -> None:
+    from skylos.cicd.platforms import detect_repo_platforms
+
     workflow = cwd / ".github" / "workflows" / "skylos.yml"
-    _print_availability(
-        console,
-        workflow.exists(),
-        "  [green]OK[/green]  GitHub Actions workflow found",
-        "  [yellow]--[/yellow]  No CI/CD workflow [dim](run: skylos cicd init)[/dim]",
-    )
+    found = []
+    if not workflow.exists():
+        found = detect_repo_platforms(cwd)
+    if workflow.exists() or not found:
+        _print_availability(
+            console,
+            workflow.exists(),
+            "  [green]OK[/green]  GitHub Actions workflow found",
+            "  [yellow]--[/yellow]  No CI/CD workflow [dim](run: skylos cicd init)[/dim]",
+        )
+    for item in found:
+        name = escape(item.platform.name)
+        if item.runs_skylos:
+            shown = escape(_relative_label(item.runs_skylos, cwd))
+            console.print(f"  [green]OK[/green]  {name} runs Skylos ({shown})")
+            continue
+        key = item.platform.key
+        if not item.platform.config:
+            key = "other"
+        shown = escape(_relative_label(item.path, cwd))
+        console.print(
+            f"  [yellow]--[/yellow]  {name} ({shown}) does not run Skylos "
+            f"[dim](run: skylos cicd init --ci {key})[/dim]"
+        )
+    _print_ci_runtime(console, cwd)
+
+
+def _relative_label(path: Path, cwd: Path) -> str:
+    try:
+        return str(path.relative_to(cwd))
+    except ValueError:
+        return str(path)
+
+
+def _ci_runtime_report(cwd: Path) -> dict | None:
+    """What `--diff` compares with in the CI running this, or None outside CI."""
+    from skylos.cicd.platforms import missing_base_hint
+    from skylos.core.ci_env import auto_diff_base_ref, ci_name, github_or_ci_base_ref
+
+    name = ci_name()
+    if not name:
+        return None
+    base = auto_diff_base_ref()
+    try:
+        fetch = missing_base_hint(base, cwd)
+    except Exception:
+        fetch = None
+    report = {
+        "name": name,
+        "pull_request": bool(github_or_ci_base_ref()),
+        "diff_base": base,
+    }
+    if fetch:
+        report["fetch"] = fetch
+    return report
+
+
+def _print_ci_runtime(console: Console, cwd: Path) -> None:
+    runtime = _ci_runtime_report(cwd)
+    if runtime is None:
+        return
+    name = escape(runtime["name"])
+    base = escape(runtime["diff_base"] or "")
+    if runtime["pull_request"]:
+        console.print(f"  [green]OK[/green]  {name} pull request: --diff compares with {base}")
+    else:
+        console.print(
+            f"  [dim]--[/dim]  {name} build, not a pull request: --diff compares with {base}"
+        )
+    if runtime.get("fetch"):
+        console.print(
+            f"  [yellow]--[/yellow]  {base} is not usable here. "
+            f"{escape(runtime['fetch'])}",
+            soft_wrap=True,
+        )
+
+
+def _ci_report(cwd: Path) -> dict:
+    from skylos.cicd.platforms import detect_repo_platforms
+
+    platforms = [
+        {
+            "key": item.platform.key,
+            "name": item.platform.name,
+            "path": _relative_label(item.path, cwd),
+            "runs_skylos": item.runs_skylos is not None,
+        }
+        for item in detect_repo_platforms(cwd)
+    ]
+    status = "missing"
+    if any(p["runs_skylos"] for p in platforms):
+        status = "ok"
+    return {"status": status, "platforms": platforms, "runtime": _ci_runtime_report(cwd)}
 
 
 def _print_rule_status(console: Console) -> None:

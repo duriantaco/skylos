@@ -163,7 +163,9 @@ control. Local rich scans with findings end with a `Next: skylos cloud` block.
 - `skylos agent scan|verify|remediate|audit|watch|pre-commit|triage .`:
   hybrid static and LLM analysis, requiring `[llm]` extras and provider config.
 - `skylos rules init|validate|list`: local YAML rule packs.
-- `skylos cicd init`: generate CI workflow.
+- `skylos cicd init`: set up the pull request gate for the detected CI
+  (`--ci github|gitlab|jenkins|bitbucket|azure|circleci|other`); writes a new
+  CI file or prints the block for an existing one.
 - `skylos done map [PATH] [--base REF] [--format text|json|markdown]`: the
   change map. Per changed Python or TS/JS function, method or class: old and
   new code, calls added/removed/moved, callers (`in_change`, `is_test`),

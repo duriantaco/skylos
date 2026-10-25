@@ -348,6 +348,9 @@ def _build_upload_job(
     baseline_flag: str,
     use_defend: bool,
 ) -> str:
+    upload_command = f"skylos cloud {scan_target}{analysis_flags}{baseline_flag}"
+    if not analysis_flags:
+        upload_command = f"skylos {scan_target}{baseline_flag} --upload"
     defend_step = ""
     if use_defend:
         defend_step = f"""
@@ -387,7 +390,7 @@ def _build_upload_job(
           fi
 
       - name: Scan and Upload to Skylos Cloud
-        run: skylos {scan_target}{analysis_flags}{baseline_flag} --upload
+        run: {upload_command}
 {_upload_env_block()}
 {defend_step}"""
 

@@ -322,6 +322,10 @@ until the Skylos GitHub App is installed on the repository.
 [Your first Skylos-gated pull request](./docs/first-gated-pr.md) walks through
 it in about 8 minutes, including making the checks required.
 
+On GitLab CI, Jenkins, Bitbucket Pipelines, Azure Pipelines or CircleCI, the
+same `skylos cicd init` sets up a pull request gate for that CI instead; see
+[Skylos on any CI](./docs/ci-platforms.md).
+
 The gate (`skylos . --gate`, `skylos cicd gate`, and the generated workflow)
 fails on any critical security issue, any secret, and any critical AI-code
 issue, such as an import of a package that does not exist on PyPI (SKY-D222)
@@ -404,7 +408,7 @@ every command. See [what they don't do](./docs/agent-hooks.md#what-it-doesnt-do)
 | Change map for review | `skylos done map --base origin/main` | Old and new code of each changed Python or TypeScript/JavaScript function, calls added and removed, who calls it and whether those callers were updated, removed auth checks, breaking signatures, and the changes to read first; `--format json` for a review agent | [Change map](./docs/change-map.md) |
 | MCP change map | `change_map` MCP tool | Gives a review agent the change map as JSON before it reads the diff. Requires a free Skylos API key (`SKYLOS_API_KEY`). `skylos done map` needs no key | [Change map](./docs/change-map.md#in-the-agent-loop) |
 | Risks that need a human approval | `skylos cicd risk-review --base origin/main` | Lists deleted or weakened tests, removed auth checks, added or changed dependencies, weakened CI, silenced checks, added secrets, guardrail setting edits, migration changes and very large diffs. As a required GitHub check (`skylos cicd init --risk-review`) it fails until a person with write access approves the head commit; bot approvals do not count | [Risk review](./docs/risk-review.md) |
-| PR gate | `skylos cicd init --no-upload` | Generates a GitHub Actions workflow that gates pull requests and runs `skylos done` when your tests can run. Drop `--no-upload` to also upload default-branch scans to Skylos Cloud with GitHub OIDC; that job fails until the Skylos GitHub App is installed on the repository | [First gated PR](./docs/first-gated-pr.md) |
+| PR gate | `skylos cicd init --no-upload` | Sets up the pull request gate for your CI. On GitHub Actions it writes a workflow that gates pull requests and runs `skylos done` when your tests can run; drop `--no-upload` to also upload default-branch scans to Skylos Cloud with GitHub OIDC, and that job fails until the Skylos GitHub App is installed on the repository. GitLab CI, Jenkins, Bitbucket Pipelines, Azure Pipelines and CircleCI get a gate for that CI | [First gated PR](./docs/first-gated-pr.md), [Skylos on any CI](./docs/ci-platforms.md) |
 | GitLab merge request report | `skylos . --format gitlab -o gl-code-quality-report.json` | Exports a native Code Quality report for GitLab CI artifacts | [GitLab Code Quality](./docs/gitlab-code-quality.md) |
 | Offline dependency SBOM | `skylos sbom . -o sbom.cdx.json` | Lists supported recorded dependencies as CycloneDX 1.6 JSON without network requests | [Dependency scanning](./docs/dependency-scanning.md#export-an-sbom-offline) |
 | SPDX SBOM + license policy | `skylos sbom . --format spdx-json` / `license_deny = ["GPL-*"]` | SPDX 2.3 JSON with declared licenses; `SKY-SCA-LIC001` flags denied licenses in `-a` scans | [License compliance](./docs/license-compliance.md) |
@@ -533,7 +537,7 @@ limiting) scored separately so they never inflate the security score.
   over file contents, policy, plugin set, integration inventory, scores, and
   full check evidence — re-run on the same tree with the same flags and Skylos
   version, and the digest must match.
-- **CI-native:** `skylos cicd init --defend` generates the workflow step, the
+- **CI-native:** `skylos cicd init --defend` generates the GitHub Actions workflow step, the
   `skylos-defend` pre-commit hook gates locally, and `$GITHUB_STEP_SUMMARY`
   gets a score summary automatically in Actions.
 - **Policy as code:** `skylos-defend.yaml` pins gate thresholds and severity
@@ -1163,6 +1167,7 @@ outcomes and the maintainers' reasons.
 | GitHub Action | [GitHub Action](./action.yml) | Repository PR gates or optional digest-pinned container-image gates |
 | GitLab Code Quality | [GitLab setup](./docs/gitlab-code-quality.md) | merge request report artifacts; no comment-posting bot or API token |
 | Bitbucket Pipelines / Azure Pipelines | [Pipeline setup](./docs/bitbucket-azure-pipelines.md) | detects pull request context for Skylos Cloud checks; `--diff` uses the PR target branch |
+| Jenkins, CircleCI and any other CI | [Skylos on any CI](./docs/ci-platforms.md) | `skylos cicd init` writes or prints the pull request gate for your CI; `--diff` uses the PR target branch |
 | VS Code extension | [VS Code extension](./editors/vscode/README.md) | in-editor findings and AI-assisted fixes |
 | Claude Code / Codex / Cursor hooks | [Agent-loop hooks](./docs/agent-hooks.md) | check each agent edit, file read, and package install locally |
 | MCP server | [MCP setup](https://docs.skylos.dev/mcp-server) | expose Skylos scans to AI agents and coding assistants; `analyze` works without a token (five calls per rolling 24 hours), other tools need a free Skylos project token; authenticated scans can use credits |
@@ -1170,16 +1175,21 @@ outcomes and the maintainers' reasons.
 | Docker image | [Installation](https://docs.skylos.dev/installation) | run Skylos without a local Python install |
 | Skylos Cloud | [Skylos Cloud](./docs/skylos-cloud.md) | `skylos cloud`: upload findings, see each branch's quality gate and how it changed |
 
-Generate a GitHub Actions workflow from the CLI:
+Set up a pull request gate from the CLI. `skylos cicd init` finds your CI
+(GitHub Actions, GitLab CI, Jenkins, Bitbucket Pipelines, Azure Pipelines,
+CircleCI) and writes its file, or prints the block to add when the file
+already exists. Other CIs get the commands to add; see
+[Skylos on any CI](./docs/ci-platforms.md).
 
 ```bash
 skylos cicd init --no-upload                       # without Skylos Cloud
 skylos cicd init --no-upload --scan-path apps/api  # a monorepo subproject
 skylos cicd init                                   # with Skylos Cloud uploads
 skylos cicd init --no-upload --risk-review         # plus the "Skylos risk review" check
+skylos cicd init --ci jenkins                      # a Jenkinsfile pull request stage
 ```
 
-The generated workflow reviews changed lines on pull requests and adds a
+On GitHub Actions, the generated workflow reviews changed lines on pull requests and adds a
 `skylos done` job when it finds your tests. Without `--no-upload` it also
 uploads full scans from default-branch pushes using GitHub OIDC; that upload
 job fails until the Skylos GitHub App is installed on the repository. It
@@ -1204,6 +1214,7 @@ See [container-image scanning](./docs/container-image-reports.md#scan-an-image-w
 | CI setup, PR gates, annotations, and branch protection | [CI/CD](https://docs.skylos.dev/ci-cd) |
 | GitLab merge request reports and CI example | [GitLab Code Quality](./docs/gitlab-code-quality.md) |
 | Bitbucket Pipelines and Azure Pipelines pull request checks | [Bitbucket and Azure Pipelines](./docs/bitbucket-azure-pipelines.md) |
+| Jenkins, CircleCI, Buildkite, Travis CI and other CIs | [Skylos on any CI](./docs/ci-platforms.md) |
 | Dead-code behavior and framework awareness | [Dead Code Detection](https://docs.skylos.dev/dead-code-detection) |
 | Security scanning and taint analysis | [Security Analysis](https://docs.skylos.dev/security-analysis) |
 | Dependency CVEs, uv/npm/pnpm/Poetry/Yarn lockfiles, offline SBOM, and SCA in CI | [Dependency Scanning](./docs/dependency-scanning.md) |

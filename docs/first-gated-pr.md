@@ -37,6 +37,11 @@ git checkout -b add-skylos-gate
 skylos cicd init
 ```
 
+This guide is for GitHub Actions. For GitLab CI, Jenkins, Bitbucket Pipelines,
+Azure Pipelines or CircleCI, see [Skylos on any CI](./ci-platforms.md). A
+repository with one of those CI files and no `.github/workflows/` gets that
+CI's gate; run `skylos cicd init --ci github` to follow this guide instead.
+
 Expected, for a repository with pytest tests:
 
 ```text
@@ -201,7 +206,9 @@ Pull request checks do not depend on it.
    GitHub App** on this repository. In an organization, an owner may have to
    approve the install.
 3. Push to your default branch (or merge any pull request). The **Skylos Cloud
-   upload** job should print `✓ Scan uploaded` and a link to the scan.
+   upload** job runs `skylos cloud` and should end with the gate for your
+   default branch, for example `✓ Quality gate on main: PASSED`, and an
+   `Open:` link to it.
 
 For a local scan with Cloud results, run `skylos cloud` (it runs every
 check and uploads; add `--gate` to exit `1` on a failed gate). It prints the

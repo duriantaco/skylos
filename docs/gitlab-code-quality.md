@@ -11,6 +11,10 @@ This adds a report to the merge request. It does not post bot comments, create
 discussions, or upload to GitLab's separate SAST/vulnerability dashboard.
 Skylos does not need a GitLab API token or administrator access to generate it.
 
+This page covers the Code Quality report. For a merge request gate that fails
+the pipeline, run `skylos cicd init --ci gitlab`; see
+[Skylos on any CI](./ci-platforms.md#gitlab-ci).
+
 ## What appears in GitLab
 
 GitLab supports Code Quality report import and merge request reports on its
