@@ -23,6 +23,10 @@ module (or project) importing the framework:
   ``FORMAT_MODULE_PATH`` packages), which ``get_format()`` reads with
   ``getattr``. Settings modules are not covered here: their liveness needs the
   proven ``DJANGO_SETTINGS_MODULE`` activation in ``web_framework_liveness``.
+* Known subclass class attributes frameworks read by name when the package is
+  not installed in the scanner env (Celery ``ResultConsumer``, Django admin
+  ``parameter_name``, django-storages ``bucket_name``). Prefer external MRO
+  overrides from source when the package is available.
 
 Template lookups are not matched by name here either: Django template
 evidence is proof-based (a resolved view, template and model alias; see
@@ -34,6 +38,67 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any
+
+# Class attributes frameworks read by name when the package is not installed
+# in the scanner environment (Skylos Docker image, etc.). Keys are simple base
+# class names from the subclass MRO. Keep tight: do not silence arbitrary
+# attributes on unresolvable bases.
+FRAMEWORK_CLASS_ATTRIBUTES_BY_BASE = {
+    # celery.backends.redis.RedisBackend.__init__:
+    # self.result_consumer = self.ResultConsumer(...)
+    "RedisBackend": frozenset({"ResultConsumer"}),
+    # django.contrib.admin.SimpleListFilter.__init__
+    "SimpleListFilter": frozenset({"parameter_name", "title"}),
+    # django-storages BaseStorage.__init__ keeps class attrs named in
+    # get_default_settings() (bucket_name is not a class body member on the
+    # storage base — only a settings key).
+    "S3Boto3Storage": frozenset(
+        {
+            "bucket_name",
+            "location",
+            "custom_domain",
+            "default_acl",
+            "file_overwrite",
+            "object_parameters",
+            "querystring_auth",
+            "gzip",
+            "region_name",
+            "endpoint_url",
+            "addressing_style",
+            "signature_version",
+        }
+    ),
+    "S3Storage": frozenset(
+        {
+            "bucket_name",
+            "location",
+            "custom_domain",
+            "default_acl",
+            "file_overwrite",
+            "object_parameters",
+            "querystring_auth",
+            "gzip",
+            "region_name",
+            "endpoint_url",
+            "addressing_style",
+            "signature_version",
+        }
+    ),
+    "BaseStorage": frozenset(
+        {
+            "bucket_name",
+            "location",
+            "custom_domain",
+            "default_acl",
+            "file_overwrite",
+            "object_parameters",
+            "querystring_auth",
+            "gzip",
+            "region_name",
+            "endpoint_url",
+        }
+    ),
+}
 
 WAGTAIL_CLASS_ATTRIBUTES = frozenset(
     {
@@ -371,6 +436,24 @@ def _class_reason(def_obj: Any, analyzer: Any, framework: Any) -> str | None:
     return None
 
 
+def _framework_class_attribute_reason(def_obj: Any, analyzer: Any) -> str | None:
+    """Subclass class-body hooks read by Celery / Django / django-storages."""
+    if getattr(def_obj, "type", None) != "variable" or "." not in def_obj.name:
+        return None
+    from skylos.analysis.external_bases import project_class_graph
+
+    graph = project_class_graph(analyzer)
+    owner = graph.owner_class(def_obj)
+    if owner is None:
+        return None
+    attr = def_obj.simple_name
+    for base_simple in graph.ancestor_base_names(owner):
+        allowed = FRAMEWORK_CLASS_ATTRIBUTES_BY_BASE.get(base_simple)
+        if allowed and attr in allowed:
+            return f"framework class attribute read by {base_simple}"
+    return None
+
+
 def documented_convention_reason(
     def_obj: Any, analyzer: Any, framework: Any
 ) -> str | None:
@@ -395,6 +478,10 @@ def documented_convention_reason(
         and def_obj.simple_name in WAGTAIL_CLASS_ATTRIBUTES
     ):
         return "Wagtail attribute read by name"
+    if in_class:
+        framework_attr = _framework_class_attribute_reason(def_obj, analyzer)
+        if framework_attr:
+            return framework_attr
     if (
         not in_class
         and _UPPERCASE_NAME_RE.match(def_obj.simple_name)
