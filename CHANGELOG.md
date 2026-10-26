@@ -1,5 +1,18 @@
 ## Changelog
 
+## [5.1.1](https://github.com/duriantaco/skylos/compare/v5.1.0...v5.1.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **cli:** cleaner debt, clean and sbom output ([#1086](https://github.com/duriantaco/skylos/issues/1086)) ([7f6795c](https://github.com/duriantaco/skylos/commit/7f6795c1508550dcbb9069befa8ae17d9e36a473))
+* **done:** show a quieted CI test step on the CI line too ([#1087](https://github.com/duriantaco/skylos/issues/1087)) ([a6349bd](https://github.com/duriantaco/skylos/commit/a6349bd675fac9dfd5a33ca1c2f66984a186160d))
+
+
+### Performance Improvements
+
+* **ci:** run tests in parallel shards ([#1089](https://github.com/duriantaco/skylos/issues/1089)) ([87b27a2](https://github.com/duriantaco/skylos/commit/87b27a2b473040e27f06344fd82cf6ddd31b6058))
+
 ## [5.1.0](https://github.com/duriantaco/skylos/compare/v5.0.0...v5.1.0) (2026-10-26)
 
 
