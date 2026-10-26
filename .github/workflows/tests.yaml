@@ -43,7 +43,7 @@ jobs:
           test/test_sync_state_paths.py
 
   test_matrix:
-    name: test-matrix (${{ matrix.install_target }})
+    name: test-matrix (${{ matrix.install_target }}, shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -53,6 +53,7 @@ jobs:
         install_target:
           - "."
           - ".[llm,dart]"
+        shard: [1, 2, 3, 4]
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -81,11 +82,11 @@ jobs:
         run: |
           uv venv
           uv pip install --python .venv/bin/python -e "${{ matrix.install_target }}"
-          uv pip install --python .venv/bin/python pytest pytest-cov
+          uv pip install --python .venv/bin/python pytest pytest-cov pytest-xdist
 
       - name: Run tests with coverage
         run: |
-          .venv/bin/python -m pytest -q --cov=skylos --cov-report=term-missing --cov-report=xml
+          .venv/bin/python -m pytest -q -n auto --dist loadfile --cov=skylos --cov-report=term-missing --cov-report=xml $(.venv/bin/python scripts/ci/test_shard.py ${{ matrix.shard }}/4)
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe

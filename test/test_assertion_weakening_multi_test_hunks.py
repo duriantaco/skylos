@@ -292,12 +292,16 @@ def test_many_tests_in_one_hunk_scale_linearly():
             f"@@ -1,{2 * count} +1,{2 * count} @@\n" + "\n".join(rows) + "\n"
         )
 
-    started = time.perf_counter()
-    small = len(detect_assertion_weakening(diff_for(500), "tests/test_many.py"))
-    small_time = time.perf_counter() - started
-    started = time.perf_counter()
-    large = len(detect_assertion_weakening(diff_for(4000), "tests/test_many.py"))
-    large_time = time.perf_counter() - started
+    def best_of_three(count):
+        times = []
+        for _ in range(3):
+            started = time.perf_counter()
+            found = len(detect_assertion_weakening(diff_for(count), "tests/test_many.py"))
+            times.append(time.perf_counter() - started)
+        return found, min(times)
+
+    small, small_time = best_of_three(500)
+    large, large_time = best_of_three(4000)
     assert (small, large) == (500, 4000)
     # 8x the input may cost ~8x the time, never ~64x.
     assert large_time < max(small_time, 0.01) * 24
