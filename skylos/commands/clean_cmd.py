@@ -279,6 +279,14 @@ def _apply_edits(edits_by_file, scan_root, console):
     return applied
 
 
+def _display_path(file_path):
+    path = Path(file_path)
+    try:
+        return str(path.resolve().relative_to(Path.cwd().resolve()))
+    except (OSError, ValueError):
+        return str(path)
+
+
 def _edits_by_file(findings, action):
     edits_by_file = {}
     for finding in findings:
@@ -294,7 +302,7 @@ def _print_dry_run_plan(console, findings, action):
     )
 
     for file_path, file_edits in _edits_by_file(findings, action).items():
-        console.print(f"\n[bold]{escape(str(file_path))}[/bold]")
+        console.print(f"\n[bold]{escape(_display_path(file_path))}[/bold]")
         for finding, _action in sorted(file_edits, key=lambda x: x[0]["line"]):
             console.print(
                 escape(
@@ -330,7 +338,7 @@ def _run_interactive_clean(console, findings, scan_root):
         console.print(
             f"[bold][{i}/{len(findings)}][/bold] Unused {escape(str(finding['type']))} "
             f"[bold cyan]{escape(str(finding['name']))}[/bold cyan] at "
-            f"{escape(str(finding['file']))}:{finding['line']}"
+            f"{escape(_display_path(finding['file']))}:{finding['line']}"
         )
         console.print(f"         Confidence: [bold]{finding['confidence']}%[/bold]")
 

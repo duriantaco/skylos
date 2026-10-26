@@ -344,3 +344,16 @@ def test_berry_workspace_lock_covers_recorded_workspace_manifest(tmp_path, capsy
     document = json.loads(capsys.readouterr().out)
     child = _occurrences(_components(document)["pkg:npm/child@2.0.0"])[0]
     assert "packages/sub-app" in child["dependency_roots"]
+
+
+def test_writing_to_a_file_says_where_and_keeps_stdout_empty(tmp_path, capsys):
+    _write(tmp_path, "requirements.txt", "flask==2.2.2\nrequests==2.25.0\n")
+    target = tmp_path / "sbom.cdx.json"
+
+    assert run_sbom_command([str(tmp_path), "-o", str(target)]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert f"Wrote CycloneDX 1.6 SBOM with 2 packages to {target}" in captured.err
+    assert len(json.loads(target.read_text(encoding="utf-8"))["components"]) == 2
+

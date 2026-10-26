@@ -1,6 +1,8 @@
 import argparse
 from pathlib import Path
 
+from skylos.core.cli_shared import quiet_analyzer_logs
+
 
 def _resolve_gate_settings(debt_args, policy) -> tuple[int | None, str | None]:
     min_score = debt_args.min_score
@@ -273,7 +275,7 @@ def run_debt_command(
         elif debt_args.output_json:
             print(output)
         else:
-            console.print(output)
+            console.print(output, markup=False)
         return 0
 
     exclude = set(
@@ -301,11 +303,12 @@ def run_debt_command(
             console.print("[dim]No changed files found.[/dim]")
             return 0
 
-    snapshot = run_debt_analysis(
-        target,
-        exclude_folders=sorted(exclude),
-        changed_files=changed_files,
-    )
+    with quiet_analyzer_logs():
+        snapshot = run_debt_analysis(
+            target,
+            exclude_folders=sorted(exclude),
+            changed_files=changed_files,
+        )
     project_target = Path(snapshot.project).resolve()
     is_project_scope = target == project_target
 
@@ -426,7 +429,7 @@ def run_debt_command(
     elif debt_args.output_json:
         print(output)
     else:
-        console.print(output)
+        console.print(output, markup=False)
 
     upload_failed = False
     if debt_args.upload:
