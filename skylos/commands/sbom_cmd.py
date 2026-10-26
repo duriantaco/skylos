@@ -98,6 +98,17 @@ def run_sbom_command(argv: list[str]) -> int:
     elif not write_text_no_symlink(args.output, text):
         print("SBOM error: could not safely write output file.", file=sys.stderr)
         return 2
+    else:
+        if args.format == "spdx-json":
+            label = "SPDX"
+            count = len(document.get("packages", []))
+        else:
+            label = "CycloneDX 1.6"
+            count = len(document.get("components", []))
+        noun = "package"
+        if count != 1:
+            noun = "packages"
+        print(f"Wrote {label} SBOM with {count} {noun} to {args.output}", file=sys.stderr)
 
     if not document.receipt["complete"]:
         where = (
