@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -6,6 +7,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from rich.console import Console
 
 import skylos.cli as cli
 import skylos.core.review_decisions as review_decisions
@@ -1745,3 +1747,31 @@ def test_cli_debt_show_history_json_rejects_symlink_history(tmp_path, monkeypatc
     assert "Error reading debt history" in message
     assert "symlink" in message
     assert "secret-outside-value" not in message
+
+
+def test_cli_debt_table_prints_bracketed_text_and_hides_analyzer_info(
+    tmp_path, monkeypatch
+):
+    snapshot = _snapshot(str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["skylos", "debt", str(tmp_path)])
+    console = Console(record=True, width=200, color_system=None)
+    levels = []
+
+    def analyze(*args, **kwargs):
+        levels.append(logging.getLogger("Skylos").level)
+        return snapshot
+
+    with (
+        patch("skylos.debt.run_debt_analysis", side_effect=analyze),
+        patch(
+            "skylos.debt.format_debt_table",
+            return_value="No [tool.skylos.gate] policy is configured.",
+        ),
+        patch("skylos.cli.Console", return_value=console),
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 0
+    assert levels == [logging.WARNING]
+    assert "No [tool.skylos.gate] policy is configured." in console.export_text()
