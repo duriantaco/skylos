@@ -6,6 +6,7 @@ because Rich parsed `[tool.skylos.gate]` as a style tag.
 
 import json
 import logging
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -175,6 +176,41 @@ def test_clean_dry_run_prints_names_and_paths_literally():
     assert PATH in text
     assert f"L3 function {NAME} (90%)" in text
 
+
+
+def test_clean_dry_run_shows_paths_relative_to_the_current_folder(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    console = _console()
+    findings = [
+        {
+            "file": str(tmp_path / "app" / "legacy.py"),
+            "line": 5,
+            "type": "function",
+            "name": "old_discount",
+            "confidence": 90,
+        }
+    ]
+
+    _print_dry_run_plan(console, findings, "remove")
+
+    text = console.export_text()
+    assert str(Path("app") / "legacy.py") in text
+    assert str(tmp_path) not in text
+
+
+def test_clean_dry_run_keeps_paths_outside_the_current_folder(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    outside = tmp_path / "other" / "legacy.py"
+    console = _console()
+    findings = [
+        {"file": str(outside), "line": 5, "type": "function", "name": "old", "confidence": 90}
+    ]
+
+    _print_dry_run_plan(console, findings, "remove")
+
+    assert str(outside) in console.export_text()
 
 def _empty_result():
     return {
