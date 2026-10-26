@@ -1360,6 +1360,7 @@ def check_silenced_checks(ctx: CheckContext) -> CheckResult:
     from skylos.done.ci_checks import RULE_CI_CHECK, ci_weakening
     from skylos.done.lint_config import RULE_LINT_CONFIG, detect_weakened_settings
     from skylos.done.suppressions import new_suppressions
+    from skylos.done.test_config import _is_workflow, detect_loosened_test_config
 
     comparison = ctx.comparison
     base_paths, head_paths, removed = ctx._repository_paths()
@@ -1384,6 +1385,11 @@ def check_silenced_checks(ctx: CheckContext) -> CheckResult:
     findings += [
         Finding(rule, file, line, message, blocking=blocking)
         for rule, file, line, message, blocking in inline.findings
+    ]
+    findings += [
+        Finding(RULE_TEST_CONFIG, item.file, item.line, f"{item.message} (also listed under tests)")
+        for item in detect_loosened_test_config(comparison)
+        if _is_workflow(item.file)
     ]
     blocking = [f for f in findings if f.blocking]
     if blocking:

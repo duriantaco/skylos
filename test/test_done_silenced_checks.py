@@ -1227,3 +1227,33 @@ def test_eslint_legacy_to_flat_migration_and_generated_ignores(tmp_path: Path):
         ),
     }
     assert _messages(_check(tmp_path, base, head), A119) == []
+
+
+QUIET_BASE = dedent(
+    """\
+    on: pull_request
+    jobs:
+      pytest:
+        runs-on: ubuntu-latest
+        steps:
+          - run: pip install pytest
+          - run: pytest -q
+    """
+)
+
+
+def test_quiet_ci_test_step_also_shows_on_the_ci_line(tmp_path: Path):
+    head = QUIET_BASE + "        continue-on-error: true\n"
+    result = _check(tmp_path, {CI: QUIET_BASE}, {CI: head})
+    assert result.status == "fail"
+    assert _messages(result, "SKY-A112") == [
+        "CI test step 'pytest -q' in job 'pytest' can now fail without failing the "
+        "build (continue-on-error) (also listed under tests)"
+    ]
+
+
+def test_ci_change_that_keeps_tests_failing_the_build_stays_clean(tmp_path: Path):
+    head = QUIET_BASE + "      - run: echo done\n"
+    result = _check(tmp_path, {CI: QUIET_BASE}, {CI: head})
+    assert result.status == "pass"
+    assert _messages(result, "SKY-A112") == []
