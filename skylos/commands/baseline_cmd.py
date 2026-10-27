@@ -9,6 +9,7 @@ from skylos import analyze as run_analyze
 from skylos.config import load_config, resolve_config_file_path
 from skylos.constants import parse_exclude_folders
 from skylos.core.baseline import save_baseline
+from skylos.core.cli_shared import quiet_analyzer_logs
 from skylos.core.gatekeeper import _analysis_incomplete_reasons
 from skylos.core.sca_baseline import dependency_scan_complete
 
@@ -83,7 +84,8 @@ def run_baseline_command(argv: list[str]) -> int:
     console.print(f"[bold]Creating baseline for {escape(path)}...[/bold]")
 
     try:
-        result = json.loads(run_analyze(path, **analyze_kwargs))
+        with quiet_analyzer_logs():
+            result = json.loads(run_analyze(path, **analyze_kwargs))
     except (OSError, RuntimeError, TypeError, ValueError):
         console.print(
             "[red]Baseline not saved: the scan did not return a usable result. "

@@ -20,6 +20,23 @@ UPLOAD_TIMEOUT = 60
 
 RIPGREP_INSTALL_URL = "https://github.com/BurntSushi/ripgrep#installation"
 
+SUPPORTED_LANGUAGES = (
+    "Python",
+    "TypeScript/JavaScript",
+    "Java",
+    "Go",
+    "PHP",
+    "Rust",
+    "Dart",
+    "C#",
+    "C++",
+    "Kotlin",
+    "Shell",
+)
+SUPPORTED_LANGUAGES_TEXT = (
+    ", ".join(SUPPORTED_LANGUAGES[:-1]) + " and " + SUPPORTED_LANGUAGES[-1]
+)
+
 # safety score const
 SAFETY_VERY_HIGH = 0.95
 SAFETY_HIGH = 0.90

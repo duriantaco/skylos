@@ -27,7 +27,9 @@
 ## Was ist Skylos?
 
 Skylos ist eine Open-Source-CLI für statische Analyse in Python-, TypeScript-,
-JavaScript-, Java-, Go-, PHP-, Rust-, Dart-, C#- und Shell-Repositories.
+JavaScript-, Java-, Go-, PHP-, Rust-, Dart-, C#-, C++-, Kotlin- und
+Shell-Repositories. Python, TypeScript/JavaScript und Java haben die tiefste
+Abdeckung; die Tabelle unter Sprachunterstützung zeigt die übrigen Sprachen.
 Skylos läuft standardmäßig lokal und kann auch als CI/CD-PR-Gate verwendet
 werden.
 
@@ -225,15 +227,33 @@ Timeout-Pflicht beizubringen.
 | Java | Ja | Ja | Ja | Tree-sitter-Parsing und strukturierte Security-Flow-Analyse |
 | Go | Ja¹ | Teilweise¹ | Teilweise | Dead-Code- und ausgewählte Security-Benchmark-Abdeckung |
 | PHP | Ja | Ja | Nein | PHP-Parser-Abdeckung plus taint-artige Security-Sinks und -Sources |
-| Rust | Ja | Ja | Nein | Rust-Parser-Abdeckung plus Security-Sink/Source-Prüfungen |
-| Dart | Ja | Ja | Nein | Dart-Parser-Abdeckung plus ausgewählte Security-Sinks und -Sources |
+| Rust | Experimentell⁴ | Teilweise | Nein | Rust-Parser-Abdeckung; Security prüft Command Injection und Path Traversal |
+| Dart | Ja³ | Teilweise³ | Nein | Dart-Parser-Abdeckung; Security prüft Command Injection, Path Traversal und SSRF |
 | C# | Teilweise | Teilweise | Teilweise | C#-Symbole, unerreichbare Anweisungen in direkten Blöcken, ausgewählte Security-Senken und direkte NuGet-Inventarisierung |
-| Shell | Nein | Ja | Nein | Shell-Script-Security-Prüfungen für Command Injection, SSRF und Path Traversal |
+| C++ | Teilweise | Nein | Nein | nur scheinbar ungenutzte dateilokale Funktionen in `.cpp`, `.cc`, `.cxx`; C++-Header werden für Referenzen gelesen |
+| Kotlin | Teilweise² | Nein² | Nein | regex-basierte Symbolerkennung; meldet nur private Deklarationen und Imports |
+| Shell | Nein | Teilweise | Nein | Shell-Script-Security-Prüfungen für Command Injection, SSRF und Path Traversal |
 
-¹ Dead-Code- und Security-Prüfungen für Go brauchen die separat gebaute
-`skylos-go`-Engine; das PyPI-Paket enthält sie nicht (die offizielle GitHub
-Action baut sie). Ohne sie laufen nur die Go-Quality-Prüfungen, und der Scan
-wird als unvollständig gemeldet.
+¹ Dead-Code- und Security-Prüfungen für Go brauchen die native
+`skylos-go`-Engine. Seit 4.50 enthalten die PyPI-Wheels für Linux, macOS und
+Windows (x86_64 und arm64) sie, ebenso das Container-Image; die offizielle
+GitHub Action baut sie. Auf anderen Plattformen zeigt `skylos doctor` den
+Befehl zum Bauen. Ohne sie laufen nur die Go-Quality-Prüfungen, und die
+Go-Dateien werden als nicht analysiert gemeldet.
+
+² Kotlin-Dead-Code meldet nur `private` Typen und Funktionen sowie ungenutzte
+Imports; jede nicht-private Deklaration gilt als verwendet. Es gibt keine
+eingebauten Kotlin-Security-Regeln; die Secret-Prüfung deckt `.kt`- und
+`.kts`-Dateien trotzdem ab.
+
+³ Dart-Prüfungen brauchen das optionale Extra `skylos[dart]`
+(`pip install "skylos[dart]"`, benötigt einen C-Compiler). Ohne es meldet ein
+Scan `.dart`-Dateien als nicht analysiert (`SKY-ANALYSIS-INCOMPLETE`).
+
+⁴ Rust-Dead-Code ist experimentell: Trait-Methodenaufrufe, über Crates hinweg
+genutzte `pub`-Elemente, Re-Exports und Makros werden nicht aufgelöst.
+Rust-Kandidaten haben höchstens Konfidenz 40, also unter dem Standard-Schwellenwert
+60; sie erscheinen nur mit `--confidence 40`.
 
 C#-Dead-Code-Funde sind konservativ: Bei einer vollständigen Analyse einer
 ausführbaren oder Web-Anwendung gelten unreferenzierte öffentliche Typen und

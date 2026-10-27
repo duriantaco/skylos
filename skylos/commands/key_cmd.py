@@ -1,11 +1,29 @@
 # skylos/commands/key_cmd.py
 import os
+import sys
 
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 from rich.panel import Panel
 
 from skylos.cloud.credentials import PROVIDERS, get_key, save_key, delete_key
+
+USAGE = "Usage: skylos key [list|add PROVIDER|remove PROVIDER]"
+
+
+def _read_answer(prompt):
+    try:
+        return input(prompt)
+    except (EOFError, KeyboardInterrupt):
+        return None
+
+
+def _stdin_is_terminal():
+    try:
+        return sys.stdin.isatty()
+    except (AttributeError, ValueError, OSError):
+        return False
 
 
 def run_key_command(argv):
@@ -16,6 +34,13 @@ def run_key_command(argv):
         subcommand = str(argv[0]).strip().lower()
 
     if subcommand == "" or subcommand == "menu":
+        if not _stdin_is_terminal():
+            console.print(
+                "skylos key opens an interactive menu and needs a terminal.",
+                markup=False,
+            )
+            console.print(escape(USAGE), style="dim")
+            return 2
         return _menu(console)
 
     if subcommand == "list" or subcommand == "ls":
@@ -39,8 +64,8 @@ def run_key_command(argv):
             provider = str(argv[1]).strip().lower()
         return _remove_key(console, provider)
 
-    console.print("[red]Unknown subcommand:[/red] " + subcommand)
-    console.print("[dim]Usage: skylos key [list|add|remove][/dim]")
+    console.print("[red]Unknown subcommand:[/red] " + escape(subcommand))
+    console.print(escape(USAGE), style="dim")
     return 2
 
 
@@ -118,7 +143,11 @@ def _menu(console):
         console.print("4) Exit")
         console.print()
 
-        choice = input("Choose (1-4): ").strip()
+        answer = _read_answer("Choose (1-4): ")
+        if answer is None:
+            console.print()
+            return 0
+        choice = answer.strip()
 
         if choice == "1":
             _render_key_list(console)
@@ -153,7 +182,11 @@ def _prompt_provider(console, allow_ollama):
 
     console.print()
     console.print("[bold]Providers:[/bold] " + ", ".join(filtered))
-    provider = input("Provider: ").strip().lower()
+    answer = _read_answer("Provider: ")
+    if answer is None:
+        console.print("[yellow]No provider entered.[/yellow]")
+        return None
+    provider = answer.strip().lower()
 
     if provider == "":
         console.print("[yellow]No provider entered.[/yellow]")
@@ -185,7 +218,11 @@ def _add_key(console, provider):
         return 0
 
     console.print()
-    key_value = input("Enter API key for " + provider + ": ").strip()
+    answer = _read_answer("Enter API key for " + provider + ": ")
+    if answer is None:
+        console.print("[yellow]No key received; nothing was saved.[/yellow]")
+        return 1
+    key_value = answer.strip()
 
     if key_value == "":
         console.print("[yellow]No key entered. Cancelled.[/yellow]")
@@ -209,7 +246,11 @@ def _remove_key(console, provider):
         console.print("[dim]No stored key found for '" + provider + "'.[/dim]")
         return 0
 
-    confirm = input("Remove stored key for '" + provider + "'? (y/N): ").strip().lower()
+    answer = _read_answer("Remove stored key for '" + provider + "'? (y/N): ")
+    if answer is None:
+        console.print("[yellow]No answer received; nothing was removed.[/yellow]")
+        return 1
+    confirm = answer.strip().lower()
     if confirm != "y":
         console.print("[dim]Cancelled.[/dim]")
         return 0

@@ -2858,6 +2858,7 @@ def _installed_provider_inventory(dist, ctx):
     specifier = key[1]
     if specifier is None:
         return None
+    project = _project_site_packages(ctx)
     directories = virtual_env_site_packages()
     try:
         directories.extend(site.getsitepackages())
@@ -2916,16 +2917,51 @@ def _installed_provider_inventory(dist, ctx):
                     continue
                 inventory = pypi_wheel_modules.module_inventory(file_names)
                 inventory["version"] = str(version)
-                inventory["complete_for_requirement"] = _requirement_is_exact(
-                    specifier
-                ) and not _installed_record_is_incomplete(
+                inventory["record_complete"] = not _installed_record_is_incomplete(
                     directory, dist_info, file_names
+                )
+                inventory["project_environment"] = directory in project
+                inventory["complete_for_requirement"] = (
+                    _requirement_is_exact(specifier) and inventory["record_complete"]
                 )
                 ctx["environment_inventories"][key] = inventory
                 return inventory
         except OSError:
             continue
     return None
+
+
+def _project_site_packages(ctx):
+    """Site-packages of the project's own environment: the activated
+    virtualenv, or the running interpreter's when it lives in the repository."""
+    directories = set(virtual_env_site_packages())
+    try:
+        prefix = Path(sys.prefix).resolve()
+        if prefix != Path(sys.base_prefix).resolve() and prefix.is_relative_to(
+            Path(ctx["repo_root"]).resolve()
+        ):
+            directories.update(site.getsitepackages())
+    except (AttributeError, OSError, TypeError, ValueError):
+        pass
+    return directories
+
+
+def _environment_lacks_module(mod, unchecked, ctx):
+    """The project's environment cannot import ``mod``: no installed
+    distribution provides it, and every declared distribution not yet ruled
+    out is installed there, at a version its declaration allows, with a
+    complete file list that does not ship it."""
+    if ctx["installed_mapping"].get(mod):
+        return False
+    for dist in unchecked:
+        inventory = _installed_provider_inventory(dist, ctx)
+        if (
+            inventory is None
+            or inventory.get("record_complete") is not True
+            or inventory.get("project_environment") is not True
+        ):
+            return False
+    return True
 
 
 def _verified_provider_inventory(dist, ctx):
@@ -3171,6 +3207,8 @@ def _check_declared_providers(
         _record_unverified(ctx, mod, "open_ended_declarations")
         return None
     if unchecked:
+        if hallucination and _environment_lacks_module(mod, unchecked, ctx):
+            return template
         # Installed metadata naming a different, undeclared distribution is
         # positive evidence; a similar declared name is only a guess.
         required = set(required_paths or (mod,)) | {

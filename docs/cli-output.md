@@ -199,6 +199,12 @@ skylos . --format llm
 skylos . --format github
 ```
 
+`github` annotations name each file relative to the repository root (the Git
+root of the scanned project), so GitHub can place them on the pull request
+diff. `skylos cicd annotate --input report.json` does the same using the
+project root recorded in the report. A file outside the repository keeps its
+absolute path.
+
 `json-ci` keeps the same findings, per-finding evidence, and summary counts as
 `json`. It omits only the top-level `dead_code_evidence` ledger and
 `definitions` map, which can make a full scan report large. Use `json` when
@@ -269,10 +275,19 @@ never presented as clean.
   not be read (see below);
 - an analysis error of a kind Skylos does not recognise (it fails closed).
 
+An LLM command (`skylos agent scan`, `verify`, `remediate`, `audit --deep`,
+`security-quick`, `security-deep`, or `skylos debt --with-agent`) run without
+the optional LLM extra exits `2` before analysing anything and prints
+`pip install "skylos[llm]"`. `skylos agent remediate --dry-run` only plans
+fixes and does not need the extra.
+
 `--force` and advisory gate settings do not convert incomplete analysis into a
 passing result. Interactive removal (`-i`) needs a complete scan and refuses
 to run with any coverage gap, because a file that was not analysed could
-still reference a candidate.
+still reference a candidate. It also needs an interactive terminal: without
+one it exits `2` before scanning (use `skylos clean . --dry-run`, then
+`--apply`). It offers only Python files it can rewrite, and exits `1` when a
+confirmed edit fails.
 
 `analysis_summary.analysis_coverage` records the decision for this run:
 
@@ -807,6 +822,15 @@ unchanged raw JSON and stable raw gate outcomes without rescanning the target:
 ```bash
 python scripts/check_advice_output.py report.json --project-root .
 ```
+
+`--severity LEVEL` keeps findings at or above LEVEL in every output format.
+A record without its own severity is compared at the severity the report
+prints for it: dead code is LOW; security, secret and dependency findings are
+HIGH; other findings are MEDIUM. `--category` accepts `security`,
+`reliability`, `secret`, `quality`, `ai_defects`, `dead_code`, `dependency`
+and `publisher_change`; any other value stops before scanning with exit 2
+and a suggestion. The closing `Found N issues` line counts the rows the
+filter left listed.
 
 The assessment is computed before display grouping and filtering. A
 severity/category/file display filter retains the assessment and discloses

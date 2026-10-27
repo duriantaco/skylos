@@ -11,6 +11,8 @@ class ToolDef:
     location: str
     has_typed_schema: bool = False
     dangerous_calls: list[str] = field(default_factory=list)
+    handler_location: str = ""
+    kind: str = "function"
 
     def to_dict(self) -> dict:
         return {
@@ -18,6 +20,32 @@ class ToolDef:
             "location": self.location,
             "has_typed_schema": self.has_typed_schema,
             "dangerous_calls": self.dangerous_calls,
+            "handler_location": self.handler_location,
+            "kind": self.kind,
+        }
+
+
+@dataclass
+class PromptInput:
+    source: str
+    parameter: str
+    prompt_location: str
+    delimited: bool = False
+
+    @property
+    def label(self) -> str:
+        line = self.prompt_location.rsplit(":", 1)[-1]
+        if self.source:
+            return f"{self.source} → {self.parameter} → prompt (L{line})"
+        return f"{self.parameter} parameter → prompt (L{line})"
+
+    def to_dict(self) -> dict:
+        return {
+            "label": self.label,
+            "source": self.source,
+            "parameter": self.parameter,
+            "prompt_location": self.prompt_location,
+            "delimited": self.delimited,
         }
 
 
@@ -30,6 +58,8 @@ class LLMIntegration:
     tools: list[ToolDef] = field(default_factory=list)
     input_sources: list[str] = field(default_factory=list)
     output_sinks: list[str] = field(default_factory=list)
+    prompt_inputs: list[PromptInput] = field(default_factory=list)
+    output_sink_flows: list[str] = field(default_factory=list)
     has_system_prompt: bool = False
     model_pinned: bool = False
     model_value: str = ""
@@ -55,6 +85,8 @@ class LLMIntegration:
             "tools": [t.to_dict() for t in self.tools],
             "input_sources": self.input_sources,
             "output_sinks": self.output_sinks,
+            "prompt_inputs": [item.to_dict() for item in self.prompt_inputs],
+            "output_sink_flows": self.output_sink_flows,
             "has_system_prompt": self.has_system_prompt,
             "model_pinned": self.model_pinned,
             "model_value": self.model_value,

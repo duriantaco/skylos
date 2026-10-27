@@ -1,5 +1,6 @@
 import sys
 
+from skylos.constants import SUPPORTED_LANGUAGES_TEXT
 
 STEPS = [
     {
@@ -7,8 +8,11 @@ STEPS = [
         "step": 1,
         "body": (
             "[bold]Skylos[/bold] finds dead code, security vulnerabilities, and quality\n"
-            "issues in [bold cyan]Python, TypeScript/JavaScript, Java, Go, PHP, Rust[/bold cyan]\n"
-            "and [bold cyan]Dart[/bold cyan] codebases.\n"
+            f"issues in [bold cyan]{SUPPORTED_LANGUAGES_TEXT}[/bold cyan] codebases.\n"
+            "Coverage is deepest in Python, TypeScript/JavaScript and Java. Rust\n"
+            "dead code is experimental, Kotlin dead code covers private symbols\n"
+            "and imports, C++ covers unused file-local functions, and Shell gets\n"
+            "security checks only.\n"
             "\n"
             "It runs static analysis locally, and can optionally ask an LLM\n"
             "to double-check findings before you act on them."
@@ -74,7 +78,7 @@ STEPS = [
             "[bold]Quality gate[/bold] (fail CI on findings):\n"
             "  [bold cyan]skylos cicd gate[/bold cyan]\n"
             "\n"
-            "[bold]Post inline PR comments[/bold] with LLM-generated fixes:\n"
+            "[bold]Post Skylos findings as inline PR comments[/bold] (GitHub):\n"
             "  [bold cyan]skylos cicd review[/bold cyan]"
         ),
     },

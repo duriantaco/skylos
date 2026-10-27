@@ -35,15 +35,26 @@ def _closest_option(parser: argparse.ArgumentParser, unknown: list[str]):
 
 
 def build_main_parser(*, version: str) -> argparse.ArgumentParser:
+    from skylos.constants import SUPPORTED_LANGUAGES_TEXT
+
     parser = _ScanArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
-            "Find dead code, secrets, and risky flows in Python, JS/TS, Go, "
-            "Java, Kotlin, PHP, Rust, Dart, and C#"
+            "Find dead code, secrets, and risky flows in\n"
+            f"{SUPPORTED_LANGUAGES_TEXT}.\n"
+            "Coverage is deepest in Python, TypeScript/JavaScript and Java; see\n"
+            "Language Support in the README for the other languages."
         ),
-        epilog="""
-Run 'skylos commands' for a full list of all available commands.
-Run 'skylos tour' for a guided walkthrough of capabilities.
-        """,
+        epilog=(
+            "Exit codes:\n"
+            "  0  scan finished (findings alone do not fail a default scan)\n"
+            "  1  findings with --format concise or --strict, or a failed --gate\n"
+            "     (--force exits 0 instead)\n"
+            "  2  usage error or incomplete analysis\n"
+            "\n"
+            "Run 'skylos commands' for a full list of all available commands.\n"
+            "Run 'skylos tour' for a guided walkthrough of capabilities."
+        ),
     )
     parser.add_argument("path", nargs="+", help="Path(s) to the project")
     parser.add_argument(
@@ -186,7 +197,9 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         default="rich",
         help=(
             "Output format. Use 'pretty' for grouped human output or "
-            "'concise' for IDE-friendly file:line findings only. "
+            "'concise' for IDE-friendly file:line findings only. Without "
+            "--gate, 'concise' exits 1 when it lists findings (repository-policy "
+            "advice alone does not count; --force exits 0). "
             "'json-ci' is a compact JSON for CI and agents: it keeps "
             "findings, per-finding evidence and summary counts but omits "
             "the top-level 'dead_code_evidence' and 'definitions' bulk. "

@@ -863,7 +863,7 @@ def test_apply_display_filters_severity_filters_without_crashing():
         {"severity": "MEDIUM", "file": "src/b.py", "message": "medium"},
         {"severity": "HIGH", "file": "src/c.py", "message": "high"},
     ]
-    assert filtered["unused_functions"] == result["unused_functions"]
+    assert filtered["unused_functions"] == []
     assert filtered["analysis_summary"]["total_files"] == 1
     assert filtered["analysis_summary"]["quality_count"] == 2
 

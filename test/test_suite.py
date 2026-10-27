@@ -8,7 +8,11 @@ from rich.console import Console
 from rich.progress import Progress
 
 from skylos.commands.suite_cmd import _write_suite_output, run_suite_command
-from skylos.core.suite import _annotatable_findings, _static_summary
+from skylos.core.suite import (
+    _annotatable_findings,
+    _static_summary,
+    format_suite_table,
+)
 from skylos.reporting.provenance import ProvenanceReport
 
 
@@ -121,6 +125,106 @@ def test_suite_json_outputs_combined_sections(tmp_path, capsys):
         payload["defense"]["note"]
         == "AI defense currently scans Python and TypeScript direct SDK integrations."
     )
+
+
+def test_suite_without_llm_integrations_reports_ai_defense_not_applicable(tmp_path):
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=False, color_system=None, width=200)
+    run_analyze = Mock(return_value=json.dumps(_static_result(str(tmp_path))))
+
+    with patch(
+        "skylos.rules.sca.vulnerability_scanner.scan_dependencies",
+        return_value=[],
+    ):
+        exit_code = run_suite_command(
+            [str(tmp_path), "--no-provenance"],
+            console_factory=lambda: console,
+            progress_factory=Progress,
+            parse_exclude_folders_func=lambda **kwargs: [],
+            load_config_func=lambda _path: {},
+            run_analyze_func=run_analyze,
+            get_git_root_func=lambda: None,
+            upload_report_func=_noop_upload,
+            upload_defense_report_func=_noop_upload,
+            upload_debt_report_func=_noop_upload,
+        )
+
+    text = output.getvalue()
+    assert exit_code == 0
+    assert "Integrations: 0" in text
+    assert "Score: not applicable (no LLM integrations found)" in text
+    assert "SECURE" not in text
+    assert "100%" not in text.split("AI Defense", 1)[1]
+
+
+def test_suite_json_without_llm_integrations_has_no_defense_score(tmp_path, capsys):
+    run_analyze = Mock(return_value=json.dumps(_static_result(str(tmp_path))))
+
+    with patch(
+        "skylos.rules.sca.vulnerability_scanner.scan_dependencies",
+        return_value=[],
+    ):
+        exit_code = run_suite_command(
+            [str(tmp_path), "--json", "--no-provenance"],
+            console_factory=_console_factory,
+            progress_factory=Progress,
+            parse_exclude_folders_func=lambda **kwargs: [],
+            load_config_func=lambda _path: {},
+            run_analyze_func=run_analyze,
+            get_git_root_func=lambda: None,
+            upload_report_func=_noop_upload,
+            upload_defense_report_func=_noop_upload,
+            upload_debt_report_func=_noop_upload,
+        )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["summary"]["integrations_found"] == 0
+    assert payload["summary"]["defense_score_pct"] is None
+
+
+def test_suite_with_llm_integrations_reports_ai_defense_score(tmp_path, capsys):
+    (tmp_path / "bot.py").write_text(
+        "from openai import OpenAI\n"
+        "client = OpenAI()\n"
+        "\n"
+        "def answer(question):\n"
+        "    return client.chat.completions.create(\n"
+        '        model="gpt-4.1",\n'
+        '        messages=[{"role": "user", "content": question}],\n'
+        "    )\n",
+        encoding="utf-8",
+    )
+    run_analyze = Mock(return_value=json.dumps(_static_result(str(tmp_path))))
+
+    with patch(
+        "skylos.rules.sca.vulnerability_scanner.scan_dependencies",
+        return_value=[],
+    ):
+        exit_code = run_suite_command(
+            [str(tmp_path), "--json", "--no-provenance"],
+            console_factory=_console_factory,
+            progress_factory=Progress,
+            parse_exclude_folders_func=lambda **kwargs: [],
+            load_config_func=lambda _path: {},
+            run_analyze_func=run_analyze,
+            get_git_root_func=lambda: None,
+            upload_report_func=_noop_upload,
+            upload_defense_report_func=_noop_upload,
+            upload_debt_report_func=_noop_upload,
+        )
+
+    payload = json.loads(capsys.readouterr().out)
+    defense_summary = payload["defense"]["summary"]
+    assert exit_code == 0
+    assert payload["summary"]["integrations_found"] >= 1
+    assert payload["summary"]["defense_score_pct"] == defense_summary["score_pct"]
+    text = format_suite_table(payload)
+    assert (
+        f"Score: {defense_summary['score_pct']}% ({defense_summary['risk_rating']})"
+        in text
+    )
+    assert "not applicable" not in text
 
 
 def test_suite_provenance_stats_match_danger_json_section(tmp_path, capsys):

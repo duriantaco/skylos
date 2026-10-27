@@ -170,6 +170,7 @@ def test_agent_verify_never_edits_or_commits_a_reviewed_dead_finding(
         return real_analyze(*args, **kwargs)
 
     monkeypatch.setattr("skylos.analyzer.analyze", capture_analyze)
+    monkeypatch.setattr("skylos.llm.runtime.llm_extra_importable", lambda: True)
     monkeypatch.setattr(
         cli,
         "resolve_llm_runtime",

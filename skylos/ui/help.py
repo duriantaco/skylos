@@ -141,14 +141,14 @@ COMMANDS = [
         "group": "Core Analysis",
     },
     {
-        "name": "skylos sbom [path] [--output sbom.cdx.json]",
-        "desc": "Export supported dependency inventory as offline CycloneDX 1.6 JSON",
+        "name": "skylos sbom [path] [--format cyclonedx-json|spdx-json] [-o FILE]",
+        "desc": "Export dependencies as CycloneDX 1.6 or SPDX 2.3 JSON, offline by default",
         "details": [
             "--output, -o  Write a file; default '-' writes JSON to stdout",
-            "--format cyclonedx-json  CycloneDX JSON output (default)",
-            "No installs, project scripts, or network requests",
-            "Exit 2 on unreadable, unsupported, or incomplete inputs; keeps partial output",
-            "Includes all recorded environments, not an installed or licence inventory",
+            "--format cyclonedx-json (default) or spdx-json",
+            "--license-lookup  Query deps.dev for licenses missing locally (network)",
+            "--strict  Exit 2 when the inventory is incomplete; otherwise exit 0 with a warning",
+            "No installs or project scripts; no network requests without --license-lookup",
         ],
         "group": "Core Analysis",
     },
@@ -216,12 +216,30 @@ COMMANDS = [
         "group": "AI Agent",
     },
     {
-        "name": "skylos hook <post-edit|pre-read|pre-bash|stop>",
+        "name": "skylos hook <event> [--client claude|codex|cursor]",
         "desc": "Agent hook entry point (reads hook JSON on stdin; installed by agent install-hooks)",
         "details": [
+            (
+                "Events: session-start, pre-edit, post-edit, pre-read, pre-bash, "
+                "post-bash, post-failure, stop"
+            ),
+            (
+                "post-edit, pre-read, pre-bash and stop check and can block; "
+                "session-start, pre-edit, post-bash and post-failure only record "
+                "the starting checkout and tool changes"
+            ),
             "Fails open on internal errors but says the action was not checked; "
             "stop reports unchecked actions. Logs to .skylos/hook.log",
             "Disable one hook with SKYLOS_HOOKS_DISABLE=pre-read (comma list or 'all')",
+        ],
+        "group": "AI Agent",
+    },
+    {
+        "name": "skylos hook recheck FILE... [--range L1:L2] | --session",
+        "desc": "Recheck files with the post-edit blocking policy",
+        "details": [
+            "recheck --session rechecks every file where agent edits introduced issues",
+            "recheck exits 0 clean, 1 blocking issues, 2 usage error",
         ],
         "group": "AI Agent",
     },
@@ -305,7 +323,7 @@ COMMANDS = [
     },
     {
         "name": "skylos cicd review [path]",
-        "desc": "Post inline PR review comments",
+        "desc": "Post Skylos findings as inline PR review comments",
         "group": "CI/CD",
     },
     {
@@ -322,6 +340,11 @@ COMMANDS = [
             "Settings come from [tool.skylos.approval] at the base, never the change",
             "Exit 0 pass, 1 needs a human approval, 2 could not decide",
         ],
+        "group": "CI/CD",
+    },
+    {
+        "name": "skylos cicd agent-review --review-id ID [--cloud-url URL]",
+        "desc": "Run a Cloud-approved paid PR review (runner for the workflow Skylos Cloud dispatches, not regular PR jobs)",
         "group": "CI/CD",
     },
     {
@@ -382,7 +405,7 @@ COMMANDS = [
         "group": "Utility",
     },
     {
-        "name": "skylos badge",
+        "name": "skylos badge [--plain]",
         "desc": "Get badge markdown for README",
         "group": "Utility",
     },
@@ -446,7 +469,7 @@ COMMANDS = [
         "group": "Utility",
     },
     {
-        "name": "skylos sync",
+        "name": "skylos sync <command>",
         "desc": "Sync config with Skylos Cloud",
         "group": "Skylos Cloud",
     },
@@ -523,7 +546,7 @@ COMMANDS = [
     },
     {
         "name": "skylos provenance [path]",
-        "desc": "Detect AI-authored code in PR changes",
+        "desc": "Read recorded agent attribution and declared commit associations",
         "group": "Utility",
     },
     {
