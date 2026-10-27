@@ -773,6 +773,58 @@ def test_cmd_pull_calls_endpoints_in_order(isolated_creds, monkeypatch, tmp_path
     ]
 
 
+def _repo_without_remote(isolated_creds, monkeypatch, tmp_path):
+    _, creds_file = isolated_creds
+    creds_file.parent.mkdir(parents=True, exist_ok=True)
+    creds_file.write_text(json.dumps({"token": "TOK"}))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(syncmod, "_find_repo_root", lambda: repo)
+    calls = []
+
+    def fake_api_get(endpoint, token):
+        calls.append(endpoint)
+        raise AssertionError(f"Unexpected endpoint {endpoint}")
+
+    monkeypatch.setattr(syncmod, "api_get", fake_api_get)
+    return repo, calls
+
+
+def test_cmd_pull_without_a_git_remote_says_how_to_fix_it(
+    isolated_creds, monkeypatch, tmp_path, capsys
+):
+    repo, calls = _repo_without_remote(isolated_creds, monkeypatch, tmp_path)
+
+    with pytest.raises(SystemExit) as e:
+        syncmod.cmd_pull()
+
+    assert e.value.code == 1
+    out = capsys.readouterr().out
+    assert "needs a git repository with a remote" in out
+    assert "git remote add origin <url>" in out
+    assert "trusted suppression state" not in out
+    assert calls == []
+    assert not (repo / syncmod.SKYLOS_DIR / syncmod.CONFIG_FILE).exists()
+    assert not (repo / syncmod.SKYLOS_DIR / syncmod.SUPPRESSIONS_FILE).exists()
+
+
+def test_cmd_pull_dry_run_without_a_git_remote_fails_the_same_way(
+    isolated_creds, monkeypatch, tmp_path, capsys
+):
+    _, calls = _repo_without_remote(isolated_creds, monkeypatch, tmp_path)
+
+    with pytest.raises(SystemExit) as e:
+        syncmod.cmd_pull(dry_run=True, output_format="json")
+
+    assert e.value.code == 1
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["status"] == "failed"
+    assert "git remote add origin <url>" in receipt["error"]
+    assert calls == []
+
+
 def test_cmd_pull_rejects_suppressions_from_another_project(
     isolated_creds, monkeypatch, tmp_path, capsys
 ):

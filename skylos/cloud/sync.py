@@ -38,6 +38,11 @@ except ImportError as e:
 SKYLOS_DIR = ".skylos"
 CONFIG_FILE = "config.yaml"
 SUPPRESSIONS_FILE = "suppressions.json"
+NO_REMOTE_MESSAGE = (
+    "skylos sync pull needs a git repository with a remote, because reviewed "
+    "findings are tied to the repository's remote URL. Add one with: "
+    "git remote add origin <url>"
+)
 DEFAULT_API_URL = "https://skylos.dev"
 WHOAMI_ENDPOINT = "/api/sync/whoami"
 UNKNOWN_LABEL = "Unknown"
@@ -803,6 +808,7 @@ def cmd_pull(*, dry_run: bool = False, output_format: str = "text") -> None:
     from skylos.cloud.sync_state import activate_sync_files, validate_sync_paths
     from skylos.core.review_decisions import (
         invalidate_trusted_bundle,
+        repository_scope,
         write_trusted_bundle,
     )
 
@@ -822,6 +828,8 @@ def cmd_pull(*, dry_run: bool = False, output_format: str = "text") -> None:
         repo_root = _find_repo_root()
         sync_subpath = _current_repo_subpath(repo_root)
         sync_project_root = repo_root / sync_subpath if sync_subpath else repo_root
+        if repository_scope(sync_project_root) is None:
+            raise AuthError(NO_REMOTE_MESSAGE)
         if not dry_run:
             trust_invalidated = invalidate_trusted_bundle(
                 sync_project_root, cache_root=cache_root
