@@ -22,7 +22,7 @@ LOW_RISK_REASONS = {
     "SKY-D207": frozenset({"non-sensitive-hash-input"}),
     "SKY-D208": frozenset({"non-sensitive-hash-input"}),
 }
-_RULE_ID = re.compile(r"SKY-[A-Z0-9]+\Z")
+_RULE_ID = re.compile(r"SKY-[A-Z0-9]+(?:-[A-Z0-9]+)*\Z")
 
 
 def normalize_rule_ids(value):
@@ -37,6 +37,21 @@ def normalize_rule_ids(value):
         for item in value
         if isinstance(item, str) and _RULE_ID.fullmatch(item.strip().upper())
     )
+
+
+def unrecognized_rule_ids(value):
+    """Entries of a rule list that ``normalize_rule_ids`` drops."""
+    if isinstance(value, str):
+        value = [item for item in re.split(r"[,\s]+", value) if item]
+    if isinstance(value, Mapping):
+        value = [key for key, setting in value.items() if setting is not False]
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return []
+    return [
+        str(item)
+        for item in value
+        if not (isinstance(item, str) and _RULE_ID.fullmatch(item.strip().upper()))
+    ]
 
 
 def explicit_rule_ids(config):

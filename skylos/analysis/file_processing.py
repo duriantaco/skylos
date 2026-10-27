@@ -333,6 +333,14 @@ def _extend_community_quality_rules(q_rules: list, file) -> None:
         pass
 
 
+def _extend_project_quality_rules(q_rules: list, file) -> None:
+    from skylos.rules.project_rules import load_project_rules
+
+    project_rules_data = load_project_rules(file)
+    if project_rules_data:
+        q_rules.extend(load_custom_rules(project_rules_data))
+
+
 def scan_python_quality(
     tree: ast.AST,
     source: str,
@@ -348,6 +356,7 @@ def scan_python_quality(
     q_rules = _build_builtin_quality_rules(cfg)
     _extend_env_custom_quality_rules(q_rules, file)
     _extend_community_quality_rules(q_rules, file)
+    _extend_project_quality_rules(q_rules, file)
     set_linter_node_types(q_rules)
     linter_q = LinterVisitor(q_rules, str(file))
     linter_q.context["source"] = source

@@ -1,4 +1,5 @@
 import copy
+import datetime
 import fnmatch
 import os
 import re
@@ -694,8 +695,14 @@ def _safe_temporary_whitelist(value):
         expires = config.get("expires")
         if isinstance(reason, str):
             entry["reason"] = reason
-        if isinstance(expires, str):
+        if isinstance(expires, datetime.datetime):
+            entry["expires"] = expires.date().isoformat()
+        elif isinstance(expires, datetime.date):
+            entry["expires"] = expires.isoformat()
+        elif isinstance(expires, str):
             entry["expires"] = expires
+        elif expires is not None:
+            entry["expires"] = str(expires)
         safe[pattern] = entry
     return safe
 
@@ -908,21 +915,33 @@ def is_path_excluded(filepath, cfg) -> bool:
     return False
 
 
-def is_whitelisted(name, filepath, cfg) -> tuple[bool, str | None, int]:
-    import datetime
+def temporary_whitelist_state(config, today=None) -> str:
+    """``active``, ``expired``, or ``invalid`` (an expiry that is not a date).
 
+    An entry without ``expires`` stays active. An unreadable expiry hides
+    nothing, so a mistyped date cannot make a temporary entry permanent.
+    """
+    if "expires" not in config:
+        return "active"
+    try:
+        exp_date = datetime.date.fromisoformat(config.get("expires"))
+    except (TypeError, ValueError):
+        return "invalid"
+    if today is None:
+        today = datetime.date.today()
+    if today > exp_date:
+        return "expired"
+    return "active"
+
+
+def is_whitelisted(name, filepath, cfg) -> tuple[bool, str | None, int]:
     for pattern, config in cfg.get("whitelist_temporary", {}).items():
         if fnmatch.fnmatch(name, pattern):
             expires = config.get("expires")
             reason = config.get("reason", "temporary whitelist")
 
-            if expires:
-                try:
-                    exp_date = datetime.date.fromisoformat(expires)
-                    if datetime.date.today() > exp_date:
-                        continue
-                except ValueError:
-                    pass
+            if temporary_whitelist_state(config) != "active":
+                continue
 
             return True, f"{reason} (expires: {expires})", 0
 
@@ -953,24 +972,48 @@ def is_whitelisted(name, filepath, cfg) -> tuple[bool, str | None, int]:
 
 
 def get_expired_whitelists(cfg) -> list[tuple[str, str, str]]:
-    import datetime
+    return _temporary_whitelists_in_state(cfg, "expired")
 
-    expired = []
+
+def get_invalid_whitelist_expiries(cfg) -> list[tuple[str, str, str]]:
+    return _temporary_whitelists_in_state(cfg, "invalid")
+
+
+def _temporary_whitelists_in_state(cfg, state) -> list[tuple[str, str, str]]:
     today = datetime.date.today()
+    return [
+        (pattern, config.get("reason", ""), config.get("expires"))
+        for pattern, config in cfg.get("whitelist_temporary", {}).items()
+        if temporary_whitelist_state(config, today) == state
+    ]
 
-    for pattern, config in cfg.get("whitelist_temporary", {}).items():
-        expires = config.get("expires")
-        reason = config.get("reason", "")
 
-        if expires:
-            try:
-                exp_date = datetime.date.fromisoformat(expires)
-                if today > exp_date:
-                    expired.append((pattern, reason, expires))
-            except ValueError:
-                pass
+def whitelist_warnings(cfg) -> list[str]:
+    """Plain-text warnings for temporary whitelist entries that hide nothing."""
+    warnings = []
+    for pattern, _reason, expires in get_expired_whitelists(cfg):
+        warnings.append(
+            f"Temporary whitelist entry '{printable_text(pattern)}' expired on "
+            f"{printable_text(expires)}; its findings are reported again. Renew or "
+            "remove it under [tool.skylos.whitelist.temporary]."
+        )
+    for pattern, _reason, expires in get_invalid_whitelist_expiries(cfg):
+        warnings.append(
+            f"Temporary whitelist entry '{printable_text(pattern)}' has an unreadable "
+            f"expires value '{printable_text(expires)}', so it hides nothing. Use a "
+            'date such as expires = "2026-12-31".'
+        )
+    return warnings
 
-    return expired
+
+def printable_text(value) -> str:
+    parts = []
+    for char in str(value):
+        if char.isprintable():
+            parts.append(char)
+        else:
+            parts.append(f"\\x{ord(char):02x}")
+    return "".join(parts)
 
 
 _NOQA_RE = re.compile(r"#\s*noqa\b(?::\s*([^#]+))?", re.IGNORECASE)

@@ -126,6 +126,20 @@ def init_rules(console, path_str, *, force=False):
     )
     console.print(f"[green]Created starter rule pack: {dest}[/green]")
     console.print(f"[dim]Validate it with: skylos rules validate {dest}[/dim]")
+    if (
+        dest.parent.name == "rules"
+        and dest.parent.parent.name == ".skylos"
+        and dest.suffix.lower() in (".yml", ".yaml")
+    ):
+        console.print(
+            "[dim]Scans with --quality or -a apply it to this folder and below; "
+            "in PR CI, the copy committed on the base branch applies.[/dim]"
+        )
+    else:
+        console.print(
+            "[yellow]Scans only load .yml/.yaml packs directly in a "
+            ".skylos/rules/ folder; move it there to apply it.[/yellow]"
+        )
     return 0
 
 

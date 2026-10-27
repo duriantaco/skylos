@@ -79,8 +79,8 @@ zusätzlich Security-, Secret-, Quality- und Dependency-Prüfungen:
 skylos . -a
 ```
 
-Erzeuge eine Projektkonfiguration mit Grenzwerten, Ignorierregeln,
-Template-Hooks und Erweiterungen für Vibe-Wörterbücher:
+Erzeuge eine Projektkonfiguration mit Grenzwerten, Ignorierregeln und
+Erweiterungen für Vibe-Wörterbücher:
 
 ```bash
 skylos init
@@ -96,6 +96,11 @@ skylos rules list cross --json
 skylos rules list --packs --json
 skylos cache stats
 ```
+
+Scans mit `--quality` oder `-a` wenden jedes `.yml`/`.yaml`-Pack in einem
+`.skylos/rules/`-Ordner zwischen gescannter Datei und Repository-Root an. In
+PR-CI kommen die Packs wie `[tool.skylos]` aus dem Base-Branch, ein Pull
+Request kann seine eigenen Regeln also nicht entfernen oder ändern.
 
 Erzeuge ein GitHub-Actions-PR-Gate:
 
@@ -126,7 +131,7 @@ Mehr Befehle stehen in der [CLI Reference](https://docs.skylos.dev/cli-reference
 | Change Map fürs Review | `skylos done map --base origin/main` | Zeigt jede geänderte Python- oder TypeScript/JavaScript-Funktion mit altem und neuem Code, hinzugefügten und entfernten Aufrufen, ihren Aufrufern, entfernten Sicherheitsprüfungen und dem, was zuerst zu lesen ist; aus dem Code berechnet, nicht von einem Modell geschrieben | [Change map](../change-map.md) |
 | Review geänderter Zeilen | `skylos . -a --diff origin/main` | Fokussiert Findings auf aktive Arbeit statt auf Legacy-Schulden | [Quality gate docs](https://docs.skylos.dev/quality-gate) |
 | Laufzeitgestützter Dead-Code-Check | `skylos . --trace` | Nutzt Runtime-Traces, um False Positives bei dynamischem Code zu reduzieren | [Smart tracing](https://docs.skylos.dev/smart-tracing) |
-| Lokales Rule-Pack | `skylos rules init` | Erstellt YAML-Regeln für projektspezifische Security- und Quality-Prüfungen | [Custom rules](https://docs.skylos.dev/custom-rules) |
+| Lokales Rule-Pack | `skylos rules init` | Erstellt `.skylos/rules/local.yml`, projektspezifische YAML-Prüfungen, die Scans mit `--quality` und `-a` anwenden | [Custom rules](https://docs.skylos.dev/custom-rules) |
 | AI-gestütztes Review | `skylos agent scan .` | Statische Analyse plus optionales LLM-Review und Fix-Vorschläge | [AI features](https://docs.skylos.dev/ai-features) |
 | LLM-App-Defense | `skylos defend .` | Findet fehlende AI-App-Guardrails, gemappt auf OWASP-LLM-Risiken | [AI defense](https://docs.skylos.dev/ai-defense) |
 | Technical-Debt-Triage | `skylos debt .` | Sortiert Hotspots und Debt-Trends | [Technical debt](https://docs.skylos.dev/technical-debt) |
@@ -190,17 +195,11 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 Quellinstallation, Container-Nutzung und optionale Dependencies stehen in der
 [Installation](https://docs.skylos.dev/installation).
 
-## Templates und Vibe-Checks konfigurieren
+## Vibe-Checks konfigurieren
 
-`skylos init` ergänzt diese Abschnitte in `pyproject.toml`:
+`skylos init` ergänzt diesen Abschnitt in `pyproject.toml`:
 
 ```toml
-[tool.skylos.templates]
-# security = ".skylos/templates/security.md"
-# quality = ".skylos/templates/quality.md"
-# security_audit = ".skylos/templates/security_audit.md"
-# review = ".skylos/templates/review.md"
-
 [tool.skylos.vibe]
 extra_phantom_names = ["verify_enterprise_auth"]
 extra_phantom_decorators = ["tenant_admin_required"]
@@ -208,9 +207,12 @@ extra_credential_names = ["tenant_signing_secret"]
 extra_network_timeout_calls = ["vendor_sdk.fetch"]
 ```
 
-Template-Dateien erweitern die eingebauten Prompts von Skylos. Sie ersetzen
-nicht den JSON-only-Ausgabevertrag und nicht die Sicherheitsregeln für
-untrusted code. Vibe-Wörterbücher helfen Teams, Skylos lokale Fake-Auth-Helper,
+LLM-Prompt-Templates liest Skylos nicht aus dem Repository: Übergib eine
+vertrauenswürdige Datei mit `--prompt-template KIND=PATH` an `skylos agent
+scan`, `agent audit`, `agent security-quick` oder `agent security-deep`. Ein
+Template erweitert den eingebauten Prompt; es ersetzt weder den
+JSON-only-Ausgabevertrag noch die Sicherheitsregeln für untrusted code.
+Vibe-Wörterbücher helfen Teams, Skylos lokale Fake-Auth-Helper,
 projektspezifische Credential-Namen, sensible Dateien und Netzwerkaufrufe mit
 Timeout-Pflicht beizubringen.
 

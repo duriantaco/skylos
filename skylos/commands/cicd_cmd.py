@@ -750,6 +750,10 @@ def run_cicd_command(
                     else results.get("project_root", ".")
                 )
                 config = load_config_func(config_path)
+                from skylos.core.gatekeeper import gate_config_notes
+
+                for note in gate_config_notes(config):
+                    console.print(f"[yellow]{escape(note)}[/yellow]", soft_wrap=True)
                 if cicd_args.input_file and cicd_args.diff_base:
                     from skylos.security.regression_gate import (
                         recheck_control_regressions,

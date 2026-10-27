@@ -72,7 +72,7 @@ export class SkylosCodeLensProvider implements vscode.CodeLensProvider {
       if (showAllActions && isDeadCodeRule(f.ruleId)) {
         lenses.push(
           new vscode.CodeLens(range, {
-            title: "Ignore",
+            title: "Add to whitelist",
             command: "skylos.addToWhitelist",
             arguments: [f.message],
           }),

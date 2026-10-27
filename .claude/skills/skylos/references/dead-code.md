@@ -88,6 +88,9 @@ evidence. Do not use trace mode as the default answer for untrusted PR review.
 - `# skylos: ignore-start` / `# skylos: ignore-end`: suppress a block.
 - `ignore = ["SKY-XXX"]` in `[tool.skylos]`: suppress a rule project-wide.
 - `skylos whitelist <pattern>`: manage whitelisted symbols.
+  `[tool.skylos.whitelist.temporary]` entries take `expires = "YYYY-MM-DD"`
+  (a TOML date works too); once expired, or with an unreadable date, they
+  hide nothing and the scan prints a warning naming the entry.
 - `skylos baseline .`: store current findings as accepted baseline.
 
 Prefer analyzer improvements or precise suppressions over broad project-wide

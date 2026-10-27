@@ -88,6 +88,11 @@ DEFAULT_BLOCK_AI_DEFECT_SEVERITIES = ("CRITICAL",)
 AI_DEFECT_SEVERITY_ORDER = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
 AI_DEFECT_REASON_RULE_LIMIT = 3
 SAFE_RULE_ID = re.compile(r"[A-Za-z0-9_.-]{1,40}")
+DEFEND_GATE_HINT = (
+    "Remove them from [tool.skylos.gate.agent] and run "
+    "`skylos defend . --min-score 70 --fail-on critical` as its own CI step "
+    "(`skylos cicd init --defend` adds it)."
+)
 
 
 INCOMPLETE_VERDICT = "Quality Gate: INCOMPLETE — could not decide (exit 2)"
@@ -438,6 +443,39 @@ def _effective_gate_config(config):
     return effective
 
 
+def gate_config_notes(config):
+    """Plain-text notes for gate settings that have no effect."""
+    from skylos.config import printable_text
+    from skylos.reporting.listing import unrecognized_rule_ids
+
+    if not isinstance(config, dict):
+        return []
+    gate_config = config.get("gate", {})
+    if not isinstance(gate_config, dict):
+        return []
+    notes = []
+    relaxed = []
+    if gate_config.get("fail_on_critical") is False:
+        relaxed.append("fail_on_critical = false")
+    for key in ("max_critical", "max_secrets"):
+        if _safe_gate_limit(gate_config.get(key), 0) > 0:
+            relaxed.append(f"{key} = {gate_config[key]}")
+    if relaxed:
+        verb = "has"
+        if len(relaxed) > 1:
+            verb = "have"
+        notes.append(
+            f"[tool.skylos.gate] {', '.join(relaxed)} {verb} no effect: any "
+            "critical security issue and any secret always fail the gate."
+        )
+    for entry in unrecognized_rule_ids(gate_config.get("rules")):
+        notes.append(
+            f"[tool.skylos.gate] rules entry '{printable_text(entry)}' is not a "
+            "Skylos rule ID such as SKY-D211, so it is not enforced."
+        )
+    return notes
+
+
 def _agent_gate_reason(message):
     return f"{AGENT_GATE_PREFIX}{message}"
 
@@ -527,8 +565,12 @@ def _check_agent_gate(
     require_defend = agent_cfg.get("require_defend", False)
     if require_defend or isinstance(min_defend, (int, float)):
         reasons.append(
-            _agent_gate_reason(
-                "require_defend/min_defend_score set but no defense data available (run skylos defend)"
+            GateReason(
+                _agent_gate_reason(
+                    "require_defend and min_defend_score are not supported; "
+                    "this gate never reads skylos defend results"
+                ),
+                hint=DEFEND_GATE_HINT,
             )
         )
         agent_passed = False

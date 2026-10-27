@@ -38,6 +38,7 @@ exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
 const store_1 = require("./store");
 const scanner_1 = require("./scanner");
+const suppressionCore_1 = require("./suppressionCore");
 const diagnostics_1 = require("./diagnostics");
 const decorations_1 = require("./decorations");
 const sidebar_1 = require("./sidebar");
@@ -311,8 +312,7 @@ function activate(context) {
     }), vscode.commands.registerCommand("skylos.removeFunction", async () => {
         vscode.window.showInformationMessage("Skylos: direct line-delete cleanup is disabled. Use an engine-backed fix preview when available.");
     }), vscode.commands.registerCommand("skylos.addToWhitelist", async (message) => {
-        const match = message.match(/Unused \w+:\s*(.+)/);
-        const name = match?.[1]?.trim();
+        const name = (0, suppressionCore_1.whitelistName)(message);
         if (!name) {
             vscode.window.showErrorMessage("Could not extract name from finding.");
             return;
@@ -320,23 +320,17 @@ function activate(context) {
         const ws = vscode.workspace.workspaceFolders?.[0];
         if (!ws)
             return;
-        const configPath = vscode.Uri.joinPath(ws.uri, ".skylosignore");
-        try {
-            const doc = await vscode.workspace.openTextDocument(configPath);
-            const edit = new vscode.WorkspaceEdit();
-            edit.insert(configPath, new vscode.Position(doc.lineCount, 0), `\n${name}`);
-            await vscode.workspace.applyEdit(edit);
-            vscode.window.showInformationMessage(`Added "${name}" to .skylosignore`);
+        if (!vscode.workspace.isTrusted) {
+            vscode.window.showWarningMessage("Skylos: Trust this workspace before adding to the whitelist.");
+            return;
         }
-        catch {
-            const edit = new vscode.WorkspaceEdit();
-            edit.createFile(configPath, { overwrite: false, ignoreIfExists: true });
-            await vscode.workspace.applyEdit(edit);
-            const edit2 = new vscode.WorkspaceEdit();
-            edit2.insert(configPath, new vscode.Position(0, 0), `${name}\n`);
-            await vscode.workspace.applyEdit(edit2);
-            vscode.window.showInformationMessage(`Created .skylosignore and added "${name}"`);
+        const result = await (0, scanner_1.runSkylosCommand)(["whitelist", name], ws.uri.fsPath);
+        if (result.code === 0 && /Added '.*' to whitelist/.test(result.stdout)) {
+            vscode.window.showInformationMessage(`Added "${name}" to [tool.skylos.whitelist] in pyproject.toml. Every symbol named "${name}" is now skipped.`);
+            return;
         }
+        const detail = (result.error ?? `${result.stdout}\n${result.stderr}`).trim().split("\n")[0];
+        vscode.window.showWarningMessage(`Skylos: could not add "${name}" to the whitelist. ${detail}`);
     }), vscode.commands.registerCommand("skylos.statusBarClick", () => {
         dashboard.show();
     }), vscode.commands.registerCommand("skylos.dashboard", () => {

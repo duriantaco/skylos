@@ -634,12 +634,14 @@ lower_confidence = "boom"
         self.assertEqual(config["whitelist"], ["safe_*"])
         self.assertEqual(config["lower_confidence"], [])
         self.assertEqual(config["whitelist_documented"], {"kept_*": "reason"})
-        self.assertEqual(config["whitelist_temporary"], {"legacy_*": {}})
+        self.assertEqual(
+            config["whitelist_temporary"], {"legacy_*": {"expires": "456"}}
+        )
         self.assertTrue(ok)
         self.assertEqual(reason, "reason")
         self.assertEqual(penalty, 0)
-        self.assertTrue(legacy_ok)
-        self.assertIn("temporary whitelist", legacy_reason)
+        self.assertFalse(legacy_ok)
+        self.assertIsNone(legacy_reason)
 
     def test_is_path_excluded_glob_path_match(self):
         cfg = {"exclude": ["src/**/gen_*.py"]}
