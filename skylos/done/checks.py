@@ -1249,6 +1249,7 @@ def check_unknown_imports(ctx: CheckContext) -> CheckResult:
                 blocking=blocking,
             )
         )
+    unchecked_note = _unchecked_imports_note(result.get("unchecked_import_files"))
     unreachable = bool(result.get("registry_unreachable"))
     status = _status(findings)
     if status == "pass" and unreachable:
@@ -1265,15 +1266,23 @@ def check_unknown_imports(ctx: CheckContext) -> CheckResult:
         id="unknown_imports",
         rule=next((f.rule for f in findings if f.blocking), "SKY-D222"),
         status=status,
-        summary=summary,
+        summary=summary + unchecked_note,
         evidence={
             "missing": blocking,
             "unresolved": len(findings) - blocking,
             "registry_unreachable": unreachable,
-            "summary": summary,
+            "summary": summary + unchecked_note,
+            "unchecked_import_files": dict(result.get("unchecked_import_files") or {}),
         },
         findings=findings,
     )
+
+
+def _unchecked_imports_note(unchecked: dict[str, int] | None) -> str:
+    if not unchecked:
+        return ""
+    parts = [f"{count} {language}" for language, count in sorted(unchecked.items())]
+    return f"; imports in {', '.join(parts)} file(s) were not checked"
 
 
 def _python_import_lines(source: str | None) -> set[int] | None:
