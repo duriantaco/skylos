@@ -1050,6 +1050,7 @@ class _SQLFlowChecker(TaintVisitor):
                 lambda name: self.untrusted_sources.resolved_import(
                     current_function, name
                 ),
+                self.untrusted_sources.module,
             )
         )
         try:

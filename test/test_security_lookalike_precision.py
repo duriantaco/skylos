@@ -48,24 +48,29 @@ class TestPasswordConfirmationIsNotTimingOracle:
             "(data: Form) => !data.password || data.password === data.confirm_password",
             "data => data.password === data.passwordConfirmation",
             "({ password, confirmPassword }: Form) => password === confirmPassword",
-            "({ password: pw, confirm_password: again }) => pw === again",
             "function check({ password, repeatPassword = '' }) { return password !== repeatPassword; }",
         ),
     )
-    def test_one_form_entry_typed_twice_is_not_reported(self, tmp_path, comparison):
-        assert (
-            _ts_lines(tmp_path, "SKY-D253", f"export const check = {comparison};\n")
-            == []
-        )
+    def test_generic_confirmation_requires_input_provenance(self, tmp_path, comparison):
+        assert _ts_lines(
+            tmp_path, "SKY-D253", f"export const check = {comparison};\n"
+        ) == [1]
+
+    def test_renamed_operands_remain_outside_name_based_rule(self, tmp_path):
+        code = "export const check = ({ password: pw, confirm_password: again }) => pw === again;\n"
+        assert _ts_lines(tmp_path, "SKY-D253", code) == []
 
     def test_zod_refine_confirmation_is_not_reported(self, tmp_path):
         code = (
             'import { z } from "zod";\n'
-            "export const schema = z\n"
+            'import { zodResolver } from "@hookform/resolvers/zod";\n'
+            'import { useForm } from "react-hook-form";\n'
+            "const schema = z\n"
             "  .object({ new_password: z.string(), confirm_password: z.string() })\n"
             "  .refine((data) => data.new_password === data.confirm_password, {\n"
             '    message: "The passwords don\'t match",\n'
             "  });\n"
+            "export function Form() { return useForm({resolver: zodResolver(schema)}); }\n"
         )
         assert _ts_lines(tmp_path, "SKY-D253", code) == []
 

@@ -305,15 +305,14 @@ def _requests_dry_run(tokens: list[str]) -> bool:
         options = tokens[: tokens.index("--")]
     dry_run = False
     for index, token in enumerate(options):
-        lowered = token.lower()
-        if lowered == "--dry-run":
+        if token == "--dry-run":
             following = ""
             if index + 1 < len(options):
                 following = options[index + 1].lower()
             dry_run = following != "false"
-        elif lowered.startswith("--dry-run="):
-            dry_run = lowered == "--dry-run=true"
-        elif lowered == "--no-dry-run":
+        elif token.startswith("--dry-run="):
+            dry_run = token == "--dry-run=true"
+        elif token == "--no-dry-run":
             dry_run = False
     return dry_run
 

@@ -499,7 +499,7 @@ def _is_timing_sensitive(name: str) -> bool:
     return False
 
 
-def _is_environment_lookup(node, source_bytes: bytes) -> bool:
+def _is_environment_lookup(node, source_bytes: bytes, bindings) -> bool:
     """``process.env.X``, ``process.env["X"]``, ``import.meta.env.X``,
     ``Bun.env.X``, ``Deno.env.get("X")``, or a ``??``/``||`` chain of them."""
     node = _unwrap_ts_expression(node)
@@ -510,8 +510,10 @@ def _is_environment_lookup(node, source_bytes: bytes) -> bool:
         if operator is None or operator.type not in _ENV_DEFAULT_OPERATORS:
             return False
         return _is_environment_lookup(
-            node.child_by_field_name("left"), source_bytes
-        ) and _is_environment_lookup(node.child_by_field_name("right"), source_bytes)
+            node.child_by_field_name("left"), source_bytes, bindings
+        ) and _is_environment_lookup(
+            node.child_by_field_name("right"), source_bytes, bindings
+        )
     if node.type == "call_expression":
         function = node.child_by_field_name("function")
         if function is None or function.type != "member_expression":
@@ -520,17 +522,25 @@ def _is_environment_lookup(node, source_bytes: bytes) -> bool:
         if method is None or _get_text(source_bytes, method) != "get":
             return False
         return _is_environment_object(
-            function.child_by_field_name("object"), source_bytes, {"Deno"}, False
+            function.child_by_field_name("object"),
+            source_bytes,
+            {"Deno"},
+            False,
+            bindings,
         )
     if node.type not in {"member_expression", "subscript_expression"}:
         return False
     return _is_environment_object(
-        node.child_by_field_name("object"), source_bytes, {"process", "Bun"}, True
+        node.child_by_field_name("object"),
+        source_bytes,
+        {"process", "Bun"},
+        True,
+        bindings,
     )
 
 
 def _is_environment_object(
-    node, source_bytes: bytes, owners: set[str], allow_import_meta: bool
+    node, source_bytes: bytes, owners: set[str], allow_import_meta: bool, bindings
 ) -> bool:
     node = _unwrap_ts_expression(node)
     if node is None or node.type != "member_expression":
@@ -539,12 +549,67 @@ def _is_environment_object(
     base = node.child_by_field_name("object")
     if prop is None or base is None or _get_text(source_bytes, prop) != "env":
         return False
+    if bindings.dynamic_scope:
+        return False
     if base.type == "identifier":
-        return _get_text(source_bytes, base) in owners
-    return allow_import_meta and base.type == "meta_property"
+        name = _get_text(source_bytes, base)
+        return (
+            name in owners
+            and bindings.unbound(name)
+            and _environment_provider_intact(name, bindings)
+        )
+    return (
+        allow_import_meta
+        and base.type == "meta_property"
+        and _get_text(source_bytes, base) == "import.meta"
+        and _environment_provider_intact("import.meta", bindings)
+    )
 
 
-def _is_environment_default(node, source_bytes: bytes) -> bool:
+def _environment_provider_intact(provider: str, bindings) -> bool:
+    roots = {provider, f"globalThis.{provider}", f"window.{provider}"}
+    source = bindings.source_bytes
+    for node in bindings.nodes:
+        target = None
+        if node.type in {"assignment_expression", "augmented_assignment_expression"}:
+            target = node.child_by_field_name("left")
+        elif node.type == "update_expression" or _is_delete_expression(node):
+            target = next(iter(node.named_children), None)
+        if target is not None:
+            path = _normalized_ts_member_path(_get_text(source, target))
+            if any(
+                path == root
+                or path == root + ".env"
+                or path.startswith(root + ".env.")
+                or path.startswith(root + ".env[")
+                for root in roots
+            ):
+                return False
+        if node.type == "variable_declarator":
+            value = node.child_by_field_name("value")
+            if value is not None and _normalized_ts_member_path(
+                _get_text(source, value)
+            ) in roots | {root + ".env" for root in roots}:
+                return False
+        if node.type != "call_expression":
+            continue
+        for argument in _html_call_arguments(node):
+            if _normalized_ts_member_path(_get_text(source, argument)) in roots | {
+                root + ".env" for root in roots
+            }:
+                return False
+        function = node.child_by_field_name("function")
+        if function is not None:
+            path = _normalized_ts_member_path(_get_text(source, function))
+            if (
+                any(path.startswith(root + ".env.") for root in roots)
+                and path != "Deno.env.get"
+            ):
+                return False
+    return True
+
+
+def _is_environment_default(node, source_bytes: bytes, bindings) -> bool:
     """The literal is the fallback in ``process.env.X ?? "http://localhost"``
     (or ``||``): the host is already configured through the environment."""
     current = node
@@ -564,7 +629,9 @@ def _is_environment_default(node, source_bytes: bytes) -> bool:
         or right.end_byte != current.end_byte
     ):
         return False
-    return _is_environment_lookup(parent.child_by_field_name("left"), source_bytes)
+    return _is_environment_lookup(
+        parent.child_by_field_name("left"), source_bytes, bindings
+    )
 
 
 def _timing_field_word(name: str) -> str:
@@ -691,12 +758,281 @@ def _ts_name_rebound(
     return False
 
 
-def _compares_one_form_entry_twice(node, left, right, source_bytes: bytes) -> bool:
+def _imported_form_api(node, bindings, package: str, imported: str) -> bool:
+    if node is None or node.type != "identifier":
+        return False
+    name = _get_text(bindings.source_bytes, node)
+    binding = bindings.only_binding(name, node)
+    if not (binding and binding[0] == "import" and binding[2:] == (package, imported)):
+        return False
+    if (package, imported) != ("zod", "z"):
+        return True
+    for use in bindings.nodes:
+        if (
+            use.type not in {"identifier", "shorthand_property_identifier"}
+            or _get_text(bindings.source_bytes, use) != name
+        ):
+            continue
+        parent = use.parent
+        current = parent
+        while current is not None and current.type not in {
+            "program",
+            "import_statement",
+        }:
+            current = current.parent
+        if current is not None and current.type == "import_statement":
+            continue
+        if parent is not None and parent.type == "nested_type_identifier":
+            continue
+        if (
+            parent is None
+            or parent.type != "member_expression"
+            or parent.child_by_field_name("object") != use
+        ):
+            return False
+        call = parent.parent
+        if (
+            call is None
+            or call.type != "call_expression"
+            or call.child_by_field_name("function") != parent
+        ):
+            return False
+    return True
+
+
+def _zod_input_field(node, source_bytes: bytes, zod_name: str) -> bool:
+    """Only validation chains that preserve the supplied string value."""
+    while node is not None and node.type == "call_expression":
+        function = node.child_by_field_name("function")
+        if function is None or function.type != "member_expression":
+            return False
+        owner = function.child_by_field_name("object")
+        prop = function.child_by_field_name("property")
+        if owner is None or prop is None:
+            return False
+        method = _get_text(source_bytes, prop)
+        if owner.type == "identifier" and _get_text(source_bytes, owner) == zod_name:
+            return method == "string"
+        if method == "or":
+            arguments = _html_call_arguments(node)
+            if len(arguments) != 1:
+                return False
+            alternative = arguments[0]
+            if alternative.type != "call_expression":
+                return False
+            literal = alternative.child_by_field_name("function")
+            values = _html_call_arguments(alternative)
+            if (
+                literal is None
+                or _get_text(source_bytes, literal) != f"{zod_name}.literal"
+                or len(values) != 1
+                or _string_literal_value(values[0], source_bytes) != ""
+            ):
+                return False
+        elif method not in {
+            "min",
+            "max",
+            "length",
+            "nonempty",
+            "optional",
+            "nullable",
+            "nullish",
+        }:
+            return False
+        node = owner
+    return False
+
+
+def _local_form_refinement(
+    function_node, fields, bound, source_bytes, bindings
+) -> bool:
+    """A private Zod schema consumed only by React Hook Form's resolver.
+
+    A parameter record alone says nothing about who supplied its values. Keep
+    server helpers, exported schemas, transforms and arbitrary consumers visible.
+    """
+    for pattern in _ts_parameter_patterns(function_node):
+        pending = [pattern]
+        while pending:
+            child = pending.pop()
+            if child.type in {"object_assignment_pattern", "assignment_pattern"}:
+                default = child.child_by_field_name("right")
+                if (
+                    default is None
+                    or _string_literal_value(default, source_bytes) != ""
+                ):
+                    return False
+            pending.extend(child.named_children)
+    body = function_node.child_by_field_name("body")
+    if body is None:
+        return False
+    if body.type == "statement_block":
+        statements = [n for n in body.named_children if n.type != "comment"]
+        if len(statements) != 1 or statements[0].type != "return_statement":
+            return False
+        body = statements[0]
+    allowed = {
+        "return_statement",
+        "binary_expression",
+        "unary_expression",
+        "parenthesized_expression",
+        "member_expression",
+        "identifier",
+        "property_identifier",
+        "true",
+        "false",
+        "null",
+        "comment",
+    }
+    pending = [body]
+    while pending:
+        child = pending.pop()
+        if child.type not in allowed:
+            return False
+        if child.type == "identifier" and _get_text(source_bytes, child) not in bound:
+            return False
+        pending.extend(child.named_children)
+    arguments = function_node.parent
+    refinement = arguments.parent if arguments is not None else None
+    if (
+        arguments is None
+        or arguments.type != "arguments"
+        or refinement is None
+        or refinement.type != "call_expression"
+    ):
+        return False
+    refinement_args = _html_call_arguments(refinement)
+    if not refinement_args or refinement_args[0] != function_node:
+        return False
+    function = refinement.child_by_field_name("function")
+    if function is None or function.type != "member_expression":
+        return False
+    method = function.child_by_field_name("property")
+    object_call = function.child_by_field_name("object")
+    if (
+        method is None
+        or _get_text(source_bytes, method) != "refine"
+        or object_call is None
+        or object_call.type != "call_expression"
+    ):
+        return False
+    constructor = object_call.child_by_field_name("function")
+    if constructor is None or constructor.type != "member_expression":
+        return False
+    zod = constructor.child_by_field_name("object")
+    method = constructor.child_by_field_name("property")
+    if (
+        not _imported_form_api(zod, bindings, "zod", "z")
+        or method is None
+        or _get_text(source_bytes, method) != "object"
+    ):
+        return False
+    shape = _html_call_arguments(object_call)
+    if len(shape) != 1 or shape[0].type != "object":
+        return False
+    entries = {}
+    for entry in shape[0].named_children:
+        if entry.type == "comment":
+            continue
+        key = entry.child_by_field_name("key")
+        value = entry.child_by_field_name("value")
+        if (
+            entry.type != "pair"
+            or key is None
+            or value is None
+            or key.type != "property_identifier"
+        ):
+            return False
+        name = _get_text(source_bytes, key)
+        if name in entries:
+            return False
+        entries[name] = value
+    if any(
+        not _zod_input_field(
+            entries.get(name), source_bytes, _get_text(source_bytes, zod)
+        )
+        for name in fields
+    ):
+        return False
+    declaration = refinement.parent
+    if declaration is None or declaration.type != "variable_declarator":
+        return False
+    name_node = declaration.child_by_field_name("name")
+    if name_node is None or name_node.type != "identifier":
+        return False
+    name = _get_text(source_bytes, name_node)
+    binding = bindings.only_binding(name, refinement)
+    if binding is None or binding[0] != "const" or binding[1] != refinement:
+        return False
+    statement = declaration.parent
+    if (
+        statement is not None
+        and statement.parent is not None
+        and statement.parent.type == "export_statement"
+    ):
+        return False
+    consumers = 0
+    for use in bindings.nodes:
+        if (
+            use.type not in {"identifier", "shorthand_property_identifier"}
+            or _get_text(source_bytes, use) != name
+            or use.id == name_node.id
+        ):
+            continue
+        parent = use.parent
+        if parent is not None and parent.type == "type_query":
+            continue
+        call = parent.parent if parent is not None else None
+        if (
+            parent is None
+            or parent.type != "arguments"
+            or call is None
+            or call.type != "call_expression"
+        ):
+            return False
+        if _html_call_arguments(call) != [use] or not _imported_form_api(
+            call.child_by_field_name("function"),
+            bindings,
+            "@hookform/resolvers/zod",
+            "zodResolver",
+        ):
+            return False
+        pair = call.parent
+        key = pair.child_by_field_name("key") if pair is not None else None
+        if (
+            pair is None
+            or pair.type != "pair"
+            or key is None
+            or _get_text(source_bytes, key) != "resolver"
+        ):
+            return False
+        options = pair.parent
+        args = options.parent if options is not None else None
+        hook = args.parent if args is not None else None
+        if (
+            options is None
+            or options.type != "object"
+            or args is None
+            or args.type != "arguments"
+            or hook is None
+            or hook.type != "call_expression"
+        ):
+            return False
+        if _html_call_arguments(hook) != [options] or not _imported_form_api(
+            hook.child_by_field_name("function"), bindings, "react-hook-form", "useForm"
+        ):
+            return False
+        consumers += 1
+    return consumers > 0
+
+
+def _compares_one_form_entry_twice(
+    node, left, right, source_bytes: bytes, bindings
+) -> bool:
     """``data.password === data.confirm_password`` inside ``(data) => ...``, or a
     destructured ``({ password, confirmPassword }) => password === confirmPassword``:
-    a password and its confirmation from one parameter record. The caller
-    supplied both values and neither names a stored secret, so the comparison
-    time reveals nothing it did not send."""
+    a password and its confirmation in a proven local browser form resolver.
+    A matching pair of field names alone is not a trust-boundary proof."""
     left = _unwrap_ts_expression(left)
     right = _unwrap_ts_expression(right)
     if left is None or right is None:
@@ -749,7 +1085,9 @@ def _compares_one_form_entry_twice(node, left, right, source_bytes: bytes) -> bo
         return False
     if pattern is None or not _is_password_confirmation_pair(*fields):
         return False
-    return not _ts_name_rebound(function_node, pattern, bound, source_bytes)
+    return not _ts_name_rebound(
+        function_node, pattern, bound, source_bytes
+    ) and _local_form_refinement(function_node, fields, bound, source_bytes, bindings)
 
 
 def _extract_var_name(node, source_bytes: bytes) -> str | None:
@@ -2634,6 +2972,7 @@ def scan_danger(
         simple_captures.setdefault(k, []).extend(v)
 
     html_bindings = None
+    environment_bindings = None
     for cap_name, (rule_id, severity, message) in _SIMPLE_MAP.items():
         for node in simple_captures.get(cap_name, []):
             if cap_name in {"innerHTML", "outerHTML", "doc_write"} and html_bindings is None:
@@ -2763,11 +3102,14 @@ def scan_danger(
             if (
                 not is_test_file
                 and len(text) >= MIN_SECRET_LENGTH
-                and not _is_environment_default(node, source_bytes)
             ):
                 text_lower = text.lower()
                 for url_prefix in _INTERNAL_URL_PREFIXES:
                     if text_lower.startswith(url_prefix):
+                        if environment_bindings is None:
+                            environment_bindings = _JsBindings(root_node, source_bytes)
+                        if _is_environment_default(node, source_bytes, environment_bindings):
+                            break
                         findings.append(
                             {
                                 "rule_id": "SKY-D248",
@@ -11689,6 +12031,7 @@ def _check_timing_comparison(
     root_node, source_bytes: bytes, file_path: str, findings: list[dict]
 ) -> None:
     """SKY-D253: Detect == or === comparisons with sensitive variable names."""
+    bindings = _JsBindings(root_node, source_bytes)
     stack = [root_node]
     while stack:
         node = stack.pop()
@@ -11704,7 +12047,7 @@ def _check_timing_comparison(
                 if not (
                     _is_null_literal_expression(left)
                     or _is_null_literal_expression(right)
-                    or _compares_one_form_entry_twice(node, left, right, source_bytes)
+                    or _compares_one_form_entry_twice(node, left, right, source_bytes, bindings)
                 ):
                     for operand in (left, right):
                         if operand is None:
