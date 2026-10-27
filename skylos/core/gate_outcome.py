@@ -61,7 +61,8 @@ def evaluate_gate(results, config, *, strict=False, provenance=None):
     if passed:
         details, hint = gatekeeper._passed_gate_summary(results, config, strict=strict)
         return GateOutcome(PASSED, list(reasons), strict, details, hint, gaps)
-    return GateOutcome(FAILED, list(reasons), strict, coverage_gaps=gaps)
+    hint = gatekeeper.cloud_gate_scope_note(results, config, strict=strict)
+    return GateOutcome(FAILED, list(reasons), strict, hint=hint, coverage_gaps=gaps)
 
 
 def incomplete_scan_outcome(results, *, strict=False):
@@ -128,6 +129,8 @@ def outcome_text_lines(outcome, *, force=False, gate=True):
     if note:
         lines.append(f"   {note}")
     lines.extend(gatekeeper.gate_reasons_text(outcome.reasons))
+    if outcome.verdict == FAILED and outcome.hint:
+        lines.append(f"   {outcome.hint}")
     if outcome.verdict == FAILED and force:
         lines.append(f"   {FORCED_PASS_NOTE}")
     lines.extend(coverage_warning_lines(outcome.coverage_gaps))
@@ -150,7 +153,7 @@ def print_outcome(console, outcome, *, force=False, gate=True):
     else:
         # strict=True: print and return; never prompt from a scan's exit path.
         gatekeeper._handle_failed_gate(
-            console, outcome.reasons, force=force, strict=True
+            console, outcome.reasons, force=force, strict=True, hint=outcome.hint
         )
     print_coverage_warning(console, outcome.coverage_gaps)
 
@@ -180,7 +183,7 @@ def gate_record(outcome, *, scope, force=False):
         "exit_code": outcome.exit_code(force=force),
         "strict": bool(outcome.strict),
         "headline": verdict_line(outcome),
-        "hint": outcome.hint if passed else None,
+        "hint": outcome.hint,
         "reason_details": [_reason_json(reason) for reason in outcome.reasons],
         "coverage_status": "incomplete"
         if outcome.verdict == INCOMPLETE

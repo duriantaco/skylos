@@ -361,10 +361,17 @@ block_ai_defect_severities = ["CRITICAL"]
 gate fails if either one fails. In a pull request, `skylos cicd gate
 --diff-base` reads this policy from the base branch, so a pull request cannot
 turn the rule off for itself. A gate policy synced from Skylos Cloud replaces
-the repository's `[tool.skylos.gate]` section. `max_critical`, `max_secrets`
-and `fail_on_critical = false` cannot loosen the critical-issue and secret
-rule; a gate run prints a warning when they try, and for a `rules` entry that
-is not a rule ID.
+the repository's `[tool.skylos.gate]` section, and the gate then checks what
+the Cloud gate checks: its mode (zero new issues, limits per category, per
+severity, or both) and its limits, which the verdict line prints. Skylos Cloud
+counts only new issues, so check a branch with
+`skylos . -a --gate --diff origin/main`; a full scan prints a line saying so.
+The `.skylos/config.yaml` that `skylos sync pull` writes applies to `--diff`
+gates while it is not committed; a copy committed only on the branch does not.
+A Cloud gate that is turned off leaves the built-in limits. `max_critical`,
+`max_secrets` and `fail_on_critical = false` cannot loosen the critical-issue
+and secret rule; a gate run prints a warning when they try, and for a `rules`
+entry that is not a rule ID.
 
 Every gate run ends with one verdict line and the reasons behind it:
 `Quality Gate: PASSED`, `Quality Gate: FAILED` (exit 1), or

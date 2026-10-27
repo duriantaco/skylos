@@ -72,6 +72,24 @@ def _base_text(context, commit, relative):
     return content.stdout
 
 
+def is_untracked_worktree_file(start_path, path):
+    """Whether Git lists ``path`` as an untracked file of this worktree.
+
+    ``skylos sync pull`` writes ``.skylos/config.yaml`` without committing it.
+    A file a commit carries, a file inside a submodule and a path through a
+    symlinked folder are never listed, so pull request content cannot pass.
+    """
+    context = GitContext.from_path(start_path)
+    try:
+        relative = Path(path).absolute().relative_to(context.root).as_posix()
+    except ValueError:
+        return False
+    listing = context.run("ls-files", "-z", "--others", "--", relative)
+    if listing.returncode:
+        return False
+    return [name for name in listing.stdout.split("\0") if name] == [relative]
+
+
 def base_rule_pack_texts(start_path, commit, rules_dir):
     """(display path, text, problem) per rule pack in ``rules_dir`` at ``commit``.
 

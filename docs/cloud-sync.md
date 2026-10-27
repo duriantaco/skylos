@@ -10,6 +10,19 @@ skylos sync pull --format json
 skylos sync pull --dry-run --format json
 ```
 
+The pulled `gate` section replaces the repository's `[tool.skylos.gate]`, and
+`skylos . --gate` checks it the way Skylos Cloud does: the mode (`zero-new`,
+`category`, `severity` or `both`) with its `by_category` and `by_severity`
+limits, any critical security issue, and the `block_secrets` and
+`block_ai_defect_severities` switches. Any secret still fails locally whatever
+the Cloud limit. The verdict line prints the Cloud limits. Skylos Cloud counts
+only new issues, so check a branch with `skylos . -a --gate --diff origin/main`
+(or `--baseline`); a full scan prints a line saying so. The pulled file applies
+to `--diff` gates while it is not committed; a copy committed only on the
+branch is branch content and does not. A Cloud gate that is turned off leaves the
+built-in limits, and an unknown mode or unusable limit reads as zero new
+issues, so a damaged file never loosens the gate.
+
 `--dry-run` authenticates and validates the responses without creating or
 modifying repository files or the private trusted-suppression cache. Its JSON
 receipt has `status: "validated"`, `dry_run: true`, the destination file paths,

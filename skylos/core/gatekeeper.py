@@ -443,6 +443,72 @@ def _effective_gate_config(config):
     return effective
 
 
+def _cloud_gate_policy(config):
+    from skylos.config import synced_gate_policy
+    from skylos.core.cloud_gate import cloud_gate_policy
+
+    return cloud_gate_policy(synced_gate_policy(config))
+
+
+def active_cloud_gate(config):
+    """The synced Skylos Cloud gate this run applies, or None.
+
+    A disabled Cloud gate is None too: the built-in limits then apply, as
+    they did before Cloud gates were read.
+    """
+    policy = _cloud_gate_policy(config)
+    if policy is None or not policy["enabled"]:
+        return None
+    return policy
+
+
+def _new_issues_only(results):
+    from skylos.core.gate_incomplete import _is_diff_scoped
+
+    summary = results.get("analysis_summary")
+    if not isinstance(summary, dict):
+        summary = {}
+    return summary.get("baseline_scoped") is True or _is_diff_scoped(results, summary)
+
+
+def cloud_gate_scope_note(results, config, *, strict=False):
+    """One line when a Cloud gate checks a scan that is not limited to new issues."""
+    from skylos.core.cloud_gate import CLOUD_GATE_SCOPE_NOTE
+
+    if strict or active_cloud_gate(config) is None:
+        return None
+    if not isinstance(results, dict):
+        results = {}
+    if _new_issues_only(results):
+        return None
+    return CLOUD_GATE_SCOPE_NOTE
+
+
+def _cloud_gate_notes(config):
+    from skylos.config import synced_gate_left_out_by_policy_base
+    from skylos.core.cloud_gate import (
+        CLOUD_GATE_OFF_NOTE,
+        UNUSED_CLOUD_GATE_NOTE,
+    )
+
+    notes = []
+    if synced_gate_left_out_by_policy_base(config):
+        notes.append(UNUSED_CLOUD_GATE_NOTE)
+    policy = _cloud_gate_policy(config)
+    if policy is None:
+        return notes
+    if not policy["enabled"]:
+        notes.append(CLOUD_GATE_OFF_NOTE)
+        return notes
+    secret_limit = policy["by_category"]["SECRET"]
+    if policy["mode"] in ("category", "both") and secret_limit > 0:
+        notes.append(
+            f"Your Skylos Cloud policy allows {_count_noun(secret_limit, 'new secret')}, "
+            "but any secret still fails the local gate."
+        )
+    return notes
+
+
 def gate_config_notes(config):
     """Plain-text notes for gate settings that have no effect."""
     from skylos.config import printable_text
@@ -453,7 +519,7 @@ def gate_config_notes(config):
     gate_config = config.get("gate", {})
     if not isinstance(gate_config, dict):
         return []
-    notes = []
+    notes = _cloud_gate_notes(config)
     relaxed = []
     if gate_config.get("fail_on_critical") is False:
         relaxed.append("fail_on_critical = false")
@@ -661,7 +727,7 @@ def _ai_defect_policy_hint(severities):
     )
 
 
-def _apply_ai_defect_severity_block(reasons, gate_config, ai_defects):
+def _apply_ai_defect_severity_block(reasons, gate_config, ai_defects, *, hint=None):
     """Fail on any AI defect at a blocking severity, whatever the count limit.
 
     Returns the blocking issues; an empty list means the rule passed.
@@ -675,7 +741,7 @@ def _apply_ai_defect_severity_block(reasons, gate_config, ai_defects):
             GateReason(
                 _ai_defect_block_reason(blocking),
                 blocking,
-                hint=_ai_defect_policy_hint(severities),
+                hint=hint or _ai_defect_policy_hint(severities),
             )
         )
     return blocking
@@ -725,6 +791,82 @@ def _apply_gate_thresholds(reasons, gate_config, groups):
             passed = False
 
     return passed
+
+
+def _cloud_gate_conditions(policy, found, results):
+    from skylos.core.cloud_gate import cloud_gate_conditions
+
+    return cloud_gate_conditions(
+        policy, found, custom_rules=results.get("custom_rules") or []
+    )
+
+
+def _apply_cloud_gate(reasons, gate_config, policy, found, results):
+    """Skylos Cloud's checks for a synced gate, with the local floors kept.
+
+    Like Cloud, any critical security issue fails, the mode decides the
+    limits, and the AI-code severity rule applies outside zero-new (which
+    already counts every AI-code issue).
+    """
+    from skylos.core.cloud_gate import CLOUD_AI_DEFECT_HINT
+
+    passed = True
+    conditions = _cloud_gate_conditions(policy, found, results)
+    critical, limits = conditions[0], conditions[1:]
+    if critical.failed:
+        passed = False
+        reasons.append(
+            GateReason(
+                _count_noun(len(critical.issues), critical.noun),
+                critical.issues,
+            )
+        )
+    if policy["mode"] != "zero-new" and _apply_ai_defect_severity_block(
+        reasons, gate_config, found["ai_defects"], hint=CLOUD_AI_DEFECT_HINT
+    ):
+        passed = False
+    listed = {id(issue) for issue in critical.issues if critical.failed}
+    for condition in limits:
+        if not condition.failed:
+            continue
+        passed = False
+        if all(id(issue) in listed for issue in condition.issues):
+            continue
+        _append_threshold_reason(
+            reasons,
+            issues=list(condition.issues),
+            limit=condition.limit,
+            noun=condition.noun,
+            plural=condition.plural,
+        )
+    return passed
+
+
+def _cloud_gate_summary(results, config, policy):
+    from skylos.core.cloud_gate import category_label, cloud_category_scanned
+
+    conditions = _cloud_gate_conditions(
+        policy, _gate_findings(results, config), results
+    )
+    parts = []
+    not_scanned = []
+    for condition in conditions:
+        category = None
+        if condition.kind == "critical":
+            category = "SECURITY"
+        elif condition.kind in ("category", "secrets"):
+            category = condition.key
+        if category and not cloud_category_scanned(category, results):
+            label = category_label(category)
+            if label not in not_scanned:
+                not_scanned.append(label)
+            continue
+        parts.append(
+            f"{len(condition.issues)} {condition.label} (limit {condition.limit})"
+        )
+    if not_scanned:
+        parts.append(f"{', '.join(not_scanned)} not scanned (add -a)")
+    return "Skylos Cloud policy: " + ", ".join(parts)
 
 
 def _gate_findings(results, config=None):
@@ -1010,7 +1152,13 @@ def check_gate(results, config, strict=False, provenance=None):
         )
         return strict_passed and not reasons, reasons + strict_reasons
 
-    passed = _apply_gate_thresholds(reasons, gate_config, _gate_issue_groups(**found))
+    cloud_gate = active_cloud_gate(config)
+    if cloud_gate is None:
+        passed = _apply_gate_thresholds(
+            reasons, gate_config, _gate_issue_groups(**found)
+        )
+    else:
+        passed = _apply_cloud_gate(reasons, gate_config, cloud_gate, found, results)
     if reasons:
         passed = False
     regressions = _security_control_regressions(results)
@@ -1133,6 +1281,12 @@ def _passed_gate_summary(results, config, *, strict):
     """Say which limits a passing scan was held to and what they let through."""
     results = results if isinstance(results, dict) else {}
     config = config if isinstance(config, dict) else {}
+    cloud_gate = active_cloud_gate(config)
+    if cloud_gate is not None and not strict:
+        return (
+            _cloud_gate_summary(results, config, cloud_gate),
+            cloud_gate_scope_note(results, config),
+        )
     gate_config = _effective_gate_config(config)
     groups = _gate_issue_groups(**_gate_findings(results, config))
     security_scanned = _security_scanned(results)
@@ -1343,9 +1497,11 @@ def _handle_passed_gate(console, command_to_run, *, details="", hint=None):
     return 0
 
 
-def _handle_failed_gate(console, reasons, *, force, strict):
+def _handle_failed_gate(console, reasons, *, force, strict, hint=None):
     console.print("\n[bold red] Quality Gate: FAILED[/bold red]")
     _print_gate_reasons(console, reasons)
+    if hint:
+        console.print(f"   [yellow]{escape(hint)}[/yellow]", soft_wrap=True)
 
     if force:
         console.print("[yellow] Forced pass (local only)[/yellow]")
@@ -1366,9 +1522,11 @@ def _handle_failed_gate(console, reasons, *, force, strict):
     return 1
 
 
-def _handle_advisory_gate(console, reasons):
+def _handle_advisory_gate(console, reasons, *, hint=None):
     console.print("\n[bold yellow]Quality Gate: ADVISORY[/bold yellow]")
     _print_gate_reasons(console, reasons)
+    if hint:
+        console.print(f"   [yellow]{escape(hint)}[/yellow]", soft_wrap=True)
     console.print("[yellow]Advisory mode enabled; CI is allowed to pass.[/yellow]")
     return 0
 
@@ -1449,9 +1607,17 @@ def run_gate_interaction(
             console, command_to_run, details=details, hint=hint
         )
     elif advisory:
-        exit_code = _handle_advisory_gate(console, reasons)
+        exit_code = _handle_advisory_gate(
+            console, reasons, hint=cloud_gate_scope_note(results, config, strict=strict)
+        )
     else:
-        exit_code = _handle_failed_gate(console, reasons, force=force, strict=strict)
+        exit_code = _handle_failed_gate(
+            console,
+            reasons,
+            force=force,
+            strict=strict,
+            hint=cloud_gate_scope_note(results, config, strict=strict),
+        )
     _print_coverage_gaps(console, coverage_gaps)
     return exit_code
 

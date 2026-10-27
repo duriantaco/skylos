@@ -1193,6 +1193,8 @@ def _run_scan_command(
                 )
             else:
                 result = filter_new_findings(result, baseline)
+            if baseline is not None:
+                result.setdefault("analysis_summary", {})["baseline_scoped"] = True
 
         if getattr(args, "verify_security", False):
             _verify_security_findings(
