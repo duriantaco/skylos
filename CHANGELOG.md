@@ -1,5 +1,18 @@
 ## Changelog
 
+## [5.1.2](https://github.com/duriantaco/skylos/compare/v5.1.1...v5.1.2) (2026-10-27)
+
+
+### Bug Fixes
+
+* **cli:** make help, docs and tour match what commands do ([#1095](https://github.com/duriantaco/skylos/issues/1095)) ([df0e251](https://github.com/duriantaco/skylos/commit/df0e251e136b96a70d251843c1fb929828326b0f))
+* **cli:** safer clean, clear no-terminal errors and honest filters ([#1094](https://github.com/duriantaco/skylos/issues/1094)) ([511e63c](https://github.com/duriantaco/skylos/commit/511e63cf5bdd54411c5bb7a423296df6737de666))
+* **deadcode:** quiet framework class attributes when deps are off-path ([#1090](https://github.com/duriantaco/skylos/issues/1090)) ([806bc79](https://github.com/duriantaco/skylos/commit/806bc79d981df6c4fce7e5513460d9bc62efadde))
+* **defend:** find schema tools, tool-call sinks and prompt inputs ([#1098](https://github.com/duriantaco/skylos/issues/1098)) ([908d83e](https://github.com/duriantaco/skylos/commit/908d83ecea591b39956fa5f44e4936045aec6743))
+* **done:** check made-up npm imports in JS and TS files ([#1096](https://github.com/duriantaco/skylos/issues/1096)) ([ea838a8](https://github.com/duriantaco/skylos/commit/ea838a8342d6015db1a1c75062694703063d5de5))
+* **done:** stop excusing deleted tests and made-up imports ([#1091](https://github.com/duriantaco/skylos/issues/1091)) ([0a19a1c](https://github.com/duriantaco/skylos/commit/0a19a1c8559ae3c11cd3c201fb2a505459f252b9))
+* **llm:** fail clearly without skylos[llm] and fix related CI, MCP and suite output ([#1092](https://github.com/duriantaco/skylos/issues/1092)) ([db2033f](https://github.com/duriantaco/skylos/commit/db2033fbadc8983e72da84fa443a468cb4983ec0))
+
 ## [5.1.1](https://github.com/duriantaco/skylos/compare/v5.1.0...v5.1.1) (2026-10-26)
 
 
