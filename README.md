@@ -287,8 +287,8 @@ skylos agent init
 skylos agent test --allow-contract-endpoint
 ```
 
-Create a project config with thresholds, ignores, template hooks, and vibe
-dictionary extensions:
+Create a project config with thresholds, ignores, and vibe dictionary
+extensions:
 
 ```bash
 skylos init
@@ -304,6 +304,13 @@ skylos rules list cross --json
 skylos rules list --packs --json
 skylos cache stats
 ```
+
+Scans with `--quality` or `-a` apply every `.yml`/`.yaml` pack in a
+`.skylos/rules/` folder from the scanned file up to the repository root (the
+nearest pack wins for a rule ID). In PR CI, as with `[tool.skylos]`, the
+packs come from the base branch, so a pull request cannot drop or edit the
+rules its own gate runs. A pack that cannot be read is skipped with a
+warning naming it.
 
 <a id="cicd"></a>
 
@@ -351,7 +358,10 @@ block_ai_defect_severities = ["CRITICAL"]
 gate fails if either one fails. In a pull request, `skylos cicd gate
 --diff-base` reads this policy from the base branch, so a pull request cannot
 turn the rule off for itself. A gate policy synced from Skylos Cloud replaces
-the repository's `[tool.skylos.gate]` section.
+the repository's `[tool.skylos.gate]` section. `max_critical`, `max_secrets`
+and `fail_on_critical = false` cannot loosen the critical-issue and secret
+rule; a gate run prints a warning when they try, and for a `rules` entry that
+is not a rule ID.
 
 Every gate run ends with one verdict line and the reasons behind it:
 `Quality Gate: PASSED`, `Quality Gate: FAILED` (exit 1), or
@@ -426,7 +436,7 @@ every command. See [what they don't do](./docs/agent-hooks.md#what-it-doesnt-do)
 | Changed-lines review | `skylos . -a --diff origin/main` | Keeps findings focused on active work instead of legacy debt. A removed security control (SKY-L021, such as a deleted auth decorator) is still reported, even when the change only deletes the decorator line | [Quality gate docs](https://docs.skylos.dev/quality-gate) |
 | Incumbent scanner comparison | `skylos compare . --against incumbent.sarif` | Runs Skylos beside the current scanner and produces a revision-aware scorecard: active overlap, raw unique findings by category, and eligible findings inside evidence-backed unused symbols, without replacing the current gate | [Scanner comparison](./docs/scanner-comparison.md) |
 | Runtime-assisted dead-code check | `skylos . --trace` | Uses runtime traces to reduce dynamic-code false positives | [Smart tracing](https://docs.skylos.dev/smart-tracing) |
-| Local rule pack | `skylos rules init` | Scaffolds YAML rules for project-specific security and quality checks | [Custom rules](https://docs.skylos.dev/custom-rules) |
+| Local rule pack | `skylos rules init` | Scaffolds `.skylos/rules/local.yml`, project-specific YAML checks that `--quality` and `-a` scans apply | [Custom rules](https://docs.skylos.dev/custom-rules) |
 | Security agent quick scan | `skylos agent security-quick .` | One-shot LLM security audit; compatibility alias for `skylos agent scan . --security` | [AI features](https://docs.skylos.dev/ai-features) |
 | Security agent deep scan | `skylos agent security-deep .` | Three-stage security workflow with threat-model context, static threat traces, discovery/validation, and remediation handoff | [AI features](https://docs.skylos.dev/ai-features) |
 | AI-assisted review | `skylos agent scan .` | Static analysis plus optional LLM review and fix suggestions | [AI features](https://docs.skylos.dev/ai-features) |
@@ -750,19 +760,13 @@ not be analysed. See [Exit Codes And Incomplete Analysis](./docs/cli-output.md#e
 See [Installation](https://docs.skylos.dev/installation) for source installs,
 container usage, and optional dependencies.
 
-## Configure Templates And Vibe Checks
+## Configure Vibe Checks And Entrypoints
 
 Run `skylos init` to add these sections to `pyproject.toml`:
 
 ```toml
 [tool.skylos]
 exclude = ["node_modules", "dist"]
-
-[tool.skylos.templates]
-# security = ".skylos/templates/security.md"
-# quality = ".skylos/templates/quality.md"
-# security_audit = ".skylos/templates/security_audit.md"
-# review = ".skylos/templates/review.md"
 
 [tool.skylos.vibe]
 extra_phantom_names = ["verify_enterprise_auth"]
@@ -787,8 +791,12 @@ structural_signatures_only = true
 include_source = false
 ```
 
-Template files extend Skylos' built-in prompts; they do not replace the
-JSON-only output contract or untrusted-code safety rules. Vibe dictionary
+LLM prompt templates are not read from the repository: pass a trusted file
+with `--prompt-template KIND=PATH` to `skylos agent scan`, `agent audit`,
+`agent security-quick` or `agent security-deep` (KIND is `security`,
+`quality`, `security_audit` or `review`). A template extends Skylos' built-in
+prompt; it does not replace the JSON-only output contract or untrusted-code
+safety rules. Vibe dictionary
 extensions let teams teach Skylos about local fake-auth helpers, project
 credential names, sensitive files, and network calls that must set timeouts.
 Dead-code entrypoints let teams mark proprietary framework classes, lifecycle
@@ -1282,6 +1290,24 @@ The CLI equivalents (`skylos verify`, `skylos defend`, `skylos . -a`) and
 `skylos agent install-hooks` run on your machine with no account or key;
 their dependency and package checks still query public registries (see
 [What Leaves Your Machine](#what-leaves-your-machine)).
+
+**Can the MCP server run in Docker or over the network?**
+
+Yes. `skylos mcp --transport sse` (or `streamable-http`) serves MCP over HTTP
+on `MCP_BIND` (default `127.0.0.1`) and `PORT` (default `8080`), and refuses
+to start without `SKYLOS_MCP_TOKEN` (at least 16 characters), the bearer token
+every client must send. The image built from `skylos_mcp/Dockerfile` sets
+`MCP_BIND=0.0.0.0` so a published port reaches it:
+
+```bash
+export SKYLOS_MCP_TOKEN="$(openssl rand -hex 24)"
+docker build -f skylos_mcp/Dockerfile -t skylos-mcp .
+docker run --rm -p 8080:8080 -e SKYLOS_MCP_TOKEN skylos-mcp
+```
+
+Clients connect to `http://localhost:8080/sse` with
+`Authorization: Bearer <token>`. Behind a proxy, set `SKYLOS_MCP_PUBLIC_URL`
+to the address clients use.
 
 **Does Skylos replace Ruff?**
 

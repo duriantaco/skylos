@@ -51,7 +51,7 @@ Rule IDs use a stable public prefix:
 | Evidence report | `skylos defend . --format md`; auditor-facing markdown artifact with integration inventory, per-check results, OWASP LLM + Agentic coverage, regulatory framework evidence, remediation appendix, and attestation. |
 | Attestation digest | Reproducible SHA-256 over scanned file contents, policy hash, plugin set, OWASP selection, filters, integration inventory, scores, and full check evidence; emitted in defend JSON/md/SARIF output. Identical trees, flags, policy, plugin set, and Skylos version reproduce identical digests; timestamps are excluded. |
 | Framework evidence | Defend check results mapped to EU AI Act, NIST AI RMF, and ISO/IEC 42001 controls with strict "evidence toward" semantics — never a compliance determination. |
-| Prompt templates | Maintainer-provided files under `[tool.skylos.templates]` that extend built-in LLM prompts without replacing safety and JSON-output contracts. |
+| Prompt templates | Trusted files passed with `--prompt-template KIND=PATH` to `skylos agent` commands that extend built-in LLM prompts without replacing safety and JSON-output contracts. Repository config cannot set them; `[tool.skylos.templates]` is not read. |
 | Vibe dictionary | Project-specific keyword extensions under `[tool.skylos.vibe]` for phantom security names, credential names, sensitive files, and timeout-required calls. |
 | Quality gate | A threshold-based pass/fail decision used locally or in CI. Critical security issues, secrets, and AI-code issues at `block_ai_defect_severities` (default `["CRITICAL"]`) fail it regardless of counts. Every run ends with a verdict line and its reasons: `PASSED`, `FAILED`, or `INCOMPLETE — could not decide (exit 2)` when required analysis did not finish; `--format json` carries it as the top-level `gate` object. Files that were not analysed (a parse error, a missing language engine) are a coverage warning under a PASSED or FAILED verdict, not exit 2, unless `--strict` or `require_complete = true` asks for complete coverage or most of the code was not analysed. |
 | Risk review | `skylos cicd risk-review --base REF`; the GitHub check "Skylos risk review" (`skylos cicd init --risk-review`). Lists the risk classes a pull request contains. With risks, the check fails until a person with write access approves the head commit; approvals from bot accounts and approvals of older commits do not count. Exit 0 pass, 1 needs a human approval, 2 could not decide. Settings: `[tool.skylos.approval]` at the base. See [docs/risk-review.md](./docs/risk-review.md). |
@@ -1812,4 +1812,11 @@ Prompt text may also use range notation such as `SKY-D226-228`,
 
 Custom rule packs may emit project-defined IDs from `.skylos/rules/*.yml`.
 Prefer a stable project prefix, for example `ORG-SEC001`, to avoid colliding
-with Skylos-owned `SKY-*` IDs.
+with Skylos-owned `SKY-*` IDs. Scans with `--quality` or `-a` load the packs
+in every `.skylos/rules/` folder from the scanned file up to the repository
+root (nearest pack wins per rule ID), plus `~/.skylos/rules/*.yml` and Cloud
+rules. With `SKYLOS_POLICY_BASE` set (PR CI), project packs are read from that
+commit only. A pack's rules only add findings; one with a `SKY-*` ID does not
+replace or hide the built-in finding. Packs that are symlinks, over 1 MB,
+invalid YAML, use YAML aliases or have no `rules` list are skipped and named
+in a scan warning.

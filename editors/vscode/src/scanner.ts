@@ -115,6 +115,37 @@ export async function doctorSkylos(): Promise<DoctorResult> {
   });
 }
 
+export interface CommandResult {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  error?: string;
+}
+
+export async function runSkylosCommand(args: string[], cwd: string): Promise<CommandResult> {
+  const bin = getSkylosBin();
+  out.appendLine(`Running: ${formatCommand(bin, args)}`);
+  return new Promise<CommandResult>((resolve) => {
+    const proc = spawn(bin, args, { cwd });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+    proc.stderr.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+    proc.on("close", (code) => {
+      if (stdout.trim()) out.appendLine(stdout.trim());
+      if (stderr.trim()) out.appendLine(stderr.trim());
+      resolve({ code, stdout, stderr });
+    });
+    proc.on("error", (err) => {
+      resolve({ code: null, stdout, stderr, error: err.message });
+    });
+  });
+}
+
 async function runScan(target: string, wsRoot: string, token?: vscode.CancellationToken, diffBase?: string): Promise<ScanResult> {
   cancelScan();
 

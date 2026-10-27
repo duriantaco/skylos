@@ -478,7 +478,7 @@ COMMANDS = [
         "desc": "Create a Skylos migration plan from Sonar properties",
         "details": [
             "properties_file defaults to sonar-project.properties",
-            "Use --write-config to write mapped settings to .skylos/config.yaml",
+            "Use --write-config to write the exclusions to a new skylos.toml (existing settings are never changed)",
         ],
         "group": "Utility",
     },

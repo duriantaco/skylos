@@ -800,6 +800,11 @@ rules = ["SKY-L027"]
 max_quality = 0
 ```
 
+`rules` takes any rule ID, including multi-part ones such as `SKY-SCA-LIC001`
+or a dependency advisory `SKY-SCA-GHSA-...` (naming an advisory lists its
+dev-only and combined rows, which are hidden by default). A gate run prints a
+warning for an entry that is not a rule ID, such as `D211`.
+
 `--all-advice` lists every generated finding and includes it in the gate.
 Defect, Review, security, dead-code and custom findings cannot be hidden by an
 Advice listing mark. Unknown or malformed marks keep findings visible.

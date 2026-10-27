@@ -2732,6 +2732,7 @@ def _build_main_scan_context(args):
         include_folders=args.include_folders,
     )
     _apply_config_driven_analysis_flags(args, project_cfg, console)
+    _print_config_warnings(args, console, project_cfg, project_root)
 
     return SimpleNamespace(
         project_root=project_root,
@@ -2741,6 +2742,28 @@ def _build_main_scan_context(args):
         config=project_cfg,
         config_file=config_file,
     )
+
+
+def _print_config_warnings(args, console, project_cfg, project_root) -> None:
+    """Say which configured settings hide nothing or have no effect."""
+    from skylos.config import whitelist_warnings
+    from skylos.core.gatekeeper import gate_config_notes
+
+    warnings = whitelist_warnings(project_cfg)
+    if getattr(args, "gate", False):
+        warnings.extend(gate_config_notes(project_cfg))
+    if getattr(args, "quality", False):
+        from skylos.rules.project_rules import project_rule_warnings
+
+        try:
+            warnings.extend(project_rule_warnings(project_root))
+        except ConfigError:
+            pass
+    for warning in warnings:
+        if _is_main_machine_output(args):
+            print(f"Warning: {warning}", file=sys.stderr)
+        else:
+            console.print(f"[warn]{_escape_markup(warning)}[/warn]", soft_wrap=True)
 
 
 def _gate_outcome(result: dict, config: dict, args, *, provenance=None):

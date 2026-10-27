@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import type { FindingsStore } from "./store";
 import { getDocumentFilters } from "./types";
 import { isDeadCodeRule } from "./findingCore";
+import { fileIgnoreEdit, hasLineIgnore, lineIgnoreEdit, type IgnoreEdit } from "./suppressionCore";
 
 
 export class SkylosQuickFixProvider implements vscode.CodeActionProvider {
@@ -30,32 +31,41 @@ export class SkylosQuickFixProvider implements vscode.CodeActionProvider {
           && (candidate.ruleId === ruleId || candidate.legacyRuleId === ruleId),
         );
 
-      const ignoreComment = getIgnoreComment(langId);
-
-      if (!lineText.includes(ignoreComment)) {
+      let lineEdit: IgnoreEdit | undefined;
+      if (!hasLineIgnore(lineText))
+        lineEdit = lineIgnoreEdit(langId, ruleId, line, lineText);
+      if (lineEdit) {
         const ignoreAction = new vscode.CodeAction(
           `Skylos: Ignore on this line`,
           vscode.CodeActionKind.QuickFix,
         );
         ignoreAction.edit = new vscode.WorkspaceEdit();
-        ignoreAction.edit.replace(
+        ignoreAction.edit.insert(
           document.uri,
-          new vscode.Range(line, 0, line, lineText.length),
-          lineText + "  " + ignoreComment,
+          new vscode.Position(lineEdit.line, lineEdit.column),
+          lineEdit.text,
         );
         ignoreAction.diagnostics = [diag];
         actions.push(ignoreAction);
       }
 
-      const fileIgnore = new vscode.CodeAction(
-        `Skylos: Ignore entire file`,
-        vscode.CodeActionKind.QuickFix,
-      );
-      fileIgnore.edit = new vscode.WorkspaceEdit();
-      const fileComment = getFileIgnoreComment(langId);
-      fileIgnore.edit.insert(document.uri, new vscode.Position(0, 0), fileComment + "\n");
-      fileIgnore.diagnostics = [diag];
-      actions.push(fileIgnore);
+      const firstLines = [0, 1].filter((index) => index < document.lineCount)
+        .map((index) => document.lineAt(index).text);
+      const fileEdit = fileIgnoreEdit(langId, firstLines);
+      if (fileEdit) {
+        const fileIgnore = new vscode.CodeAction(
+          `Skylos: Ignore entire file`,
+          vscode.CodeActionKind.QuickFix,
+        );
+        fileIgnore.edit = new vscode.WorkspaceEdit();
+        fileIgnore.edit.insert(
+          document.uri,
+          new vscode.Position(fileEdit.line, fileEdit.column),
+          fileEdit.text,
+        );
+        fileIgnore.diagnostics = [diag];
+        actions.push(fileIgnore);
+      }
 
       if (finding?.fixPatch) {
         const previewFix = new vscode.CodeAction(
@@ -123,16 +133,4 @@ function getRuleId(code: vscode.Diagnostic["code"]): string {
     return String(code.value);
   }
   return "";
-}
-
-function getIgnoreComment(langId: string): string {
-  if (langId === "python") 
-    return "# pragma: no skylos";
-  return "// skylos-ignore";
-}
-
-function getFileIgnoreComment(langId: string): string {
-  if (langId === "python") 
-    return "# skylos-ignore-file";
-  return "// skylos-ignore-file";
 }

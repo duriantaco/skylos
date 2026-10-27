@@ -109,7 +109,13 @@ Full scans skip generated/vendored files (Django migrations, `static/**/lib`,
 
 - `skylos . --gate`: apply `[tool.skylos.gate]` thresholds. Any critical
   AI-code issue fails by default; set `block_ai_defect_severities = []` to
-  turn that off.
+  turn that off. Any critical security issue and any secret always fail:
+  `max_critical`/`max_secrets` above 0 and `fail_on_critical = false` only
+  print a warning. `rules = [...]` accepts any rule ID, multi-part
+  `SKY-SCA-*` ones included; an entry that is not a rule ID prints a warning.
+  `[tool.skylos.gate.agent] require_defend`/`min_defend_score` are not
+  supported and fail the agent gate; gate AI defense with
+  `skylos defend . --min-score N --fail-on critical`.
 - `--strict`: fail on any finding.
 - `--force` / `-f`: bypass gate exit failure.
 - Every gate run ends with a verdict line and its reasons: `Quality Gate:
@@ -168,7 +174,9 @@ control. Local rich scans with findings end with a `Next: skylos cloud` block.
   hybrid static and LLM analysis, requiring `[llm]` extras and provider config.
   Without the extra, LLM commands exit 2 with `pip install "skylos[llm]"`;
   `skylos doctor` shows `LLM support not installed`.
-- `skylos rules init|validate|list`: local YAML rule packs.
+- `skylos rules init|validate|list`: local YAML rule packs. `init` writes
+  `.skylos/rules/local.yml`; `--quality`/`-a` scans apply packs in
+  `.skylos/rules/` up to the repository root (base-branch copy in PR CI).
 - `skylos cicd init`: set up the pull request gate for the detected CI
   (`--ci github|gitlab|jenkins|bitbucket|azure|circleci|other`); writes a new
   CI file or prints the block for an existing one.
