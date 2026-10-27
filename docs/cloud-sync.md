@@ -50,6 +50,12 @@ no-follow directory descriptors. Windows uses native handle-relative opens,
 renames and deletes. A platform without either capability refuses the pull;
 checking paths before a write is insufficient to prevent directory-swap races.
 
+After both files are verified, the pull records their SHA-256 in
+`~/.skylos/synced-files/` (one file per checkout, outside the repository).
+`skylos done` uses it to leave out the untracked files the pull wrote; an edit
+after the pull, or a pull that failed part way, makes them count as a change
+again. CI never uses this record.
+
 This is rollback for caught failures, not a multi-file transaction across a
 process crash or power loss. A crash between the two file replacements can
 leave a mixed generation. The trusted cache remains invalidated until its
