@@ -348,6 +348,21 @@ COMMANDS = [
         "group": "CI/CD",
     },
     {
+        "name": "skylos cicd pr-policy --output DIR",
+        "desc": "Save the Skylos Cloud policy for a PR scan (workflow step written by skylos cicd init)",
+        "group": "CI/CD",
+    },
+    {
+        "name": "skylos cicd pr-scan [path] --policy DIR --output FILE",
+        "desc": "Scan a PR head as untrusted data, with no upload credential (workflow step)",
+        "group": "CI/CD",
+    },
+    {
+        "name": "skylos cicd pr-publish --input FILE",
+        "desc": "Upload a prepared PR scan to Skylos Cloud with GitHub OIDC (workflow step)",
+        "group": "CI/CD",
+    },
+    {
         "name": "skylos cloud [PATH]",
         "desc": "Scan with every check, upload the findings (not the repository) and show this branch's gate and link",
         "details": [
