@@ -98,17 +98,24 @@ def _folder_packs(folder: Path) -> list[dict]:
                 {"path": str(path), "rules": [], "problem": "larger than 1 MB"}
             )
             continue
-        packs.append(_cached_file_pack(str(path), info.st_mtime_ns, info.st_size))
+        packs.append(
+            _cached_file_pack(str(folder), path.name, info.st_mtime_ns, info.st_size)
+        )
     return packs
 
 
 @functools.lru_cache(maxsize=64)
-def _cached_file_pack(path: str, _mtime_ns: int, _size: int) -> dict:
+def _cached_file_pack(folder: str, name: str, _mtime_ns: int, _size: int) -> dict:
+    base = Path(folder).resolve()
+    target = (base / name).resolve()
+    display = str(Path(folder) / name)
+    if not target.is_relative_to(base):
+        return {"path": display, "rules": [], "problem": "outside the rules folder"}
     try:
-        text = Path(path).read_text(encoding="utf-8")
+        text = target.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        return {"path": path, "rules": [], "problem": str(exc)}
-    return _parse_pack(path, text)
+        return {"path": display, "rules": [], "problem": str(exc)}
+    return _parse_pack(display, text)
 
 
 @functools.lru_cache(maxsize=256)
