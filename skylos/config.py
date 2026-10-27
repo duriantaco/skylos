@@ -314,9 +314,12 @@ def _pulled_synced_policy(start_dir: Path, base_synced_cfg: dict) -> tuple[dict,
     The base commit has no synced gate. A ``.skylos/config.yaml`` that
     ``skylos sync pull`` left untracked is Skylos Cloud policy, not branch
     content, so it applies. One that a commit or the index carries is branch
-    content and stays out.
+    content and stays out. In CI an untracked file may come from a pull
+    request's own build steps, so CI reads Cloud policy only from the base or
+    from ``SKYLOS_SYNCED_POLICY_FILE``.
     """
     from skylos.cicd.policy import is_untracked_worktree_file
+    from skylos.core.report_context import is_ci
 
     _layers, sync_config = _find_config_layers(start_dir)
     if not sync_config:
@@ -324,7 +327,7 @@ def _pulled_synced_policy(start_dir: Path, base_synced_cfg: dict) -> tuple[dict,
     pulled = _load_synced_config(sync_config)
     if not isinstance(pulled.get("gate"), dict):
         return base_synced_cfg, False
-    if is_untracked_worktree_file(start_dir, sync_config):
+    if not is_ci() and is_untracked_worktree_file(start_dir, sync_config):
         return pulled, False
     return base_synced_cfg, True
 

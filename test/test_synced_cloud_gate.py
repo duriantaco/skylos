@@ -690,6 +690,14 @@ def test_operator_policy_file_sets_the_cloud_gate_in_ci(tmp_path, monkeypatch):
 
 
 
+@pytest.fixture(autouse=True)
+def _outside_ci(monkeypatch):
+    from skylos.core.report_context import _CI_MARKERS
+
+    for name in _CI_MARKERS:
+        monkeypatch.delenv(name, raising=False)
+
+
 def _git(root, *args):
     return subprocess.run(
         ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", *args],
@@ -728,6 +736,21 @@ def test_policy_base_uses_the_untracked_policy_sync_pull_wrote(base_repo, monkey
         {"unused_functions": [{"name": "helper", "file": "app.py", "line": 1}]}, config
     )
     assert (passed, reasons) == (False, ["1 dead code issue (max: 0)"])
+
+
+def test_policy_base_ignores_an_untracked_policy_in_ci(base_repo, monkeypatch):
+    _synced(base_repo, _gate_yaml("category", by_category="{SECURITY: 99, SECRET: 0, QUALITY: 99, DEAD_CODE: 99, DEPENDENCY: 99}"))
+    monkeypatch.setenv("CI", "true")
+
+    config = _base_config(base_repo, monkeypatch)
+
+    assert synced_gate_policy(config) is None
+    assert config["gate"]["max_quality"] == 0
+    assert UNUSED_CLOUD_GATE_NOTE in gk.gate_config_notes(config)
+    passed, reasons = gk.check_gate(
+        {"quality": [_finding("SKY-Q301", "LOW", "a.py")]}, config
+    )
+    assert (passed, reasons) == (False, ["1 quality issue (max: 0)"])
 
 
 def test_policy_base_ignores_a_branch_committed_policy(base_repo, monkeypatch):
