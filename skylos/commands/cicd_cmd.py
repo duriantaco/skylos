@@ -807,6 +807,7 @@ def run_cicd_command(
             results,
             max_annotations=cicd_args.max_annotations,
             severity_filter=cicd_args.severity,
+            root_path=getattr(cicd_args, "path", "."),
         )
         return 0
 

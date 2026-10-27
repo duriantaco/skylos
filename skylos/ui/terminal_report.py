@@ -31,6 +31,7 @@ from skylos.reporting.finding_types import (
     iter_result_findings,
 )
 from skylos.reporting.rollups import FINDING_SECTIONS
+from skylos.reporting.sca_summary import is_advisory
 from skylos.reporting.typing_coverage import typing_coverage_text
 from skylos.ui.dead_code_evidence import (
     compact_dead_code_evidence,
@@ -815,7 +816,7 @@ def _title(item: dict, category: str, fallback_label: str) -> str:
             message = item.get("message")
             return f"{title}\n{message}" if message and str(message) != title else title
 
-    if category == "dependency_vulnerabilities":
+    if category == "dependency_vulnerabilities" and is_advisory(item):
         meta = item.get("metadata") or {}
         pkg = meta.get("package_name")
         version = meta.get("package_version")

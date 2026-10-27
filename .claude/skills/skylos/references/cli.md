@@ -97,6 +97,10 @@ Use `--diff REF` for findings on changed lines. Use `--diff-base REF` for
 findings in changed files. Use `--baseline` after `skylos baseline .` to show
 only new findings.
 
+`--severity` also filters records without a severity, at the level the report
+prints (dead code LOW). An unknown `--category` value exits 2 with a
+suggestion (the secrets value is `secret`).
+
 Full scans skip generated/vendored files (Django migrations, `static/**/lib`,
 `*.min.js`, library banners). The count is in
 `analysis_summary.generated_files`; add `--include-generated` to scan them.
@@ -177,7 +181,8 @@ control. Local rich scans with findings end with a `Next: skylos cloud` block.
   shown, 2 could not run. `skylos done --map` prints it after the verdict
   without changing it. MCP tool: `change_map`. Details: `docs/change-map.md`.
 - `skylos baseline .`: save current findings baseline.
-- `skylos clean`: interactively remove or comment dead code.
+- `skylos clean`: interactively remove or comment dead code. Edits Python files
+  only; other files are listed, never offered. Exit 1 if any edit fails.
 - `skylos cache stats|clear`: manage cache data.
 - `skylos doctor`: installation health check.
 - `skylos verify-verdict BUNDLE [--commit SHA] [--repository HOST/OWNER/REPO]
