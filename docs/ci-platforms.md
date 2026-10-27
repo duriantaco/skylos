@@ -148,7 +148,11 @@ skylos . --danger --quality --ai-defects --secrets --sca --baseline --gate --dif
 ## Skylos Cloud
 
 `skylos cicd init` adds Cloud uploads only for GitHub Actions, through GitHub
-OIDC; that job runs `skylos cloud`. On other CIs, add one step on your default
+OIDC: default-branch pushes run `skylos cloud`, and pull requests to the
+default branch upload through `pull_request_target` jobs that never give PR
+files a credential (see
+[what the workflow contains](./first-gated-pr.md#what-the-workflow-contains)).
+On other CIs, add one step on your default
 branch that runs `skylos cloud` with a `SKYLOS_TOKEN` secret (a CI project
 token), as shown in [Bitbucket and Azure Pipelines](./bitbucket-azure-pipelines.md).
 For GitLab, see [GitLab managed uploads](./gitlab-managed-uploads.md).

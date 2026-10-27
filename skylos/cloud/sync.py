@@ -480,13 +480,19 @@ def _auth_headers(token: str | None) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def api_get(endpoint: str, token: str | None) -> dict[str, Any]:
+def api_get(
+    endpoint: str,
+    token: str | None,
+    *,
+    extra_headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
     url = _safe_sync_url(endpoint)
+    headers = {**(extra_headers or {}), **_auth_headers(token)}
 
     try:
         resp = requests.get(
             url,
-            headers=_auth_headers(token),
+            headers=headers,
             timeout=30,
         )
     except requests.exceptions.ConnectionError:

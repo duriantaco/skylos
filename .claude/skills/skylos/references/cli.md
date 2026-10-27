@@ -165,7 +165,10 @@ control. Local rich scans with findings end with a `Next: skylos cloud` block.
 - `skylos rules init|validate|list`: local YAML rule packs.
 - `skylos cicd init`: set up the pull request gate for the detected CI
   (`--ci github|gitlab|jenkins|bitbucket|azure|circleci|other`); writes a new
-  CI file or prints the block for an existing one.
+  CI file or prints the block for an existing one. On GitHub with uploads on,
+  it also uploads pull requests to the default branch through
+  `pull_request_target` jobs that run `skylos cicd pr-policy`, `pr-scan` and
+  `pr-publish` (workflow steps, not for local use).
 - `skylos done map [PATH] [--base REF] [--format text|json|markdown]`: the
   change map. Per changed Python or TS/JS function, method or class: old and
   new code, calls added/removed/moved, callers (`in_change`, `is_test`),

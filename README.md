@@ -317,8 +317,11 @@ gh pr create --fill
 
 The generated workflow reviews changed lines on pull requests and adds a
 `skylos done` job when it finds your tests. Without `--no-upload`, it also
-adds a Skylos Cloud upload job for pushes to your default branch, which fails
-until the Skylos GitHub App is installed on the repository.
+uploads to Skylos Cloud with GitHub OIDC: pushes to your default branch, and
+pull requests to it, which Cloud then lists with their check and comment. A
+pull request is scanned as untrusted data in a job with no credentials and
+uploaded by a job that never checks out its files. Uploads fail until the
+Skylos GitHub App is installed on the repository.
 [Your first Skylos-gated pull request](./docs/first-gated-pr.md) walks through
 it in about 8 minutes, including making the checks required.
 
@@ -1191,9 +1194,12 @@ skylos cicd init --ci jenkins                      # a Jenkinsfile pull request 
 
 On GitHub Actions, the generated workflow reviews changed lines on pull requests and adds a
 `skylos done` job when it finds your tests. Without `--no-upload` it also
-uploads full scans from default-branch pushes using GitHub OIDC; that upload
-job fails until the Skylos GitHub App is installed on the repository. It
-supports monorepo subprojects through `--scan-path`. See
+uploads full scans to Skylos Cloud using GitHub OIDC, from default-branch
+pushes and from pull requests to the default branch (`pull_request_target`:
+the pull request is scanned as data without credentials, then a job that never
+checks out its files uploads it). Uploads fail until the Skylos GitHub App is
+installed on the repository. It supports monorepo subprojects through
+`--scan-path`. See
 [Your first Skylos-gated pull request](./docs/first-gated-pr.md).
 
 To scan a built image with the composite Action, install a pinned Trivy version

@@ -2493,17 +2493,66 @@ class TestVerifyReport(unittest.TestCase):
 
     @patch("skylos.api.get_project_token")
     @patch("skylos.api.get_project_info")
-    def test_verify_report_free_plan_rejected(self, mock_info, mock_token):
+    @patch("skylos.api.get_git_info", return_value=("sha", "branch", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value=None)
+    @patch("requests.post")
+    def test_verify_report_lets_skylos_cloud_decide_the_plan(
+        self, mock_post, _, _git, mock_info, mock_token
+    ):
         mock_token.return_value = "token"
         mock_info.return_value = {"plan": "free"}
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"results": []}
+        mock_post.return_value = resp
 
         from skylos.api import verify_report
 
-        result = verify_report({})
+        result = verify_report(
+            {"danger": [{"file": "app.py", "line": 5, "message": "oops"}]},
+            quiet=True,
+        )
+
+        self.assertTrue(result["success"])
+        mock_post.assert_called_once()
+        mock_info.assert_not_called()
+
+    @patch("skylos.api.get_project_token")
+    @patch("skylos.api.get_git_info", return_value=("sha", "branch", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value=None)
+    @patch("requests.post")
+    def test_verify_report_free_daily_limit_names_the_limit(
+        self, mock_post, _, _git, mock_token
+    ):
+        mock_token.return_value = "token"
+        resp = MagicMock()
+        resp.status_code = 429
+        resp.json.return_value = {
+            "error": "Verify daily limit reached for Free plan",
+            "code": "RATE_LIMITED",
+            "plan": "free",
+            "limit_per_day": 20,
+        }
+        mock_post.return_value = resp
+
+        from skylos.api import verify_report
+
+        result = verify_report(
+            {"danger": [{"file": "app.py", "line": 5, "message": "oops"}]},
+            quiet=True,
+        )
 
         self.assertFalse(result["success"])
-        self.assertIn("Workspace plan", result["error"])
+        self.assertIn("all 20 of today's verification checks", result["error"])
+        self.assertIn("Workspace", result["error"])
         self.assertNotIn("Pro", result["error"])
+
+        resp.json.side_effect = ValueError("not json")
+        result = verify_report(
+            {"danger": [{"file": "app.py", "line": 5, "message": "oops"}]},
+            quiet=True,
+        )
+        self.assertIn("today's verification checks", result["error"])
 
     @patch("skylos.api.get_project_token")
     @patch("skylos.api.get_project_info")

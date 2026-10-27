@@ -294,8 +294,11 @@ skylos cicd init --upload
 skylos cicd init --upload --scan-path apps/api
 ```
 
-Der erzeugte Upload-Workflow nutzt GitHub OIDC, sendet PR-Head-Commit- und
-Branch-Metadaten und unterstützt Monorepo-Subprojekte über `--scan-path`.
+Der erzeugte Workflow lädt per GitHub OIDC zu Skylos Cloud hoch: Pushes auf den
+Default-Branch und Pull Requests auf den Default-Branch. Ein Pull Request wird
+als nicht vertrauenswürdige Daten in einem Job ohne Zugangsdaten gescannt und
+von einem Job hochgeladen, der seine Dateien nie auscheckt. Monorepo-Subprojekte
+gehen über `--scan-path`.
 
 ## Dokumentationskarte
 

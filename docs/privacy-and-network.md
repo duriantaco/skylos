@@ -85,10 +85,10 @@ server uses `SKYLOS_CLOUD_URL`).
 | `skylos compare --upload` | `POST /api/shadow/reports` | the comparison report |
 | `skylos agent scan --upload` | the report upload above (when there are findings), then `POST /api/agent-runs` | the scan report; the run summary above |
 | `skylos agent verify --upload`, `skylos agent remediate --upload`, `skylos agent remediate --standards --upload` | `POST /api/agent-runs` | the run summary above |
-| `skylos . --verify` | `GET /api/sync/whoami`, `POST /api/verify` | the scan findings to verify |
+| `skylos . --verify` | `POST /api/verify` (Skylos Cloud decides what your plan allows; Free has a daily limit) | the scan findings to verify |
 | `skylos ingest claude-security` | `POST /api/report` **by default** | the normalized Claude Code Security findings. `--no-upload` keeps them local |
 | `skylos verify-verdict` without `--keys` | `GET https://skylos.dev/.well-known/skylos-verdict-keys.json` | nothing (public keys, no token). `--keys <file>` works offline |
-| The workflow from `skylos cicd init` | its upload job runs `skylos sync pull` and `skylos cloud` (`skylos . --upload` when only dead code is checked) on pushes to the default branch | the scan report. `skylos cicd init --no-upload` leaves the job out |
+| The workflow from `skylos cicd init` | its upload job runs `skylos sync pull` and `skylos cloud` (`skylos . --upload` when only dead code is checked) on pushes to the default branch. On pull requests to the default branch, `skylos cicd pr-policy` reads `GET /api/sync/config` and `/api/sync/rules`, and `skylos cicd pr-publish` makes the report upload above | the scan report. `skylos cicd init --no-upload` leaves these jobs out |
 
 ## Other hosts
 
