@@ -1,5 +1,12 @@
 ## Changelog
 
+## [5.1.4](https://github.com/duriantaco/skylos/compare/v5.1.3...v5.1.4) (2026-10-27)
+
+
+### Bug Fixes
+
+* **cli:** show the Workspace plan name in whoami and project commands ([#1103](https://github.com/duriantaco/skylos/issues/1103)) ([5bd15e5](https://github.com/duriantaco/skylos/commit/5bd15e5865d0b4233a1e457f408707bb92d1c345))
+
 ## [5.1.3](https://github.com/duriantaco/skylos/compare/v5.1.2...v5.1.3) (2026-10-27)
 
 
