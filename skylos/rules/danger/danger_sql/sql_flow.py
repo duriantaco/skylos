@@ -7,6 +7,10 @@ from skylos.rules.danger.taint import TaintVisitor
 from skylos.rules.danger.danger_sql.sqlalchemy_provenance import (
     SQLAlchemyTextProvenance,
 )
+from skylos.rules.danger.danger_sql.write_only_collections import (
+    WriteOnlyReceiver,
+    write_only_methods,
+)
 from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
 from skylos.security.receiver_resolution import ReceiverResolver
 
@@ -316,6 +320,8 @@ class _SQLFlowChecker(TaintVisitor):
                 if root is not None:
                     self.rebound_global_sql_names.add(root)
         self.db_receiver_alias_stack: list[set[str]] = [set()]
+        self.write_only_methods: dict[int, WriteOnlyReceiver] = {}
+        self.write_only_receiver_stack: list[WriteOnlyReceiver | None] = [None]
 
     def _push(self):
         super()._push()
@@ -711,7 +717,12 @@ class _SQLFlowChecker(TaintVisitor):
         if func.attr in SQL_CONSTRUCT_NAMES:
             if self._is_imported_sql_construct(func):
                 return True
-        return func.attr in TABLE_STATEMENT_METHODS and self._is_sql_table(func.value)
+        if func.attr not in TABLE_STATEMENT_METHODS:
+            return False
+        receiver = self.write_only_receiver_stack[-1]
+        if receiver is not None and receiver.owns(func.value):
+            return True
+        return self._is_sql_table(func.value)
 
     def _is_imported_sql_construct(self, func: ast.AST) -> bool:
         name = _qualified_name_from_expr(func)
@@ -1008,26 +1019,40 @@ class _SQLFlowChecker(TaintVisitor):
         self._invalidate_sql_binding(node.name)
         self.sqlalchemy_text.record_name_binding(node.name)
         self.sqlalchemy_text.enter_function(node)
+        self.write_only_receiver_stack.append(self.write_only_methods.get(id(node)))
         try:
             self._record_passthrough_function(node)
             super().visit_FunctionDef(node)
         finally:
+            self.write_only_receiver_stack.pop()
             self.sqlalchemy_text.leave_scope()
 
     def visit_AsyncFunctionDef(self, node):
         self._invalidate_sql_binding(node.name)
         self.sqlalchemy_text.record_name_binding(node.name)
         self.sqlalchemy_text.enter_function(node)
+        self.write_only_receiver_stack.append(self.write_only_methods.get(id(node)))
         try:
             self._record_passthrough_function(node)
             super().visit_AsyncFunctionDef(node)
         finally:
+            self.write_only_receiver_stack.pop()
             self.sqlalchemy_text.leave_scope()
 
     def visit_ClassDef(self, node):
         self._invalidate_sql_binding(node.name)
         self.sqlalchemy_text.record_name_binding(node.name)
         self.sqlalchemy_text.enter_class(node)
+        current_function = self._current_function()
+        self.write_only_methods.update(
+            write_only_methods(
+                node,
+                lambda name: self.untrusted_sources.resolved_import(
+                    current_function, name
+                ),
+                self.untrusted_sources.module,
+            )
+        )
         try:
             super().visit_ClassDef(node)
         finally:
@@ -1056,9 +1081,11 @@ class _SQLFlowChecker(TaintVisitor):
 
     def visit_Lambda(self, node: ast.Lambda):
         self.sqlalchemy_text.enter_lambda(node)
+        self.write_only_receiver_stack.append(None)
         try:
             self.generic_visit(node)
         finally:
+            self.write_only_receiver_stack.pop()
             self.sqlalchemy_text.leave_scope()
 
     def _visit_scoped_comprehension(self, node):

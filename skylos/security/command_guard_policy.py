@@ -287,9 +287,34 @@ def _is_persistent_mutation(tokens: list[str]) -> bool:
 
 
 def _is_publish_command(tokens: list[str]) -> bool:
-    if any(tokens_start_with(tokens, prefix) for prefix in PUBLISH_COMMAND_PREFIXES):
-        return True
-    return tokens_start_with(tokens, ("yarn", "npm", "publish"))
+    publishes = any(
+        tokens_start_with(tokens, prefix) for prefix in PUBLISH_COMMAND_PREFIXES
+    ) or tokens_start_with(tokens, ("yarn", "npm", "publish"))
+    return publishes and not _requests_dry_run(tokens)
+
+
+def _requests_dry_run(tokens: list[str]) -> bool:
+    """The last dry-run setting before ``--`` wins, as in npm, pnpm and cargo.
+
+    ``--dry-run`` followed by ``false`` (npm's boolean value form),
+    ``--dry-run=<anything but true>`` and ``--no-dry-run`` still publish.
+    A tool without the flag rejects it instead of uploading.
+    """
+    options = tokens
+    if "--" in tokens:
+        options = tokens[: tokens.index("--")]
+    dry_run = False
+    for index, token in enumerate(options):
+        if token == "--dry-run":
+            following = ""
+            if index + 1 < len(options):
+                following = options[index + 1].lower()
+            dry_run = following != "false"
+        elif token.startswith("--dry-run="):
+            dry_run = token == "--dry-run=true"
+        elif token == "--no-dry-run":
+            dry_run = False
+    return dry_run
 
 
 def _is_untrusted_package_tool_execution(tokens: list[str]) -> bool:
