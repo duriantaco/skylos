@@ -151,7 +151,7 @@ class ModuleAliases:
         return roots
 
     def scoped(self, name, importer=None):
-        """Return (module, ambiguous) for a name inside the importer's projects."""
+        """Return (module, blocked) for a name inside the importer's projects."""
         importer_roots = self._roots_of(importer)
         if not importer_roots:
             return None, False
@@ -162,7 +162,9 @@ class ModuleAliases:
         }
         if len(scoped) == 1:
             return next(iter(scoped.values())), False
-        return None, len(scoped) > 1
+        top = name.split(".", 1)[0]
+        shadowed = any((root, top) in self._tops for root in importer_roots)
+        return None, len(scoped) > 1 or shadowed
 
     def lookup(self, name, importer=None):
         candidates = self._names.get(name)

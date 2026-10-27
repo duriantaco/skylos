@@ -254,8 +254,8 @@ class FastAPIProject:
 
     def module_named(self, name, importer=None):
         importer = self._module(importer)
-        found, ambiguous = self.module_aliases.scoped(name, importer)
-        if ambiguous:
+        found, blocked = self.module_aliases.scoped(name, importer)
+        if blocked:
             return None
         if found is None:
             found = self.modules.get(name)
@@ -1235,32 +1235,33 @@ class FastAPIProject:
 
     def _possibly_included(self):
         """Objects an include under an unknown condition may attach."""
+        if not self.possible_includes:
+            return set()
+        conditional = defaultdict(set)
+        for include in self.possible_includes:
+            self._step()
+            if (
+                include.owner is None
+                or include.owner_key in self.executed_callables
+                or include.owner_key in self.report.roots
+            ):
+                conditional[include.receiver].add(include.child)
         possible = set()
-        changed = True
-        while changed:
-            changed = False
-            for include in self.possible_includes:
-                if include.child in self.active_objects or include.child in possible:
+        visited = set()
+        pending = list(self.active_objects)
+        while pending:
+            self._step()
+            current = pending.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            children = conditional.get(current, set()) | self.includes.get(current, set())
+            for child in children:
+                self._step()
+                if child in self.active_objects or child in possible:
                     continue
-                if (
-                    include.receiver not in self.active_objects
-                    and include.receiver not in possible
-                ):
-                    continue
-                if not (
-                    include.owner is None
-                    or include.owner_key in self.executed_callables
-                    or include.owner_key in self.report.roots
-                ):
-                    continue
-                pending = [include.child]
-                while pending:
-                    current = pending.pop()
-                    if current in possible or current in self.active_objects:
-                        continue
-                    possible.add(current)
-                    pending.extend(self.includes.get(current, ()))
-                changed = True
+                possible.add(child)
+                pending.append(child)
         return possible
 
     def collect(self):
