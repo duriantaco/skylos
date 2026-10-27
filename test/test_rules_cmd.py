@@ -349,3 +349,15 @@ def test_cli_rules_remove_legacy_wrapper_raises_on_missing_pack(tmp_path):
         cli._rules_remove(console, tmp_path, "missing")
 
     assert exc.value.code == 1
+
+
+def test_rules_init_prints_paths_relative_to_the_current_folder(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    console = Mock()
+
+    assert rules_cmd.init_rules(console, ".skylos/rules/local.yml") == 0
+
+    printed = " ".join(str(call.args[0]) for call in console.print.call_args_list)
+    assert "Created starter rule pack: .skylos/rules/local.yml" in printed
+    assert "skylos rules validate .skylos/rules/local.yml" in printed
+    assert str(tmp_path) not in printed

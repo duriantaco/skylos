@@ -210,3 +210,15 @@ def test_cli_contract_dispatch_preserves_argv(monkeypatch):
         ["validate", ".skylos/ai-contract.yml"],
         console_factory=Console,
     )
+
+
+def test_contract_init_prints_paths_relative_to_the_current_folder(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    console = Mock()
+
+    assert contract_cmd.init_contract(console, ".skylos/ai-contract.yml") == 0
+
+    printed = " ".join(str(call.args[0]) for call in console.print.call_args_list)
+    assert "Created AI contract: .skylos/ai-contract.yml" in printed
+    assert "skylos contract validate .skylos/ai-contract.yml" in printed
+    assert str(tmp_path) not in printed
