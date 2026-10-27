@@ -71,17 +71,21 @@ when you want one command to check a repo or pull request for:
   invented package APIs, and impossible dependency versions
 - LLM app risks such as unsafe tool use and missing output validation
 
-Python has the deepest coverage. TypeScript/JavaScript and Java also get
-dead-code, security and quality checks; PHP and Dart get dead-code and
-security checks; Rust gets security checks and experimental dead code
-(hidden below the default confidence threshold; `--confidence 40` lists it).
+Skylos supports 11 languages: Python, TypeScript/JavaScript, Java, Go, PHP,
+Rust, Dart, C#, C++, Kotlin and Shell. Python has the deepest coverage.
+TypeScript/JavaScript and Java also get dead-code, security and quality checks;
+PHP and Dart get dead-code and security checks (Dart security covers command
+injection, path traversal and SSRF); Rust gets command-injection and
+path-traversal checks and experimental dead code (hidden below the default
+confidence threshold; `--confidence 40` lists it).
 Go dead-code and security checks need the native `skylos-go` engine: from
 4.50 the PyPI wheels for Linux, macOS and Windows (x86_64 and arm64) include
 it, the container image includes it and the GitHub Action builds it. On other
 platforms `skylos doctor` prints the command that builds it from source, and
 `SKYLOS_GO_BIN` points Skylos at a separately built engine. C# support is
-partial, Kotlin is dead code only, C++ is limited to unused file-local
-functions, and Shell is security only.
+partial, Kotlin dead code covers only private declarations and imports (there
+are no Kotlin security rules), C++ is limited to unused file-local functions,
+and Shell gets security checks only.
 Skylos also checks CI/CD and deployment config. See
 [Language Support](#language-support).
 
@@ -263,7 +267,7 @@ verification incomplete. Unknown bare imports still require review.
 
 Deterministic local/workspace API verification currently covers Python,
 TypeScript/JavaScript, Go, and Java without executing target code. PHP, Rust,
-Dart, C#, Kotlin, and Shell retain their existing static-analysis coverage,
+Dart, C#, Kotlin, C++, and Shell retain their existing static-analysis coverage,
 but their local API proof is reported as unsupported and therefore incomplete.
 See [AI Code Verification Coverage](./docs/ai-code-verification.md).
 
@@ -855,12 +859,12 @@ how many in one line of output. Set `include_generated = true` under
 | Java | Yes | Yes | Yes | Supported | Tree-sitter parsing, structured security-flow analysis, conservative static-member proof |
 | Go | Yes¹ | Partial¹ | Partial | Supported | native engine status remains separate from deterministic workspace API proof |
 | PHP | Yes | Yes | No | Unsupported | PHP parser coverage, type and docblock references, Laravel and Drupal conventions (including `.module`/`.install`/`.inc`/`.theme` files), plus taint-style security sinks and sources (Drupal request and Form API input into SQL strings, `Markup::create()` and inline Twig templates) |
-| Rust | Experimental⁴ | Yes | No | Unsupported | Rust parser coverage plus security sink/source checks |
-| Dart | Yes³ | Yes³ | No | Unsupported | Dart parser coverage plus selected security sinks and sources |
-| C# | Partial | Partial | Partial | Partial | C# symbols, direct-block unreachable code, selected security sinks, and direct NuGet inventory |
+| Rust | Experimental⁴ | Partial | No | Unsupported | Rust parser coverage; security covers command injection and path traversal |
+| Dart | Yes³ | Partial³ | No | Unsupported | Dart parser coverage; security covers command injection, path traversal and SSRF |
+| C# | Partial | Partial | Partial | Unsupported | C# symbols, direct-block unreachable code, selected security sinks, and direct NuGet inventory |
 | C++ | Partial | No | No | Unsupported | conservative unused file-local functions in `.cpp`, `.cc`, `.cxx`; C++ headers are parsed for references |
-| Kotlin | Yes | No² | No | Unsupported | Kotlin symbol extraction with conservative static-analysis coverage |
-| Shell | No | Yes | No | Unsupported | shell-script security checks for command injection, SSRF, and path traversal |
+| Kotlin | Partial² | No² | No | Unsupported | regex-based symbol extraction; reports only private declarations and imports |
+| Shell | No | Partial | No | Unsupported | shell-script security checks for command injection, SSRF, and path traversal |
 
 ¹ Go dead-code and security checks need the native `skylos-go` engine. From
 4.50 the PyPI wheels for Linux, macOS and Windows (x86_64 and arm64) include
@@ -869,8 +873,9 @@ Elsewhere, `skylos doctor` prints the command that builds it. Without it only
 Go quality checks run and the Go files are reported as not analysed; see the
 Go engine note below.
 
-² No built-in Kotlin security rules; secret scanning still covers `.kt` and
-`.kts` files.
+² Kotlin dead code reports only `private` types and functions and unused
+imports; every non-private declaration is treated as used. No built-in Kotlin
+security rules; secret scanning still covers `.kt` and `.kts` files.
 
 ³ From 4.47.2, Dart checks need the optional `skylos[dart]` extra
 (`pip install "skylos[dart]"`); earlier releases install the Dart parser by
@@ -1278,10 +1283,10 @@ until the server is started with `SKYLOS_API_KEY` set; create a free key in
 the Skylos Cloud dashboard settings. Unauthenticated `analyze` calls are free.
 Authenticated `analyze`, security, quality, secrets and provenance scans can
 use credits; Skylos Cloud sets the current cost. `remediate` currently costs
-10 credits per call. The CLI equivalents (`skylos verify`,
-`skylos defend`, `skylos . -a`) and `skylos agent install-hooks` run on
-your machine with no account or key; their dependency and package checks
-still query public registries (see
+10 credits per call that generates fixes; a dry run (the default) is free.
+The CLI equivalents (`skylos verify`, `skylos defend`, `skylos . -a`) and
+`skylos agent install-hooks` run on your machine with no account or key;
+their dependency and package checks still query public registries (see
 [What Leaves Your Machine](#what-leaves-your-machine)).
 
 **Does Skylos replace Ruff?**

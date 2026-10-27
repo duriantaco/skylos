@@ -320,7 +320,7 @@ def test_cli_guardrail_commands_dispatch_exits_zero(monkeypatch):
 @pytest.mark.parametrize(
     ("command", "expected"),
     [
-        ("debt", "skylos debt [path]"),
+        ("debt", "usage: skylos debt [-h]"),
         ("sonar", "skylos sonar import [properties_file]"),
     ],
 )

@@ -1145,7 +1145,10 @@ def test_formatted_upload_modes_honor_cloud_gate_rejection(monkeypatch, output_a
     local_gate.assert_not_called()
 
 
-def test_main_interactive_dry_run_does_not_modify(monkeypatch):
+def test_main_interactive_dry_run_does_not_modify(monkeypatch, tmp_path):
+    (tmp_path / "a.py").write_text("import os\n\ndef u():\n    return 1\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_is_tty", lambda: True)
     result = {
         "analysis_summary": {"total_files": 1},
         "unused_functions": [{"name": "u", "file": "a.py", "line": 1}],
@@ -1190,7 +1193,10 @@ def test_main_interactive_dry_run_does_not_modify(monkeypatch):
     c_imp.assert_not_called()
 
 
-def test_main_interactive_comment_out_uses_comment_functions(monkeypatch):
+def test_main_interactive_comment_out_uses_comment_functions(monkeypatch, tmp_path):
+    (tmp_path / "a.py").write_text("import os\n\ndef u():\n    return 1\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_is_tty", lambda: True)
     result = {
         "analysis_summary": {"total_files": 1},
         "unused_functions": [{"name": "u", "file": "a.py", "line": 1}],

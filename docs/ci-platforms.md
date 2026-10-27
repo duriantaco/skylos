@@ -164,3 +164,9 @@ Diff-scoped reports cannot be uploaded.
 `--default-branch`. `--llm`, `--model`, `--defend`, `--risk-review`,
 `--claude-security`, `--advisory-gate`, `--done`/`--no-done`, `--triggers` and
 `--force` are GitHub Actions only. Other CIs say which of them were not used.
+
+`--llm` adds a "Skylos Agent Review (LLM)" step on pull requests. The gate job
+then installs `skylos[llm]` and passes the model provider's key from a
+repository secret of the same name: `OPENAI_API_KEY` for the default
+`gpt-4.1`, `ANTHROPIC_API_KEY` for Claude models, `GEMINI_API_KEY` for
+`gemini/` models (`--model` picks the model). `ollama/` models need no secret.

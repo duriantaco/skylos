@@ -283,6 +283,14 @@ def check_tool_access(tool_name: str) -> tuple[bool, str]:
     return (True, "")
 
 
+def record_uncharged_call(tool_name: str) -> None:
+    session = get_session()
+    if not session.authenticated:
+        session.record_unauth_call()
+        return
+    session.record_call(tool_name)
+
+
 def deduct_credits(tool_name: str) -> tuple[bool, str]:
     session = get_session()
 

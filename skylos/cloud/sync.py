@@ -1129,20 +1129,27 @@ def cmd_upgrade() -> None:
     print("✅ Upgrade complete!")
 
 
+HELP_FLAGS = frozenset({"-h", "--help"})
+
+
+def _print_sync_usage() -> None:
+    print("Usage: skylos sync <command>")
+    print("")
+    print("Commands:")
+    print("  connect [token]  Connect to Skylos Cloud")
+    print("  status           Show connection status")
+    print("  disconnect       Remove saved credentials")
+    print("  pull             Pull config and suppressions (skylos sync pull --help)")
+    print("  setup [token]    One-command setup")
+    print(f"  upgrade          Add {PAID_PLAN_NAME} plan features after upgrading")
+
+
 def main(args: Sequence[str] | None = None) -> None:
     if args is None:
         args = sys.argv[1:]
 
-    if not args:
-        print("Usage: skylos sync <command>")
-        print("")
-        print("Commands:")
-        print("  connect [token]  Connect to Skylos Cloud")
-        print("  status           Show connection status")
-        print("  disconnect       Remove saved credentials")
-        print("  pull             Pull config and suppressions")
-        print("  setup [token]    One-command setup")
-        print(f"  upgrade          Add {PAID_PLAN_NAME} plan features after upgrading")
+    if not args or args[0] in HELP_FLAGS:
+        _print_sync_usage()
         return
 
     cmd = args[0].lower()
@@ -1160,6 +1167,9 @@ def main(args: Sequence[str] | None = None) -> None:
         options = parser.parse_args(list(args[1:]))
         cmd_pull(dry_run=options.dry_run, output_format=options.format)
         return
+    if HELP_FLAGS.intersection(args[1:]):
+        _print_sync_usage()
+        return
     handlers = {
         "connect": lambda: cmd_connect(_optional_arg(args, 1)),
         "status": cmd_status,
@@ -1174,19 +1184,23 @@ def main(args: Sequence[str] | None = None) -> None:
     handler()
 
 
+def _print_project_usage() -> None:
+    print("Usage: skylos project <command>")
+    print("")
+    print("Commands:")
+    print("  status    Show the active project for this repo")
+    print("  list      Show locally known projects")
+    print("  use       Select or create a project for this repo")
+    print("  create    Open the browser flow and create a new project")
+    print("  unlink    Remove the local repo-to-project link")
+
+
 def project_main(args: Sequence[str] | None = None) -> None:
     if args is None:
         args = sys.argv[1:]
 
-    if not args:
-        print("Usage: skylos project <command>")
-        print("")
-        print("Commands:")
-        print("  status    Show the active project for this repo")
-        print("  list      Show locally known projects")
-        print("  use       Select or create a project for this repo")
-        print("  create    Open the browser flow and create a new project")
-        print("  unlink    Remove the local repo-to-project link")
+    if not args or HELP_FLAGS.intersection(args):
+        _print_project_usage()
         return
 
     cmd = args[0].lower()

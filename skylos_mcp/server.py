@@ -28,6 +28,7 @@ from skylos_mcp.auth import (
     initialize_auth,
     check_tool_access,
     deduct_credits,
+    record_uncharged_call,
 )
 
 
@@ -1025,7 +1026,7 @@ def _health_score_payload(result: dict, *, expand_advice: bool = False) -> dict:
     return payload
 
 
-def _gate(tool_name: str) -> str | None:
+def _access_error(tool_name: str) -> str | None:
     client_allowed, client_err = check_mcp_client_context(
         _REQUIRE_MCP_CLIENT_AUTH_CONTEXT
     )
@@ -1036,11 +1037,35 @@ def _gate(tool_name: str) -> str | None:
     if not allowed:
         return json.dumps({"error": err})
 
+    return None
+
+
+def _charge_error(tool_name: str, *, charge: bool = True) -> str | None:
+    if not charge:
+        record_uncharged_call(tool_name)
+        return None
+
     ok, credit_err = deduct_credits(tool_name)
     if not ok:
         return json.dumps({"error": credit_err})
 
     return None
+
+
+def _gate(tool_name: str) -> str | None:
+    access_err = _access_error(tool_name)
+    if access_err:
+        return access_err
+
+    return _charge_error(tool_name)
+
+
+def _llm_extra_error() -> str | None:
+    from skylos.llm.runtime import LLM_EXTRA_MISSING_MESSAGE, llm_extra_installed
+
+    if llm_extra_installed():
+        return None
+    return json.dumps({"error": LLM_EXTRA_MISSING_MESSAGE})
 
 
 GATED_TOOL_AUTH_NOTE = (
@@ -1417,10 +1442,11 @@ def _register_tools(mcp):
         `skylos[llm]` extra and provider configuration (including credentials
         when required), and sends affected code to that provider. It does not
         run your tests.
-        Review every change and run trusted tests before keeping it."""
-        gate_err = _gate("remediate")
-        if gate_err:
-            return gate_err
+        Review every change and run trusted tests before keeping it.
+        Dry runs use no credits; a run that generates fixes is charged."""
+        access_err = _access_error("remediate")
+        if access_err:
+            return access_err
 
         if test_cmd:
             return json.dumps(
@@ -1431,6 +1457,15 @@ def _register_tools(mcp):
                     )
                 }
             )
+
+        if not dry_run:
+            llm_err = _llm_extra_error()
+            if llm_err:
+                return llm_err
+
+        charge_err = _charge_error("remediate", charge=not dry_run)
+        if charge_err:
+            return charge_err
 
         try:
             from skylos.llm.orchestrator import RemediationAgent
@@ -1490,6 +1525,10 @@ def _register_tools(mcp):
         gate_err = _gate("verify_dead_code")
         if gate_err:
             return gate_err
+
+        llm_err = _llm_extra_error()
+        if llm_err:
+            return llm_err
 
         try:
             run_analyze = _lazy_analyze()

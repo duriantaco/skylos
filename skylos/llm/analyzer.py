@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from rich.markup import escape
+
 from .context import ContextBuilder
 from .agents import AgentConfig, create_agent
 from .finding_evidence import filter_findings_with_evidence
@@ -282,7 +284,10 @@ class SkylosLLM(AgentReviewRoutingMixin):
                     )
 
             except Exception as e:
-                self.ui.print(f"Error analyzing {file_path}: {e}", style="red")
+                self.ui.print(
+                    f"Error analyzing {escape(str(file_path))}: {escape(str(e))}",
+                    style="red",
+                )
                 continue
 
             if chunk_start_line != 1:

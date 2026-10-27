@@ -16,6 +16,7 @@ from skylos.reporting.advice_display import (
     advice_priority,
     combine_complexity_advice,
     complexity_display,
+    default_display_severity,
     group_advice_for_display,
 )
 from skylos.reporting.advice_policy import prepare_advice_view
@@ -238,12 +239,7 @@ def _finding_view(result, finding_type):
 def _finding_severity(item, category):
     if get_finding_type(item, category) == "advice":
         return advice_priority(item, category)
-    default = "LOW" if category.startswith("unused_") else "MEDIUM"
-    if category == "analysis_errors":
-        default = "HIGH"
-    elif category in {"danger", "secrets", "dependency_vulnerabilities"}:
-        default = "HIGH"
-    return str(item.get("severity") or default).upper()
+    return str(item.get("severity") or default_display_severity(category)).upper()
 
 
 def _finding_table_cells(item, category, root_path=None):
@@ -939,8 +935,8 @@ def _render_reliability(console: Console, root_path, limit, items):
 
 
 def _render_sca(console: Console, limit, items, root_path=None):
-    """Advisories as one row per package; other SCA findings (licences) as rows."""
-    from skylos.reporting.sca_summary import is_advisory
+    """Advisories as one row per package; licences and other SCA findings as rows."""
+    from skylos.reporting.sca_summary import is_advisory, is_license_finding
 
     items = [item for item in (items or []) if isinstance(item, dict)]
     _render_sca_packages(
@@ -950,8 +946,20 @@ def _render_sca(console: Console, limit, items, root_path=None):
         console,
         root_path,
         limit,
+        "Dependency Licenses",
+        [item for item in items if is_license_finding(item)],
+        "dependency_vulnerabilities",
+    )
+    _render_finding_table(
+        console,
+        root_path,
+        limit,
         "Dependency Vulnerabilities (SCA)",
-        [item for item in items if not is_advisory(item)],
+        [
+            item
+            for item in items
+            if not is_advisory(item) and not is_license_finding(item)
+        ],
         "dependency_vulnerabilities",
     )
 

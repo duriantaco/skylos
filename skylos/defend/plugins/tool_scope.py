@@ -31,6 +31,19 @@ class ToolScopePlugin(DefensePlugin):
                 dangerous_tools.append(f"{tool.name}: {calls}")
 
         if not dangerous_tools:
+            unresolved = [
+                tool.name
+                for tool in integration.tools
+                if tool.kind == "schema" and not tool.handler_location
+            ]
+            if unresolved:
+                names = ", ".join(unresolved)
+                return self._pass(
+                    integration,
+                    integration.location,
+                    "No dangerous operations in resolved tool handlers; "
+                    f"no handler is called with the model's output for: {names}",
+                )
             return self._pass(
                 integration,
                 integration.location,

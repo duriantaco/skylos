@@ -952,6 +952,12 @@ def _ensure_llm_support() -> bool:
         LLM_AVAILABLE = True
         return True
 
+    from skylos.llm.runtime import llm_extra_importable
+
+    if not llm_extra_importable():
+        LLM_AVAILABLE = False
+        return False
+
     try:
         from skylos.llm.analyzer import (
             SkylosLLM as skylos_llm_impl,
@@ -965,6 +971,15 @@ def _ensure_llm_support() -> bool:
     AnalyzerConfig = analyzer_config_impl
     LLM_AVAILABLE = True
     return True
+
+
+def _exit_without_llm_extra() -> None:
+    from skylos.llm.runtime import LLM_EXTRA_MISSING_MESSAGE
+
+    Console(stderr=True).print(
+        f"[bold red]{_escape_markup(LLM_EXTRA_MISSING_MESSAGE)}[/bold red]"
+    )
+    sys.exit(2)
 
 
 def _build_analyzer_config(**kwargs):
@@ -1682,6 +1697,7 @@ _RULE_SELECTION_DEFAULT_IDS = {
     "ai_defects": "SKY-AI000",
     "quality": "SKY-Q000",
     "secrets": "SKY-S000",
+    "unused_exports": "SKY-E004",
     "custom_rules": "CUSTOM",
     "circular_dependencies": "SKY-CIRC",
     "dependency_vulnerabilities": "SKY-SCA-000",
@@ -1769,34 +1785,58 @@ def _display_filter_allowed_categories(category):
     return None
 
 
+def _validate_display_category(args) -> None:
+    category = getattr(args, "category", None)
+    if not category:
+        return
+    import difflib
+
+    valid = sorted(set(_DISPLAY_FILTER_CATEGORY_MAP.values()))
+    unknown = []
+    for raw_value in str(category).split(","):
+        value = raw_value.strip().lower()
+        if value and value not in valid and value not in unknown:
+            unknown.append(value)
+    if not unknown:
+        return
+    described = []
+    for value in unknown:
+        matches = difflib.get_close_matches(value, valid, n=1, cutoff=0.6)
+        if matches:
+            described.append(f"{value} (did you mean '{matches[0]}'?)")
+        else:
+            described.append(value)
+    raise ConfigError(
+        f"Unknown --category value(s): {', '.join(described)}. "
+        f"Valid categories: {', '.join(valid)}."
+    )
+
+
 def _display_filter_matches_file(item, file_filter):
     if not file_filter:
         return True
     return file_filter in (item.get("file") or item.get("file_path") or "")
 
 
-def _display_filter_has_severity(items):
-    for item in items:
-        if "severity" in item:
-            return True
-    return False
+def _display_filter_passes_severity(item, min_rank, section):
+    from skylos.reporting.advice_display import default_display_severity
 
-
-def _display_filter_passes_severity(item, min_rank):
-    sev = (item.get("severity") or "").lower()
+    sev = str(item.get("severity") or default_display_severity(section)).lower()
     return _DISPLAY_FILTER_SEVERITY_RANK.get(sev, 0) >= min_rank
 
 
-def _display_filter_items(items, file_filter, min_rank):
+def _display_filter_items(items, file_filter, min_rank, section):
     kept = items
     if file_filter:
         kept = [
             item for item in kept if _display_filter_matches_file(item, file_filter)
         ]
 
-    if min_rank > 0 and kept and _display_filter_has_severity(kept):
+    if min_rank > 0 and kept:
         kept = [
-            item for item in kept if _display_filter_passes_severity(item, min_rank)
+            item
+            for item in kept
+            if _display_filter_passes_severity(item, min_rank, section)
         ]
 
     return kept
@@ -1857,14 +1897,14 @@ def _apply_display_filters(
             filtered[key] = []
             continue
 
-        filtered[key] = _display_filter_items(items, file_filter, min_rank)
+        filtered[key] = _display_filter_items(items, file_filter, min_rank, key)
 
     _filter_architecture_advisories(
         result,
         filtered,
         lambda signal: (
             (not allowed_cats or "quality" in allowed_cats)
-            and bool(_display_filter_items([signal], file_filter, min_rank))
+            and bool(_display_filter_items([signal], file_filter, min_rank, "quality"))
         ),
     )
 
@@ -1881,7 +1921,9 @@ def _apply_display_filters(
                 reviewed_category = str(item.get("category") or "").lower()
             if allowed_cats and reviewed_category not in allowed_cats:
                 continue
-            if not _display_filter_items([item], file_filter, min_rank):
+            if not _display_filter_items(
+                [item], file_filter, min_rank, str(item.get("section") or "")
+            ):
                 continue
             reviewed_kept.append(item)
         filtered["reviewed_findings"] = reviewed_kept
@@ -2663,6 +2705,7 @@ def _build_main_scan_context(args):
         args.sca = True
 
     _apply_selected_rule_analysis_flags(args)
+    _validate_display_category(args)
 
     project_root = _resolve_main_project_root(args.path)
     if getattr(args, "format", "rich") == "gitlab":
@@ -5388,8 +5431,7 @@ def main() -> None:
 
             if not getattr(agent_args, "scan_only", False):
                 if not _ensure_llm_support():
-                    Console().print("[bold red]Agent module not available[/bold red]")
-                    sys.exit(1)
+                    _exit_without_llm_extra()
 
                 model = agent_args.model
                 provider_override = getattr(agent_args, "provider", None)
@@ -5666,9 +5708,13 @@ def main() -> None:
             model = JEV_MODEL
             provider, api_key, base_url = "typesafe", None, None
         else:
-            if not _ensure_llm_support():
-                Console().print("[bold red]Agent module not available[/bold red]")
-                sys.exit(1)
+            remediation_plan_only = (
+                cmd == "remediate"
+                and getattr(agent_args, "dry_run", False)
+                and not getattr(agent_args, "standards", None)
+            )
+            if not remediation_plan_only and not _ensure_llm_support():
+                _exit_without_llm_extra()
 
             model = agent_args.model
 
@@ -5746,6 +5792,13 @@ def main() -> None:
                     if prompt is None:
                         console.print(
                             "[bad]Interactive mode requires 'inquirer'. Install with: pip install inquirer[/bad]"
+                        )
+                        sys.exit(2)
+                    if not _is_tty():
+                        console.print(
+                            "[bad]--interactive file selection requires an "
+                            "interactive terminal; run without --interactive to "
+                            "audit every file under the path.[/bad]"
                         )
                         sys.exit(2)
                     choices = [

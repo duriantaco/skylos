@@ -354,19 +354,21 @@ def _run_local_scan(
     )
 
     from skylos.analyzer import analyze
+    from skylos.core.cli_shared import quiet_analyzer_logs
 
-    raw = analyze(
-        str(scan_path),
-        conf=confidence,
-        exclude_folders=exclude_folders or None,
-        enable_secrets=False,
-        enable_danger=True,
-        enable_quality=True,
-        enable_ai_defects=True,
-        enable_sca=enable_sca,
-        enable_dependency_hallucinations=False,
-        grep_cache=False,
-    )
+    with quiet_analyzer_logs():
+        raw = analyze(
+            str(scan_path),
+            conf=confidence,
+            exclude_folders=exclude_folders or None,
+            enable_secrets=False,
+            enable_danger=True,
+            enable_quality=True,
+            enable_ai_defects=True,
+            enable_sca=enable_sca,
+            enable_dependency_hallucinations=False,
+            grep_cache=False,
+        )
     (
         post_revision,
         post_worktree_dirty,

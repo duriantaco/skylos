@@ -105,7 +105,7 @@ Source = "https://github.com/duriantaco/skylos"
 "MCP server" = "https://docs.skylos.dev/mcp-server"
 
 [project.optional-dependencies]
-llm = ["litellm>=1.84.0,<1.89.0", "aiohttp>=3.14.0"]
+llm = ["litellm>=1.84.0,<1.107.0", "aiohttp>=3.14.0"]
 lint = ["ruff>=0.15.0"]
 test = ["pytest>=9.0.2", "packaging>=24.2"]
 verdict = ["cryptography>=42"]
@@ -114,7 +114,7 @@ dart = ["tree-sitter-dart-orchard>=0.3.2,<0.6"]
 all = [
     "pytest>=9.0.2",
     "packaging>=24.2",
-    "litellm>=1.84.0,<1.89.0",
+    "litellm>=1.84.0,<1.107.0",
     "aiohttp>=3.14.0",
     "ruff>=0.15.0",
     "cryptography>=42",
