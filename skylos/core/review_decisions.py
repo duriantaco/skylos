@@ -1729,8 +1729,10 @@ def _environment_dependency_hash(
             "sha256:" + hashlib.sha256(raw_value.encode("utf-8")).hexdigest()
         )
 
-    explicit_config = str(os.environ.get("SKYLOS_CONFIG_FILE") or "").strip()
-    if explicit_config:
+    for config_variable in ("SKYLOS_CONFIG_FILE", "SKYLOS_SYNCED_POLICY_FILE"):
+        explicit_config = str(os.environ.get(config_variable) or "").strip()
+        if not explicit_config:
+            continue
         candidate = Path(explicit_config).expanduser()
         if not candidate.is_absolute():
             candidate = Path.cwd() / candidate
@@ -1751,7 +1753,7 @@ def _environment_dependency_hash(
                 dependency_cache[cache_key] = None
             return None
         config_bytes = config_text.encode("utf-8", "surrogateescape")
-        environment["SKYLOS_CONFIG_FILE"] = sha256_value(
+        environment[config_variable] = sha256_value(
             {
                 "content": "sha256:" + hashlib.sha256(config_bytes).hexdigest(),
             }

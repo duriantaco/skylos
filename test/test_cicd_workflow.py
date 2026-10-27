@@ -11,6 +11,8 @@ from skylos.commands.done_cmd import build_parser as build_done_parser
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.rules.config.cicd.github_actions import scan_github_actions
 
+PR_UPLOAD_JOBS = ("pr-policy", "pr-scan", "pr-publish")
+
 
 def test_default_workflow_valid_yaml():
     content = generate_workflow()
@@ -272,7 +274,9 @@ def test_workflow_uploads_through_oidc_by_default():
     parsed = yaml.safe_load(content)
     assert "SKYLOS_TOKEN" not in content
     gate_job = parsed["jobs"]["skylos"]
-    assert gate_job["if"] == "github.event_name != 'push'"
+    assert gate_job["if"] == (
+        "github.event_name != 'push' && github.event_name != 'pull_request_target'"
+    )
     analysis_step = next(
         s for s in gate_job["steps"] if s.get("name") == "Run Skylos Analysis"
     )
@@ -508,7 +512,8 @@ def test_risk_review_job_runs_on_pull_requests_and_reviews():
     }
     # Other jobs do not rerun on reviews.
     assert parsed["jobs"]["skylos"]["if"] == (
-        "github.event_name != 'push' && github.event_name != 'pull_request_review'"
+        "github.event_name != 'push' && github.event_name != 'pull_request_target' "
+        "&& github.event_name != 'pull_request_review'"
     )
     assert parsed["jobs"]["done"]["if"] == (
         "github.event_name == 'pull_request' || github.event_name == 'merge_group'"
@@ -521,7 +526,8 @@ def test_risk_review_job_runs_on_pull_requests_and_reviews():
     )
     assert claude["jobs"]["claude-security"]["if"] == (
         "github.event_name != 'pull_request_review' "
-        "&& github.event_name != 'merge_group'"
+        "&& github.event_name != 'merge_group' "
+        "&& github.event_name != 'pull_request_target'"
     )
 
 
@@ -719,7 +725,7 @@ def test_cicd_init_adds_done_for_pytest_projects(tmp_path, monkeypatch):
     exit_code, workflow, printed = _run_cicd_init(tmp_path, monkeypatch)
 
     assert exit_code == 0
-    assert set(workflow["jobs"]) == {"skylos", "done", "cloud-upload"}
+    assert set(workflow["jobs"]) == {"skylos", "done", "cloud-upload", *PR_UPLOAD_JOBS}
     install = workflow["jobs"]["done"]["steps"][3]["run"]
     assert install.strip() == "python -I -m pip install -r requirements.txt pytest"
     assert "Skylos Done" in printed and "runs your tests" in printed
@@ -764,7 +770,7 @@ def test_cicd_init_done_and_upload_flags(tmp_path, monkeypatch):
     _, workflow, _ = _run_cicd_init(
         tmp_path, monkeypatch, "--no-done", "--upload", "--force"
     )
-    assert set(workflow["jobs"]) == {"skylos", "cloud-upload"}
+    assert set(workflow["jobs"]) == {"skylos", "cloud-upload", *PR_UPLOAD_JOBS}
 
 
 def test_cicd_init_risk_review_flag(tmp_path, monkeypatch):
@@ -775,6 +781,7 @@ def test_cicd_init_risk_review_flag(tmp_path, monkeypatch):
         "risk-review",
         "risk-review-recheck",
         "cloud-upload",
+        *PR_UPLOAD_JOBS,
     }
     assert "Skylos risk review" in printed
     assert "bot approvals do not count" in printed
@@ -1225,11 +1232,13 @@ def test_no_merge_group_without_pull_requests():
 def test_claude_jobs_stay_off_merge_groups():
     parsed = yaml.safe_load(generate_workflow(use_claude_security=True))
     assert parsed["jobs"]["claude-security"]["if"] == (
-        "github.event_name != 'merge_group'"
+        "github.event_name != 'merge_group' "
+        "&& github.event_name != 'pull_request_target'"
     )
     assert parsed["jobs"]["upload-claude-findings"]["if"] == (
         "always() && needs.skylos.result != 'skipped' "
-        "&& github.event_name != 'merge_group'"
+        "&& github.event_name != 'merge_group' "
+        "&& github.event_name != 'pull_request_target'"
     )
 
 

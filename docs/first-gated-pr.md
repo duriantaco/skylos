@@ -48,20 +48,24 @@ Expected, for a repository with pytest tests:
 Workflow written to .github/workflows/skylos.yml
 
 Pull requests
-  Skylos Quality Gate  scans the changed lines; fails when the gate fails
-  Skylos Done          runs your tests (pytest project found)
-                       installs: python -I -m pip install -e . pytest
-                       edit that step in the workflow if your tests need more
+  Skylos Quality Gate     scans the changed lines; fails when the gate fails
+  Skylos Done             runs your tests (pytest project found)
+                          installs: python -I -m pip install -e . pytest
+                          edit that step in the workflow if your tests need more
 Pushes to main
-  Skylos Cloud upload  full scan to Skylos Cloud with GitHub OIDC; no API key secret
-                       needs the Skylos GitHub App on this repository
-                       (without Cloud: rerun with --no-upload)
+  Skylos Cloud upload     full scan to Skylos Cloud with GitHub OIDC; no API key secret
+                          needs the Skylos GitHub App on this repository
+                          (without Cloud: rerun with --no-upload)
+Pull requests to main
+  Skylos Cloud PR upload  scans the PR head as data with no credentials; a job that
+                          never checks it out uploads it with GitHub OIDC
+                          starts with PRs opened or updated after this file is merged
 ```
 
 Two choices to make here:
 
 - **Not using Skylos Cloud?** Run `skylos cicd init --no-upload`. Otherwise
-  the upload job fails on your default branch until step 7 is done.
+  the upload jobs fail until step 7 is done.
 - **"Skylos Done: not added"?** Skylos found no pytest tests and no
   `test_command`. For a Vitest or Jest project, the message prints the exact
   `[tool.skylos.done]` settings to add. Continue without it, or see
@@ -99,9 +103,15 @@ Expected (the exact columns depend on your `gh` version):
 ✓  Skylos Analysis/Skylos Quality Gate (pull_request)
 ✓  Skylos Analysis/Skylos Done (pull_request)
 -  Skylos Analysis/Skylos Cloud upload (pull_request)
+-  Skylos Analysis/Skylos Cloud PR policy (pull_request)
+-  Skylos Analysis/Skylos Cloud PR scan (pull_request)
+-  Skylos Analysis/Skylos Cloud PR upload (pull_request)
 ```
 
-`-` means skipped: the upload job runs only on pushes to your default branch.
+`-` means skipped: the upload job runs only on pushes to your default branch,
+and the three PR upload jobs only on `pull_request_target` runs. GitHub runs
+those from the workflow on your default branch, so they start with the pull
+requests opened or updated after this one is merged.
 The gate checks only the lines a pull request changes, so findings already in
 your code do not fail this first pull request. On the pull request you will
 also see:
@@ -196,8 +206,8 @@ the gate by default. To change that, set `block_ai_defect_severities` under
 
 ## 7. Optional: connect Skylos Cloud (3 to 5 minutes, needs the browser)
 
-This sends full scans of your default branch to the Skylos Cloud dashboard.
-Pull request checks do not depend on it.
+This sends full scans of your default branch, and of pull requests to it, to
+the Skylos Cloud dashboard. The checks from steps 4 to 6 do not depend on it.
 
 1. Run `skylos login` in the repository. In the browser, sign in with GitHub
    and choose or create the project for this repository. The CLI sends the
@@ -209,6 +219,10 @@ Pull request checks do not depend on it.
    upload** job runs `skylos cloud` and should end with the gate for your
    default branch, for example `✓ Quality gate on main: PASSED`, and an
    `Open:` link to it.
+4. Open or update a pull request to the default branch. The **Skylos Cloud PR
+   upload** job uploads its scan; Skylos Cloud then lists the pull request and
+   publishes its own Cloud-verified "Skylos Quality Gate" check on it (paid
+   plans also get the PR comment and review brief).
 
 For a local scan with Cloud results, run `skylos cloud` (it runs every
 check and uploads; add `--gate` to exit `1` on a failed gate). It prints the
@@ -266,7 +280,12 @@ those; add yourself to the ruleset's bypass list to do it.
   token could not be verified` from the upload: the job lost
   `id-token: write`, or `--upload` was moved into a pull request job. Skylos
   Cloud accepts tokenless uploads only from default-branch pushes and from
-  its own pull request workflow.
+  `pull_request_target` runs of `.github/workflows/skylos.yml`.
+- `UNVERIFIED_GITHUB_SCAN` from `Skylos Cloud PR upload`: the workflow file is
+  not `.github/workflows/skylos.yml`, the pull request does not target the
+  default branch, or its head moved while the scan ran (the next push uploads
+  again). `GITHUB_APP_PERMISSION_MISSING`: give the Skylos GitHub App
+  Actions read access.
 
 **3. A required check stays "Expected — Waiting for status to be reported".**
 
@@ -329,14 +348,29 @@ never changes the gate's result.
 
 ## What the workflow contains
 
-`skylos cicd init` writes one file, `.github/workflows/skylos.yml`, with up
-to three jobs:
+`skylos cicd init` writes one file, `.github/workflows/skylos.yml`, with
+these jobs:
 
 | Job | Runs on | Permissions |
 |:---|:---|:---|
 | `skylos` (Skylos Quality Gate) | pull requests, merge groups (and default-branch pushes with `--no-upload`) | read code, write PR comments |
 | `done` (Skylos Done) | pull requests, checking out the PR head with full history, and merge groups, checking out the merge-group commit | read code |
 | `cloud-upload` (Skylos Cloud upload) | pushes to the default branch | read code, GitHub OIDC token |
+| `pr-policy` (Skylos Cloud PR policy) | `pull_request_target` for pull requests to the default branch; no checkout | GitHub OIDC token |
+| `pr-scan` (Skylos Cloud PR scan) | after `pr-policy`; installs Skylos, then checks out the PR head into `pr-source` without saved credentials and scans it as data | read code |
+| `pr-publish` (Skylos Cloud PR upload) | after `pr-scan`; no checkout, uploads the prepared scan | GitHub OIDC token |
+
+The PR upload jobs are how Skylos Cloud gets pull requests: Cloud accepts a
+pull request upload only from a `pull_request_target` run of
+`.github/workflows/skylos.yml`, then checks the run and the PR's current head
+before it shows the check. `pull_request_target` runs the workflow from the
+default branch with its token, so no job that reads PR files has an OIDC token,
+a write permission or a secret. `pr-scan` removes every `.skylos` folder from
+the checkout, takes `[tool.skylos]` and other Skylos settings from the PR's base
+commit and the Cloud policy from `pr-policy`, and keeps findings that the PR
+hides with inline ignore comments (except dead code). Without `--no-upload`,
+`cicd init` writes them only when the output is
+`.github/workflows/skylos.yml`.
 
 Useful options: `--no-upload`, `--done` / `--no-done`, `--default-branch`,
 `--scan-path apps/api` for one project in a monorepo, `--advisory-gate` to

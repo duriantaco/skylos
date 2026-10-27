@@ -123,6 +123,13 @@ def _default_workflow_output() -> str:
     return str(_repo_root() / ".github" / "workflows" / "skylos.yml")
 
 
+def _accepts_pr_uploads(output_path: str) -> bool:
+    from skylos.cicd.workflow import PR_UPLOAD_WORKFLOW_PATH
+
+    expected = tuple(PR_UPLOAD_WORKFLOW_PATH.split("/"))
+    return Path(output_path).parts[-len(expected) :] == expected
+
+
 def _detect_default_branch() -> str | None:
     """The branch origin/HEAD points to, as recorded by `git clone`."""
     ref = _git_output("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
@@ -203,6 +210,7 @@ def _run_cicd_init(cicd_args, console) -> int:
     from skylos.cicd.init_setup import detect_done_setup, print_init_next_steps
     from skylos.cicd.workflow import (
         FALLBACK_DEFAULT_BRANCHES,
+        PR_UPLOAD_WORKFLOW_PATH,
         display_path,
         generate_workflow,
         write_workflow,
@@ -219,6 +227,8 @@ def _run_cicd_init(cicd_args, console) -> int:
     done_setup = detect_done_setup(_repo_root())
     use_done = done_setup.enabled if cicd_args.done is None else cicd_args.done
     default_branch = cicd_args.default_branch or _detect_default_branch()
+    output_path = cicd_args.output or _default_workflow_output()
+    pr_upload = use_upload and _accepts_pr_uploads(output_path)
     try:
         yaml_content = generate_workflow(
             triggers=cicd_args.triggers,
@@ -236,11 +246,11 @@ def _run_cicd_init(cicd_args, console) -> int:
             done_install_commands=done_setup.install_commands,
             default_branch=default_branch,
             use_risk_review=cicd_args.risk_review,
+            use_pr_upload=pr_upload,
         )
     except ValueError as e:
         console.print(f"[bold red]Invalid workflow option: {e}[/bold red]")
         return 1
-    output_path = cicd_args.output or _default_workflow_output()
     try:
         existing = _existing_workflow_text(output_path)
         if existing == yaml_content:
@@ -282,7 +292,18 @@ def _run_cicd_init(cicd_args, console) -> int:
         ),
         branch_detected=bool(default_branch),
         risk_review=cicd_args.risk_review and "pull_request" in cicd_args.triggers,
+        pr_upload=pr_upload,
     )
+    if (
+        use_upload
+        and not pr_upload
+        and {"pull_request", "push"} <= set(cicd_args.triggers)
+    ):
+        console.print(
+            "[yellow]Pull requests do not upload to Skylos Cloud from this file: "
+            f"Cloud accepts pull request uploads only from {PR_UPLOAD_WORKFLOW_PATH}.[/yellow]",
+            soft_wrap=True,
+        )
     return 0
 
 
@@ -512,9 +533,11 @@ def run_cicd_command(
             "Pipelines or CircleCI; other CIs get the commands to add). On "
             "GitHub it writes .github/workflows/skylos.yml: a pull request gate "
             "(changed-line scan, PR comments, `skylos done` when your tests can "
-            "run) and a default-branch upload to Skylos Cloud through GitHub "
-            "OIDC. Other CIs get a changed-line gate; an existing CI file is "
-            "never edited, Skylos prints the block to add instead."
+            "run) and uploads to Skylos Cloud through GitHub OIDC: full scans of "
+            "default-branch pushes, and pull requests to the default branch "
+            "scanned as untrusted data without credentials. Other CIs get a "
+            "changed-line gate; an existing CI file is never edited, Skylos "
+            "prints the block to add instead."
         ),
     )
     from skylos.cicd.platforms import CI_CHOICES
@@ -566,8 +589,10 @@ def run_cicd_command(
         action=argparse.BooleanOptionalAction,
         default=None,
         help=(
-            "Upload full scans from default-branch pushes to Skylos Cloud with "
-            "GitHub OIDC; no API key secret. Needs the Skylos GitHub App on the "
+            "Upload to Skylos Cloud with GitHub OIDC; no API key secret: full "
+            "scans of default-branch pushes, and pull requests to the default "
+            "branch (scanned without credentials, uploaded by a job that never "
+            "checks out their files). Needs the Skylos GitHub App on the "
             "repository (default: on for GitHub Actions; --no-upload for "
             "local-only CI)"
         ),
@@ -695,9 +720,11 @@ def run_cicd_command(
 
     from skylos.commands.risk_review_cmd import add_risk_review_parser
     from skylos.cicd.agent_review import add_agent_review_parser
+    from skylos.cicd.pr_upload import add_pr_upload_parsers
 
     add_risk_review_parser(cicd_sub)
     add_agent_review_parser(cicd_sub)
+    add_pr_upload_parsers(cicd_sub)
 
     if not argv:
         cicd_parser.print_help()
@@ -718,6 +745,11 @@ def run_cicd_command(
         from skylos.commands.risk_review_cmd import run_risk_review
 
         return run_risk_review(cicd_args, console=console)
+
+    if cicd_args.cicd_cmd in ("pr-policy", "pr-scan", "pr-publish"):
+        from skylos.cicd.pr_upload import run_pr_upload_command
+
+        return run_pr_upload_command(cicd_args, console=console)
 
     if cicd_args.cicd_cmd == "gate":
         from skylos.cicd.policy import base_policy_context

@@ -65,6 +65,9 @@ git commit -m "Add Skylos CI gate"
 git push
 ```
 
+不加 `--no-upload` 时，工作流还会通过 GitHub OIDC 上传到 Skylos Cloud：默认分支的推送，
+以及指向默认分支的 PR。PR 在没有任何凭据的作业中作为不可信数据扫描，再由一个从不检出其文件的作业上传。
+
 使用 GitLab CI、Jenkins、Bitbucket Pipelines、Azure Pipelines 或 CircleCI？同一条
 `skylos cicd init` 会为该 CI 设置 PR 门控，详见 [Skylos on any CI](../ci-platforms.md)。
 

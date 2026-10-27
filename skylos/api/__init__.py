@@ -3282,13 +3282,6 @@ def verify_report(result_json, quiet=False) -> dict:
             "error": "Verification requires a valid Skylos token. Run 'skylos login' or set SKYLOS_TOKEN.",
         }
 
-    if not _token_allows_verification(token):
-        return {
-            "success": False,
-            "error": "Verification requires the Workspace plan. "
-            "Buying any credit pack turns it on.",
-        }
-
     commit, branch, actor, ci = get_git_info()
     git_root = get_git_root()
 
@@ -3316,12 +3309,6 @@ def verify_report(result_json, quiet=False) -> dict:
         _print_verification_counts(verdict_counts)
 
     return {"success": True, "counts": verdict_counts}
-
-
-def _token_allows_verification(token: str) -> bool:
-    info = get_project_info(token) or {}
-    plan = (info.get("plan") or "free").lower()
-    return plan in ["pro", "enterprise", "beta"]
 
 
 def _post_verification_request(
@@ -3359,19 +3346,41 @@ def _verification_error_response(response) -> dict | None:
     if response.status_code in (401, 403):
         return {
             "success": False,
-            "error": "Verification denied (token invalid or not paid).",
+            "error": "Verification denied: Skylos Cloud did not accept this token. "
+            "Run 'skylos login' or check SKYLOS_TOKEN.",
         }
     if response.status_code == 402:
         return {
             "success": False,
             "error": "Verification requires the Workspace plan (payment required).",
         }
+    if response.status_code == 429:
+        return {"success": False, "error": _verification_limit_message(response)}
     if response.status_code != 200:
         return {
             "success": False,
             "error": f"Verifier error {response.status_code}: {response.text[:2000]}",
         }
     return None
+
+
+def _verification_limit_message(response) -> str:
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    limit = None
+    if isinstance(body, dict):
+        limit = body.get("limit_per_day")
+    if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0:
+        used = f"all {limit} of today's verification checks"
+    else:
+        used = "today's verification checks"
+    return (
+        f"Verification limit reached: this Free workspace used {used}. "
+        "Try again tomorrow, or buy any credit pack on Billing to turn on "
+        "Workspace, which has no daily limit."
+    )
 
 
 def _merge_verification_results(result_json: dict, results: list[dict]) -> None:

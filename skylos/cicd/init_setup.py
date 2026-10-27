@@ -20,6 +20,7 @@ from skylos.cicd.workflow import (
     DONE_JOB_NAME,
     FIRST_GATED_PR_GUIDE_URL,
     GATE_JOB_NAME,
+    PR_PUBLISH_JOB_NAME,
     RISK_REVIEW_JOB_NAME,
     UPLOAD_JOB_NAME,
 )
@@ -240,12 +241,13 @@ def print_init_next_steps(
     push_branches: tuple[str, ...],
     branch_detected: bool,
     risk_review: bool = False,
+    pr_upload: bool = False,
 ) -> None:
     """Say what each generated job does and how to open the first gated PR."""
     pr = "pull_request" in triggers
     done = pr and done_setup.enabled
     branch_text = escape(" or ".join(push_branches))
-    width = len(UPLOAD_JOB_NAME) + 2
+    width = len(PR_PUBLISH_JOB_NAME) + 2
     indent = " " * (width + 2)
 
     def row(name: str, *lines: str) -> None:
@@ -303,6 +305,14 @@ def print_init_next_steps(
             "needs the Skylos GitHub App on this repository",
             "(without Cloud: rerun with --no-upload)",
         )
+        if pr and pr_upload:
+            console.print(f"[bold]Pull requests to {branch_text}[/bold]")
+            row(
+                PR_PUBLISH_JOB_NAME,
+                "scans the PR head as data with no credentials; a job that",
+                "never checks it out uploads it with GitHub OIDC",
+                "starts with PRs opened or updated after this file is merged",
+            )
     if "push" in triggers and not branch_detected:
         console.print(
             f"[yellow]No origin/HEAD, so pushes to {branch_text} trigger it; "

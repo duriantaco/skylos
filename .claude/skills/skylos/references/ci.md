@@ -34,6 +34,30 @@ Review these files for CI changes:
 Generated workflows should be deterministic, least-privilege, and explicit
 about which events receive secrets.
 
+## GitHub Pull Request Uploads
+
+Skylos Cloud trusts a GitHub OIDC upload only from a default-branch `push`, or
+from `pull_request_target` in `.github/workflows/skylos.yml` (Cloud also checks
+the run and the PR head). With uploads on, `cicd init` therefore adds three
+`pull_request_target` jobs (`skylos/cicd/pr_upload.py`), only when the output
+is that path:
+
+- `pr-policy` (`skylos cicd pr-policy`): OIDC, no checkout; saves
+  `/api/sync/config` and optional `/api/sync/rules` as an artifact.
+- `pr-scan` (`skylos cicd pr-scan`): `contents: read`, no OIDC/secrets/cache;
+  Skylos installed before the PR head is checked out (`persist-credentials:
+  false`); deletes every `.skylos` in the checkout, scans with
+  `SKYLOS_POLICY_BASE` (repo settings from the base commit) and
+  `SKYLOS_SYNCED_POLICY_FILE` (the Cloud policy), restores inline-ignored
+  non-dead-code findings, writes a prepared upload.
+- `pr-publish` (`skylos cicd pr-publish`): OIDC, no checkout; checks the
+  artifact's commit, PR number and project root, then uploads.
+
+Keep every other job off `pull_request_target`, never give a job that reads PR
+files `id-token`, write scopes, `github.token` or secrets, and keep
+`test/test_cicd_pr_upload.py` (audit-clean and mutation-flagged workflows)
+passing.
+
 ## Other CI Platforms
 
 `skylos cicd init` picks the CI from the repository (`skylos/cicd/platforms.py`):

@@ -7,6 +7,7 @@ from pathlib import Path
 
 CONFIG_FILE_ENV_VAR = "SKYLOS_CONFIG_FILE"
 POLICY_BASE_ENV_VAR = "SKYLOS_POLICY_BASE"
+SYNCED_POLICY_ENV_VAR = "SKYLOS_SYNCED_POLICY_FILE"
 # Read in this order within one directory; only the first one with Skylos
 # settings counts there (like Ruff's .ruff.toml > ruff.toml > pyproject.toml).
 CONFIG_FILE_NAMES = (".skylos.toml", "skylos.toml", "pyproject.toml")
@@ -189,11 +190,14 @@ def load_config(start_path, config_file=None) -> dict:
         current = current.parent
 
     explicit_config = resolve_config_file_path(config_file)
+    operator_synced_cfg = load_operator_synced_policy()
     policy_base = os.environ.get(POLICY_BASE_ENV_VAR)
     if policy_base:
         from skylos.cicd.policy import load_base_policy
 
         user_layers, synced_cfg = load_base_policy(current, policy_base)
+        if operator_synced_cfg is not None:
+            synced_cfg = operator_synced_cfg
         # An explicitly supplied operator file remains supported. Repository
         # discovery and synced policy come exclusively from the selected base.
         if explicit_config is not None:
@@ -213,6 +217,8 @@ def load_config(start_path, config_file=None) -> dict:
 
     final_cfg = copy.deepcopy(DEFAULTS)
     synced_cfg = _load_synced_config(sync_config) if sync_config else {}
+    if operator_synced_cfg is not None:
+        synced_cfg = operator_synced_cfg
 
     if synced_cfg:
         final_cfg = _merge_user_config(final_cfg, synced_cfg)
@@ -513,6 +519,34 @@ def _load_synced_config(sync_config: Path) -> dict:
     if not isinstance(raw, dict):
         return {}
 
+    return _normalize_synced_config(raw)
+
+
+def load_operator_synced_policy() -> dict | None:
+    """The synced policy file named by ``SKYLOS_SYNCED_POLICY_FILE``, or None.
+
+    CI sets it to Skylos Cloud policy fetched outside the checkout. It then
+    replaces any ``.skylos/config.yaml`` in the checkout or the policy base,
+    and a file that cannot be read stops the scan instead of dropping policy.
+    """
+    raw_path = str(os.environ.get(SYNCED_POLICY_ENV_VAR) or "").strip()
+    if not raw_path:
+        return None
+    path = Path(raw_path)
+    if not path.is_absolute() or not _is_safe_config_file(path, "config.yaml"):
+        raise ConfigError(
+            f"{SYNCED_POLICY_ENV_VAR} must be the absolute path of a config.yaml file"
+        )
+    try:
+        import yaml
+
+        if path.stat().st_size > 2 * 1024 * 1024:
+            raise ValueError("synced policy is too large")
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ConfigError(f"Could not read {SYNCED_POLICY_ENV_VAR}") from exc
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{SYNCED_POLICY_ENV_VAR} must hold a mapping")
     return _normalize_synced_config(raw)
 
 

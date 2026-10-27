@@ -93,9 +93,10 @@ def build_main_parser(*, version: str) -> argparse.ArgumentParser:
         "--verify",
         action="store_true",
         help=(
-            "(PRO source-scan option) Verify scan findings with the neuro-symbolic "
-            "prover. For AI-code verification and the Python working-tree model, "
-            "use 'skylos verify [path]'."
+            "(Skylos Cloud source-scan option; Free workspaces have a daily limit) "
+            "Verify scan findings with the neuro-symbolic prover. For AI-code "
+            "verification and the Python working-tree model, use "
+            "'skylos verify [path]'."
         ),
     )
     parser.add_argument(

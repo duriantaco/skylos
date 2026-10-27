@@ -28,6 +28,9 @@ ANALYSIS_FLAG_MAP: dict[str, str] = {
 
 SKYLOS_DEFENSE_RESULTS_SHELL_PATH = '"$RUNNER_TEMP/defense-results.json"'
 PINNED_ACTIONS_CHECKOUT = "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5"
+PINNED_ACTIONS_CHECKOUT_PR_HEAD = (
+    "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+)
 PINNED_ACTIONS_SETUP_PYTHON = (
     "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
 )
@@ -49,6 +52,11 @@ DONE_JOB_NAME = "Skylos Done"
 RISK_REVIEW_JOB_NAME = "Skylos risk review"
 RISK_REVIEW_RECHECK_JOB_NAME = "Skylos risk review (re-check after review)"
 UPLOAD_JOB_NAME = "Skylos Cloud upload"
+PR_POLICY_JOB_NAME = "Skylos Cloud PR policy"
+PR_SCAN_JOB_NAME = "Skylos Cloud PR scan"
+PR_PUBLISH_JOB_NAME = "Skylos Cloud PR upload"
+PR_UPLOAD_WORKFLOW_PATH = ".github/workflows/skylos.yml"
+PR_UPLOAD_EVENT_TYPES = ("opened", "synchronize", "reopened")
 # Used when the repository's default branch cannot be read from Git.
 FALLBACK_DEFAULT_BRANCHES = ("main", "master")
 DEFAULT_DONE_INSTALL_COMMANDS = ("python -I -m pip install pytest",)
@@ -89,11 +97,13 @@ def skylos_requirement(
     return shlex.quote(package)
 
 
-def _skylos_install_command(version: str | None = None, *, llm: bool = False) -> str:
+def _skylos_install_command(
+    version: str | None = None, *, dart: bool = True, llm: bool = False
+) -> str:
     # -I keeps a pull request's own files (e.g. a top-level pip/ directory)
     # off sys.path while pip runs after checkout. [dart] keeps Dart files
     # scanned; hosted runners have the C compiler its parser builds with.
-    return f"python -I -m pip install {skylos_requirement(version, llm=llm)}"
+    return f"python -I -m pip install {skylos_requirement(version, dart=dart, llm=llm)}"
 
 
 def _shell_path(path: str | Path | None) -> str:
@@ -120,6 +130,21 @@ def _push_branches(default_branch: str | None) -> tuple[str, ...]:
     return (default_branch,)
 
 
+def upload_project_root(scan_path: str | Path | None) -> str:
+    """The Skylos Cloud project folder (repo-relative) that ``scan_path`` uploads to."""
+    from skylos.cloud.project_context import normalize_repo_subpath
+
+    raw = str(scan_path or ".").strip().replace("\\", "/")
+    while raw.startswith("./"):
+        raw = raw[2:]
+    root = normalize_repo_subpath(raw)
+    if root is None or Path(raw).is_absolute():
+        raise ValueError(
+            "scan_path must be a folder inside the repository for pull request uploads"
+        )
+    return root
+
+
 def _upload_env_block() -> str:
     return """        env:
           SKYLOS_COMMIT: ${{ github.sha }}
@@ -134,6 +159,7 @@ def _header_comment(
     push_branches: Sequence[str],
     risk_review_job: bool = False,
     merge_queue: bool = False,
+    pr_upload_jobs: bool = False,
     llm_key_env: str | None = None,
 ) -> str:
     lines = [
@@ -176,6 +202,18 @@ def _header_comment(
             f"# Pushes to {' or '.join(push_branches)}: the full scan uploads to Skylos Cloud with",
             "# GitHub OIDC (no API key secret). Cloud accepts it once the Skylos GitHub",
             "# App is installed on this repository. Without Cloud: skylos cicd init --no-upload",
+        ]
+    if pr_upload_jobs:
+        lines += [
+            "#",
+            f"# Pull requests to {' or '.join(push_branches)} upload to Skylos Cloud too. They use",
+            "# pull_request_target, so GitHub runs this file as it is on the base branch:",
+            "# PR uploads start once this file is merged.",
+            f'#   "{PR_POLICY_JOB_NAME}" reads the Cloud policy with GitHub OIDC; no checkout.',
+            f'#   "{PR_SCAN_JOB_NAME}" reads the PR head as data: read-only token, no OIDC,',
+            "#   no secrets, and Skylos is installed before any PR file is read.",
+            f'#   "{PR_PUBLISH_JOB_NAME}" uploads that scan with GitHub OIDC; no checkout.',
+            f"#   Skylos Cloud accepts PR uploads only from {PR_UPLOAD_WORKFLOW_PATH}.",
         ]
     return "\n".join(lines)
 
@@ -406,6 +444,131 @@ def _build_upload_job(
 {defend_step}"""
 
 
+def _build_pr_upload_jobs(
+    *,
+    python_version: str,
+    skylos_version: str | None,
+    scan_target: str,
+    analysis_flags: str,
+    project_root: str,
+) -> str:
+    root_arg = ""
+    if project_root:
+        root_arg = f" --project-root {shlex.quote(project_root)}"
+    scan_install = _skylos_install_command(skylos_version)
+    plain_install = _skylos_install_command(skylos_version, dart=False)
+    return f"""
+  pr-policy:
+    if: github.event_name == 'pull_request_target'
+    name: {PR_POLICY_JOB_NAME}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      - name: Setup Python
+        uses: {PINNED_ACTIONS_SETUP_PYTHON}
+        with:
+          python-version: '{python_version}'
+
+      - name: Install Skylos
+        run: {plain_install}
+
+      - name: Read the Skylos Cloud policy without pull request files
+        run: skylos cicd pr-policy --output "$RUNNER_TEMP/skylos-pr-policy"{root_arg}
+
+      - name: Save the policy for the scan job
+        uses: {PINNED_ACTIONS_UPLOAD_ARTIFACT}
+        with:
+          name: skylos-pr-policy
+          path: ${{{{ runner.temp }}}}/skylos-pr-policy
+          if-no-files-found: error
+          retention-days: 1
+
+  pr-scan:
+    if: github.event_name == 'pull_request_target'
+    needs: pr-policy
+    name: {PR_SCAN_JOB_NAME}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      SKYLOS_COMMIT: ${{{{ github.event.pull_request.head.sha }}}}
+      SKYLOS_BRANCH: ${{{{ github.event.pull_request.head.ref }}}}
+      SKYLOS_PR_NUMBER: ${{{{ github.event.pull_request.number }}}}
+      SKYLOS_PR_BASE_SHA: ${{{{ github.event.pull_request.base.sha }}}}
+    steps:
+      - name: Setup Python
+        uses: {PINNED_ACTIONS_SETUP_PYTHON}
+        with:
+          python-version: '{python_version}'
+
+      - name: Install Skylos before reading pull request files
+        run: {scan_install}
+
+      - name: Checkout the pull request head without credentials
+        uses: {PINNED_ACTIONS_CHECKOUT_PR_HEAD}
+        with:
+          ref: refs/pull/${{{{ github.event.pull_request.number }}}}/head
+          path: pr-source
+          fetch-depth: 0
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - name: Verify the fetched pull request head
+        working-directory: pr-source
+        run: test "$(git rev-parse HEAD)" = "$SKYLOS_COMMIT"
+
+      - name: Download the Skylos Cloud policy
+        uses: {PINNED_ACTIONS_DOWNLOAD_ARTIFACT}
+        with:
+          name: skylos-pr-policy
+          path: ${{{{ runner.temp }}}}/skylos-pr-policy
+
+      - name: Scan the pull request as untrusted data
+        working-directory: pr-source
+        run: skylos cicd pr-scan {scan_target}{analysis_flags} --policy "$RUNNER_TEMP/skylos-pr-policy" --output "$RUNNER_TEMP/skylos-pr-report/report.json.gz"{root_arg}
+
+      - name: Save the scan for the upload job
+        uses: {PINNED_ACTIONS_UPLOAD_ARTIFACT}
+        with:
+          name: skylos-pr-report
+          path: ${{{{ runner.temp }}}}/skylos-pr-report
+          if-no-files-found: error
+          retention-days: 1
+
+  pr-publish:
+    if: github.event_name == 'pull_request_target'
+    needs: pr-scan
+    name: {PR_PUBLISH_JOB_NAME}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      id-token: write
+    env:
+      SKYLOS_COMMIT: ${{{{ github.event.pull_request.head.sha }}}}
+      SKYLOS_PR_NUMBER: ${{{{ github.event.pull_request.number }}}}
+    steps:
+      - name: Setup Python
+        uses: {PINNED_ACTIONS_SETUP_PYTHON}
+        with:
+          python-version: '{python_version}'
+
+      - name: Install Skylos
+        run: {plain_install}
+
+      - name: Download the pull request scan
+        uses: {PINNED_ACTIONS_DOWNLOAD_ARTIFACT}
+        with:
+          name: skylos-pr-report
+          path: ${{{{ runner.temp }}}}/skylos-pr-report
+
+      - name: Upload the scan to Skylos Cloud
+        run: skylos cicd pr-publish --input "$RUNNER_TEMP/skylos-pr-report/report.json.gz"{root_arg}
+"""
+
+
 def generate_workflow(
     *,
     triggers: Optional[list[str]] = None,
@@ -424,6 +587,7 @@ def generate_workflow(
     done_install_commands: Optional[Sequence[str]] = None,
     default_branch: str | None = None,
     use_risk_review: bool = False,
+    use_pr_upload: bool = True,
 ) -> str:
     """
     Generate the GitHub Actions workflow YAML for Skylos scans.
@@ -431,13 +595,17 @@ def generate_workflow(
     Pull requests get the "Skylos Quality Gate" job (diff-aware scan, gate,
     annotations, review comments) and, with use_done, the "Skylos Done" job.
     With use_upload, pushes to the default branch upload a full scan through
-    GitHub OIDC from a separate job, the only one granted id-token: write.
+    GitHub OIDC from a separate job. With use_pr_upload as well, pull requests
+    to the default branch upload through pull_request_target: a read-only job
+    scans the pull request head as data, and only the jobs that never check
+    out pull request files get id-token: write.
 
     Calls: skylos/cicd/workflow.py _build_trigger_block;
         skylos/cicd/workflow.py _skylos_install_command;
         skylos/cicd/workflow.py _shell_path;
         skylos/cicd/workflow.py _build_done_job;
         skylos/cicd/workflow.py _build_upload_job;
+        skylos/cicd/workflow.py _build_pr_upload_jobs;
         skylos/cicd/workflow.py _build_claude_security_jobs.
 
     Called from: skylos/commands/cicd_cmd.py run_cicd_command.
@@ -454,6 +622,15 @@ def generate_workflow(
 
     push_branches = _push_branches(default_branch)
     upload_job = use_upload and "push" in triggers
+    pr_upload_jobs = (
+        upload_job
+        and use_pr_upload
+        and "pull_request" in triggers
+        and "pull_request_target" not in triggers
+    )
+    project_root = ""
+    if pr_upload_jobs:
+        project_root = upload_project_root(scan_path)
     done_job = use_done and "pull_request" in triggers
     risk_review_job = use_risk_review and "pull_request" in triggers
     # Required checks must also report on merge_group events, or a merge
@@ -464,6 +641,7 @@ def generate_workflow(
         push_branches=push_branches,
         review_events=risk_review_job,
         merge_queue=merge_queue,
+        pr_upload=pr_upload_jobs,
     )
     install_command = _skylos_install_command(skylos_version)
     gate_install_command = _skylos_install_command(skylos_version, llm=use_llm)
@@ -560,9 +738,13 @@ def generate_workflow(
     )
     skylos_environment = "\n    environment: skylos-security" if use_llm else ""
     # The upload job owns default-branch pushes; the gate job covers the rest.
-    skipped_events = (["push"] if upload_job else []) + (
-        ["pull_request_review"] if risk_review_job else []
-    )
+    skipped_events = []
+    if upload_job:
+        skipped_events.append("push")
+    if pr_upload_jobs:
+        skipped_events.append("pull_request_target")
+    if risk_review_job:
+        skipped_events.append("pull_request_review")
     gate_condition = (
         "\n    if: "
         + " && ".join(f"github.event_name != '{event}'" for event in skipped_events)
@@ -588,6 +770,7 @@ def generate_workflow(
         push_branches=push_branches,
         risk_review_job=risk_review_job,
         merge_queue=merge_queue,
+        pr_upload_jobs=pr_upload_jobs,
         llm_key_env=llm_key_env,
     )
 
@@ -682,12 +865,22 @@ jobs:
             use_defend=use_defend,
         )
 
+    if pr_upload_jobs:
+        workflow += _build_pr_upload_jobs(
+            python_version=python_version,
+            skylos_version=skylos_version,
+            scan_target=scan_target,
+            analysis_flags=analysis_flags,
+            project_root=project_root,
+        )
+
     if use_claude_security:
         workflow += _build_claude_security_jobs(
             python_version,
             install_command,
             skip_reviews=risk_review_job,
             skip_merge_groups=merge_queue,
+            skip_pr_target=pr_upload_jobs,
         )
 
     return workflow
@@ -699,21 +892,28 @@ def _build_claude_security_jobs(
     *,
     skip_reviews: bool = False,
     skip_merge_groups: bool = False,
+    skip_pr_target: bool = False,
 ) -> str:
     # Not a required check: it stays off review events and merge groups,
     # where it would only spend the API key again on reviewed code.
-    skipped = (["pull_request_review"] if skip_reviews else []) + (
-        ["merge_group"] if skip_merge_groups else []
-    )
+    skipped = []
+    if skip_reviews:
+        skipped.append("pull_request_review")
+    if skip_merge_groups:
+        skipped.append("merge_group")
+    if skip_pr_target:
+        skipped.append("pull_request_target")
     review_condition = (
         "\n    if: "
         + " && ".join(f"github.event_name != '{event}'" for event in skipped)
         if skipped
         else ""
     )
-    upload_condition = "always() && needs.skylos.result != 'skipped'" + (
-        " && github.event_name != 'merge_group'" if skip_merge_groups else ""
-    )
+    upload_condition = "always() && needs.skylos.result != 'skipped'"
+    if skip_merge_groups:
+        upload_condition += " && github.event_name != 'merge_group'"
+    if skip_pr_target:
+        upload_condition += " && github.event_name != 'pull_request_target'"
     return f"""
   claude-security:{review_condition}
     runs-on: ubuntu-latest
@@ -778,12 +978,18 @@ def _build_trigger_block(
     push_branches: Sequence[str] = FALLBACK_DEFAULT_BRANCHES,
     review_events: bool = False,
     merge_queue: bool = False,
+    pr_upload: bool = False,
 ) -> str:
     lines = ['"on":']
     for trigger in triggers:
         if trigger == "pull_request":
             # Every pull request, whatever its base branch.
             lines.append("  pull_request:")
+            if pr_upload:
+                branches = ", ".join(json.dumps(branch) for branch in push_branches)
+                lines.append("  pull_request_target:")
+                lines.append(f"    types: [{', '.join(PR_UPLOAD_EVENT_TYPES)}]")
+                lines.append(f"    branches: [{branches}]")
             if review_events and "pull_request_review" not in triggers:
                 # Only the risk review job runs on these.
                 lines.append("  pull_request_review:")
