@@ -23,16 +23,23 @@ class NoDangerousSinkPlugin(DefensePlugin):
     def check(
         self, integration: LLMIntegration, graph: AIIntegrationGraph
     ) -> DefenseResult:
-        if not integration.output_sinks:
+        if not integration.output_sinks and not integration.output_sink_flows:
             return self._pass(
                 integration,
                 integration.location,
-                "No dangerous sink detected in same scope as LLM call",
+                "No dangerous sink detected in same scope as LLM call "
+                "or reached by its output one call hop away",
             )
 
-        sinks = ", ".join(integration.output_sinks)
-        return self._fail(
-            integration,
-            integration.location,
-            f"Dangerous sink(s) detected in same scope as LLM call: {sinks}",
-        )
+        parts = []
+        if integration.output_sinks:
+            sinks = ", ".join(integration.output_sinks)
+            parts.append(
+                f"Dangerous sink(s) detected in same scope as LLM call: {sinks}"
+            )
+        if integration.output_sink_flows:
+            reached = "; ".join(integration.output_sink_flows)
+            parts.append(
+                f"Model output reaches a dangerous sink one call hop away: {reached}"
+            )
+        return self._fail(integration, integration.location, "; ".join(parts))
