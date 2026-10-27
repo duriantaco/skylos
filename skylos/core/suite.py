@@ -140,6 +140,13 @@ def format_suite_table(report: dict[str, Any]) -> str:
     debt_score = debt.get("score") or {}
     defense = report.get("defense") or {}
     defense_summary = defense.get("summary") or {}
+    defense_score_line = "  Score: not applicable (no LLM integrations found)"
+    if defense_summary.get("integrations_found", 0):
+        defense_score_line = (
+            "  "
+            f"Score: {defense_summary.get('score_pct', 100)}% "
+            f"({defense_summary.get('risk_rating', 'SECURE')})"
+        )
 
     lines = [
         "",
@@ -169,11 +176,7 @@ def format_suite_table(report: dict[str, Any]) -> str:
         "",
         "AI Defense",
         f"  Integrations: {defense_summary.get('integrations_found', 0)}",
-        (
-            "  "
-            f"Score: {defense_summary.get('score_pct', 100)}% "
-            f"({defense_summary.get('risk_rating', 'SECURE')})"
-        ),
+        defense_score_line,
         f"  Failed checks: {defense_summary.get('failed', 0)}",
         f"  Coverage: {defense.get('note', _DEFENSE_NOTE)}",
         "",
@@ -381,6 +384,11 @@ def run_suite(
         defense_report = _empty_defense_payload(str(target_path))
 
     static_summary = _static_summary(static_result)
+    defense_summary = defense_report.get("summary") or {}
+    integrations_found = int(defense_summary.get("integrations_found") or 0)
+    defense_score_pct = None
+    if integrations_found:
+        defense_score_pct = int(defense_summary.get("score_pct") or 0)
     return {
         "version": "1.0",
         "project": str(target_path),
@@ -395,12 +403,8 @@ def run_suite(
             "static": static_summary,
             "debt_score_pct": debt_snapshot.score.score_pct,
             "debt_hotspots": len(debt_snapshot.hotspots),
-            "defense_score_pct": int(
-                (defense_report.get("summary") or {}).get("score_pct") or 0
-            ),
-            "integrations_found": int(
-                (defense_report.get("summary") or {}).get("integrations_found") or 0
-            ),
+            "defense_score_pct": defense_score_pct,
+            "integrations_found": integrations_found,
             "provenance_available": provenance_section.get("available", False),
         },
         "static": static_result,
