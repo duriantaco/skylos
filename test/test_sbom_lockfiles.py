@@ -357,3 +357,20 @@ def test_writing_to_a_file_says_where_and_keeps_stdout_empty(tmp_path, capsys):
     assert f"Wrote CycloneDX 1.6 SBOM with 2 packages to {target}" in captured.err
     assert len(json.loads(target.read_text(encoding="utf-8"))["components"]) == 2
 
+
+def test_spdx_written_line_counts_the_same_packages_as_cyclonedx(tmp_path, capsys):
+    _write(tmp_path, "requirements.txt", "flask==2.2.2\nrequests==2.25.0\n")
+    target = tmp_path / "sbom.spdx.json"
+
+    assert (
+        run_sbom_command([str(tmp_path), "--format", "spdx-json", "-o", str(target)])
+        == 0
+    )
+
+    captured = capsys.readouterr()
+    assert (
+        f"Wrote SPDX 2.3 SBOM with 2 packages (plus the project package) to {target}"
+        in captured.err
+    )
+    assert len(json.loads(target.read_text(encoding="utf-8"))["packages"]) == 3
+
