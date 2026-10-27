@@ -734,7 +734,7 @@ def cmd_project_status() -> None:
         org = active.get("organization", {})
         print(f"  Active Name:  {project.get('name', UNKNOWN_LABEL)}")
         print(f"  Active Org:   {org.get('name', 'My Workspace')}")
-        print(f"  Plan:         {active.get('plan', 'free').capitalize()}")
+        print(f"  Plan:         {plan_display_name(active.get('plan'))}")
     else:
         print("  Active Name:  not connected")
 
@@ -758,7 +758,7 @@ def cmd_project_list() -> None:
         if item["project_id"] == linked_project_id:
             marker = "*"
         print(f"{marker} {item['project_name']}  [{item['project_id']}]")
-        print(f"    Org: {item['org_name']}   Plan: {str(item['plan']).capitalize()}")
+        print(f"    Org: {item['org_name']}   Plan: {plan_display_name(item['plan'])}")
 
     if linked_project_id:
         print("\n* active for this repo")

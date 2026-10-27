@@ -455,6 +455,9 @@ def test_cmd_project_list_marks_active_project(
     assert "* Active Project  [proj_active]" in out
     assert "Other Project  [proj_other]" in out
     assert "active for this repo" in out
+    assert "Plan: Workspace" in out
+    assert "Plan: Free" in out
+    assert "Plan: Pro" not in out
 
 
 def test_cmd_connect_with_token_arg_saves_creds(isolated_creds, monkeypatch, capsys):
@@ -1312,3 +1315,49 @@ def test_pull_prints_paths_relative_to_the_current_folder(tmp_path, monkeypatch)
     outside = tmp_path.parent / "elsewhere" / "config.yaml"
     assert syncmod._display_path(inside) == str(Path(".skylos") / "config.yaml")
     assert syncmod._display_path(outside) == str(outside)
+
+
+def test_cmd_project_status_shows_the_workspace_plan_name(
+    isolated_creds, monkeypatch, tmp_path, capsys
+):
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    monkeypatch.setattr(syncmod, "_find_repo_root", lambda: repo_root)
+    monkeypatch.setattr(syncmod, "get_token", lambda: "TOK")
+    monkeypatch.setattr(
+        syncmod,
+        "api_get",
+        lambda endpoint, token: {
+            "project": {"name": "Proj"},
+            "organization": {"name": "Acme"},
+            "plan": "pro",
+        },
+    )
+
+    syncmod.cmd_project_status()
+    out = capsys.readouterr().out
+
+    assert "  Plan:         Workspace" in out
+    assert "Plan:         Pro" not in out
+
+
+def test_whoami_shows_the_workspace_plan_name(monkeypatch, capsys):
+    from skylos.commands import whoami_cmd
+
+    monkeypatch.setattr(whoami_cmd, "get_project_token", lambda: "TOK")
+    monkeypatch.setattr(
+        whoami_cmd,
+        "get_project_info",
+        lambda token: {
+            "ok": True,
+            "project": {"name": "acme-shop"},
+            "organization": {"name": "Acme"},
+            "plan": "pro",
+        },
+    )
+
+    assert whoami_cmd.run_whoami_command() == 0
+    out = capsys.readouterr().out
+
+    assert "Plan:     Workspace" in out
+    assert "Plan:     pro" not in out
