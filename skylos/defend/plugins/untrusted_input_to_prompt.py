@@ -19,6 +19,8 @@ class UntrustedInputToPromptPlugin(DefensePlugin):
     )
 
     def applies_to(self, integration: LLMIntegration) -> bool:
+        if integration.prompt_inputs:
+            return True
         return bool(integration.input_sources) and bool(integration.prompt_sites)
 
     def check(
@@ -29,10 +31,24 @@ class UntrustedInputToPromptPlugin(DefensePlugin):
         )
 
         if has_defense:
+            if integration.prompt_inputs:
+                return self._pass(
+                    integration,
+                    integration.location,
+                    "Input formatted into prompt text has intermediate processing",
+                )
             return self._pass(
                 integration,
                 integration.location,
                 "Input and prompt in same scope with intermediate processing",
+            )
+
+        if integration.prompt_inputs:
+            inputs = ", ".join(item.label for item in integration.prompt_inputs[:3])
+            return self._fail(
+                integration,
+                integration.location,
+                f"Input formatted into prompt text without processing: {inputs}",
             )
 
         sources = ", ".join(integration.input_sources[:3])

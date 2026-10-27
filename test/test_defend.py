@@ -1883,12 +1883,13 @@ def agent_two():
         agents = [i for i in integrations if i.integration_type == "agent"]
         assert len(agents) == 2
 
-        # Tools should NOT bleed — each agent gets only module-level tools
-        # (since tool funcs aren't decorated with @tool, they won't be ToolDefs,
-        # so both should have empty tools lists)
+        agents.sort(key=lambda i: int(i.location.rsplit(":", 1)[-1]))
+        assert [t.name for t in agents[0].tools] == ["tool_search"]
+        assert [t.name for t in agents[1].tools] == ["tool_calc"]
         for agent in agents:
-            # No @tool decorated functions, so no tools attached
-            assert len(agent.tools) == 0
+            assert agent.tools[0].kind == "schema"
+            assert agent.tools[0].handler_location == ""
+            assert agent.tools[0].dangerous_calls == []
 
     def test_module_level_prompt_available_to_function_calls(self):
         """Module-level prompt definitions should be visible to function-scoped calls."""
