@@ -40,64 +40,38 @@ from pathlib import Path
 from typing import Any
 
 # Class attributes frameworks read by name when the package is not installed
-# in the scanner environment (Skylos Docker image, etc.). Keys are simple base
-# class names from the subclass MRO. Keep tight: do not silence arbitrary
-# attributes on unresolvable bases.
+# in the scanner environment (Skylos Docker image, etc.). Keys are qualified
+# framework providers, not simple class names shared by unrelated projects.
+_S3_CLASS_ATTRIBUTES = frozenset(
+    {
+        "bucket_name",
+        "location",
+        "custom_domain",
+        "default_acl",
+        "file_overwrite",
+        "object_parameters",
+        "querystring_auth",
+        "gzip",
+        "region_name",
+        "endpoint_url",
+        "addressing_style",
+        "signature_version",
+    }
+)
+
 FRAMEWORK_CLASS_ATTRIBUTES_BY_BASE = {
     # celery.backends.redis.RedisBackend.__init__:
     # self.result_consumer = self.ResultConsumer(...)
-    "RedisBackend": frozenset({"ResultConsumer"}),
+    "celery.backends.redis.RedisBackend": frozenset({"ResultConsumer"}),
     # django.contrib.admin.SimpleListFilter.__init__
-    "SimpleListFilter": frozenset({"parameter_name", "title"}),
-    # django-storages BaseStorage.__init__ keeps class attrs named in
-    # get_default_settings() (bucket_name is not a class body member on the
-    # storage base — only a settings key).
-    "S3Boto3Storage": frozenset(
-        {
-            "bucket_name",
-            "location",
-            "custom_domain",
-            "default_acl",
-            "file_overwrite",
-            "object_parameters",
-            "querystring_auth",
-            "gzip",
-            "region_name",
-            "endpoint_url",
-            "addressing_style",
-            "signature_version",
-        }
+    "django.contrib.admin.SimpleListFilter": frozenset({"parameter_name", "title"}),
+    "django.contrib.admin.filters.SimpleListFilter": frozenset(
+        {"parameter_name", "title"}
     ),
-    "S3Storage": frozenset(
-        {
-            "bucket_name",
-            "location",
-            "custom_domain",
-            "default_acl",
-            "file_overwrite",
-            "object_parameters",
-            "querystring_auth",
-            "gzip",
-            "region_name",
-            "endpoint_url",
-            "addressing_style",
-            "signature_version",
-        }
-    ),
-    "BaseStorage": frozenset(
-        {
-            "bucket_name",
-            "location",
-            "custom_domain",
-            "default_acl",
-            "file_overwrite",
-            "object_parameters",
-            "querystring_auth",
-            "gzip",
-            "region_name",
-            "endpoint_url",
-        }
-    ),
+    # Only S3 implementations supply these get_default_settings() keys.
+    # The generic storages.base.BaseStorage returns an empty settings dict.
+    "storages.backends.s3.S3Storage": _S3_CLASS_ATTRIBUTES,
+    "storages.backends.s3boto3.S3Boto3Storage": _S3_CLASS_ATTRIBUTES,
 }
 
 WAGTAIL_CLASS_ATTRIBUTES = frozenset(
@@ -447,10 +421,13 @@ def _framework_class_attribute_reason(def_obj: Any, analyzer: Any) -> str | None
     if owner is None:
         return None
     attr = def_obj.simple_name
-    for base_simple in graph.ancestor_base_names(owner):
-        allowed = FRAMEWORK_CLASS_ATTRIBUTES_BY_BASE.get(base_simple)
+    _, external = graph.ancestry(owner)
+    for provider in external:
+        if provider.split(".", 1)[0] in graph.project_roots:
+            continue
+        allowed = FRAMEWORK_CLASS_ATTRIBUTES_BY_BASE.get(provider)
         if allowed and attr in allowed:
-            return f"framework class attribute read by {base_simple}"
+            return f"framework class attribute read by {provider}"
     return None
 
 

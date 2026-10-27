@@ -6,9 +6,11 @@ Sphinx ``Domain.resolve_xref``, a Pygments ``Style.styles``) is an override:
 the library calls or reads it, so it has no reference inside the project.
 
 The external MRO is read from source, never imported. Modules are located by
-file lookup in the running interpreter's standard-library directory, in the
-``site-packages``/``dist-packages`` entries on ``sys.path`` that lie outside
-the scan root, and in a project ``.venv`` / ``venv`` / ``env`` when present.
+file lookup in the running interpreter's standard-library directory and one
+project virtualenv, preferring ``.venv``, ``venv``, ``env``, then ``.env``.
+When no project virtualenv is found, ``site-packages``/``dist-packages`` entries
+on ``sys.path`` outside the scan root are used instead. Project dependency
+sources take precedence over the scanner's installed dependency versions.
 A class's bases are followed through its module's imports, re-exports and
 simple aliases, with depth, file-size and file-count limits and a
 per-search-path cache. A base that cannot be found stays unresolved and
@@ -402,18 +404,19 @@ class ExternalClassIndex:
         return members.get(member)
 
 
-_VENV_DIR_NAMES = frozenset({".venv", "venv", "env", ".env"})
+_VENV_DIR_NAMES = (".venv", "venv", "env", ".env")
 
 
 def _venv_site_packages(scan_roots) -> list[Path]:
-    """``site-packages`` under a project virtualenv.
+    """``site-packages`` from the first available project virtualenv.
 
     Scanner images often lack the app's third-party deps on ``sys.path``. The
     app's ``.venv`` (excluded from dead-code file walk) still holds Celery /
     Django sources that define subclass hooks such as ``ResultConsumer``.
-    Arbitrary vendored ``site-packages`` trees are not included.
+    Prefer the first scan root, then ``.venv``, ``venv``, ``env``, ``.env``.
+    Keep one environment authoritative so stale environments cannot contribute
+    incompatible package files. Arbitrary vendored trees are not included.
     """
-    found: list[Path] = []
     for root in scan_roots:
         try:
             root_path = Path(root).resolve()
@@ -425,21 +428,27 @@ def _venv_site_packages(scan_roots) -> list[Path]:
             venv = root_path / venv_name
             if not venv.is_dir():
                 continue
+            found: list[Path] = []
             for pattern in (
                 "lib/python*/site-packages",
                 "lib/site-packages",
                 "Lib/site-packages",
             ):
-                found.extend(path for path in venv.glob(pattern) if path.is_dir())
-    return found
+                found.extend(
+                    path for path in sorted(venv.glob(pattern)) if path.is_dir()
+                )
+            if found:
+                return found
+    return []
 
 
 def default_search_dirs(exclude_roots=()) -> list[Path]:
-    """Stdlib + ``sys.path`` site-packages outside the scan, plus project venvs.
+    """Stdlib plus one project venv, or the scanner's external site-packages.
 
-    Paths under ``exclude_roots`` are skipped so vendored trees inside the
-    project are not treated as external — except ``.venv`` / ``venv`` /
-    ``env`` site-packages, which hold installed dependencies.
+    The selected project environment is authoritative for dependency source.
+    Mixing scanner or stale virtualenv packages could invent an incompatible
+    MRO. Without a project environment, keep the scanner's search-path order.
+    Vendored trees inside the scan remain excluded.
     """
     excluded = []
     for root in exclude_roots:
@@ -455,10 +464,13 @@ def default_search_dirs(exclude_roots=()) -> list[Path]:
     stdlib = sysconfig.get_paths().get("stdlib")
     if stdlib:
         candidates.append(Path(stdlib))
-    for entry in sys.path:
-        if entry and Path(entry).name in ("site-packages", "dist-packages"):
-            candidates.append(Path(entry))
-    candidates.extend(_venv_site_packages(exclude_roots))
+    project_sites = _venv_site_packages(excluded)
+    if project_sites:
+        candidates.extend(project_sites)
+    else:
+        for entry in sys.path:
+            if entry and Path(entry).name in ("site-packages", "dist-packages"):
+                candidates.append(Path(entry))
 
     dirs: list[Path] = []
     for candidate in candidates:
@@ -468,25 +480,11 @@ def default_search_dirs(exclude_roots=()) -> list[Path]:
             continue
         if resolved in dirs or not resolved.is_dir():
             continue
-        # Project venv site-packages are under the scan root on purpose.
-        if inside_scan(resolved) and not _is_venv_site_packages(resolved, excluded):
+        # Only explicitly selected virtualenv sources may be inside the scan.
+        if inside_scan(resolved) and candidate not in project_sites:
             continue
         dirs.append(resolved)
     return dirs
-
-
-def _is_venv_site_packages(path: Path, scan_roots: list[Path]) -> bool:
-    if path.name not in {"site-packages", "dist-packages"}:
-        return False
-    for root in scan_roots:
-        try:
-            relative = path.relative_to(root)
-        except ValueError:
-            continue
-        parts = relative.parts
-        if parts and parts[0] in _VENV_DIR_NAMES:
-            return True
-    return False
 
 
 _INDEXES: dict[tuple, ExternalClassIndex] = {}

@@ -24,7 +24,9 @@ def _write(root: Path, files: dict[str, str]) -> None:
 
 def _scan(root: Path, files: dict[str, str], *, conf: int = 80):
     _write(root, files)
-    return json.loads(analyze(str(root), conf=conf, grep_verify=False, grep_cache=False))
+    return json.loads(
+        analyze(str(root), conf=conf, grep_verify=False, grep_cache=False)
+    )
 
 
 def _names(result, bucket: str) -> set[str]:
@@ -68,8 +70,8 @@ RESULT = Plugin()
     assert "orphan" in unused
 
 
-def test_unresolvable_celery_result_consumer_stays_live(tmp_path):
-    """Scanner env without Celery: curated RedisBackend.ResultConsumer hook."""
+def test_unrelated_celery_name_keeps_result_consumer_reported(tmp_path):
+    """An unavailable lookalike package does not establish a Celery hook."""
     result = _scan(
         tmp_path,
         {
@@ -92,12 +94,12 @@ ENTRY = RedisClusterBackend
         },
     )
     unused = _names(result, "unused_variables")
-    assert "ResultConsumer" not in unused
-    assert "RedisClusterBackend.ResultConsumer" not in unused
+    assert "ResultConsumer" in unused
+    assert "backend.RedisClusterBackend.ResultConsumer" in unused
     assert "orphan" in unused
 
 
-def test_unresolvable_django_parameter_name_stays_live(tmp_path):
+def test_unrelated_django_name_keeps_filter_attributes_reported(tmp_path):
     result = _scan(
         tmp_path,
         {
@@ -119,12 +121,12 @@ class StatusFilter(SimpleListFilter):
         },
     )
     unused = _names(result, "unused_variables")
-    assert "parameter_name" not in unused
-    assert "title" not in unused
+    assert "parameter_name" in unused
+    assert "title" in unused
     assert "orphan" in unused
 
 
-def test_unresolvable_storages_bucket_name_stays_live(tmp_path):
+def test_unrelated_storages_name_keeps_bucket_name_reported(tmp_path):
     result = _scan(
         tmp_path,
         {
@@ -139,7 +141,7 @@ class CVStorage(S3Boto3Storage):
         },
     )
     unused = _names(result, "unused_variables")
-    assert "bucket_name" not in unused
+    assert "bucket_name" in unused
     assert "orphan" in unused
 
 
@@ -181,9 +183,9 @@ def test_project_venv_site_packages_are_external_search_dirs(tmp_path):
         item["full_name"]
         for key in ("unused_functions", "unused_variables", "unused_classes")
         for item in (
-            json.loads(analyze(str(root), conf=60, grep_verify=False, grep_cache=False)).get(
-                key
-            )
+            json.loads(
+                analyze(str(root), conf=60, grep_verify=False, grep_cache=False)
+            ).get(key)
             or []
         )
     }
