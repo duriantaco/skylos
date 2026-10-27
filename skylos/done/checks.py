@@ -1254,13 +1254,18 @@ def check_unknown_imports(ctx: CheckContext) -> CheckResult:
     if status == "pass" and unreachable:
         status = "incomplete"
     blocking = sum(f.blocking for f in findings)
-    summary = (
-        f"{blocking} import(s) or package(s) do not exist"
-        if blocking
-        else "Could not reach the package registry"
-        if unreachable
-        else "Every added import and package resolves"
-    )
+    unresolved = len(findings) - blocking
+    if blocking:
+        summary = f"{blocking} import(s) or package(s) do not exist"
+    elif unreachable:
+        summary = "Could not reach the package registry"
+    elif unresolved:
+        summary = (
+            f"No missing packages found; {unresolved} import(s) could not be "
+            "tied to a declared package"
+        )
+    else:
+        summary = "Every added import and package resolves"
     return CheckResult(
         id="unknown_imports",
         rule=next((f.rule for f in findings if f.blocking), "SKY-D222"),
@@ -1268,7 +1273,7 @@ def check_unknown_imports(ctx: CheckContext) -> CheckResult:
         summary=summary,
         evidence={
             "missing": blocking,
-            "unresolved": len(findings) - blocking,
+            "unresolved": unresolved,
             "registry_unreachable": unreachable,
             "summary": summary,
         },
