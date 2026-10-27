@@ -1381,6 +1381,7 @@ def test_cli_debt_with_agent_includes_advisory_in_json(tmp_path, monkeypatch):
 
     with (
         patch("skylos.debt.run_debt_analysis", return_value=snapshot),
+        patch("skylos.llm.runtime.llm_extra_importable", return_value=True),
         patch(
             "skylos.cli.resolve_llm_runtime",
             return_value=("openai", "test-key", None, False),
@@ -1402,6 +1403,32 @@ def test_cli_debt_with_agent_includes_advisory_in_json(tmp_path, monkeypatch):
         payload["hotspots"][0]["advisory"]["summary"]
         == "Start by isolating the branching service logic."
     )
+
+
+def test_cli_debt_with_agent_without_the_llm_extra_exits_2(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["skylos", "debt", str(tmp_path), "--json", "--with-agent"],
+    )
+    console = Mock()
+
+    with (
+        patch("skylos.debt.run_debt_analysis") as mock_analysis,
+        patch("skylos.llm.runtime.llm_extra_importable", return_value=False),
+        patch("skylos.cli.resolve_llm_runtime") as mock_runtime,
+        patch("builtins.print") as mock_print,
+        patch("skylos.cli.Console", return_value=console),
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 2
+    mock_analysis.assert_not_called()
+    mock_runtime.assert_not_called()
+    mock_print.assert_not_called()
+    printed = " ".join(str(call.args[0]) for call in console.print.call_args_list)
+    assert 'pip install "skylos\\[llm]"' in printed
 
 
 def test_cli_debt_fail_on_status_uses_baseline_comparison(tmp_path, monkeypatch):

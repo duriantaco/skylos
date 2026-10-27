@@ -26,12 +26,9 @@ def _rust_available() -> bool:
 
 
 def _llm_available() -> bool:
-    try:
-        from skylos.llm.analyzer import AnalyzerConfig, SkylosLLM  # noqa: F401
+    from skylos.llm.runtime import llm_extra_installed
 
-        return True
-    except ImportError:
-        return False
+    return llm_extra_installed()
 
 
 def _interactive_available() -> bool:
@@ -103,7 +100,11 @@ def _doctor_json_report(py_ver: str, py_ok: bool, go_status: dict) -> dict:
                 "optional": True,
                 "build_url": RUST_ACCELERATION_BUILD_URL,
             },
-            "llm_support": {"status": "available" if llm_available else "unavailable"},
+            "llm_support": (
+                {"status": "available"}
+                if llm_available
+                else {"status": "unavailable", "install": 'pip install "skylos[llm]"'}
+            ),
             "dart_support": (
                 {"status": "available"}
                 if _dart_available()
@@ -240,9 +241,9 @@ def _print_optional_status(console: Console) -> None:
     _print_availability(
         console,
         _llm_available(),
-        "  [green]OK[/green]  LLM support available",
-        "  [yellow]--[/yellow]  LLM support not available "
-        "[dim](optional: pip install litellm)[/dim]",
+        "  [green]OK[/green]  LLM support installed",
+        "  [yellow]--[/yellow]  LLM support not installed "
+        '[dim](optional, for skylos agent: pip install "skylos\\[llm]")[/dim]',
     )
     _print_availability(
         console,
