@@ -1,6 +1,7 @@
 import json
 import subprocess
 from pathlib import Path
+from urllib.parse import urljoin, urlsplit
 
 import pytest
 
@@ -50,6 +51,23 @@ def test_checked_in_security_manifest_validates():
 
     labels = {label for case in cases for label in case["taxonomy"]}
     assert labels <= set(SECURITY_TAXONOMY)
+
+
+def test_slash_only_redirect_guard_accepts_an_external_destination():
+    target = "//outside.example/path"
+    assert target.startswith("/")
+    assert (
+        urlsplit(urljoin("https://app.example/login", target)).hostname
+        == "outside.example"
+    )
+
+    cases = {case["id"]: case for case in load_manifest(MANIFEST_PATH)["cases"]}
+    assert cases["open-redirect-local-guard"]["expect"]["present"]["danger"] == [
+        "SKY-D230"
+    ]
+    assert cases["open-redirect-literal-allowlist"]["expect"]["absent"]["danger"] == [
+        "SKY-D230"
+    ]
 
 
 def test_security_benchmark_scans_only_fixture_changed_files(tmp_path, monkeypatch):
