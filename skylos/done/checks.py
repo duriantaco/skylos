@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
-from skylos.done.base import Comparison, DoneError, _git_text
+from skylos.done.base import Comparison, DoneError, _git_text, is_synced_policy_file
 from skylos.done.config import DoneConfig
 from skylos.done.inventory import (
     RewrittenTest,
@@ -950,7 +950,8 @@ def check_gate_tampering(ctx: CheckContext) -> CheckResult:
                         RULE_GATE_TAMPERING,
                         path,
                         None,
-                        f"changes {path}, which is protected ({pattern} in protected_paths)",
+                        f"changes {path}, which is protected ({pattern} in protected_paths)"
+                        + _untracked_policy_note(comparison, path),
                     )
                 )
                 break
@@ -1017,6 +1018,17 @@ def check_gate_tampering(ctx: CheckContext) -> CheckResult:
         },
         findings=findings,
     )
+
+
+def _untracked_policy_note(comparison: Comparison, path: str) -> str:
+    """Why an untracked synced policy file still counts as a change."""
+    if path not in comparison._untracked or not is_synced_policy_file(path):
+        return ""
+    from skylos.core.report_context import is_ci
+
+    if is_ci():
+        return "; an untracked synced policy file is not trusted in CI"
+    return "; it is not what skylos sync pull last wrote"
 
 
 def _protected_match(path: str, patterns: tuple[str, ...]) -> str | None:

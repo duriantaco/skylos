@@ -48,6 +48,51 @@ def is_runtime_path(path: str) -> bool:
     )
 
 
+_CLOUD_LINK_FILE = ".skylos/link.json"
+_SYNCED_POLICY_FILES = {
+    ".skylos/config.yaml": "config.yaml",
+    ".skylos/suppressions.json": "suppressions.json",
+}
+
+
+def is_synced_policy_file(path: str) -> bool:
+    return path in _SYNCED_POLICY_FILES
+
+
+def is_untracked_skylos_state(root: Path, path: str) -> bool:
+    """Whether an untracked ``path`` is a file Skylos's own Cloud commands left.
+
+    Such files are treated as if ``.git/info/exclude`` listed them, so only
+    committed or staged edits count. Tracked and staged paths never ask.
+
+    - ``.skylos/link.json`` (``skylos login``, ``skylos cloud``) only picks
+      which already-saved Cloud project token this checkout uses. No done,
+      gate or test setting is read from it, and reviewed findings pulled from
+      Cloud apply only while it names their project, so an edit to it alone
+      can only stop them applying.
+    - ``.skylos/config.yaml`` and ``.skylos/suppressions.json`` are Cloud
+      policy the local gate reads. They count only while their bytes match
+      what ``skylos sync pull`` last wrote in this checkout (recorded outside
+      the repository), and never in CI, where a pull request's own steps could
+      have written both the file and that record.
+    """
+    if path == _CLOUD_LINK_FILE:
+        try:
+            return stat.S_ISREG((root / path).lstat().st_mode)
+        except OSError:
+            return False
+    name = _SYNCED_POLICY_FILES.get(path)
+    if name is None:
+        return False
+    from skylos.core.report_context import is_ci
+
+    if is_ci():
+        return False
+    from skylos.cloud.sync_state import synced_file_matches
+
+    return synced_file_matches(root, name)
+
+
 # Untracked folders that installing the project or running its tests creates.
 # Without this, `pip install -e .` (an `<name>.egg-info/` folder) or Skylos's own
 # pytest run (`.pytest_cache/`) makes a clean checkout's receipt dirty. Each is
@@ -402,6 +447,7 @@ def _changed_files(
             and path not in changed
             and head_tree is None
             and not is_untracked_build_artifact(context.root, path)
+            and not is_untracked_skylos_state(context.root, path)
         ):
             changed[path] = ChangedFile(path, "added", None)
             untracked.add(path)
@@ -430,7 +476,10 @@ def _is_dirty(context: GitContext) -> bool:
         path = entry[3:]
         if is_runtime_path(path):
             continue
-        if entry[:2] == "??" and is_untracked_build_artifact(context.root, path):
+        if entry[:2] == "??" and (
+            is_untracked_build_artifact(context.root, path)
+            or is_untracked_skylos_state(context.root, path)
+        ):
             continue
         return True
     return False

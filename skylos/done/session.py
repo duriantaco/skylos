@@ -38,6 +38,7 @@ from skylos.done.base import (
     _resolve_commit,
     is_runtime_path,
     is_untracked_build_artifact,
+    is_untracked_skylos_state,
     open_comparison,
 )
 from skylos.done.config import base_config_text, parse_done_config
@@ -499,7 +500,10 @@ def _snapshot_tree(comparison: Comparison) -> str:
         "--exclude-standard",
         "-z",
     )
-    if raw is None or current is None:
+    untracked_raw = _git_bytes(
+        comparison._context, "ls-files", "--others", "--exclude-standard", "-z"
+    )
+    if raw is None or current is None or untracked_raw is None:
         raise DoneError("could not inventory the session working tree")
     try:
         tracked = {}
@@ -509,6 +513,7 @@ def _snapshot_tree(comparison: Comparison) -> str:
                 mode, kind, oid = metadata.split(" ")
                 tracked[name] = (mode, kind, oid)
         paths = set(tracked) | {p for p in current.decode("utf-8").split("\0") if p}
+        untracked = {p for p in untracked_raw.decode("utf-8").split("\0") if p}
     except (UnicodeError, ValueError):
         raise DoneError("the session contains unsupported Git paths") from None
     paths = {
@@ -516,6 +521,11 @@ def _snapshot_tree(comparison: Comparison) -> str:
         for p in paths
         if not is_runtime_path(p)
         and (p in tracked or not is_untracked_build_artifact(comparison.root, p))
+        and (
+            p in tracked
+            or p not in untracked
+            or not is_untracked_skylos_state(comparison.root, p)
+        )
     }
     if len(paths) > MAX_TREE_FILES:
         raise DoneError("the session tree exceeds 50000 files")

@@ -805,7 +805,11 @@ def _display_path(path: Path) -> str:
 
 
 def cmd_pull(*, dry_run: bool = False, output_format: str = "text") -> None:
-    from skylos.cloud.sync_state import activate_sync_files, validate_sync_paths
+    from skylos.cloud.sync_state import (
+        SYNC_RECORD_DIR,
+        activate_sync_files,
+        validate_sync_paths,
+    )
     from skylos.core.review_decisions import (
         invalidate_trusted_bundle,
         repository_scope,
@@ -880,7 +884,9 @@ def cmd_pull(*, dry_run: bool = False, output_format: str = "text") -> None:
             filename: {"path": str(skylos_dir / filename)} for filename in files
         }
         if not dry_run:
-            with activate_sync_files(repo_root, files):
+            with activate_sync_files(
+                repo_root, files, record_root=GLOBAL_CREDS_DIR / SYNC_RECORD_DIR
+            ):
                 trusted_path = write_trusted_bundle(
                     sync_project_root,
                     supp_data,
@@ -967,23 +973,27 @@ def _validate_sync_suppressions(supp_data) -> None:
 
 
 def _write_sync_config(skylos_dir: Path, config_data):
-    from skylos.cloud.sync_state import activate_sync_files
+    from skylos.cloud.sync_state import SYNC_RECORD_DIR, activate_sync_files
 
     config_payload = _sync_config_payload(config_data)
     config_path = skylos_dir / CONFIG_FILE
     files = {CONFIG_FILE: yaml.safe_dump(config_payload, default_flow_style=False)}
-    with activate_sync_files(skylos_dir.parent, files):
+    with activate_sync_files(
+        skylos_dir.parent, files, record_root=GLOBAL_CREDS_DIR / SYNC_RECORD_DIR
+    ):
         pass
     print(f"  ✓ {config_path}")
 
 
 def _write_sync_suppressions(skylos_dir: Path, supp_data):
-    from skylos.cloud.sync_state import activate_sync_files
+    from skylos.cloud.sync_state import SYNC_RECORD_DIR, activate_sync_files
 
     _validate_sync_suppressions(supp_data)
     supp_path = skylos_dir / SUPPRESSIONS_FILE
     files = {SUPPRESSIONS_FILE: json.dumps(supp_data, indent=2, allow_nan=False) + "\n"}
-    with activate_sync_files(skylos_dir.parent, files):
+    with activate_sync_files(
+        skylos_dir.parent, files, record_root=GLOBAL_CREDS_DIR / SYNC_RECORD_DIR
+    ):
         pass
     print(f"  ✓ {supp_path} ({supp_data.get('count', 0)} suppressions)")
 
