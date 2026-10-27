@@ -37,6 +37,7 @@ def run_warm_cache_command(
 ) -> int:
     from skylos.commands.hook_cmd import _git_root, hook_verify
     from skylos.constants import parse_exclude_folders
+    from skylos.core.cli_shared import quiet_analyzer_logs
     from skylos.core.file_discovery import discover_source_files
     from skylos.rules.ai_defect.module_facts_index import CACHE_PATH
 
@@ -56,7 +57,8 @@ def run_warm_cache_command(
 
     started = time.monotonic()
     # Any file works: verifying one builds the index for the whole project.
-    hook_verify(files[0], root)
+    with quiet_analyzer_logs():
+        hook_verify(files[0], root)
     elapsed = time.monotonic() - started
     print_func(
         f"Indexed {len(files)} Python file(s) in {elapsed:.1f}s -> "

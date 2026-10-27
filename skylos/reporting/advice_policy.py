@@ -384,9 +384,11 @@ def _combine_package_advisories(view, explicit_rules=()):
     same upgrade, so the worst one stays listed and names the others in
     ``listing.combines``; each other is unlisted as ``combined`` with a
     ``listing.lead`` reference, as the terminal table already prints them.
+    License-policy findings are not fixed by that upgrade and stay listed.
     Gates read the raw advisories, and every record stays in the report."""
     from skylos.reporting.advice_display import SEVERITY_RANK
     from skylos.reporting.listing import COMBINED_REASON, SCA_RULE_PREFIX, is_listed
+    from skylos.reporting.sca_summary import is_advisory
 
     rows = view.get("dependency_vulnerabilities")
     if not isinstance(rows, list):
@@ -397,6 +399,8 @@ def _combine_package_advisories(view, explicit_rules=()):
             continue
         rule = _rule_id(row).upper()
         if not rule.startswith(SCA_RULE_PREFIX) or rule in explicit_rules:
+            continue
+        if not is_advisory(row):
             continue
         if not is_listed(row, "dependency_vulnerabilities"):
             continue

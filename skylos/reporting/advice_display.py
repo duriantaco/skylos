@@ -156,6 +156,20 @@ def complexity_display(item) -> ComplexityDisplay | None:
     return None
 
 
+def default_display_severity(section) -> str:
+    """Severity reports show for a record of this result section without one."""
+    if section in {
+        "analysis_errors",
+        "danger",
+        "secrets",
+        "dependency_vulnerabilities",
+    }:
+        return "HIGH"
+    if str(section or "").startswith("unused_"):
+        return "LOW"
+    return "MEDIUM"
+
+
 def advice_priority(finding: Mapping, category=None) -> str:
     """Human advice priority; original severity remains evidence and gate input."""
     severity = str(finding.get("severity") or "MEDIUM").strip().upper()

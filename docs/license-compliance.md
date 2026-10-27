@@ -131,7 +131,10 @@ The policy runs as part of dependency analysis (`skylos . -a`, `--sca`, or
 `--select SKY-SCA-LIC001`). It is offline. Findings go in the
 `dependency_vulnerabilities` result bucket with rule ID `SKY-SCA-LIC001` and
 category `DEPENDENCY`. Their metadata includes `license`, `license_source`,
-`license_declared`, `denied_licenses`, and `disallowed_licenses`.
+`license_declared`, `denied_licenses`, and `disallowed_licenses`. The terminal
+report lists them under **Dependency Licenses**, apart from the per-package
+vulnerability table, and each violation counts as its own issue even when the
+same package also has advisories (an upgrade does not fix a license).
 
 How the policy is evaluated:
 

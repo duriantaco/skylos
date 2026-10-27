@@ -6,6 +6,7 @@ from typing import Sequence
 
 from rich.markup import escape
 
+from skylos.core.cli_shared import quiet_analyzer_logs
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.constants import RIPGREP_INSTALL_URL
 from skylos.ui.dead_code_evidence import dead_code_uncertainty_summary
@@ -85,6 +86,53 @@ def _closing_summary(result: dict, uncertainty_count) -> str | None:
     from skylos.reporting.assessment_display import closing_summary
 
     return closing_summary(result, uncertainty_count=uncertainty_count)
+
+
+def _rewritable_dead_code(items, project_root):
+    from skylos.remediation.safety import python_rewrite_blocker
+
+    rewritable = []
+    blocked = []
+    blockers = {}
+    for item in items or []:
+        file_key = str(item.get("file") or "")
+        if file_key not in blockers:
+            blockers[file_key] = python_rewrite_blocker(
+                file_key, root_path=project_root
+            )
+        if blockers[file_key] is None:
+            rewritable.append(item)
+        else:
+            blocked.append((item, blockers[file_key]))
+    return rewritable, blocked
+
+
+def _print_blocked_dead_code(console, blocked) -> None:
+    if not blocked:
+        return
+    by_file = {}
+    for item, reason in blocked:
+        by_file.setdefault(str(item.get("file") or ""), reason)
+    examples = "; ".join(
+        f"{_display_location(path)}: {reason}"
+        for path, reason in list(by_file.items())[:3]
+    )
+    if len(by_file) > 3:
+        examples += f"; and {len(by_file) - 3} more files"
+    console.print(
+        f"[warn]Not offering {len(blocked)} item(s) Skylos cannot edit safely "
+        f"({escape(examples)}).[/warn]"
+    )
+
+
+def _display_location(path) -> str:
+    import pathlib
+
+    try:
+        resolved = pathlib.Path(path).resolve()
+        return str(resolved.relative_to(pathlib.Path.cwd().resolve()))
+    except (OSError, ValueError):
+        return str(path)
 
 
 def _ci_workflow_exists(project_root) -> bool:
@@ -510,6 +558,11 @@ def _run_scan_command(
             )
         if not _is_tty():
             parser.error("--tui requires an interactive terminal")
+    if getattr(args, "interactive", False) and not _is_tty():
+        parser.error(
+            "--interactive requires an interactive terminal; without one, preview "
+            "edits with 'skylos clean PATH --dry-run' and apply them with --apply"
+        )
     args._explicit_upload_requested = bool(getattr(args, "upload", False))
 
     try:
@@ -753,13 +806,17 @@ def _run_scan_command(
             if getattr(args, "diff_mode", "lines") == "impact":
                 from skylos.core.pr_impact import annotate_dead_code_impact
 
-                annotate_dead_code_impact(
-                    result, scan_path, project_root=project_root, base_ref=base_ref,
-                    config=config, confidence=args.confidence,
-                    config_file=config_file,
-                    exclude_folders=final_exclude_folders,
-                    grep_verify=not args.no_grep_verify,
-                )
+                impact_logs = nullcontext()
+                if quiet_analysis_output or not getattr(args, "verbose", False):
+                    impact_logs = quiet_analyzer_logs()
+                with impact_logs:
+                    annotate_dead_code_impact(
+                        result, scan_path, project_root=project_root, base_ref=base_ref,
+                        config=config, confidence=args.confidence,
+                        config_file=config_file,
+                        exclude_folders=final_exclude_folders,
+                        grep_verify=not args.no_grep_verify,
+                    )
 
         if args.pytest_fixtures:
             report_path = project_root / ".skylos_unused_fixtures.json"
@@ -1564,7 +1621,7 @@ def _run_scan_command(
             return
 
         if args.github:
-            _emit_github_annotations(output_result)
+            _emit_github_annotations(output_result, root_path=project_root)
             upload_formatted_result()
             exit_code = _finish_formatted_scan(
                 result, config, args, provenance=prov_report
@@ -1724,8 +1781,14 @@ def _run_scan_command(
         raise SystemExit(2)
 
     if args.interactive:
-        unused_functions = result.get("unused_functions", [])
-        unused_imports = result.get("unused_imports", [])
+        interactive_failures = 0
+        unused_functions, blocked_functions = _rewritable_dead_code(
+            result.get("unused_functions", []), project_root
+        )
+        unused_imports, blocked_imports = _rewritable_dead_code(
+            result.get("unused_imports", []), project_root
+        )
+        _print_blocked_dead_code(console, blocked_functions + blocked_imports)
 
         if not (unused_functions or unused_imports):
             console.print("[good]No unused functions/imports to process.[/good]")
@@ -1774,6 +1837,7 @@ def _run_scan_command(
                                     f"[good] ✓ {action_past} function:[/good] {func['name']}"
                                 )
                             else:
+                                interactive_failures += 1
                                 console.print(
                                     f"[bad] x Failed to {action_verb} function:[/bad] {func['name']}"
                                 )
@@ -1790,9 +1854,16 @@ def _run_scan_command(
                                     f"[good] ✓ {action_past} import:[/good] {imp['name']}"
                                 )
                             else:
+                                interactive_failures += 1
                                 console.print(
                                     f"[bad] x Failed to {action_verb} import:[/bad] {imp['name']}"
                                 )
+                        if interactive_failures:
+                            console.print(
+                                f"[bad]Cleanup incomplete: {interactive_failures} "
+                                "change(s) failed; see above.[/bad]"
+                            )
+                            raise SystemExit(1)
                         console.print("[good]Cleanup complete![/good]")
                     else:
                         console.print("[warn]Operation cancelled.[/warn]")
@@ -1849,8 +1920,13 @@ def _run_scan_command(
                     **advice_options,
                 )
 
+    display_filtered = bool(
+        getattr(args, "severity", None)
+        or getattr(args, "category", None)
+        or getattr(args, "file_filter", None)
+    )
     unused_total = sum(
-        len(result.get(k, []))
+        len(output_result.get(k, []))
         for k in (
             "unused_functions",
             "unused_imports",
@@ -1860,9 +1936,9 @@ def _run_scan_command(
             "unused_files",
         )
     )
-    danger_count = len(result.get("danger", []) or [])
-    reliability_count = len(result.get("reliability", []) or [])
-    quality_count = len(result.get("quality", []) or [])
+    danger_count = len(output_result.get("danger", []) or [])
+    reliability_count = len(output_result.get("reliability", []) or [])
+    quality_count = len(output_result.get("quality", []) or [])
     if (
         getattr(args, "format", "rich") != "pretty"
         and not result.get("analysis_errors")
@@ -1880,10 +1956,11 @@ def _run_scan_command(
             quality_enabled=bool(quality_count),
             quality_count=quality_count,
             uncertainty_count=uncertainty_count,
-            summary=_closing_summary(result, uncertainty_count),
+            summary=_closing_summary(output_result, uncertainty_count),
             # The grade panel above already offered the Skylos grade badge.
             show_badge=not (
-                output_result.get("assessment")
+                display_filtered
+                or output_result.get("assessment")
                 or output_result.get("grade")
                 and not args.upload
                 and not args.tui

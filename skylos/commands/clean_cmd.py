@@ -16,10 +16,14 @@ from skylos.remediation.codemods import (
     remove_unused_function_cst,
     remove_unused_import_cst,
 )
-from skylos.remediation.safety import resolve_remediation_path
+from skylos.remediation.safety import (
+    python_rewrite_blocker,
+    resolve_remediation_path,
+)
 
 SUPPORTED_FINDING_TYPES = {"function", "import"}
 DEFAULT_NONINTERACTIVE_CONFIDENCE = 80
+BLOCKED_FILES_SHOWN = 10
 TYPE_ALIASES = {
     "function": "function",
     "functions": "function",
@@ -68,8 +72,12 @@ def _build_parser():
             "With no mode flag, Skylos asks about each edit and can write files only "
             "after final confirmation. --dry-run never writes. --apply writes matching "
             "edits without prompting.\n\n"
-            "Exit 0 means the cleanup command completed; individual transform failures "
-            "are printed but do not currently make the process exit nonzero."
+            "Only Python files are edited. Findings in other languages, symlinked "
+            "files, files outside the scan path and files the Python rewriter cannot "
+            "parse are listed and never offered.\n\n"
+            "Exit 0 means every selected edit was written (or previewed with "
+            "--dry-run). Exit 1 means at least one edit failed; each failure is "
+            "printed. Exit 2 means invalid options."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -200,10 +208,12 @@ def _collect_all_findings(result):
     return all_findings
 
 
-def _filter_findings(all_findings, selected_types, confidence):
+def _filter_findings(all_findings, selected_types, confidence, scan_root=None):
     findings = []
     unsupported_findings = []
     filtered_findings = []
+    blocked_findings = []
+    blockers = {}
 
     for finding in all_findings:
         if finding["type"] not in SUPPORTED_FINDING_TYPES:
@@ -215,12 +225,52 @@ def _filter_findings(all_findings, selected_types, confidence):
         if confidence is not None and finding["confidence"] < confidence:
             filtered_findings.append(finding)
             continue
+        file_key = str(finding["file"])
+        if file_key not in blockers:
+            blockers[file_key] = python_rewrite_blocker(file_key, root_path=scan_root)
+        if blockers[file_key] is not None:
+            blocked_findings.append((finding, blockers[file_key]))
+            continue
         findings.append(finding)
 
-    return findings, unsupported_findings, filtered_findings
+    return findings, unsupported_findings, filtered_findings, blocked_findings
 
 
-def _print_skipped_summary(console, unsupported_findings, filtered_findings):
+def _item_count(count):
+    if count == 1:
+        return "1 dead code item"
+    return f"{count} dead code items"
+
+
+def _print_blocked_summary(console, blocked_findings):
+    if not blocked_findings:
+        return
+    console.print(
+        f"[yellow]Not offering {_item_count(len(blocked_findings))} in files "
+        "skylos clean cannot edit safely:[/yellow]"
+    )
+    by_file = {}
+    for finding, reason in blocked_findings:
+        entry = by_file.setdefault(finding["file"], {"reason": reason, "count": 0})
+        entry["count"] += 1
+    files = list(by_file.items())
+    for file_path, entry in files[:BLOCKED_FILES_SHOWN]:
+        console.print(
+            escape(
+                f"  {_display_path(file_path)} ({_item_count(entry['count'])}): "
+                f"{entry['reason']}"
+            )
+        )
+    if len(files) > BLOCKED_FILES_SHOWN:
+        console.print(
+            f"  [dim]... and {len(files) - BLOCKED_FILES_SHOWN} more files[/dim]"
+        )
+    console.print()
+
+
+def _print_skipped_summary(
+    console, unsupported_findings, filtered_findings, blocked_findings=()
+):
     if unsupported_findings:
         unsupported_types = ", ".join(
             sorted({finding["type"] for finding in unsupported_findings})
@@ -238,6 +288,8 @@ def _print_skipped_summary(console, unsupported_findings, filtered_findings):
             "outside the selected type or confidence filters.[/dim]\n"
         )
 
+    _print_blocked_summary(console, blocked_findings)
+
 
 def _transform_for(finding_type, action):
     if action == "remove":
@@ -253,12 +305,20 @@ def _transform_for(finding_type, action):
     return None
 
 
+def _action_verb(action):
+    if action == "remove":
+        return "remove"
+    return "comment out"
+
+
 def _apply_edits(edits_by_file, scan_root, console):
     applied = 0
+    failed = 0
 
     for file_edits in edits_by_file.values():
         file_edits.sort(key=lambda x: -x[0]["line"])
         for finding, action in file_edits:
+            location = f"{_display_path(finding['file'])}:{finding['line']}"
             try:
                 transform = _transform_for(finding["type"], action)
                 if transform and _apply_codemod(
@@ -269,14 +329,27 @@ def _apply_edits(edits_by_file, scan_root, console):
                     root_path=scan_root,
                 ):
                     applied += 1
-            except Exception as e:
-                verb = "remove" if action == "remove" else "comment out"
-                console.print(
-                    f"  [red]Failed to {verb} {escape(str(finding['name']))}: "
-                    f"{escape(str(e))}[/red]"
+                    continue
+                reason = (
+                    f"no matching {finding['type']} at {location}; the file may "
+                    "have changed since the scan"
                 )
+            except Exception as e:
+                reason = f"{location}: {e}"
+            failed += 1
+            console.print(
+                f"  [red]Failed to {_action_verb(action)} "
+                f"{escape(str(finding['name']))}: {escape(reason)}[/red]"
+            )
 
-    return applied
+    return applied, failed
+
+
+def _print_failed_summary(console, failed):
+    if failed == 1:
+        console.print("[red]1 edit failed; see the error above.[/red]")
+        return
+    console.print(f"[red]{failed} edits failed; see the errors above.[/red]")
 
 
 def _display_path(file_path):
@@ -320,9 +393,12 @@ def _run_noninteractive_clean(console, findings, scan_root, args):
         return 0
 
     edits_by_file = _edits_by_file(findings, action)
-    applied = _apply_edits(edits_by_file, scan_root, console)
+    applied, failed = _apply_edits(edits_by_file, scan_root, console)
     verb = "commented out" if action == "comment" else "removed"
     console.print(f"\n[green]Done![/green] {verb.capitalize()} {applied} item(s).")
+    if failed:
+        _print_failed_summary(console, failed)
+        return 1
     return 0
 
 
@@ -389,11 +465,14 @@ def _run_interactive_clean(console, findings, scan_root):
     for finding in to_comment:
         edits_by_file.setdefault(finding["file"], []).append((finding, "comment"))
 
-    applied = _apply_edits(edits_by_file, scan_root, console)
+    applied, failed = _apply_edits(edits_by_file, scan_root, console)
     console.print(
         f"\n[green]Done![/green] Applied {applied} changes "
         f"({len(to_remove)} removed, {len(to_comment)} commented out)."
     )
+    if failed:
+        _print_failed_summary(console, failed)
+        return 1
     return 0
 
 
@@ -442,10 +521,12 @@ def run_clean_command(argv: list[str]) -> int:
         console.print("[green]No dead code found. Your codebase is clean![/green]")
         return 0
 
-    findings, unsupported_findings, filtered_findings = _filter_findings(
-        all_findings, selected_types, confidence
+    findings, unsupported_findings, filtered_findings, blocked_findings = (
+        _filter_findings(all_findings, selected_types, confidence, scan_root)
     )
-    _print_skipped_summary(console, unsupported_findings, filtered_findings)
+    _print_skipped_summary(
+        console, unsupported_findings, filtered_findings, blocked_findings
+    )
 
     if not findings:
         console.print("[dim]No actionable dead code edits found.[/dim]")

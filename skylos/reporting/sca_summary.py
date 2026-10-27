@@ -16,6 +16,7 @@ _SEVERITY_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 _VERSION_TOKEN = re.compile(r"\d+|[A-Za-z]+")
 _END = (0, 1, "~")
 MAX_IDS_SHOWN = 3
+LICENSE_POLICY_RULE_ID = "SKY-SCA-LIC001"
 
 
 def _version_key(version: str):
@@ -56,6 +57,14 @@ def is_advisory(finding) -> bool:
         and bool(metadata.get("vuln_id"))
         and bool(metadata.get("package_name"))
     )
+
+
+def is_license_finding(finding) -> bool:
+    """A dependency license-policy finding (SKY-SCA-LIC001)."""
+    if not isinstance(finding, Mapping):
+        return False
+    rule_id = str(finding.get("rule_id") or "").strip().upper()
+    return rule_id == LICENSE_POLICY_RULE_ID
 
 
 @dataclass
