@@ -22,15 +22,36 @@ class ConfigError(ValueError):
 class _LoadedConfig(dict):
     """Config data with loader-owned policy provenance, outside editable keys."""
 
-    __slots__ = ("_dependency_baseline_locked",)
+    __slots__ = (
+        "_dependency_baseline_locked",
+        "_synced_gate",
+        "_unused_synced_gate",
+    )
 
-    def __init__(self, config: dict, *, dependency_baseline_locked: bool):
+    def __init__(
+        self,
+        config: dict,
+        *,
+        dependency_baseline_locked: bool,
+        synced_gate: dict | None = None,
+        unused_synced_gate: bool = False,
+    ):
         super().__init__(config)
         self._dependency_baseline_locked = dependency_baseline_locked
+        self._synced_gate = copy.deepcopy(synced_gate)
+        self._unused_synced_gate = unused_synced_gate
 
     @property
     def dependency_baseline_locked(self) -> bool:
         return self._dependency_baseline_locked
+
+    @property
+    def synced_gate(self) -> dict | None:
+        return copy.deepcopy(self._synced_gate)
+
+    @property
+    def unused_synced_gate(self) -> bool:
+        return self._unused_synced_gate
 
 
 def dependency_baseline_policy_locked(config: dict) -> bool:
@@ -38,6 +59,23 @@ def dependency_baseline_policy_locked(config: dict) -> bool:
     return (
         isinstance(config, _LoadedConfig) and config.dependency_baseline_locked is True
     )
+
+
+def synced_gate_policy(config: dict) -> dict | None:
+    """The gate section of the synced Skylos Cloud policy the loader applied.
+
+    It comes from ``.skylos/config.yaml`` (or ``SKYLOS_SYNCED_POLICY_FILE``),
+    never from a repository TOML file, so a ``[tool.skylos.gate]`` table
+    cannot pose as Cloud policy.
+    """
+    if not isinstance(config, _LoadedConfig):
+        return None
+    return config.synced_gate
+
+
+def synced_gate_left_out_by_policy_base(config: dict) -> bool:
+    """A working-tree synced gate that a base-branch policy check did not read."""
+    return isinstance(config, _LoadedConfig) and config.unused_synced_gate is True
 
 
 DEFAULTS = {
@@ -196,10 +234,14 @@ def load_config(start_path, config_file=None) -> dict:
         from skylos.cicd.policy import load_base_policy
 
         user_layers, synced_cfg = load_base_policy(current, policy_base)
+        unused_synced_gate = False
         if operator_synced_cfg is not None:
             synced_cfg = operator_synced_cfg
+        elif not isinstance(synced_cfg.get("gate"), dict):
+            synced_cfg, unused_synced_gate = _pulled_synced_policy(current, synced_cfg)
         # An explicitly supplied operator file remains supported. Repository
-        # discovery and synced policy come exclusively from the selected base.
+        # discovery comes exclusively from the selected base; synced policy
+        # from the base, or from an untracked file that sync pull wrote.
         if explicit_config is not None:
             user_layers = [_load_toml_user_config(explicit_config, explicit=True)]
         final_cfg = _merge_user_config(copy.deepcopy(DEFAULTS), synced_cfg)
@@ -209,7 +251,9 @@ def load_config(start_path, config_file=None) -> dict:
             user_cfg.pop(INHERITANCE_ROOT_SETTING, None)
             final_cfg = _merge_user_config(final_cfg, user_cfg)
         return _finalize_loaded_config(
-            _restore_synced_policy_precedence(final_cfg, synced_cfg), synced_cfg
+            _restore_synced_policy_precedence(final_cfg, synced_cfg),
+            synced_cfg,
+            unused_synced_gate=unused_synced_gate,
         )
     layers, sync_config = _find_config_layers(current)
     if explicit_config is not None:
@@ -245,14 +289,47 @@ def load_config(start_path, config_file=None) -> dict:
     )
 
 
-def _finalize_loaded_config(final_cfg: dict, synced_cfg: dict) -> dict:
+def _finalize_loaded_config(
+    final_cfg: dict, synced_cfg: dict, *, unused_synced_gate: bool = False
+) -> dict:
     # Derive provenance only from the separately loaded synced configuration,
     # after every repository merge. A TOML key cannot impersonate this attribute.
     synced_gate = synced_cfg.get("gate")
     policy_locked = (
         isinstance(synced_gate, dict) and bool(synced_gate)
     ) or _has_synced_security_policy(synced_cfg)
-    return _LoadedConfig(final_cfg, dependency_baseline_locked=policy_locked)
+    if not isinstance(synced_gate, dict):
+        synced_gate = None
+    return _LoadedConfig(
+        final_cfg,
+        dependency_baseline_locked=policy_locked,
+        synced_gate=synced_gate,
+        unused_synced_gate=unused_synced_gate,
+    )
+
+
+def _pulled_synced_policy(start_dir: Path, base_synced_cfg: dict) -> tuple[dict, bool]:
+    """Synced policy for a base-branch check: ``(policy, gate left out)``.
+
+    The base commit has no synced gate. A ``.skylos/config.yaml`` that
+    ``skylos sync pull`` left untracked is Skylos Cloud policy, not branch
+    content, so it applies. One that a commit or the index carries is branch
+    content and stays out. In CI an untracked file may come from a pull
+    request's own build steps, so CI reads Cloud policy only from the base or
+    from ``SKYLOS_SYNCED_POLICY_FILE``.
+    """
+    from skylos.cicd.policy import is_untracked_worktree_file
+    from skylos.core.report_context import is_ci
+
+    _layers, sync_config = _find_config_layers(start_dir)
+    if not sync_config:
+        return base_synced_cfg, False
+    pulled = _load_synced_config(sync_config)
+    if not isinstance(pulled.get("gate"), dict):
+        return base_synced_cfg, False
+    if not is_ci() and is_untracked_worktree_file(start_dir, sync_config):
+        return pulled, False
+    return base_synced_cfg, True
 
 
 def resolve_config_file_path(config_file=None) -> Path | None:

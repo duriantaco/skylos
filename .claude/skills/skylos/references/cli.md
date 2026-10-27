@@ -116,6 +116,18 @@ Full scans skip generated/vendored files (Django migrations, `static/**/lib`,
   `[tool.skylos.gate.agent] require_defend`/`min_defend_score` are not
   supported and fail the agent gate; gate AI defense with
   `skylos defend . --min-score N --fail-on critical`.
+- A gate synced by `skylos sync pull` (`.skylos/config.yaml`, or
+  `SKYLOS_SYNCED_POLICY_FILE` in CI) with Cloud's `mode`/`by_category`/
+  `by_severity` is checked the way Skylos Cloud checks it: zero-new (every
+  category at 0), category, severity or both; any critical security issue and
+  any secret still fail. Findings map to Cloud categories (danger → SECURITY,
+  secrets → SECRET, quality → QUALITY, dead code → DEAD_CODE, dependency
+  vulnerabilities → DEPENDENCY; AI-code, reliability and custom findings by
+  rule ID prefix, then message) and severities (UNKNOWN or missing → MEDIUM).
+  Cloud counts new issues only: use `--diff origin/main` (or `--baseline`); a
+  full scan prints `Skylos Cloud counts only new issues. ...`. An uncommitted
+  pulled file applies to `--diff` gates; `enabled: false` keeps the built-in
+  limits.
 - `--strict`: fail on any finding.
 - `--force` / `-f`: bypass gate exit failure.
 - Every gate run ends with a verdict line and its reasons: `Quality Gate:
