@@ -71,8 +71,16 @@ def _agent_hooks_report() -> dict:
 
 
 def _doctor_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="skylos doctor", add_help=False)
-    parser.add_argument("--format", choices=("text", "json"), default="text")
+    parser = argparse.ArgumentParser(
+        prog="skylos doctor",
+        description="Check installation health and language-engine availability",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="Print human-readable (default) or machine-readable health",
+    )
     return parser
 
 

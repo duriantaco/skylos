@@ -145,12 +145,26 @@ entries are easy to find because every Skylos command contains
 
 ## What each hook does
 
+The installer writes eight hooks. Four of them check and can block:
+
 | Hook | Claude Code | Codex | Cursor | What it does |
 |:---|:---|:---|:---|:---|
-| `post-edit` | `PostToolUse` on `Edit\|Write\|MultiEdit` | `PostToolUse` on `apply_patch` | `afterFileEdit` | Verifies the changed lines and reports failures to the agent |
+| `post-edit` | `PostToolUse` on `Edit\|Write\|MultiEdit` | `PostToolUse` on `apply_patch\|Edit\|Write` | `afterFileEdit` | Verifies the changed lines and reports failures to the agent |
 | `pre-read` | `PreToolUse` on `Read` | not available (Codex reads files through the shell; `pre-bash` covers that) | `beforeReadFile` | Blocks reading a file that contains secrets |
 | `pre-bash` | `PreToolUse` on `Bash\|PowerShell` | `PreToolUse` on `Bash` | `beforeShellExecution` | Blocks commands that would print a secret file or variable, installs of hallucinated or typosquatted packages, and git-hook bypasses; asks before installs it cannot verify |
 | `stop` | `Stop` | `Stop` | `stop` | Blocks "done" while issues this session added are still open |
+
+The other four only record state and never block:
+
+| Hook | Claude Code | Codex | Cursor | What it records |
+|:---|:---|:---|:---|:---|
+| `session-start` | `UserPromptSubmit` | `UserPromptSubmit` | `beforeSubmitPrompt` | The starting checkout, so `stop` can tell the agent's changes from earlier ones (with a committed `[tool.skylos.done]` table; see [Done gate](./done-gate.md#in-the-agent-loop)) |
+| `pre-edit` | `PreToolUse` on `Edit\|Write\|MultiEdit` | `PreToolUse` on `apply_patch\|Edit\|Write` | not available | The file before the edit, so the agent's new lines can be attributed in `skylos provenance`; it can also capture the starting checkout when `session-start` did not run |
+| `post-bash` | `PostToolUse` on `Bash\|PowerShell` | `PostToolUse` on `Bash` | not available | Files a shell command changed (their lines stay unattributed) |
+| `post-failure` | `PostToolUseFailure` on `Edit\|Write\|MultiEdit` and on `Bash\|PowerShell` | not available | not available | Partial changes from a failed edit or command (their lines stay unattributed) |
+
+`skylos hook recheck FILE... [--range L1:L2]` and `skylos hook recheck --session`
+are commands for the agent, not hooks; see [post-edit](#post-edit).
 
 ### post-edit
 
@@ -436,7 +450,7 @@ this hook and the issues are unchanged:
 - **Claude Code:** Skylos lets the agent stop and shows you a warning.
 - **Codex:** Skylos lets the agent stop and shows you a warning.
 - **Cursor:** Skylos sends no follow-up message. Cursor's own `loop_limit`
-  also applies; the installer sets it to 3.
+  also applies; the installer sets it to 10.
 
 ## Hook contract used
 
@@ -501,8 +515,14 @@ An explicitly configured but invalid agent standards policy
 gives Claude Code and Codex a repair message at `post-edit` and reports the
 problem to all three agents at `stop`; `skylos hook recheck` exits 2. Hook
 timeouts set by the installer are 15 s (`pre-read`), 30 s
-(`pre-bash`), 120 s (`post-edit`) and 180 s (`stop`). All three agents treat a
-timeout as a non-blocking failure.
+(`session-start`, `pre-edit`, `pre-bash`, `post-bash`, `post-failure`),
+120 s (`post-edit`) and 7,260 s (`stop`). The `stop` timeout covers the
+largest test budgets the Done gate allows when it runs your tests at stop:
+3,600 s for the test command, 1,800 s for changed-line mutation checks and
+1,800 s for rerunning failing tests on the session's starting commit, plus
+60 s to save the receipt. Without a committed `[tool.skylos.done]` table,
+`stop` runs no tests and only rechecks recorded issues. All three agents treat
+a timeout as a non-blocking failure.
 
 Each hook call appends one JSON line to `.skylos/hook.log` with the time,
 event, client, outcome, counts and duration. `pre-bash` outcomes are `skip`,

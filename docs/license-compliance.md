@@ -16,8 +16,10 @@ skylos sbom . --format spdx-json --license-lookup       # opt-in network lookup
 ```
 
 Exit codes are the same as the CycloneDX export: `0` means the supported
-inventory was exported, and `2` means inputs were incomplete or a read or write
-failed. A package with an unknown license does not make the export incomplete.
+inventory was exported, including when inputs were incomplete (Skylos prints an
+`SBOM incomplete` warning on stderr). `2` means a bad path or a refused or
+failed write, or incomplete inputs with `--strict`. A package with an unknown
+license does not make the export incomplete.
 
 ## Where license data comes from
 

@@ -23,7 +23,7 @@
 
 ## Skylos 是什么？
 
-Skylos 是一款面向 Python、TypeScript、JavaScript、Java、Go、PHP、Rust、Dart、C# 和 Shell 仓库的开源静态分析 CLI。它默认在本地运行，也可以作为 CI/CD PR 门控使用。
+Skylos 是一款面向 Python、TypeScript、JavaScript、Java、Go、PHP、Rust、Dart、C#、C++、Kotlin 和 Shell 仓库的开源静态分析 CLI。它默认在本地运行，也可以作为 CI/CD PR 门控使用。Python、TypeScript/JavaScript 和 Java 的覆盖最深，其他语言的支持范围见“语言支持”表。
 
 如果你使用 Vulture 检测死代码、Bandit 做安全检查，或使用 Semgrep、CodeQL、GitHub Advanced Security 做 CI 门控，Skylos 可以作为补充：它更关注框架感知的死代码检测、差异感知的回归检查，以及适合 PR 审查的反馈。
 
@@ -142,12 +142,20 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 | Java | 是 | 是 | 是 | Tree-sitter 解析和结构化安全流分析 |
 | Go | 是¹ | 部分¹ | 部分 | 死代码和部分安全基准覆盖 |
 | PHP | 是 | 是 | 否 | PHP parser 覆盖，加上污点式安全 sinks 和 sources |
-| Rust | 是 | 是 | 否 | Rust parser 覆盖，加上安全 sinks 和 sources |
-| Dart | 是 | 是 | 否 | Dart parser 覆盖，加上部分安全 sinks 和 sources |
+| Rust | 实验性⁴ | 部分 | 否 | Rust parser 覆盖；安全检查覆盖命令注入和路径穿越 |
+| Dart | 是³ | 部分³ | 否 | Dart parser 覆盖；安全检查覆盖命令注入、路径穿越和 SSRF |
 | C# | 部分 | 部分 | 部分 | C# 符号、直接代码块中的不可达语句、部分安全汇入点及 NuGet 直接依赖清单 |
-| Shell | 否 | 是 | 否 | shell 脚本安全检查，覆盖命令注入、SSRF 和路径穿越 |
+| C++ | 部分 | 否 | 否 | 仅报告 `.cpp`、`.cc`、`.cxx` 中看似未使用的文件内函数；会读取 C++ 头文件中的引用 |
+| Kotlin | 部分² | 否² | 否 | 基于正则的符号提取；只报告 private 声明和导入 |
+| Shell | 否 | 部分 | 否 | shell 脚本安全检查，覆盖命令注入、SSRF 和路径穿越 |
 
-¹ Go 的死代码和安全检查需要单独构建的 `skylos-go` 引擎；PyPI 包不包含该引擎（官方 GitHub Action 会自动构建）。没有该引擎时只运行 Go 质量检查，扫描结果会被标记为不完整。
+¹ Go 的死代码和安全检查需要原生 `skylos-go` 引擎。从 4.50 起，Linux、macOS 和 Windows（x86_64 和 arm64）的 PyPI wheel 以及容器镜像都包含该引擎，官方 GitHub Action 会自动构建。其他平台上 `skylos doctor` 会给出构建命令。没有该引擎时只运行 Go 质量检查，Go 文件会被报告为未分析。
+
+² Kotlin 死代码只报告 `private` 类型和函数以及未使用的导入；所有非 private 声明都视为已使用。Kotlin 没有内置安全规则，但密钥扫描仍覆盖 `.kt` 和 `.kts` 文件。
+
+³ Dart 检查需要可选依赖 `skylos[dart]`（`pip install "skylos[dart]"`，安装时需要 C 编译器）。未安装时，包含 `.dart` 文件的扫描会把它们报告为未分析（`SKY-ANALYSIS-INCOMPLETE`）。
+
+⁴ Rust 死代码是实验性功能：trait 方法调用、跨 crate 使用的 `pub` 项、重新导出和宏都不会被解析。Rust 候选项的置信度最高为 40，低于默认阈值 60，因此只有加上 `--confidence 40` 才会列出。
 
 C# 死代码检查采用保守策略：完整扫描可执行或 Web 应用时，未被引用的 public
 类型和方法会作为低置信度候选项；库的公开 API、protected 成员及已知的框架或
