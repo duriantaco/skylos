@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from skylos.deadcode.framework_liveness import _bound_names, _eager_nodes, _module_name
+from skylos.deadcode.python_import_roots import ModuleAliases
 from skylos.deadcode.signature_contracts import _merge_c3_mro
 from skylos.deadcode.web_framework_liveness import _resolve_from_module
 
@@ -193,6 +194,7 @@ class FastAPIProject:
                 continue
             name = _module_name(path, self.root)
             self.modules[name] = FastAPIModule(name, path, parsed.tree)
+        self.module_aliases = ModuleAliases(self.root, self.modules)
         self.functions: dict[str, CallableInfo] = {}
         self.classes: dict[str, ClassInfo] = {}
         self.objects: dict[str, ObjectInfo] = {}
@@ -203,6 +205,7 @@ class FastAPIProject:
         self.constructors = []
         self.registrations = []
         self.includes = defaultdict(set)
+        self.possible_includes = []
         self.active_objects = set()
         self.executed_callables = set()
         self.executed_keys = self.executed_callables
@@ -249,6 +252,17 @@ class FastAPIProject:
             return self.modules.get(module)
         return module
 
+    def module_named(self, name, importer=None):
+        importer = self._module(importer)
+        found, blocked = self.module_aliases.scoped(name, importer)
+        if blocked:
+            return None
+        if found is None:
+            found = self.modules.get(name)
+        if found is None:
+            found = self.module_aliases.lookup(name, importer)
+        return found
+
     def resolve(self, expression, bindings, module=None):
         self._step()
         module = self._module(module)
@@ -283,15 +297,15 @@ class FastAPIProject:
                     None,
                     self.method_available(owner, expression.attr),
                 )
-            if owner in self.modules:
-                source = self.modules[owner]
+            source = self.module_named(owner, module)
+            if source is not None:
                 self.collect_module(source)
                 if expression.attr in source.bindings:
                     return source.bindings[expression.attr]
-                child = owner + "." + expression.attr
-                if child in self.modules:
-                    self.collect_module(self.modules[child])
-                    return child
+                child = self.module_named(source.name + "." + expression.attr, module)
+                if child is not None:
+                    self.collect_module(child)
+                    return child.name
             qualified = owner + "." + expression.attr
             if qualified in self.attribute_values:
                 return self.attribute_values[qualified]
@@ -456,20 +470,27 @@ class FastAPIProject:
                 source = alias.name
                 if source.split(".")[0] == "fastapi":
                     module.mentions_fastapi = True
-                if source in self.modules:
-                    self.collect_module(self.modules[source])
-                bindings[alias.asname or source.split(".")[0]] = (
-                    source if alias.asname else source.split(".")[0]
-                )
+                imported = self.module_named(source, module)
+                if imported is not None:
+                    self.collect_module(imported)
+                if alias.asname and imported is not None:
+                    bindings[alias.asname] = imported.name
+                elif alias.asname:
+                    bindings[alias.asname] = source
+                else:
+                    bindings[source.split(".")[0]] = source.split(".")[0]
             return
         source = _resolve_from_module(statement, package)
         if not source:
             return
         if source.split(".")[0] == "fastapi":
             module.mentions_fastapi = True
-        imported = self.modules.get(source)
+        imported = self.module_named(source, module)
         if imported is not None:
             self.collect_module(imported)
+        imported_name = source
+        if imported is not None:
+            imported_name = imported.name
         for alias in statement.names:
             if alias.name == "*":
                 if imported is not None:
@@ -491,13 +512,13 @@ class FastAPIProject:
                             module.factory_aliases[name] = _FACTORY_KINDS[provider]
                 continue
             name = alias.asname or alias.name
-            qualified = source + "." + alias.name
-            child = self.modules.get(qualified)
+            qualified = imported_name + "." + alias.name
+            child = self.module_named(qualified, module)
             if imported is not None and alias.name in imported.bindings:
                 value = imported.bindings[alias.name]
             elif child is not None:
                 self.collect_module(child)
-                value = qualified
+                value = child.name
             else:
                 value = self.attribute_values.get(qualified, qualified)
             bindings[name] = value
@@ -1141,6 +1162,28 @@ class FastAPIProject:
                             else None,
                         )
                     )
+        elif proven and uncertain and method in {"include_router", "mount"}:
+            position, keyword_name = 0, "router"
+            if method == "mount":
+                position, keyword_name = 1, "app"
+            child_node = next(
+                (kw.value for kw in expression.keywords if kw.arg == keyword_name), None
+            )
+            if child_node is None and len(expression.args) > position:
+                child_node = expression.args[position]
+            child = self._eval(child_node, bindings, module, executed, owner, uncertain)
+            owner_key = None
+            if owner in self.functions:
+                owner_key = self.functions[owner].key
+            if child in self.objects:
+                self.possible_includes.append(
+                    SimpleNamespace(
+                        receiver=receiver,
+                        child=child,
+                        owner=owner,
+                        owner_key=owner_key,
+                    )
+                )
         if (
             isinstance(expression.func, ast.Name)
             and expression.func.id in {"setattr", "delattr"}
@@ -1190,6 +1233,37 @@ class FastAPIProject:
                 continue
             return None
 
+    def _possibly_included(self):
+        """Objects an include under an unknown condition may attach."""
+        if not self.possible_includes:
+            return set()
+        conditional = defaultdict(set)
+        for include in self.possible_includes:
+            self._step()
+            if (
+                include.owner is None
+                or include.owner_key in self.executed_callables
+                or include.owner_key in self.report.roots
+            ):
+                conditional[include.receiver].add(include.child)
+        possible = set()
+        visited = set()
+        pending = list(self.active_objects)
+        while pending:
+            self._step()
+            current = pending.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            children = conditional.get(current, set()) | self.includes.get(current, set())
+            for child in children:
+                self._step()
+                if child in self.active_objects or child in possible:
+                    continue
+                possible.add(child)
+                pending.append(child)
+        return possible
+
     def collect(self):
         for module in self.modules.values():
             self.collect_module(module)
@@ -1212,6 +1286,7 @@ class FastAPIProject:
                 and info.invocable
             ):
                 self.report.roots.add(info.key)
+        possible = self._possibly_included()
         for record in self.registrations:
             info = record.callback
             possible_owner = (
@@ -1224,6 +1299,7 @@ class FastAPIProject:
             if possible_owner and (
                 record.uncertain
                 or transformed
+                or (record.executed and record.proven and record.object_key in possible)
                 or (
                     not has_app
                     and record.executed
