@@ -1,8 +1,11 @@
 # Cloud configuration and suppression sync
 
 `skylos sync pull` fetches the linked project's configuration and reviewed
-findings. It validates both responses, their project identities, and supported
-suppression schema before activating either repository file.
+findings. The repository needs a git remote (`git remote add origin <url>`):
+reviewed findings are tied to its remote URL, so without one the pull stops
+before contacting Skylos Cloud. It validates both responses, their project
+identities, and supported suppression schema before activating either
+repository file.
 
 ```bash
 skylos sync pull
