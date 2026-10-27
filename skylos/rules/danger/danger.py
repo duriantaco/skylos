@@ -18,6 +18,8 @@ from .danger_agent.tool_privilege import scan as scan_agent_tool_privilege
 from .danger_llm.consumption import scan as scan_llm_consumption
 from .danger_llm.llm_flow import scan as scan_llm
 from .danger_ml.model_deserialization import scan as scan_ml_model_load
+from .danger_logging import scan as scan_secret_logging
+from .pickle_provenance import safe_pickle_loads
 from skylos.security.command_guard import (
     findings_for_command,
     is_external_url,
@@ -61,6 +63,7 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         self.aliases = {}
         self.assigned_calls_stack = [{}]
         self._parents_annotated = False
+        self._safe_pickle_loads = set()
 
     def _annotate_parents(self, node: ast.AST) -> None:
         for child in ast.iter_child_nodes(node):
@@ -104,6 +107,7 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         self._symbol_stack.pop()
 
     def visit_Module(self, node):
+        self._safe_pickle_loads = safe_pickle_loads(node, self.file_path)
         if not self._parents_annotated:
             self._annotate_parents(node)
             self._parents_annotated = True
@@ -148,6 +152,9 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                     opts = None
 
                 if not _matches_rule(name, rule_key):
+                    continue
+
+                if rule_key == "pickle.loads" and id(node) in self._safe_pickle_loads:
                     continue
 
                 if rule_key == "yaml.load" and not _yaml_load_without_safeloader(
@@ -563,6 +570,7 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         scan_llm_consumption(tree, file_path, findings)
         scan_llm(tree, file_path, findings)
         scan_ml_model_load(tree, file_path, findings)
+        findings.extend(scan_secret_logging(tree, {"filename": file_path}))
         _PythonCommandExfilChecker(file_path, findings).visit(tree)
         return
 
@@ -603,6 +611,8 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         scan_llm(tree, file_path, findings)
     if _has_any(source_lower, _ML_MODEL_LOAD_TOKENS):
         scan_ml_model_load(tree, file_path, findings)
+    if _has_any(source_lower, ("print", "logging", "loguru")):
+        findings.extend(scan_secret_logging(tree, {"filename": file_path}))
     if _has_any(
         source_lower,
         (

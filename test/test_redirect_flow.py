@@ -110,8 +110,8 @@ def test_redirect_request_query_get():
     assert "SKY-D230" in _rule_ids(findings)
 
 
-def test_redirect_with_urlparse_guard_safe():
-    """If urlparse().netloc check exists, don't flag."""
+def test_redirect_with_urlparse_guard_is_not_proven_safe():
+    """A netloc check does not prove browser-safe redirect semantics."""
     code = (
         "from flask import redirect, request\n"
         "from urllib.parse import urlparse\n"
@@ -122,11 +122,11 @@ def test_redirect_with_urlparse_guard_safe():
         "    return redirect(request.args.get('next', '/'))\n"
     )
     findings = _scan_code(code)
-    assert "SKY-D230" not in _rule_ids(findings)
+    assert "SKY-D230" in _rule_ids(findings)
 
 
-def test_redirect_with_startswith_guard_safe():
-    """If .startswith('/') check exists, don't flag."""
+def test_redirect_with_startswith_guard_is_not_proven_safe():
+    """A slash prefix accepts protocol-relative URLs and cannot validate a new read."""
     code = (
         "from flask import redirect, request\n"
         "def f():\n"
@@ -136,7 +136,7 @@ def test_redirect_with_startswith_guard_safe():
         "    return redirect(request.args.get('next', '/'))\n"
     )
     findings = _scan_code(code)
-    assert "SKY-D230" not in _rule_ids(findings)
+    assert "SKY-D230" in _rule_ids(findings)
 
 
 def test_redirect_tainted_variable_still_flagged():

@@ -483,3 +483,75 @@ def attribute_write_names(tree: ast.AST | None) -> tuple[frozenset[str], bool]:
             ):
                 computed = True
     return frozenset(names), computed
+
+
+def has_mock_api_patching(tree: ast.AST | None) -> bool:
+    """A mock patcher may replace an imported API without an attribute store.
+
+    This is an uncertainty check for optional safety proofs, not a claim that
+    the patch targets a particular API. Aliases are overapproximated across
+    scopes so rebinding a patch name cannot accidentally establish safety.
+    """
+    if tree is None:
+        return False
+    nodes = list(ast.walk(tree))
+    bindings: dict[str, set[str]] = {}
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                name = alias.asname or alias.name.split(".")[0]
+                qualified = alias.name if alias.asname else name
+                bindings.setdefault(name, set()).add(qualified)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for alias in node.names:
+                bindings.setdefault(alias.asname or alias.name, set()).add(
+                    f"{node.module}.{alias.name}"
+                )
+
+    patch_paths = {
+        "unittest", "unittest.mock", "mock",
+        "unittest.mock.patch", "mock.patch",
+        "unittest.mock.patch.object", "mock.patch.object",
+        "unittest.mock.patch.dict", "mock.patch.dict",
+        "unittest.mock.patch.multiple", "mock.patch.multiple",
+    }
+    bindings = {
+        name: values & patch_paths for name, values in bindings.items()
+        if values & patch_paths
+    }
+    if not bindings:
+        return False
+
+    def qualified(expr):
+        dotted = _dotted(expr)
+        if not dotted:
+            return set()
+        root, separator, tail = dotted.partition(".")
+        return {
+            f"{value}.{tail}" if separator else value
+            for value in bindings.get(root, ())
+        }
+
+    assignments = [node for node in nodes if isinstance(node, (ast.Assign, ast.AnnAssign))]
+    for _ in range(len(assignments) + 1):
+        changed = False
+        for node in assignments:
+            values = qualified(node.value) & patch_paths
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, ast.Name) and values:
+                    existing = bindings.setdefault(target.id, set())
+                    before = len(existing)
+                    existing.update(values)
+                    changed |= len(existing) != before
+        if not changed:
+            break
+    for node in nodes:
+        if isinstance(node, ast.Call):
+            if any(
+                name == prefix or name.startswith(prefix + ".")
+                for name in qualified(node.func)
+                for prefix in ("unittest.mock.patch", "mock.patch")
+            ):
+                return True
+    return False

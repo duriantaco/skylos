@@ -3,7 +3,12 @@ import ast
 import re
 import sys
 from skylos.rules.danger.taint import TaintVisitor, PATH_SANITIZERS
-from skylos.rules.danger.module_namespace import attribute_write_names
+from skylos.rules.danger.module_namespace import (
+    attribute_write_names,
+    has_mock_api_patching,
+    module_name_for,
+    module_rebinding,
+)
 from skylos.rules.danger.danger_fs.closed_world import HELPER_PARAMETER_SOURCE
 from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
 from skylos.security.receiver_resolution import ReceiverResolver
@@ -597,9 +602,19 @@ class _PathFlowChecker(TaintVisitor):
         self.update_handle_reads = None
         self._attribute_writes = (frozenset(), True)
         self._class_methods = ()
+        self._non_archive_imports_uncertain = True
+        self._import_parents = {}
 
     def visit_Module(self, node):
         self.untrusted_sources = UntrustedSourceIndex(node, follow_local_calls=True)
+        self._import_parents = {
+            id(child): parent
+            for parent in ast.walk(node)
+            for child in ast.iter_child_nodes(parent)
+        }
+        self._non_archive_imports_uncertain = module_rebinding(
+            node, module_name_for(self.file_path)
+        )[0] or has_mock_api_patching(node)
         try:
             self._attribute_writes = attribute_write_names(node)
         except RecursionError:
@@ -715,9 +730,45 @@ class _PathFlowChecker(TaintVisitor):
             return None
         return ARCHIVE_CONSTRUCTORS.get(self._canonical_call_name(expr) or "")
 
+    def _non_archive_import_scope_supported(self, node):
+        child = node
+        current = self._import_parents.get(id(child))
+        while current is not None:
+            if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return child in current.body
+            if isinstance(
+                current,
+                (
+                    ast.ClassDef,
+                    ast.Lambda,
+                    ast.ListComp,
+                    ast.SetComp,
+                    ast.DictComp,
+                    ast.GeneratorExp,
+                ),
+            ):
+                return False
+            child, current = current, self._import_parents.get(id(current))
+        return True
+
     def _archive_call_target(self, node):
         """Whose ``extract``/``extractall`` this is: ``zip``, ``tar``,
         ``project`` (a method the project defines) or ``unknown``."""
+        # OpenTelemetry extracts a tracing context, not archive members. The
+        # exemption needs the imported API and rejects rebinding/monkeypatching.
+        writes, computed = self._attribute_writes
+        if (
+            node.func.attr == "extract"
+            and self._non_archive_import_scope_supported(node)
+            and not self._non_archive_imports_uncertain
+            and not computed
+            and "extract" not in writes
+            and self.untrusted_sources.resolved_import(
+                self._current_function(), _qualified_name(node) or ""
+            )
+            == "opentelemetry.propagate.extract"
+        ):
+            return "project"
         kind = self._archive_kind(node.func.value)
         if kind:
             return kind

@@ -9,6 +9,7 @@ from skylos.core.test_paths import is_test_source_file
 from skylos.rules.danger.module_namespace import module_name_for, module_rebinding
 from skylos.rules.danger.taint import TaintVisitor, URL_SANITIZERS
 from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
+from .url_scheme import audit_urlopen
 
 # ``scheme://host`` followed by a path/query/fragment delimiter: once a literal
 # prefix reaches this point, interpolation afterwards cannot change the host.
@@ -2276,6 +2277,7 @@ class _SSRFFlowChecker(TaintVisitor):
 
     def visit_Call(self, node):
         qn = _qualified_name_from_call(node)
+        audit_urlopen(self, node)
 
         if (
             qn == "setattr"

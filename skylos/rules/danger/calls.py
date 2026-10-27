@@ -1,6 +1,7 @@
 import ast
 import re
 from skylos.rules.base import SkylosRule
+from .pickle_provenance import safe_pickle_loads
 from skylos.security.command_guard import scan_shell_command
 from skylos.security.sensitive_data import first_sensitive_name
 from skylos.security.command_guard_types import (
@@ -39,7 +40,7 @@ DANGEROUS_CALLS = {
     "pickle.loads": (
         "SKY-D205",
         "CRITICAL",
-        "Untrusted deserialization via pickle.loads",
+        "pickle.loads can execute code; only deserialize bytes from trusted sources",
     ),
     "yaml.load": ("SKY-D206", "HIGH", "yaml.load without SafeLoader"),
     "hashlib.md5": (
@@ -705,6 +706,7 @@ class DangerousCallsRule(SkylosRule):
         self.aliases: dict[str, str] = {}
         self.assigned_calls_by_scope: dict[int, dict[str, str]] = {}
         self._parents_annotated = False
+        self._safe_pickle_loads = set()
 
     def _annotate_parents(self, node: ast.AST) -> None:
         for child in ast.iter_child_nodes(node):
@@ -761,6 +763,7 @@ class DangerousCallsRule(SkylosRule):
             self.assigned_calls_by_scope.clear()
             self._annotate_parents(node)
             self._parents_annotated = True
+            self._safe_pickle_loads = safe_pickle_loads(node, context.get("filename"))
             self.assigned_calls_by_scope.setdefault(id(node), {})
             return None
         if isinstance(node, ast.Import):
@@ -785,6 +788,9 @@ class DangerousCallsRule(SkylosRule):
 
         for rule_key, tup in DANGEROUS_CALLS.items():
             if not _matches_rule(name, rule_key):
+                continue
+
+            if rule_key == "pickle.loads" and id(node) in self._safe_pickle_loads:
                 continue
 
             rule_id = tup[0]
