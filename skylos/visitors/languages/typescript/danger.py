@@ -233,6 +233,7 @@ _INTERNAL_URL_PREFIXES = (
     "https://127.0.0.1",
     "https://0.0.0.0",
 )
+_ENV_DEFAULT_OPERATORS = {"??", "||"}
 
 _BASE64_CHARS = set(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=-_"
@@ -298,6 +299,29 @@ _TIMING_SENSITIVE_SUFFIXES = (
     "hmac",
     "signature",
     "apikey",
+)
+_TIMING_PASSWORD_WORDS = ("password", "passwd", "pwd", "passphrase")
+_TIMING_CONFIRMATION_WORDS = (
+    "confirm",
+    "repeat",
+    "retype",
+    "reenter",
+    "again",
+    "verify",
+    "verification",
+)
+_TIMING_STORED_WORDS = (
+    "hash",
+    "digest",
+    "hmac",
+    "signature",
+    "stored",
+    "expected",
+    "saved",
+    "secret",
+    "token",
+    "salt",
+    "encrypted",
 )
 
 _STORAGE_SENSITIVE_SUFFIXES = (
@@ -473,6 +497,259 @@ def _is_timing_sensitive(name: str) -> bool:
         if normalized == suffix or normalized.endswith(suffix):
             return True
     return False
+
+
+def _is_environment_lookup(node, source_bytes: bytes) -> bool:
+    """``process.env.X``, ``process.env["X"]``, ``import.meta.env.X``,
+    ``Bun.env.X``, ``Deno.env.get("X")``, or a ``??``/``||`` chain of them."""
+    node = _unwrap_ts_expression(node)
+    if node is None:
+        return False
+    if node.type == "binary_expression":
+        operator = node.child_by_field_name("operator")
+        if operator is None or operator.type not in _ENV_DEFAULT_OPERATORS:
+            return False
+        return _is_environment_lookup(
+            node.child_by_field_name("left"), source_bytes
+        ) and _is_environment_lookup(node.child_by_field_name("right"), source_bytes)
+    if node.type == "call_expression":
+        function = node.child_by_field_name("function")
+        if function is None or function.type != "member_expression":
+            return False
+        method = function.child_by_field_name("property")
+        if method is None or _get_text(source_bytes, method) != "get":
+            return False
+        return _is_environment_object(
+            function.child_by_field_name("object"), source_bytes, {"Deno"}, False
+        )
+    if node.type not in {"member_expression", "subscript_expression"}:
+        return False
+    return _is_environment_object(
+        node.child_by_field_name("object"), source_bytes, {"process", "Bun"}, True
+    )
+
+
+def _is_environment_object(
+    node, source_bytes: bytes, owners: set[str], allow_import_meta: bool
+) -> bool:
+    node = _unwrap_ts_expression(node)
+    if node is None or node.type != "member_expression":
+        return False
+    prop = node.child_by_field_name("property")
+    base = node.child_by_field_name("object")
+    if prop is None or base is None or _get_text(source_bytes, prop) != "env":
+        return False
+    if base.type == "identifier":
+        return _get_text(source_bytes, base) in owners
+    return allow_import_meta and base.type == "meta_property"
+
+
+def _is_environment_default(node, source_bytes: bytes) -> bool:
+    """The literal is the fallback in ``process.env.X ?? "http://localhost"``
+    (or ``||``): the host is already configured through the environment."""
+    current = node
+    parent = current.parent
+    while parent is not None and parent.type == "parenthesized_expression":
+        current = parent
+        parent = current.parent
+    if parent is None or parent.type != "binary_expression":
+        return False
+    operator = parent.child_by_field_name("operator")
+    if operator is None or operator.type not in _ENV_DEFAULT_OPERATORS:
+        return False
+    right = parent.child_by_field_name("right")
+    if (
+        right is None
+        or right.start_byte != current.start_byte
+        or right.end_byte != current.end_byte
+    ):
+        return False
+    return _is_environment_lookup(parent.child_by_field_name("left"), source_bytes)
+
+
+def _timing_field_word(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+def _is_password_confirmation_pair(first: str, second: str) -> bool:
+    words = (_timing_field_word(first), _timing_field_word(second))
+    if words[0] == words[1]:
+        return False
+    if not all(any(part in word for part in _TIMING_PASSWORD_WORDS) for word in words):
+        return False
+    if any(any(part in word for part in _TIMING_STORED_WORDS) for word in words):
+        return False
+    return any(
+        any(part in word for part in _TIMING_CONFIRMATION_WORDS) for word in words
+    )
+
+
+def _enclosing_ts_function(node):
+    current = node.parent
+    while current is not None:
+        if current.type in _TS_FUNCTION_NODE_TYPES:
+            return current
+        current = current.parent
+    return None
+
+
+def _ts_parameter_patterns(function_node) -> list:
+    single = function_node.child_by_field_name("parameter")
+    if single is not None:
+        return [single]
+    parameters = function_node.child_by_field_name("parameters")
+    if parameters is None:
+        return []
+    patterns = []
+    for parameter in parameters.named_children:
+        if parameter.type in {"required_parameter", "optional_parameter"}:
+            pattern = parameter.child_by_field_name("pattern")
+            if pattern is not None:
+                patterns.append(pattern)
+        else:
+            patterns.append(parameter)
+    return patterns
+
+
+def _destructured_field_names(pattern, source_bytes: bytes) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for child in pattern.named_children:
+        if child.type == "shorthand_property_identifier_pattern":
+            name = _get_text(source_bytes, child)
+            fields[name] = name
+        elif child.type == "object_assignment_pattern":
+            left = child.child_by_field_name("left")
+            if (
+                left is not None
+                and left.type == "shorthand_property_identifier_pattern"
+            ):
+                name = _get_text(source_bytes, left)
+                fields[name] = name
+        elif child.type == "pair_pattern":
+            key = child.child_by_field_name("key")
+            value = child.child_by_field_name("value")
+            if (
+                key is not None
+                and value is not None
+                and key.type == "property_identifier"
+                and value.type == "identifier"
+            ):
+                fields[_get_text(source_bytes, value)] = _get_text(source_bytes, key)
+    return fields
+
+
+def _ts_name_rebound(
+    function_node, pattern, names: set[str], source_bytes: bytes
+) -> bool:
+    """A binding of one of ``names`` anywhere in the function other than the
+    parameter ``pattern`` itself: assignment, declaration, loop or catch
+    variable, update, destructuring, or a shadowing parameter."""
+    stack = [function_node]
+    while stack:
+        node = stack.pop()
+        stack.extend(node.children)
+        if node.type not in {"identifier", "shorthand_property_identifier_pattern"}:
+            continue
+        if _get_text(source_bytes, node) not in names:
+            continue
+        if pattern.start_byte <= node.start_byte and node.end_byte <= pattern.end_byte:
+            continue
+        if node.type == "shorthand_property_identifier_pattern":
+            return True
+        parent = node.parent
+        if parent is None:
+            continue
+        if parent.type in {
+            "assignment_expression",
+            "augmented_assignment_expression",
+            "for_in_statement",
+        }:
+            left = parent.child_by_field_name("left")
+            if left is not None and left.start_byte == node.start_byte:
+                return True
+        if parent.type == "variable_declarator":
+            declared = parent.child_by_field_name("name")
+            if declared is not None and declared.start_byte == node.start_byte:
+                return True
+        if parent.type in {
+            "update_expression",
+            "required_parameter",
+            "optional_parameter",
+            "formal_parameters",
+            "catch_clause",
+            "pair_pattern",
+            "array_pattern",
+            "object_assignment_pattern",
+            "assignment_pattern",
+            "rest_pattern",
+        }:
+            return True
+        if parent.type == "arrow_function":
+            single = parent.child_by_field_name("parameter")
+            if single is not None and single.start_byte == node.start_byte:
+                return True
+    return False
+
+
+def _compares_one_form_entry_twice(node, left, right, source_bytes: bytes) -> bool:
+    """``data.password === data.confirm_password`` inside ``(data) => ...``, or a
+    destructured ``({ password, confirmPassword }) => password === confirmPassword``:
+    a password and its confirmation from one parameter record. The caller
+    supplied both values and neither names a stored secret, so the comparison
+    time reveals nothing it did not send."""
+    left = _unwrap_ts_expression(left)
+    right = _unwrap_ts_expression(right)
+    if left is None or right is None:
+        return False
+    function_node = _enclosing_ts_function(node)
+    if function_node is None:
+        return False
+    patterns = _ts_parameter_patterns(function_node)
+    if left.type == "member_expression" and right.type == "member_expression":
+        receivers = [operand.child_by_field_name("object") for operand in (left, right)]
+        properties = [
+            operand.child_by_field_name("property") for operand in (left, right)
+        ]
+        if any(
+            receiver is None or receiver.type != "identifier" for receiver in receivers
+        ):
+            return False
+        if any(
+            prop is None or prop.type != "property_identifier" for prop in properties
+        ):
+            return False
+        record = _get_text(source_bytes, receivers[0])
+        if record != _get_text(source_bytes, receivers[1]):
+            return False
+        pattern = next(
+            (
+                candidate
+                for candidate in patterns
+                if candidate.type == "identifier"
+                and _get_text(source_bytes, candidate) == record
+            ),
+            None,
+        )
+        bound = {record}
+        fields = [_get_text(source_bytes, prop) for prop in properties]
+    elif left.type == "identifier" and right.type == "identifier":
+        names = [_get_text(source_bytes, operand) for operand in (left, right)]
+        pattern = None
+        fields = []
+        for candidate in patterns:
+            if candidate.type != "object_pattern":
+                continue
+            destructured = _destructured_field_names(candidate, source_bytes)
+            if all(name in destructured for name in names):
+                pattern = candidate
+                fields = [destructured[name] for name in names]
+                break
+        bound = set(names)
+    else:
+        return False
+    if pattern is None or not _is_password_confirmation_pair(*fields):
+        return False
+    return not _ts_name_rebound(function_node, pattern, bound, source_bytes)
 
 
 def _extract_var_name(node, source_bytes: bytes) -> str | None:
@@ -2483,7 +2760,11 @@ def scan_danger(
                     findings.append(entropy_finding)
 
             # Hardcoded internal URL (SKY-D248)
-            if not is_test_file and len(text) >= MIN_SECRET_LENGTH:
+            if (
+                not is_test_file
+                and len(text) >= MIN_SECRET_LENGTH
+                and not _is_environment_default(node, source_bytes)
+            ):
                 text_lower = text.lower()
                 for url_prefix in _INTERNAL_URL_PREFIXES:
                     if text_lower.startswith(url_prefix):
@@ -11423,6 +11704,7 @@ def _check_timing_comparison(
                 if not (
                     _is_null_literal_expression(left)
                     or _is_null_literal_expression(right)
+                    or _compares_one_form_entry_twice(node, left, right, source_bytes)
                 ):
                     for operand in (left, right):
                         if operand is None:
