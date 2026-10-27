@@ -952,6 +952,12 @@ def _ensure_llm_support() -> bool:
         LLM_AVAILABLE = True
         return True
 
+    from skylos.llm.runtime import llm_extra_importable
+
+    if not llm_extra_importable():
+        LLM_AVAILABLE = False
+        return False
+
     try:
         from skylos.llm.analyzer import (
             SkylosLLM as skylos_llm_impl,
@@ -965,6 +971,15 @@ def _ensure_llm_support() -> bool:
     AnalyzerConfig = analyzer_config_impl
     LLM_AVAILABLE = True
     return True
+
+
+def _exit_without_llm_extra() -> None:
+    from skylos.llm.runtime import LLM_EXTRA_MISSING_MESSAGE
+
+    Console(stderr=True).print(
+        f"[bold red]{_escape_markup(LLM_EXTRA_MISSING_MESSAGE)}[/bold red]"
+    )
+    sys.exit(2)
 
 
 def _build_analyzer_config(**kwargs):
@@ -5388,8 +5403,7 @@ def main() -> None:
 
             if not getattr(agent_args, "scan_only", False):
                 if not _ensure_llm_support():
-                    Console().print("[bold red]Agent module not available[/bold red]")
-                    sys.exit(1)
+                    _exit_without_llm_extra()
 
                 model = agent_args.model
                 provider_override = getattr(agent_args, "provider", None)
@@ -5666,9 +5680,13 @@ def main() -> None:
             model = JEV_MODEL
             provider, api_key, base_url = "typesafe", None, None
         else:
-            if not _ensure_llm_support():
-                Console().print("[bold red]Agent module not available[/bold red]")
-                sys.exit(1)
+            remediation_plan_only = (
+                cmd == "remediate"
+                and getattr(agent_args, "dry_run", False)
+                and not getattr(agent_args, "standards", None)
+            )
+            if not remediation_plan_only and not _ensure_llm_support():
+                _exit_without_llm_extra()
 
             model = agent_args.model
 

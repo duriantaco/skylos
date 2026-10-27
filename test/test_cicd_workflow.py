@@ -118,7 +118,84 @@ def test_workflow_with_llm():
     assert "agent scan" in content
     assert "--changed" in content
     assert "claude-sonnet-4-5-20250929" in content
-    assert "SKYLOS_API_KEY" in content
+    assert "ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}" in content
+    assert "SKYLOS_API_KEY" not in content
+
+
+def _llm_step(content):
+    steps = yaml.safe_load(content)["jobs"]["skylos"]["steps"]
+    return next(s for s in steps if s.get("name") == "Skylos Agent Review (LLM)")
+
+
+@pytest.mark.parametrize(
+    ("model", "env_var"),
+    [
+        ("gpt-4.1", "OPENAI_API_KEY"),
+        ("claude-sonnet-4-20250514", "ANTHROPIC_API_KEY"),
+        ("gemini/gemini-2.0-flash", "GEMINI_API_KEY"),
+        ("groq/llama3-70b-8192", "GROQ_API_KEY"),
+        ("mistral/mistral-large-latest", "MISTRAL_API_KEY"),
+    ],
+)
+def test_workflow_llm_step_passes_the_key_the_cli_reads(model, env_var):
+    from skylos.cloud.credentials import PROVIDERS
+    from skylos.llm.runtime import detect_provider
+
+    step = _llm_step(generate_workflow(use_llm=True, model=model))
+
+    assert PROVIDERS[detect_provider(model)] == env_var
+    assert step["env"] == {env_var: f"${{{{ secrets.{env_var} }}}}"}
+
+
+def test_workflow_llm_step_with_a_local_model_needs_no_key():
+    content = generate_workflow(use_llm=True, model="ollama/llama3")
+
+    assert "env" not in _llm_step(content)
+    assert "API_KEY" not in content
+    assert "# Pull requests (no secrets needed):" in content
+
+
+def test_workflow_llm_header_names_the_secret():
+    content = generate_workflow(use_llm=True, model="gpt-4.1")
+
+    assert (
+        "# Pull requests (the LLM review step needs the OPENAI_API_KEY secret):"
+        in content
+    )
+    assert "no secrets needed" not in content
+
+
+def test_workflow_llm_step_runs_a_command_the_agent_parser_accepts():
+    from skylos.cli import _build_agent_parser
+
+    step = _llm_step(generate_workflow(use_llm=True, model="gpt-4.1"))
+    args = _build_agent_parser().parse_args(shlex.split(step["run"])[2:])
+
+    assert (args.agent_cmd, args.model, args.changed) == ("scan", "gpt-4.1", True)
+    assert (args.format, args.output) == ("json", "skylos-llm-results.json")
+
+
+def test_workflow_llm_installs_the_llm_extra_only_in_the_gate_job():
+    content = generate_workflow(use_llm=True, model="gpt-4.1", skylos_version="5.1.1")
+    jobs = yaml.safe_load(content)["jobs"]
+
+    def install_runs(job):
+        return [
+            s["run"] for s in jobs[job]["steps"] if s.get("name") == "Install Skylos"
+        ]
+
+    assert install_runs("skylos") == [
+        "python -I -m pip install 'skylos[dart,llm]==5.1.1'"
+    ]
+    assert install_runs("cloud-upload") == [
+        "python -I -m pip install 'skylos[dart]==5.1.1'"
+    ]
+
+
+def test_workflow_without_llm_installs_no_llm_extra():
+    content = generate_workflow(skylos_version="5.1.1")
+
+    assert "llm" not in content.lower()
 
 
 def test_workflow_claude_model_adds_anthropic_key():
@@ -245,7 +322,7 @@ def test_workflow_upload_with_llm():
     analysis_step = next(s for s in steps if s.get("name") == "Run Skylos Analysis")
     assert "--upload" not in analysis_step["run"]
     llm_step = next(s for s in steps if s.get("name") == "Skylos Agent Review (LLM)")
-    assert "SKYLOS_API_KEY" in llm_step["env"]
+    assert llm_step["env"] == {"OPENAI_API_KEY": "${{ secrets.OPENAI_API_KEY }}"}
     upload_steps = parsed["jobs"]["cloud-upload"]["steps"]
     assert any(s.get("run", "").startswith("skylos cloud ") for s in upload_steps)
     assert all("SKYLOS_API_KEY" not in s.get("env", {}) for s in upload_steps)

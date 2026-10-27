@@ -269,6 +269,12 @@ never presented as clean.
   not be read (see below);
 - an analysis error of a kind Skylos does not recognise (it fails closed).
 
+An LLM command (`skylos agent scan`, `verify`, `remediate`, `audit --deep`,
+`security-quick`, `security-deep`, or `skylos debt --with-agent`) run without
+the optional LLM extra exits `2` before analysing anything and prints
+`pip install "skylos[llm]"`. `skylos agent remediate --dry-run` only plans
+fixes and does not need the extra.
+
 `--force` and advisory gate settings do not convert incomplete analysis into a
 passing result. Interactive removal (`-i`) needs a complete scan and refuses
 to run with any coverage gap, because a file that was not analysed could

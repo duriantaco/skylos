@@ -242,6 +242,14 @@ def run_debt_command(
             f"[red]Error: --history-limit must be > 0, got {debt_args.history_limit}[/red]"
         )
         return 1
+    if debt_args.with_agent and not debt_args.show_history:
+        from rich.markup import escape
+
+        from skylos.llm.runtime import LLM_EXTRA_MISSING_MESSAGE, llm_extra_importable
+
+        if not llm_extra_importable():
+            console.print(f"[red]Error: {escape(LLM_EXTRA_MISSING_MESSAGE)}[/red]")
+            return 2
 
     if debt_args.show_history:
         try:

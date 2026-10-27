@@ -17,6 +17,11 @@ from skylos.llm.schemas import (
 from skylos.llm.security_verifier import annotate_security_finding
 
 
+@pytest.fixture(autouse=True)
+def _llm_extra_installed(monkeypatch):
+    monkeypatch.setattr("skylos.llm.runtime.llm_extra_importable", lambda: True)
+
+
 def _security_scan_result(file_path: str) -> AnalysisResult:
     return AnalysisResult(
         findings=[

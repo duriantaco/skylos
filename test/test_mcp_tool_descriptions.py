@@ -114,6 +114,7 @@ def test_default_remediation_is_a_static_plan(tools, monkeypatch, tmp_path):
     from skylos.llm.orchestrator import RemediationAgent
 
     monkeypatch.setattr(server_mod, "_gate", lambda name: None)
+    monkeypatch.setattr(server_mod, "_access_error", lambda name: None)
     monkeypatch.setattr(
         RemediationAgent,
         "_scan",

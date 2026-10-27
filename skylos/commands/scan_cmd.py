@@ -229,7 +229,11 @@ def _verify_security_findings(
         VerificationSettings,
         verify_security_findings,
     )
-    from skylos.llm.runtime import resolve_llm_runtime
+    from skylos.llm.runtime import (
+        LLM_EXTRA_INSTALL_COMMAND,
+        llm_extra_installed,
+        resolve_llm_runtime,
+    )
 
     def note(message: str) -> None:
         if not machine_output:
@@ -240,6 +244,13 @@ def _verify_security_findings(
     if not 1 <= runs <= 9 or max_findings < 0:
         note(
             "[warn]AI verification skipped: --verify-runs must be 1-9 and --verify-max 0 or more.[/warn]"
+        )
+        return
+    if not llm_extra_installed():
+        note(
+            "[warn]AI verification skipped: the LLM extra is not installed "
+            f"({escape(LLM_EXTRA_INSTALL_COMMAND)}). "
+            "Findings stay unchecked and keep blocking as before.[/warn]"
         )
         return
     model = (

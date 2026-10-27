@@ -731,3 +731,212 @@ class TestGateIntegration:
         assert result is not None
         error = json.loads(result)
         assert "Rate limit exceeded" in error["error"]
+
+
+class _ToolRegistry:
+    def __init__(self):
+        self.tools = {}
+
+    def tool(self, *args, **kwargs):
+        def register(fn):
+            self.tools[fn.__name__] = fn
+            return fn
+
+        return register
+
+    def resource(self, *args, **kwargs):
+        def register(fn):
+            return fn
+
+        return register
+
+
+class TestRemediateCredits:
+    def _remediate(self):
+        from skylos_mcp.server import _register_tools
+
+        registry = _ToolRegistry()
+        _register_tools(registry)
+        return registry.tools["remediate"]
+
+    def _paid_session(self, monkeypatch):
+        import skylos_mcp.auth as auth_mod
+
+        session = AuthSession(
+            authenticated=True,
+            plan="pro",
+            api_key="test-key",
+            credits=100,
+            rate_limit_per_hour=500,
+            validated_at=time.time(),
+        )
+        monkeypatch.setattr(auth_mod, "_session", session)
+        return session
+
+    def _deduct_ok(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"balance_after": 90}
+        mock_req = MagicMock()
+        mock_req.post.return_value = mock_resp
+        return mock_req
+
+    def _agent(self):
+        agent_cls = MagicMock()
+        agent_cls.return_value.run.return_value = {"planned": 1}
+        return agent_cls
+
+    def test_dry_run_is_not_charged_but_counts_toward_the_rate_limit(
+        self, tmp_path, monkeypatch
+    ):
+        session = self._paid_session(monkeypatch)
+        mock_req = self._deduct_ok()
+        agent_cls = self._agent()
+
+        with (
+            patch.dict("sys.modules", {"requests": mock_req}),
+            patch("skylos.llm.orchestrator.RemediationAgent", agent_cls),
+        ):
+            reply = json.loads(self._remediate()(str(tmp_path), dry_run=True))
+
+        assert reply == {"planned": 1}
+        mock_req.post.assert_not_called()
+        assert agent_cls.return_value.run.call_args.kwargs["dry_run"] is True
+        assert len(session._call_counts["remediate"]) == 1
+
+    def test_default_call_is_a_free_dry_run(self, tmp_path, monkeypatch):
+        self._paid_session(monkeypatch)
+        mock_req = self._deduct_ok()
+        agent_cls = self._agent()
+
+        with (
+            patch.dict("sys.modules", {"requests": mock_req}),
+            patch("skylos.llm.orchestrator.RemediationAgent", agent_cls),
+        ):
+            self._remediate()(str(tmp_path))
+
+        mock_req.post.assert_not_called()
+        assert agent_cls.return_value.run.call_args.kwargs["dry_run"] is True
+
+    def test_generating_fixes_is_charged(self, tmp_path, monkeypatch):
+        self._paid_session(monkeypatch)
+        mock_req = self._deduct_ok()
+        agent_cls = self._agent()
+
+        with (
+            patch.dict("sys.modules", {"requests": mock_req}),
+            patch("skylos.llm.orchestrator.RemediationAgent", agent_cls),
+            patch("skylos.llm.runtime.llm_extra_installed", return_value=True),
+        ):
+            self._remediate()(str(tmp_path), dry_run=False)
+
+        mock_req.post.assert_called_once()
+        assert mock_req.post.call_args.kwargs["json"] == {
+            "feature_key": "mcp_remediate"
+        }
+        assert agent_cls.return_value.run.call_args.kwargs["dry_run"] is False
+
+    def test_generating_fixes_without_credits_does_not_run(self, tmp_path, monkeypatch):
+        self._paid_session(monkeypatch)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 402
+        mock_resp.json.return_value = {"required": 10, "available": 0}
+        mock_req = MagicMock()
+        mock_req.post.return_value = mock_resp
+        agent_cls = self._agent()
+
+        with (
+            patch.dict("sys.modules", {"requests": mock_req}),
+            patch("skylos.llm.orchestrator.RemediationAgent", agent_cls),
+            patch("skylos.llm.runtime.llm_extra_installed", return_value=True),
+        ):
+            reply = json.loads(self._remediate()(str(tmp_path), dry_run=False))
+
+        assert "Insufficient credits" in reply["error"]
+        agent_cls.assert_not_called()
+
+    def test_generating_fixes_without_the_llm_extra_is_refused_before_charging(
+        self, tmp_path, monkeypatch
+    ):
+        session = self._paid_session(monkeypatch)
+        mock_req = self._deduct_ok()
+        agent_cls = self._agent()
+
+        with (
+            patch.dict("sys.modules", {"requests": mock_req}),
+            patch("skylos.llm.orchestrator.RemediationAgent", agent_cls),
+            patch("skylos.llm.runtime.llm_extra_installed", return_value=False),
+        ):
+            reply = json.loads(self._remediate()(str(tmp_path), dry_run=False))
+
+        assert 'pip install "skylos[llm]"' in reply["error"]
+        mock_req.post.assert_not_called()
+        agent_cls.assert_not_called()
+        assert "remediate" not in session._call_counts
+
+    def test_rejected_test_cmd_is_not_charged(self, tmp_path, monkeypatch):
+        self._paid_session(monkeypatch)
+        mock_req = self._deduct_ok()
+
+        with patch.dict("sys.modules", {"requests": mock_req}):
+            reply = json.loads(
+                self._remediate()(str(tmp_path), dry_run=False, test_cmd="pytest")
+            )
+
+        assert "does not accept test_cmd" in reply["error"]
+        mock_req.post.assert_not_called()
+
+    def test_unauthenticated_dry_run_still_needs_a_key(self, tmp_path, monkeypatch):
+        import skylos_mcp.auth as auth_mod
+
+        monkeypatch.setattr(auth_mod, "_session", AuthSession(authenticated=False))
+        agent_cls = self._agent()
+
+        with patch("skylos.llm.orchestrator.RemediationAgent", agent_cls):
+            reply = json.loads(self._remediate()(str(tmp_path), dry_run=True))
+
+        assert "requires authentication" in reply["error"]
+        agent_cls.assert_not_called()
+
+    def test_rate_limited_dry_run_is_blocked(self, tmp_path, monkeypatch):
+        session = self._paid_session(monkeypatch)
+        now = time.time()
+        session.rate_limit_per_hour = 1
+        session._call_counts["_all"] = [now - 1]
+        agent_cls = self._agent()
+
+        with patch("skylos.llm.orchestrator.RemediationAgent", agent_cls):
+            reply = json.loads(self._remediate()(str(tmp_path), dry_run=True))
+
+        assert "Rate limit exceeded" in reply["error"]
+        agent_cls.assert_not_called()
+
+
+class TestVerifyDeadCodeNeedsTheLlmExtra:
+    def test_missing_llm_extra_is_reported_before_analysis(self, tmp_path, monkeypatch):
+        import skylos_mcp.auth as auth_mod
+        import skylos_mcp.server as server_mod
+
+        monkeypatch.setattr(
+            auth_mod,
+            "_session",
+            AuthSession(
+                authenticated=True,
+                plan="pro",
+                api_key="test-key",
+                rate_limit_per_hour=500,
+                validated_at=time.time(),
+            ),
+        )
+        registry = _ToolRegistry()
+        server_mod._register_tools(registry)
+        analyze = MagicMock()
+
+        with (
+            patch.object(server_mod, "_lazy_analyze", return_value=analyze),
+            patch("skylos.llm.runtime.llm_extra_installed", return_value=False),
+        ):
+            reply = json.loads(registry.tools["verify_dead_code"](str(tmp_path)))
+
+        assert 'pip install "skylos[llm]"' in reply["error"]
+        analyze.assert_not_called()

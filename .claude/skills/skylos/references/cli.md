@@ -162,6 +162,8 @@ control. Local rich scans with findings end with a `Next: skylos cloud` block.
   `docs/agent-verification.md`.
 - `skylos agent scan|verify|remediate|audit|watch|pre-commit|triage .`:
   hybrid static and LLM analysis, requiring `[llm]` extras and provider config.
+  Without the extra, LLM commands exit 2 with `pip install "skylos[llm]"`;
+  `skylos doctor` shows `LLM support not installed`.
 - `skylos rules init|validate|list`: local YAML rule packs.
 - `skylos cicd init`: set up the pull request gate for the detected CI
   (`--ci github|gitlab|jenkins|bitbucket|azure|circleci|other`); writes a new

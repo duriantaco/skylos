@@ -2,6 +2,7 @@ import os
 import time
 from .base import BaseAdapter
 from skylos.cloud.credentials import get_key, PROVIDERS
+from skylos.llm.runtime import LLM_EXTRA_INSTALL_COMMAND, load_litellm
 from skylos.llm.completion_diagnostics import (
     OUTPUT_BUDGET_FINISH_REASON,
     OUTPUT_BUDGET_SIGNAL,
@@ -61,16 +62,13 @@ class LiteLLMAdapter(BaseAdapter):
         }
         self.explicit_provider = (provider or "").strip().lower() or None
 
-        os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
         try:
-            import litellm
-
-            self.litellm = litellm
+            self.litellm = load_litellm()
             self.litellm.drop_params = True
         except ImportError:
             raise ImportError(
                 "LiteLLM is required for this feature. "
-                "Install it with: pip install skylos[llm]"
+                f"Install it with: {LLM_EXTRA_INSTALL_COMMAND}"
             )
 
         self.api_base = api_base or os.getenv("SKYLOS_LLM_BASE_URL")

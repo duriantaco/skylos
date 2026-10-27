@@ -1272,10 +1272,10 @@ until the server is started with `SKYLOS_API_KEY` set; create a free key in
 the Skylos Cloud dashboard settings. Unauthenticated `analyze` calls are free.
 Authenticated `analyze`, security, quality, secrets and provenance scans can
 use credits; Skylos Cloud sets the current cost. `remediate` currently costs
-10 credits per call. The CLI equivalents (`skylos verify`,
-`skylos defend`, `skylos . -a`) and `skylos agent install-hooks` run on
-your machine with no account or key; their dependency and package checks
-still query public registries (see
+10 credits per call that generates fixes; a dry run (the default) is free.
+The CLI equivalents (`skylos verify`, `skylos defend`, `skylos . -a`) and
+`skylos agent install-hooks` run on your machine with no account or key;
+their dependency and package checks still query public registries (see
 [What Leaves Your Machine](#what-leaves-your-machine)).
 
 **Does Skylos replace Ruff?**
