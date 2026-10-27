@@ -1,5 +1,13 @@
 ## Changelog
 
+## [5.1.3](https://github.com/duriantaco/skylos/compare/v5.1.2...v5.1.3) (2026-10-27)
+
+
+### Bug Fixes
+
+* **gate:** apply the synced skylos cloud policy to skylos --gate ([#1101](https://github.com/duriantaco/skylos/issues/1101)) ([0b46dbf](https://github.com/duriantaco/skylos/commit/0b46dbf47997d2a429d1296d6269aeff53a507d4))
+* **sync:** say sync pull needs a git remote before contacting cloud ([#1100](https://github.com/duriantaco/skylos/issues/1100)) ([2a20b49](https://github.com/duriantaco/skylos/commit/2a20b49daa430457d9b409dd7d52853fbd758aeb))
+
 ## [5.1.2](https://github.com/duriantaco/skylos/compare/v5.1.1...v5.1.2) (2026-10-27)
 
 
