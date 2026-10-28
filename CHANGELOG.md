@@ -1,5 +1,20 @@
 ## Changelog
 
+## [5.1.5](https://github.com/duriantaco/skylos/compare/v5.1.4...v5.1.5) (2026-10-28)
+
+
+### Bug Fixes
+
+* **analyzer:** preserve references and security flows ([#1115](https://github.com/duriantaco/skylos/issues/1115)) ([088f0f4](https://github.com/duriantaco/skylos/commit/088f0f41c428eb2e4471dcba5dfe7efd07641db9))
+* **cli:** shorten saved paths in command output ([#1112](https://github.com/duriantaco/skylos/issues/1112)) ([acd86a5](https://github.com/duriantaco/skylos/commit/acd86a59ad197381a0d2487b82b05eaba0573c2c))
+* **dead-code:** reduce Python and JS/TS FPs ([#1118](https://github.com/duriantaco/skylos/issues/1118)) ([78b80da](https://github.com/duriantaco/skylos/commit/78b80dadb4b22696fa92743073ee853d8f8daf72))
+* **dead-code:** resolve FastAPI routers in nested projects ([#1107](https://github.com/duriantaco/skylos/issues/1107)) ([3035566](https://github.com/duriantaco/skylos/commit/30355668d8778b7d713d633d4a92893080dd103f))
+* **rust:** improve dead code, quality and security checks ([#1111](https://github.com/duriantaco/skylos/issues/1111)) ([c226937](https://github.com/duriantaco/skylos/commit/c226937654cc4a7fcf1cb0f93989b4abf7cb1fe6))
+* **security:** close python data flow and provenance gaps ([#1110](https://github.com/duriantaco/skylos/issues/1110)) ([142c3f9](https://github.com/duriantaco/skylos/commit/142c3f920f57b8f602378a36f4219ecf9c944519))
+* **security:** improve secret, path and XSS checks ([#1116](https://github.com/duriantaco/skylos/issues/1116)) ([bbd4bb3](https://github.com/duriantaco/skylos/commit/bbd4bb37aa4d4c42b304e96afd0f2be7c4564ca5))
+* **security:** skip password confirmations, dry-run publishes ([#1108](https://github.com/duriantaco/skylos/issues/1108)) ([4b98679](https://github.com/duriantaco/skylos/commit/4b98679383b1e86e94ecfd31e4002f95fbc02cc6))
+* **upload:** send MEDIUM for advisories with no severity rating ([#1117](https://github.com/duriantaco/skylos/issues/1117)) ([c041f5a](https://github.com/duriantaco/skylos/commit/c041f5aaaef58598103ae93713f4184be2b53ea6))
+
 ## [5.1.4](https://github.com/duriantaco/skylos/compare/v5.1.3...v5.1.4) (2026-10-27)
 
 
