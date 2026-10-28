@@ -10,6 +10,7 @@ from rich.table import Table
 from rich.text import Text
 
 from skylos.rules.catalog import get_rule_catalog
+from skylos.ui.paths import shown_path
 
 MAX_RULE_PACK_BYTES = 1_000_000
 
@@ -106,13 +107,6 @@ def _resolve_local_rule_pack_path(path_str):
     return resolved
 
 
-def _shown_path(path: Path) -> str:
-    try:
-        return str(path.relative_to(Path.cwd().resolve()))
-    except ValueError:
-        return str(path)
-
-
 def init_rules(console, path_str, *, force=False):
     try:
         dest = _resolve_local_rule_pack_path(path_str)
@@ -122,7 +116,7 @@ def init_rules(console, path_str, *, force=False):
 
     if dest.exists() and not force:
         console.print(
-            f"[red]Rule pack already exists: {_shown_path(dest)}. Use --force to overwrite.[/red]"
+            f"[red]Rule pack already exists: {shown_path(dest)}. Use --force to overwrite.[/red]"
         )
         return 1
 
@@ -131,8 +125,8 @@ def init_rules(console, path_str, *, force=False):
         _starter_rule_pack().strip() + "\n",
         encoding="utf-8",
     )
-    console.print(f"[green]Created starter rule pack: {_shown_path(dest)}[/green]")
-    console.print(f"[dim]Validate it with: skylos rules validate {_shown_path(dest)}[/dim]")
+    console.print(f"[green]Created starter rule pack: {shown_path(dest)}[/green]")
+    console.print(f"[dim]Validate it with: skylos rules validate {shown_path(dest)}[/dim]")
     if (
         dest.parent.name == "rules"
         and dest.parent.parent.name == ".skylos"

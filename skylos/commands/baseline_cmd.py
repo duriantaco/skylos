@@ -12,6 +12,7 @@ from skylos.core.baseline import save_baseline
 from skylos.core.cli_shared import quiet_analyzer_logs
 from skylos.core.gatekeeper import _analysis_incomplete_reasons
 from skylos.core.sca_baseline import dependency_scan_complete
+from skylos.ui.paths import shown_path
 
 
 def _build_baseline_parser() -> argparse.ArgumentParser:
@@ -152,7 +153,7 @@ def run_baseline_command(argv: list[str]) -> int:
     )
 
     console.print(
-        f"[good]Baseline saved to {escape(str(baseline_path))} "
+        f"[good]Baseline saved to {escape(shown_path(baseline_path))} "
         f"({total} existing findings captured)[/good]"
     )
     console.print(

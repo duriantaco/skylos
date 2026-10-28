@@ -744,7 +744,7 @@ def test_skylos_pr_workflow_builds_go_engine_from_immutable_base():
 
 def test_skylos_workflow_reports_incomplete_scan_before_preserving_exit_code():
     scan_job = _skylos_workflow()["jobs"]["scan"]
-    assert scan_job["timeout-minutes"] == 20
+    assert scan_job["timeout-minutes"] == 45
 
     steps = scan_job["steps"]
     scan_step = next(s for s in steps if s.get("name") == "Run Skylos")

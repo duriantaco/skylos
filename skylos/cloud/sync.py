@@ -10,6 +10,7 @@ import subprocess
 from collections.abc import Sequence
 from typing import Any
 from urllib.parse import urlparse
+from skylos.ui.paths import shown_path
 from skylos.cloud.plan_names import (
     PAID_PLAN_NAME,
     PRICING_URL,
@@ -631,9 +632,9 @@ def cmd_connect(token_arg: str | None = None) -> None:
         print(f"\n✗ {e}")
         sys.exit(1)
 
-    print(f"\nLinked repo: {repo_root}")
-    print(f"Link file:   {link_path}")
-    print(f"\nToken saved to {creds_path}")
+    print(f"\nLinked repo: {shown_path(repo_root)}")
+    print(f"Link file:   {shown_path(link_path)}")
+    print(f"\nToken saved to {shown_path(creds_path)}")
     print("\nYou can now run:")
     print("  skylos .      # Scan locally; findings stay on your machine")
     print("  skylos cloud  # Scan with every check and upload to Skylos Cloud")
@@ -709,7 +710,7 @@ def cmd_project_status() -> None:
             active = None
 
     print("\nSkylos Project Status\n")
-    print(f"  Repo:         {repo_root}")
+    print(f"  Repo:         {shown_path(repo_root)}")
 
     if linked_project_id:
         print(f"  Linked ID:    {linked_project_id}")
