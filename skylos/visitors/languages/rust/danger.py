@@ -72,6 +72,7 @@ class _SecurityFlow:
         self.file = str(Path(file_path))
         self.source = source
         self.findings = []
+        self.return_values = []
 
     def text(self, node):
         if node is None:
@@ -194,7 +195,11 @@ class _SecurityFlow:
             api = state.resolve(self.text(type_node))
             kind = "path" if api in _PATH_TYPES else None
             state.bind(name, Value(sources=sources, kind=kind))
-        self.block(self.field(node, "body"), state)
+        self.return_values.append([])
+        try:
+            self.block(self.field(node, "body"), state)
+        finally:
+            self.return_values.pop()
 
     def bind_pattern(self, node, value, state):
         if node is None:
@@ -253,9 +258,12 @@ class _SecurityFlow:
                 state.assign(self.text(left), value)
             return value, True
         if kind == "return_expression":
-            return joined(
+            value = joined(
                 self.expression(child, state) for child in node.named_children
-            ), False
+            )
+            if self.return_values:
+                self.return_values[-1].append(value)
+            return value, False
         if kind == "block":
             return self.block(node, state)
         if kind == "if_expression":
@@ -447,9 +455,28 @@ class _SecurityFlow:
                 pattern = self.field(param, "pattern") or param
                 self.bind_pattern(pattern, UNKNOWN, closure)
             body = self.field(node, "body")
-            if body is not None:
-                self.statement(body, closure)
-            return UNKNOWN
+            self.return_values.append([])
+            try:
+                tail, _continuing = self.statement(body, closure)
+                if body is not None and body.type == "block":
+                    statements = [
+                        child for child, _conditional in self.scope_statements(body)
+                    ]
+                    last = statements[-1] if statements else None
+                    if (
+                        last is None
+                        or last.type == "let_declaration"
+                        or last.type in _ITEMS
+                        or last.type == "use_declaration"
+                        or (last.children and last.children[-1].type == ";")
+                    ):
+                        tail = UNKNOWN
+                returned = joined([tail, *self.return_values[-1]])
+            finally:
+                self.return_values.pop()
+            # A bounded source summary is not a path restriction, provider
+            # identity, or authorization to apply the closure's writes outside.
+            return Value(kind="closure", return_sources=returned.sources)
         if kind == "call_expression":
             return self.call(node, state)
         if kind == "macro_invocation":
@@ -500,8 +527,11 @@ class _SecurityFlow:
             args = [self.expression(arg, state) for arg in arg_nodes]
             method = self.text(self.field(callee, "field"))
             return self.method(node, receiver_node, receiver, method, args, state)
+        callable_value = self.expression(callee, state)
         args = [self.expression(arg, state) for arg in arg_nodes]
         combined = joined(args)
+        if callable_value.return_sources:
+            combined = joined([combined, Value(sources=callable_value.return_sources)])
         api = state.resolve(self.text(callee))
         if api in _SOURCES:
             return Value(sources=frozenset({api}), kind="result_string")

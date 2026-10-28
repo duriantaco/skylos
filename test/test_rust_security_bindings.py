@@ -544,3 +544,112 @@ async fn f(input: String) {{ struct File;
 impl File {{ async fn create(_: String) {{}} }}
 File::create(input).await; }}"""
     assert scan(tmp_path, source) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "|| input.clone()",
+        "move || input.clone()",
+        "|| { let selected = input.clone(); selected }",
+        '|| { if flag { return input.clone(); } "fixed".to_string() }',
+        '|| { match flag { true => return input.clone(), false => return "fixed".to_string() } }',
+    ],
+)
+def test_local_closure_return_preserves_captured_source(tmp_path, body):
+    findings = scan(
+        tmp_path,
+        f"""use std::fs::File;
+fn f(input: String, flag: bool) {{
+    let selected = {body};
+    File::open(selected());
+}}""",
+    )
+    assert [(f["rule_id"], f["line"]) for f in findings] == [("SKY-D215", 4)]
+    assert findings[0]["metadata"]["security_evidence"]["sources"] == [
+        "parameter:input"
+    ]
+
+
+def test_local_closure_path_join_return_keeps_source_at_aliased_call(tmp_path):
+    findings = scan(
+        tmp_path,
+        """use std::{fs::File, path::Path};
+fn f(dir: &Path) {
+    let selected = || dir.join("child");
+    let reader_path = selected;
+    File::open(reader_path());
+}""",
+    )
+    assert [(f["rule_id"], f["line"]) for f in findings] == [("SKY-D215", 5)]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '|| "fixed"',
+        '|| { let _captured = &input; "fixed" }',
+        '|| { if flag { return "one"; } "two" }',
+        '|| { let inner = || input.clone(); "fixed" }',
+        '|| { fn inner(input: String) -> String { return input; } "fixed" }',
+    ],
+)
+def test_local_literal_closure_returns_do_not_inherit_unreturned_inputs(tmp_path, body):
+    findings = scan(
+        tmp_path,
+        f"""use std::fs::File;
+fn f(input: String, flag: bool) {{
+    let selected = {body};
+    File::open(selected());
+}}""",
+    )
+    assert findings == []
+
+
+def test_local_closure_parameter_shadows_captured_source(tmp_path):
+    findings = scan(
+        tmp_path,
+        """use std::fs::File;
+fn f(input: String) {
+    let selected = |input: &str| input;
+    File::open(selected("fixed"));
+}""",
+    )
+    assert findings == []
+
+
+def test_unknown_helper_around_closure_result_does_not_sanitize(tmp_path):
+    findings = scan(
+        tmp_path,
+        """use std::fs::File;
+fn f(input: String) {
+    let selected = || input.clone();
+    File::open(sanitize(selected()));
+}""",
+    )
+    assert [(f["rule_id"], f["line"]) for f in findings] == [("SKY-D215", 4)]
+
+
+def test_local_closure_summary_does_not_grant_path_safety(tmp_path):
+    findings = scan(
+        tmp_path,
+        """use std::{fs::File, path::Path};
+fn f(input: String) {
+    let selected = || Path::new(&input).file_name().unwrap();
+    File::open(selected());
+}""",
+    )
+    assert [(f["rule_id"], f["line"]) for f in findings] == [("SKY-D215", 4)]
+
+
+def test_rebinding_closure_does_not_keep_old_return_source(tmp_path):
+    findings = scan(
+        tmp_path,
+        """use std::fs::File;
+fn f(input: String) {
+    let selected = || input.clone();
+    let selected = || "fixed";
+    File::open(selected());
+}""",
+    )
+    assert findings == []

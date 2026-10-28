@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 @dataclass(frozen=True)
 class Value:
     sources: frozenset[str] = frozenset()
+    return_sources: frozenset[str] = frozenset()
     kind: str | None = None
     api: str | None = None
     literal: str | None = None
@@ -40,6 +41,7 @@ def joined(values):
         )
     return Value(
         sources=frozenset().union(*(v.sources for v in values)),
+        return_sources=frozenset().union(*(v.return_sources for v in values)),
         kind=first.kind if all(v.kind == first.kind for v in values) else None,
         api=first.api if all(v.api == first.api for v in values) else None,
         literal=first.literal
