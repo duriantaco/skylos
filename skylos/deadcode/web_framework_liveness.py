@@ -27,6 +27,7 @@ _FLASK_CALLBACKS = {
         "teardown_request",
         "teardown_appcontext",
         "context_processor",
+        "shell_context_processor",
         "template_filter",
         "template_global",
         "errorhandler",
@@ -45,7 +46,20 @@ _FLASK_CALLBACKS = {
         "errorhandler",
         "app_errorhandler",
     },
+    "flask_login.LoginManager": {
+        "user_loader",
+        "request_loader",
+        "unauthorized_handler",
+        "needs_refresh_handler",
+    },
+    "flask_login.login_manager.LoginManager": {
+        "user_loader",
+        "request_loader",
+        "unauthorized_handler",
+        "needs_refresh_handler",
+    },
 }
+_FLASK_CALLBACK_METHODS = frozenset().union(*_FLASK_CALLBACKS.values())
 _DJANGO_LAUNCHERS = {
     "django.core.wsgi.get_wsgi_application",
     "django.core.asgi.get_asgi_application",
@@ -65,6 +79,8 @@ _EXECUTION_MARKERS = {
 # Positional arguments Flask passes to each callback kind (None: all of them,
 # for template filters/tests/globals that take the template's arguments).
 _FLASK_CALLBACK_ARITY = {
+    "user_loader": 1,
+    "request_loader": 1,
     "teardown_appcontext": 1,
     "teardown_request": 1,
     "teardown_app_request": 1,
@@ -131,7 +147,10 @@ class _ModuleEvidence:
     targets: list = field(default_factory=list)
     blueprints: set = field(default_factory=set)
     blueprint_callbacks: list = field(default_factory=list)
-    imported_blueprint_callbacks: list = field(default_factory=list)
+    imported_callbacks: list = field(default_factory=list)
+    escaped_callback_objects: set = field(default_factory=set)
+    callback_objects: set = field(default_factory=set)
+    callback_mutations: set = field(default_factory=set)
     classes: dict = field(default_factory=dict)
     settings: set = field(default_factory=set)
     values: dict = field(default_factory=dict)
@@ -189,11 +208,12 @@ class _Assignment:
 
 
 class _WebScanner:
-    def __init__(self, index, module, executed_definitions):
+    def __init__(self, index, module, executed_definitions, callback_bindings=False):
         path = index._resolve_path(module.path)
         self.index = index
         self.evidence = _ModuleEvidence(index, path, index.modules[path])
         self.tree = module.tree
+        self.callback_bindings = callback_bindings
         self.path_values = {}
         self.settings_module = None
         self.executed_definitions = executed_definitions
@@ -204,9 +224,119 @@ class _WebScanner:
         module_bindings = {}
         self.suite(self.tree.body, module_bindings)
         self.evidence.bindings = module_bindings.copy()
+        if self.callback_bindings:
+            self._collect_callback_mutations(module_bindings)
         self._collect_module_level()
         self._collect_callback_signatures(module_bindings)
         return self.evidence
+
+    def _collect_callback_mutations(self, bindings):
+        """Visible provider replacement invalidates only the new callback proofs."""
+        changed = self.evidence.callback_mutations
+        metadata = {
+            "__class__",
+            "__dict__",
+            "__code__",
+            "__globals__",
+            "__defaults__",
+            "__kwdefaults__",
+            "__getattribute__",
+            "__setattr__",
+            "__new__",
+            "__init__",
+        }
+
+        def record(name):
+            while name.rpartition(".")[2] in metadata:
+                name = name.rpartition(".")[0]
+            changed.add(name)
+
+        for node in ast.walk(self.tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                own = [
+                    child
+                    for statement in node.body
+                    for child in _eager_nodes(statement)
+                ]
+                declared = {
+                    name
+                    for child in own
+                    if isinstance(child, ast.Global)
+                    for name in child.names
+                }
+                changed.update(
+                    self.evidence.module + "." + child.id
+                    for child in own
+                    if isinstance(child, ast.Name)
+                    and isinstance(child.ctx, (ast.Store, ast.Del))
+                    and child.id in declared
+                )
+                # An import's local slot can be replaced by an executed
+                # global write without changing the exporting module.
+                for name in declared:
+                    if any(
+                        isinstance(child, ast.Name)
+                        and child.id == name
+                        and isinstance(child.ctx, (ast.Store, ast.Del))
+                        for child in own
+                    ):
+                        canonical = bindings.get(name)
+                        if canonical:
+                            record(canonical)
+            if isinstance(node, ast.Attribute) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
+                value = _qualified(node, bindings)
+                if value:
+                    record(value)
+            if isinstance(node, ast.Subscript) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
+                base = node.value
+                if (
+                    isinstance(base, ast.Call)
+                    and isinstance(base.func, ast.Name)
+                    and base.func.id in {"globals", "locals"}
+                ):
+                    changed.add(self.evidence.module)
+                elif isinstance(base, ast.Attribute) and base.attr in {
+                    "__dict__",
+                    "__globals__",
+                }:
+                    owner = _qualified(base.value, bindings)
+                    if owner:
+                        member = _literal(node.slice)
+                        record(
+                            owner + "." + member if isinstance(member, str) else owner
+                        )
+            if not isinstance(node, ast.Call):
+                continue
+            leaf = (
+                node.func.id
+                if isinstance(node.func, ast.Name)
+                else getattr(node.func, "attr", None)
+            )
+            if leaf in {"exec", "eval"}:
+                changed.add(self.evidence.module)
+            if (
+                leaf in {"patch", "setattr", "delattr"}
+                and node.args
+                and isinstance(_literal(node.args[0]), str)
+            ):
+                record(_literal(node.args[0]))
+            if leaf in {"setattr", "delattr", "object"} and len(node.args) >= 2:
+                owner = _qualified(node.args[0], bindings)
+                if owner:
+                    member = _literal(node.args[1])
+                    record(owner + "." + member if isinstance(member, str) else owner)
+            if leaf == "update" and isinstance(node.func, ast.Attribute):
+                receiver = node.func.value
+                if (
+                    isinstance(receiver, ast.Call)
+                    and isinstance(receiver.func, ast.Name)
+                    and receiver.func.id in {"globals", "locals"}
+                ):
+                    changed.add(self.evidence.module)
 
     def _collect_callback_signatures(self, module_bindings):
         """Flask fixes the signature of any function registered as a callback,
@@ -390,6 +520,12 @@ class _WebScanner:
 
     def _scan_function(self, statement, bindings, _owner):
         definition = self.evidence.at(statement, "function")
+        if self.callback_bindings and _owner is not None:
+            for node in ast.walk(statement):
+                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                    escaped = _qualified(node, bindings)
+                    if escaped:
+                        self.evidence.escaped_callback_objects.add(escaped)
         registered = self._flask_callback(statement, bindings, definition)
         if definition is not None:
             executes = registered is True or (
@@ -470,6 +606,20 @@ class _WebScanner:
             for target in targets
         )
         self._calls(value, bindings, routes=routes)
+        if self.callback_bindings and isinstance(
+            value, (ast.Lambda, ast.Dict, ast.List, ast.Tuple, ast.Set)
+        ):
+            for node in ast.walk(value):
+                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                    escaped = _qualified(node, bindings)
+                    if escaped:
+                        self.evidence.escaped_callback_objects.add(escaped)
+        if self.callback_bindings and any(
+            not isinstance(target, ast.Name) for target in targets
+        ):
+            escaped = _qualified(value, bindings)
+            if escaped:
+                self.evidence.escaped_callback_objects.add(escaped)
         assignment = _Assignment(
             value,
             _qualified(value, bindings),
@@ -486,10 +636,12 @@ class _WebScanner:
         qualified = assignment.qualified
         if (
             assignment.constructor in _FLASK_CALLBACKS
-            and "flask" not in self.index.shadowed
+            and assignment.constructor.split(".", 1)[0] not in self.index.shadowed
         ):
             symbol = (assignment.owner or self.evidence.module) + "." + name
             qualified = "@" + assignment.constructor + ":" + symbol
+            if self.callback_bindings:
+                self.evidence.callback_objects.add(qualified)
         bindings[name] = qualified
         if assignment.owner is None:
             self.evidence.values[name] = assignment.value
@@ -555,13 +707,30 @@ class _WebScanner:
         for decorator in node.decorator_list:
             function = decorator.func if isinstance(decorator, ast.Call) else decorator
             registered = _flask_decorator(_qualified(function, bindings))
-            if registered is None:
+            deferred = registered is not None and (
+                registered[0].startswith("flask_login.")
+                or getattr(function, "attr", None) == "shell_context_processor"
+            )
+            if registered is None or deferred:
                 qualified = _qualified(function, bindings)
                 if qualified and isinstance(function, ast.Attribute):
-                    if function.attr in _FLASK_CALLBACKS["flask.Blueprint"]:
-                        self.evidence.imported_blueprint_callbacks.append(
-                            (definition, qualified.rpartition(".")[0])
+                    if function.attr in _FLASK_CALLBACK_METHODS:
+                        self.evidence.imported_callbacks.append(
+                            (definition, qualified.rpartition(".")[0], function.attr)
                         )
+                elif isinstance(function, ast.Attribute) and isinstance(
+                    function.value, ast.Name
+                ):
+                    if function.attr in _FLASK_CALLBACK_METHODS:
+                        self.evidence.imported_callbacks.append(
+                            (
+                                definition,
+                                self.evidence.module + "." + function.value.id,
+                                function.attr,
+                            )
+                        )
+                if deferred:
+                    return False
                 continue
             source, symbol = registered
             self._flask_signature(definition, _qualified(function, bindings))
@@ -629,9 +798,32 @@ class _WebScanner:
         return cached
 
     def _calls(self, expression, bindings, *, routes=False):
+        references = {}
+
+        def callback_values(node):
+            if node in references:
+                return references[node]
+            values = set()
+            if isinstance(node, ast.Name):
+                value = bindings.get(node.id)
+                if value:
+                    values.add(value)
+            else:
+                for child in ast.iter_child_nodes(node):
+                    values.update(callback_values(child))
+            references[node] = values
+            return values
+
         for call in _eager_nodes(expression):
             if not isinstance(call, ast.Call):
                 continue
+            # An object handed to another callable can have its registration
+            # methods replaced. The new factory/type proof must stay unknown.
+            if self.callback_bindings:
+                for argument in [*call.args, *(kw.value for kw in call.keywords)]:
+                    self.evidence.escaped_callback_objects.update(
+                        callback_values(argument)
+                    )
             function = _qualified(call.func, bindings)
             self._blueprint_call(call, function, bindings)
             self._flask_registration_call(call, bindings)
@@ -1010,27 +1202,59 @@ def _executed_definitions(index):
     return roots
 
 
-def _blueprint_targets(modules):
+def _blueprint_targets(modules, index):
     scanners = {module.module: module for module in modules}
+    mutations = {
+        name
+        for module in modules
+        for name in (*module.class_member_overrides, *module.callback_mutations)
+    }
+    escaped = {value for module in modules for value in module.escaped_callback_objects}
+    objects = {value for module in modules for value in module.callback_objects}
 
-    def exported_blueprint(qualified, seen=frozenset()):
+    def intact(*names):
+        return not any(
+            name == changed or name.startswith(changed + ".")
+            for name in names
+            for changed in mutations
+        )
+
+    def exported_object(qualified, seen=frozenset(), method=None):
         if qualified in seen or len(seen) >= 24:
             return None
-        if qualified.startswith("@flask.Blueprint:"):
-            return qualified.partition(":")[2]
+        if qualified.startswith("@"):
+            source, _, symbol = qualified[1:].partition(":")
+            if (
+                source in _FLASK_CALLBACKS
+                and source.split(".", 1)[0] not in index.shadowed
+            ):
+                if (
+                    source.startswith("flask_login.")
+                    or method == "shell_context_processor"
+                ) and qualified not in objects:
+                    return None
+                if (
+                    source.startswith("flask_login.")
+                    or method == "shell_context_processor"
+                ) and (qualified in escaped or symbol in escaped or source in escaped):
+                    return None
+                return source, symbol, qualified
+            return None
         name, _, member = qualified.rpartition(".")
-        scanner = scanners.get(name)
-        if scanner is None:
+        module = scanners.get(name)
+        if module is None:
             return None
-        value = scanner.bindings.get(member)
-        if not isinstance(value, str):
-            return None
-        return exported_blueprint(value, seen | {qualified})
+        value = module.bindings.get(member)
+        if isinstance(value, str):
+            return exported_object(value, seen | {qualified}, method)
+        return None
 
     registered = {name for module in modules for name in module.blueprints}
     registered.update(
-        target for name in list(registered)
-        if (target := exported_blueprint(name)) is not None
+        target[1]
+        for name in list(registered)
+        if (target := exported_object(name)) is not None
+        and target[0] == "flask.Blueprint"
     )
     found = [
         (definition, "flask_web_callback")
@@ -1039,10 +1263,38 @@ def _blueprint_targets(modules):
         if symbol in registered
     ]
     for module in modules:
-        for definition, qualified in module.imported_blueprint_callbacks:
-            symbol = exported_blueprint(qualified)
-            if symbol is not None and symbol in registered:
-                found.append((definition, "flask_web_callback"))
+        for definition, qualified, method in module.imported_callbacks:
+            target = exported_object(qualified, method=method)
+            if target is None:
+                continue
+            source, symbol, bound = target
+            if method not in _FLASK_CALLBACKS[source]:
+                continue
+            strict = (
+                source.startswith("flask_login.") or method == "shell_context_processor"
+            )
+            if strict and not intact(
+                module.module,
+                source + "." + method,
+                symbol + "." + method,
+                bound + "." + method,
+            ):
+                continue
+            if source == "flask.Blueprint" and symbol not in registered:
+                continue
+            found.append((definition, "flask_web_callback"))
+            node = getattr(definition, "node", None)
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and method in _FLASK_CALLBACK_ARITY
+            ):
+                parameters = index.parameters.get(definition.name, {})
+                positional = [*node.args.posonlyargs, *node.args.args]
+                count = _FLASK_CALLBACK_ARITY[method]
+                for argument in positional if count is None else positional[:count]:
+                    parameter = parameters.get(argument.arg)
+                    if parameter is not None:
+                        found.append((parameter, "flask_callback_signature"))
     return found
 
 
@@ -1056,10 +1308,17 @@ def find_web_framework_targets(
     from skylos.deadcode.django_framework_liveness import _looks_like_settings
 
     executed = _executed_definitions(index)
-    modules = [_WebScanner(index, module, executed).collect() for module in parsed]
+    callback_bindings = any(
+        name.split(".", 1)[0] in {"flask", "flask_login"} - index.shadowed
+        for _, name in index.imports
+    )
+    modules = [
+        _WebScanner(index, module, executed, callback_bindings).collect()
+        for module in parsed
+    ]
     scanners = {module.module: module for module in modules}
     has_framework_import = any(
-        name.split(".", 1)[0] in {"django", "flask"} - index.shadowed
+        name.split(".", 1)[0] in {"django", "flask", "flask_login"} - index.shadowed
         for _, name in index.imports
     )
     has_settings = any(_looks_like_settings(scanner) for scanner in scanners.values())
@@ -1074,7 +1333,7 @@ def find_web_framework_targets(
     targets.extend(
         (definition, "flask_app_factory") for definition in _flask_app_factories(index)
     )
-    targets.extend(_blueprint_targets(modules))
+    targets.extend(_blueprint_targets(modules, index))
     if "django" not in index.shadowed:
         targets.extend(
             find_django_targets(

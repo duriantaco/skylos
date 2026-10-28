@@ -34,6 +34,7 @@ from skylos.constants import AUTO_CALLED
 from skylos.deadcode.python_ast import ParsedPythonFile, parse_python_files
 from skylos.deadcode.provider_method_liveness import find_provider_method_targets
 from skylos.deadcode.logging_config_liveness import find_logging_config_targets
+from skylos.deadcode.property_descriptor_liveness import classify_property_descriptors
 
 
 SENTINEL_CALLER = "<skylos.deadcode.liveness>"
@@ -132,6 +133,7 @@ def apply_dead_code_liveness(
     root = Path(project_root).resolve()
     py_files = _python_files(root, files)
     parsed_files = parse_python_files(py_files)
+    classify_property_descriptors(definitions, parsed_files, module_names)
     docs_text = _read_public_docs(root)
 
     classes: dict[str, Any] = {}

@@ -493,33 +493,182 @@ def _exception_type_leaf_names(exc_type: ast.expr | None) -> set[str]:
     return set()
 
 
+def _import_binding_names(statement: ast.stmt) -> list[str]:
+    if isinstance(statement, ast.Import):
+        return [
+            alias.asname or alias.name.split(".", 1)[0] for alias in statement.names
+        ]
+    if isinstance(statement, ast.ImportFrom):
+        return [
+            alias.asname or alias.name for alias in statement.names if alias.name != "*"
+        ]
+    return []
+
+
+def _assigned_names(statement: ast.stmt) -> set[str]:
+    targets = []
+    if isinstance(statement, ast.Assign):
+        targets = list(statement.targets)
+    elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
+        targets = [statement.target]
+    names = set()
+    while targets:
+        target = targets.pop()
+        if isinstance(target, ast.Name):
+            names.add(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            targets.extend(target.elts)
+        elif isinstance(target, ast.Starred):
+            targets.append(target.value)
+    return names
+
+
+def _binding_arms(statement: ast.stmt) -> list[tuple[list, list]]:
+    if isinstance(statement, ast.If):
+        return [(statement.body, statement.orelse)]
+    if isinstance(statement, ast.Try):
+        return [
+            (statement.body + statement.orelse, handler.body)
+            for handler in statement.handlers
+        ]
+    return []
+
+
+def _scope_nodes(statements):
+    pending = list(statements)
+    while pending:
+        node = pending.pop()
+        yield node
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            pending.extend(node.args.defaults)
+            pending.extend(
+                default for default in node.args.kw_defaults if default is not None
+            )
+            pending.extend(getattr(node, "decorator_list", ()))
+        elif isinstance(node, ast.ClassDef):
+            pending.extend(node.bases)
+            pending.extend(keyword.value for keyword in node.keywords)
+            pending.extend(node.decorator_list)
+        else:
+            pending.extend(ast.iter_child_nodes(node))
+
+
+def _arm_bindings(statements: list) -> tuple[set[str], set[str]]:
+    imported = set()
+    assigned = set()
+    for statement in _scope_nodes(statements):
+        imported.update(_import_binding_names(statement))
+        assigned.update(_assigned_names(statement))
+    return imported, assigned
+
+
+def _crossed_arm_import_names(
+    statement: ast.stmt, *, include_imports: bool
+) -> set[str]:
+    names = set()
+    for first, second in _binding_arms(statement):
+        first_imports, first_assigns = _arm_bindings(first)
+        second_imports, second_assigns = _arm_bindings(second)
+        if include_imports:
+            first_assigns |= first_imports
+            second_assigns |= second_imports
+        names |= first_imports & second_assigns
+        # A handler-only import needs separate proof that the body can raise.
+        if not isinstance(statement, ast.Try):
+            names |= second_imports & first_assigns
+    return names
+
+
 def _module_alternative_import_names(node: ast.Module) -> set[str]:
+    """Select names for the existing reaching-state import resolver."""
     imports = set()
     definitions = set()
+    crossed = set()
     pending = list(node.body)
     while pending:
         statement = pending.pop()
-        if isinstance(statement, ast.Import):
-            for alias in statement.names:
-                name = alias.asname
-                if not name:
-                    name = alias.name.split(".", 1)[0]
-                imports.add(name)
-        elif isinstance(statement, ast.ImportFrom):
-            for alias in statement.names:
-                name = alias.asname
-                if not name:
-                    name = alias.name
-                imports.add(name)
+        if isinstance(statement, (ast.Import, ast.ImportFrom)):
+            imports.update(_import_binding_names(statement))
         elif isinstance(
             statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
         ):
             definitions.add(statement.name)
         else:
+            crossed.update(_crossed_arm_import_names(statement, include_imports=True))
             for child in ast.iter_child_nodes(statement):
                 if isinstance(child, (ast.stmt, ast.ExceptHandler)):
                     pending.append(child)
-    return imports & definitions
+    return (imports & definitions) | crossed
+
+
+def _function_import_fallback_reads(node: ast.AST) -> set[int]:
+    """Simple top-level try fallbacks with one import and no later rebinding."""
+    candidates = [
+        (statement, _crossed_arm_import_names(statement, include_imports=False))
+        for statement in node.body
+        if isinstance(statement, ast.Try)
+    ]
+    candidates = [(statement, names) for statement, names in candidates if names]
+    if not candidates:
+        return set()
+    bindings = {}
+    scope_nodes = list(_scope_nodes(node.body))
+    for child in scope_nodes:
+        names = _import_binding_names(child)
+        if isinstance(child, ast.Name) and isinstance(child.ctx, (ast.Store, ast.Del)):
+            names.append(child.id)
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.append(child.name)
+        if isinstance(child, ast.ExceptHandler) and child.name:
+            names.append(child.name)
+        if isinstance(child, (ast.Global, ast.Nonlocal)):
+            names.extend(child.names)
+        if isinstance(child, (ast.MatchAs, ast.MatchStar)) and child.name:
+            names.append(child.name)
+        if isinstance(child, ast.MatchMapping) and child.rest:
+            names.append(child.rest)
+        for name in names:
+            bindings.setdefault(name, []).append(child)
+    excluded = {
+        child.arg for child in ast.walk(node.args) if isinstance(child, ast.arg)
+    }
+    excluded.update(
+        name
+        for child in ast.walk(node)
+        if isinstance(child, ast.Nonlocal)
+        for name in child.names
+    )
+    excluded.update(
+        parameter.name
+        for child in ast.walk(node)
+        for parameter in getattr(child, "type_params", ())
+    )
+    result = {}
+    for statement, names in candidates:
+        children = list(_scope_nodes([statement]))
+        if any(
+            isinstance(child, (ast.Raise, ast.Return, ast.Break, ast.Continue))
+            for child in children
+        ):
+            continue
+        for name in names - excluded:
+            sites = bindings.get(name, ())
+            if len(sites) != 2 or any(site not in children for site in sites):
+                continue
+            if (
+                sum(isinstance(site, (ast.Import, ast.ImportFrom)) for site in sites)
+                != 1
+            ):
+                continue
+            result[name] = statement.end_lineno
+    return {
+        id(child)
+        for child in scope_nodes
+        if isinstance(child, ast.Name)
+        and isinstance(child.ctx, ast.Load)
+        and child.id in result
+        and child.lineno > result[child.id]
+    }
 
 
 def _nested_forward_references(node: ast.expr, resolve_origin) -> list:
@@ -743,6 +892,7 @@ class Visitor(ast.NodeVisitor):
         self.current_function_params = []
         self.local_var_maps = []
         self._local_import_maps = []
+        self._local_import_fallback_reads = []
         self._local_import_collisions = set()
         self.in_cst_class = 0
         self.local_type_maps = []
@@ -1138,6 +1288,15 @@ class Visitor(ast.NodeVisitor):
                 self.add_ref(target)
             return True
         return False
+
+    def _credit_fallback_import_read(self, node: ast.Name, index: int) -> None:
+        if index >= len(self._local_import_fallback_reads):
+            return
+        if id(node) not in self._local_import_fallback_reads[index]:
+            return
+        for target in self._local_import_maps[index].get(node.id, ()):
+            self.first_read_lineno.setdefault(target, node.lineno)
+            self.add_ref(target)
 
     def _credit_rebinding_reads(self, node: ast.Assign) -> None:
         if not self.current_function_scope:
@@ -1733,6 +1892,7 @@ class Visitor(ast.NodeVisitor):
         self._function_node_stack.append(node)
         self.local_var_maps.append({})
         self._local_import_maps.append({})
+        self._local_import_fallback_reads.append(_function_import_fallback_reads(node))
         self.local_type_maps.append({})
         self.local_constants.append({})
 
@@ -1838,6 +1998,7 @@ class Visitor(ast.NodeVisitor):
         self.current_function_params = self._param_stack.pop()
         self.local_var_maps.pop()
         self._local_import_maps.pop()
+        self._local_import_fallback_reads.pop()
         self.local_type_maps.pop()
         self.local_constants.pop()
         if type_parameter_names:
@@ -3718,11 +3879,13 @@ class Visitor(ast.NodeVisitor):
                         return
 
         if self.current_function_scope and self.local_var_maps:
-            for scope_map in reversed(self.local_var_maps):
+            for index in range(len(self.local_var_maps) - 1, -1, -1):
+                scope_map = self.local_var_maps[index]
                 if node.id in scope_map:
                     fq = scope_map[node.id]
                     self.first_read_lineno.setdefault(fq, node.lineno)
                     self.add_ref(fq)
+                    self._credit_fallback_import_read(node, index)
                     return
 
         if self._credit_local_import_read(node):

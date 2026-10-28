@@ -1808,6 +1808,12 @@ def _discover_package_entry_files(
             targets.append(target)
 
     entry_files: set[str] = set()
+    if "exports" in fields:
+        from .package_exports import package_export_pattern_files
+
+        entry_files.update(
+            package_export_pattern_files(package_root, data.get("exports"))
+        )
     for target in targets:
         resolved = _resolve_path_target(package_root, target)
         if resolved:
