@@ -560,6 +560,13 @@ _RULES = (
         "SKY-D217", "Raw SQL execution", "security", "CRITICAL", finding_type="review"
     ),
     RuleCatalogEntry(
+        "SKY-D218",
+        "Dynamic urllib URL scheme audit",
+        "security",
+        "MEDIUM",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-D222",
         "Dependency hallucination",
         "ai_defect",
@@ -1001,7 +1008,12 @@ _RULES = (
         "GitHub Actions AI agent on untrusted trigger without actor gate",
         "security",
         "CRITICAL",
-        aliases=("ai agent", "claude-code-action", "run-gemini-cli", "prompt injection"),
+        aliases=(
+            "ai agent",
+            "claude-code-action",
+            "run-gemini-cli",
+            "prompt injection",
+        ),
         finding_type="review",
     ),
     RuleCatalogEntry(
@@ -1073,7 +1085,12 @@ _RULES = (
         "GitHub Actions long-lived publish token where trusted publishing exists",
         "security",
         "MEDIUM",
-        aliases=("trusted publishing", "use-trusted-publishing", "PyPI token", "NPM_TOKEN"),
+        aliases=(
+            "trusted publishing",
+            "use-trusted-publishing",
+            "PyPI token",
+            "NPM_TOKEN",
+        ),
         finding_type="review",
     ),
     RuleCatalogEntry(

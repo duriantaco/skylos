@@ -256,13 +256,34 @@
     {
       "id": "open-redirect-local-guard",
       "path": "fixtures/open_redirect_local_guard",
-      "description": "Redirect targets guarded to local paths should stay quiet.",
+      "description": "A leading-slash check still accepts protocol-relative external redirect targets.",
+      "taxonomy": ["open_redirect"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Preserves the original slash-only guard. Values such as //outside.example/path pass it; this is an unsafe-guard positive control."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D230"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "open-redirect-literal-allowlist",
+      "path": "fixtures/open_redirect_literal_allowlist",
+      "description": "A redirect restricted to explicit local destinations should stay quiet.",
       "taxonomy": ["open_redirect", "precision_guard"],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
         "license": "Apache-2.0",
-        "notes": "Golden precision fixture for local-path redirect guards."
+        "notes": "Negative control paired with the original unsafe slash-only guard."
       },
       "budget": {
         "max_seconds": 5.0

@@ -132,6 +132,7 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D215 | HIGH | Path traversal and archive extraction traversal | Python, TS/JS, Go, Java, PHP, Rust, Dart, Shell | CWE-22 / A01 |
 | D216 | CRITICAL | Server-side request forgery | Python, TS/JS, Go, Java, Dart, Shell, audit | CWE-918 / A10 |
 | D217 | CRITICAL | Raw SQL / ORM SQL injection | Python | CWE-89 / A03 |
+| D218 | MEDIUM | Dynamic urllib URL scheme audit (`SKY-D218`) | Python | Conditional audit |
 | D220 | CRITICAL | SQL injection in added code / diff validation | MCP code-change validator | CWE-89 / A03 |
 | D223 | MEDIUM | Undeclared third-party dependency | Python | supply-chain |
 | D226 | CRITICAL | XSS: unsafe DOM or HTML rendering | Python, TS/JS, Java, audit | CWE-79 / A03 |
@@ -153,7 +154,7 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D247 | MEDIUM | CORS wildcard origin | TS/JS | CWE-942 / A05 |
 | D248 | MEDIUM | Hardcoded internal URL | TS/JS | CWE-798 |
 | D250 | MEDIUM | Insecure randomness for security-sensitive values | Python, TS/JS, Go, Java | CWE-330 |
-| D251 | HIGH | Sensitive data in logs | TS/JS | CWE-532 |
+| D251 | HIGH | Sensitive data in logs | Python, TS/JS | CWE-532 |
 | D252 | MEDIUM | Insecure cookie flags | TS/JS, Go, Java | CWE-614 |
 | D253 | MEDIUM | Timing-unsafe comparison | TS/JS | CWE-208 |
 | D254 | HIGH | HTTP session trust boundary violation | Java | CWE-501 |
@@ -177,10 +178,33 @@ itself. Explicit authentication-qualified names (such as `authSessionId`) and
 direct member expressions with authentication or cookie-qualified paths remain
 findings. D270 storage checks are unchanged.
 
+Python D251 follows credential environment reads, credential prompts and
+`getpass` results through local containers and string formatting into `print`
+and logging calls. It requires source evidence; a variable name alone does not
+prove that its value contains a credential. Literal replacements are safe;
+unknown helpers named `redact` are not automatically trusted.
+
+D218 requests review of the intended URL schemes because urllib also supports
+local-file and other non-HTTP resources. It does not establish attacker control
+or an exploitable file read. Explicit literal URLs and proven HTTP/HTTPS prefixes
+or dominating scheme guards do not produce this audit. D216 independently checks
+whether untrusted input can choose the request host.
+
 For Python D203, `os.system` with a fixed command string (no dynamic formatting
 or Python/shell variables) is LOW: there is no input to inject. It stays
 CRITICAL when the fixed command itself deletes broadly, exfiltrates data,
 pipes a remote script into a shell, or reads host credentials.
+
+Python D205 suppresses only proven local `pickle.dumps` / `pickle.loads`
+round-trips over built-in data. Unknown objects can define reduction hooks;
+attributes and cross-function state therefore remain review candidates. The
+warning describes pickle's execution capability without asserting that an
+unknown input is definitely attacker-controlled.
+
+Python D230 preserves tainted redirect targets across conditional assignments.
+An unrelated `urlparse` check or a leading slash alone does not prove safety.
+An enforced literal destination allowlist or an unconditional internal route
+assignment remains safe.
 
 For Python D207/D208, `hashlib.md5` / `hashlib.sha1` remain findings when
 their purpose is unclear; names such as `cache_key` do not prove the digest
