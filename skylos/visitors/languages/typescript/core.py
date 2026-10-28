@@ -113,9 +113,6 @@ _REFS_PATTERN = """
 (binary_expression left: (identifier) @ref)
 (assignment_expression right: (identifier) @ref)
 (assignment_pattern right: (identifier) @ref)
-(object_assignment_pattern right: (identifier) @ref)
-(required_parameter value: (identifier) @ref)
-(optional_parameter value: (identifier) @ref)
 (update_expression (identifier) @ref)
 (spread_element (identifier) @ref)
 (member_expression object: (identifier) @ref)
@@ -601,6 +598,22 @@ class TypeScriptCore:
                 # The declared name, not a use. ``type A = B`` still uses ``B``.
                 continue
             self._add_ref(node)
+
+        self._scan_default_parameter_refs()
+
+    def _scan_default_parameter_refs(self) -> None:
+        if not self.root_node:
+            return
+        for node in self._iter_nodes(self.root_node):
+            if node.type != "required_parameter":
+                continue
+            seen_default = False
+            for child in node.children:
+                if child.type == "=":
+                    seen_default = True
+                    continue
+                if seen_default and child.type == "identifier":
+                    self._add_ref(child)
 
     def _find_containing_class(self, node) -> str | None:
         current = node.parent
