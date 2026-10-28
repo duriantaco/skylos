@@ -5,13 +5,13 @@ import pytest
 
 from skylos.analyzer import analyze
 from skylos.visitors.languages.rust import scan_rust_file
+from test.fixture_paths import write_fixture
 
 
 def write(tmp_path, name, source):
-    path = tmp_path / "src" / name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(dedent(source).lstrip())
-    return path
+    return write_fixture(
+        tmp_path, f"src/{name}", dedent(source).lstrip(), overwrite=True
+    )
 
 
 @pytest.mark.parametrize("alias", ["Error", "Error as _", "Error as StdError"])
