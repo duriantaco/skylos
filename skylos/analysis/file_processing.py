@@ -439,11 +439,15 @@ def _scan_php_file(file, cfg, *, enable_danger_rules: bool, **_options):
     )
 
 
-def _scan_rust_file(file, cfg, *, enable_danger_rules: bool, **_options):
+def _scan_rust_file(
+    file, cfg, *, enable_danger_rules: bool, enable_quality_rules: bool, **_options
+):
     return scan_rust_file(
         file,
         cfg,
         enable_danger_rules=enable_danger_rules,
+        enable_quality_rules=enable_quality_rules,
+        _include_analysis_metadata=True,
     )
 
 

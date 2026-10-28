@@ -874,7 +874,7 @@ how many in one line of output. Set `include_generated = true` under
 | Java | Yes | Yes | Yes | Supported | Tree-sitter parsing, structured security-flow analysis, conservative static-member proof |
 | Go | Yes¹ | Partial¹ | Partial | Supported | native engine status remains separate from deterministic workspace API proof |
 | PHP | Yes | Yes | No | Unsupported | PHP parser coverage, type and docblock references, Laravel and Drupal conventions (including `.module`/`.install`/`.inc`/`.theme` files), plus taint-style security sinks and sources (Drupal request and Form API input into SQL strings, `Markup::create()` and inline Twig templates) |
-| Rust | Experimental⁴ | Partial | No | Unsupported | Rust parser coverage; security covers command injection and path traversal |
+| Rust | Experimental⁴ | Partial | Partial | Unsupported | Rust parser coverage; command/path security checks, direct unreachable statements and duplicate branch bodies |
 | Dart | Yes³ | Partial³ | No | Unsupported | Dart parser coverage; security covers command injection, path traversal and SSRF |
 | C# | Partial | Partial | Partial | Unsupported | C# symbols, direct-block unreachable code, selected security sinks, and direct NuGet inventory |
 | C++ | Partial | No | No | Unsupported | conservative unused file-local functions in `.cpp`, `.cc`, `.cxx`; C++ headers are parsed for references |
@@ -901,10 +901,14 @@ them silently; `skylos doctor` shows whether Dart support is installed.
 
 ⁴ Rust dead code is experimental: trait-method calls, `pub` items used across
 crates, re-exports, macros and `#[bench]` functions are not resolved, and a
-hand-checked sample on ripgrep found no true positives. Rust candidates are
+previous hand-checked sample on ripgrep found no true positives. Rust candidates are
 capped at confidence 40, below the default threshold, so they are not listed
 unless you pass `--confidence 40`; the scan says so in one line. `rustc`'s
 own `unused_imports` and `dead_code` lints cover private items.
+
+Rust quality checks cover statements after a direct `return`, `break` or
+`continue`, and duplicate multi-statement `if`/`else` bodies with a plain boolean
+condition. They do not expand macros or infer complete control flow.
 
 "No" means Skylos has no built-in rules of that kind for the language.
 

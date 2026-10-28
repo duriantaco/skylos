@@ -3061,7 +3061,11 @@ class Skylos:
             file_key = f"{ref_file}:{ref}"
 
             if file_key in self.defs:
-                self.defs[file_key].references += 1
+                definition = self.defs[file_key]
+                # Same-provider local imports share a legacy graph key. Their
+                # reads reach the provider, but not an unread outer binding.
+                if not getattr(definition, "unread_type_checking_import", False):
+                    definition.references += 1
                 if file_key in import_to_original:
                     original = import_to_original[file_key]
                     if original in self.defs:

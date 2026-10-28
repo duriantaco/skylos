@@ -145,7 +145,7 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 | Java | 是 | 是 | 是 | Tree-sitter 解析和结构化安全流分析 |
 | Go | 是¹ | 部分¹ | 部分 | 死代码和部分安全基准覆盖 |
 | PHP | 是 | 是 | 否 | PHP parser 覆盖，加上污点式安全 sinks 和 sources |
-| Rust | 实验性⁴ | 部分 | 否 | Rust parser 覆盖；安全检查覆盖命令注入和路径穿越 |
+| Rust | 实验性⁴ | 部分 | 部分 | Rust 解析；命令注入、路径穿越、直接不可达语句及重复分支检查 |
 | Dart | 是³ | 部分³ | 否 | Dart parser 覆盖；安全检查覆盖命令注入、路径穿越和 SSRF |
 | C# | 部分 | 部分 | 部分 | C# 符号、直接代码块中的不可达语句、部分安全汇入点及 NuGet 直接依赖清单 |
 | C++ | 部分 | 否 | 否 | 仅报告 `.cpp`、`.cc`、`.cxx` 中看似未使用的文件内函数；会读取 C++ 头文件中的引用 |

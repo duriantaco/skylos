@@ -32,6 +32,28 @@ def _name(node):
     return None
 
 
+def _module_literal_value(checker, expr, at):
+    """An earlier, unconditionally assigned module string or literal alias."""
+    if checker._name_is_local(expr.id, expr) or not checker._module_global_is_stable(
+        expr.id
+    ):
+        return None, None
+    writes, computed = _api_writes(checker)
+    if computed or expr.id in writes:
+        return None, None
+    value = checker._module_scope.values.get(expr.id)
+    if _text(value) is None and not isinstance(value, ast.Name):
+        return None, None
+    statement = checker.parents.get(id(value))
+    if (
+        not isinstance(statement, (ast.Assign, ast.AnnAssign))
+        or checker.parents.get(id(statement)) is not checker.tree
+        or statement.lineno >= at.lineno
+    ):
+        return None, None
+    return value, statement
+
+
 def _fixed_scheme(checker, expr, at, depth=0):
     if depth > 5:
         return False
@@ -46,8 +68,12 @@ def _fixed_scheme(checker, expr, at, depth=0):
         # An unknown object can replace the whole string via __radd__.
         return prefix is not None and _text(expr.right) is not None
     func = checker._current_function()
-    if isinstance(expr, ast.Name) and func is not None:
-        value, statement = checker._single_local_value(expr, func, at)
+    if isinstance(expr, ast.Name):
+        value, statement = (None, None)
+        if func is not None:
+            value, statement = checker._single_local_value(expr, func, at)
+        if value is None:
+            value, statement = _module_literal_value(checker, expr, at)
         if value is not None:
             return _fixed_scheme(checker, value, statement, depth + 1)
     return False

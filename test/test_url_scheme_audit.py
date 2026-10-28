@@ -209,3 +209,119 @@ def test_patched_parser_does_not_prove_scheme_guard(tmp_path):
             return urlopen(url)
     """,
     )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "return urlopen(API_URL)",
+        "return urlopen(Request(API_URL, data=payload))",
+        "req = Request(API_URL, data=payload)\n    return urlopen(req)",
+        "url = API_URL\n    req = Request(url)\n    return urlopen(req)",
+    ],
+)
+def test_module_literal_url_keeps_its_explicit_scheme(tmp_path, body):
+    assert not scan(
+        tmp_path,
+        "from urllib.request import Request, urlopen\n"
+        "API_URL = 'https://api.example.invalid/v1'\n"
+        "def fetch(payload):\n    " + body + "\n",
+    )
+
+
+def test_ordered_module_literal_aliases_keep_explicit_scheme(tmp_path):
+    assert not scan(
+        tmp_path,
+        """
+        from urllib.request import Request, urlopen
+        endpoint = 'https://api.example.invalid/v1'
+        API_URL = endpoint
+        URL_ALIAS: str = API_URL
+        def fetch():
+            return urlopen(Request(URL_ALIAS))
+        """,
+    )
+
+
+@pytest.mark.parametrize(
+    "setup,signature,body",
+    [
+        ("", "API_URL", "return urlopen(Request(API_URL))"),
+        ("", "url", "API_URL = url\n    return urlopen(Request(API_URL))"),
+        ("API_URL = input()\n", "", "return urlopen(Request(API_URL))"),
+        (
+            "", "url",
+            "global API_URL\n    API_URL = url\n    return urlopen(API_URL)",
+        ),
+        ("", "url", "globals()['API_URL'] = url\n    return urlopen(API_URL)"),
+        (
+            "import sys\n",
+            "url",
+            "setattr(sys.modules[__name__], 'API_URL', url)\n    return urlopen(API_URL)",
+        ),
+        (
+            "",
+            "url",
+            "req = Request(API_URL)\n    req.full_url = url\n    return urlopen(req)",
+        ),
+        (
+            "",
+            "mutate",
+            "req = Request(API_URL)\n    mutate(req)\n    return urlopen(req)",
+        ),
+        (
+            "from unittest.mock import patch\n@patch('download.API_URL')\n",
+            "mock",
+            "return urlopen(API_URL)",
+        ),
+        ("", "url", "return urlopen(API_URL + url)"),
+    ],
+    ids=[
+        "parameter-shadow", "local-shadow", "module-rebinding", "global-write",
+        "namespace-write", "module-setattr", "request-mutation", "request-escape",
+        "mock-patch", "custom-right-add",
+    ],
+)
+def test_module_literal_lookalikes_keep_audit(tmp_path, setup, signature, body):
+    assert scan(
+        tmp_path,
+        "from urllib.request import Request, urlopen\n"
+        "API_URL = 'https://api.example.invalid/v1'\n"
+        + setup
+        + f"def fetch({signature}):\n    " + body + "\n",
+    )
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        "if enabled:\n    API_URL = 'https://api.example.invalid/v1'",
+        "import os\nAPI_URL = os.environ['URL']",
+        "from config import API_URL",
+        "API_URL = later\nlater = 'https://api.example.invalid/v1'",
+        "API_URL = 'https://' + suffix",
+    ],
+    ids=["conditional", "environment", "imported", "forward-alias", "unknown-add"],
+)
+def test_unproven_module_url_bindings_keep_audit(tmp_path, setup):
+    assert scan(
+        tmp_path,
+        "from urllib.request import Request, urlopen\n"
+        + setup
+        + "\ndef fetch():\n    return urlopen(Request(API_URL))\n",
+    )
+
+
+def test_fixed_observed_callers_do_not_suppress_unknown_parameter_audit(tmp_path):
+    assert scan(
+        tmp_path,
+        """
+        from urllib.request import Request, urlopen
+        API_URL = 'https://api.example.invalid/v1'
+        class Client:
+            def _request_json(self, url):
+                return urlopen(Request(url))
+            def send(self):
+                return self._request_json(API_URL)
+        """,
+    )
