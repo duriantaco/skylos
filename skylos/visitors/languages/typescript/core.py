@@ -119,6 +119,7 @@ _REFS_PATTERN = """
 (subscript_expression object: (identifier) @ref)
 (subscript_expression index: (identifier) @ref)
 (pair value: (identifier) @ref)
+(instantiation_expression (identifier) @ref)
 (unary_expression (identifier) @ref)
 (await_expression (identifier) @ref)
 (template_substitution (identifier) @ref)

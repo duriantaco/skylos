@@ -179,8 +179,9 @@ direct member expressions with authentication or cookie-qualified paths remain
 findings. D270 storage checks are unchanged.
 
 Python D251 follows credential environment reads, credential prompts and
-`getpass` results through local containers and string formatting into `print`
-and logging calls. It requires source evidence; a variable name alone does not
+`getpass` results through local containers, assigned object fields, aliases and
+string formatting into `print` and logging calls. It requires source evidence;
+a variable name alone does not
 prove that its value contains a credential. Literal replacements are safe;
 unknown helpers named `redact` are not automatically trusted.
 
@@ -205,6 +206,12 @@ Python D230 preserves tainted redirect targets across conditional assignments.
 An unrelated `urlparse` check or a leading slash alone does not prove safety.
 An enforced literal destination allowlist or an unconditional internal route
 assignment remains safe.
+
+Proven Tornado `RequestHandler` argument reads also count as redirect sources,
+including values assigned with `:=`. Local overrides and unrelated methods with
+the same name do not establish a request source. A fixed local path segment
+such as `"/entry/" + slug` cannot change the redirect origin; `"/" + target`
+alone is insufficient.
 
 For Python D207/D208, `hashlib.md5` / `hashlib.sha1` remain findings when
 their purpose is unclear; names such as `cache_key` do not prove the digest
@@ -1680,6 +1687,17 @@ file-level I/A/D optional with `--all-advice`; explicit enforcement and raw
 report/gate policy remain unchanged.
 
 ## Dead Code and Reachability
+
+Python liveness follows literal logging factory paths into a proven
+`logging.config.dictConfig` consumer and callbacks on registered Flask
+blueprints imported through project modules. A dotted string or an unregistered
+blueprint alone is insufficient. Analysis is static and bounded; unresolved
+dynamic configuration remains a limitation.
+
+Rust references include qualified function values passed as callbacks. Exact
+matching `cfg` predicates can preserve imported filesystem providers inside the
+same feature condition; this does not evaluate Cargo features or macros. Rust
+dead-code candidates retain their experimental confidence cap of 40.
 
 | ID | Severity | Name | Scope |
 |:---|:---|:---|:---|

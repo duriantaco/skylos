@@ -1,7 +1,9 @@
 from __future__ import annotations
 import ast
+from collections import Counter
 import sys
 from skylos.rules.danger.taint import TaintVisitor
+from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex, _dotted
 
 
 REDIRECT_FUNCS = {"redirect", "HttpResponseRedirect", "HttpResponsePermanentRedirect"}
@@ -56,11 +58,250 @@ def _is_request_args_get(node):
     return False
 
 
+def _fixed_local_prefix(node):
+    """A fixed first path segment keeps a suffix on the current origin.
+
+    A slash alone is insufficient: ``'/' + '/example.com'`` changes the host.
+    Require a literal alphanumeric character after that slash, before any
+    untrusted suffix. Browser control stripping cannot remove that character.
+    """
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _fixed_local_prefix(node.left)
+    if isinstance(node, ast.JoinedStr) and node.values:
+        return _fixed_local_prefix(node.values[0])
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and len(node.value) > 1
+        and node.value[0] == "/"
+        and node.value[1].isascii()
+        and node.value[1].isalnum()
+    )
+
+
+def _stable_module_classes(tree):
+    """A class spelling proves ancestry only while its binding is unique."""
+    counts = Counter()
+    classes = {}
+    pending = list(tree.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            counts[node.name] += 1
+            if isinstance(node, ast.ClassDef):
+                if node in tree.body:
+                    classes[node.name] = node
+                pending.extend(node.bases)
+                pending.extend(keyword.value for keyword in node.keywords)
+            else:
+                pending.extend(node.args.defaults)
+                pending.extend(value for value in node.args.kw_defaults if value)
+            pending.extend(node.decorator_list)
+            continue
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            counts[node.id] += 1
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                counts[alias.asname or alias.name.split(".", 1)[0]] += 1
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            counts[node.name] += 1
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            counts[node.name] += 1
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            counts[node.rest] += 1
+        pending.extend(ast.iter_child_nodes(node))
+    global_names = {
+        name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Global)
+        for name in node.names
+    }
+    return {
+        name: node
+        for name, node in classes.items()
+        if counts[name] == 1 and name not in global_names
+    }
+
+
 class _RedirectFlowChecker(TaintVisitor):
-    def __init__(self, file_path, findings):
+    def __init__(self, file_path, findings, tree):
         super().__init__(file_path, findings)
         self._exception_states = []
         self._loop_states = []
+        self.untrusted_sources = UntrustedSourceIndex(tree)
+        self._classes = _stable_module_classes(tree)
+        self._class_stack = []
+        self._reader_override_cache = {}
+        self._class_aliases = {}
+        self._reader_writes = {}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(
+                node.value, ast.Name
+            ):
+                targets = (
+                    node.targets if isinstance(node, ast.Assign) else [node.target]
+                )
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        self._class_aliases.setdefault(target.id, set()).add(
+                            node.value.id
+                        )
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+                and isinstance(node.value, ast.Name)
+            ):
+                self._reader_writes.setdefault(node.attr, set()).add(node.value.id)
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in {"setattr", "delattr"}
+                and len(node.args) >= 2
+                and isinstance(node.args[0], ast.Name)
+            ):
+                member = node.args[1]
+                name = member.value if isinstance(member, ast.Constant) else None
+                self._reader_writes.setdefault(name, set()).add(node.args[0].id)
+
+    def _reader_replaced(self, klass, name):
+        key = klass, name
+        if key not in self._reader_override_cache:
+            aliases = {klass.name}
+            for _ in range(24):
+                expanded = aliases | {
+                    alias
+                    for alias, sources in self._class_aliases.items()
+                    if sources & aliases
+                }
+                if expanded == aliases:
+                    break
+                aliases = expanded
+            else:
+                self._reader_override_cache[key] = True
+                return True
+            if aliases & (
+                self._reader_writes.get(name, set())
+                | self._reader_writes.get(None, set())
+            ):
+                self._reader_override_cache[key] = True
+                return True
+            self._reader_override_cache[key] = any(
+                (
+                    isinstance(node, ast.Attribute)
+                    and isinstance(node.ctx, (ast.Store, ast.Del))
+                    and node.attr == name
+                )
+                or (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id in {"setattr", "delattr"}
+                    and len(node.args) >= 2
+                    and (
+                        not isinstance(node.args[1], ast.Constant)
+                        or node.args[1].value == name
+                    )
+                )
+                for node in ast.walk(klass)
+            )
+        return self._reader_override_cache[key]
+
+    def visit_ClassDef(self, node):
+        self._class_stack.append(node)
+        super().visit_ClassDef(node)
+        self._class_stack.pop()
+
+    def _noninstance_descriptor(self, decorator):
+        pending = [_dotted(decorator)]
+        seen = set()
+        while pending and len(seen) < 24:
+            name = pending.pop()
+            if name in seen:
+                continue
+            seen.add(name)
+            if name.rsplit(".", 1)[-1] in {"staticmethod", "classmethod"} or (
+                self.untrusted_sources.resolved_import(None, name)
+                in {"builtins.staticmethod", "builtins.classmethod"}
+            ):
+                return True
+            pending.extend(self._class_aliases.get(name, ()))
+        return bool(pending)
+
+    def _tornado_argument_read(self, node):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr
+            in {"get_argument", "get_query_argument", "get_body_argument"}
+            and isinstance(node.func.value, ast.Name)
+            and self._class_stack
+            and self._current_function() is not None
+        ):
+            return False
+        function = self._current_function()
+        parameters = function.args.posonlyargs + function.args.args
+        if not parameters or node.func.value.id != parameters[0].arg:
+            return False
+        if any(
+            self._noninstance_descriptor(decorator)
+            for decorator in function.decorator_list
+        ):
+            return False
+        if function not in self._class_stack[-1].body or any(
+            isinstance(child, ast.Name)
+            and isinstance(child.ctx, (ast.Store, ast.Del))
+            and child.id == parameters[0].arg
+            for statement in function.body
+            for child in ast.walk(statement)
+        ):
+            return False
+        visited = set()
+
+        def inherits_handler(klass):
+            if id(klass) in visited:
+                return False
+            visited.add(id(klass))
+            if len(klass.bases) != 1:
+                # An unknown mixin can override the request-reading method.
+                return False
+            if self._reader_replaced(klass, node.func.attr):
+                return False
+            # A local override may return application data instead of a request
+            # argument. Do not infer its semantics from the method name.
+            if any(
+                (
+                    isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and member.name == node.func.attr
+                )
+                or (
+                    isinstance(member, (ast.Assign, ast.AnnAssign))
+                    and any(
+                        isinstance(target, ast.Name) and target.id == node.func.attr
+                        for target in (
+                            member.targets
+                            if isinstance(member, ast.Assign)
+                            else [member.target]
+                        )
+                    )
+                )
+                for member in klass.body
+            ):
+                return False
+            for base in klass.bases:
+                dotted = _dotted(base)
+                if self.untrusted_sources.resolved_import(None, dotted) == (
+                    "tornado.web.RequestHandler"
+                ):
+                    return True
+                if (
+                    isinstance(base, ast.Name)
+                    and base.id in self._classes
+                    and self._import_names_are_stable(base.id)
+                ):
+                    if inherits_handler(self._classes[base.id]):
+                        return True
+            return False
+
+        return inherits_handler(self._class_stack[-1])
 
     def _visit_block(self, statements):
         """Return whether the block has a path reaching its next statement."""
@@ -114,6 +355,12 @@ class _RedirectFlowChecker(TaintVisitor):
     visit_Continue = visit_Break
 
     def is_tainted(self, node):
+        if _fixed_local_prefix(node):
+            return False
+        if self._tornado_argument_read(node):
+            return True
+        if isinstance(node, ast.NamedExpr):
+            return self.is_tainted(node.value)
         if _starts_with_internal_url(node):
             return False
         if isinstance(node, ast.IfExp):
@@ -121,6 +368,11 @@ class _RedirectFlowChecker(TaintVisitor):
         if isinstance(node, ast.BoolOp):
             return any(self.is_tainted(value) for value in node.values)
         return super().is_tainted(node)
+
+    def visit_NamedExpr(self, node):
+        if isinstance(node.target, ast.Name):
+            self._set(node.target.id, self.is_tainted(node.value))
+        self.generic_visit(node)
 
     @staticmethod
     def _copy_env(env):
@@ -309,7 +561,7 @@ class _RedirectFlowChecker(TaintVisitor):
 
 def scan(tree, file_path, findings):
     try:
-        checker = _RedirectFlowChecker(file_path, findings)
+        checker = _RedirectFlowChecker(file_path, findings, tree)
         checker.visit(tree)
     except Exception as e:
         print(f"Redirect flow analysis failed for {file_path}: {e}", file=sys.stderr)

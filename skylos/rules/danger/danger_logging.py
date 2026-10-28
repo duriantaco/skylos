@@ -55,6 +55,7 @@ class _Value:
     literal: str | int | None = None
     items: tuple[_Value, ...] | None = None
     pairs: tuple[tuple[str | int, _Value], ...] | None = None
+    fields: tuple[tuple[str, _Value], ...] | None = None
 
 
 _UNKNOWN = _Value()
@@ -77,6 +78,23 @@ def _mapping(pairs):
 def _joined(left, right):
     if left == right:
         return left
+    if left.fields is not None or right.fields is not None:
+        left_fields, right_fields = dict(left.fields or ()), dict(right.fields or ())
+        left_unknown = _Value(sources=left.sources) if left.fields is None else _UNKNOWN
+        right_unknown = (
+            _Value(sources=right.sources) if right.fields is None else _UNKNOWN
+        )
+        fields = tuple(
+            (
+                name,
+                _joined(
+                    left_fields.get(name, left_unknown),
+                    right_fields.get(name, right_unknown),
+                ),
+            )
+            for name in sorted(left_fields.keys() | right_fields.keys())
+        )
+        return _Value(sources=left.sources | right.sources, fields=fields)
     return _Value(sources=left.sources | right.sources)
 
 
@@ -128,9 +146,39 @@ class _LoggingFlow:
     def _replace(self, previous, replacement):
         if previous is _UNKNOWN:
             return
+        # A list or mapping stores the object identity, not a snapshot of its
+        # fields. Keep those aliases in sync after a field write or redaction.
+        cache = {id(previous): replacement}
+        remaining = 10_000
+
+        def replace_container(value, depth=0):
+            nonlocal remaining
+            if id(value) in cache:
+                return cache[id(value)]
+            if depth >= 24 or remaining <= 0:
+                return value
+            remaining -= 1
+            updated = value
+            if value.items is not None:
+                items = tuple(
+                    replace_container(item, depth + 1) for item in value.items
+                )
+                if any(new is not old for new, old in zip(items, value.items)):
+                    updated = _sequence(items)
+            elif value.pairs is not None:
+                pairs = tuple(
+                    (key, replace_container(item, depth + 1))
+                    for key, item in value.pairs
+                )
+                if any(
+                    new is not old for (_, new), (_, old) in zip(pairs, value.pairs)
+                ):
+                    updated = _mapping(pairs)
+            cache[id(value)] = updated
+            return updated
+
         for name, value in list(self.values.items()):
-            if value is previous:
-                self.values[name] = replacement
+            self.values[name] = replace_container(value)
 
     def _assign(self, target, value):
         if isinstance(target, ast.Name):
@@ -149,6 +197,17 @@ class _LoggingFlow:
             base = self.expr(target.value)
             if base.api:
                 self.values[base.api + "." + target.attr] = value
+            elif base is not _UNKNOWN:
+                fields = dict(base.fields or ())
+                inherited = base.sources - _combined(fields.values()).sources
+                fields[target.attr] = value
+                self._replace(
+                    base,
+                    _Value(
+                        sources=inherited | _combined(fields.values()).sources,
+                        fields=tuple(fields.items()),
+                    ),
+                )
         elif isinstance(target, ast.Subscript):
             base, key = self.expr(target.value), self.expr(target.slice).literal
             if base.pairs is not None and key is not None:
@@ -182,7 +241,15 @@ class _LoggingFlow:
             if base.api:
                 name = base.api + "." + node.attr
                 return self.values.get(name, _Value(api=name))
-            return _UNKNOWN
+            if base.fields is not None:
+                return dict(base.fields).get(
+                    node.attr,
+                    _Value(
+                        sources=base.sources
+                        - _combined(value for _, value in base.fields).sources
+                    ),
+                )
+            return _Value(sources=base.sources)
         if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
             return _sequence(self.expr(x) for x in node.elts)
         if isinstance(node, ast.Dict):
@@ -461,7 +528,10 @@ class _LoggingFlow:
             parameters = node.args.posonlyargs + node.args.args + node.args.kwonlyargs
             parameters += [p for p in [node.args.vararg, node.args.kwarg] if p]
             for name in local.names | {p.arg for p in parameters}:
-                self.values[name] = _UNKNOWN
+                # Parameters are not credential sources. Distinct identities
+                # let a local field write be tracked without contaminating
+                # unrelated parameters or relying on an attribute's spelling.
+                self.values[name] = _Value()
             self.symbol = node.name
             self.block(node.body)
             self.values, self.symbol = saved, symbol
