@@ -16,6 +16,7 @@ from skylos.contracts import (
     validate_contract_file,
 )
 from skylos.core.safe_cache_io import write_existing_text_no_symlink
+from skylos.ui.paths import shown_path
 
 
 def run_contract_command(argv, *, console_factory=Console) -> int:
@@ -79,13 +80,6 @@ def run_contract_command(argv, *, console_factory=Console) -> int:
     return 0
 
 
-def _shown_path(path: Path) -> str:
-    try:
-        return str(path.relative_to(Path.cwd().resolve()))
-    except ValueError:
-        return str(path)
-
-
 def init_contract(console, path_str: str, *, force: bool = False) -> int:
     try:
         dest = _resolve_project_path(path_str)
@@ -94,8 +88,8 @@ def init_contract(console, path_str: str, *, force: bool = False) -> int:
         console.print(f"[red]{exc}[/red]")
         return 1
 
-    console.print(f"[green]Created AI contract: {_shown_path(dest)}[/green]")
-    console.print(f"[dim]Validate it with: skylos contract validate {_shown_path(dest)}[/dim]")
+    console.print(f"[green]Created AI contract: {shown_path(dest)}[/green]")
+    console.print(f"[dim]Validate it with: skylos contract validate {shown_path(dest)}[/dim]")
     return 0
 
 

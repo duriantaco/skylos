@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 
 from skylos.core.cli_shared import quiet_analyzer_logs
+from skylos.ui.paths import shown_path
 
 
 def _resolve_gate_settings(debt_args, policy) -> tuple[int | None, str | None]:
@@ -394,7 +395,7 @@ def run_debt_command(
         except (OSError, ValueError) as e:
             console.print(f"[red]Error writing debt baseline: {e}[/red]")
             return 1
-        console.print(f"[green]Debt baseline written to {baseline_path}[/green]")
+        console.print(f"[green]Debt baseline written to {shown_path(baseline_path)}[/green]")
 
     if debt_args.history:
         if not is_project_scope:
