@@ -22,6 +22,7 @@ from skylos.core.git_safety import (
     read_only_git_environment,
 )
 from skylos.core.safe_cache_io import read_text_no_symlink, write_text_no_symlink
+from skylos.ui.paths import shown_path
 
 AGENTS = ("claude", "codex", "cursor")
 MAX_CONFIG_BYTES = 2_000_000
@@ -496,7 +497,7 @@ def ensure_gitignored(project: Path) -> str | None:
         [GITIGNORE_HEADER, *(e.replace(".skylos/", "", 1) for e in GITIGNORE_ENTRIES)]
     )
     if write_text_no_symlink(local, body + "\n"):
-        return f"Wrote {local} so hook state stays out of Git."
+        return f"Wrote {shown_path(local)} so hook state stays out of Git."
     return None
 
 
