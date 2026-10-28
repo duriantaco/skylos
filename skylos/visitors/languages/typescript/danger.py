@@ -12036,17 +12036,28 @@ def _check_timing_comparison(
     while stack:
         node = stack.pop()
         if node.type == "binary_expression":
-            has_eq = False
+            operator = None
             for child in node.children:
                 if not child.is_named and child.type in ("==", "===", "!=", "!=="):
-                    has_eq = True
+                    operator = child.type
                     break
-            if has_eq:
+            if operator:
                 left = node.child_by_field_name("left")
                 right = node.child_by_field_name("right")
+                # Strict equality against a boolean checks type/value, never
+                # a variable-length secret's contents. Loose equality can
+                # coerce an operand, so it keeps the existing audit behavior.
+                boolean_literal = operator in {"===", "!=="} and any(
+                    value is not None and value.type in {"true", "false"}
+                    for value in (
+                        _unwrap_ts_expression(left),
+                        _unwrap_ts_expression(right),
+                    )
+                )
                 if not (
                     _is_null_literal_expression(left)
                     or _is_null_literal_expression(right)
+                    or boolean_literal
                     or _compares_one_form_entry_twice(node, left, right, source_bytes, bindings)
                 ):
                     for operand in (left, right):

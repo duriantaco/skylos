@@ -15,6 +15,7 @@ from skylos.rules.danger.danger_web.html_context import (
 from skylos.rules.danger.danger_web.url_patterns import FLAG_NAMES, url_pattern_is_safe
 from skylos.rules.danger.taint import TaintVisitor, XSS_SANITIZERS
 from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
+from skylos.rules.danger.module_namespace import has_mock_api_patching
 
 # Template-source sinks: the first argument (or ``source=``) is compiled as a
 # Jinja template, so untrusted text there is template code, not data.
@@ -336,6 +337,7 @@ class _XSSFlowChecker(TaintVisitor):
         self._local_counts: dict = {}
         self._url_checkers: dict = {}
         self._checking_urls: set = set()
+        self._has_api_patching = has_mock_api_patching(tree)
 
     def _template_source_arg(self, node: ast.Call, qn: str):
         last = qn.split(".")[-1]
@@ -613,10 +615,19 @@ class _XSSFlowChecker(TaintVisitor):
         call_name = _qualified_name_from_call(node)
         if not call_name:
             return None
+        if self._has_api_patching:
+            return None
         if call_name in self.sanitizers:
             if self._root_is_rebound(call_name, func):
                 return None
-            return call_name
+            if not self._import_names_are_stable(call_name):
+                return None
+            sanitizer = (
+                self.untrusted_sources.resolved_import(func, call_name) or call_name
+            )
+            if not self._sanitizer_is_unpatched(sanitizer):
+                return None
+            return sanitizer
         if not self._may_import(call_name, self._sanitizer_prefixes):
             return None
         if not self._import_names_are_stable(call_name):
@@ -632,7 +643,10 @@ class _XSSFlowChecker(TaintVisitor):
         root = call_name.split(".")[0]
         if not self._module_binding_counts().get(root):
             return False
-        return self.untrusted_sources.resolved_import(func, call_name) is None
+        return (
+            self.untrusted_sources.resolved_import(func, call_name)
+            not in self.sanitizers
+        )
 
     def _escapes_quotes(self, node: ast.Call, sanitizer: str) -> bool:
         if sanitizer not in _QUOTE_ESCAPING_SANITIZERS:
