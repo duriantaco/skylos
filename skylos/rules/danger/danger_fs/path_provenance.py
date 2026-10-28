@@ -51,7 +51,12 @@ from skylos.rules.danger.danger_fs.path_flow import (
     _commonpath_elements,
     _test_is_negative,
 )
-from skylos.rules.danger.module_namespace import module_name_for, module_rebinding
+from skylos.rules.danger.module_namespace import (
+    attribute_write_names,
+    has_mock_api_patching,
+    module_name_for,
+    module_rebinding,
+)
 from skylos.rules.danger.untrusted_sources import (
     REQUEST_ANNOTATIONS,
     REQUEST_NAMES,
@@ -2587,6 +2592,8 @@ class _Tracer:
         self.limited = 0
         self.trace_memo = {}
         self.summary_memo = {}
+        self.string_constructor_memo = {}
+        self.string_runtime_stable = None
 
     def _limit(self, unit, node, text):
         self.limited += 1
@@ -3844,7 +3851,7 @@ class _Tracer:
                         partial_call = value.node
                         facts.add(self._returns(unit, scope, node, target, list(partial_call.args[1:]), list(partial_call.keywords), env))
                 else:
-                    facts.add(_Facts.leaf(UNKNOWN, _step(unit, node, f"object of class `{value.node.name}`")))
+                    facts.add(self._constructor_facts(unit, scope, node, value, env))
             return facts
         arguments = [*node.args, *[keyword.value for keyword in node.keywords]]
         if names and names <= {"builtins.open", "io.open", "codecs.open"} and node.args:
@@ -3870,6 +3877,217 @@ class _Tracer:
             if receiver.chains[UNTRUSTED]:
                 return receiver.then(_step(unit, node, f"derived by `.{func.attr}()`"))
         return _Facts.leaf(UNKNOWN, _step(unit, node, f"return value of `{_describe(node)}` is not followed"))
+
+    def _constructor_facts(self, unit, scope, node, value, env):
+        unpacked = any(isinstance(argument, ast.Starred) for argument in node.args)
+        if not unpacked and self._default_string_constructor(value):
+            argument = (
+                node.args[0]
+                if node.args
+                else next(
+                    (
+                        keyword.value
+                        for keyword in node.keywords
+                        if keyword.arg == "object"
+                    ),
+                    None,
+                )
+            )
+            if argument is None and (node.args or node.keywords):
+                return _Facts.leaf(
+                    UNKNOWN,
+                    _step(unit, node, "string constructor arguments are not resolved"),
+                )
+            if argument is None:
+                return _Facts.leaf(
+                    SAFE, _step(unit, node, "empty string subclass instance")
+                )
+            return self.trace(unit, scope, argument, env).then(
+                _step(
+                    unit,
+                    node,
+                    f"default `str` constructor of `{value.node.name}` preserves its argument",
+                )
+            )
+        return _Facts.leaf(
+            UNKNOWN, _step(unit, node, f"object of class `{value.node.name}`")
+        )
+
+    def _default_string_constructor(self, value, depth=0):
+        """Only plain, unmodified subclasses of the real builtin ``str``.
+
+        Calling an arbitrary class does not preserve argument bytes: a custom
+        ``__new__``, metaclass or decorator can return a fixed value or an IO
+        wrapper. Follow a bounded single-base chain with inert class bodies
+        instead of treating every user constructor as a string conversion.
+        """
+        key = id(value.node)
+        if depth >= _MAX_VALUE_DEPTH:
+            return False
+        if key in self.string_constructor_memo:
+            return self.string_constructor_memo[key]
+        self.string_constructor_memo[key] = False
+        cls = value.node
+        if not self._plain_string_class(cls):
+            return False
+        if self.string_runtime_stable is None:
+            self.string_runtime_stable = True
+            for unit in self.project.units:
+                writes, computed = attribute_write_names(unit.tree)
+                if (
+                    computed
+                    or writes
+                    & {
+                        "str",
+                        "__new__",
+                        "__init__",
+                        "__bases__",
+                        "__class__",
+                        "__call__",
+                        "__init_subclass__",
+                        "__mro_entries__",
+                        "__set_name__",
+                    }
+                    or has_mock_api_patching(unit.tree)
+                    or unit.rebinding()[0]
+                ):
+                    self.string_runtime_stable = False
+                    break
+                for call, scope in unit.calls:
+                    arguments = [
+                        *call.args,
+                        *[keyword.value for keyword in call.keywords],
+                    ]
+                    if all(_constant_literal(argument) for argument in arguments):
+                        continue
+                    targets = self.project.values(unit, scope, call.func)
+                    if targets and all(
+                        (
+                            target.kind == "fn"
+                            and not getattr(target.node, "decorator_list", ())
+                        )
+                        or (
+                            target.kind == "cls"
+                            and not target.node.decorator_list
+                            and not target.node.keywords
+                            and not self.project.mro(target.node)[1]
+                        )
+                        or (
+                            target.kind == "ext"
+                            and (
+                                target.name
+                                in {
+                                    "builtins.str",
+                                    "builtins.type",
+                                    "builtins.len",
+                                    "builtins.open",
+                                    "io.open",
+                                    "os.open",
+                                    "os.fspath",
+                                    "pathlib.Path",
+                                    "pathlib.PurePath",
+                                    "pathlib.PosixPath",
+                                    "pathlib.WindowsPath",
+                                }
+                                or (
+                                    target.name == "builtins.isinstance"
+                                    and self._inert_string_type_check(unit, scope, call)
+                                )
+                            )
+                            and not self._external_rebound(target.name)
+                        )
+                        for target in targets
+                    ):
+                        continue
+                    # An unknown consumer may use type(instance) to replace
+                    # its class's constructor, even without receiving the
+                    # class itself. Literal arguments cannot expose it.
+                    self.string_runtime_stable = False
+                    break
+                if not self.string_runtime_stable:
+                    break
+        if not self.string_runtime_stable:
+            return False
+        for unit in self.project.units:
+            for ref, scope in unit.loads:
+                targets = self.project.values(unit, scope, ref)
+                if not targets or not any(
+                    target.kind == "cls" and target.node is cls for target in targets
+                ):
+                    continue
+                parent = unit.parents.get(id(ref))
+                if isinstance(parent, ast.Call) and parent.func is ref:
+                    continue
+                if (
+                    isinstance(parent, ast.ClassDef)
+                    and ref in parent.bases
+                    and self._plain_string_class(parent)
+                ):
+                    continue
+                if (
+                    isinstance(parent, ast.Assign)
+                    and parent.value is ref
+                    and all(isinstance(target, ast.Name) for target in parent.targets)
+                    and all(
+                        (found := unit.lookup(scope, target.id)) is not None
+                        and len(found[1]) == 1
+                        for target in parent.targets
+                    )
+                ):
+                    continue
+                if (
+                    isinstance(parent, ast.AnnAssign)
+                    and parent.value is ref
+                    and isinstance(parent.target, ast.Name)
+                    and (found := unit.lookup(scope, parent.target.id)) is not None
+                    and len(found[1]) == 1
+                ):
+                    continue
+                return False
+        base = cls.bases[0]
+        bases = self.project.values(value.unit, value.unit.scope_of(base), base)
+        if not bases:
+            return False
+        for parent in bases:
+            if parent.kind == "ext" and parent.name == "builtins.str":
+                if self._external_rebound(parent.name):
+                    return False
+            elif parent.kind != "cls" or not self._default_string_constructor(
+                parent, depth + 1
+            ):
+                return False
+        self.string_constructor_memo[key] = True
+        return True
+
+    def _inert_string_type_check(self, unit, scope, call):
+        if len(call.args) != 2 or call.keywords:
+            return False
+        tested = call.args[1]
+        types = tested.elts if isinstance(tested, ast.Tuple) else [tested]
+        for expr in types:
+            values = self.project.values(unit, scope, expr)
+            if not values or any(
+                value.kind != "ext"
+                or value.name not in {"builtins.str", "os.PathLike"}
+                or self._external_rebound(value.name)
+                for value in values
+            ):
+                return False
+        return bool(types)
+
+    @staticmethod
+    def _plain_string_class(cls):
+        if cls.decorator_list or cls.keywords or len(cls.bases) != 1:
+            return False
+        return all(
+            isinstance(statement, ast.Pass)
+            or (
+                isinstance(statement, ast.Expr)
+                and isinstance(statement.value, ast.Constant)
+                and isinstance(statement.value.value, str)
+            )
+            for statement in cls.body
+        )
 
     def _downloaded(self, unit, scope, expr, depth):
         """``expr`` names a file a downloader wrote (``urlretrieve``)."""
