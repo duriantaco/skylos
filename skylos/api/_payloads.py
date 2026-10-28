@@ -249,6 +249,16 @@ def _compact_file_path(finding: dict[str, Any]) -> str:
     return str(finding.get("file_path") or finding.get("file") or "unknown")
 
 
+_UPLOAD_SEVERITIES = frozenset({"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"})
+
+
+def _upload_severity(value: Any) -> str:
+    severity = str(value or "").strip().upper()
+    if severity in _UPLOAD_SEVERITIES:
+        return severity
+    return "MEDIUM"
+
+
 def _compact_upload_finding(
     finding: dict[str, Any],
     *,
@@ -261,7 +271,7 @@ def _compact_upload_finding(
             finding.get("line_number") or finding.get("line") or 0
         ),
         "message": _truncate_upload_text(finding.get("message"), 500),
-        "severity": str(finding.get("severity") or "MEDIUM").upper(),
+        "severity": _upload_severity(finding.get("severity")),
         "category": str(finding.get("category") or "QUALITY").upper(),
     }
     tool_rule_id = finding.get("tool_rule_id")
