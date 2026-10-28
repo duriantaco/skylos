@@ -1189,11 +1189,11 @@ class PerformanceRule(SkylosRule):
     def _is_memory_buffer(self, origin: ast.AST | None) -> bool:
         return (
             isinstance(origin, ast.Call)
-            and self._stdlib_read_module_unshadowed("io")
             and any(
                 self._read_stdlib_callable(origin.func, "io", constructor)
                 for constructor in ("BytesIO", "StringIO")
             )
+            and self._stdlib_read_module_unshadowed("io")
         )
 
     def _local_memory_buffer_read(self, node, origin, *, fixed_contents=False):
@@ -1603,15 +1603,15 @@ class PerformanceRule(SkylosRule):
         import and a local instance whose read method has not escaped or been
         replaced before this call. Unknown receivers retain their warning.
         """
-        if node.func.attr != "read" or not self._stdlib_read_module_unshadowed(
-            "configparser"
-        ):
+        if node.func.attr != "read":
             return False
         origin = self._read_origin(node.func.value)
         if not isinstance(origin, ast.Call) or not any(
             self._read_stdlib_callable(origin.func, "configparser", constructor)
             for constructor in ("ConfigParser", "RawConfigParser")
         ):
+            return False
+        if not self._stdlib_read_module_unshadowed("configparser"):
             return False
         root = origin
         while root in self._parents:
@@ -1882,8 +1882,8 @@ class PerformanceRule(SkylosRule):
         archive_member = (
             node.func.attr == "read"
             and isinstance(origin, ast.Call)
-            and self._stdlib_read_module_unshadowed("zipfile")
             and self._read_stdlib_callable(origin.func, "zipfile", "ZipFile")
+            and self._stdlib_read_module_unshadowed("zipfile")
         )
         # ZipFile.read(name, pwd=None) names a member; its first argument is
         # not a byte bound as it is on file.read(size). Keep that API's whole

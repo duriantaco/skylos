@@ -615,6 +615,7 @@ class Definition:
         "suppression_lines",
         "module_shadows_getattr",
         "confidence_factors",
+        "unread_type_checking_import",
     )
 
     def __init__(
@@ -664,6 +665,7 @@ class Definition:
         # Evidence that lowers a dead-code candidate's confidence without
         # making it uncertain (see skylos/deadcode/confidence.py).
         self.confidence_factors = []
+        self.unread_type_checking_import = False
 
     def to_dict(self) -> dict[str, Any]:
         if self.type == "method" and "." in self.name:
@@ -741,6 +743,7 @@ class Visitor(ast.NodeVisitor):
         self.current_function_params = []
         self.local_var_maps = []
         self._local_import_maps = []
+        self._local_import_collisions = set()
         self.in_cst_class = 0
         self.local_type_maps = []
         self._dataclass_stack = []
@@ -846,6 +849,12 @@ class Visitor(ast.NodeVisitor):
         for d in self.defs:
             if d.name == name:
                 found = True
+                if (
+                    t == "import"
+                    and d.type == "import"
+                    and self.current_function_scope
+                ):
+                    self._local_import_collisions.add((d.line, d.simple_name))
                 if node is not None:
                     d.node = node
                 for k, v in extra.items():
@@ -901,6 +910,27 @@ class Visitor(ast.NodeVisitor):
         self._resolve_deferred_global_loads()
         self._resolve_module_import_loads(self._module_import_bindings)
         self._credit_lazy_module_attributes(node)
+        from skylos.deadcode.type_checking_imports import unread_type_checking_imports
+
+        unread_imports = (
+            unread_type_checking_imports(node) if self._local_import_collisions else {}
+        )
+        for definition in self.defs:
+            key = (definition.line, definition.simple_name)
+            binding = (
+                unread_imports.get(key) if key in self._local_import_collisions else None
+            )
+            if definition.type == "import" and binding is not None:
+                definition.unread_type_checking_import = True
+                # A local import of the same provider may have overwritten
+                # these fields while sharing the outer definition's name.
+                definition.binding_name = binding["binding_name"]
+                definition.is_exported |= binding["is_exported"]
+                definition.suppression_lines = binding["suppression_lines"]
+                definition.why_unused.append(
+                    "No reads of this module-level TYPE_CHECKING import binding; "
+                    "function-local imports are separate bindings."
+                )
 
     def _copy_module_import_bindings(self) -> dict[str, set[str]]:
         copied = {}
@@ -4079,7 +4109,10 @@ class Visitor(ast.NodeVisitor):
         for defn in self.defs:
             if defn.name in self.call_graph:
                 defn.calls = self.call_graph[defn.name]
-            if defn.name in self.reverse_call_graph:
+            if (
+                defn.name in self.reverse_call_graph
+                and not defn.unread_type_checking_import
+            ):
                 defn.called_by = self.reverse_call_graph[defn.name]
 
         for class_qname in self.descriptor_classes:

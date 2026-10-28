@@ -39,26 +39,6 @@ _DEF_CONTAINER_TYPES = {
 }
 
 _IMPLICIT_ENTRYPOINTS = {"main"}
-_IMPLICIT_METHODS = {
-    "clone",
-    "default",
-    "drop",
-    "fmt",
-    "from",
-    "into",
-    "try_from",
-    "as_ref",
-    "as_mut",
-    "deref",
-    "deref_mut",
-    "serialize",
-    "deserialize",
-    "poll",
-    "poll_ready",
-    "call",
-    "call_once",
-    "call_mut",
-}
 
 _ATTR_PATH_REF_RE = re.compile(
     r'(?:default|serialize_with|deserialize_with|with)\s*=\s*"([A-Za-z_][A-Za-z0-9_:]*)"'
@@ -1099,7 +1079,6 @@ class RustCore:
             self._is_public(node)
             or trait_impl
             or name in _IMPLICIT_ENTRYPOINTS
-            or (current_type is not None and name in _IMPLICIT_METHODS)
             or self._is_test_function(name, attrs, line)
             or self._has_attr_prefix(attrs, ("#[tokio::main", "#[actix_web::main"))
         )

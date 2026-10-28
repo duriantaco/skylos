@@ -227,7 +227,7 @@ Timeout-Pflicht beizubringen.
 | Java | Ja | Ja | Ja | Tree-sitter-Parsing und strukturierte Security-Flow-Analyse |
 | Go | Ja¹ | Teilweise¹ | Teilweise | Dead-Code- und ausgewählte Security-Benchmark-Abdeckung |
 | PHP | Ja | Ja | Nein | PHP-Parser-Abdeckung plus taint-artige Security-Sinks und -Sources |
-| Rust | Experimentell⁴ | Teilweise | Nein | Rust-Parser-Abdeckung; Security prüft Command Injection und Path Traversal |
+| Rust | Experimentell⁴ | Teilweise | Teilweise | Rust-Parser; Command Injection, Path Traversal, direkt unerreichbare Anweisungen und doppelte Zweige |
 | Dart | Ja³ | Teilweise³ | Nein | Dart-Parser-Abdeckung; Security prüft Command Injection, Path Traversal und SSRF |
 | C# | Teilweise | Teilweise | Teilweise | C#-Symbole, unerreichbare Anweisungen in direkten Blöcken, ausgewählte Security-Senken und direkte NuGet-Inventarisierung |
 | C++ | Teilweise | Nein | Nein | nur scheinbar ungenutzte dateilokale Funktionen in `.cpp`, `.cc`, `.cxx`; C++-Header werden für Referenzen gelesen |
