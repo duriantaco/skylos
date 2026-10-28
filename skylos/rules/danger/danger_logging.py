@@ -130,6 +130,7 @@ class _LoggingFlow:
         self.findings = {}
         self.imports = UntrustedSourceIndex(tree)
         self.function = None
+        self._call_refs = []
         declared = _LocalNames()
         for statement in tree.body:
             declared.visit(statement)
@@ -179,6 +180,8 @@ class _LoggingFlow:
 
         for name, value in list(self.values.items()):
             self.values[name] = replace_container(value)
+        for reference in self._call_refs:
+            reference[0] = replace_container(reference[0])
 
     def _assign(self, target, value):
         if isinstance(target, ast.Name):
@@ -238,18 +241,7 @@ class _LoggingFlow:
             )
         if isinstance(node, ast.Attribute):
             base = self.expr(node.value)
-            if base.api:
-                name = base.api + "." + node.attr
-                return self.values.get(name, _Value(api=name))
-            if base.fields is not None:
-                return dict(base.fields).get(
-                    node.attr,
-                    _Value(
-                        sources=base.sources
-                        - _combined(value for _, value in base.fields).sources
-                    ),
-                )
-            return _Value(sources=base.sources)
+            return self._member(base, node.attr)
         if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
             return _sequence(self.expr(x) for x in node.elts)
         if isinstance(node, ast.Dict):
@@ -318,10 +310,52 @@ class _LoggingFlow:
             self.expr(child)
         return _UNKNOWN
 
+    def _member(self, base, name):
+        if base.api:
+            qualified = base.api + "." + name
+            return self.values.get(qualified, _Value(api=qualified))
+        if base.fields is not None:
+            return dict(base.fields).get(
+                name,
+                _Value(
+                    sources=base.sources
+                    - _combined(value for _, value in base.fields).sources
+                ),
+            )
+        return _Value(sources=base.sources)
+
+    def _call_inputs(self, node):
+        # Python binds a method before evaluating arguments. Retain that
+        # object even if an argument rebinds its name, while _replace refreshes
+        # its fields when an argument mutates the same object in place.
+        start = len(self._call_refs)
+
+        def retain(value):
+            reference = [value]
+            self._call_refs.append(reference)
+            return reference
+
+        try:
+            receiver = None
+            if isinstance(node.func, ast.Attribute):
+                receiver = retain(self.expr(node.func.value))
+                func = self._member(receiver[0], node.func.attr)
+            else:
+                func = self.expr(node.func)
+            arguments = [retain(self.expr(arg)) for arg in node.args]
+            keywords = [(kw.arg, retain(self.expr(kw.value))) for kw in node.keywords]
+            return (
+                func,
+                [value[0] for value in arguments],
+                [(name, value[0]) for name, value in keywords],
+                receiver[0] if receiver is not None else None,
+            )
+        finally:
+            del self._call_refs[start:]
+
     def _call(self, node):
-        func = self.expr(node.func)
-        args = [self.expr(a) for a in node.args]
-        keywords = {kw.arg: self.expr(kw.value) for kw in node.keywords}
+        func, args, keyword_args, base = self._call_inputs(node)
+        keywords = dict(keyword_args)
         api = func.api or ""
         if api in {"os.getenv", "os.environ.get"}:
             key = args[0].literal if args else keywords.get("key", _UNKNOWN).literal
@@ -360,11 +394,47 @@ class _LoggingFlow:
             return _UNKNOWN
         if api in {"builtins.str", "builtins.repr", "builtins.ascii", "json.dumps"}:
             return _combined(args[:1])
-        if api in {"builtins.list", "builtins.tuple", "builtins.set", "builtins.dict"}:
+        if api == "builtins.dict":
+            result = _mapping(())
+            for value in args:
+                result = self._mapping_update(result, value)
+            for key, value in keyword_args:
+                result = self._mapping_update(
+                    result, value if key is None else _mapping([(key, value)])
+                )
+            return result
+        if api in {"builtins.list", "builtins.tuple", "builtins.set"}:
             return _combined(args + list(keywords.values()))
         if isinstance(node.func, ast.Attribute):
-            base = self.expr(node.func.value)
             method = node.func.attr
+            if base.pairs is not None and method == "update":
+                updated = base
+                for value in args:
+                    updated = self._mapping_update(updated, value)
+                for key, value in keyword_args:
+                    updated = self._mapping_update(
+                        updated,
+                        value if key is None else _mapping([(key, value)]),
+                    )
+                self._replace(base, updated)
+                # dict.update mutates its receiver and returns None. Its
+                # arguments are not the value of the call expression.
+                return _UNKNOWN
+            if base.pairs is not None and method == "setdefault" and args:
+                fields = dict(base.pairs)
+                key = args[0].literal
+                default = args[1] if len(args) > 1 else _UNKNOWN
+                if key is not None:
+                    if key in fields:
+                        return fields[key]
+                    fields[key] = default
+                    self._replace(base, _mapping(fields.items()))
+                    return default
+                # An unknown key may select an existing value or insert the
+                # default. Neither alternative justifies dropping sources.
+                value = _combined([base] + args)
+                self._replace(base, value)
+                return value
             if method == "get" and base.pairs is not None and args:
                 return dict(base.pairs).get(
                     args[0].literal, args[1] if len(args) > 1 else _UNKNOWN
@@ -415,6 +485,26 @@ class _LoggingFlow:
         # A helper called redact(), hash(), or sanitize() is not proof that its
         # result omits the credential. Keep unknown transforms reviewable.
         return _combined(args + list(keywords.values()))
+
+    def _mapping_update(self, base, value):
+        pairs = value.pairs
+        if pairs is None and value.items is not None:
+            entries = []
+            for item in value.items:
+                if (
+                    item.items is None
+                    or len(item.items) != 2
+                    or item.items[0].literal is None
+                ):
+                    break
+                entries.append((item.items[0].literal, item.items[1]))
+            else:
+                pairs = tuple(entries)
+        if base.pairs is None or pairs is None:
+            return _combined([base, value])
+        fields = dict(base.pairs)
+        fields.update(pairs)
+        return _mapping(fields.items())
 
     def _emit(self, node, values):
         sources = _combined(values).sources
