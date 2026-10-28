@@ -11,6 +11,7 @@ class Value:
     return_sources: frozenset[str] = frozenset()
     kind: str | None = None
     api: str | None = None
+    guarded_api: tuple[frozenset[tuple[str, ...]], str] | None = None
     literal: str | None = None
     canonical: bool = False
     contained: bool = False
@@ -44,6 +45,9 @@ def joined(values):
         return_sources=frozenset().union(*(v.return_sources for v in values)),
         kind=first.kind if all(v.kind == first.kind for v in values) else None,
         api=first.api if all(v.api == first.api for v in values) else None,
+        guarded_api=first.guarded_api
+        if all(v.guarded_api == first.guarded_api for v in values)
+        else None,
         literal=first.literal
         if all(v.literal == first.literal for v in values)
         else None,
@@ -56,16 +60,23 @@ def joined(values):
 
 
 class State:
-    def __init__(self, frames=None):
+    def __init__(self, frames=None, conditions=frozenset()):
         self.frames = frames if frames is not None else [{}]
+        self.conditions = conditions
 
     def copy(self):
-        return State([dict(frame) for frame in self.frames])
+        return State([dict(frame) for frame in self.frames], self.conditions)
 
     def get(self, name):
         for frame in reversed(self.frames):
             if name in frame:
-                return frame[name]
+                value = frame[name]
+                if value.guarded_api is not None:
+                    guards, api = value.guarded_api
+                    return replace(
+                        value, api=api if guards <= self.conditions else None
+                    )
+                return value
         if name in {"std", "tokio", "async_std"}:
             return Value(api=name)
         if name == "String":

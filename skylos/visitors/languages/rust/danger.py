@@ -114,21 +114,43 @@ class _SecurityFlow:
                 if name is not None:
                     state.bind(self.text(name), UNKNOWN)
         bindings = {}
-        for child, conditional in self.scope_statements(node):
+        for child, conditional, guards, complete_guards in self.scope_entries(node):
             if child.type == "use_declaration":
                 for name, path in use_bindings(child, self.text):
-                    bindings.setdefault(name, set()).add(
-                        None if conditional else state.resolve(path)
+                    api = state.resolve(path)
+                    value = (
+                        Value(guarded_api=(guards, api))
+                        if conditional and guards and complete_guards and api
+                        else UNKNOWN
+                        if conditional
+                        else Value(api=api)
                     )
-        for name, apis in bindings.items():
+                    bindings.setdefault(name, set()).add(value)
+        for name, values in bindings.items():
             # Conflicting imports and local declarations cannot prove an API.
-            if name in state.frames[-1] or len(apis) != 1:
+            if name in state.frames[-1] or len(values) != 1:
                 state.bind(name, UNKNOWN)
             else:
-                state.bind(name, Value(api=next(iter(apis))))
+                state.bind(name, next(iter(values)))
 
     def scope_statements(self, node):
+        for child, conditional, _guards, _complete in self.scope_entries(node):
+            yield child, conditional
+
+    def cfg_key(self, node):
+        """Compare exact cfg token trees; this does not evaluate features."""
+        if node is None or node.has_error:
+            return ()
+        if node.type in {"line_comment", "block_comment"}:
+            return ()
+        if node.type in {"string_literal", "raw_string_literal"} or not node.children:
+            return (self.text(node),)
+        return tuple(part for child in node.children for part in self.cfg_key(child))
+
+    def scope_entries(self, node):
         conditional = scope_conditional = False
+        guards = scope_guards = frozenset()
+        unsupported = scope_unsupported = False
         for child in node.named_children:
             if child.type in {"attribute_item", "inner_attribute_item"}:
                 attribute = next(
@@ -145,27 +167,43 @@ class _SecurityFlow:
                     else []
                 )
                 optional = bool(names and self.text(names[0]) in {"cfg", "cfg_attr"})
+                cfg = bool(names and self.text(names[0]) == "cfg")
+                key = self.cfg_key(names[1]) if cfg and len(names) == 2 else ()
                 if child.type == "inner_attribute_item":
                     scope_conditional |= optional
+                    if key:
+                        scope_guards |= {key}
+                    scope_unsupported |= optional and not key
                 else:
                     conditional |= optional
+                    if key:
+                        guards |= {key}
+                    unsupported |= optional and not key
                 continue
             if child.type in {"line_comment", "block_comment"}:
                 continue
-            yield child, conditional or scope_conditional
+            yield (
+                child,
+                conditional or scope_conditional,
+                guards | scope_guards,
+                not (unsupported or scope_unsupported),
+            )
             conditional = False
+            guards, unsupported = frozenset(), False
 
     def module(self, node, inherited=None):
         state = inherited.copy() if inherited is not None else State()
         state.frames.append({})
         self.declarations(node, state)
-        for child in node.named_children:
+        for child, _conditional, guards, _complete in self.scope_entries(node):
+            context = state.copy()
+            context.conditions |= guards
             if child.type == "function_item":
-                self.function(child, state)
+                self.function(child, context)
             elif child.type in {"impl_item", "mod_item", "trait_item"}:
                 body = self.field(child, "body")
                 if body is not None:
-                    self.module(body, state)
+                    self.module(body, context)
 
     def function(self, node, inherited):
         state = inherited.copy()
@@ -221,11 +259,14 @@ class _SecurityFlow:
         state.frames.append({})
         self.declarations(node, state)
         value, continuing = UNKNOWN, True
-        for child, conditional in self.scope_statements(node):
+        for child, conditional, guards, _complete in self.scope_entries(node):
             if not continuing:
                 break
             before = state.copy() if conditional else None
+            prior_conditions = state.conditions
+            state.conditions |= guards
             value, continuing = self.statement(child, state)
+            state.conditions = prior_conditions
             if before is not None:
                 if continuing:
                     for index, frame in enumerate(state.frames):

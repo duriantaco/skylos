@@ -131,6 +131,7 @@ class _ModuleEvidence:
     targets: list = field(default_factory=list)
     blueprints: set = field(default_factory=set)
     blueprint_callbacks: list = field(default_factory=list)
+    imported_blueprint_callbacks: list = field(default_factory=list)
     classes: dict = field(default_factory=dict)
     settings: set = field(default_factory=set)
     values: dict = field(default_factory=dict)
@@ -555,6 +556,12 @@ class _WebScanner:
             function = decorator.func if isinstance(decorator, ast.Call) else decorator
             registered = _flask_decorator(_qualified(function, bindings))
             if registered is None:
+                qualified = _qualified(function, bindings)
+                if qualified and isinstance(function, ast.Attribute):
+                    if function.attr in _FLASK_CALLBACKS["flask.Blueprint"]:
+                        self.evidence.imported_blueprint_callbacks.append(
+                            (definition, qualified.rpartition(".")[0])
+                        )
                 continue
             source, symbol = registered
             self._flask_signature(definition, _qualified(function, bindings))
@@ -1004,13 +1011,39 @@ def _executed_definitions(index):
 
 
 def _blueprint_targets(modules):
+    scanners = {module.module: module for module in modules}
+
+    def exported_blueprint(qualified, seen=frozenset()):
+        if qualified in seen or len(seen) >= 24:
+            return None
+        if qualified.startswith("@flask.Blueprint:"):
+            return qualified.partition(":")[2]
+        name, _, member = qualified.rpartition(".")
+        scanner = scanners.get(name)
+        if scanner is None:
+            return None
+        value = scanner.bindings.get(member)
+        if not isinstance(value, str):
+            return None
+        return exported_blueprint(value, seen | {qualified})
+
     registered = {name for module in modules for name in module.blueprints}
-    return [
+    registered.update(
+        target for name in list(registered)
+        if (target := exported_blueprint(name)) is not None
+    )
+    found = [
         (definition, "flask_web_callback")
         for module in modules
         for definition, symbol in module.blueprint_callbacks
         if symbol in registered
     ]
+    for module in modules:
+        for definition, qualified in module.imported_blueprint_callbacks:
+            symbol = exported_blueprint(qualified)
+            if symbol is not None and symbol in registered:
+                found.append((definition, "flask_web_callback"))
+    return found
 
 
 def find_web_framework_targets(
