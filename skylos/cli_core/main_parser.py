@@ -38,6 +38,7 @@ def build_main_parser(*, version: str) -> argparse.ArgumentParser:
     from skylos.constants import SUPPORTED_LANGUAGES_TEXT
 
     parser = _ScanArgumentParser(
+        prog="skylos",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
             "Find dead code, secrets, and risky flows in\n"
