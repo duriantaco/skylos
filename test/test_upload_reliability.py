@@ -7,6 +7,7 @@ folder and turns retry sleeps and the contract-version check off.
 
 from __future__ import annotations
 
+import dataclasses
 import email.utils
 import gzip
 import json
@@ -2036,7 +2037,14 @@ def test_dropping_an_optional_artifact_uses_a_new_key(repo, monkeypatch):
     monkeypatch.setattr(
         "skylos.api._artifacts.requests.put", _ArtifactServer([_ok()]).put
     )
-    assert api.upload_report(result, quiet=True)["success"]
+    prepared = dataclasses.replace(
+        api._prepare_report_upload(result),
+        definitions_payload={"definitions": result["definitions"]},
+    )
+    uploaded = api._send_prepared_upload(
+        TOKEN, prepared, kind="report", quiet=True, strict=False, is_forced=False
+    )
+    assert uploaded["success"]
     keys = [c.headers["Idempotency-Key"] for c in posts]
     assert keys[0] != keys[1]
     assert keys[1] == keys[2]

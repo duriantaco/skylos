@@ -1024,7 +1024,7 @@ def _prepare_report_upload(
         legacy_payload=legacy_payload,
         core_payload=core_payload,
         compatibility_payload=compatibility_payload,
-        definitions_payload={"definitions": definitions} if definitions else None,
+        definitions_payload=None,
         metadata=metadata,
         scan_summary=scan_summary,
         grade_data=grade_data,

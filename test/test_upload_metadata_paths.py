@@ -178,12 +178,12 @@ def _prepare_upload(result, tmp_path, *, git_root=None):
 def test_every_upload_shape_is_free_of_machine_paths(tmp_path, analyzed):
     prepared = _prepare_upload(analyzed, tmp_path)
     roots = _machine_roots(tmp_path)
-    assert prepared.definitions_payload
+    assert prepared.definitions_payload is None
+    assert prepared.legacy_payload["definitions"]
     for payload in (
         prepared.core_payload,
         prepared.legacy_payload,
         prepared.compatibility_payload,
-        prepared.definitions_payload,
     ):
         assert _leaks(payload, roots) == []
 
@@ -229,7 +229,6 @@ def test_nested_scan_keeps_evidence_relative_to_the_scanned_project(
         prepared.core_payload,
         prepared.legacy_payload,
         prepared.compatibility_payload,
-        prepared.definitions_payload,
     ):
         assert _leaks(payload, _machine_roots(tmp_path)) == []
     row = next(
@@ -240,7 +239,7 @@ def test_nested_scan_keeps_evidence_relative_to_the_scanned_project(
         and finding["rule_id"] == "SKY-D211"
     )
     assert row["metadata"]["receiver_resolution"]["file"] == "app/db.py"
-    assert prepared.definitions_payload["definitions"]["app.db.Database"]["file"] == (
+    assert prepared.legacy_payload["definitions"]["app.db.Database"]["file"] == (
         "app/db.py"
     )
 

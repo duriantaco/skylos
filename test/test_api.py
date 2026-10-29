@@ -1,5 +1,6 @@
 import os
 import json
+import dataclasses
 import importlib
 import builtins
 import subprocess
@@ -21,6 +22,16 @@ from skylos.api import (
     _extract_pr_number,
     _normalize_branch,
 )
+
+
+def _upload_prepared_with_definitions(result):
+    prepared = dataclasses.replace(
+        api._prepare_report_upload(result),
+        definitions_payload={"definitions": result["definitions"]},
+    )
+    return api._send_prepared_upload(
+        "token", prepared, kind="report", quiet=True, strict=False, is_forced=False
+    )
 
 
 class TestSkylosApi(unittest.TestCase):
@@ -1258,14 +1269,6 @@ class TestSkylosApi(unittest.TestCase):
                         "headers": {"x-test": "1"},
                     },
                 },
-                "definitions": {
-                    "artifact_id": "artifact-defs",
-                    "key": "definitions-key",
-                    "upload": {
-                        "method": "PUT",
-                        "url": "https://uploads.skylos.dev/definitions",
-                    },
-                },
             },
         }
         complete_resp = MagicMock()
@@ -1300,7 +1303,7 @@ class TestSkylosApi(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertEqual(result["scan_id"], "scan_artifact")
         self.assertEqual(mock_post.call_count, 2)
-        self.assertEqual(mock_put.call_count, 2)
+        self.assertEqual(mock_put.call_count, 1)
         self.assertEqual(
             # Contract client_read_timeout_seconds for the report endpoints.
             mock_post.call_args_list[0].kwargs["timeout"],
@@ -1318,20 +1321,14 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(init_payload["summary"]["definitions_count"], 1)
         self.assertTrue(init_payload["idempotency_key"].startswith("report-upload:"))
         self.assertNotIn("definitions", init_payload)
-        self.assertIn("definitions", init_payload["artifacts"])
-        self.assertIn("scan_report", init_payload["artifacts"])
+        self.assertEqual(list(init_payload["artifacts"]), ["scan_report"])
 
-        report_payload, definitions_payload = uploaded_payloads
+        (report_payload,) = uploaded_payloads
         self.assertNotIn("definitions", report_payload)
-        self.assertEqual(
-            definitions_payload,
-            {"definitions": {"app.func": {"file": "app.py", "line": 5}}},
-        )
 
         complete_payload = mock_post.call_args_list[1].kwargs["json"]
         self.assertEqual(complete_payload["scan_id"], "scan_artifact")
-        self.assertIn("scan_report", complete_payload["artifacts"])
-        self.assertIn("definitions", complete_payload["artifacts"])
+        self.assertEqual(list(complete_payload["artifacts"]), ["scan_report"])
         self.assertEqual(
             complete_payload["artifacts"]["scan_report"]["artifact_id"],
             "artifact-scan",
@@ -1339,14 +1336,6 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(
             complete_payload["artifacts"]["scan_report"]["key"],
             "scan-key",
-        )
-        self.assertEqual(
-            complete_payload["artifacts"]["definitions"]["artifact_id"],
-            "artifact-defs",
-        )
-        self.assertEqual(
-            complete_payload["artifacts"]["definitions"]["key"],
-            "definitions-key",
         )
 
     @patch("skylos.api.get_project_token")
@@ -1456,12 +1445,11 @@ class TestSkylosApi(unittest.TestCase):
         mock_put.side_effect = [ok_upload, fail_upload, fail_upload, fail_upload]
 
         with patch("skylos.api._legacy_inline_upload_limit_bytes", return_value=10):
-            result = upload_report(
+            result = _upload_prepared_with_definitions(
                 {
                     "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
                     "definitions": {"app.func": {"file": "app.py", "line": 5}},
-                },
-                quiet=True,
+                }
             )
 
         self.assertTrue(result["success"])
@@ -1518,12 +1506,11 @@ class TestSkylosApi(unittest.TestCase):
         mock_put.return_value = ok_upload
 
         with patch("skylos.api._legacy_inline_upload_limit_bytes", return_value=10):
-            result = upload_report(
+            result = _upload_prepared_with_definitions(
                 {
                     "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
                     "definitions": {"app.func": {"file": "app.py", "line": 5}},
-                },
-                quiet=True,
+                }
             )
 
         self.assertTrue(result["success"])
@@ -1594,12 +1581,11 @@ class TestSkylosApi(unittest.TestCase):
         mock_put.return_value = ok_upload
 
         with patch("skylos.api._legacy_inline_upload_limit_bytes", return_value=10):
-            result = upload_report(
+            result = _upload_prepared_with_definitions(
                 {
                     "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
                     "definitions": {"app.func": {"file": "app.py", "line": 5}},
-                },
-                quiet=True,
+                }
             )
 
         self.assertTrue(result["success"])
