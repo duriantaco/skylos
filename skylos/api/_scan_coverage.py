@@ -96,17 +96,57 @@ def _complete_assessment(result: dict[str, Any], summary: dict[str, Any]) -> boo
     # Current reports retain optional Advice while assessment follows the
     # shared listing decision. Prove both views against their original rows;
     # missing or inconsistent summaries cannot establish absence coverage.
-    listed_counts = summarize_finding_types(listed_result(result))
+    listed = listed_result(result)
+    listed_counts = summarize_finding_types(listed)
     recorded_listed = summary.get("listed_finding_type_counts")
+    combined = _combined_advisory_counts(result, listed)
     return (
         valid_counts(recorded_raw)
         and valid_counts(recorded_listed)
         and recorded_raw == raw_counts
         and recorded_listed == listed_counts
         and counts == listed_counts
-        and all(raw_counts[key] == listed_counts[key] for key in ("defect", "review"))
+        and all(
+            raw_counts[key] == listed_counts[key] + combined[key]
+            for key in ("defect", "review")
+        )
         and assessment == compute_assessment(result)
     )
+
+
+def _combined_advisory_counts(
+    result: dict[str, Any], listed: dict[str, Any]
+) -> dict[str, int]:
+    from skylos.reporting.finding_types import get_finding_type, iter_result_findings
+    from skylos.reporting.listing import is_combined_advisory, listing_decision
+
+    leads = set()
+    for category, finding in iter_result_findings(listed):
+        if get_finding_type(finding, category) == "advice":
+            continue
+        leads.add(
+            (
+                str(finding.get("rule_id") or "").upper(),
+                str(finding.get("file") or finding.get("file_path") or ""),
+                finding.get("line") or finding.get("line_number"),
+            )
+        )
+    counts = {"defect": 0, "review": 0}
+    for category, finding in iter_result_findings(result):
+        if not is_combined_advisory(finding):
+            continue
+        lead = listing_decision(finding).get("lead")
+        if not isinstance(lead, dict):
+            continue
+        key = (
+            str(lead.get("rule_id") or "").upper(),
+            str(lead.get("file") or ""),
+            lead.get("line"),
+        )
+        finding_type = get_finding_type(finding, category)
+        if key in leads and finding_type in counts:
+            counts[finding_type] += 1
+    return counts
 
 
 def scan_coverage_receipt(
