@@ -26,6 +26,9 @@ COMMANDS = [
     {
         "name": "skylos PATH [PATH ...]",
         "desc": "Scan source code; dead code by default, main analyzers with -a",
+        "details": [
+            "--ai-review: an AI model (and Jev, with TYPESAFE_API_KEY) double-checks security and unused-code issues; blocking never changes",
+        ],
         "group": "Core Analysis",
     },
     {
@@ -61,7 +64,7 @@ COMMANDS = [
             "Use --output FILE for JSON or --no-fail to preserve status while exiting 0",
             "Terminal output is human-readable; redirected, stdin, and saved output use JSON",
         ],
-        "group": "AI Agent",
+        "group": "Coding agents",
     },
     {
         "name": "skylos preflight [ARTIFACT]",
@@ -133,12 +136,12 @@ COMMANDS = [
             "Writes .skylos/receipts/latest.json; receipt [path]: print it again",
             "Exit 0 pass, 1 fail or unfinished, 2 could not run",
         ],
-        "group": "Core Analysis",
+        "group": "Coding agents",
     },
     {
         "name": "skylos discover [path]",
         "desc": "Inventory Python and TypeScript/JavaScript LLM integrations",
-        "group": "Core Analysis",
+        "group": "AI app safety",
     },
     {
         "name": "skylos sbom [path] [--format cyclonedx-json|spdx-json] [-o FILE]",
@@ -159,42 +162,42 @@ COMMANDS = [
             "DIRECTORY defaults to the current directory; files are rejected",
             "Findings are report-only unless --fail-on, --min-score, or policy requests a gate",
         ],
-        "group": "Core Analysis",
+        "group": "AI app safety",
     },
     {
         "name": "skylos agent scan [path]",
         "desc": "Hybrid static + LLM analysis",
-        "group": "AI Agent",
+        "group": "AI review",
     },
     {
         "name": "skylos agent audit [path]",
         "desc": "Manage the persistent Deep Mode security audit workflow",
-        "group": "AI Agent",
+        "group": "AI review",
     },
     {
         "name": "skylos agent security-quick [path]",
         "desc": "Run a one-shot LLM security audit",
-        "group": "AI Agent",
+        "group": "AI review",
     },
     {
         "name": "skylos agent security-deep [path]",
         "desc": "Start the staged Deep Mode security workflow",
-        "group": "AI Agent",
+        "group": "AI review",
     },
     {
         "name": "skylos agent verify <path>",
-        "desc": "Use an LLM to review dead-code findings",
-        "group": "AI Agent",
+        "desc": "Review unused-code findings with an LLM, Jev, or both",
+        "group": "AI review",
     },
     {
         "name": "skylos agent install-standards [--enforce RULE_ID]",
         "desc": "Install project coding standards as native agent skills",
-        "group": "AI Agent",
+        "group": "Coding agents",
     },
     {
         "name": "skylos agent check-standards [path]",
         "desc": "Check selected project coding standards with Skylos",
-        "group": "AI Agent",
+        "group": "Coding agents",
     },
     {
         "name": "skylos agent install-hooks [--claude|--codex|--cursor]",
@@ -204,7 +207,7 @@ COMMANDS = [
             "--user writes the same file under your home directory",
             "Existing hooks are kept; re-running is a no-op; --uninstall removes only Skylos hooks",
         ],
-        "group": "AI Agent",
+        "group": "Coding agents",
     },
     {
         "name": "skylos agent warm-cache [path]",
@@ -213,7 +216,7 @@ COMMANDS = [
             "Writes .skylos/cache/module-facts.json; later hooks re-parse only changed files",
             "Optional: without it the first post-edit hook builds the index",
         ],
-        "group": "AI Agent",
+        "group": "Coding agents",
     },
     {
         "name": "skylos hook <event> [--client claude|codex|cursor]",
@@ -232,7 +235,7 @@ COMMANDS = [
             "stop reports unchecked actions. Logs to .skylos/hook.log",
             "Disable one hook with SKYLOS_HOOKS_DISABLE=pre-read (comma list or 'all')",
         ],
-        "group": "AI Agent",
+        "group": "Coding agents",
     },
     {
         "name": "skylos hook recheck FILE... [--range L1:L2] | --session",
@@ -241,7 +244,7 @@ COMMANDS = [
             "recheck --session rechecks every file where agent edits introduced issues",
             "recheck exits 0 clean, 1 blocking issues, 2 usage error",
         ],
-        "group": "AI Agent",
+        "group": "Coding agents",
     },
     {
         "name": "skylos agent recap [PATH] [--days N]",
@@ -250,7 +253,7 @@ COMMANDS = [
             "Reads only the local .skylos/hook.log; nothing is uploaded",
             "--days 0 counts everything in the log; --format json for scripts",
         ],
-        "group": "AI Agent",
+        "group": "Coding agents",
     },
     {
         "name": "skylos mcp [--transport stdio|sse|streamable-http]",
@@ -259,52 +262,52 @@ COMMANDS = [
             "Speaks MCP over stdio by default; MCP clients start it as `skylos mcp`",
             "Without SKYLOS_API_KEY only the analyze tool works (5 calls/day)",
         ],
-        "group": "AI Agent",
+        "group": "Coding agents",
     },
     {
         "name": "skylos agent remediate [path]",
         "desc": "Scan and fix issues; optionally test or create a PR",
-        "group": "AI Agent",
+        "group": "AI review",
     },
     {
         "name": "skylos agent replay RUN_DIR",
         "desc": "Validate and inspect a saved agent harness run",
-        "group": "AI Agent",
+        "group": "AI review",
     },
     {
         "name": "skylos agent init [--path CONTRACT]",
         "desc": "Create a runtime agent behavior contract",
-        "group": "AI Agent",
+        "group": "AI app safety",
     },
     {
         "name": "skylos agent test [CONTRACT]",
         "desc": "Test runtime agent behavior against its contract",
-        "group": "AI Agent",
+        "group": "AI app safety",
     },
     {
         "name": "skylos agent watch [path]",
         "desc": "Continuous repo monitoring",
-        "group": "AI Agent",
+        "group": "Automation",
     },
     {
         "name": "skylos agent pre-commit [path]",
         "desc": "Staged local hook for security, secrets, and quality",
-        "group": "AI Agent",
+        "group": "Coding agents",
     },
     {
         "name": "skylos agent triage <command>",
         "desc": "Suggest, dismiss, snooze, or restore ranked actions",
-        "group": "AI Agent",
+        "group": "Automation",
     },
     {
         "name": "skylos agent status [path]",
         "desc": "Show the latest active-agent summary",
-        "group": "AI Agent",
+        "group": "Automation",
     },
     {
         "name": "skylos agent serve [path]",
         "desc": "Serve the active-agent state through a local HTTP API",
-        "group": "AI Agent",
+        "group": "Automation",
     },
     {
         "name": "skylos cicd init",
@@ -678,7 +681,10 @@ def print_flat_commands(console):
         "Core Analysis",
         "Skylos Cloud",
         "CI/CD",
-        "AI Agent",
+        "AI review",
+        "Coding agents",
+        "AI app safety",
+        "Automation",
         "Release",
         "Account",
     )

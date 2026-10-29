@@ -426,6 +426,7 @@ every command. See [what they don't do](./docs/agent-hooks.md#what-it-doesnt-do)
 | First dead-code scan | `skylos .` | Finds unused functions, classes, imports, files, and framework entrypoint mistakes | [Dead code docs](https://docs.skylos.dev/dead-code-detection) |
 | Deterministic cleanup preview | `skylos clean . --dry-run --types import,function --confidence 80` | Shows planned Python import/function removals without writing; add `--apply` to edit files | [Dead code docs](https://docs.skylos.dev/dead-code-detection) |
 | Security and quality audit | `skylos . -a` | Adds dangerous flow, secrets, dependency, config, quality, and AI-defect checks | [Security docs](https://docs.skylos.dev/security-analysis) |
+| AI double-check of issues | `skylos . -a --ai-review` | Each security and unused-code issue gets an AI verdict: confirmed, AI disagrees, or unsure. Uses your model key, plus Jev when `TYPESAFE_API_KEY` is set. Nothing is hidden and blocking never changes; with `skylos cloud --ai-review` the verdicts show on the Cloud PR board and Issues | [AI review](./docs/ai-review.md) |
 | Combined repo report | `skylos suite .` | Reports static findings, technical debt, AI defense, and provenance; SCA can query OSV, and findings alone exit `0` | [CLI Reference](https://docs.skylos.dev/cli-reference) |
 | Optional Python linting | `pip install "skylos[lint]" && skylos lint .` | Runs Ruff with its native configuration, output, fixes, and exit codes through the Skylos CLI | [Python linting](./docs/python-linting.md) |
 | Agent branch done check | `skylos done --base origin/main` | Runs your tests and flags deleted, skipped or weakened tests, loosened test settings and CI test steps, silenced checks, and test-only special cases; writes a receipt | [Done gate](./docs/done-gate.md) |
@@ -457,7 +458,7 @@ every command. See [what they don't do](./docs/agent-hooks.md#what-it-doesnt-do)
 | Project standards for agents | `skylos agent install-standards --enforce SKY-L002` | Gives Codex, Claude Code, and Cursor a project skill and selects measurable quality rules for hook and CI checks | [Project standards](./docs/agent-standards.md) |
 | MCP agent verification | `verify_change` MCP tool | Lets Claude, Cursor, and other MCP clients verify an edited file/range with the same schema as `skylos verify`. Requires a free Skylos project token (`SKYLOS_API_KEY`). `skylos verify` and agent-loop hooks need no token | [MCP server](https://docs.skylos.dev/mcp-server) |
 | LLM integration inventory | `skylos discover .` | Maps recognized LLM calls, agent tools, prompt sites, and input sources in Python and TypeScript/JavaScript | [Agent verification](./docs/agent-verification.md) |
-| Pre-deployment agent verification | `skylos defend . --format md -o evidence.md` | Verifies agent guardrails, scores OWASP LLM/Agentic coverage, and emits an attested evidence report | [Agent verification](./docs/agent-verification.md) |
+| AI app safety | `skylos defend . --format md -o evidence.md` | Verifies agent guardrails, scores OWASP LLM/Agentic coverage, and emits an attested evidence report | [Agent verification](./docs/agent-verification.md) |
 | Agent verification CI gate | `skylos defend . --fail-on critical` | Blocks deploys with unguarded LLM integrations; SARIF for code scanning via `--format sarif` | [Agent verification](./docs/agent-verification.md) |
 | MCP agent pre-flight | `verify_agent` MCP tool | Lets coding agents statically verify the agents they build — scores, failed checks, attestation digest. Requires a free Skylos project token (`SKYLOS_API_KEY`). `skylos defend` needs no token | [MCP server](https://docs.skylos.dev/mcp-server) |
 | Technical debt triage | `skylos debt .` | Ranks hotspots and debt trends | [Technical debt](https://docs.skylos.dev/technical-debt) |
@@ -669,8 +670,15 @@ it talks to Skylos Cloud:** `skylos cloud`, `--upload`, `skylos login`, `whoami`
 `skylos login`, a CI OIDC token) never makes a command upload a scan,
 findings or a run summary. There is no update check and no analytics.
 
-- `skylos agent scan`, `agent verify`, `agent remediate` and
-  `agent remediate --standards` send a run summary only with `--upload`: one
+- `--ai-review` and `--verify-security` never send anything to Skylos Cloud
+  by themselves. They send the flagged file (comments removed) and the rule's
+  message to your own model provider with your key. With `TYPESAFE_API_KEY`
+  set, `--ai-review` also sends the unused-code candidates and a bounded copy
+  of your first-party source (at most 64 KB) to Jev (`api.typesafe.ai`). The
+  verdicts reach Skylos Cloud only with `--upload` or `skylos cloud`.
+- `skylos agent verify`, `agent remediate` and `agent remediate --standards`
+  send a run summary only with `--upload`, and `skylos agent scan --upload`
+  sends the same summary plus its findings: one
   `POST /api/agent-runs` with `command`, per-command counts, `model`,
   `provider`, `duration_seconds`, `commit_hash`, `branch`, `actor` and
   `status`. `actor` is `SKYLOS_ACTOR`, the CI-reported user, or the `HEAD`

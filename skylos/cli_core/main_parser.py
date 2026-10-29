@@ -163,13 +163,13 @@ def build_main_parser(*, version: str) -> argparse.ArgumentParser:
         "--model",
         type=str,
         default=None,
-        help="LLM model. Examples: gpt-4o-mini, claude-sonnet-4-20250514, groq/llama3-70b-8192. Full list: https://docs.litellm.ai/docs/providers",
+        help="Model for --ai-review. Examples: gpt-4.1, claude-sonnet-4-20250514, groq/llama3-70b-8192. Full list: https://docs.litellm.ai/docs/providers",
     )
     parser.add_argument(
         "--api-base",
         type=str,
         default=None,
-        help="Custom API URL for self-hosted models",
+        help="Custom API URL for a self-hosted model used by --ai-review or --verify-security",
     )
     parser.add_argument(
         "--version",
@@ -282,6 +282,17 @@ def build_main_parser(*, version: str) -> argparse.ArgumentParser:
         action="store_true",
         dest="danger",
         help="Scan for security issues. Off by default.",
+    )
+    parser.add_argument(
+        "--ai-review",
+        action="store_true",
+        dest="ai_review",
+        help=(
+            "Ask an AI model to double-check security and unused-code issues "
+            "(and Jev too, when TYPESAFE_API_KEY is set). Each issue gets an AI "
+            "verdict: confirmed, AI disagrees, or unsure. Nothing is hidden and "
+            "blocking never changes. Needs an LLM API key or TYPESAFE_API_KEY."
+        ),
     )
     parser.add_argument(
         "--verify-security",

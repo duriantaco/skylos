@@ -79,6 +79,7 @@ git push
 |:---|:---|:---|:---|
 | 第一次死代码扫描 | `skylos .` | 发现未使用的函数、类、导入、文件和框架入口点问题 | [死代码文档](https://docs.skylos.dev/dead-code-detection) |
 | 安全与质量审计 | `skylos . -a` | 增加危险数据流、密钥、依赖和质量检查 | [安全文档](https://docs.skylos.dev/security-analysis) |
+| AI 复核问题 | `skylos . -a --ai-review` | 每个安全和未使用代码问题都会得到 AI 判断：确认、AI 不同意或不确定。不会隐藏任何问题，门禁结果不变；使用 `skylos cloud --ai-review` 时判断会显示在 Skylos Cloud | [AI review](../ai-review.md) |
 | 可选 Python lint | `pip install "skylos[lint]" && skylos lint .` | 通过 Skylos CLI 运行 Ruff，并保留其原生配置、输出、修复和退出码 | [Python linting](../python-linting.md) |
 | PR 门控 | `skylos cicd init` | 为你的 CI 设置 PR 门控：生成带注释和失败阈值的 GitHub Actions 工作流，或为 GitLab CI、Jenkins、Bitbucket Pipelines、Azure Pipelines 和 CircleCI 生成门控配置 | [CI/CD 指南](https://docs.skylos.dev/ci-cd) |
 | 更易读的终端报告 | `skylos . --format pretty` | 按文件分组展示发现，包含严重级别标记、代码片段和可复制的 `file:line` 位置 | [CLI Output Modes](../cli-output.md) |

@@ -309,7 +309,7 @@ def _verify_security_findings(
     provider, api_key, base_url, local = resolve_llm_runtime(
         model=model,
         provider_override=getattr(args, "verify_provider", None),
-        base_url_override=None,
+        base_url_override=getattr(args, "api_base", None),
         console=None,
         allow_prompt=False,
     )
@@ -355,6 +355,90 @@ def _verify_security_findings(
             f"{counts['refuted']} likely false positive, {counts['unverified']} unverified, "
             f"{counts['not_checked']} not checked. Blocking is unchanged."
         )
+
+
+def _run_ai_review(
+    result: dict, args, console, *, project_root, machine_output: bool
+) -> None:
+    import os
+
+    from skylos.llm import ai_review
+    from skylos.llm.runtime import (
+        LLM_EXTRA_INSTALL_COMMAND,
+        llm_extra_installed,
+        resolve_llm_runtime,
+    )
+
+    def note(message: str) -> None:
+        if not machine_output:
+            console.print(message)
+
+    model = (
+        getattr(args, "model", None)
+        or getattr(args, "verify_model", None)
+        or os.getenv("SKYLOS_VERIFY_MODEL")
+        or ai_review.DEFAULT_MODEL
+    )
+    if not getattr(args, "verify_model", None):
+        args.verify_model = model
+    use_llm = False
+    provider = None
+    api_key = None
+    base_url = None
+    if llm_extra_installed():
+        provider, api_key, base_url, local = resolve_llm_runtime(
+            model=model,
+            provider_override=getattr(args, "verify_provider", None),
+            base_url_override=getattr(args, "api_base", None),
+            console=None,
+            allow_prompt=False,
+        )
+        use_llm = bool(api_key or local)
+    use_jev = ai_review.jev_available()
+    if not use_llm and not use_jev:
+        install = ""
+        if not llm_extra_installed():
+            install = f" Install the LLM extra first ({escape(LLM_EXTRA_INSTALL_COMMAND)})."
+        note(
+            "[warn]AI review skipped: no LLM API key (skylos key) and no "
+            f"{ai_review.JEV_KEY_ENV}.{install} Issues and blocking are unchanged.[/warn]"
+        )
+        return
+    if use_llm:
+        _verify_security_findings(
+            result,
+            args,
+            console,
+            project_root=project_root,
+            machine_output=machine_output,
+        )
+        ai_review.attach_security_reviews(result)
+    try:
+        ai_review.review_dead_code(
+            result,
+            project_root=str(project_root),
+            model=model,
+            api_key=api_key,
+            provider=provider,
+            base_url=base_url,
+            use_llm=use_llm,
+            use_jev=use_jev,
+        )
+    except Exception as exc:
+        note(
+            f"[warn]AI review of unused code failed: {type(exc).__name__}. Issues are unchanged.[/warn]"
+        )
+    counts = ai_review.summarize_ai_reviews(result)
+    reviewers = []
+    if use_llm:
+        reviewers.append(model)
+    if use_jev:
+        reviewers.append("Jev")
+    note(
+        f"[muted]AI review ({escape(', '.join(reviewers))}):[/muted] "
+        f"{counts['confirmed']} confirmed, {counts['disputed']} AI disagrees, "
+        f"{counts['unsure']} unsure. Blocking is unchanged."
+    )
 
 
 def _report_scope_options(args, config):
@@ -1196,7 +1280,15 @@ def _run_scan_command(
             if baseline is not None:
                 result.setdefault("analysis_summary", {})["baseline_scoped"] = True
 
-        if getattr(args, "verify_security", False):
+        if getattr(args, "ai_review", False):
+            _run_ai_review(
+                result,
+                args,
+                console,
+                project_root=project_root,
+                machine_output=machine_output,
+            )
+        elif getattr(args, "verify_security", False):
             _verify_security_findings(
                 result,
                 args,

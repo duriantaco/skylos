@@ -125,6 +125,7 @@ Mehr Befehle stehen in der [CLI Reference](https://docs.skylos.dev/cli-reference
 |:---|:---|:---|:---|
 | Erster Dead-Code-Scan | `skylos .` | Findet ungenutzte Funktionen, Klassen, Imports, Dateien und Fehler bei Framework-Entrypoints | [Dead-code docs](https://docs.skylos.dev/dead-code-detection) |
 | Security- und Quality-Audit | `skylos . -a` | Aktiviert gefährliche Datenflüsse, Secrets, Dependencies und Quality-Prüfungen | [Security docs](https://docs.skylos.dev/security-analysis) |
+| KI-Gegenprüfung der Findings | `skylos . -a --ai-review` | Jedes Security- und Dead-Code-Finding bekommt ein KI-Urteil: bestätigt, KI widerspricht oder unsicher. Nichts wird ausgeblendet, das Gate ändert sich nie; mit `skylos cloud --ai-review` erscheinen die Urteile in Skylos Cloud | [AI review](../ai-review.md) |
 | Optionales Python-Linting | `pip install "skylos[lint]" && skylos lint .` | Führt Ruff mit nativer Konfiguration, Ausgabe, Fixes und Exit-Codes über die Skylos-CLI aus | [Python linting](../python-linting.md) |
 | PR-Gate | `skylos cicd init` | Richtet das PR-Gate für dein CI ein: einen GitHub-Actions-Workflow mit Annotationen und Failure-Thresholds, oder ein Gate für GitLab CI, Jenkins, Bitbucket Pipelines, Azure Pipelines und CircleCI | [CI/CD guide](https://docs.skylos.dev/ci-cd) |
 | Lesbarer Terminalreport | `skylos . --format pretty` | Gruppiert Findings nach Datei, mit Severity, Snippets und kopierbaren `file:line`-Positionen | [CLI output modes](../cli-output.md) |
