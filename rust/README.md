@@ -7,7 +7,7 @@ provides the `skylos_fast` module. Skylos does not declare a `fast` pip extra;
 
 ## Build from source
 
-Use the Python environment in which you run Skylos. You need Python 3.10 or
+Use the Python environment in which you run Skylos. You need Python 3.11 or
 later, a [Rust toolchain with Cargo](https://www.rust-lang.org/tools/install),
 and a native compiler/linker. On macOS, install the Xcode Command Line Tools
 with `xcode-select --install` if they are missing.

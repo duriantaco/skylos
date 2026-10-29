@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "skylos"
 version = "5.1.5"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 description = "Python dead code, security and secrets scanner with a pull-request gate; narrower checks for TypeScript, Java and more."
 authors = [{name = "Aaron Oh", email = "aaronoh2015@gmail.com"}]
 readme = "README.md"
@@ -63,7 +63,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -105,13 +104,14 @@ Source = "https://github.com/duriantaco/skylos"
 "MCP server" = "https://docs.skylos.dev/mcp-server"
 
 [project.optional-dependencies]
-llm = ["litellm>=1.84.0,<1.107.0", "aiohttp>=3.14.0"]
+llm = ["litellm>=1.84.0,<1.107.0", "aiohttp>=3.14.0", "filelock>=4.2.1"]
 lint = ["ruff>=0.15.0"]
 test = ["pytest>=9.0.2", "packaging>=24.2"]
 verdict = ["cryptography>=42"]
 # Dart parsing; this grammar ships no wheels, so installing it compiles C.
 dart = ["tree-sitter-dart-orchard>=0.3.2,<0.6"]
 all = [
+    "filelock>=4.2.1",
     "pytest>=9.0.2",
     "packaging>=24.2",
     "litellm>=1.84.0,<1.107.0",

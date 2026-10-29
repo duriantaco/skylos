@@ -52,7 +52,7 @@ Manual AI Assist commands and chat use your configured provider. Optional edit-t
 
 ## Requirements
 
-1. Python 3.10+
+1. Python 3.11+
 2. Skylos engine installed (`pip install skylos`) and available on `PATH`, or set an explicit path via `skylos.path`
 3. (Optional) OpenAI or Anthropic API key for AI chat and fixes, or an OpenAI-compatible local server
 
@@ -327,6 +327,11 @@ npm run compile
 ```bash
 npm run package
 ```
+
+Packaging pins `@azure/identity` to 4.12.0 under `@vscode/vsce` to keep MSAL
+on the unaffected 3.x line ([GHSA-xcx6-jx8p-x3h5](https://github.com/advisories/GHSA-xcx6-jx8p-x3h5)).
+Its `uuid` dependency is pinned to the patched CommonJS-compatible 11.1.1 release.
+Review this override when Azure Identity supports MSAL 7.1.0 or newer.
 
 ## License
 
