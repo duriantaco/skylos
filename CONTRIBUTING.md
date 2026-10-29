@@ -25,7 +25,7 @@ the scope.
 
 ## Development Setup
 
-Skylos supports Python 3.10 and newer.
+Skylos supports Python 3.11 and newer.
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/skylos.git

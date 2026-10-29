@@ -97,7 +97,7 @@ add the separate job in [GitLab Code Quality](./gitlab-code-quality.md).
 The `Skylos` stage runs only in pull request builds (`when { changeRequest() }`)
 of a Multibranch Pipeline job. It installs Skylos in a virtualenv under
 `$WORKSPACE_TMP`, outside the checkout, so the install is not part of the diff.
-The agent needs `python3` 3.10 or newer.
+The agent needs `python3` 3.11 or newer.
 
 The Jenkins and "other CI" commands install plain `skylos`. Dart support,
 `skylos[dart]`, is built from source and needs a C compiler, which many Jenkins

@@ -307,7 +307,7 @@ def _jenkins(settings: Settings, requirement: str) -> Rendered:
         (
             "Multibranch Pipeline pull request builds scan the lines the pull",
             "request changes and fail when the Skylos gate fails.",
-            "The agent needs Python 3.10 or newer as python3. To scan Dart",
+            "The agent needs Python 3.11 or newer as python3. To scan Dart",
             "files, install 'skylos[dart]' instead; it needs a C compiler.",
         ),
     )
@@ -326,7 +326,7 @@ def _jenkins(settings: Settings, requirement: str) -> Rendered:
         where="Add this stage inside stages { } in your Jenkinsfile:",
         notes=(
             "runs in Multibranch Pipeline pull request builds",
-            "the agent needs python3 (3.10 or newer)",
+            "the agent needs python3 (3.11 or newer)",
             "Dart files: install 'skylos[dart]' instead (needs a C compiler)",
             "private repository and the fetch fails: give the step Git credentials",
         ),
@@ -484,7 +484,7 @@ def _other(settings: Settings, requirement: str) -> Rendered:
     return Rendered(
         full="",
         snippet="\n".join(commands),
-        where="Run these in a pull request build step (Python 3.10 or newer):",
+        where="Run these in a pull request build step (Python 3.11 or newer):",
         notes=(
             f"compares with origin/{branch}; change {branch} if the pull request targets another branch",
             "the scan exits non-zero when the gate fails, which fails the step",

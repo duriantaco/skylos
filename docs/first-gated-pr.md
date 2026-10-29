@@ -13,7 +13,7 @@ No API key or repository secret is needed for either check.
 ## Before you start
 
 - A GitHub repository where you can push branches. Step 5 needs admin access.
-- Python 3.10 or newer, `git`, and the [GitHub CLI](https://cli.github.com)
+- Python 3.11 or newer, `git`, and the [GitHub CLI](https://cli.github.com)
   (`gh auth status` should show you logged in). The commands below use `gh`,
   but the GitHub website works too.
 - Required checks need a public repository, or a private one on GitHub Pro,

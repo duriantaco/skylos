@@ -52,7 +52,7 @@ Manual AI Assist commands and chat use your configured provider. Optional edit-t
 
 ## Requirements
 
-1. Python 3.10+
+1. Python 3.11+
 2. Skylos engine installed (`pip install skylos`) and available on `PATH`, or set an explicit path via `skylos.path`
 3. (Optional) OpenAI or Anthropic API key for AI chat and fixes, or an OpenAI-compatible local server
 

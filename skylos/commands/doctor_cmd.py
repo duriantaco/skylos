@@ -98,7 +98,7 @@ def _doctor_json_report(py_ver: str, py_ok: bool, go_status: dict) -> dict:
             "python": {
                 "status": "ok" if py_ok else "fail",
                 "version": py_ver,
-                "minimum_version": "3.10",
+                "minimum_version": "3.11",
             },
             "skylos": {"status": "ok", "version": str(skylos.__version__)},
             "go_engine": _go_engine_json(go_status),
@@ -187,7 +187,7 @@ def _print_runtime_status(
 ) -> None:
     console.print(
         f"  {'[green]OK[/green]' if py_ok else '[red]FAIL[/red]'}  Python {py_ver}"
-        + ("" if py_ok else " [red](requires 3.10+)[/red]")
+        + ("" if py_ok else " [red](requires 3.11+)[/red]")
     )
     console.print(f"  [green]OK[/green]  Skylos {skylos.__version__}")
     _print_availability(
@@ -492,7 +492,7 @@ def _print_agent_hooks(console: Console) -> None:
 def run_doctor_command(argv: list[str] | None = None) -> int:
     args = _doctor_parser().parse_args(argv or [])
     py_ver = platform.python_version()
-    py_ok = tuple(int(x) for x in py_ver.split(".")[:2]) >= (3, 10)
+    py_ok = tuple(int(x) for x in py_ver.split(".")[:2]) >= (3, 11)
     go_status = _go_engine_status()
     if args.format == "json":
         print(json.dumps(_doctor_json_report(py_ver, py_ok, go_status), indent=2))
