@@ -1,5 +1,21 @@
 ## Changelog
 
+## [5.2.0](https://github.com/duriantaco/skylos/compare/v5.1.5...v5.2.0) (2026-10-29)
+
+
+### Features
+
+* **scan:** add --ai-review and group AI commands by job ([#1124](https://github.com/duriantaco/skylos/issues/1124)) ([6d1c982](https://github.com/duriantaco/skylos/commit/6d1c982f14d36e71eb5763583ee44a5397bd93da))
+
+
+### Bug Fixes
+
+* **cli:** always name the program skylos in usage and errors ([#1125](https://github.com/duriantaco/skylos/issues/1125)) ([5451aac](https://github.com/duriantaco/skylos/commit/5451aacf9a9142cdbcc998a44b36687825147ffb))
+* **deps:** resolve filelock and MSAL security alerts ([#1123](https://github.com/duriantaco/skylos/issues/1123)) ([0031acc](https://github.com/duriantaco/skylos/commit/0031accc4af26fd3c6150d19355d11a5af3eea4b))
+* **sca:** report aliased advisories for one package version once ([#1121](https://github.com/duriantaco/skylos/issues/1121)) ([bceab8c](https://github.com/duriantaco/skylos/commit/bceab8c7dbf48f461c6277e04350eb0dae4a689d))
+* **upload:** keep coverage when listing folds a package advisories ([#1119](https://github.com/duriantaco/skylos/issues/1119)) ([30cca09](https://github.com/duriantaco/skylos/commit/30cca09bb54d2ade965f317b1d987fea00eee345))
+* **upload:** stop sending the definitions file cloud refuses ([#1120](https://github.com/duriantaco/skylos/issues/1120)) ([805a3af](https://github.com/duriantaco/skylos/commit/805a3aff4e6f62295b954cc5809e97e5abeaf1e7))
+
 ## [5.1.5](https://github.com/duriantaco/skylos/compare/v5.1.4...v5.1.5) (2026-10-28)
 
 
