@@ -197,6 +197,7 @@ def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
         "confidence",
         "llm_verdict",
         "llm_challenged",
+        "ai_review",
         "needs_review",
         "blame_email",
         "package_name",

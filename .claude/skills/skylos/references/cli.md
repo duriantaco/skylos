@@ -182,6 +182,15 @@ control. Local rich scans with findings end with a `Next: skylos cloud` block.
   Skylos version → identical digest) and `framework_evidence` (EU AI Act /
   NIST AI RMF / ISO 42001, evidence-toward semantics only). Details:
   `docs/agent-verification.md`.
+- `skylos . -a --ai-review` (also `skylos cloud --ai-review`): AI review.
+  Security issues get the `--verify-security` votes; unused-code issues are
+  reviewed by the LLM and, with `TYPESAFE_API_KEY`, by Jev. Each reviewed
+  issue gets `metadata.ai_review.reviewers[]` (`name` llm|jev, `verdict`
+  real|false_positive|unsure, `model`, `reason`). Display only: no issue is
+  dropped and the gate and exit code never change. `--model`/`--api-base`
+  pick the model. Without a key it prints one skip line. Details:
+  `docs/ai-review.md`. Skylos uses three AI names: AI review, Coding agents,
+  AI app safety (`docs/ai-review.md`).
 - `skylos agent scan|verify|remediate|audit|watch|pre-commit|triage .`:
   hybrid static and LLM analysis, requiring `[llm]` extras and provider config.
   Without the extra, LLM commands exit 2 with `pip install "skylos[llm]"`;

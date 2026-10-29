@@ -38,11 +38,14 @@ STEPS = [
         ),
     },
     {
-        "title": "AI Agent",
+        "title": "AI review",
         "step": 3,
         "body": (
-            "[bold]Double-check dead-code findings with an LLM[/bold]\n"
-            "(it searches for uses a static scan can miss):\n"
+            "[bold]Let an AI double-check security and unused-code issues[/bold]\n"
+            "(each issue gets an AI verdict; blocking never changes):\n"
+            "  [bold cyan]skylos . -a --ai-review[/bold cyan]\n"
+            "\n"
+            "[bold]Review only unused code, with an LLM, Jev or both[/bold]:\n"
             "  [bold cyan]skylos agent verify .[/bold cyan]\n"
             "\n"
             "[bold]Auto-fix and create PR[/bold]:\n"
@@ -55,7 +58,7 @@ STEPS = [
         ),
     },
     {
-        "title": "AI Defense",
+        "title": "AI app safety",
         "step": 4,
         "body": (
             "[bold]Map LLM integrations[/bold] in your codebase:\n"

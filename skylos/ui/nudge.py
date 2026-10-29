@@ -160,10 +160,10 @@ def pick_nudge(result, args, project_root=None):
     ran_quality = getattr(args, "quality", False)
 
     if dead_code_count > 5:
-        return "[dim]Verify with LLM:[/dim] [bold]skylos agent verify .[/bold]"
+        return "[dim]Let an AI double-check them:[/dim] [bold]skylos . --ai-review[/bold]"
 
-    if danger_count > 0 or secrets_count > 0:
-        return "[dim]Check LLM defenses:[/dim] [bold]skylos defend .[/bold]"
+    if danger_count > 0:
+        return "[dim]Let an AI double-check them:[/dim] [bold]skylos . -a --ai-review[/bold]"
 
     if reliability_count > 0:
         return "[dim]Review deployment and runtime compatibility findings before release.[/dim]"

@@ -5956,7 +5956,7 @@ def main() -> None:
                     static_only += 1
                 elif source == "llm":
                     llm_only += 1
-                elif source == "static+llm":
+                elif source in ("static+llm", "static+jev"):
                     both += 1
 
             console.print("\n[brand]Results:[/brand]")
