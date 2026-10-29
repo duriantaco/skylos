@@ -328,6 +328,11 @@ npm run compile
 npm run package
 ```
 
+Packaging pins `@azure/identity` to 4.12.0 under `@vscode/vsce` to keep MSAL
+on the unaffected 3.x line ([GHSA-xcx6-jx8p-x3h5](https://github.com/advisories/GHSA-xcx6-jx8p-x3h5)).
+Its `uuid` dependency is pinned to the patched CommonJS-compatible 11.1.1 release.
+Review this override when Azure Identity supports MSAL 7.1.0 or newer.
+
 ## License
 
 Apache-2.0
