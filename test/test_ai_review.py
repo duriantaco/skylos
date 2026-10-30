@@ -185,3 +185,144 @@ def test_without_any_key_the_scan_is_untouched(monkeypatch):
     assert repr(result) == before
     verify.assert_not_called()
     assert "AI review skipped" in console.print.call_args[0][0]
+
+
+def test_a_refused_key_skips_the_review_without_inventing_verdicts(monkeypatch):
+    class Adapter:
+        retry_attempts = 3
+
+        def __init__(self, reply):
+            self.reply = reply
+
+        def complete(self, system, user):
+            return self.reply
+
+    quota = Adapter(
+        "Error: litellm.RateLimitError: RateLimitError: OpenAIException - "
+        "You have no credits remaining. Key sk-abcd1234efgh."
+    )
+    assert (
+        ai_review.provider_refusal(
+            model="gpt-4.1", api_key="k", adapter_factory=lambda: quota
+        )
+        == "You have no credits remaining. Key sk-…."
+    )
+    assert quota.retry_attempts == 1
+    for reply in ("Error: Request timed out.", '{"ok": true}'):
+        assert (
+            ai_review.provider_refusal(
+                model="gpt-4.1", api_key="k", adapter_factory=lambda: Adapter(reply)
+            )
+            is None
+        )
+    assert (
+        ai_review.reviewer_from_verification(
+            {"level": "unverified", "runs": 3, "answered": 0}
+        )
+        is None
+    )
+
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setattr("skylos.llm.runtime.llm_extra_installed", lambda: True)
+    monkeypatch.setattr(
+        "skylos.llm.runtime.resolve_llm_runtime",
+        lambda **kwargs: ("openai", "k", None, False),
+    )
+    monkeypatch.setattr(
+        ai_review, "provider_refusal", lambda **kwargs: "You have no credits remaining."
+    )
+    verify = MagicMock()
+    monkeypatch.setattr(scan_cmd, "_verify_security_findings", verify)
+    console = MagicMock()
+    result = {
+        "danger": [{"rule_id": "SKY-D211", "file": "a.py", "line": 1}],
+        "unused_functions": [{"name": "f", "file": "a.py", "line": 2}],
+    }
+    before = repr(result)
+    scan_cmd._run_ai_review(
+        result,
+        SimpleNamespace(model=None, verify_model=None, api_base=None),
+        console,
+        project_root=".",
+        machine_output=False,
+    )
+    assert repr(result) == before
+    verify.assert_not_called()
+    printed = " ".join(call.args[0] for call in console.print.call_args_list)
+    assert "refused the request: You have no credits remaining." in printed
+    assert "AI review skipped" in printed
+
+
+def test_failed_model_calls_stay_blocking_but_get_no_ai_verdict():
+    from skylos.llm import finding_verification
+
+    class Failing:
+        def _review_batch(self, *args, **kwargs):
+            raise RuntimeError("Error: provider refused")
+
+    finding = {
+        "rule_id": "SKY-D211",
+        "severity": "CRITICAL",
+        "file": "app.py",
+        "line": 2,
+    }
+    finding_verification.verify_security_findings(
+        [finding],
+        model="gpt-4.1",
+        api_key="k",
+        read_source=lambda path: "import sqlite3\ncursor.execute(query)\n",
+        verifier_factory=Failing,
+    )
+    record = finding["metadata"]["verification"]
+    assert record["level"] == "unverified"
+    assert record["answered"] == 0
+    assert ai_review.attach_security_reviews({"danger": [finding]}) == 0
+    assert "ai_review" not in finding["metadata"]
+
+
+def test_litellm_never_writes_logs_into_machine_output(capfd, monkeypatch):
+    import logging
+
+    import pytest
+
+    pytest.importorskip("litellm")
+    from skylos.llm.runtime import load_litellm
+
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "level", logging.INFO)
+    load_litellm()
+    capfd.readouterr()
+    for name in ("LiteLLM", "openai", "httpx"):
+        logging.getLogger(name).info("completion() model= gpt-4.1")
+    assert capfd.readouterr().out == ""
+
+
+def test_the_ai_review_line_closes_the_report_after_the_issue_count():
+    from skylos import cli
+
+    def reviewed(name, verdict, model=None):
+        reviewer = {"name": name, "verdict": verdict}
+        if model:
+            reviewer["model"] = model
+        return {"metadata": {"ai_review": {"reviewers": [reviewer]}}}
+
+    result = {
+        "danger": [reviewed("llm", "real", "gpt-4.1")],
+        "unused_functions": [reviewed("jev", "false_positive"), {"name": "f"}],
+    }
+    line = ai_review.closing_line(result)
+    assert line == (
+        "AI review (gpt-4.1, Jev): 1 confirmed, 1 AI disagrees, 0 unsure. "
+        "Blocking is unchanged."
+    )
+    assert ai_review.closing_line({"danger": [{"rule_id": "SKY-D211"}]}) is None
+
+    import io
+
+    from rich.console import Console
+
+    buffer = io.StringIO()
+    logger = SimpleNamespace(console=Console(file=buffer, width=200))
+    cli.print_badge(4, logger, show_badge=False, ai_review_line=line)
+    out = buffer.getvalue()
+    assert out.index("Found 4 dead-code items.") < out.index("AI review (gpt-4.1, Jev)")

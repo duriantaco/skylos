@@ -145,10 +145,42 @@ def upload_project_root(scan_path: str | Path | None) -> str:
     return root
 
 
-def _upload_env_block() -> str:
-    return """        env:
-          SKYLOS_COMMIT: ${{ github.sha }}
-          SKYLOS_BRANCH: ${{ github.ref_name }}"""
+AI_REVIEW_KEY_ENVS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "TYPESAFE_API_KEY")
+
+
+def _upload_env_block(*, ai_review: bool = False) -> str:
+    lines = [
+        "        env:",
+        "          SKYLOS_COMMIT: ${{ github.sha }}",
+        "          SKYLOS_BRANCH: ${{ github.ref_name }}",
+    ]
+    if ai_review:
+        lines += [
+            "          SKYLOS_AI_REVIEW: ${{ vars.SKYLOS_AI_REVIEW }}",
+            "          SKYLOS_AI_REVIEW_MODEL: ${{ vars.SKYLOS_AI_REVIEW_MODEL }}",
+        ]
+        lines += [
+            f"          {name}: ${{{{ vars.SKYLOS_AI_REVIEW == 'true' && secrets.{name} || '' }}}}"
+            for name in AI_REVIEW_KEY_ENVS
+        ]
+    return "\n".join(lines)
+
+
+def _ai_review_upload_run(upload_command: str) -> str:
+    return (
+        f"""|
+          ai_review=()
+          if [ "$SKYLOS_AI_REVIEW" = "true" ]; then
+            ai_review=(--ai-review)
+            case "$SKYLOS_AI_REVIEW_MODEL" in
+              "") ;;
+              [!A-Za-z0-9]* | *[!A-Za-z0-9._/:-]*) echo "Ignoring SKYLOS_AI_REVIEW_MODEL: use a model name such as gpt-4.1" ;;
+              *) ai_review+=(--model "$SKYLOS_AI_REVIEW_MODEL") ;;
+            esac
+          fi
+          {upload_command} """
+        + '"${ai_review[@]}"'
+    )
 
 
 def _header_comment(
@@ -202,6 +234,8 @@ def _header_comment(
             f"# Pushes to {' or '.join(push_branches)}: the full scan uploads to Skylos Cloud with",
             "# GitHub OIDC (no API key secret). Cloud accepts it once the Skylos GitHub",
             "# App is installed on this repository. Without Cloud: skylos cicd init --no-upload",
+            "# Optional AI review of that scan: set the repository variable SKYLOS_AI_REVIEW",
+            "# to true and add an OPENAI_API_KEY, ANTHROPIC_API_KEY or TYPESAFE_API_KEY secret.",
         ]
     if pr_upload_jobs:
         lines += [
@@ -439,8 +473,8 @@ def _build_upload_job(
           fi
 
       - name: Scan and Upload to Skylos Cloud
-        run: {upload_command}
-{_upload_env_block()}
+        run: {_ai_review_upload_run(upload_command)}
+{_upload_env_block(ai_review=True)}
 {defend_step}"""
 
 
