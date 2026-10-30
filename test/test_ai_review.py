@@ -278,3 +278,20 @@ def test_failed_model_calls_stay_blocking_but_get_no_ai_verdict():
     assert record["answered"] == 0
     assert ai_review.attach_security_reviews({"danger": [finding]}) == 0
     assert "ai_review" not in finding["metadata"]
+
+
+def test_litellm_never_writes_logs_into_machine_output(capfd, monkeypatch):
+    import logging
+
+    import pytest
+
+    pytest.importorskip("litellm")
+    from skylos.llm.runtime import load_litellm
+
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "level", logging.INFO)
+    load_litellm()
+    capfd.readouterr()
+    for name in ("LiteLLM", "openai", "httpx"):
+        logging.getLogger(name).info("completion() model= gpt-4.1")
+    assert capfd.readouterr().out == ""
