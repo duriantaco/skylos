@@ -46,6 +46,7 @@ from skylos.core.safe_cache_io import (
     save_project_json_cache,
 )
 from skylos.rules.ai_defect import pypi_wheel_modules
+from skylos.rules.ai_defect.compose_environment import compose_entrypoint_distributions
 from skylos.rules.ai_defect.environment_dependencies import (
     DirectoryEnvironment,
     directory_environment,
@@ -2218,8 +2219,13 @@ def _environment_scope_for_file(repo_root, file_path, cache, *, diff_path=False)
     if len(relative.parts) > MAX_DEPENDENCY_SCOPE_COMPONENTS:
         relative = Path()
     key = ("scope", relative)
+    compose_names = (
+        compose_entrypoint_distributions(root, root / importer, cache)
+        if importer is not None
+        else frozenset()
+    )
     if key in cache:
-        return cache[key]
+        return cache[key] | compose_names
     names = set()
     manifest_nearer = False
     dockerfiles = []
@@ -2239,7 +2245,7 @@ def _environment_scope_for_file(repo_root, file_path, cache, *, diff_path=False)
             root_dockerignore = environment.dockerignore
     names |= image_distributions(dockerfiles, root_dockerignore=root_dockerignore)
     cache[key] = frozenset(names)
-    return cache[key]
+    return cache[key] | compose_names
 
 
 def _nested_pyproject_metadata(repo_root, directory, project_names=None):

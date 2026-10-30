@@ -420,6 +420,17 @@ Finding types:
 - `mixed_script`: Cyrillic or Greek homoglyphs mixed with Latin text.
 - `risky_placement`: injection in a high-risk README, prompt field, YAML, or JSON field.
 
+Literal-pattern messages quote the matching clause. Their JSON
+`metadata.instruction_pattern` records up to 16 matching signals, their base
+severity and line offsets in the extracted, normalized text. Those offsets are
+not source line numbers; `segment_start_line` identifies the extracted segment's
+source location. `complete: false` means additional signals were omitted from
+the evidence. Each match and its context are limited to 240 characters;
+`matched_text_truncated` marks a shortened match. The strongest matched signal
+determines severity, including when multiple strings begin on the same source
+line. Application prompts still
+require review; their names or message roles do not establish safety.
+
 ### AI Application Security
 
 | ID | Severity | Name | Languages | Details |
@@ -1014,6 +1025,16 @@ environment boundary. Conditional shell execution, install-target changes and
 ambiguous build stages do not establish that an import is provided. These files
 are read as bounded text, never executed or installed; unsupported shapes
 retain the normal import check.
+
+A single unambiguous Compose configuration can also declare packages for the
+exact Python file named by a service's command. The supported shape uses a
+literal read-only repository mount, a selected official Python Dockerfile stage
+and straight-line `python -m pip install` commands, optionally with literal
+versions sourced from a copied `.env` file. This evidence applies only to that
+entry file, not its siblings or imports. Overrides, interpreter changes and
+unsupported build or runtime configuration retain the warning. This affects
+undeclared-import checks (SKY-D223); it does not clear SKY-D222 hallucinations,
+verify an installed image or change dependency vulnerability checks.
 
 A distribution that a declared one requires unconditionally also provides its
 imports (SKY-D223 only, never a hallucination): an edge recorded in the nearest
