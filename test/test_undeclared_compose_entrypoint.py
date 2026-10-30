@@ -10,7 +10,10 @@ import pytest
 import yaml
 
 from skylos.rules.ai_defect import dependency_hallucination as dep
-from skylos.rules.ai_defect.compose_environment import compose_entrypoint_distributions
+from skylos.rules.ai_defect.compose_environment import (
+    _UniqueLoader,
+    compose_entrypoint_distributions,
+)
 
 
 def _write(root, name, text):
@@ -461,3 +464,69 @@ def test_copy_glob_is_not_a_literal_source_even_when_starred_file_exists(tmp_pat
         dockerfile.replace("COPY sim/versions.env", "COPY sim/versions*.env"),
     )
     assert not compose_entrypoint_distributions(tmp_path, entry)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "duplicate",
+        "alias",
+        "merge",
+        "python_name",
+        "python_tuple",
+        "python_apply",
+        "multiple_documents",
+    ],
+)
+def test_otherwise_valid_yaml_cannot_bypass_strict_safe_loading(tmp_path, case):
+    entry, _, _ = _fixture(tmp_path)
+    text = (tmp_path / "compose.yaml").read_text()
+    if case == "duplicate":
+        text += "name: otherwise-valid\n"
+    elif case == "alias":
+        text = text.replace(
+            "name: fixture\n", "name: &project fixture\nversion: *project\n"
+        )
+    elif case == "merge":
+        text += "<<: {name: otherwise-valid}\n"
+    elif case == "multiple_documents":
+        text += "---\n" + text
+    else:
+        tags = {
+            "python_name": "!!python/name:builtins.str ''",
+            "python_tuple": "!!python/tuple [1, 2]",
+            "python_apply": "!!python/object/apply:builtins.str [fixture]",
+        }
+        text = text.replace("name: fixture\n", f"name: {tags[case]}\n")
+    _write(tmp_path, "compose.yaml", text)
+    assert not compose_entrypoint_distributions(tmp_path, entry)
+
+
+@pytest.mark.parametrize("invalid", [False, True])
+def test_yaml_loader_is_disposed_after_success_or_rejection(
+    tmp_path, monkeypatch, invalid
+):
+    entry, _, _ = _fixture(tmp_path)
+    if invalid:
+        with (tmp_path / "compose.yaml").open("a") as stream:
+            stream.write("name: duplicate\n")
+    disposed = []
+    original_dispose = _UniqueLoader.dispose
+
+    def dispose(loader):
+        disposed.append(loader)
+        original_dispose(loader)
+
+    monkeypatch.setattr(_UniqueLoader, "dispose", dispose)
+    names = compose_entrypoint_distributions(tmp_path, entry)
+    assert names == (frozenset() if invalid else {"fastapi", "uvicorn"})
+    assert len(disposed) == 1
+
+
+def test_compose_parser_passes_yaml_security_self_scan():
+    from skylos.rules.danger.danger import scan_ctx
+
+    root = Path(__file__).resolve().parents[1]
+    source = root / "skylos/rules/ai_defect/compose_environment.py"
+    findings = scan_ctx(root, [source])
+    assert not [row for row in findings if row["rule_id"] == "SKY-D206"]

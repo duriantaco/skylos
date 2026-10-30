@@ -364,7 +364,11 @@ def compose_entrypoint_distributions(root, file_path, cache=None):
             if len(files) != 1 or dotenv.exists() or dotenv.is_symlink():
                 raise _Unknown
             for path in files:
-                data = yaml.load(_text(root, path), Loader=_UniqueLoader)
+                loader = _UniqueLoader(_text(root, path))
+                try:
+                    data = loader.get_single_data()
+                finally:
+                    loader.dispose()
                 if not isinstance(data, dict) or set(data) - {"name", "version", "services", "volumes", "networks"}:
                     raise _Unknown
                 services = data.get("services")
