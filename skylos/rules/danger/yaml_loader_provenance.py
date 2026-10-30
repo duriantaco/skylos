@@ -224,3 +224,17 @@ def safe_yaml_loader_classes(tree):
     if not _only_loader_uses(tree, aliases, safe, bases):
         return frozenset()
     return frozenset(safe)
+
+
+def yaml_loader_classes(tree):
+    """``(safe, local)``: classes proven safe, and every class the module defines.
+
+    A loader argument naming a local class is only safe when proven, whatever
+    the class is called.
+    """
+    if not isinstance(tree, ast.Module):
+        return frozenset(), frozenset()
+    local = frozenset(
+        node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+    )
+    return safe_yaml_loader_classes(tree), local

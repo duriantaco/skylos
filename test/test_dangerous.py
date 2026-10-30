@@ -1020,6 +1020,13 @@ def test_yaml_safe_loader_subclass_does_not_trigger(tmp_path, code):
         "class L(SafeLoader):\n    pass\n"
         "yaml.load('a: 1', Loader=L)\n",
         "import yaml\n"
+        "class SafeLoader(yaml.UnsafeLoader):\n    pass\n"
+        "yaml.load('a: 1', Loader=SafeLoader)\n",
+        "import yaml\n"
+        "class CSafeLoader(yaml.SafeLoader):\n    pass\n"
+        "CSafeLoader.add_constructor('!x', object)\n"
+        "yaml.load('a: 1', CSafeLoader)\n",
+        "import yaml\n"
         "@decorate\n"
         "class L(yaml.SafeLoader):\n    pass\n"
         "yaml.load('a: 1', Loader=L)\n",
