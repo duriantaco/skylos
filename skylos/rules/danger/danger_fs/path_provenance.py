@@ -320,12 +320,80 @@ _SERVER_WORDS = re.compile(
     r"\b(?:gunicorn|uvicorn|hypercorn|daphne|waitress(?:-serve)?|uwsgi|granian|wsgi|asgi|handler)\b",
     re.I,
 )
+PUBLIC_IMPORTERS = (
+    "is public in an importable package; importers outside the project are not visible"
+)
+_RUNTIME_ATTRIBUTES = frozenset(
+    {"str", "type", "staticmethod", "isalnum", "join", "get", "post", "put",
+     "patch", "delete", "head", "options", "__class__",
+     "__bases__", "__call__", "__getattribute__", "__code__",
+     "__defaults__", "__kwdefaults__", "__globals__", "__dict__",
+     "route_class", "router", "dependency_overrides",
+     "__signature__", "__annotations__", "__wrapped__"}
+)  # fmt: skip
+_FRAMEWORK_SETUP_CALLS = frozenset(
+    {"include_router", "add_api_route", "middleware", "add_middleware", "mount"}
+)
+_INERT_MIDDLEWARE = frozenset(
+    {f"{package}.middleware.{module}.{name}"
+     for package in ("starlette", "fastapi")
+     for module, name in (("cors", "CORSMiddleware"), ("gzip", "GZipMiddleware"),
+                          ("trustedhost", "TrustedHostMiddleware"),
+                          ("httpsredirect", "HTTPSRedirectMiddleware"))}
+)  # fmt: skip
+_STATIC_APPS = frozenset(
+    {"starlette.staticfiles.StaticFiles", "fastapi.staticfiles.StaticFiles"}
+)
+_ROUTE_VERBS = frozenset({"get", "post", "put", "patch", "delete", "head", "options"})
+_INERT_ROUTE_OPTIONS = frozenset(
+    {"response_model", "status_code", "tags", "summary", "description", "response_description",
+     "deprecated", "include_in_schema", "name", "operation_id"}
+)  # fmt: skip
+_CLOCK_CALLS = frozenset(
+    {
+        "datetime.datetime.now",
+        "datetime.datetime.utcnow",
+        "datetime.datetime.today",
+        "datetime.date.today",
+    }
+)
+_NUMERIC_CLOCK_DIRECTIVES = frozenset("YmdHMSfjy")
+_PYDANTIC_MODELS = frozenset({"pydantic.BaseModel", "pydantic.main.BaseModel"})
+_PYDANTIC_FIELDS = frozenset({"pydantic.Field", "pydantic.fields.Field"})
+_PYDANTIC_CONFIGS = frozenset({"pydantic.ConfigDict", "pydantic.config.ConfigDict"})
+_FASTAPI_BODIES = frozenset(
+    {"fastapi.Body", "fastapi.params.Body", "fastapi.param_functions.Body"}
+)
+_OPTIONAL_TYPES = frozenset({"typing.Optional", "typing_extensions.Optional"})
+_UNION_TYPES = frozenset({"typing.Union", "typing_extensions.Union"})
+_PLAIN_ANNOTATION_NODES = (ast.Name, ast.Attribute, ast.Subscript, ast.Tuple, ast.List, ast.BinOp,
+                           ast.BitOr, ast.Constant, ast.Load)  # fmt: skip
+_IMPLICIT_MODULES = frozenset({"sitecustomize", "usercustomize"})
+_DYNAMIC_LOADERS = frozenset(
+    {"import_module", "__import__", "run_path", "run_module", "exec_module", "load_module", "load_source",
+     "load_entry_point", "iter_entry_points", "entry_points", "execfile"}
+)  # fmt: skip
+_MODEL_HOOK_ATTRIBUTES = frozenset(
+    {"__init__", "__new__", "__setattr__", "__getattr__", "__getattribute__", "__class__", "__dict__",
+     "__fields__", "__validators__", "__get_validators__", "__get_pydantic_core_schema__",
+     "__pydantic_validator__", "__pydantic_core_schema__", "__pydantic_fields__", "__pydantic_decorators__",
+     "model_config", "model_fields", "model_post_init", "model_validate", "model_construct",
+     "default", "default_factory", "annotation"}
+)  # fmt: skip
 
 
 def _extend(chain, step):
     if len(chain) >= _MAX_STEPS:
         return (*chain[: _MAX_STEPS - 1], step)
     return (*chain, step)
+
+
+def _with_hidden_callers(facts, escapes, step):
+    """``facts`` plus an unknown chain for each caller outside the project
+    that a proof could not see."""
+    for escape in dict.fromkeys(escapes):
+        facts.add(_Facts.leaf(UNKNOWN, escape).then(step))
+    return facts
 
 
 class _Facts:
@@ -841,6 +909,9 @@ class _Project:
         self._config_index = None
         self._django_views = {}
         self._framework_units = {}
+        self._imports = {}
+        self._importers = None
+        self._dynamic_loaders = {}
 
     @classmethod
     def load(cls, root, files=None, complete=True):
@@ -1093,6 +1164,105 @@ class _Project:
                 break
             directory = directory.parent
         return found
+
+    def imported_units(self, unit):
+        """Project modules that loading ``unit`` may execute: every static
+        import anywhere in it, the packages on the way, and its own package."""
+        cached = self._imports.get(id(unit))
+        if cached is not None:
+            return cached
+        requests = []
+        for node in ast.walk(unit.tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    parts = alias.name.split(".")
+                    requests.extend(
+                        (".".join(parts[:index]), 0)
+                        for index in range(1, len(parts) + 1)
+                    )
+            elif isinstance(node, ast.ImportFrom):
+                parts = []
+                if node.module:
+                    parts = node.module.split(".")
+                requests.append((node.module or "", node.level))
+                requests.extend(
+                    (".".join(parts[:index]), node.level)
+                    for index in range(1, len(parts))
+                )
+                requests.extend(
+                    (".".join([*parts, alias.name]), node.level)
+                    for alias in node.names
+                    if alias.name != "*"
+                )
+        found = []
+        for dotted, level in requests:
+            for target in self.find_module(unit, dotted, level):
+                if target is not unit and target not in found:
+                    found.append(target)
+        directory = unit.path.parent
+        while (directory / "__init__.py").is_file() and directory != directory.parent:
+            package = self.by_path.get(directory / "__init__.py")
+            if package is not None and package is not unit and package not in found:
+                found.append(package)
+            directory = directory.parent
+        self._imports[id(unit)] = found
+        return found
+
+    def importers(self, unit):
+        if self._importers is None:
+            self._importers = {}
+            for candidate in self.units:
+                for target in self.imported_units(candidate):
+                    self._importers.setdefault(id(target), []).append(candidate)
+        return self._importers.get(id(unit), [])
+
+    def process_units(self, anchors):
+        """Modules that can run in the same process as ``anchors``: whatever
+        imports them (a possible entry point, except test modules when the
+        anchors are not tests), everything those load, and implicit startup
+        modules."""
+        include_tests = any(unit.is_test for unit in anchors)
+        roots = list(dict.fromkeys(anchors))
+        seen = {id(unit) for unit in roots}
+        pending = list(roots)
+        while pending:
+            for parent in self.importers(pending.pop()):
+                if id(parent) in seen or (parent.is_test and not include_tests):
+                    continue
+                seen.add(id(parent))
+                roots.append(parent)
+                pending.append(parent)
+        loaded = {id(unit): unit for unit in roots}
+        pending = list(roots)
+        while pending:
+            for child in self.imported_units(pending.pop()):
+                if id(child) not in loaded:
+                    loaded[id(child)] = child
+                    pending.append(child)
+        for unit in self.units:
+            if unit.path.stem in _IMPLICIT_MODULES:
+                loaded[id(unit)] = unit
+        if any(self._loads_dynamically(unit) for unit in loaded.values()):
+            return list(self.units)
+        return list(loaded.values())
+
+    def _loads_dynamically(self, unit):
+        """A module that imports by computed name or runs other files may load
+        any project module, so the static import graph does not bound it."""
+        cached = self._dynamic_loaders.get(id(unit))
+        if cached is None:
+            cached = False
+            for call, _ in unit.calls:
+                name = None
+                if isinstance(call.func, ast.Name):
+                    name = call.func.id
+                elif isinstance(call.func, ast.Attribute):
+                    name = call.func.attr
+                if name in _DYNAMIC_LOADERS:
+                    cached = True
+                    break
+            self._dynamic_loaders[id(unit)] = cached
+        return cached
 
     def values(self, unit, scope, expr, depth=0):
         """Possible run-time values of ``expr``, or None when unknown."""
@@ -1719,7 +1889,7 @@ class _Project:
                 sites.escapes.append(_step(unit, fn, "a lambda is called through a value whose callers are not visible"))
                 return sites
             if definer is not None and definer.kind == "module" and not keys[0].startswith("_") and (unit.path.parent / "__init__.py").is_file() and not unit.is_test:
-                sites.escapes.append(_step(unit, fn, f"`{keys[0]}` is public in an importable package; importers outside the project are not visible"))
+                sites.escapes.append(_step(unit, fn, f"`{keys[0]}` {PUBLIC_IMPORTERS}"))
             self._collect_sites(unit, fn, owner, keys, sites)
             return sites
         self._decorator_escapes(unit, definer, fn, sites)
@@ -1732,9 +1902,7 @@ class _Project:
                     _step(unit, fn, f"class `{owner.name}` extends `{external[0]}`, which may call `{fn.name}`")
                 )
         if self._public_api(unit, fn, owner, definer):
-            sites.escapes.append(
-                _step(unit, fn, f"`{fn.name}` is public in an importable package; importers outside the project are not visible")
-            )
+            sites.escapes.append(_step(unit, fn, f"`{fn.name}` {PUBLIC_IMPORTERS}"))
         self._config_entries(unit, fn, owner, definer, sites)
         self._skipped_mentions(fn, sites)
         keys = [fn.name]
@@ -2238,6 +2406,7 @@ class _Project:
             return self._launch
         self._launch = ""
         tracer = _Tracer(self, TRAVERSAL_RULE)
+        tracer.filename_proofs = False
         for unit in self.units:
             if unit.is_test:
                 continue
@@ -2594,7 +2763,11 @@ class _Tracer:
         self.summary_memo = {}
         self.string_constructor_memo = {}
         self.string_runtime_stable = None
-        self.filename_runtime_stable = None
+        self.filename_proofs = rule == TRAVERSAL_RULE
+        self.filename_runtime_stable = {}
+        self.unit_runtime_stable = {}
+        self.plain_model_memo = {}
+        self.attribute_writes = None
 
     def _limit(self, unit, node, text):
         self.limited += 1
@@ -2793,7 +2966,7 @@ class _Tracer:
                 return _Facts.leaf(SAFE, _step(unit, node, f"module name `{node.id}`"))
             return _Facts.leaf(UNKNOWN, _step(unit, node, f"`{node.id}` is not bound in the project"))
         owner, binds = found
-        if self.rule == TRAVERSAL_RULE:
+        if self.filename_proofs:
             guard = self._guard_statement(unit, scope, node, node.id)
             if guard is not None and guard[1][0] == "passes a body-proven filename check":
                 if not any(
@@ -2801,7 +2974,14 @@ class _Tracer:
                     and guard[0].lineno <= getattr(bind.node, "lineno", 0) <= node.lineno
                     for bind in binds
                 ):
-                    return _Facts.leaf(SAFE, _step(unit, node, f"`{node.id}` passes a body-proven filename check"))
+                    step = _step(
+                        unit, node, f"`{node.id}` passes a body-proven filename check"
+                    )
+                    hidden = (
+                        self._filename_equality_guard(unit, scope, guard[0], node.id)
+                        or ()
+                    )
+                    return _with_hidden_callers(_Facts.leaf(SAFE, step), hidden, step)
         binds = self._visible_binds(unit, owner, binds, node)
         facts = _Facts()
         for bind in binds:
@@ -3151,7 +3331,11 @@ class _Tracer:
         """How ``statement`` stops the code after it unless ``name`` passed a
         check, or None."""
         if isinstance(statement, ast.If) and self._guard_terminates(unit, scope, statement.body):
-            if self.rule == TRAVERSAL_RULE and self._filename_equality_guard(unit, scope, statement, name):
+            if (
+                self.filename_proofs
+                and self._filename_equality_guard(unit, scope, statement, name)
+                is not None
+            ):
                 return "passes a body-proven filename check", SAFE
             if _test_is_negative(statement.test) and name in self._allowlisted(unit, scope, statement.test):
                 return ALLOWLIST_CHECK, SAFE
@@ -4207,10 +4391,16 @@ class _Tracer:
         info = self.project.function_info.get(id(fn))
         if info is None:
             return _Facts.leaf(UNKNOWN, _step(unit, call, f"`{_describe(call)}` is not resolved"))
-        if self.rule == TRAVERSAL_RULE and self._filename_call(
-            unit, scope, call, value, prebound, prebound_keywords, env
+        escapes = []
+        if self.filename_proofs and self._filename_call(
+            unit, scope, call, value, prebound, prebound_keywords, env, escapes
         ):
-            return _Facts.leaf(SAFE, _step(unit, call, "resolved helper produces only filename-component characters"))
+            step = _step(
+                unit,
+                call,
+                "resolved helper produces only filename-component characters",
+            )
+            return _with_hidden_callers(_Facts.leaf(SAFE, step), escapes, step)
         summary = self._summary(fn, info[0])
         facts = _Facts()
         for kind in _Facts.KINDS:
@@ -4302,6 +4492,8 @@ class _Tracer:
         )
 
     def _filename_body(self, unit, fn):
+        if not isinstance(fn, ast.FunctionDef):
+            return None
         args = fn.args
         positional = [*args.posonlyargs, *args.args]
         if len(positional) != 1 or args.vararg or args.kwarg or args.kwonlyargs:
@@ -4323,64 +4515,201 @@ class _Tracer:
             return None
         returned = body[1].value
         if isinstance(returned, ast.BoolOp) and isinstance(returned.op, ast.Or) and len(returned.values) == 2:
-            if not self._filename_literal(returned.values[1]):
+            fallback = returned.values[1]
+            if not self._filename_literal(fallback) and not self._filename_clock(
+                unit, fallback
+            ):
                 return None
             returned = returned.values[0]
         if not isinstance(returned, ast.Name) or returned.id != assignment.targets[0].id:
             return None
         return parameter
 
-    def _filename_runtime_is_stable(self):
-        if self.filename_runtime_stable is None:
-            self.filename_runtime_stable = True
-            for unit in self.project.units:
-                writes, computed = attribute_write_names(unit.tree)
-                if (
-                    computed or unit.rebinding()[0] or has_mock_api_patching(unit.tree)
-                    or writes & {"str", "type", "staticmethod", "isalnum", "join", "get", "post", "put",
-                                 "patch", "delete", "head", "options", "__class__",
-                                 "__bases__", "__call__", "__getattribute__", "__code__",
-                                 "__defaults__", "__kwdefaults__", "__globals__", "__dict__",
-                                 "route_class", "router", "dependency_overrides",
-                                 "__signature__", "__annotations__", "__wrapped__"}
-                ):
-                    self.filename_runtime_stable = False
-                    break
-                for call, scope in unit.calls:
-                    if isinstance(call.func, ast.Attribute) and call.func.attr in {
-                        "include_router", "add_api_route", "middleware", "add_middleware", "mount"
-                    }:
-                        self.filename_runtime_stable = False
-                        break
-                    if self._external_call(unit, scope, call, {"fastapi.FastAPI"}) and (
-                        call.args or any(
-                            keyword.arg not in {"title", "description", "version"}
-                            or not isinstance(keyword.value, ast.Constant)
-                            or not isinstance(keyword.value.value, str)
-                            for keyword in call.keywords
-                        )
-                    ):
-                        self.filename_runtime_stable = False
-                        break
-                if not self.filename_runtime_stable:
-                    break
-        return self.filename_runtime_stable
+    def _filename_runtime_is_stable(self, anchors):
+        """No module that can share a process with ``anchors`` may patch
+        names, builtins or the web framework the filename proof relies on."""
+        key = frozenset(id(unit) for unit in anchors)
+        stable = self.filename_runtime_stable.get(key)
+        if stable is None:
+            stable = all(
+                self._unit_runtime_is_stable(unit)
+                for unit in self.project.process_units(anchors)
+            )
+            self.filename_runtime_stable[key] = stable
+        return stable
 
-    def _native_string(self, unit, scope, node, env=None, active=frozenset()):
-        """Only proved native strings, never a helper annotation by itself."""
+    def _unit_runtime_is_stable(self, unit):
+        stable = self.unit_runtime_stable.get(id(unit))
+        if stable is not None:
+            return stable
+        writes, computed = attribute_write_names(unit.tree)
+        dynamic, rebound = unit.rebinding()
+        stable = not (
+            computed
+            or dynamic
+            or rebound
+            or has_mock_api_patching(unit.tree)
+            or writes & _RUNTIME_ATTRIBUTES
+            or self._writes_project_namespace(unit)
+        )
+        for call, scope in unit.calls:
+            if not stable:
+                break
+            if (
+                isinstance(call.func, ast.Attribute)
+                and call.func.attr in _FRAMEWORK_SETUP_CALLS
+            ):
+                stable = self._inert_framework_setup(unit, scope, call)
+            elif self._external_call(unit, scope, call, {"fastapi.FastAPI"}):
+                stable = not call.args and all(
+                    keyword.arg in {"title", "description", "version"}
+                    and isinstance(keyword.value, ast.Constant)
+                    and isinstance(keyword.value.value, str)
+                    for keyword in call.keywords
+                )
+        self.unit_runtime_stable[id(unit)] = stable
+        return stable
+
+    def _writes_project_namespace(self, unit):
+        """An attribute write, delete or ``setattr`` on a project module or
+        class (``import app; app.clean = ...``), or through ``sys.modules``."""
+        for node in ast.walk(unit.tree):
+            receiver = None
+            if isinstance(node, ast.Attribute) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
+                receiver = node.value
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in {"setattr", "delattr"}
+            ):
+                if node.args:
+                    receiver = node.args[0]
+            if receiver is None or (
+                isinstance(receiver, ast.Name) and receiver.id in {"self", "cls"}
+            ):
+                continue
+            scope = unit.scope_of(node)
+            for part in ast.walk(receiver):
+                if isinstance(part, ast.Attribute) and part.attr == "modules":
+                    owners = self.project.values(unit, scope, part)
+                    if owners is None or any(
+                        value.name == "sys.modules" for value in owners
+                    ):
+                        return True
+            owners = self.project.values(unit, scope, receiver)
+            if owners and any(value.kind in {"mod", "cls"} for value in owners):
+                return True
+        return False
+
+    def _inert_framework_setup(self, unit, scope, call):
+        """Framework CORS/compression/host middleware and static file mounts
+        never call route functions, so they cannot change route arguments."""
+        if call.func.attr == "add_middleware":
+            component = _first_argument(call, "middleware_class")
+            values = self.project.values(unit, scope, component)
+            return bool(values) and all(
+                value.kind == "ext"
+                and value.name in _INERT_MIDDLEWARE
+                and not self._external_rebound(value.name)
+                for value in values
+            )
+        if call.func.attr != "mount":
+            return False
+        application = None
+        if len(call.args) >= 2:
+            application = call.args[1]
+        for keyword in call.keywords:
+            if keyword.arg == "app":
+                application = keyword.value
+        return isinstance(application, ast.Call) and self._external_call(
+            unit, scope, application, _STATIC_APPS
+        )
+
+    def _clock_format(self, unit, scope, node):
+        """The literal format of ``datetime.now()``-style ``strftime``, or None."""
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "strftime"
+        ):
+            return None
+        if len(node.args) != 1 or node.keywords:
+            return None
+        text = node.args[0]
+        if not isinstance(text, ast.Constant) or not isinstance(text.value, str):
+            return None
+        clock = node.func.value
+        if not isinstance(clock, ast.Call) or clock.args or clock.keywords:
+            return None
+        if not self._external_call(unit, scope, clock, _CLOCK_CALLS):
+            return None
+        return text.value
+
+    def _filename_clock(self, unit, node):
+        """A clock rendered only with numeric directives and filename characters."""
+        text = self._clock_format(unit, unit.scope_of(node), node)
+        if text is None:
+            return False
+        index = 0
+        while index < len(text):
+            char = text[index]
+            if char == "%":
+                if (
+                    index + 1 >= len(text)
+                    or text[index + 1] not in _NUMERIC_CLOCK_DIRECTIVES
+                ):
+                    return False
+                index += 2
+                continue
+            if not (char.isascii() and (char.isalnum() or char in "-_")):
+                return False
+            index += 1
+        return True
+
+    def _native_string(
+        self, unit, scope, node, env=None, active=frozenset(), escapes=None
+    ):
+        """Only proved native strings, never a helper annotation by itself.
+
+        With an ``escapes`` list, callers outside the project (a public
+        function in an importable package) are recorded there for the caller
+        to keep as unknown; every caller the project shows is still proved."""
         key = (id(node), id(scope))
         if key in active or len(active) >= 24:
             return False
         active = active | {key}
         if isinstance(node, ast.Constant):
             return isinstance(node.value, str)
+        if self._clock_format(unit, scope, node) is not None:
+            return True
         if isinstance(node, ast.BoolOp):
-            return all(self._native_string(unit, scope, part, env, active) for part in node.values)
+            return all(
+                self._native_string(unit, scope, part, env, active, escapes)
+                for part in node.values
+            )
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr in {"strip", "lstrip", "rstrip", "lower", "upper", "replace"}:
-                return self._native_string(unit, scope, node.func.value, env, active) and all(
-                    isinstance(arg, ast.Constant) and isinstance(arg.value, str) for arg in node.args
-                ) and not node.keywords
+            if node.func.attr in {
+                "strip",
+                "lstrip",
+                "rstrip",
+                "lower",
+                "upper",
+                "replace",
+            }:
+                return (
+                    self._native_string(
+                        unit, scope, node.func.value, env, active, escapes
+                    )
+                    and all(
+                        isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+                        for arg in node.args
+                    )
+                    and not node.keywords
+                )
+        if isinstance(node, ast.Attribute):
+            return self._validated_str_field(unit, scope, node, env, active, escapes)
         if not isinstance(node, ast.Name):
             return False
         found = unit.lookup(scope, node.id)
@@ -4392,7 +4721,9 @@ class _Tracer:
             return False
         for bind in binds:
             if bind.kind == "assign":
-                if not self._native_string(unit, bind.scope, bind.value, env, active):
+                if not self._native_string(
+                    unit, bind.scope, bind.value, env, active, escapes
+                ):
                     return False
                 continue
             if bind.kind != "param" or owner.kind != "function":
@@ -4404,47 +4735,474 @@ class _Tracer:
             if binding is not None and binding[0] is not None:
                 site, parent_env = binding
                 values = list(self.project.bind_argument(fn, site, parameter.arg))
-                if not values or not all(self._native_string(u, s, expr, parent_env, active) for expr, u, s in values):
+                if not values or not all(
+                    self._native_string(u, s, expr, parent_env, active, escapes)
+                    for expr, u, s in values
+                ):
                     return False
                 continue
             # FastAPI validates a native str path/query parameter. Merely
             # annotating an arbitrary helper (or an unknown request model) is
             # not runtime type evidence. Reject custom decorators/dependencies.
             annotation = self.project.values(unit, owner, parameter.annotation)
-            native_annotation = annotation and all(value.kind == "ext" and value.name == "builtins.str" for value in annotation)
-            decorators = fn.decorator_list
-            framework_parameter = False
+            native_annotation = annotation and all(
+                value.kind == "ext" and value.name == "builtins.str"
+                for value in annotation
+            )
             framework_escape = None
-            if (
-                native_annotation and len(decorators) == 1
-                and not self._external_rebound("builtins.str")
-                and not self._external_rebound("fastapi.FastAPI")
+            if native_annotation:
+                framework_escape = self._framework_route_escape(unit, fn)
+            framework_parameter = framework_escape is not None
+            default = _default_of(fn, parameter.arg)
+            if default is not None and not (
+                isinstance(default, ast.Constant) and isinstance(default.value, str)
             ):
-                decorator = decorators[0]
-                if isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Attribute):
-                    applications = self.project.values(unit, unit.scope_of(decorator), decorator.func.value)
-                    framework_parameter = bool(applications) and all(
-                        value.kind == "extinst" and value.name == "fastapi.FastAPI" for value in applications
-                    ) and decorator.func.attr in {"get", "post", "put", "patch", "delete", "head", "options"} and (
-                        len(decorator.args) == 1 and isinstance(decorator.args[0], ast.Constant)
-                        and isinstance(decorator.args[0].value, str) and not decorator.keywords
-                    )
-                    if framework_parameter:
-                        framework_escape = _step(unit, decorator, f"decorated with `{_describe(decorator.func)}`; the wrapper's callers are not visible")
-                default = _default_of(fn, parameter.arg)
-                if default is not None and not (isinstance(default, ast.Constant) and isinstance(default.value, str)):
-                    framework_parameter = False
+                framework_parameter = False
             sites = self.project.call_sites(unit, fn)
-            escapes = [step for step in sites.escapes if not (framework_parameter and step == framework_escape)]
-            if escapes or sites.possible or len(sites.resolved) > _MAX_SITES:
+            route_escape = None
+            if framework_parameter:
+                route_escape = framework_escape
+            if (
+                not self._hidden_callers(sites, route_escape, escapes)
+                or len(sites.resolved) > _MAX_SITES
+            ):
                 return False
             if not framework_parameter and (sites.entries or not sites.resolved):
                 return False
             for site in sites.resolved:
                 values = list(self.project.bind_argument(fn, site, parameter.arg))
-                if not values or not all(self._native_string(u, s, expr, None, active) for expr, u, s in values):
+                if not values or not all(
+                    self._native_string(u, s, expr, None, active, escapes)
+                    for expr, u, s in values
+                ):
                     return False
         return True
+
+    @staticmethod
+    def _hidden_callers(sites, route_escape, escapes):
+        """Accept callers the project cannot show only when they are importers
+        outside the project or calls on an unresolved receiver, and only when
+        the caller keeps them as unknown evidence (as the tracer does)."""
+        hidden = [step for step in sites.escapes if step != route_escape]
+        if (
+            not all(step.endswith(PUBLIC_IMPORTERS) for step in hidden)
+            or len(sites.possible) > _MAX_SITES
+        ):
+            return False
+        hidden.extend(
+            _step(
+                site.unit,
+                site.call,
+                f"the receiver of `{_describe(site.call)}` is not resolved",
+            )
+            for site in sites.possible
+        )
+        if not hidden:
+            return True
+        if escapes is None:
+            return False
+        escapes.extend(hidden)
+        return True
+
+    def _framework_route_escape(self, unit, fn):
+        """The escape step of a plain FastAPI route decorator, or None."""
+        decorators = fn.decorator_list
+        if (
+            len(decorators) != 1
+            or self._external_rebound("builtins.str")
+            or self._external_rebound("fastapi.FastAPI")
+        ):
+            return None
+        decorator = decorators[0]
+        if not isinstance(decorator, ast.Call) or not isinstance(
+            decorator.func, ast.Attribute
+        ):
+            return None
+        if decorator.func.attr not in _ROUTE_VERBS or len(decorator.args) != 1:
+            return None
+        if not isinstance(decorator.args[0], ast.Constant) or not isinstance(
+            decorator.args[0].value, str
+        ):
+            return None
+        if any(
+            keyword.arg not in _INERT_ROUTE_OPTIONS for keyword in decorator.keywords
+        ):
+            return None
+        applications = self.project.values(
+            unit, unit.scope_of(decorator), decorator.func.value
+        )
+        if not applications or not all(
+            value.kind == "extinst" and value.name == "fastapi.FastAPI"
+            for value in applications
+        ):
+            return None
+        return _step(
+            unit,
+            decorator,
+            f"decorated with `{_describe(decorator.func)}`; the wrapper's callers are not visible",
+        )
+
+    def _validated_str_field(self, unit, scope, node, env, active, escapes):
+        """``model.field`` of a request model whose field FastAPI validates as
+        ``str`` (or None), on an instance only FastAPI or a no-argument
+        constructor created."""
+        if not isinstance(node.ctx, ast.Load) or not isinstance(node.value, ast.Name):
+            return False
+        models = self._validated_models(unit, scope, node.value, env, active, escapes)
+        return bool(models) and all(
+            self._plain_str_field(model, node.attr) for model in models
+        )
+
+    def _validated_models(self, unit, scope, expr, env, active, escapes):
+        key = ("model", id(expr), id(scope))
+        if key in active or len(active) >= 24:
+            return None
+        active = active | {key}
+        if isinstance(expr, ast.BoolOp) and isinstance(expr.op, ast.Or):
+            models = []
+            for part in expr.values:
+                found = self._validated_models(unit, scope, part, env, active, escapes)
+                if found is None:
+                    return None
+                models.extend(found)
+            return models
+        if isinstance(expr, ast.Call):
+            if expr.args or expr.keywords:
+                return None
+            values = self.project.values(unit, scope, expr.func)
+            if not values or not all(value.kind == "cls" for value in values):
+                return None
+            return [value.node for value in values]
+        if not isinstance(expr, ast.Name):
+            return None
+        found = unit.lookup(scope, expr.id)
+        if found is None:
+            return None
+        owner, binds = found
+        binds = self._visible_binds(unit, owner, binds, expr)
+        if not binds:
+            return None
+        models = []
+        for bind in binds:
+            if bind.kind == "assign":
+                inner = self._validated_models(
+                    unit, bind.scope, bind.value, env, active, escapes
+                )
+            elif bind.kind == "param" and owner.kind == "function":
+                inner = self._validated_model_parameter(
+                    unit, owner, bind.node, env, active, escapes
+                )
+            else:
+                return None
+            if inner is None:
+                return None
+            models.extend(inner)
+        return models
+
+    def _validated_model_parameter(self, unit, owner, parameter, env, active, escapes):
+        fn = owner.node
+        binding = _env_lookup(env, id(fn))
+        if binding is not None and binding[0] is not None:
+            site, parent_env = binding
+            return self._bound_models(
+                fn, [site], parameter.arg, parent_env, active, escapes
+            )
+        sites = self.project.call_sites(unit, fn)
+        if len(sites.resolved) > _MAX_SITES:
+            return None
+        route = self._framework_route_escape(unit, fn)
+        models = []
+        if route is not None:
+            models = self._request_models(unit, owner, fn, parameter)
+            if models is None:
+                return None
+        elif sites.entries or not sites.resolved:
+            return None
+        if not self._hidden_callers(sites, route, escapes):
+            return None
+        if not sites.resolved:
+            return models
+        direct = self._bound_models(
+            fn, sites.resolved, parameter.arg, None, active, escapes
+        )
+        if direct is None:
+            return None
+        return models + direct
+
+    def _bound_models(self, fn, sites, name, env, active, escapes):
+        models = []
+        for site in sites:
+            values = list(self.project.bind_argument(fn, site, name))
+            if not values:
+                return None
+            for expr, expr_unit, expr_scope in values:
+                found = self._validated_models(
+                    expr_unit, expr_scope, expr, env, active, escapes
+                )
+                if found is None:
+                    return None
+                models.extend(found)
+        return models
+
+    def _request_models(self, unit, owner, fn, parameter):
+        """Model classes FastAPI builds for a JSON body parameter."""
+        default = _default_of(fn, parameter.arg)
+        if default is not None and not (
+            isinstance(default, ast.Constant) and default.value is None
+        ):
+            if not isinstance(default, ast.Call) or not self._external_call(
+                unit, unit.scope_of(default), default, _FASTAPI_BODIES
+            ):
+                return None
+            arguments = [
+                *default.args,
+                *(keyword.value for keyword in default.keywords),
+            ]
+            if any(
+                keyword.arg in {None, "default_factory"} for keyword in default.keywords
+            ):
+                return None
+            if not all(isinstance(argument, ast.Constant) for argument in arguments):
+                return None
+            initial = _first_argument(default, "default")
+            if (
+                initial is not None
+                and initial.value is not None
+                and initial.value is not Ellipsis
+            ):
+                return None
+        members = self._annotation_members(unit, owner, parameter.annotation)
+        if not members:
+            return None
+        models = []
+        for member in members:
+            values = self.project.values(unit, owner, member)
+            if not values or not all(
+                value.kind == "cls" and self._plain_model(value.node)
+                for value in values
+            ):
+                return None
+            models.extend(value.node for value in values)
+        return models
+
+    def _annotation_members(self, unit, scope, annotation):
+        """Non-None members of ``X``, ``X | None``, ``Optional[X]`` or ``Union[...]``."""
+        if annotation is None:
+            return None
+        if isinstance(annotation, ast.Constant) and annotation.value is None:
+            return []
+        if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+            left = self._annotation_members(unit, scope, annotation.left)
+            right = self._annotation_members(unit, scope, annotation.right)
+            if left is None or right is None:
+                return None
+            return left + right
+        if isinstance(annotation, ast.Subscript):
+            values = self.project.values(unit, scope, annotation.value)
+            if not values or len(values) != 1:
+                return None
+            generic = next(iter(values))
+            if generic.kind != "ext" or self._external_rebound(generic.name):
+                return None
+            items = [annotation.slice]
+            if generic.name in _UNION_TYPES and isinstance(annotation.slice, ast.Tuple):
+                items = list(annotation.slice.elts)
+            elif (
+                generic.name not in _OPTIONAL_TYPES and generic.name not in _UNION_TYPES
+            ):
+                return None
+            members = []
+            for item in items:
+                found = self._annotation_members(unit, scope, item)
+                if found is None:
+                    return None
+                members.extend(found)
+            return members
+        if isinstance(annotation, (ast.Name, ast.Attribute)):
+            return [annotation]
+        return None
+
+    def _plain_model(self, cls_node, active=frozenset()):
+        """A pydantic model class with only declared fields and a literal
+        configuration: no methods, validators, decorators, metaclass or
+        writes to the class that could replace validated values."""
+        cached = self.plain_model_memo.get(id(cls_node))
+        if cached is not None:
+            return cached
+        if id(cls_node) in active:
+            return False
+        info = self.project.class_info.get(id(cls_node))
+        plain = (
+            info is not None
+            and not cls_node.decorator_list
+            and not cls_node.keywords
+            and len(cls_node.bases) == 1
+        )
+        if plain:
+            unit, definer, scope = info
+            values = self.project.values(unit, definer, cls_node.bases[0])
+            plain = bool(values)
+            for value in values or ():
+                if value.kind == "ext":
+                    plain = (
+                        plain
+                        and value.name in _PYDANTIC_MODELS
+                        and not self._external_rebound(value.name)
+                    )
+                elif value.kind == "cls":
+                    plain = plain and self._plain_model(
+                        value.node, active | {id(cls_node)}
+                    )
+                else:
+                    plain = False
+            plain = plain and all(
+                self._plain_model_statement(unit, scope, statement)
+                for statement in cls_node.body
+            )
+            plain = plain and not self._class_written(cls_node)
+        self.plain_model_memo[id(cls_node)] = plain
+        return plain
+
+    def _plain_model_statement(self, unit, scope, statement):
+        if isinstance(statement, ast.Pass):
+            return True
+        if isinstance(statement, ast.Expr):
+            return isinstance(statement.value, ast.Constant) and isinstance(
+                statement.value.value, str
+            )
+        if isinstance(statement, ast.AnnAssign):
+            if not isinstance(statement.target, ast.Name) or not statement.simple:
+                return False
+            if not all(
+                isinstance(part, _PLAIN_ANNOTATION_NODES)
+                for part in ast.walk(statement.annotation)
+            ):
+                return False
+            value = statement.value
+            if value is None or isinstance(
+                value, (ast.Constant, ast.Name, ast.Attribute)
+            ):
+                return True
+            if not isinstance(value, ast.Call) or not self._external_call(
+                unit, scope, value, _PYDANTIC_FIELDS
+            ):
+                return False
+            if any(
+                keyword.arg in {None, "default_factory"} for keyword in value.keywords
+            ):
+                return False
+            arguments = [*value.args, *(keyword.value for keyword in value.keywords)]
+            return all(
+                isinstance(
+                    part,
+                    (
+                        ast.Constant,
+                        ast.Name,
+                        ast.Attribute,
+                        ast.Load,
+                        ast.UnaryOp,
+                        ast.USub,
+                    ),
+                )
+                for argument in arguments
+                for part in ast.walk(argument)
+            )
+        if isinstance(statement, ast.Assign):
+            if len(statement.targets) != 1 or not isinstance(
+                statement.targets[0], ast.Name
+            ):
+                return False
+            if statement.targets[0].id != "model_config":
+                return False
+            value = statement.value
+            if (
+                not isinstance(value, ast.Call)
+                or value.args
+                or not self._external_call(unit, scope, value, _PYDANTIC_CONFIGS)
+            ):
+                return False
+            return all(
+                keyword.arg is not None and isinstance(keyword.value, ast.Constant)
+                for keyword in value.keywords
+            )
+        return False
+
+    def _project_attribute_writes(self):
+        if self.attribute_writes is None:
+            names = set()
+            for unit in self.project.units:
+                names |= attribute_write_names(unit.tree)[0]
+            self.attribute_writes = frozenset(names)
+        return self.attribute_writes
+
+    def _class_written(self, cls_node):
+        if self._project_attribute_writes() & _MODEL_HOOK_ATTRIBUTES:
+            return True
+        for stores in self.project.attr_stores.values():
+            for store_unit, target, _, _, store_scope in stores:
+                if isinstance(target.value, ast.Name) and target.value.id == "self":
+                    continue
+                owners = self.project.values(store_unit, store_scope, target.value)
+                if owners and any(
+                    value.kind == "cls" and value.node is cls_node for value in owners
+                ):
+                    return True
+        return False
+
+    def _plain_str_field(self, cls_node, attr):
+        """``attr`` is declared as ``str``/``Optional[str]`` with a literal or
+        ``Field`` default, and no code in the project assigns that attribute."""
+        if (
+            attr.startswith("_")
+            or attr.startswith("model_")
+            or not self._plain_model(cls_node)
+        ):
+            return False
+        declaration = None
+        owner_unit = None
+        owner_scope = None
+        for unit, candidate in self.project.mro(cls_node)[0]:
+            for statement in candidate.body:
+                if (
+                    isinstance(statement, ast.AnnAssign)
+                    and isinstance(statement.target, ast.Name)
+                    and statement.target.id == attr
+                ):
+                    declaration = statement
+                    owner_unit = unit
+                    owner_scope = self.project.class_info[id(candidate)][2]
+                    break
+            if declaration is not None:
+                break
+        if declaration is None or self._attribute_assigned(attr):
+            return False
+        members = self._annotation_members(
+            owner_unit, owner_scope, declaration.annotation
+        )
+        if not members or len(members) != 1:
+            return False
+        kinds = self.project.values(owner_unit, owner_scope, members[0])
+        if not kinds or not all(
+            value.kind == "ext" and value.name == "builtins.str" for value in kinds
+        ):
+            return False
+        value = declaration.value
+        if isinstance(value, ast.Call):
+            value = _first_argument(value, "default")
+        return value is None or (
+            isinstance(value, ast.Constant)
+            and (
+                value.value is None
+                or value.value is Ellipsis
+                or isinstance(value.value, str)
+            )
+        )
+
+    def _attribute_assigned(self, attr):
+        return (
+            bool(self.project.attr_stores.get(attr))
+            or attr in self._project_attribute_writes()
+        )
 
     def _native_type_guard(self, unit, owner, use, binds):
         """A dominating exact type check; isinstance permits str overrides."""
@@ -4475,33 +5233,95 @@ class _Tracer:
                 return True
         return False
 
-    def _filename_call(self, unit, scope, call, value, prebound=(), prebound_keywords=(), env=None):
-        if not self.project.complete or not self._filename_runtime_is_stable():
+    def _filename_call(
+        self,
+        unit,
+        scope,
+        call,
+        value,
+        prebound=(),
+        prebound_keywords=(),
+        env=None,
+        escapes=None,
+    ):
+        if not self.project.complete:
             return False
         fn = value.node
         info = self.project.function_info.get(id(fn))
-        if info is None:
+        if info is None or not self._filename_runtime_is_stable((unit, info[0])):
             return False
         parameter = self._filename_body(info[0], fn)
         if parameter is None:
             return False
-        site = _Site(unit, scope, call, [*prebound, *call.args], [*prebound_keywords, *call.keywords], value.bound, "call")
+        site = _Site(
+            unit,
+            scope,
+            call,
+            [*prebound, *call.args],
+            [*prebound_keywords, *call.keywords],
+            value.bound,
+            "call",
+        )
         arguments = list(self.project.bind_argument(fn, site, parameter))
-        return bool(arguments) and all(self._native_string(u, s, expr, env) for expr, u, s in arguments)
+        return bool(arguments) and all(
+            self._native_string(u, s, expr, env, frozenset(), escapes)
+            for expr, u, s in arguments
+        )
 
     def _filename_equality_guard(self, unit, scope, statement, name):
+        """Hidden-caller steps (possibly none) when ``statement`` rejects
+        ``name`` unless it equals a body-proven filename, else None."""
         test = statement.test
-        if not isinstance(test, ast.Compare) or len(test.ops) != 1 or not isinstance(test.ops[0], ast.NotEq):
-            return False
-        for candidate, original in ((test.left, test.comparators[0]), (test.comparators[0], test.left)):
-            if not isinstance(original, ast.Name) or original.id != name or not isinstance(candidate, ast.Call):
+        if (
+            not isinstance(test, ast.Compare)
+            or len(test.ops) != 1
+            or not isinstance(test.ops[0], ast.NotEq)
+        ):
+            return None
+        for candidate, original in (
+            (test.left, test.comparators[0]),
+            (test.comparators[0], test.left),
+        ):
+            if not isinstance(original, ast.Name) or original.id != name:
                 continue
-            if not self._native_string(unit, scope, original):
+            call = candidate
+            if isinstance(candidate, ast.Name) and candidate.id != name:
+                call = self._single_assigned_value(unit, scope, candidate, statement)
+            if not isinstance(call, ast.Call):
                 continue
-            values = self.project.values(unit, scope, candidate.func)
-            if values and all(value.kind == "fn" and self._filename_call(unit, scope, candidate, value) for value in values):
-                return True
-        return False
+            escapes = []
+            if not self._native_string(
+                unit, scope, original, None, frozenset(), escapes
+            ):
+                continue
+            values = self.project.values(unit, scope, call.func)
+            if values and all(
+                value.kind == "fn"
+                and self._filename_call(unit, scope, call, value, escapes=escapes)
+                for value in values
+            ):
+                return tuple(dict.fromkeys(escapes))
+        return None
+
+    @staticmethod
+    def _single_assigned_value(unit, scope, use, statement):
+        """The value of a local assigned exactly once, unconditionally,
+        before ``statement``."""
+        found = unit.lookup(scope, use.id)
+        if found is None:
+            return None
+        owner, binds = found
+        if owner.kind != "function" or len(binds) != 1:
+            return None
+        bind = binds[0]
+        if bind.kind != "assign" or not bind.top_level or bind.scope is not owner:
+            return None
+        if (
+            not isinstance(bind.node, ast.Assign)
+            or getattr(bind.node, "end_lineno", 0) >= statement.lineno
+        ):
+            return None
+        return bind.value
 
     def _summary(self, fn, fn_unit):
         """Return provenance of ``fn`` once: parameters that reach a return
