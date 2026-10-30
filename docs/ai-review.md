@@ -45,6 +45,23 @@ Only CI uploads (GitHub or GitLab OIDC, or a project key marked as a CI key)
 set an issue's AI state in Issues. An upload from a laptop login shows its
 verdicts on that scan only.
 
+### In CI
+
+Issues get their AI state only from scans of the default branch that CI
+uploads. To turn AI review on there:
+
+1. In the repository's GitHub settings, add the variable `SKYLOS_AI_REVIEW`
+   with the value `true`.
+2. Add one of `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` or `TYPESAFE_API_KEY` as a
+   repository secret.
+3. Optional: add the variable `SKYLOS_AI_REVIEW_MODEL`, for example
+   `claude-sonnet-4-20250514`. The default is `gpt-4.1`.
+
+This works in the workflow the Skylos GitHub App writes (merge its workflow
+update pull request first) and in one from `skylos cicd init` (run it again).
+Only the default-branch scan reads the key. Pull request jobs never receive it,
+and a key secret on its own does nothing without the variable.
+
 `skylos agent verify`, `agent scan`, `agent security-quick`,
 `agent security-deep` and `agent remediate` stay available when you want to
 run one AI pass on its own.

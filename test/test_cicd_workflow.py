@@ -14,6 +14,10 @@ from skylos.rules.config.cicd.github_actions import scan_github_actions
 PR_UPLOAD_JOBS = ("pr-policy", "pr-scan", "pr-publish")
 
 
+def _upload_command(step):
+    return step["run"].strip().splitlines()[-1].removesuffix(' "${ai_review[@]}"')
+
+
 def test_default_workflow_valid_yaml():
     content = generate_workflow()
     parsed = yaml.safe_load(content)
@@ -153,7 +157,7 @@ def test_workflow_llm_step_with_a_local_model_needs_no_key():
     content = generate_workflow(use_llm=True, model="ollama/llama3")
 
     assert "env" not in _llm_step(content)
-    assert "API_KEY" not in content
+    assert "API_KEY" not in str(yaml.safe_load(content)["jobs"]["skylos"])
     assert "# Pull requests (no secrets needed):" in content
 
 
@@ -207,7 +211,7 @@ def test_workflow_claude_model_adds_anthropic_key():
 
 def test_workflow_non_claude_model_no_anthropic_key():
     content = generate_workflow(use_llm=True, model="gpt-4.1")
-    assert "ANTHROPIC_API_KEY" not in content
+    assert "ANTHROPIC_API_KEY" not in str(yaml.safe_load(content)["jobs"]["skylos"])
 
 
 def test_workflow_permissions():
@@ -307,16 +311,15 @@ def test_workflow_uploads_through_oidc_by_default():
     assert sync_lines[2:] == ["  exit 1", "fi"]
     assert "continue-on-error" not in sync_step
     upload_step = steps[names.index("Scan and Upload to Skylos Cloud")]
-    assert upload_step["run"].startswith("skylos cloud ")
+    assert _upload_command(upload_step).startswith("skylos cloud ")
     args = build_main_parser(version="test").parse_args(
-        [*shlex.split(upload_step["run"])[2:], "--upload"]
+        [*shlex.split(_upload_command(upload_step))[2:], "--upload"]
     )
     assert args.upload and not args.no_upload and not args.force
     assert not args.diff and not args.diff_base
-    assert upload_step["env"] == {
-        "SKYLOS_COMMIT": "${{ github.sha }}",
-        "SKYLOS_BRANCH": "${{ github.ref_name }}",
-    }
+    assert upload_step["env"]["SKYLOS_COMMIT"] == "${{ github.sha }}"
+    assert upload_step["env"]["SKYLOS_BRANCH"] == "${{ github.ref_name }}"
+    assert "SKYLOS_TOKEN" not in upload_step["env"]
 
 
 def test_workflow_upload_with_llm():
@@ -328,7 +331,10 @@ def test_workflow_upload_with_llm():
     llm_step = next(s for s in steps if s.get("name") == "Skylos Agent Review (LLM)")
     assert llm_step["env"] == {"OPENAI_API_KEY": "${{ secrets.OPENAI_API_KEY }}"}
     upload_steps = parsed["jobs"]["cloud-upload"]["steps"]
-    assert any(s.get("run", "").startswith("skylos cloud ") for s in upload_steps)
+    upload_step = next(
+        s for s in upload_steps if s.get("name") == "Scan and Upload to Skylos Cloud"
+    )
+    assert _upload_command(upload_step).startswith("skylos cloud ")
     assert all("SKYLOS_API_KEY" not in s.get("env", {}) for s in upload_steps)
 
 
@@ -338,7 +344,7 @@ def test_dead_code_only_workflow_keeps_the_manual_upload():
     upload_step = next(
         s for s in steps if s.get("name") == "Scan and Upload to Skylos Cloud"
     )
-    assert upload_step["run"] == "skylos . --baseline --upload"
+    assert _upload_command(upload_step) == "skylos . --baseline --upload"
 
 
 def test_workflow_defend_uploads_only_from_upload_job():
@@ -1249,3 +1255,65 @@ def test_generated_merge_queue_workflow_passes_skylos_actions_audit(tmp_path):
         generate_workflow(use_risk_review=True, use_upload=False, use_done=True),
     )
     assert scan_github_actions(tmp_path) == []
+
+
+def test_cloud_upload_ai_review_needs_the_repository_opt_in(tmp_path):
+    import json
+    import os
+    import shutil
+    import subprocess
+
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash unavailable")
+    parsed = yaml.safe_load(generate_workflow(use_upload=True, use_defend=True))
+    upload_step = next(
+        s
+        for s in parsed["jobs"]["cloud-upload"]["steps"]
+        if s.get("name") == "Scan and Upload to Skylos Cloud"
+    )
+    for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "TYPESAFE_API_KEY"):
+        assert upload_step["env"][name] == (
+            f"${{{{ vars.SKYLOS_AI_REVIEW == 'true' && secrets.{name} || '' }}}}"
+        )
+    for job_name, job in parsed["jobs"].items():
+        for step in job.get("steps", []):
+            if step is upload_step or step.get("name") == "Skylos Agent Review (LLM)":
+                continue
+            assert "secrets." not in json.dumps(step), (job_name, step.get("name"))
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    record = tmp_path / "argv.json"
+    fake = bin_dir / "skylos"
+    fake.write_text(
+        "#!/bin/sh\n"
+        f"{sys.executable} -c 'import json, sys; json.dump(sys.argv[1:], open(sys.argv[1], \"w\"))' "
+        f'"{record}" "$@"\n',
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+
+    def run(**env):
+        result = subprocess.run(
+            [bash, "-e", "-c", upload_step["run"]],
+            env={"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", **env},
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=True,
+        )
+        return json.loads(record.read_text())[1:], result.stdout
+
+    base, _ = run(SKYLOS_AI_REVIEW="")
+    assert "--ai-review" not in base
+    on, _ = run(
+        SKYLOS_AI_REVIEW="true", SKYLOS_AI_REVIEW_MODEL="claude-sonnet-4-20250514"
+    )
+    assert on == base + ["--ai-review", "--model", "claude-sonnet-4-20250514"]
+    flag, out = run(
+        SKYLOS_AI_REVIEW="true",
+        SKYLOS_AI_REVIEW_MODEL="--api-base=https://evil.example",
+    )
+    assert flag == base + ["--ai-review"]
+    assert "Ignoring SKYLOS_AI_REVIEW_MODEL" in out
