@@ -403,7 +403,7 @@ def _build_upload_job(
     defend_step = ""
     if use_defend:
         defend_step = f"""
-      - name: AI Defense Check and Upload
+      - name: AI app safety check and upload
         run: skylos defend {scan_target} --fail-on critical --min-score 70 --json -o {SKYLOS_DEFENSE_RESULTS_SHELL_PATH} --upload
 {_upload_env_block()}
 """
@@ -718,7 +718,7 @@ def generate_workflow(
         defend_step = "\n".join(
             [
                 "",
-                "      - name: AI Defense Check",
+                "      - name: AI app safety check",
                 f"        run: skylos defend {scan_target} --fail-on critical --min-score 70 --json -o {SKYLOS_DEFENSE_RESULTS_SHELL_PATH}",
             ]
         )

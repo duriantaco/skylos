@@ -615,7 +615,7 @@ def run_cicd_command(
     p_ci_init.add_argument(
         "--defend",
         action="store_true",
-        help="Include AI Defense check step (skylos defend)",
+        help="Include the AI app safety check (skylos defend)",
     )
     p_ci_init.add_argument(
         "--risk-review",
@@ -708,7 +708,7 @@ def run_cicd_command(
     p_ci_rev.add_argument(
         "--defense-input",
         help=(
-            "AI defense sidecar JSON from `skylos defend` "
+            "AI app safety JSON from `skylos defend` "
             "(filename in the current directory or path under RUNNER_TEMP)"
         ),
     )

@@ -414,7 +414,7 @@ class TestReport:
         ]
         score = compute_defense_score(results)
         output = format_defense_table(results, score, 1, 10)
-        assert "Skylos AI Defense Report" in output
+        assert "Skylos AI app safety report" in output
         assert "model-pinned" in output
         assert "no-dangerous-sink" in output
 
@@ -1472,7 +1472,7 @@ def chat(msg):
         score = compute_defense_score(results)
         ops = compute_ops_score(results)
         output = format_defense_table(results, score, 1, 10, ops_score=ops)
-        assert "AI Defense Score" in output
+        assert "Defense score" in output
         assert "AI Ops Score" in output
         assert "50%" in output  # ops: 1/2 = 50%
 

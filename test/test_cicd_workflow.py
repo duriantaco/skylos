@@ -347,13 +347,13 @@ def test_workflow_defend_uploads_only_from_upload_job():
     gate_defend = next(
         s
         for s in parsed["jobs"]["skylos"]["steps"]
-        if s.get("name") == "AI Defense Check"
+        if s.get("name") == "AI app safety check"
     )
     assert "--upload" not in gate_defend["run"]
     upload_defend = next(
         s
         for s in parsed["jobs"]["cloud-upload"]["steps"]
-        if s.get("name") == "AI Defense Check and Upload"
+        if s.get("name") == "AI app safety check and upload"
     )
     assert upload_defend["run"].endswith("--upload")
     assert upload_defend["env"]["SKYLOS_COMMIT"] == "${{ github.sha }}"

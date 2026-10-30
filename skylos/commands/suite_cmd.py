@@ -126,7 +126,7 @@ def _build_suite_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="skylos suite",
         description=(
-            "Build one report from static analysis, technical debt, AI defense, "
+            "Build one report from static analysis, technical debt, AI app safety, "
             "and provenance checks for a source directory."
         ),
         epilog=(

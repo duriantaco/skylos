@@ -34,7 +34,7 @@ _PROVENANCE_FINDING_SECTIONS = (
 )
 
 _DEFENSE_NOTE = (
-    "AI defense currently scans Python and TypeScript direct SDK integrations."
+    "AI app safety currently scans Python and TypeScript direct SDK integrations."
 )
 
 
@@ -174,7 +174,7 @@ def format_suite_table(report: dict[str, Any]) -> str:
         ),
         f"  Hotspots: {len(debt.get('hotspots', []) or [])}",
         "",
-        "AI Defense",
+        "AI app safety",
         f"  Integrations: {defense_summary.get('integrations_found', 0)}",
         defense_score_line,
         f"  Failed checks: {defense_summary.get('failed', 0)}",
@@ -352,7 +352,7 @@ def run_suite(
         transient=True,
         disable=output_json,
     ) as progress:
-        progress.add_task("Scanning AI defenses...", total=None)
+        progress.add_task("Checking AI app safety...", total=None)
         files = _collect_ai_files(target_path, exclude)
         integrations, graph = detect_integrations(target_path, exclude_folders=exclude)
 

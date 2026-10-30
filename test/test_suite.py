@@ -123,7 +123,7 @@ def test_suite_json_outputs_combined_sections(tmp_path, capsys):
     assert payload["provenance"]["enabled"] is False
     assert (
         payload["defense"]["note"]
-        == "AI defense currently scans Python and TypeScript direct SDK integrations."
+        == "AI app safety currently scans Python and TypeScript direct SDK integrations."
     )
 
 
@@ -154,7 +154,7 @@ def test_suite_without_llm_integrations_reports_ai_defense_not_applicable(tmp_pa
     assert "Integrations: 0" in text
     assert "Score: not applicable (no LLM integrations found)" in text
     assert "SECURE" not in text
-    assert "100%" not in text.split("AI Defense", 1)[1]
+    assert "100%" not in text.split("AI app safety", 1)[1]
 
 
 def test_suite_json_without_llm_integrations_has_no_defense_score(tmp_path, capsys):
