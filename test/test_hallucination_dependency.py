@@ -1748,6 +1748,46 @@ def test_paired_relative_import_fallback_is_local_without_hiding_other_imports(
     ]
 
 
+@pytest.mark.parametrize("fallback", [False, True])
+def test_ambiguous_sibling_provider_adds_context_without_clearing_finding(
+    monkeypatch, tmp_path, fallback
+):
+    repo = tmp_path / "repo"
+    _write_py(
+        repo / "pyproject.toml",
+        '[project]\nname="application"\ndependencies=["opaque-provider"]\n',
+    )
+    _write_py(repo / "package" / "__init__.py", "")
+    helper = _write_py(
+        repo / "package" / "helper.py", "raise ImportError('initialization failed')\nVALUE=1\n"
+    )
+    source = _write_py(
+        repo / "package" / "script.py",
+        (
+            "try:\n    from .helper import VALUE\n"
+            "except ImportError:\n    from helper import VALUE\n"
+            if fallback
+            else "#!/usr/bin/env python3\nfrom helper import VALUE\n"
+        ),
+    )
+    entry = _write_py(repo / "entry.py", "import package.script\n")
+    _stub_dependency_registry(monkeypatch, {"helper": "missing"})
+    findings = dep.scan_python_dependency_hallucinations(repo, [entry, source, helper])
+    helper_findings = [row for row in findings if row["symbol"] == "helper"]
+    assert len(helper_findings) == 1
+    finding = helper_findings[0]
+    assert finding["rule_id"] == dep.RULE_ID_UNDECLARED
+    assert "Unresolved absolute import 'helper'" in finding["message"]
+    context = finding["metadata"]["local_provider_candidate"]
+    assert context["path"] == "package/helper.py"
+    assert context["absolute_runtime_provider_proven"] is False
+    assert "Possible hallucinated" in finding["metadata"]["dependency_provider_diagnostic"]
+    diff, _ = dep.scan_diff_added_imports(repo, [("package/script.py", 1, "helper")])
+    assert [(row["rule_id"], row["symbol"]) for row in diff] == [
+        (dep.RULE_ID_UNDECLARED, "helper")
+    ]
+
+
 def test_scan_registry_status_is_not_persisted(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

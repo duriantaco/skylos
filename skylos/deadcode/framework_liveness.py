@@ -49,6 +49,10 @@ def find_framework_entrypoint_targets(
         index, parsed, root, exclude_folders=exclude_folders
     ):
         found[(id(definition), reason)] = (definition, reason)
+    from skylos.deadcode.ros_launch_liveness import find_ros_launch_targets
+
+    for definition, reason in find_ros_launch_targets(index, parsed, root):
+        found[(id(definition), reason)] = (definition, reason)
     return list(found.values())
 
 

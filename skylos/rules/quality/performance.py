@@ -505,6 +505,8 @@ class PerformanceRule(SkylosRule):
         self._read_non_library = False
         self._read_source_reader = None
         self._read_project_providers = {}
+        self._video_capture_imported = False
+        self._video_capture_constructor_proofs = {}
 
         self._reset_scope_caches()
 
@@ -1483,6 +1485,178 @@ class PerformanceRule(SkylosRule):
                 return False
         return True
 
+    def _video_capture_call(self, value: ast.AST | None) -> bool:
+        """A real OpenCV constructor proves a frame API, not a memory bound."""
+        if not isinstance(value, ast.Call):
+            return False
+        if value not in self._video_capture_constructor_proofs:
+            self._video_capture_constructor_proofs[value] = (
+                self._prove_video_capture_call(value)
+            )
+        return self._video_capture_constructor_proofs[value]
+
+    def _prove_video_capture_call(self, value: ast.Call) -> bool:
+        if not (
+            isinstance(value, ast.Call)
+            and self._stdlib_read_module_unshadowed("cv2")
+            and self._read_stdlib_callable(value.func, "cv2", "VideoCapture")
+        ):
+            return False
+        root = value
+        while root in self._parents:
+            root = self._parents[root]
+        for child in ast.walk(root):
+            if not isinstance(
+                child, (ast.Name, ast.Attribute)
+            ) or not self._is_stdlib_callable(child, "cv2", "VideoCapture"):
+                continue
+            parent = self._parents.get(child)
+            if isinstance(parent, ast.Call) and parent.func is child:
+                continue
+            current = child
+            while current in self._parents:
+                parent = self._parents[current]
+                if isinstance(parent, ast.arg) and parent.annotation is current:
+                    break
+                if isinstance(parent, ast.AnnAssign) and parent.annotation is current:
+                    break
+                if (
+                    isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and parent.returns is current
+                ):
+                    break
+                if not isinstance(parent, (ast.Subscript, ast.Tuple, ast.BinOp)):
+                    return False
+                current = parent
+            else:
+                return False
+        return True
+
+    def _video_capture_read(self, node: ast.Call) -> bool:
+        if (
+            not self._video_capture_imported
+            or node.func.attr != "read"
+            or node.args
+            or node.keywords
+        ):
+            return False
+        receiver = node.func.value
+        if not isinstance(receiver, ast.Name) or self._read_dynamic_namespace:
+            return False
+        scope = self._enclosing_scope(node)
+        root = scope
+        while root in self._parents:
+            root = self._parents[root]
+        # A global camera is also usable inside its generator function. Check
+        # every visible binding/use, rather than trusting the receiver's name.
+        if self._read_binding(node, receiver.id) is not None:
+            origin = self._read_origin(receiver)
+            if origin is not None:
+                scope = self._enclosing_scope(origin)
+        nodes = list(ast.walk(scope))
+        aliases = {receiver.id}
+        current = receiver
+        for _ in range(12):
+            if not isinstance(current, ast.Name):
+                break
+            aliases.add(current.id)
+            current = self._read_binding(current, current.id)
+        for _ in range(12):
+            previous = set(aliases)
+            for child in nodes:
+                if isinstance(child, (ast.Assign, ast.AnnAssign)) and (
+                    isinstance(child.value, ast.Name) and child.value.id in aliases
+                ):
+                    targets = (
+                        child.targets
+                        if isinstance(child, ast.Assign)
+                        else [child.target]
+                    )
+                    if not all(isinstance(target, ast.Name) for target in targets):
+                        return False
+                    aliases.update(target.id for target in targets)
+            if aliases == previous:
+                break
+        else:
+            return False
+        if aliases & (self._global_writes | self._read_nonlocal_writes):
+            return False
+        constructors = 0
+        for child in nodes:
+            if isinstance(child, ast.arg) and child.arg in aliases:
+                return False
+            if (
+                isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and child.name in aliases
+            ):
+                return False
+            if (
+                isinstance(child, ast.alias)
+                and (child.asname or child.name.split(".")[0]) in aliases
+            ):
+                return False
+            if isinstance(child, ast.ExceptHandler) and child.name in aliases:
+                return False
+            if isinstance(child, (ast.MatchAs, ast.MatchStar)) and child.name in aliases:
+                return False
+            if isinstance(child, ast.Name) and child.id in aliases:
+                parent = self._parents.get(child)
+                if isinstance(child.ctx, (ast.Store, ast.Del)):
+                    if not isinstance(parent, (ast.Assign, ast.AnnAssign)):
+                        return False
+                    value = parent.value
+                    if self._video_capture_call(value):
+                        constructors += 1
+                    elif not (
+                        isinstance(value, ast.Constant) and value.value is None
+                        or isinstance(value, ast.Name) and value.id in aliases
+                    ):
+                        return False
+                    continue
+                if (
+                    isinstance(parent, (ast.Assign, ast.AnnAssign))
+                    and parent.value is child
+                ):
+                    continue
+                if isinstance(parent, (ast.Compare, ast.BoolOp, ast.UnaryOp)):
+                    continue
+                if isinstance(parent, (ast.If, ast.While)) and parent.test is child:
+                    continue
+                if not (
+                    isinstance(parent, ast.Attribute)
+                    and parent.value is child
+                    and isinstance(parent.ctx, ast.Load)
+                    and parent.attr
+                    in {
+                        "read", "isOpened", "release", "set", "get", "grab",
+                        "retrieve", "open", "getBackendName", "setExceptionMode",
+                        "getExceptionMode",
+                    }
+                    and isinstance(self._parents.get(parent), ast.Call)
+                    and self._parents[parent].func is parent
+                ):
+                    return False
+        # Any visible method replacement or reflection invalidates the API
+        # contract, including aliases that escaped this lexical scope.
+        for child in ast.walk(root):
+            if (
+                isinstance(child, ast.Attribute)
+                and child.attr in {"read", "VideoCapture"}
+                and isinstance(child.ctx, (ast.Store, ast.Del))
+            ):
+                return False
+            if isinstance(child, ast.Attribute) and child.attr == "__dict__":
+                return False
+            if isinstance(child, ast.Name) and child.id == "__import__":
+                return False
+            if (
+                isinstance(child, ast.Call)
+                and _qualified_name(child.func).rsplit(".", 1)[-1]
+                in {"setattr", "delattr", "__setattr__", "__delattr__"}
+            ):
+                return False
+        return constructors > 0
+
     def _read_origin(self, node: ast.AST, seen=()) -> ast.AST | None:
         if isinstance(node, ast.Name):
             if node.id in seen or len(seen) >= 12:
@@ -1890,7 +2064,7 @@ class PerformanceRule(SkylosRule):
         # member materialization visible instead of treating a name as a size.
         if not archive_member and self._read_bound(node) == "bounded":
             return None
-        if self._non_stream_read_api(node):
+        if self._non_stream_read_api(node) or self._video_capture_read(node):
             return None
         if node.func.attr == "read" and (
             self._whole_buffer_consumer(node) or self._returned_materialized_read(node)
@@ -4491,6 +4665,16 @@ class PerformanceRule(SkylosRule):
         findings = []
 
         if isinstance(node, ast.Module):
+            self._video_capture_constructor_proofs = {}
+            self._video_capture_imported = any(
+                isinstance(child, ast.Import)
+                and any(alias.name == "cv2" for alias in child.names)
+                or isinstance(child, ast.ImportFrom)
+                and not child.level
+                and child.module == "cv2"
+                and any(alias.name == "VideoCapture" for alias in child.names)
+                for child in ast.walk(node)
+            )
             self._read_project_root = context.get("project_root")
             self._read_filename = context.get("filename")
             self._read_project_providers = {}

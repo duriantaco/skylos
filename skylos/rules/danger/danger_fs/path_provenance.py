@@ -2594,6 +2594,7 @@ class _Tracer:
         self.summary_memo = {}
         self.string_constructor_memo = {}
         self.string_runtime_stable = None
+        self.filename_runtime_stable = None
 
     def _limit(self, unit, node, text):
         self.limited += 1
@@ -2792,6 +2793,15 @@ class _Tracer:
                 return _Facts.leaf(SAFE, _step(unit, node, f"module name `{node.id}`"))
             return _Facts.leaf(UNKNOWN, _step(unit, node, f"`{node.id}` is not bound in the project"))
         owner, binds = found
+        if self.rule == TRAVERSAL_RULE:
+            guard = self._guard_statement(unit, scope, node, node.id)
+            if guard is not None and guard[1][0] == "passes a body-proven filename check":
+                if not any(
+                    bind.kind != "param"
+                    and guard[0].lineno <= getattr(bind.node, "lineno", 0) <= node.lineno
+                    for bind in binds
+                ):
+                    return _Facts.leaf(SAFE, _step(unit, node, f"`{node.id}` passes a body-proven filename check"))
         binds = self._visible_binds(unit, owner, binds, node)
         facts = _Facts()
         for bind in binds:
@@ -3141,6 +3151,8 @@ class _Tracer:
         """How ``statement`` stops the code after it unless ``name`` passed a
         check, or None."""
         if isinstance(statement, ast.If) and self._guard_terminates(unit, scope, statement.body):
+            if self.rule == TRAVERSAL_RULE and self._filename_equality_guard(unit, scope, statement, name):
+                return "passes a body-proven filename check", SAFE
             if _test_is_negative(statement.test) and name in self._allowlisted(unit, scope, statement.test):
                 return ALLOWLIST_CHECK, SAFE
             status = self._contained(unit, scope, statement.test, False, name)
@@ -4195,6 +4207,10 @@ class _Tracer:
         info = self.project.function_info.get(id(fn))
         if info is None:
             return _Facts.leaf(UNKNOWN, _step(unit, call, f"`{_describe(call)}` is not resolved"))
+        if self.rule == TRAVERSAL_RULE and self._filename_call(
+            unit, scope, call, value, prebound, prebound_keywords, env
+        ):
+            return _Facts.leaf(SAFE, _step(unit, call, "resolved helper produces only filename-component characters"))
         summary = self._summary(fn, info[0])
         facts = _Facts()
         for kind in _Facts.KINDS:
@@ -4217,6 +4233,275 @@ class _Tracer:
                 passed = passed.then(item)
             facts.add(passed)
         return facts
+
+    @staticmethod
+    def _filename_literal(node):
+        # Deliberately exclude dots as well as separators/drive syntax. This
+        # proves a component, not that its directory entries cannot be links.
+        return isinstance(node, ast.Constant) and isinstance(node.value, str) and all(
+            char.isalnum() or char in "-_" for char in node.value
+        )
+
+    def _filename_filter(self, node, parameter):
+        """A literal str.join over one checked character at a time.
+
+        This is a body proof, not a helper-name allowlist. Its caller must
+        separately prove native string input: user objects/str subclasses may
+        override iteration or isalnum and cannot establish this proof.
+        """
+        if not (
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "join" and self._filename_literal(node.func.value)
+            and len(node.args) == 1 and not node.keywords
+        ):
+            return False
+        generator = node.args[0]
+        if not isinstance(generator, (ast.GeneratorExp, ast.ListComp)) or len(generator.generators) != 1:
+            return False
+        iterator = generator.generators[0]
+        if iterator.is_async or iterator.ifs or not isinstance(iterator.target, ast.Name):
+            return False
+        if not isinstance(iterator.iter, ast.Name) or iterator.iter.id != parameter:
+            return False
+        item = generator.elt
+        if not isinstance(item, ast.IfExp) or not self._filename_literal(item.orelse):
+            return False
+        char = iterator.target.id
+        if not isinstance(item.body, ast.Name) or item.body.id != char:
+            return False
+
+        def checked(test):
+            if isinstance(test, ast.BoolOp):
+                # Keep the supported language small: unknown predicates may
+                # invoke custom code, even when another conjunct looks safe.
+                return all(checked(part) for part in test.values)
+            if isinstance(test, ast.Call):
+                return (
+                    isinstance(test.func, ast.Attribute) and test.func.attr == "isalnum"
+                    and isinstance(test.func.value, ast.Name) and test.func.value.id == char
+                    and not test.args and not test.keywords
+                )
+            if isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], ast.In):
+                if not isinstance(test.left, ast.Name) or test.left.id != char:
+                    return False
+                allowed = test.comparators[0]
+                if isinstance(allowed, ast.Constant):
+                    return self._filename_literal(allowed)
+                return isinstance(allowed, (ast.Tuple, ast.List, ast.Set)) and all(
+                    self._filename_literal(part) for part in allowed.elts
+                )
+            return False
+
+        # Unknown predicates could mutate the iterator/locals or invoke custom
+        # behavior. Do not infer safety from only a familiar-looking subtest.
+        return checked(item.test) and all(
+            isinstance(part, (ast.BoolOp, ast.Call, ast.Compare, ast.Attribute, ast.Name,
+                              ast.Load, ast.Constant, ast.Tuple, ast.List, ast.Set, ast.In,
+                              ast.And, ast.Or))
+            for part in ast.walk(item.test)
+        )
+
+    def _filename_body(self, unit, fn):
+        args = fn.args
+        positional = [*args.posonlyargs, *args.args]
+        if len(positional) != 1 or args.vararg or args.kwarg or args.kwonlyargs:
+            return None
+        if any(not self._external_call(unit, unit.scope_of(decorator), ast.Call(
+            func=decorator, args=[], keywords=[]
+        ), {"builtins.staticmethod"}) for decorator in fn.decorator_list):
+            return None
+        body = list(fn.body)
+        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
+            body.pop(0)
+        if len(body) != 2 or not isinstance(body[0], ast.Assign) or not isinstance(body[1], ast.Return):
+            return None
+        assignment = body[0]
+        if len(assignment.targets) != 1 or not isinstance(assignment.targets[0], ast.Name):
+            return None
+        parameter = positional[0].arg
+        if not self._filename_filter(assignment.value, parameter):
+            return None
+        returned = body[1].value
+        if isinstance(returned, ast.BoolOp) and isinstance(returned.op, ast.Or) and len(returned.values) == 2:
+            if not self._filename_literal(returned.values[1]):
+                return None
+            returned = returned.values[0]
+        if not isinstance(returned, ast.Name) or returned.id != assignment.targets[0].id:
+            return None
+        return parameter
+
+    def _filename_runtime_is_stable(self):
+        if self.filename_runtime_stable is None:
+            self.filename_runtime_stable = True
+            for unit in self.project.units:
+                writes, computed = attribute_write_names(unit.tree)
+                if (
+                    computed or unit.rebinding()[0] or has_mock_api_patching(unit.tree)
+                    or writes & {"str", "type", "staticmethod", "isalnum", "join", "get", "post", "put",
+                                 "patch", "delete", "head", "options", "__class__",
+                                 "__bases__", "__call__", "__getattribute__", "__code__",
+                                 "__defaults__", "__kwdefaults__", "__globals__", "__dict__",
+                                 "route_class", "router", "dependency_overrides",
+                                 "__signature__", "__annotations__", "__wrapped__"}
+                ):
+                    self.filename_runtime_stable = False
+                    break
+                for call, scope in unit.calls:
+                    if isinstance(call.func, ast.Attribute) and call.func.attr in {
+                        "include_router", "add_api_route", "middleware", "add_middleware", "mount"
+                    }:
+                        self.filename_runtime_stable = False
+                        break
+                    if self._external_call(unit, scope, call, {"fastapi.FastAPI"}) and (
+                        call.args or any(
+                            keyword.arg not in {"title", "description", "version"}
+                            or not isinstance(keyword.value, ast.Constant)
+                            or not isinstance(keyword.value.value, str)
+                            for keyword in call.keywords
+                        )
+                    ):
+                        self.filename_runtime_stable = False
+                        break
+                if not self.filename_runtime_stable:
+                    break
+        return self.filename_runtime_stable
+
+    def _native_string(self, unit, scope, node, env=None, active=frozenset()):
+        """Only proved native strings, never a helper annotation by itself."""
+        key = (id(node), id(scope))
+        if key in active or len(active) >= 24:
+            return False
+        active = active | {key}
+        if isinstance(node, ast.Constant):
+            return isinstance(node.value, str)
+        if isinstance(node, ast.BoolOp):
+            return all(self._native_string(unit, scope, part, env, active) for part in node.values)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in {"strip", "lstrip", "rstrip", "lower", "upper", "replace"}:
+                return self._native_string(unit, scope, node.func.value, env, active) and all(
+                    isinstance(arg, ast.Constant) and isinstance(arg.value, str) for arg in node.args
+                ) and not node.keywords
+        if not isinstance(node, ast.Name):
+            return False
+        found = unit.lookup(scope, node.id)
+        if found is None:
+            return False
+        owner, binds = found
+        binds = self._visible_binds(unit, owner, binds, node)
+        if not binds:
+            return False
+        for bind in binds:
+            if bind.kind == "assign":
+                if not self._native_string(unit, bind.scope, bind.value, env, active):
+                    return False
+                continue
+            if bind.kind != "param" or owner.kind != "function":
+                return False
+            fn, parameter = owner.node, bind.node
+            if self._native_type_guard(unit, owner, node, binds):
+                continue
+            binding = _env_lookup(env, id(fn))
+            if binding is not None and binding[0] is not None:
+                site, parent_env = binding
+                values = list(self.project.bind_argument(fn, site, parameter.arg))
+                if not values or not all(self._native_string(u, s, expr, parent_env, active) for expr, u, s in values):
+                    return False
+                continue
+            # FastAPI validates a native str path/query parameter. Merely
+            # annotating an arbitrary helper (or an unknown request model) is
+            # not runtime type evidence. Reject custom decorators/dependencies.
+            annotation = self.project.values(unit, owner, parameter.annotation)
+            native_annotation = annotation and all(value.kind == "ext" and value.name == "builtins.str" for value in annotation)
+            decorators = fn.decorator_list
+            framework_parameter = False
+            framework_escape = None
+            if (
+                native_annotation and len(decorators) == 1
+                and not self._external_rebound("builtins.str")
+                and not self._external_rebound("fastapi.FastAPI")
+            ):
+                decorator = decorators[0]
+                if isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Attribute):
+                    applications = self.project.values(unit, unit.scope_of(decorator), decorator.func.value)
+                    framework_parameter = bool(applications) and all(
+                        value.kind == "extinst" and value.name == "fastapi.FastAPI" for value in applications
+                    ) and decorator.func.attr in {"get", "post", "put", "patch", "delete", "head", "options"} and (
+                        len(decorator.args) == 1 and isinstance(decorator.args[0], ast.Constant)
+                        and isinstance(decorator.args[0].value, str) and not decorator.keywords
+                    )
+                    if framework_parameter:
+                        framework_escape = _step(unit, decorator, f"decorated with `{_describe(decorator.func)}`; the wrapper's callers are not visible")
+                default = _default_of(fn, parameter.arg)
+                if default is not None and not (isinstance(default, ast.Constant) and isinstance(default.value, str)):
+                    framework_parameter = False
+            sites = self.project.call_sites(unit, fn)
+            escapes = [step for step in sites.escapes if not (framework_parameter and step == framework_escape)]
+            if escapes or sites.possible or len(sites.resolved) > _MAX_SITES:
+                return False
+            if not framework_parameter and (sites.entries or not sites.resolved):
+                return False
+            for site in sites.resolved:
+                values = list(self.project.bind_argument(fn, site, parameter.arg))
+                if not values or not all(self._native_string(u, s, expr, None, active) for expr, u, s in values):
+                    return False
+        return True
+
+    def _native_type_guard(self, unit, owner, use, binds):
+        """A dominating exact type check; isinstance permits str overrides."""
+        for statement in owner.node.body:
+            if getattr(statement, "lineno", 0) >= use.lineno:
+                break
+            if not isinstance(statement, ast.If) or not self._guard_terminates(unit, owner, statement.body):
+                continue
+            test = statement.test
+            if not isinstance(test, ast.Compare) or len(test.ops) != 1 or not isinstance(test.ops[0], ast.IsNot):
+                continue
+            call, expected = test.left, test.comparators[0]
+            if not isinstance(call, ast.Call) or len(call.args) != 1 or call.keywords:
+                continue
+            if not isinstance(call.args[0], ast.Name) or call.args[0].id != use.id:
+                continue
+            if not self._external_call(unit, owner, call, {"builtins.type"}):
+                continue
+            values = self.project.values(unit, owner, expected)
+            if not values or not all(value.kind == "ext" and value.name == "builtins.str" for value in values):
+                continue
+            if self._external_rebound("builtins.str"):
+                continue
+            if not any(
+                bind.kind != "param" and statement.lineno <= getattr(bind.node, "lineno", 0) <= use.lineno
+                for bind in binds
+            ):
+                return True
+        return False
+
+    def _filename_call(self, unit, scope, call, value, prebound=(), prebound_keywords=(), env=None):
+        if not self.project.complete or not self._filename_runtime_is_stable():
+            return False
+        fn = value.node
+        info = self.project.function_info.get(id(fn))
+        if info is None:
+            return False
+        parameter = self._filename_body(info[0], fn)
+        if parameter is None:
+            return False
+        site = _Site(unit, scope, call, [*prebound, *call.args], [*prebound_keywords, *call.keywords], value.bound, "call")
+        arguments = list(self.project.bind_argument(fn, site, parameter))
+        return bool(arguments) and all(self._native_string(u, s, expr, env) for expr, u, s in arguments)
+
+    def _filename_equality_guard(self, unit, scope, statement, name):
+        test = statement.test
+        if not isinstance(test, ast.Compare) or len(test.ops) != 1 or not isinstance(test.ops[0], ast.NotEq):
+            return False
+        for candidate, original in ((test.left, test.comparators[0]), (test.comparators[0], test.left)):
+            if not isinstance(original, ast.Name) or original.id != name or not isinstance(candidate, ast.Call):
+                continue
+            if not self._native_string(unit, scope, original):
+                continue
+            values = self.project.values(unit, scope, candidate.func)
+            if values and all(value.kind == "fn" and self._filename_call(unit, scope, candidate, value) for value in values):
+                return True
+        return False
 
     def _summary(self, fn, fn_unit):
         """Return provenance of ``fn`` once: parameters that reach a return

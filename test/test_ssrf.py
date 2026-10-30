@@ -722,6 +722,42 @@ def test_cli_configured_url_through_helper_is_not_ssrf(tmp_path):
     assert _ssrf_findings(out) == []
 
 
+@pytest.mark.parametrize(
+    ("factory_extra", "main_extra", "parse_arguments", "expect_ssrf"),
+    [
+        ("", "", "", False),
+        ("", "", "request.args", True),
+        ("", "    customize(parser)\n", "", True),
+        ("", "    parser.parse_args = request.parse_args\n", "", True),
+        ("if remote_enabled:\n    def build_parser():\n        return RemoteParser()\n", "", "", True),
+        ("from remote_plugin import *\n", "", "", True),
+        ("exec(plugin_source)\n", "", "", True),
+        ("configure_parser(argparse)\n", "", "", True),
+        ("configure_parser(argparse.ArgumentParser)\n", "", "", True),
+        ("configure_factory(build_parser)\n", "", "", True),
+        ("configure_namespace(globals())\n", "", "", True),
+    ],
+)
+def test_proved_argparse_factory_keeps_remote_and_rebound_cases(
+    tmp_path, factory_extra, main_extra, parse_arguments, expect_ssrf
+):
+    source = (
+        "import argparse, requests\n"
+        "def build_parser():\n"
+        "    parser = argparse.ArgumentParser()\n"
+        "    parser.add_argument('--url')\n"
+        "    return parser\n"
+        + factory_extra
+        + "def main():\n"
+        "    parser = build_parser()\n"
+        + main_extra
+        + f"    args = parser.parse_args({parse_arguments})\n"
+        "    return requests.get(args.url)\n"
+    )
+    findings = _scan_one(tmp_path, "parser_factory.py", source)
+    assert bool(_ssrf_findings(findings)) is expect_ssrf
+
+
 def test_direct_argv_url_is_operator_input(tmp_path):
     code = (
         "import sys, requests\n"
