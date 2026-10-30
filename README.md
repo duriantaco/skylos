@@ -6,8 +6,10 @@
 
 ## What Is Skylos?
 
-Skylos is an open-source (Apache-2.0) CLI and pull-request gate for Python
-projects that runs without an account. `skylos .` finds dead code: unused
+Skylos is an open-source (Apache-2.0) CLI and pull-request gate for Python,
+TypeScript/JavaScript, Java, Go, PHP, Rust and Dart projects that runs without
+an account; coverage is deepest in Python, TypeScript/JavaScript and Java.
+`skylos .` finds dead code: unused
 functions, classes, imports and empty files. Add `-a` to check security bugs,
 hard-coded secrets, vulnerable dependencies, code quality and AI-code
 mistakes. Findings include source locations and supporting analysis;

@@ -1,4 +1,4 @@
-name: "Skylos - AI Agent Code Checks, SAST & PR Gate"
+name: "Skylos - Python SAST, Dead Code Detection & PR Gate"
 description: "PR gate for AI-agent code in Python, TS/JS, Java, Go and more: fake packages, deleted tests, security flows, dead code."
 author: "Skylos (founder@skylos.dev)"
 
