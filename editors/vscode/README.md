@@ -1,6 +1,6 @@
 # Skylos for VS Code
 
-> Python dead code, security and secrets checks in VS Code, from the open-source [Skylos](https://github.com/duriantaco/skylos) CLI. TypeScript and JavaScript get narrower checks. Findings show the file, line and evidence. AI chat and fixes are optional; when you invoke them, your configured provider receives code context.
+> Security, secrets and dead-code checks in VS Code for Python, TypeScript and JavaScript, from the open-source [Skylos](https://github.com/duriantaco/skylos) CLI. Findings show the file, line and evidence. AI chat and fixes are optional; when you invoke them, your configured provider receives code context.
 
 <img src="media/vsce.gif" alt="Skylos VS Code Extension — inline dead code detection, security scanning, and CodeLens actions" width="800" />
 

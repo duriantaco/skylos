@@ -1,7 +1,7 @@
 {
   "name": "skylos-vscode-extension",
   "displayName": "Skylos",
-  "description": "Python dead code, security and secrets checks in VS Code from the open-source Skylos CLI; narrower checks for TypeScript and JavaScript. AI chat and fixes are optional; when you invoke them, your configured provider receives code context.",
+  "description": "Security, secrets and dead-code checks in VS Code for Python, TypeScript and JavaScript, from the open-source Skylos CLI. AI chat and fixes are optional; when you invoke them, your configured provider receives code context.",
   "version": "0.6.1",
   "publisher": "oha",
   "icon": "icon.png",

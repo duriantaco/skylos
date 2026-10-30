@@ -44,7 +44,7 @@ PRs, not endorsements.
 [![codecov](https://codecov.io/gh/duriantaco/skylos/branch/main/graph/badge.svg)](https://codecov.io/gh/duriantaco/skylos)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/skylos)
 [![PyPI version](https://img.shields.io/pypi/v/skylos)](https://pypi.org/project/skylos/)
-![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/oha.skylos-vscode-extension)
+[![VS Code Marketplace](https://vsmarketplacebadges.dev/version-short/oha.skylos-vscode-extension.svg)](https://marketplace.visualstudio.com/items?itemName=oha.skylos-vscode-extension)
 
 [Website](https://skylos.dev) |
 [Docs](https://docs.skylos.dev) |

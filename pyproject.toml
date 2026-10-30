@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "skylos"
 version = "5.2.0"
 requires-python = ">=3.11"
-description = "Python dead code, security and secrets scanner with a pull-request gate; narrower checks for TypeScript, Java and more."
+description = "Checks code from AI coding agents: fake packages, deleted or weakened tests, security flows, secrets and dead code. Python, TypeScript/JavaScript, Java, Go, PHP, Rust and Dart; coverage varies by language."
 authors = [{name = "Aaron Oh", email = "aaronoh2015@gmail.com"}]
 readme = "README.md"
 license = "Apache-2.0"
@@ -66,6 +66,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: Software Development :: Testing",
     "Topic :: Security",

@@ -8,7 +8,7 @@
 [![codecov](https://codecov.io/gh/duriantaco/skylos/branch/main/graph/badge.svg)](https://codecov.io/gh/duriantaco/skylos)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/skylos)
 [![PyPI version](https://img.shields.io/pypi/v/skylos)](https://pypi.org/project/skylos/)
-![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/oha.skylos-vscode-extension)
+[![VS Code Marketplace](https://vsmarketplacebadges.dev/version-short/oha.skylos-vscode-extension.svg)](https://marketplace.visualstudio.com/items?itemName=oha.skylos-vscode-extension)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/Ftn9t9tErf)
 
 [官网](https://skylos.dev) |
