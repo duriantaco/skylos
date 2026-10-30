@@ -20,7 +20,7 @@ from .danger_llm.llm_flow import scan as scan_llm
 from .danger_ml.model_deserialization import scan as scan_ml_model_load
 from .danger_logging import scan as scan_secret_logging
 from .pickle_provenance import safe_pickle_loads
-from .yaml_loader_provenance import safe_yaml_loader_classes
+from .yaml_loader_provenance import yaml_loader_classes
 from skylos.security.command_guard import (
     findings_for_command,
     is_external_url,
@@ -111,7 +111,7 @@ class _DangerousCallsChecker(ast.NodeVisitor):
 
     def _yaml_loader_classes(self):
         if self._safe_yaml_loaders is None:
-            self._safe_yaml_loaders = safe_yaml_loader_classes(self._module)
+            self._safe_yaml_loaders = yaml_loader_classes(self._module)
         return self._safe_yaml_loaders
 
     def visit_Module(self, node):

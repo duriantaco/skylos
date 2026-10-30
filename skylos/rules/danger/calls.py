@@ -2,7 +2,7 @@ import ast
 import re
 from skylos.rules.base import SkylosRule
 from .pickle_provenance import safe_pickle_loads
-from .yaml_loader_provenance import safe_yaml_loader_classes
+from .yaml_loader_provenance import yaml_loader_classes
 from skylos.security.command_guard import scan_shell_command
 from skylos.security.sensitive_data import first_sensitive_name
 from skylos.security.command_guard_types import (
@@ -520,21 +520,22 @@ def _is_safe_yaml_loader(value: ast.AST, aliases=None) -> bool:
     return name.split(".")[-1] in {"SafeLoader", "CSafeLoader"}
 
 
-def _is_safe_loader_argument(value: ast.AST, aliases, safe_classes) -> bool:
-    if isinstance(value, ast.Name) and value.id in safe_classes:
-        return True
+def _is_safe_loader_argument(value: ast.AST, aliases, loader_classes) -> bool:
+    safe_classes, local_classes = loader_classes
+    if isinstance(value, ast.Name) and value.id in local_classes:
+        return value.id in safe_classes
     return _is_safe_yaml_loader(value, aliases)
 
 
 def _yaml_load_without_safeloader(
-    node: ast.Call, aliases=None, safe_classes=frozenset()
+    node: ast.Call, aliases=None, loader_classes=(frozenset(), frozenset())
 ):
     for kw in node.keywords or []:
         if kw.arg == "Loader":
-            if _is_safe_loader_argument(kw.value, aliases, safe_classes):
+            if _is_safe_loader_argument(kw.value, aliases, loader_classes):
                 return False
     if len(node.args) >= 2 and _is_safe_loader_argument(
-        node.args[1], aliases, safe_classes
+        node.args[1], aliases, loader_classes
     ):
         return False
     return True
@@ -742,9 +743,9 @@ class DangerousCallsRule(SkylosRule):
             current = getattr(current, "parent", None)
         return 0
 
-    def _yaml_loader_classes(self) -> frozenset[str]:
+    def _yaml_loader_classes(self):
         if self._safe_yaml_loaders is None:
-            self._safe_yaml_loaders = safe_yaml_loader_classes(self._module)
+            self._safe_yaml_loaders = yaml_loader_classes(self._module)
         return self._safe_yaml_loaders
 
     def _assigned_calls_for(self, node: ast.AST) -> dict[str, str]:
