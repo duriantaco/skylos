@@ -395,6 +395,21 @@ def _run_ai_review(
         )
         use_llm = bool(api_key or local)
     use_jev = ai_review.jev_available()
+    if use_llm:
+        refusal = ai_review.provider_refusal(
+            model=model, api_key=api_key, provider=provider, base_url=base_url
+        )
+        if refusal:
+            use_llm = False
+            note(
+                f"[warn]AI review: {escape(model)} refused the request: "
+                f"{escape(refusal)}[/warn]"
+            )
+            if not use_jev:
+                note(
+                    "[warn]AI review skipped. Issues and blocking are unchanged.[/warn]"
+                )
+                return
     if not use_llm and not use_jev:
         install = ""
         if not llm_extra_installed():

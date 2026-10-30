@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 from typing import Any, Callable
 
 AI_REVIEW_KEY = "ai_review"
@@ -12,6 +13,20 @@ DEAD_CODE_MAX_REVIEWS = 50
 JEV_KEY_ENV = "TYPESAFE_API_KEY"
 JEV_MODEL = "jev-1.13.0"
 VERDICTS = ("real", "false_positive", "unsure")
+_REFUSALS = (
+    "quota",
+    "no credits",
+    "credit_balance",
+    "billing",
+    "unauthorized",
+    "invalid api key",
+    "invalid_api_key",
+    "incorrect api key",
+    "authentication",
+    "permission denied",
+    "model_not_found",
+    "does not exist",
+)
 
 _LLM_VERDICTS = {
     "TRUE_POSITIVE": "real",
@@ -52,7 +67,7 @@ def _verification_verdict(record: dict[str, Any]) -> str | None:
 
 
 def reviewer_from_verification(record: Any) -> dict[str, Any] | None:
-    if not isinstance(record, dict):
+    if not isinstance(record, dict) or record.get("answered") == 0:
         return None
     verdict = _verification_verdict(record)
     if verdict is None:
@@ -256,3 +271,35 @@ def summarize_ai_reviews(result: dict[str, Any]) -> dict[str, int]:
         if state:
             counts[state] += 1
     return counts
+
+
+def provider_refusal(
+    *,
+    model: str,
+    api_key: str | None,
+    provider: str | None = None,
+    base_url: str | None = None,
+    adapter_factory: Callable[[], Any] | None = None,
+) -> str | None:
+    if adapter_factory is None:
+        from skylos.llm.agents import AgentConfig, create_llm_adapter
+
+        def adapter_factory() -> Any:
+            config = AgentConfig(model=model, api_key=api_key, stream=False)
+            config.provider = provider
+            config.base_url = base_url
+            config.max_tokens = 8
+            return create_llm_adapter(config)
+
+    adapter = adapter_factory()
+    if hasattr(adapter, "retry_attempts"):
+        adapter.retry_attempts = 1
+    reply = str(adapter.complete("Reply with OK.", "OK") or "")
+    if not reply.startswith("Error:") or not any(
+        refusal in reply.lower() for refusal in _REFUSALS
+    ):
+        return None
+    reason = " ".join(reply.removeprefix("Error:").split())
+    reason = re.sub(r"^(?:[\w.]+(?:Error|Exception):\s*)+", "", reason)
+    reason = re.sub(r"^\w+Exception - ", "", reason)
+    return re.sub(r"sk-[A-Za-z0-9_*-]{4,}", "sk-…", reason)[:200]
