@@ -491,6 +491,7 @@ def _scan_shell_file(file, cfg, *, enable_danger_rules: bool, **_options):
         file,
         cfg,
         enable_danger_rules=enable_danger_rules,
+        _include_analysis_metadata=True,
     )
 
 

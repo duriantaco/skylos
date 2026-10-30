@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from skylos.analysis.finding_filter import partition_inline_ignored_findings
+
 from .danger import scan_danger
+from .directives import shell_inline_ignores
 
 
 SHELL_SOURCE_EXTS = (".sh", ".bash", ".zsh", ".ksh", ".bats")
@@ -38,11 +41,39 @@ def _empty_result(config: dict) -> tuple:
     )
 
 
+def _analysis_result(result: tuple, source: str) -> tuple:
+    ignore_lines, ignore_rules_by_line = shell_inline_ignores(source)
+    findings, suppressed = partition_inline_ignored_findings(
+        result[7], "security", ignore_lines, ignore_rules_by_line
+    )
+    return (
+        *result[:7],
+        findings,
+        *result[8:],
+        ignore_lines,
+        suppressed,
+        {},
+        {},
+        set(),
+        set(),
+        source.splitlines(keepends=True),
+        {},
+        {},
+        [],
+        None,
+        set(),
+        None,
+        ignore_rules_by_line,
+        False,
+    )
+
+
 def scan_shell_file(
     file_path: str,
     config: dict | None = None,
     *,
     enable_danger_rules: bool = True,
+    _include_analysis_metadata: bool = False,
 ) -> tuple:
     if config is None:
         config = {}
@@ -60,7 +91,7 @@ def scan_shell_file(
 
     findings = scan_danger(str(path), source) if enable_danger_rules else []
 
-    return (
+    result = (
         [],
         [],
         set(),
@@ -75,6 +106,9 @@ def scan_shell_file(
         config,
         [],
     )
+    if not _include_analysis_metadata:
+        return result
+    return _analysis_result(result, source)
 
 
 __all__ = ["SHELL_SOURCE_EXTS", "scan_shell_file"]

@@ -1379,3 +1379,50 @@ def test_composite_action_home_writes_are_reported(tmp_path):
     )
     # The calling job's env and earlier steps are unknown.
     assert "SKY-D338" in _rule_ids(scan_github_actions_file(action, root=tmp_path))
+
+
+def _analyzed_shell(tmp_path: Path, code: str) -> dict:
+    (tmp_path / "activate.sh").write_text(code, encoding="utf-8")
+    return json.loads(
+        analyze(str(tmp_path), enable_danger=True, conf=0, grep_verify=False)
+    )
+
+
+def _suppressed_rule_ids(result: dict) -> set[str]:
+    return {
+        finding["rule_id"]
+        for finding in result.get("suppressed", [])
+        if finding.get("reason") == "inline ignore comment"
+    }
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        '#!/usr/bin/env bash\nsource "$1"  # skylos: ignore[SKY-D212] root-run installer\n',
+        '#!/usr/bin/env bash\n# skylos: ignore-start\nsource "$1"\n# skylos: ignore-end\n',
+    ],
+)
+def test_shell_comment_directive_suppresses_the_finding(tmp_path, code):
+    result = _analyzed_shell(tmp_path, code)
+
+    assert "SKY-D212" not in _rule_ids(result.get("danger", []))
+    assert "SKY-D212" in _suppressed_rule_ids(result)
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        '#!/usr/bin/env bash\necho "# skylos: ignore[SKY-D212]"; source "$1"\n',
+        "#!/usr/bin/env bash\necho '# skylos: ignore[SKY-D212]'; source \"$1\"\n",
+        '#!/usr/bin/env bash\nsource "$1"  # skylos: ignore[SKY-D215]\n',
+        '#!/usr/bin/env bash\n# skylos: ignore[SKY-D212]\nsource "$1"\n',
+        '#!/usr/bin/env bash\nsource "$1"  # skylos: ignore[not a rule]\n',
+        '#!/usr/bin/env bash\ncat <<EOF\n# skylos: ignore-start\nEOF\nsource "$1"\n',
+        '#!/usr/bin/env bash\nmsg="first\n# skylos: ignore-start"\nsource "$1"\n',
+    ],
+)
+def test_shell_directive_lookalikes_keep_the_finding(tmp_path, code):
+    result = _analyzed_shell(tmp_path, code)
+
+    assert "SKY-D212" in _rule_ids(result["danger"])
