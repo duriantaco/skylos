@@ -407,3 +407,20 @@ def test_browser_client_module_still_exposes_its_secret():
     secret = "sk_live_" + "51HqLyjWDarjtT1zdp7dcXyZ"
     text = f"const apiToken = '{secret}';\n"
     assert "SKY-S102" in _secret_rules("src/client.js", text)
+
+
+def test_hidden_low_risk_security_finding_is_not_called_advice(tmp_path):
+    from skylos.reporting.advice_policy import prepare_advice_view
+
+    findings = _python_findings(
+        tmp_path,
+        "import subprocess\n\n"
+        "def tag():\n"
+        "    return subprocess.check_output('git tag', shell=True)\n",
+    )
+    result = apply_advice_policy({"danger": _by_rule(findings, "SKY-D209")})
+    _view, visibility = prepare_advice_view(result)
+    assert visibility.omitted_checks == 1
+    assert "advice" not in visibility.message.split("(", 1)[0]
+    assert "low-risk security" in visibility.message
+    assert "--all-advice" in visibility.message

@@ -22,6 +22,12 @@ from skylos.reporting.finding_types import get_finding_type, iter_result_finding
 from skylos.reporting.rollups import FINDING_SECTIONS
 
 
+_RISK_DEMOTION_LABELS = {
+    "low-risk-context": "low-risk security findings such as fixed shell commands",
+    "likely-public-identifier": "likely public identifiers, not secrets",
+}
+
+
 @dataclass(frozen=True)
 class AdviceVisibility:
     total_checks: int
@@ -64,13 +70,17 @@ class AdviceVisibility:
             "generated": "generated files",
             "tooling": "docs, scripts and tooling folders",
             "measurement": "measurements outside the default advice set",
+            **_RISK_DEMOTION_LABELS,
         }
         detail = ", ".join(
             f"{count} {labels.get(reason, 'other optional advice')}"
             for reason, count in self.reasons
         )
+        kind = "optional advice"
+        if any(reason in _RISK_DEMOTION_LABELS for reason, _count in self.reasons):
+            kind = "unlisted"
         return (
-            f"{self.omitted_checks} optional advice "
+            f"{self.omitted_checks} {kind} "
             f"{'finding' if self.omitted_checks == 1 else 'findings'} ({detail}) available "
             "with --all-advice."
         )
