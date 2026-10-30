@@ -4,6 +4,8 @@ import os
 import json
 import re
 
+import skylos
+
 from skylos.cicd.evidence import sanitize_bounded_payload, sanitize_untrusted_text
 from skylos.core.evidence_contract import finding_evidence_contract
 from skylos.deadcode.finding_evidence import dead_code_finding_evidence_payload
@@ -137,7 +139,7 @@ class SarifExporter:
         self,
         findings,
         tool_name="Skylos",
-        version="1.0.0",
+        version=None,
         *,
         analyzer_owned=False,
         allow_empty_location=False,
@@ -145,7 +147,7 @@ class SarifExporter:
     ):
         self.findings = findings
         self.tool_name = tool_name
-        self.version = version
+        self.version = version or skylos.__version__
         self.analyzer_owned = analyzer_owned
         # Skylos Cloud uploads send an empty URI for a finding without a
         # usable location (stored as "no location"); SARIF files for other

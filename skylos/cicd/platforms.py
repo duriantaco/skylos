@@ -42,7 +42,7 @@ class Platform:
     name: str
     markers: tuple[str, ...]
     config: str | None = None
-    anchor: str = "other-ci"
+    anchor: str = "other-cis"
 
 
 PLATFORMS = (
