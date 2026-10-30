@@ -183,7 +183,7 @@ control. Local rich scans with findings end with a `Next: skylos cloud` block.
   NIST AI RMF / ISO 42001, evidence-toward semantics only). Details:
   `docs/agent-verification.md`.
 - `skylos . -a --ai-review` (also `skylos cloud --ai-review`): AI review.
-  Security issues get the `--verify-security` votes; unused-code issues are
+  Python security issues get the `--verify-security` votes; unused-code issues are
   reviewed by the LLM and, with `TYPESAFE_API_KEY`, by Jev. Each reviewed
   issue gets `metadata.ai_review.reviewers[]` (`name` llm|jev, `verdict`
   real|false_positive|unsure, `model`, `reason`). Display only: no issue is

@@ -17,8 +17,9 @@ skylos cloud --ai-review                # same, uploaded to Skylos Cloud
 skylos . -a --ai-review --model claude-sonnet-4-20250514
 ```
 
-- High-severity security issues are checked several times by your model
-  (the same check as `--verify-security`).
+- High-severity security issues in Python files are checked several times by
+  your model (the same check as `--verify-security`). Security issues in other
+  languages are not AI-reviewed yet.
 - Unused-code issues are checked by your model, and by Jev when
   `TYPESAFE_API_KEY` is set. With only `TYPESAFE_API_KEY`, Jev reviews them
   alone.

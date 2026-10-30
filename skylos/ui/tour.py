@@ -41,7 +41,7 @@ STEPS = [
         "title": "AI review",
         "step": 3,
         "body": (
-            "[bold]Let an AI double-check security and unused-code issues[/bold]\n"
+            "[bold]Let an AI double-check unused code and Python security issues[/bold]\n"
             "(each issue gets an AI verdict; blocking never changes):\n"
             "  [bold cyan]skylos . -a --ai-review[/bold cyan]\n"
             "\n"
