@@ -20,6 +20,7 @@ from .danger_llm.llm_flow import scan as scan_llm
 from .danger_ml.model_deserialization import scan as scan_ml_model_load
 from .danger_logging import scan as scan_secret_logging
 from .pickle_provenance import safe_pickle_loads
+from .yaml_loader_provenance import safe_yaml_loader_classes
 from skylos.security.command_guard import (
     findings_for_command,
     is_external_url,
@@ -64,6 +65,8 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         self.assigned_calls_stack = [{}]
         self._parents_annotated = False
         self._safe_pickle_loads = set()
+        self._module = None
+        self._safe_yaml_loaders = None
 
     def _annotate_parents(self, node: ast.AST) -> None:
         for child in ast.iter_child_nodes(node):
@@ -106,8 +109,15 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         self.assigned_calls_stack.pop()
         self._symbol_stack.pop()
 
+    def _yaml_loader_classes(self):
+        if self._safe_yaml_loaders is None:
+            self._safe_yaml_loaders = safe_yaml_loader_classes(self._module)
+        return self._safe_yaml_loaders
+
     def visit_Module(self, node):
         self._safe_pickle_loads = safe_pickle_loads(node, self.file_path)
+        self._module = node
+        self._safe_yaml_loaders = None
         if not self._parents_annotated:
             self._annotate_parents(node)
             self._parents_annotated = True
@@ -158,7 +168,7 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                     continue
 
                 if rule_key == "yaml.load" and not _yaml_load_without_safeloader(
-                    node, self.aliases
+                    node, self.aliases, self._yaml_loader_classes()
                 ):
                     continue
 
