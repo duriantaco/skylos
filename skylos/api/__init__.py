@@ -3207,7 +3207,7 @@ def _print_defense_upload_success(defense_data: dict, response) -> None:
     print(" done!")
     print("✓ Defense scan uploaded")
     print(
-        f"  Defense Score: {score.get('score_pct', 0)}% ({score.get('risk_rating', 'UNKNOWN')})"
+        f"  Defense score: {score.get('score_pct', 0)}% ({score.get('risk_rating', 'UNKNOWN')})"
     )
     if scan_id:
         print(f"\n🔗 View: {BASE_URL}/dashboard/scans/{scan_id}")

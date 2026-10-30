@@ -88,7 +88,7 @@ git push
 | 只审查变更行 | `skylos . -a --diff origin/main` | 聚焦当前 PR，避免被历史债务淹没 | [质量门控](https://docs.skylos.dev/quality-gate) |
 | 运行时辅助死代码检测 | `skylos . --trace` | 用测试运行轨迹降低动态代码误报 | [Smart Tracing](https://docs.skylos.dev/smart-tracing) |
 | AI 辅助审查 | `skylos agent scan .` | 静态分析加可选 LLM 审查和修复建议 | [AI Features](https://docs.skylos.dev/ai-features) |
-| LLM 应用防护 | `skylos defend .` | 查找缺失的 AI 应用防护措施并映射到 OWASP LLM 风险 | [AI Defense](https://docs.skylos.dev/ai-defense) |
+| LLM 应用防护 | `skylos defend .` | 查找缺失的 AI 应用防护措施并映射到 OWASP LLM 风险 | [AI app safety](https://docs.skylos.dev/ai-defense) |
 | 技术债务梳理 | `skylos debt .` | 排序热点和债务趋势 | [Technical Debt](https://docs.skylos.dev/technical-debt) |
 
 ## Skylos 能发现什么？
@@ -216,7 +216,7 @@ Skylos 辅助的死代码清理 PR 已被
 | 安全扫描和污点分析 | [Security Analysis](https://docs.skylos.dev/security-analysis) |
 | Rule ID 前缀和产品术语 | [Rule Dictionary](../../dictionary.md) |
 | Agent 扫描、验证、修复和模型设置 | [AI Features](https://docs.skylos.dev/ai-features) |
-| AI 防御和 LLM guardrails | [AI Defense](https://docs.skylos.dev/ai-defense) |
+| AI 防御和 LLM guardrails | [AI app safety](https://docs.skylos.dev/ai-defense) |
 | 一次改动影响了什么、先读什么（`skylos done map`） | [Change map](../change-map.md) |
 | MCP server 设置 | [MCP Server](https://docs.skylos.dev/mcp-server) |
 | 基线、过滤、抑制和白名单 | [Configuration](https://docs.skylos.dev/configuration) |

@@ -136,7 +136,7 @@ Mehr Befehle stehen in der [CLI Reference](https://docs.skylos.dev/cli-reference
 | Laufzeitgestützter Dead-Code-Check | `skylos . --trace` | Nutzt Runtime-Traces, um False Positives bei dynamischem Code zu reduzieren | [Smart tracing](https://docs.skylos.dev/smart-tracing) |
 | Lokales Rule-Pack | `skylos rules init` | Erstellt `.skylos/rules/local.yml`, projektspezifische YAML-Prüfungen, die Scans mit `--quality` und `-a` anwenden | [Custom rules](https://docs.skylos.dev/custom-rules) |
 | AI-gestütztes Review | `skylos agent scan .` | Statische Analyse plus optionales LLM-Review und Fix-Vorschläge | [AI features](https://docs.skylos.dev/ai-features) |
-| LLM-App-Defense | `skylos defend .` | Findet fehlende AI-App-Guardrails, gemappt auf OWASP-LLM-Risiken | [AI defense](https://docs.skylos.dev/ai-defense) |
+| LLM-App-Defense | `skylos defend .` | Findet fehlende AI-App-Guardrails, gemappt auf OWASP-LLM-Risiken | [AI app safety](https://docs.skylos.dev/ai-defense) |
 | Technical-Debt-Triage | `skylos debt .` | Sortiert Hotspots und Debt-Trends | [Technical debt](https://docs.skylos.dev/technical-debt) |
 
 ## Was Skylos findet
@@ -170,7 +170,7 @@ und PR-Checker, der mehrere häufige Review-Prüfungen hinter einer CLI bündelt
 - **Projektspezifische Regeln:** lokale YAML-Regeln sowie erweiterbare Prompt-,
   Credential-, Sensitive-File- und Timeout-Wörterbücher über Config.
 - **Eine CLI-Oberfläche:** Dead Code, Security, Secrets, Dependencies, Quality,
-  Technical Debt, Agent Review und AI Defense nutzen dieselbe CLI.
+  Technical Debt, Agent Review und AI app safety nutzen dieselbe CLI.
 
 ## Installation
 
@@ -337,7 +337,7 @@ gehen über `--scan-path`.
 | Security-Scanning und Taint-Analyse | [Security Analysis](https://docs.skylos.dev/security-analysis) |
 | Rule-ID-Präfixe und Produktterminologie | [Rule Dictionary](../../dictionary.md) |
 | Agent Scan, Verifikation, Remediation und Modellsetup | [AI Features](https://docs.skylos.dev/ai-features) |
-| AI-Defense-Prüfungen und LLM-Guardrails | [AI Defense](https://docs.skylos.dev/ai-defense) |
+| AI-app-safety-Prüfungen und LLM-Guardrails | [AI app safety](https://docs.skylos.dev/ai-defense) |
 | Was eine Änderung berührt und was zuerst zu lesen ist (`skylos done map`) | [Change map](../change-map.md) |
 | MCP-Server-Setup | [MCP Server](https://docs.skylos.dev/mcp-server) |
 | Real-world gemergte Cleanup-PRs | [Real-World Results](../../REAL_WORLD_RESULTS.md) |
