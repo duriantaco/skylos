@@ -254,6 +254,30 @@ def jev_available() -> bool:
     return bool(os.environ.get(JEV_KEY_ENV, "").strip())
 
 
+def closing_line(result: dict[str, Any]) -> str | None:
+    counts = summarize_ai_reviews(result)
+    if not sum(counts.values()):
+        return None
+    names: list[str] = []
+    findings = [f for f in result.get("danger") or [] if isinstance(f, dict)]
+    findings.extend(_dead_code_findings(result))
+    for finding in findings:
+        review = (finding.get("metadata") or {}).get(AI_REVIEW_KEY)
+        if not isinstance(review, dict):
+            continue
+        for reviewer in review.get("reviewers") or []:
+            name = "Jev"
+            if reviewer.get("name") != "jev":
+                name = str(reviewer.get("model") or "AI model")
+            if name not in names:
+                names.append(name)
+    return (
+        f"AI review ({', '.join(names)}): {counts['confirmed']} confirmed, "
+        f"{counts['disputed']} AI disagrees, {counts['unsure']} unsure. "
+        "Blocking is unchanged."
+    )
+
+
 def summarize_ai_reviews(result: dict[str, Any]) -> dict[str, int]:
     counts = {"confirmed": 0, "disputed": 0, "unsure": 0}
     findings = [

@@ -295,3 +295,34 @@ def test_litellm_never_writes_logs_into_machine_output(capfd, monkeypatch):
     for name in ("LiteLLM", "openai", "httpx"):
         logging.getLogger(name).info("completion() model= gpt-4.1")
     assert capfd.readouterr().out == ""
+
+
+def test_the_ai_review_line_closes_the_report_after_the_issue_count():
+    from skylos import cli
+
+    def reviewed(name, verdict, model=None):
+        reviewer = {"name": name, "verdict": verdict}
+        if model:
+            reviewer["model"] = model
+        return {"metadata": {"ai_review": {"reviewers": [reviewer]}}}
+
+    result = {
+        "danger": [reviewed("llm", "real", "gpt-4.1")],
+        "unused_functions": [reviewed("jev", "false_positive"), {"name": "f"}],
+    }
+    line = ai_review.closing_line(result)
+    assert line == (
+        "AI review (gpt-4.1, Jev): 1 confirmed, 1 AI disagrees, 0 unsure. "
+        "Blocking is unchanged."
+    )
+    assert ai_review.closing_line({"danger": [{"rule_id": "SKY-D211"}]}) is None
+
+    import io
+
+    from rich.console import Console
+
+    buffer = io.StringIO()
+    logger = SimpleNamespace(console=Console(file=buffer, width=200))
+    cli.print_badge(4, logger, show_badge=False, ai_review_line=line)
+    out = buffer.getvalue()
+    assert out.index("Found 4 dead-code items.") < out.index("AI review (gpt-4.1, Jev)")
