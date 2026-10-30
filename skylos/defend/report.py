@@ -29,7 +29,7 @@ def format_defense_table(
     width = 74
     lines.append("")
     lines.append("┌" + "─" * width + "┐")
-    lines.append(f"│ {'Skylos AI Defense Report':<{width - 1}}│")
+    lines.append(f"│ {'Skylos AI app safety report':<{width - 1}}│")
     summary = (
         f"Scanned: {files_scanned} files | "
         f"Found: {integrations_count} LLM integration(s) | "
@@ -64,7 +64,7 @@ def format_defense_table(
     lines.append("")
     lines.append("─" * 74)
     lines.append("")
-    lines.append(f"AI Defense Score: {score.score_pct}% ({score.risk_rating})")
+    lines.append(f"Defense score: {score.score_pct}% ({score.risk_rating})")
     lines.append(
         f"  {score.weighted_score}/{score.weighted_max} weighted points | "
         f"{score.passed}/{score.total} checks passing"

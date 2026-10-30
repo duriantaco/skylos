@@ -114,7 +114,7 @@ Full scans skip generated/vendored files (Django migrations, `static/**/lib`,
   print a warning. `rules = [...]` accepts any rule ID, multi-part
   `SKY-SCA-*` ones included; an entry that is not a rule ID prints a warning.
   `[tool.skylos.gate.agent] require_defend`/`min_defend_score` are not
-  supported and fail the agent gate; gate AI defense with
+  supported and fail the agent gate; gate AI app safety with
   `skylos defend . --min-score N --fail-on critical`.
 - A gate synced by `skylos sync pull` (`.skylos/config.yaml`, or
   `SKYLOS_SYNCED_POLICY_FILE` in CI) with Cloud's `mode`/`by_category`/
