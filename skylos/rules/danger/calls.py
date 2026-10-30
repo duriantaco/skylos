@@ -2,6 +2,7 @@ import ast
 import re
 from skylos.rules.base import SkylosRule
 from .pickle_provenance import safe_pickle_loads
+from .source_owned_code import source_owned_code_calls
 from skylos.security.command_guard import scan_shell_command
 from skylos.security.sensitive_data import first_sensitive_name
 from skylos.security.command_guard_types import (
@@ -707,6 +708,7 @@ class DangerousCallsRule(SkylosRule):
         self.assigned_calls_by_scope: dict[int, dict[str, str]] = {}
         self._parents_annotated = False
         self._safe_pickle_loads = set()
+        self._source_owned_code = frozenset()
 
     def _annotate_parents(self, node: ast.AST) -> None:
         for child in ast.iter_child_nodes(node):
@@ -764,6 +766,9 @@ class DangerousCallsRule(SkylosRule):
             self._annotate_parents(node)
             self._parents_annotated = True
             self._safe_pickle_loads = safe_pickle_loads(node, context.get("filename"))
+            self._source_owned_code = source_owned_code_calls(
+                node, context.get("filename"), context.get("project_root")
+            )
             self.assigned_calls_by_scope.setdefault(id(node), {})
             return None
         if isinstance(node, ast.Import):
@@ -791,6 +796,9 @@ class DangerousCallsRule(SkylosRule):
                 continue
 
             if rule_key == "pickle.loads" and id(node) in self._safe_pickle_loads:
+                continue
+
+            if rule_key in {"exec", "eval"} and id(node) in self._source_owned_code:
                 continue
 
             rule_id = tup[0]

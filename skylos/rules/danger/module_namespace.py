@@ -119,9 +119,16 @@ def _callee(func: ast.AST) -> str | None:
 
 
 class _Analysis:
-    def __init__(self, tree: ast.AST, module_name: str | None, parents=None):
+    def __init__(
+        self,
+        tree: ast.AST,
+        module_name: str | None,
+        parents=None,
+        isolated_code_calls: frozenset[int] = frozenset(),
+    ):
         self.tree = tree
         self.module_name = module_name
+        self.isolated_code_calls = isolated_code_calls
         self.parents = (
             parents
             if parents is not None
@@ -379,7 +386,12 @@ class _Analysis:
                 return True, frozenset()
             if isinstance(node, ast.Call):
                 callee = _callee(node.func)
-                if callee in self.reloaders or _dotted(node.func) in _CODE_RUNNERS:
+                if callee in self.reloaders:
+                    return True, frozenset()
+                if (
+                    _dotted(node.func) in _CODE_RUNNERS
+                    and id(node) not in self.isolated_code_calls
+                ):
                     return True, frozenset()
                 if callee == "getattr" and len(node.args) >= 2:
                     attr = node.args[1]
@@ -437,7 +449,11 @@ class _Analysis:
 
 
 def module_rebinding(
-    tree: ast.AST | None, module_name: str | None = None, parents=None
+    tree: ast.AST | None,
+    module_name: str | None = None,
+    parents=None,
+    *,
+    isolated_code_calls: frozenset[int] = frozenset(),
 ) -> tuple[bool, frozenset[str]]:
     """``(dynamic, rebound)`` for the module ``tree``.
 
@@ -450,10 +466,13 @@ def module_rebinding(
     (``setattr(sys.modules[__name__], "NAME", ...)``, ``me.NAME = ...``).
     ``module_name`` (see ``module_name_for``) recognises self-imports; without
     it every import counts as one. ``parents`` (child id -> parent node) may
-    be passed to reuse a map the caller already built."""
+    be passed to reuse a map the caller already built.
+    ``isolated_code_calls`` (ids of ``exec``/``eval`` calls) are calls the
+    caller proved run in a fresh namespace dict, so they cannot write this
+    module's globals; every other code runner still counts as dynamic."""
     if tree is None:
         return False, frozenset()
-    return _Analysis(tree, module_name, parents).run()
+    return _Analysis(tree, module_name, parents, isolated_code_calls).run()
 
 
 def attribute_write_names(tree: ast.AST | None) -> tuple[frozenset[str], bool]:

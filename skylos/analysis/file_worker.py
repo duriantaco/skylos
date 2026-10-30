@@ -223,6 +223,7 @@ def _danger_findings(
     danger_rules = [DangerousCallsRule()]
     set_linter_node_types(danger_rules)
     danger_linter = LinterVisitor(danger_rules, str(file))
+    danger_linter.context["project_root"] = getattr(options, "project_root", None)
     danger_linter.visit(prepared.tree)
     findings = danger_linter.findings
 
