@@ -65,6 +65,7 @@ class LiteLLMAdapter(BaseAdapter):
         try:
             self.litellm = load_litellm()
             self.litellm.drop_params = True
+            self.litellm.suppress_debug_info = True
         except ImportError:
             raise ImportError(
                 "LiteLLM is required for this feature. "

@@ -265,6 +265,8 @@ def verify_security_findings(
                 line_count=line_count, runs=runs,
             )
             record["model"] = model
+            if not any(votes[id(finding)]):
+                record["answered"] = 0
             _metadata(finding)[VERIFICATION_KEY] = record
             counts[record["level"]] += 1
     return counts

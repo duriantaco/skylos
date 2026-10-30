@@ -88,6 +88,15 @@ def _closing_summary(result: dict, uncertainty_count) -> str | None:
     return closing_summary(result, uncertainty_count=uncertainty_count)
 
 
+def _ai_review_closing_line(result: dict) -> str | None:
+    from skylos.llm.ai_review import closing_line
+
+    line = closing_line(result)
+    if line:
+        return f"[muted]{escape(line)}[/muted]"
+    return None
+
+
 def _rewritable_dead_code(items, project_root):
     from skylos.remediation.safety import python_rewrite_blocker
 
@@ -395,6 +404,21 @@ def _run_ai_review(
         )
         use_llm = bool(api_key or local)
     use_jev = ai_review.jev_available()
+    if use_llm:
+        refusal = ai_review.provider_refusal(
+            model=model, api_key=api_key, provider=provider, base_url=base_url
+        )
+        if refusal:
+            use_llm = False
+            note(
+                f"[warn]AI review: {escape(model)} refused the request: "
+                f"{escape(refusal)}[/warn]"
+            )
+            if not use_jev:
+                note(
+                    "[warn]AI review skipped. Issues and blocking are unchanged.[/warn]"
+                )
+                return
     if not use_llm and not use_jev:
         install = ""
         if not llm_extra_installed():
@@ -428,17 +452,6 @@ def _run_ai_review(
         note(
             f"[warn]AI review of unused code failed: {type(exc).__name__}. Issues are unchanged.[/warn]"
         )
-    counts = ai_review.summarize_ai_reviews(result)
-    reviewers = []
-    if use_llm:
-        reviewers.append(model)
-    if use_jev:
-        reviewers.append("Jev")
-    note(
-        f"[muted]AI review ({escape(', '.join(reviewers))}):[/muted] "
-        f"{counts['confirmed']} confirmed, {counts['disputed']} AI disagrees, "
-        f"{counts['unsure']} unsure. Blocking is unchanged."
-    )
 
 
 def _report_scope_options(args, config):
@@ -2062,6 +2075,7 @@ def _run_scan_command(
             quality_count=quality_count,
             uncertainty_count=uncertainty_count,
             summary=_closing_summary(output_result, uncertainty_count),
+            ai_review_line=_ai_review_closing_line(output_result),
             # The grade panel above already offered the Skylos grade badge.
             show_badge=not (
                 display_filtered

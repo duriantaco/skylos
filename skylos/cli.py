@@ -1580,6 +1580,7 @@ def print_badge(
     show_badge=True,
     uncertainty_count=0,
     summary=None,
+    ai_review_line=None,
 ):
     """Print the closing count line, plus a README badge unless one was shown.
 
@@ -1601,6 +1602,8 @@ def print_badge(
             headline += f" Usage remains uncertain for {uncertainty_count} {noun}."
         if summary:
             headline = summary
+        if ai_review_line:
+            headline = f"{headline}\n{ai_review_line}"
         if not show_badge:
             console.print(headline)
             return
@@ -1635,6 +1638,8 @@ def print_badge(
         headline = f"Found {counts[0]}."
     if summary:
         headline = summary
+    if ai_review_line:
+        headline = f"{headline}\n{ai_review_line}"
 
     if not show_badge:
         console.print(headline)

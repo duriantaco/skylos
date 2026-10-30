@@ -1,4 +1,5 @@
 import importlib.util
+import logging
 import os
 from urllib.parse import urlparse
 
@@ -17,10 +18,16 @@ def llm_extra_installed() -> bool:
     return importlib.util.find_spec("litellm") is not None
 
 
+_QUIET_LLM_LOGGERS = ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy", "openai", "httpx")
+
+
 def load_litellm():
     os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
     import litellm
 
+    litellm.suppress_debug_info = True
+    for name in _QUIET_LLM_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
     return litellm
 
 

@@ -27,7 +27,7 @@ COMMANDS = [
         "name": "skylos PATH [PATH ...]",
         "desc": "Scan source code; dead code by default, main analyzers with -a",
         "details": [
-            "--ai-review: an AI model (and Jev, with TYPESAFE_API_KEY) double-checks security and unused-code issues; blocking never changes",
+            "--ai-review: an AI model (and Jev, with TYPESAFE_API_KEY) double-checks unused code and Python security issues; blocking never changes",
         ],
         "group": "Core Analysis",
     },
