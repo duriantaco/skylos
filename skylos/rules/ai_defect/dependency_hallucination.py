@@ -88,6 +88,8 @@ MAX_PYTHON_LAYOUT_CANDIDATES = 1024
 MAX_ROS_MANIFEST_BYTES = 256_000
 MAX_ROS_MANIFEST_CANDIDATES = 128
 MAX_ROS_PACKAGE_DIRECTORIES = 256
+MAX_ROS_ABSENCE_ENTRIES = 50_000
+ROS_PACKAGE_MANIFEST = "package.xml"
 CONVENTIONAL_PYTHON_SOURCE_ROOT = Path("src")
 MAX_DIST_MODULE_LOOKUPS = 32
 DIST_MODULE_LOOKUP_WORKERS = 16
@@ -2580,6 +2582,100 @@ def _is_ros_import(mod, ctx, importer):
     return any(mod in dependencies for dependencies in package_deps)
 
 
+def _ros_package_manifest_absent(repo_root):
+    """True only when no ``package.xml`` exists for the scanned code.
+
+    Without one, a ROS 2 module comes from a sourced ROS distribution that no
+    Python manifest can declare. Every ``package.xml`` counts (ROS 1, unparsed
+    or unrelated XML too), below the scan root and in any of its parents. A
+    symlinked or unreadable directory, or reaching the entry bound, proves
+    nothing, so the import stays reportable.
+    """
+    root = Path(os.path.abspath(repo_root))
+    for parent in root.parents:
+        try:
+            os.lstat(parent / ROS_PACKAGE_MANIFEST)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return False
+        return False
+    pending = [root]
+    seen = 0
+    while pending:
+        directory = pending.pop()
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    seen += 1
+                    if seen > MAX_ROS_ABSENCE_ENTRIES:
+                        return False
+                    if entry.name == ROS_PACKAGE_MANIFEST:
+                        return False
+                    if entry.is_symlink():
+                        if entry.is_dir():
+                            return False
+                        continue
+                    if entry.name != ".git" and entry.is_dir(follow_symlinks=False):
+                        pending.append(entry.path)
+        except OSError:
+            return False
+    return True
+
+
+def _no_ros_package_manifest(ctx):
+    if ctx.get("ros_manifest_absent") is None:
+        ctx["ros_manifest_absent"] = _ros_package_manifest_absent(ctx["repo_root"])
+    return ctx["ros_manifest_absent"]
+
+
+def _defines_ros_launch_description(ctx, importer):
+    """The ROS 2 launch loader's entrypoint: one module-level, undecorated
+    ``generate_launch_description()`` without parameters.
+
+    In a ``*.launch.py`` file this identifies ``launch`` as the ROS 2 launch
+    package; the PyPI project of that name is an unrelated launcher.
+    """
+    cache = ctx.setdefault("ros_launch_description_cache", {})
+    if importer in cache:
+        return cache[importer]
+    found = False
+    source = read_project_text_no_symlink(
+        ctx["repo_root"],
+        importer,
+        max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+        encoding="utf-8",
+        errors="ignore",
+    )
+    tree = None
+    if source is not None and "generate_launch_description" in source:
+        try:
+            tree = ast.parse(source)
+        except (MemoryError, RecursionError, SyntaxError, ValueError):
+            tree = None
+    if tree is not None:
+        definitions = [
+            statement
+            for statement in tree.body
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and statement.name == "generate_launch_description"
+        ]
+        if len(definitions) == 1 and isinstance(definitions[0], ast.FunctionDef):
+            function = definitions[0]
+            arguments = function.args
+            found = not function.decorator_list and not any(
+                (
+                    arguments.posonlyargs,
+                    arguments.args,
+                    arguments.kwonlyargs,
+                    arguments.vararg,
+                    arguments.kwarg,
+                )
+            )
+    cache[importer] = found
+    return found
+
+
 def _find_import_line(src, mod):
     if not src:
         return 1
@@ -2757,6 +2853,7 @@ def _build_dependency_context(repo_root, py_files=None):
         # Environment files/install commands in scope (per file).
         "environment_deps": frozenset(),
         "ros_package_deps": _collect_ros_package_dependencies(repo_root, py_files),
+        "ros_manifest_absent": None,
         "manifest_context": bool(declared_deps)
         or _has_dependency_manifest_context(repo_root),
         "private_allow": _load_private_allowlist(),
@@ -3578,13 +3675,19 @@ def _classify_import_names(
         mod == "launch"
         and importer is not None
         and importer.name.endswith(".launch.py")
-        and any(parent in ctx["ros_package_deps"] for parent in importer.parents)
+        and (
+            any(parent in ctx["ros_package_deps"] for parent in importer.parents)
+            or _defines_ros_launch_description(ctx, importer)
+        )
     )
     if mod in ROS_PYTHON_IMPORT_ROOTS or ros_launch:
         # These are known ROS modules, so a missing PyPI project is not proof
         # of hallucination. A manifest must actually declare the imported
         # package; an unrelated ROS package elsewhere in a monorepo cannot.
-        if manifest_context or ctx["ros_package_deps"]:
+        reportable = bool(ctx["ros_package_deps"]) or (
+            manifest_context and not _no_ros_package_manifest(ctx)
+        )
+        if reportable:
             return _undeclared_template(
                 mod,
                 f"Undeclared ROS import '{mod}' in package.xml or Python manifest.",
