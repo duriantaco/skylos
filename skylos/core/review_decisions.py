@@ -1956,6 +1956,7 @@ def _repository_semantic_hash(
         suffix = relative.suffix.lower()
         return bool(
             _is_relevant_rel(relative)
+            or suffix in _LANGUAGES
             or suffix in ALLOWED_FILE_SUFFIXES
             or name == ".env"
             or name.startswith(".env.")
@@ -3022,28 +3023,20 @@ def finding_identity(
             )
             if local_dependency_hash is None:
                 return None
-        if local_dependency_hash in (None, "dependency-closure-incomplete"):
-            # No proven local closure (another language, or a Python import
-            # the closure could not follow): bind the review to the bounded
-            # snapshot of every analyzer input instead.
-            repository_hash = _repository_semantic_hash(
-                project_root,
-                source_cache=source_cache,
-                dependency_cache=dependency_cache,
-            )
-            if repository_hash is None:
-                return None
-        else:
-            # The finding's file, its proven import closure and the language's
-            # dependency environment are already bound above.  Folding in the
-            # whole-repository snapshot made every unrelated commit reopen each
-            # approved high-risk review.  Trade-off: a reverse importer,
-            # startup monkeypatch or framework registry outside the closure no
-            # longer invalidates the review on its own.
-            repository_hash = "local-dependency-closure-complete"
+        # A forward import closure does not prove all callers, startup bindings,
+        # or framework registrations that made a reviewed sink safe.  Bind every
+        # high-risk decision to the bounded repository input snapshot as well.
+        # An incomplete snapshot must leave the finding visible for review.
+        repository_hash = _repository_semantic_hash(
+            project_root,
+            source_cache=source_cache,
+            dependency_cache=dependency_cache,
+        )
+        if repository_hash is None:
+            return None
         semantic_dependency_hash = sha256_value(
             {
-                "scope": "high-risk-proof-envelope-v3",
+                "scope": "high-risk-proof-envelope-v4",
                 "local_dependency_hash": local_dependency_hash,
                 "repository_hash": repository_hash,
             }
