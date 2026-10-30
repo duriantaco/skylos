@@ -1032,7 +1032,9 @@ literal read-only repository mount, a selected official Python Dockerfile stage
 and straight-line `python -m pip install` commands, optionally with literal
 versions sourced from a copied `.env` file. This evidence applies only to that
 entry file, not its siblings or imports. Overrides, interpreter changes and
-unsupported build or runtime configuration retain the warning. This affects
+unsupported build or runtime configuration retain the warning. Sourced shell
+settings that change word splitting and alternate service launchers whose
+environment cannot be resolved also retain it. This affects
 undeclared-import checks (SKY-D223); it does not clear SKY-D222 hallucinations,
 verify an installed image or change dependency vulnerability checks.
 

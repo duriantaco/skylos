@@ -28,7 +28,7 @@ _PYTHON_IMAGE = re.compile(r"^(?:docker\.io/library/)?python:3\.[0-9]+(?:\.[0-9]
 _ASSIGNMENT = re.compile(r"^([A-Z_][A-Z0-9_]*)=([A-Za-z0-9_.+-]+)$")
 _VARIABLE = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 _BENIGN_PYTHON_ENV = {"PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED"}
-_REDIRECTING_ENV = {"PATH", "VIRTUAL_ENV", "ENV", "BASH_ENV"}
+_REDIRECTING_ENV = {"PATH", "VIRTUAL_ENV", "ENV", "BASH_ENV", "IFS"}
 _STAGE_KEYS = {"FROM", "ENV", "WORKDIR", "COPY", "RUN"}
 _SERVICE_KEYS = {"build", "init", "working_dir", "command", "environment", "volumes", "ports", "healthcheck"}
 
@@ -323,6 +323,11 @@ def _service_entry(root, service):
                 raise _Unknown
             mounts.append(destination)
     if not mounts:
+        # Another explicit launcher may run the same source through a partial
+        # mount, copied image contents or a shell wrapper. Its environment is
+        # unknown, so it cannot be ignored in favor of a supported sibling.
+        if "command" in service or "entrypoint" in service:
+            raise _Unknown
         return None
     if len(mounts) != 1 or len(volumes) != 1:
         raise _Unknown

@@ -312,6 +312,7 @@ def test_nonexistent_distribution_stays_d222(tmp_path, monkeypatch):
         "VIRTUAL_ENV",
         "ENV",
         "BASH_ENV",
+        "IFS",
         "LD_PRELOAD",
     ],
 )
@@ -320,6 +321,56 @@ def test_sourced_version_file_cannot_redirect_interpreter_or_install(tmp_path, k
     with (tmp_path / "sim/versions.env").open("a") as stream:
         stream.write(f"{key}=other\n")
     assert not compose_entrypoint_distributions(tmp_path, entry)
+
+
+@pytest.mark.parametrize("ifs", [None, "a"])
+def test_shell_field_splitting_cannot_invent_package_declarations(
+    tmp_path, monkeypatch, ifs
+):
+    entry, _, dockerfile = _fixture(tmp_path)
+    with (tmp_path / "sim/versions.env").open("a") as stream:
+        stream.write("PACKAGE=fastapi\n")
+        if ifs is not None:
+            stream.write(f"IFS={ifs}\n")
+    _write(
+        tmp_path,
+        "sim/Dockerfile",
+        dockerfile.replace('"fastapi==${FASTAPI_VERSION}"', "${PACKAGE}"),
+    )
+    _stub(monkeypatch)
+    findings = dep.scan_python_dependency_hallucinations(tmp_path, [entry])
+    assert [(row["rule_id"], row["symbol"]) for row in findings] == (
+        [] if ifs is None else [("SKY-D223", "fastapi"), ("SKY-D223", "uvicorn")]
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["partial_directory", "single_file", "shell_wrapper", "entrypoint", "no_mount"],
+)
+def test_alternate_unmodeled_launcher_keeps_entrypoint_findings(
+    tmp_path, monkeypatch, case
+):
+    entry, data, _ = _fixture(tmp_path)
+    alternate = deepcopy(data["services"]["api"])
+    alternate["build"]["target"] = "other"
+    alternate["volumes"] = ["./sim:/workspace/sim:ro"]
+    if case == "single_file":
+        alternate["volumes"] = ["./sim/app.py:/workspace/sim/app.py:ro"]
+    elif case == "shell_wrapper":
+        alternate["command"] = ["sh", "-c", "python /workspace/sim/app.py"]
+    elif case == "entrypoint":
+        alternate["entrypoint"] = alternate.pop("command")
+    elif case == "no_mount":
+        alternate["volumes"] = []
+    data["services"]["alternate"] = alternate
+    _write(tmp_path, "compose.yaml", yaml.safe_dump(data))
+    _stub(monkeypatch)
+    findings = dep.scan_python_dependency_hallucinations(tmp_path, [entry])
+    assert [(row["rule_id"], row["symbol"]) for row in findings] == [
+        ("SKY-D223", "fastapi"),
+        ("SKY-D223", "uvicorn"),
+    ]
 
 
 @pytest.mark.parametrize("spec", ['"fastapi"evil', '"fastapi""evil"'])
