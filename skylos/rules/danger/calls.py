@@ -3,7 +3,7 @@ import re
 from skylos.rules.base import SkylosRule
 from .pickle_provenance import safe_pickle_loads
 from .source_owned_code import source_owned_code_calls
-from .yaml_loader_provenance import yaml_loader_classes
+from .yaml_loader_provenance import yaml_loader_classes, yaml_load_call_name
 from skylos.security.command_guard import scan_shell_command
 from skylos.security.sensitive_data import first_sensitive_name
 from skylos.security.command_guard_types import (
@@ -45,6 +45,7 @@ DANGEROUS_CALLS = {
         "pickle.loads can execute code; only deserialize bytes from trusted sources",
     ),
     "yaml.load": ("SKY-D206", "HIGH", "yaml.load without SafeLoader"),
+    "yaml.load_all": ("SKY-D206", "HIGH", "yaml.load_all without SafeLoader"),
     "hashlib.md5": (
         "SKY-D207",
         "MEDIUM",
@@ -723,6 +724,8 @@ class DangerousCallsRule(SkylosRule):
         self._source_owned_code = frozenset()
         self._module = None
         self._safe_yaml_loaders = None
+        self._yaml_filename = None
+        self._yaml_project_root = None
 
     def _annotate_parents(self, node: ast.AST) -> None:
         for child in ast.iter_child_nodes(node):
@@ -747,7 +750,9 @@ class DangerousCallsRule(SkylosRule):
 
     def _yaml_loader_classes(self):
         if self._safe_yaml_loaders is None:
-            self._safe_yaml_loaders = yaml_loader_classes(self._module)
+            self._safe_yaml_loaders = yaml_loader_classes(
+                self._module, self._yaml_filename, self._yaml_project_root
+            )
         return self._safe_yaml_loaders
 
     def _assigned_calls_for(self, node: ast.AST) -> dict[str, str]:
@@ -789,6 +794,8 @@ class DangerousCallsRule(SkylosRule):
                 node, context.get("filename"), context.get("project_root")
             )
             self._module = node
+            self._yaml_filename = context.get("filename")
+            self._yaml_project_root = context.get("project_root")
             self._safe_yaml_loaders = None
             self.assigned_calls_by_scope.setdefault(id(node), {})
             return None
@@ -807,6 +814,7 @@ class DangerousCallsRule(SkylosRule):
         name = _qualified_name_from_call(
             node, self.aliases, self._assigned_calls_for(node)
         )
+        name = yaml_load_call_name(node, self._module) or name
         if not name:
             return None
 
@@ -827,7 +835,7 @@ class DangerousCallsRule(SkylosRule):
             message = tup[2]
             opts = tup[3] if len(tup) > 3 else None
 
-            if rule_key == "yaml.load":
+            if rule_key in {"yaml.load", "yaml.load_all"}:
                 if not _yaml_load_without_safeloader(
                     node, self.aliases, self._yaml_loader_classes()
                 ):

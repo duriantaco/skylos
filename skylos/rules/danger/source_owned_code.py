@@ -25,7 +25,10 @@ or patched name the proof reads, a namespace that may be the module's own, or
 a repository module shadowing ``ast``/``copy``/``pathlib``. Proof is per
 module: one ``exec``/``eval`` that is not proved (``exec(user_code, {})``)
 keeps every call in the module reported, because it could patch ``ast`` or
-``pathlib`` before the others run. No target code is executed.
+``pathlib`` before the others run. A complete, bounded project source snapshot
+must also rule out source-file mutations, escaped filesystem capabilities,
+reader/parser overrides and dynamic loading in other modules. Unknown effects
+in the loader itself leave the call reported. No target code is executed.
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ from .builtin_bindings import builtin_references
 from .danger_fs.closed_world import _SKIP_DIRS
 from .module_namespace import attribute_write_names, module_name_for, module_rebinding
 from .untrusted_sources import UntrustedSourceIndex
+from .project_source import project_source_snapshot
 
 _TREE = "tree"
 _MODULE = "module"
@@ -46,6 +50,7 @@ _CODE = "code"
 _DATA = "data"
 _PATH = "path"
 _PARENTS = "parents"
+_UNKNOWN_PATH = "unknown_path"
 _NODES = frozenset({_TREE, _MODULE})
 _CODE_RUNNERS = frozenset({"exec", "eval"})
 _COMPILE_MODES = frozenset({"exec", "eval", "single"})
@@ -58,12 +63,84 @@ _READ_ONLY_AST = frozenset(
 _COPIES = frozenset({"copy.deepcopy", "copy.copy"})
 _SEQUENCES = frozenset({"list", "tuple", "iter", "reversed", "enumerate"})
 _READS = frozenset({"len", "hasattr", "repr", "bool", "any", "all", "str"})
+_EXCEPTIONS = frozenset({"AssertionError", "ValueError", "TypeError", "RuntimeError"})
 _BUILTIN_NAMES = frozenset(
-    {"compile", "next", "isinstance", "getattr", "dict"}
+    {"compile", "next", "isinstance", "getattr", "dict", "open", "input"}
     | _CODE_RUNNERS
     | _SEQUENCES
     | _READS
+    | _EXCEPTIONS
 )
+_PATH_READS = frozenset(
+    {
+        "read_text",
+        "read_bytes",
+        "exists",
+        "is_file",
+        "is_dir",
+        "stat",
+        "lstat",
+        "as_posix",
+        "is_absolute",
+    }
+)
+_FILE_WRITES = frozenset(
+    {
+        "write_text",
+        "write_bytes",
+        "write",
+        "writelines",
+        "truncate",
+        "touch",
+        "unlink",
+        "rename",
+        "replace",
+        "rmdir",
+        "mkdir",
+        "symlink_to",
+        "hardlink_to",
+        "chmod",
+        "lchmod",
+        "chown",
+    }
+)
+_FILE_FUNCTIONS = frozenset(
+    {
+        "open",
+        "os.open",
+        "io.open",
+        "builtins.open",
+        "os.replace",
+        "os.rename",
+        "os.renames",
+        "os.remove",
+        "os.unlink",
+        "os.truncate",
+        "os.symlink",
+        "os.link",
+        "shutil.copy",
+        "shutil.copy2",
+        "shutil.copyfile",
+        "shutil.copytree",
+        "shutil.move",
+        "shutil.rmtree",
+    }
+)
+_DYNAMIC_LOADS = frozenset(
+    {
+        "__import__",
+        "builtins.__import__",
+        "importlib.import_module",
+        "importlib.reload",
+        "importlib.util.spec_from_file_location",
+        "importlib.machinery.SourceFileLoader",
+        "runpy.run_module",
+        "runpy.run_path",
+        "imp.load_source",
+        "imp.load_module",
+    }
+)
+_PROJECT_READS = frozenset({"os.environ.get", "os.getenv"})
 _LIST_GROWTH = frozenset({"append", "extend", "insert"})
 _LIST_METHODS = frozenset(
     {"append", "extend", "insert", "pop", "remove", "clear", "sort", "reverse"}
@@ -430,6 +507,7 @@ class _Proof:
         )
         self.constants: dict[str, ast.AST] = {}
         self.helpers: dict[str, ast.FunctionDef] = {}
+        self.classes = {}
         for statement in tree.body:
             if isinstance(statement, ast.FunctionDef):
                 if (
@@ -437,6 +515,8 @@ class _Proof:
                     and self.counts.get(statement.name) == 1
                 ):
                     self.helpers[statement.name] = statement
+            elif isinstance(statement, ast.ClassDef):
+                self.classes[statement.name] = statement
             elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
                 targets = _assigned(statement)
                 if (
@@ -453,6 +533,8 @@ class _Proof:
         self.file_checks: dict[str, bool] = {}
         self.used_globals: set[str] = set()
         self.used_attrs: set[str] = set()
+        self.audit_targets = None
+        self.file_unsafe = False
         self.steps = 0
 
     def run(self) -> frozenset[int]:
@@ -484,9 +566,108 @@ class _Proof:
             self._run(frame, owner.body)
             if not frame.escaped:
                 proven |= frame.candidates
-        if proven != runners or not self._names_are_stable():
+        if (
+            proven != runners
+            or not self._names_are_stable()
+            or not self._project_is_stable()
+        ):
             return frozenset()
         return frozenset(proven)
+
+    def _project_is_stable(self):
+        trees, complete = project_source_snapshot(self.root)
+        if not complete:
+            return False
+        targets = frozenset(
+            os.path.realpath(path) for path, owned in self.file_checks.items() if owned
+        )
+        saw_current = False
+        project_written = set()
+        project_reads = set(self.used_attrs)
+        for path, tree in trees.items():
+            own = os.path.realpath(path) == os.path.realpath(self.file)
+            if own:
+                if ast.dump(tree, include_attributes=False) != ast.dump(
+                    self.tree, include_attributes=False
+                ):
+                    return False
+                saw_current = True
+                tree = self.tree
+            isolated = frozenset()
+            if own:
+                isolated = self.isolated
+            dynamic, _ = module_rebinding(
+                tree, module_name_for(path), isolated_code_calls=isolated
+            )
+            written, computed = attribute_write_names(tree)
+            patched = _patched_names(
+                tree,
+                {
+                    id(child): parent
+                    for parent in ast.walk(tree)
+                    for child in ast.iter_child_nodes(parent)
+                },
+            )
+            if dynamic or computed or patched is None:
+                return False
+            project_written.update(written | patched)
+            if (self.used_attrs | _RELIED_DUNDERS) & (written | patched):
+                return False
+            audit = _Proof(tree, path, self.root)
+            audit.audit_targets = targets
+            module_frame = _Frame(None, frozenset(audit.constants), frozenset(), False)
+            audit._run(module_frame, tree.body)
+            for function in ast.walk(tree):
+                if isinstance(function, _FUNCTIONS):
+                    audit._run(audit._top_frame(function), function.body)
+                elif isinstance(function, ast.ClassDef):
+                    audit._run(
+                        _Frame(None, frozenset(), frozenset(), False), function.body
+                    )
+            if audit.file_unsafe:
+                return False
+            project_reads.update(audit.used_attrs)
+        return saw_current and not project_reads & project_written
+
+    def _source_path(self, kind):
+        if kind == _UNKNOWN_PATH:
+            return True
+        if not _is_path(kind):
+            return False
+        path = os.path.realpath(kind[1])
+        return any(_inside(target, path) for target in self.audit_targets)
+
+    def _filesystem_call(self, frame, node, name):
+        values = [self._value(frame, arg) for arg in node.args]
+        values.extend(self._value(frame, kw.value) for kw in node.keywords)
+        if name in {"open", "os.open", "io.open", "builtins.open"}:
+            mode = _argument(node, 1, "mode")
+            readonly = name != "os.open" and (
+                mode is None or (_is_str(mode) and mode.value in {"r", "rt", "rb"})
+            )
+            if readonly and not any(kw.arg in {"opener", None} for kw in node.keywords):
+                return None
+            destinations = values[:1]
+        elif name in {
+            "shutil.copy",
+            "shutil.copy2",
+            "shutil.copyfile",
+            "shutil.copytree",
+            "shutil.move",
+            "os.replace",
+            "os.rename",
+            "os.renames",
+            "os.symlink",
+            "os.link",
+        }:
+            destinations = values[:2]
+        else:
+            destinations = values[:1]
+        if not destinations or any(
+            not _is_path(value) or self._source_path(value) for value in destinations
+        ):
+            self.file_unsafe = True
+        return None
 
     def _module_is_static(self) -> bool:
         if not _inside(os.path.realpath(self.file), self.root):
@@ -558,6 +739,8 @@ class _Proof:
             raise _Unproven
 
     def _escape(self, frame, kind, expr=None):
+        if self.audit_targets is not None and (_is_path(kind) or kind == _UNKNOWN_PATH):
+            self.file_unsafe = True
         if kind in _NODES:
             frame.escaped = True
         elif kind == _EMPTY:
@@ -610,10 +793,32 @@ class _Proof:
         return None
 
     def _v_Constant(self, frame, node):
+        if self.audit_targets is not None and isinstance(node.value, str):
+            text = node.value
+            if text and os.path.isabs(text):
+                kind = (_PATH, os.path.realpath(text))
+                if self._source_path(kind):
+                    return kind
+            elif text:
+                normalized = os.path.normpath(text)
+                for target in self.audit_targets:
+                    directory = target
+                    while _inside(directory, self.root):
+                        if directory.endswith(os.sep + normalized) or normalized == ".":
+                            return _UNKNOWN_PATH
+                        if directory == self.root:
+                            break
+                        directory = os.path.dirname(directory)
         return _DATA
 
     def _v_Name(self, frame, node):
         name = node.id
+        if self.audit_targets is not None:
+            resolved = self._resolved(frame, name)
+            if resolved in _FILE_FUNCTIONS | _DYNAMIC_LOADS or (
+                name == "open" and id(node) in self.builtins
+            ):
+                self.file_unsafe = True
         for scope in reversed(frame.scopes):
             if name in scope:
                 return scope[name]
@@ -661,6 +866,24 @@ class _Proof:
     def _v_Attribute(self, frame, node):
         base = self._value(frame, node.value)
         attr = node.attr
+        if self.audit_targets is not None:
+            dotted = _dotted(node)
+            resolved = None
+            if dotted is not None:
+                resolved = self._resolved(frame, dotted)
+            if resolved in _FILE_FUNCTIONS | _DYNAMIC_LOADS:
+                self.file_unsafe = True
+            if base == _UNKNOWN_PATH:
+                self.file_unsafe = True
+            elif self._source_path(base) and attr not in {
+                "parent",
+                "parents",
+                "name",
+                "stem",
+                "suffix",
+                "suffixes",
+            }:
+                self.file_unsafe = True
         if _is_path(base):
             if attr == "parent":
                 self.used_attrs.add(attr)
@@ -855,6 +1078,12 @@ class _Proof:
 
     def _v_Call(self, frame, node):
         func = node.func
+        if (
+            self.audit_targets is not None
+            and isinstance(func, ast.Name)
+            and func.id == "__import__"
+        ):
+            self.file_unsafe = True
         if isinstance(func, ast.Name):
             name = func.id
             if not self._shadowed(frame, name):
@@ -865,6 +1094,12 @@ class _Proof:
                 if helper is not None:
                     self.used_globals.add(name)
                     return self._helper_call(frame, node, helper)
+                if self.audit_targets is not None and self._plain_constructor(name):
+                    for argument in node.args:
+                        self._consume(frame, argument)
+                    for item in node.keywords:
+                        self._consume(frame, item.value)
+                    return _DATA
             resolved = self._resolved(frame, name)
             if resolved is not None:
                 return self._library_call(frame, node, resolved)
@@ -880,12 +1115,39 @@ class _Proof:
         return self._unknown_call(frame, node)
 
     def _unknown_call(self, frame, node):
+        if self.audit_targets is None:
+            frame.escaped = True
+        else:
+            self.file_unsafe = True
         self._consume(frame, node.func)
         for argument in node.args:
             self._consume(frame, argument)
         for item in node.keywords:
             self._consume(frame, item.value)
         return None
+
+    def _plain_constructor(self, name):
+        cls = self.classes.get(name)
+        if (
+            cls is None
+            or self.counts.get(name) != 1
+            or cls.bases
+            or cls.keywords
+            or cls.decorator_list
+        ):
+            return False
+        for statement in cls.body:
+            if isinstance(statement, _FUNCTIONS):
+                if (
+                    statement.name in {"__init__", "__new__"}
+                    or statement.decorator_list
+                ):
+                    return False
+            elif not isinstance(statement, ast.Pass) and not (
+                isinstance(statement, ast.Expr) and _is_str(statement.value)
+            ):
+                return False
+        return True
 
     def _consume_rest(self, frame, node, used):
         for argument in node.args:
@@ -903,6 +1165,20 @@ class _Proof:
         )
 
     def _builtin_call(self, frame, node, name):
+        if self.audit_targets is not None and name == "input":
+            for argument in node.args:
+                self._consume(frame, argument)
+            return _DATA
+        if self.audit_targets is not None and name == "open":
+            return self._filesystem_call(frame, node, name)
+        if name in _EXCEPTIONS or name == "dict":
+            for argument in node.args:
+                kind = self._consume(frame, argument)
+                if name == "dict" and kind is None:
+                    frame.escaped = True
+            for item in node.keywords:
+                self._consume(frame, item.value)
+            return _DATA
         if name == "compile":
             return self._compile(frame, node)
         if name in _CODE_RUNNERS:
@@ -911,6 +1187,7 @@ class _Proof:
             kind = self._value(frame, node.args[0])
             if kind in _NODES:
                 return _TREE
+            frame.escaped = True
             return None
         if name == "isinstance" and self._positional(node, 2):
             kind = self._value(frame, node.args[0])
@@ -928,9 +1205,12 @@ class _Proof:
                 self._consume(frame, extra)
             if kind in _NODES:
                 return _TREE
+            frame.escaped = True
             return None
         if name in _READS and not node.keywords:
             kinds = [self._value(frame, argument) for argument in node.args]
+            if any(kind is None for kind in kinds):
+                frame.escaped = True
             if name == "str" and len(kinds) == 1:
                 if _is_path(kinds[0]) or kinds[0] in {_DATA, _TEXT}:
                     return _DATA
@@ -952,6 +1232,12 @@ class _Proof:
     def _getattr(self, frame, node):
         kind = self._value(frame, node.args[0])
         name = node.args[1]
+        if self.audit_targets is not None and _is_str(name):
+            capabilities = {
+                value.rsplit(".", 1)[-1] for value in _FILE_FUNCTIONS | _DYNAMIC_LOADS
+            }
+            if name.value in capabilities | _FILE_WRITES:
+                self.file_unsafe = True
         default = None
         if len(node.args) == 3:
             default = node.args[2]
@@ -963,6 +1249,7 @@ class _Proof:
             self._consume(frame, default)
             return None
         if kind not in _NODES:
+            frame.escaped = True
             self._consume(frame, default)
             return None
         if default is not None:
@@ -989,7 +1276,11 @@ class _Proof:
             _argument(node, 5, "optimize"),
         ]
         kind = self._value(frame, source)
-        self._consume_rest(frame, node, {source})
+        metadata = {source}
+        filename = _argument(node, 1, "filename")
+        if filename is not None and _is_str(filename):
+            metadata.add(filename)
+        self._consume_rest(frame, node, metadata)
         if not (_is_str(mode) and mode.value in _COMPILE_MODES):
             return None
         if flags is not None and not (
@@ -1017,11 +1308,25 @@ class _Proof:
 
     def _library_call(self, frame, node, resolved):
         leaf = resolved.rsplit(".", 1)[-1]
+        if self.audit_targets is not None and resolved in _PROJECT_READS:
+            self.used_attrs.update(resolved.split(".")[1:])
+            for argument in node.args:
+                self._value(frame, argument)
+            for item in node.keywords:
+                self._value(frame, item.value)
+            return _DATA
+        if self.audit_targets is not None and resolved in _DYNAMIC_LOADS:
+            self.file_unsafe = True
+            return None
+        if self.audit_targets is not None and resolved in _FILE_FUNCTIONS:
+            return self._filesystem_call(frame, node, resolved)
         if resolved in _PATH_CLASSES and self._positional(node, 1):
             kind = self._value(frame, node.args[0])
             self.used_attrs.add(leaf)
             if _is_path(kind):
                 return kind
+            if self.audit_targets is not None:
+                return _UNKNOWN_PATH
             return None
         if resolved == "ast.parse":
             return self._parse(frame, node)
@@ -1037,6 +1342,7 @@ class _Proof:
                 return _TREE
             return None
         if resolved in _READ_ONLY_AST:
+            self.used_attrs.add(leaf)
             for argument in node.args:
                 self._value(frame, argument)
             for item in node.keywords:
@@ -1064,7 +1370,11 @@ class _Proof:
             return self._unknown_call(frame, node)
         mode = _argument(node, 2, "mode")
         kind = self._value(frame, source)
-        self._consume_rest(frame, node, {source})
+        metadata = {source}
+        filename = _argument(node, 1, "filename")
+        if filename is not None and _is_str(filename):
+            metadata.add(filename)
+        self._consume_rest(frame, node, metadata)
         if mode is not None and not (_is_str(mode) and mode.value in _COMPILE_MODES):
             return None
         if kind != _TEXT:
@@ -1107,8 +1417,17 @@ class _Proof:
 
     def _method_call(self, frame, node, receiver):
         attr = node.func.attr
+        if self.audit_targets is not None:
+            if receiver == _UNKNOWN_PATH:
+                self.file_unsafe = True
+            elif attr in _FILE_WRITES and not _is_path(receiver):
+                self.file_unsafe = True
         if _is_path(receiver):
             return self._path_method(frame, node, receiver[1], attr)
+        if self.audit_targets is None and receiver not in _NODES | {_EMPTY}:
+            frame.escaped = True
+        elif self.audit_targets is not None and receiver not in _NODES | {_EMPTY}:
+            self.file_unsafe = True
         if receiver in _NODES | {_EMPTY}:
             if attr in _LIST_GROWTH and node.args and not node.keywords:
                 if not any(isinstance(arg, ast.Starred) for arg in node.args):
@@ -1175,6 +1494,11 @@ class _Proof:
         if attr in {"read_text", "read_bytes"} and literal and self._owned_file(path):
             self.used_attrs.add(attr)
             return _TEXT
+        if self.audit_targets is not None:
+            if attr in _PATH_READS:
+                return _DATA
+            if self._source_path((_PATH, path)):
+                self.file_unsafe = True
         for argument in arguments:
             self._consume(frame, argument)
         return None

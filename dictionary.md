@@ -126,7 +126,7 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D203 | CRITICAL | OS command execution: `os.system` / process sinks | Python, Java | CWE-78 / A03 |
 | D204 | CRITICAL | Unsafe deserialization: `pickle.load` and language equivalents | Python, Java, PHP, audit | A08 |
 | D205 | CRITICAL | Unsafe deserialization: `pickle.loads` | Python | A08 |
-| D206 | HIGH | `yaml.load` without SafeLoader | Python | A08 |
+| D206 | HIGH | `yaml.load` or `yaml.load_all` without SafeLoader | Python | A08 |
 | D207 | MEDIUM | Weak hash: MD5 | Python, TS/JS, Go, Java | CWE-328 |
 | D208 | MEDIUM | Weak hash: SHA1 | Python, TS/JS, Go, Java | CWE-328 |
 | D209 | HIGH | `subprocess` with `shell=True` | Python | CWE-78 / A03 |
