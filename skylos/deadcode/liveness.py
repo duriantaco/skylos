@@ -356,8 +356,8 @@ def _mark(defn: Any, reason: str, report: LivenessReport) -> None:
     refs = getattr(defn, "heuristic_refs", None)
     if refs is not None:
         refs[f"dead_code_liveness:{reason}"] = 1.0
-        if reason.startswith(("flask_web_", "django_web_")) or reason.startswith(
-            "celery_"
+        if reason.startswith(
+            ("flask_web_", "django_web_", "ros_launch_", "celery_")
         ):
             refs["framework_root"] = 1.0
         if reason == "unittest_discovery":

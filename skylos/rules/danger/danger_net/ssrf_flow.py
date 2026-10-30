@@ -850,7 +850,9 @@ class _SSRFFlowChecker(TaintVisitor):
         self.tree = tree
         self.http_names: set[str] = set()
         self.http_receiver_alias_stack: list[set[str]] = [set()]
-        self.untrusted_sources = UntrustedSourceIndex(tree, follow_local_calls=True)
+        self.untrusted_sources = UntrustedSourceIndex(
+            tree, follow_local_calls=True, prove_parser_factories=True
+        )
         self.assigned_values: list[dict[str, ast.AST]] = [{}]
         self.request_url_mutations: list[dict[str, list[ast.AST]]] = [{}]
         self.parents = (

@@ -100,6 +100,26 @@ def test_shared_cache_identities_match_one_finding_at_a_time(tmp_path):
     ]
 
 
+def test_high_risk_repository_snapshot_reads_each_input_once(tmp_path, monkeypatch):
+    source, lines = _many_sinks(tmp_path)
+    caller = tmp_path / "caller.py"
+    caller.write_text("from app import write_report_0\nwrite_report_0()\n")
+    reads = []
+    real_read = review_decisions.read_project_text_no_symlink
+
+    def counted_read(project_root, path, **kwargs):
+        reads.append(str(path))
+        return real_read(project_root, path, **kwargs)
+
+    monkeypatch.setattr(review_decisions, "read_project_text_no_symlink", counted_read)
+    annotated = annotate_result_identities(_result(source, lines), tmp_path)["danger"]
+
+    assert len(annotated) == 6
+    assert all(finding.get("context_hash") for finding in annotated)
+    for relative in ("app.py", "caller.py", "validator.py"):
+        assert reads.count(relative) == 1
+
+
 def test_finding_file_parses_do_not_grow_with_its_finding_count(tmp_path, monkeypatch):
     source, lines = _many_sinks(tmp_path)
     app_source = source.read_text()
