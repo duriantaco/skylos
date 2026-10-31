@@ -325,15 +325,34 @@ def _allowlist_names(compare):
     return set()
 
 
-def _test_is_negative(test):
-    """True when the branch body runs if the check *failed*."""
+def polarity_names(test, holds, call_names, compare_names=None):
+    """Names checked by ``test`` when it evaluates to ``holds``: membership
+    (``in``/``not in``) through ``compare_names`` and true calls through
+    ``call_names``, combined by the logic of ``not``, ``and`` and ``or``."""
+    if compare_names is None:
+        compare_names = _allowlist_names
     if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
-        return True
-    if isinstance(test, ast.Compare) and len(test.ops) == 1:
-        return isinstance(test.ops[0], (ast.NotEq, ast.NotIn, ast.IsNot))
-    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.Or):
-        return all(_test_is_negative(value) for value in test.values)
-    return False
+        return polarity_names(test.operand, not holds, call_names, compare_names)
+    if isinstance(test, ast.BoolOp):
+        parts = [
+            polarity_names(value, holds, call_names, compare_names)
+            for value in test.values
+        ]
+        if not parts:
+            return set()
+        if isinstance(test.op, ast.And) == holds:
+            return set().union(*parts)
+        return set.intersection(*parts)
+    if isinstance(test, ast.Compare):
+        names = compare_names(test)
+        if not names:
+            return set()
+        if isinstance(test.ops[0], ast.NotIn) == holds:
+            return set()
+        return set(names)
+    if isinstance(test, ast.Call) and holds:
+        return set(call_names(test))
+    return set()
 
 
 def _body_terminates(body):
@@ -1026,24 +1045,21 @@ class _PathFlowChecker(TaintVisitor):
 
     def visit_If(self, node):
         self._record_safety_tokens(node.test)
-        names = self._validation_names(node.test)
-        if not names:
+        when_true = self._validation_names(node.test, True)
+        when_false = self._validation_names(node.test, False)
+        if not when_true and not when_false:
             self.generic_visit(node)
             return
         self.visit(node.test)
-        if _test_is_negative(node.test):
-            self._visit_block(node.body)
-            self._visit_block(node.orelse, names)
-            if _body_terminates(node.body):
-                self._current_validated().update(names)
-        else:
-            self._visit_block(node.body, names)
-            self._visit_block(node.orelse)
+        self._visit_block(node.body, when_true)
+        self._visit_block(node.orelse, when_false)
+        if when_false and _body_terminates(node.body):
+            self._current_validated().update(when_false)
 
     def visit_Assert(self, node):
-        names = self._validation_names(node.test)
+        names = self._validation_names(node.test, True)
         self.generic_visit(node)
-        if names and not _test_is_negative(node.test):
+        if names:
             self._current_validated().update(names)
 
     def _visit_block(self, statements, validated=None):
@@ -1091,15 +1107,11 @@ class _PathFlowChecker(TaintVisitor):
         else:
             self.file_object_stack[-1].discard(name)
 
-    def _validation_names(self, test):
-        """Names a containment or allowlist check in ``test`` vouches for."""
-        names = set()
-        for sub in ast.walk(test):
-            if isinstance(sub, ast.Call):
-                names |= self._containment_call_names(sub)
-            elif isinstance(sub, ast.Compare):
-                names |= _allowlist_names(sub)
-        return names
+    def _validation_names(self, test, holds):
+        """Names a containment or allowlist check vouches for when ``test``
+        evaluates to ``holds``. ``a or b`` holding proves only what both
+        prove; ``a and b`` failing likewise."""
+        return polarity_names(test, holds, self._containment_call_names)
 
     def _containment_call_names(self, call):
         if _callee_last(call) == "commonpath":
