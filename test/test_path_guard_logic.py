@@ -9,11 +9,13 @@ import pytest
 from skylos.analyzer import analyze
 
 ROUTE = """
+import os
 from fastapi import FastAPI, HTTPException
 from storage import load
 
 app = FastAPI()
 ALLOWED = {{"a.txt", "b.txt"}}
+BASE = "/srv/files"
 
 @app.get("/files/{{name}}")
 def view(name: str, strict: bool = True):
@@ -71,8 +73,20 @@ def _d215(tmp_path, body):
             return open(name).read()
         raise HTTPException(status_code=404)
         """,
+        """
+        target = os.path.realpath(os.path.join(BASE, name))
+        if os.path.commonpath([target, BASE]) != BASE or not strict:
+            raise HTTPException(status_code=404)
+        return open(target).read()
+        """,
     ],
-    ids=["reject-either", "reject-not-both", "use-when-both", "local-use-when-both"],
+    ids=[
+        "reject-either",
+        "reject-not-both",
+        "use-when-both",
+        "local-use-when-both",
+        "containment-reject-either",
+    ],
 )
 def test_checks_the_whole_test_guarantees_are_kept(tmp_path, body):
     assert _d215(tmp_path, body) == []
@@ -101,12 +115,19 @@ def test_checks_the_whole_test_guarantees_are_kept(tmp_path, body):
             return open(name).read()
         raise HTTPException(status_code=404)
         """,
+        """
+        target = os.path.realpath(os.path.join(BASE, name))
+        if os.path.commonpath([target, BASE]) != BASE and strict:
+            raise HTTPException(status_code=404)
+        return open(target).read()
+        """,
     ],
     ids=[
         "reject-unless-either",
         "reject-only-when-strict",
         "use-when-either",
         "local-use-when-either",
+        "containment-reject-only-when-strict",
     ],
 )
 def test_checks_an_or_makes_optional_still_report(tmp_path, body):

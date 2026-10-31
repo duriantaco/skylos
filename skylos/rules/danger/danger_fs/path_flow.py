@@ -327,8 +327,10 @@ def _allowlist_names(compare):
 
 def polarity_names(test, holds, call_names, compare_names=None):
     """Names checked by ``test`` when it evaluates to ``holds``: membership
-    (``in``/``not in``) through ``compare_names`` and true calls through
-    ``call_names``, combined by the logic of ``not``, ``and`` and ``or``."""
+    (``in``/``not in``) through ``compare_names``, true calls through
+    ``call_names`` (also as a side of a holding ``==``, as in
+    ``commonpath([p, base]) == base``), combined by the logic of ``not``,
+    ``and`` and ``or``."""
     if compare_names is None:
         compare_names = _allowlist_names
     if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
@@ -345,11 +347,20 @@ def polarity_names(test, holds, call_names, compare_names=None):
         return set.intersection(*parts)
     if isinstance(test, ast.Compare):
         names = compare_names(test)
-        if not names:
+        if names:
+            if isinstance(test.ops[0], ast.NotIn) == holds:
+                return set()
+            return set(names)
+        if len(test.ops) != 1 or not isinstance(test.ops[0], (ast.Eq, ast.NotEq)):
             return set()
-        if isinstance(test.ops[0], ast.NotIn) == holds:
+        if isinstance(test.ops[0], ast.Eq) != holds:
             return set()
-        return set(names)
+        found = set()
+        for side in (test.left, test.comparators[0]):
+            for part in ast.walk(side):
+                if isinstance(part, ast.Call):
+                    found |= set(call_names(part))
+        return found
     if isinstance(test, ast.Call) and holds:
         return set(call_names(test))
     return set()
