@@ -74,7 +74,6 @@ def test_escaping_without_a_mutator_keeps_its_original_html_context(
 @pytest.mark.parametrize(
     "mutator,providers",
     [
-        pytest.param(MERGE, (), id="unrestricted-issue-loop-is-unproved"),
         pytest.param(
             "def change(key, value):\n    setattr(html, key, value)\n",
             (),
@@ -155,3 +154,12 @@ def test_namespace_writes_retain_raw_listed_high_review_and_gate_failure(
     passed, reasons = check_gate(result, {"gate": {"max_high": 0, "max_security": 10}})
     assert passed is False
     assert any("high" in str(reason).lower() for reason in reasons)
+
+
+def test_unrestricted_namespace_loop_without_visible_effects_preserves_escape(
+    tmp_path, monkeypatch
+):
+    raw, listed, result = _scan(tmp_path, monkeypatch, RENDER + MERGE)
+    assert raw == listed == []
+    passed, reasons = check_gate(result, {"gate": {"max_high": 0, "max_security": 10}})
+    assert passed is True, reasons

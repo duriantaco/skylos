@@ -15,7 +15,8 @@ from skylos.rules.danger.danger_web.html_context import (
 from skylos.rules.danger.danger_web.url_patterns import FLAG_NAMES, url_pattern_is_safe
 from skylos.rules.danger.taint import TaintVisitor, XSS_SANITIZERS
 from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
-from skylos.rules.danger.module_namespace import has_mock_api_patching
+from skylos.rules.danger.module_namespace import attribute_write_names, has_mock_api_patching
+from .namespace_provenance import isolated_namespace_writes
 
 # Template-source sinks: the first argument (or ``source=``) is compiled as a
 # Jinja template, so untrusted text there is template code, not data.
@@ -321,7 +322,7 @@ class _HelperEnv:
 class _XSSFlowChecker(TaintVisitor):
     SAFE_MARK_FUNCS = {"Markup", "mark_safe"}
 
-    def __init__(self, tree, file_path, findings, sanitizers=None):
+    def __init__(self, tree, file_path, findings, sanitizers=None, project_root=None):
         super().__init__(file_path, findings, sanitizers=sanitizers)
         self.untrusted_sources = UntrustedSourceIndex(tree)
         self._tree = tree
@@ -338,6 +339,20 @@ class _XSSFlowChecker(TaintVisitor):
         self._url_checkers: dict = {}
         self._checking_urls: set = set()
         self._has_api_patching = has_mock_api_patching(tree)
+        self._project_root = project_root
+
+    def _sanitizer_is_unpatched(self, qualified):
+        cached = getattr(self, "_attribute_writes_cache", None)
+        if cached is None or cached[0] is not self._tree:
+            written = attribute_write_names(self._tree)
+            if written[1]:
+                isolated = isolated_namespace_writes(self._tree, self.file_path, self._project_root)
+                if isolated:
+                    written = attribute_write_names(self._tree, isolated_writes=isolated)
+            cached = (self._tree, written)
+            self._attribute_writes_cache = cached
+        names, computed = cached[1]
+        return not computed and qualified.rsplit(".", 1)[-1] not in names
 
     def _template_source_arg(self, node: ast.Call, qn: str):
         last = qn.split(".")[-1]
@@ -1340,10 +1355,10 @@ def _alias_groups(bindings) -> dict:
     return groups
 
 
-def scan(tree, file_path, findings):
+def scan(tree, file_path, findings, *, project_root=None):
     try:
         checker = _XSSFlowChecker(
-            tree, file_path, findings, sanitizers=XSS_SANITIZERS
+            tree, file_path, findings, sanitizers=XSS_SANITIZERS, project_root=project_root
         )
         checker.visit(tree)
     except Exception as e:

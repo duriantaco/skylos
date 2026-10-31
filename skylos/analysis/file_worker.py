@@ -237,6 +237,7 @@ def _danger_findings(
             Path(file),
             taint_findings,
             source=prepared.source,
+            project_root=getattr(options, "project_root", None),
         )
     except Exception as error:
         logger.debug("Taint analysis failed for %s", file, exc_info=True)

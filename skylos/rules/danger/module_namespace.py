@@ -475,7 +475,9 @@ def module_rebinding(
     return _Analysis(tree, module_name, parents, isolated_code_calls).run()
 
 
-def attribute_write_names(tree: ast.AST | None) -> tuple[frozenset[str], bool]:
+def attribute_write_names(
+    tree: ast.AST | None, *, isolated_writes: frozenset[int] = frozenset()
+) -> tuple[frozenset[str], bool]:
     """Attribute names the module writes on any object (``x.basename = ...``,
     ``del x.basename``, ``setattr(x, "basename", ...)``), and whether it
     writes one with a computed name (``setattr(x, name, ...)`` on anything
@@ -484,6 +486,8 @@ def attribute_write_names(tree: ast.AST | None) -> tuple[frozenset[str], bool]:
     names: set[str] = set()
     computed = False
     for node in ast.walk(tree) if tree is not None else ():
+        if id(node) in isolated_writes:
+            continue
         if isinstance(node, ast.Attribute) and isinstance(
             node.ctx, (ast.Store, ast.Del)
         ):
