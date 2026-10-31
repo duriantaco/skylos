@@ -1,4 +1,4 @@
-"""Source-proven Django autoreload callbacks, with their actual call owners."""
+"""Source-proven Django autoreload callbacks and management entry points."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from skylos.deadcode.framework_liveness import (
     _qualified,
 )
 from skylos.deadcode.web_framework_liveness import _executed_definitions
+from skylos.rules.danger.module_namespace import module_name_for, module_rebinding
 
 
 _RELOADER = "django.utils.autoreload.run_with_reloader"
@@ -81,6 +82,8 @@ class _AutoreloadScanner(_ConverterScanner):
         changed = isinstance(value, ast.Attribute) and self.registry.changed(
             _qualified(value, bindings)
         )
+        if not isinstance(value, (ast.Name, ast.Attribute, ast.Constant)):
+            self._command_namespace_escapes(value, bindings)
         super()._scan_assignment(statement, bindings, owner)
         if changed:
             targets = []
@@ -91,6 +94,15 @@ class _AutoreloadScanner(_ConverterScanner):
             for target in targets:
                 if isinstance(target, ast.Name):
                     bindings[target.id] = None
+
+    def _command_namespace_escapes(self, expression, bindings):
+        if expression is None:
+            return
+        for node in _eager_nodes(expression):
+            if isinstance(node, (ast.Name, ast.Attribute)):
+                qualified = _qualified(node, bindings)
+                if qualified is not None:
+                    self.registry.command_namespace_escapes.add(qualified)
 
     def _calls(self, expression, bindings, *, routes=False):
         for call in _eager_nodes(expression):
@@ -149,6 +161,12 @@ class _AutoreloadScanner(_ConverterScanner):
                     )
                 else:
                     scanner.invoke(function, call, bindings)
+            else:
+                for argument in (
+                    *call.args,
+                    *(keyword.value for keyword in call.keywords),
+                ):
+                    self._command_namespace_escapes(argument, bindings)
 
 
 class _AutoreloadRegistry:
@@ -156,6 +174,10 @@ class _AutoreloadRegistry:
         self.scanners = {}
         self.callbacks = {}
         self.changed_providers = set()
+        # Additional command-entry proof only; these do not change which
+        # autoreload callbacks the existing interpreter discovers.
+        self.command_namespace_escapes = set()
+        self.command_module_namespaces = {}
         for module in parsed:
             scanner = _AutoreloadScanner(index, module, self)
             self.scanners[scanner.evidence.module] = scanner
@@ -216,12 +238,148 @@ def _command_handles(definitions, root, registry):
             ):
                 selected, function = registry.function(name)
                 if selected is not None and function[0].lineno == member.lineno:
-                    yield selected, function, command
+                    yield selected, function, command, proof, scanner
             break
 
 
+def _command_module_stable(scanner, names, registry):
+    key = id(scanner)
+    if key not in registry.command_module_namespaces:
+        registry.command_module_namespaces[key] = module_rebinding(
+            scanner.tree, module_name_for(scanner.evidence.path)
+        )
+    dynamic, rebound = registry.command_module_namespaces[key]
+    return not dynamic and not rebound.intersection(names)
+
+
+def _command_dispatch_proven(command, proof, registry, discovery):
+    """The selected handle survives ordinary construction and lookup.
+
+    Unknown constructors, descriptors, class effects or escaped namespaces do
+    not justify a new entry point. Existing autoreload interpretation remains
+    independent of this narrower proof.
+    """
+    lineage = proof._mro(command)
+    if not lineage or not _command_module_stable(discovery, {"Command"}, registry):
+        return False
+    protocols = {
+        "__init__",
+        "__new__",
+        "__getattribute__",
+        "__getattr__",
+        "__setattr__",
+        "__delattr__",
+        "__init_subclass__",
+        "__bases__",
+    }
+    for owner in lineage:
+        if any(
+            escaped == owner
+            or escaped.startswith(owner + ".")
+            or owner.startswith(escaped + ".")
+            for escaped in registry.command_namespace_escapes
+        ):
+            return False
+        protected = {owner + "." + member for member in protocols | {"handle"}}
+        changed = set(proof.provider_overrides) | registry.changed_providers
+        if any(
+            target == written
+            or target.startswith(written + ".")
+            or written.startswith(target + ".")
+            for target in protected
+            for written in changed
+        ):
+            return False
+        info = proof.classes.get(owner)
+        if info is None:
+            if (
+                owner != "builtins.object"
+                and proof.status(owner, "command") is not True
+            ):
+                return False
+            continue
+        definition, _bases, members, _bindings, scanner = info
+        if not _command_module_stable(scanner, {definition.simple_name}, registry):
+            return False
+        if (
+            definition.node.decorator_list
+            or definition.node.keywords
+            or protocols.intersection(members)
+        ):
+            return False
+        deferred_annotations = any(
+            isinstance(statement, ast.ImportFrom)
+            and statement.module == "__future__"
+            and any(alias.name == "annotations" for alias in statement.names)
+            for statement in scanner.tree.body
+        )
+        for statement in definition.node.body:
+            if isinstance(statement, ast.Pass):
+                continue
+            if isinstance(statement, ast.Expr) and isinstance(
+                statement.value, ast.Constant
+            ):
+                continue
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                # Definition headers can execute user code too.
+                headers = [*statement.decorator_list, *statement.args.defaults]
+                headers.extend(
+                    item for item in statement.args.kw_defaults if item is not None
+                )
+                if any(not _command_literal(item) for item in headers):
+                    return False
+                annotations = [
+                    argument.annotation
+                    for argument in (
+                        *statement.args.posonlyargs,
+                        *statement.args.args,
+                        *statement.args.kwonlyargs,
+                        *([statement.args.vararg] if statement.args.vararg else []),
+                        *([statement.args.kwarg] if statement.args.kwarg else []),
+                    )
+                ] + [statement.returns]
+                if not deferred_annotations and any(
+                    annotation is not None
+                    and not isinstance(annotation, (ast.Name, ast.Constant))
+                    for annotation in annotations
+                ):
+                    return False
+                continue
+            if (
+                isinstance(statement, ast.Assign)
+                and all(isinstance(target, ast.Name) for target in statement.targets)
+                and _command_literal(statement.value)
+            ):
+                continue
+            if (
+                isinstance(statement, ast.AnnAssign)
+                and isinstance(statement.target, ast.Name)
+                and (statement.value is None or _command_literal(statement.value))
+                and (
+                    deferred_annotations
+                    or isinstance(statement.annotation, (ast.Name, ast.Constant))
+                )
+            ):
+                continue
+            return False
+    return True
+
+
+def _command_literal(node):
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return all(_command_literal(item) for item in node.elts)
+    if isinstance(node, ast.Dict):
+        return all(
+            key is not None and _command_literal(key) and _command_literal(value)
+            for key, value in zip(node.keys, node.values)
+        )
+    return False
+
+
 def find_django_autoreload_targets(definitions, parsed_files, root):
-    """Only real autoreload calls in executing source create callback roots."""
+    """Find executing autoreload callbacks and proven management handles."""
     if not any(
         definition.type == "import" and definition.name.split(".", 1)[0] == "django"
         for definition in definitions.values()
@@ -242,7 +400,15 @@ def find_django_autoreload_targets(definitions, parsed_files, root):
         for function in tuple(scanner.functions.values()):
             if id(function[1]) in executed and id(function[1]) not in scanner.invoked:
                 scanner.invoke(function)
-    for scanner, function, command in _command_handles(definitions, root, registry):
+    handles = list(_command_handles(definitions, root, registry))
+    # Freeze entry proofs before invoking command bodies: effects inside an
+    # already-entered handle cannot disprove that the body was entered.
+    command_roots = {
+        id(function[1]): function[1]
+        for _scanner, function, command, proof, discovery in handles
+        if _command_dispatch_proven(command, proof, registry, discovery)
+    }
+    for scanner, function, command, _proof, _discovery in handles:
         instance = ast.Name(id="_skylos_command_instance", ctx=ast.Load())
         call = ast.Call(
             func=ast.Name(id="handle", ctx=ast.Load()), args=[instance], keywords=[]
@@ -251,4 +417,7 @@ def find_django_autoreload_targets(definitions, parsed_files, root):
     return [
         (definition, "django_web_autoreload_callback")
         for definition in registry.callbacks.values()
+    ] + [
+        (definition, "django_web_management_command_handle")
+        for definition in command_roots.values()
     ]

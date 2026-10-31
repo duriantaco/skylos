@@ -724,6 +724,149 @@ def _view_targets(name, project):
     return targets
 
 
+def _function_view_targets(activation, scanners, index):
+    """Read only the active source URL tables and their captured callbacks."""
+    if not activation.url_roots:
+        return []
+    from skylos.deadcode.provider_method_liveness import _ProofLimit
+    from skylos.deadcode.provider_source_dispatch import _DispatchValue, _SourceDispatch
+
+    definitions = {
+        id(item): item for items in index.all_by_name.values() for item in items
+    }
+    source = _SourceDispatch(definitions, index._backend_modules)
+    changed = {
+        name
+        for module in activation.loaded
+        if module in scanners
+        for name in scanners[module].callback_mutations
+    }
+
+    def intact(name):
+        return not any(
+            name == item or name.startswith(item + ".") or item.startswith(name + ".")
+            for item in changed
+        )
+
+    def module_tree(name):
+        scanner = scanners.get(name)
+        return (
+            source.files[str(scanner.path.resolve())].tree
+            if scanner is not None
+            else None
+        )
+
+    found = {}
+    visited = set()
+
+    def visit_table(tree):
+        if (
+            tree in visited
+            or tree in source.invalid_modules
+            or not source.initialize(tree)
+        ):
+            return
+        visited.add(tree)
+        for value in source.environments.get(tree, {}).get("urlpatterns", []):
+            visit_value(value)
+
+    def visit_value(value):
+        if not isinstance(value, _DispatchValue) or not source.usable(value):
+            return
+        if value.kind == "sequence":
+            for members in value.fields.values():
+                for item in members:
+                    visit_value(item)
+        elif value.kind == "urlinclude":
+            visit_table(value.node)
+        elif value.kind == "urlpattern":
+            if not all(
+                intact(guard.node)
+                for guard in value.guards
+                if isinstance(guard, _DispatchValue)
+                and guard.kind == "django_registration"
+            ):
+                return
+            for callback in value.fields.get("callback", []):
+                if not isinstance(callback, _DispatchValue) or not source.usable(
+                    callback
+                ):
+                    continue
+                if callback.kind == "urlinclude":
+                    visit_table(callback.node)
+                    continue
+                if callback.kind != "function":
+                    continue
+                node = callback.node
+                if (
+                    not isinstance(node, ast.FunctionDef)
+                    or node.decorator_list
+                    or source.deferred_body(node)
+                ):
+                    continue
+                arguments = node.args
+                if (
+                    len([*arguments.posonlyargs, *arguments.args]) != 1
+                    or arguments.defaults
+                    or arguments.kwonlyargs
+                    or arguments.vararg
+                    or arguments.kwarg
+                ):
+                    # This proof models a request-only callback. It must not
+                    # replace URL/default argument bindings with unknown data.
+                    continue
+                options = value.fields.get("kwargs", [])
+                if (
+                    len(options) != 1
+                    or not isinstance(options[0], _DispatchValue)
+                    or options[0].kind != "registry"
+                    or options[0].fields
+                    or not source.usable(options[0])
+                ):
+                    continue
+                tree = source.context(node)
+                if (
+                    not isinstance(tree, ast.Module)
+                    or tree in source.invalid_modules
+                    or not source.initialize(tree)
+                ):
+                    continue
+                location = (Path(source.file_for_node[node]), node.lineno)
+                candidates = [
+                    item
+                    for item in index.all_by_location.get(location, ())
+                    if item.type == "function"
+                ]
+                if len(candidates) == 1:
+                    definition = candidates[0]
+                    if (
+                        intact(definition.name)
+                        and index.class_or_function(definition.name) is definition
+                    ):
+                        found[id(definition)] = definition
+
+    try:
+        roots = [
+            tree
+            for name in activation.url_roots
+            if (tree := module_tree(name)) is not None
+        ]
+        for tree in roots:
+            source.initialize(tree)
+        changed.update(
+            name
+            for scanner in scanners.values()
+            if str(scanner.path.resolve()) in source.files
+            and source.files[str(scanner.path.resolve())].tree in source.module_states
+            for name in scanner.callback_mutations
+        )
+        for tree in roots:
+            visit_table(tree)
+    except (_ProofLimit, RecursionError):
+        return []
+    return [(item, "django_web_function_view") for item in found.values()]
+
+
 def find_django_targets(
     index: Any,
     scanners: dict,
@@ -742,6 +885,7 @@ def find_django_targets(
     targets.extend(_storage_backend_targets(activation, scanners, classes))
     targets.extend(_logging_factory_targets(activation, scanners, classes))
     targets.extend(_admin_targets(activation, scanners, classes))
+    targets.extend(_function_view_targets(activation, scanners, index))
     project = _DjangoProject(
         index,
         scanners,

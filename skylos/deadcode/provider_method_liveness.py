@@ -248,6 +248,7 @@ def find_provider_method_targets(
             by_location[key].append(candidate)
             by_name[candidate.simple_name].append(candidate)
         owners = {}
+        framework_owners = []
         pending = [parsed.tree for parsed in parsed_files]
         root_markers = {
             "framework_root",
@@ -271,6 +272,14 @@ def find_provider_method_targets(
                 definition = matches[0]
                 owners[node] = definition
                 evidence = getattr(definition, "heuristic_refs", {})
+                if "framework_root" in evidence:
+                    framework_owners.append(
+                        (
+                            node,
+                            "dead_code_liveness:django_web_management_command_handle"
+                            in evidence,
+                        )
+                    )
                 actual_callback = {
                     "framework_root",
                     "test_entrypoint",
@@ -338,6 +347,27 @@ def find_provider_method_targets(
                     found.setdefault(
                         id(definition), (definition, owners.get(owner), None)
                     )
+        try:
+            from skylos.deadcode.provider_source_dispatch import _SourceDispatch
+
+            dispatch = _SourceDispatch(
+                definitions, parsed_files, framework_owners=framework_owners
+            )
+            for target, caller in dispatch.targets():
+                key = (dispatch.file_for_node[target], target.lineno)
+                matches = by_location.get(key, ())
+                if len(matches) == 1:
+                    definition = matches[0]
+                    found[id(definition)] = (
+                        definition,
+                        owners.get(caller),
+                        "top_level_execution"
+                        if isinstance(caller, ast.Module)
+                        else "reachable_from_root",
+                    )
+        except (_ProofLimit, RecursionError):
+            # Preserve the established proofs when the supplemental domain ends.
+            pass
         return list(found.values())
     except (_ProofLimit, RecursionError):
         # No partial name-based rescue when source resolution exceeds its bound.
