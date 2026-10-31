@@ -1,5 +1,27 @@
 ## Changelog
 
+## [5.3.0](https://github.com/duriantaco/skylos/compare/v5.2.0...v5.3.0) (2026-10-31)
+
+
+### Features
+
+* **cicd:** opt-in AI review on the default-branch upload ([#1126](https://github.com/duriantaco/skylos/issues/1126)) ([ac308ed](https://github.com/duriantaco/skylos/commit/ac308ede6f0a7174434219d04a0e38c5a03f1e54))
+
+
+### Bug Fixes
+
+* **ai-review:** stop on a refused key and never record failed calls as unsure ([#1128](https://github.com/duriantaco/skylos/issues/1128)) ([39d2049](https://github.com/duriantaco/skylos/commit/39d2049e99cf13eb4190f69ac7b0bd054c29aeb7))
+* **analyzer:** reduce noise with conservative provenance checks ([#1130](https://github.com/duriantaco/skylos/issues/1130)) ([9c8ccc0](https://github.com/duriantaco/skylos/commit/9c8ccc08ae2ef78199f87cd8fe8079b0e2074aff))
+* **deadcode:** prove Django command and provider reachability ([#1138](https://github.com/duriantaco/skylos/issues/1138)) ([91356bf](https://github.com/duriantaco/skylos/commit/91356bf98f86d8e27e708015f23d3872e04c1766))
+* **defend:** call it AI app safety in reports, help and CI steps ([#1127](https://github.com/duriantaco/skylos/issues/1127)) ([e332af8](https://github.com/duriantaco/skylos/commit/e332af86b1ebd1aada0120f2dc9abfbc9aca12a1))
+* **pricing:** match Cloud prices and only charge remediate when the AI runs ([#1141](https://github.com/duriantaco/skylos/issues/1141)) ([3300a81](https://github.com/duriantaco/skylos/commit/3300a81b0dada125980e7e7efc3f6d442986d0f6))
+* **security:** avoid false XSS warnings from unrelated Namespace writes ([#1142](https://github.com/duriantaco/skylos/issues/1142)) ([2b4ba5f](https://github.com/duriantaco/skylos/commit/2b4ba5f9dfb2a703b0ba494fbd529ea78b063fde))
+* **security:** distinguish compound check descriptions from directives ([#1140](https://github.com/duriantaco/skylos/issues/1140)) ([f4bff65](https://github.com/duriantaco/skylos/commit/f4bff656cf285dab3d2d6ae334d980c3441e69c0))
+* **security:** improve YAML and code execution checks ([#1136](https://github.com/duriantaco/skylos/issues/1136)) ([e8fd22c](https://github.com/duriantaco/skylos/commit/e8fd22ca0851e854142dce19b72ed081b2e264ad))
+* **security:** prevent unsafe route paths from being marked safe ([#1137](https://github.com/duriantaco/skylos/issues/1137)) ([643276e](https://github.com/duriantaco/skylos/commit/643276ee9d1a9c7a07642fc1b1417b236361bf6a))
+* **security:** recognize normalized URL scheme guards ([#1139](https://github.com/duriantaco/skylos/issues/1139)) ([a96d59c](https://github.com/duriantaco/skylos/commit/a96d59cb7f01432fcd5abd0ff496aab3b362d56e))
+* **security:** scope import evidence and preserve prompt severity ([#1131](https://github.com/duriantaco/skylos/issues/1131)) ([8a6d32c](https://github.com/duriantaco/skylos/commit/8a6d32c612565ef54aafff7c19769ffc98837c8b))
+
 ## [5.2.0](https://github.com/duriantaco/skylos/compare/v5.1.5...v5.2.0) (2026-10-29)
 
 
