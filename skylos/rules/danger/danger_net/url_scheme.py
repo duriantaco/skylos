@@ -85,6 +85,270 @@ def _allowed_literals(expr, *, prefixes=False):
     return bool(values) and all(_text(value) in allowed for value in values)
 
 
+def _normalization_result_stable(checker):
+    """Decline new string-method proof when native result capability escapes.
+
+    Parser identity alone does not protect a mutable result class's scheme
+    descriptor. Track syntactic capability origins, not arbitrary objects
+    that happen to have a scheme attribute.
+    """
+    cached = getattr(checker, "_url_scheme_normalization_stable", None)
+    if cached is not None:
+        return cached
+    checker._url_scheme_normalization_stable = False
+    nodes = list(ast.walk(checker.tree))
+    imports = {}
+    result_types = {
+        "ParseResult",
+        "SplitResult",
+        "ParseResultBytes",
+        "SplitResultBytes",
+        "_ParseResultBase",
+        "_SplitResultBase",
+    }
+    for node in nodes:
+        if isinstance(node, ast.ImportFrom) and any(
+            alias.name == "*" for alias in node.names
+        ):
+            return False
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imports.setdefault(alias.asname or alias.name.split(".")[0], set()).add(
+                    alias.name if alias.asname else alias.name.split(".")[0]
+                )
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for alias in node.names:
+                if node.module == "urllib.parse" and (
+                    alias.name in result_types
+                    or alias.name.startswith(("_ResultMixin", "_NetlocResultMixin"))
+                ):
+                    return False
+                imports.setdefault(alias.asname or alias.name, set()).add(
+                    node.module + "." + alias.name
+                )
+
+    module, parser, result, exposed = 1, 2, 4, 8
+    result_names = set()
+
+    def qualified(expr, depth=0):
+        if depth >= 12:
+            return set()
+        if isinstance(expr, ast.Name):
+            return imports.get(expr.id, set())
+        if isinstance(expr, ast.Attribute):
+            return {
+                prefix + "." + expr.attr for prefix in qualified(expr.value, depth + 1)
+            }
+        return set()
+
+    namespace_builtins = {
+        "globals",
+        "locals",
+        "vars",
+        "__import__",
+        "exec",
+        "eval",
+        "compile",
+        "getattr",
+    }
+    reflective_attributes = {
+        "__dict__",
+        "__globals__",
+        "__closure__",
+        "__code__",
+        "__wrapped__",
+        "__class__",
+        "__mro__",
+        "__bases__",
+        "__subclasses__",
+        "__getattribute__",
+        "__getattr__",
+        "f_globals",
+        "f_locals",
+        "f_builtins",
+        "f_back",
+        "gi_frame",
+        "cr_frame",
+        "ag_frame",
+        "tb_frame",
+    }
+    for node in nodes:
+        if isinstance(node, ast.Attribute) and node.attr in reflective_attributes:
+            return False
+        if not isinstance(node, (ast.Name, ast.Attribute)) or not isinstance(
+            node.ctx, ast.Load
+        ):
+            continue
+        if isinstance(node, ast.Name) and node.id in namespace_builtins | {
+            "__builtins__"
+        }:
+            return False
+        paths = qualified(node)
+        parent = checker.parents.get(id(node))
+        if paths & {"sys", "builtins", "importlib", "operator", "_operator"} and not (
+            isinstance(parent, ast.Attribute) and parent.value is node
+        ):
+            return False
+        if any(
+            path in {"sys.modules", "sys._getframe"}
+            or path.startswith(("sys.modules.", "importlib."))
+            or path.startswith(("sys.__", "builtins.__"))
+            or path in {"builtins." + name for name in namespace_builtins}
+            or path
+            in {
+                "operator.attrgetter",
+                "operator.methodcaller",
+                "_operator.attrgetter",
+                "_operator.methodcaller",
+            }
+            for path in paths
+        ):
+            # Dynamic namespace access can expose the same mutable native
+            # result types without naming them in an ordinary import.
+            return False
+
+    string_types = {"str", "bytes"}
+    assignments = [
+        node for node in nodes if isinstance(node, (ast.Assign, ast.AnnAssign))
+    ]
+    for _ in range(8):
+        before = len(string_types)
+        for node in assignments:
+            value = node.value
+            if (isinstance(value, ast.Name) and value.id in string_types) or qualified(
+                value
+            ) & {"builtins.str", "builtins.bytes"}:
+                targets = (
+                    node.targets if isinstance(node, ast.Assign) else [node.target]
+                )
+                string_types.update(
+                    target.id for target in targets if isinstance(target, ast.Name)
+                )
+        if len(string_types) == before:
+            break
+    else:
+        return False
+    if any(
+        isinstance(node, ast.ClassDef)
+        and any(
+            (isinstance(base, ast.Name) and base.id in string_types)
+            or qualified(base) & {"builtins.str", "builtins.bytes"}
+            for base in node.bases
+        )
+        for node in nodes
+    ):
+        # Native parsing invokes string coercion/slicing methods. An exposed
+        # local string subclass can make its scheme field a non-string value.
+        return False
+
+    def kind(expr, depth=0):
+        if depth >= 12:
+            return exposed
+        capability = (
+            result if isinstance(expr, ast.Name) and expr.id in result_names else 0
+        )
+        paths = qualified(expr)
+        parser_paths = {"urllib.parse.urlsplit", "urllib.parse.urlparse"}
+        if paths & {"urllib", "urllib.parse"}:
+            capability |= module
+        if paths & parser_paths:
+            capability |= parser
+        if any(
+            path.startswith("urllib.parse.") and path not in parser_paths
+            for path in paths
+        ):
+            capability |= exposed
+        if isinstance(expr, ast.Call) and qualified(expr.func) & {
+            "urllib.parse.urlsplit",
+            "urllib.parse.urlparse",
+        }:
+            capability |= result
+        if isinstance(expr, ast.Attribute):
+            base = kind(expr.value, depth + 1)
+            if base & result:
+                fields = {
+                    "scheme",
+                    "netloc",
+                    "path",
+                    "params",
+                    "query",
+                    "fragment",
+                    "hostname",
+                    "port",
+                    "username",
+                    "password",
+                }
+                capability |= 0 if expr.attr in fields else exposed
+            if base & parser or (base & module and expr.attr.startswith("__")):
+                capability |= exposed
+        return capability
+
+    for _ in range(8):
+        before = len(result_names)
+        for node in assignments:
+            if not kind(node.value) & result:
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            result_names.update(
+                target.id for target in targets if isinstance(target, ast.Name)
+            )
+        if len(result_names) == before:
+            break
+    else:
+        return False
+
+    for node in nodes:
+        if not isinstance(node, ast.expr) or (
+            isinstance(node, (ast.Name, ast.Attribute))
+            and not isinstance(node.ctx, ast.Load)
+        ):
+            continue
+        capability = kind(node)
+        if not capability:
+            continue
+        parent = checker.parents.get(id(node))
+        if (
+            capability == module
+            and isinstance(parent, ast.Attribute)
+            and parent.value is node
+            and isinstance(parent.ctx, ast.Load)
+        ):
+            continue
+        if (
+            capability == parser
+            and isinstance(parent, ast.Call)
+            and parent.func is node
+        ):
+            continue
+        if capability == result:
+            if (
+                isinstance(parent, ast.Attribute)
+                and parent.value is node
+                and isinstance(parent.ctx, ast.Load)
+                and not kind(parent)
+            ):
+                continue
+            if isinstance(parent, (ast.Assign, ast.AnnAssign)) and parent.value is node:
+                targets = (
+                    parent.targets
+                    if isinstance(parent, ast.Assign)
+                    else [parent.target]
+                )
+                scope = checker.parents.get(id(parent))
+                while scope is not None and not isinstance(
+                    scope,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module),
+                ):
+                    scope = checker.parents.get(id(scope))
+                if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) and all(
+                    isinstance(target, ast.Name) for target in targets
+                ):
+                    continue
+        return False
+    checker._url_scheme_normalization_stable = True
+    return True
+
+
 def _guard_read(checker, test, name, func, guard, *, truth):
     if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
         return _guard_read(checker, test.operand, name, func, guard, truth=not truth)
@@ -129,6 +393,16 @@ def _guard_read(checker, test, name, func, guard, *, truth):
         return None
     if not _allowed_literals(allowed):
         return None
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Attribute)
+        and value.func.attr == "lower"
+        and not value.args
+        and not value.keywords
+    ):
+        if not _normalization_result_stable(checker):
+            return None
+        value = value.func.value
     if isinstance(value, ast.Attribute) and value.attr == "scheme":
         return checker._parsed_url_read_line(value.value, name, func, guard)
     return None
@@ -203,11 +477,17 @@ def audit_urlopen(checker, node):
         for url in candidates
     ):
         return
+    message = (
+        "Audit URL schemes: urllib can open local files and other non-HTTP resources; "
+        "validate dynamic URLs against the intended schemes."
+    )
+    if checker._current_function() is not None:
+        message += " Caller-side URL scheme validation is not analysed."
     checker.findings.append(
         {
             "rule_id": "SKY-D218",
             "severity": "MEDIUM",
-            "message": "Audit URL schemes: urllib can open local files and other non-HTTP resources; validate dynamic URLs against the intended schemes.",
+            "message": message,
             "file": str(checker.file_path),
             "line": node.lineno,
             "col": node.col_offset,
