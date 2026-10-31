@@ -1,5 +1,6 @@
 import logging
 import math
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -9,9 +10,11 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.tree import Tree
 
+from skylos.core.test_paths import is_test_code_path
 from skylos.deadcode.confidence import confidence_detail
 from skylos.reporting.advice_display import (
     ADVICE_PRIORITY_NOTE,
+    SEVERITY_RANK,
     advice_display_counts,
     advice_priority,
     combine_complexity_advice,
@@ -30,12 +33,15 @@ from skylos.reporting.finding_types import (
     get_finding_type,
     iter_result_findings,
 )
+from skylos.reporting.issue_summary import suppressed_breakdown
 from skylos.reporting.rollups import FINDING_SECTIONS
+from skylos.rules.guidance import finding_fix, finding_rule_id, rule_docs_url
 from skylos.ui.dead_code_evidence import (
     compact_dead_code_evidence,
     dead_code_candidate_counts,
     dead_code_uncertainty_summary,
     dead_code_uncertainty_text,
+    short_dead_code_evidence,
 )
 from skylos.ui.quality_advice import pytest_signature_advice, pytest_signature_title
 from skylos.ui.scope_notes import scope_note_lines
@@ -155,7 +161,7 @@ def _display_cap(items, limit):
 
 # A message column narrower than this wraps to a word or two per line, so
 # less useful columns fold into the message cell instead.
-_MIN_MESSAGE_WIDTH = 30
+_MIN_MESSAGE_WIDTH = 36
 # Longer locations wrap inside their column rather than crowd the message.
 _MAX_LOCATION_WIDTH = 48
 # Custom rule IDs may be arbitrarily long; fold them without consuming the report.
@@ -242,8 +248,12 @@ def _finding_severity(item, category):
     return str(item.get("severity") or default_display_severity(category)).upper()
 
 
-def _finding_table_cells(item, category, root_path=None):
-    """Keep category-specific evidence in a consistent finding table."""
+def _finding_table_cells(item, category, root_path=None, *, verbose=True):
+    """Keep category-specific evidence in a consistent finding table.
+
+    Outside --verbose a dead-code row keeps its confidence and short reason
+    tags on one line instead of every evidence sentence.
+    """
     complexity = complexity_display(item)
     rule = (
         complexity.rule_label
@@ -269,11 +279,21 @@ def _finding_table_cells(item, category, root_path=None):
         if name and name not in details[0]:
             details.append(name)
         confidence = confidence_detail(item)
-        if confidence:
-            details.append(confidence)
-        why = compact_dead_code_evidence(item)
-        if why:
-            details.append(f"Evidence: {why}")
+        if verbose:
+            if confidence:
+                details.append(confidence)
+            why = compact_dead_code_evidence(item)
+            if why:
+                details.append(f"Evidence: {why}")
+        else:
+            why = short_dead_code_evidence(item)
+            summary = []
+            if confidence:
+                summary.append(confidence)
+            if why:
+                summary.append(f"Evidence: {why}")
+            if summary:
+                details.append(" · ".join(summary))
     elif category == "quality":
         kind, name, detail = _quality_detail(item)
         test_advice = pytest_signature_advice(item)
@@ -353,36 +373,188 @@ def _finding_table_cells(item, category, root_path=None):
     return rule, rule_name, "\n".join(details), location
 
 
-def _render_finding_table(console, root_path, limit, title, items, category):
+_PROVIDED_BY = re.compile(r"\(provided by: ([^)]+)\)")
+_GROUPED_BY_PACKAGE = frozenset({"SKY-D223"})
+
+
+def _item_file(item):
+    return item.get("file") or item.get("file_path") or item.get("basename")
+
+
+def _item_line(item):
+    line = item.get("line") or item.get("line_number") or item.get("lineno") or 1
+    if isinstance(line, int) and not isinstance(line, bool):
+        return line
+    return 1
+
+
+def _item_rule(item, category):
+    return finding_rule_id(item, category)
+
+
+def _package_key(item):
+    message = str(item.get("message") or "")
+    match = _PROVIDED_BY.search(message)
+    if match:
+        return match.group(1).strip()
+    return str(item.get("symbol") or item.get("name") or message)
+
+
+def _display_rows(items, category, root_path, *, verbose=False):
+    """Rows to print: production first by severity, then test code.
+
+    Undeclared-dependency findings show one row per package. Outside
+    --verbose, several test-code findings of one rule share one row.
+    """
+    keyed = []
+    for item in items:
+        in_tests = is_test_code_path(_item_file(item), root_path)
+        severity = _finding_severity(item, category)
+        keyed.append(
+            (
+                (
+                    int(in_tests),
+                    SEVERITY_RANK.get(severity, 99),
+                    str(_item_file(item) or ""),
+                    _item_line(item),
+                ),
+                in_tests,
+                item,
+            )
+        )
+    keyed.sort(key=lambda entry: entry[0])
+    rows = []
+    groups = {}
+    for _key, in_tests, item in keyed:
+        rule = _item_rule(item, category)
+        if rule in _GROUPED_BY_PACKAGE:
+            group_key = ("package", rule, _package_key(item))
+        elif in_tests and not verbose:
+            group_key = ("tests", rule)
+        else:
+            rows.append({"kind": "single", "items": [item]})
+            continue
+        if group_key in groups:
+            groups[group_key]["items"].append(item)
+            continue
+        row = {"kind": group_key[0], "items": [item]}
+        groups[group_key] = row
+        rows.append(row)
+    for row in rows:
+        if row["kind"] == "tests" and len(row["items"]) == 1:
+            row["kind"] = "single"
+    return rows
+
+
+def _plural_word(count, singular, plural):
+    if count == 1:
+        return singular
+    return plural
+
+
+def _group_detail(row, detail, root_path):
+    items = row["items"]
+    count = len(items)
+    files = {str(_item_file(item) or "?") for item in items}
+    if row["kind"] == "package":
+        detail = "\n".join(
+            line for line in detail.splitlines() if not line.startswith("Symbol: ")
+        )
+        sites = _plural_word(count, "import site", "import sites")
+        file_noun = _plural_word(len(files), "file", "files")
+        return f"{detail}\n{count} {sites} in {len(files)} {file_noun}"
+    shown = [
+        f"{_shorten_path(_item_file(item), root_path)}:{_item_line(item)}"
+        for item in items[1:4]
+    ]
+    more = count - 1 - len(shown)
+    also = ", ".join(shown)
+    if more > 0:
+        also += f" and {more} more"
+    noun = _plural_word(count, "finding", "findings")
+    return f"{count} {noun} in test code, e.g.:\n{detail}\nAlso: {also}"
+
+
+def _fix_legend(console, entries):
+    if not entries:
+        return
+    from rich.padding import Padding
+
+    console.print("[bold]How to fix[/bold]")
+    for (rule, fix), name in entries.items():
+        url = rule_docs_url(rule)
+        console.print(
+            Padding(
+                f"[link={escape(url)}]{escape(rule or '-')}[/link] "
+                f"[bold]{escape(name)}[/bold]: {escape(fix)}\n"
+                f"[muted]{escape(url)}[/muted]",
+                (0, 0, 0, 2),
+            )
+        )
+
+
+def _render_finding_table(
+    console, root_path, limit, title, items, category, *, verbose=False
+):
     items = [item for item in (items or []) if isinstance(item, dict)]
     if not items:
         return
     console.rule(f"[bold]{escape(title)}")
-    show, overflow = _display_cap(items, limit)
-    cells = [_finding_table_cells(item, category, root_path) for item in show]
+    rows = _display_rows(items, category, root_path, verbose=verbose)
+    show, overflow = _display_cap(rows, limit)
+    cells = [
+        _finding_table_cells(row["items"][0], category, root_path, verbose=verbose)
+        for row in show
+    ]
     rule_width = _text_width([cell[0] for cell in cells], floor=18, cap=_MAX_RULE_WIDTH)
     location_width = _text_width([cell[3] for cell in cells], cap=_MAX_LOCATION_WIDTH)
+    fixed_widths = [rule_width]
+    if verbose:
+        fixed_widths = [6, rule_width]
     columns = _fit_side_columns(
-        console, [6, rule_width], [("severity", 9), ("location", location_width)]
+        console, fixed_widths, [("severity", 9), ("location", location_width)]
     )
+    if "location" not in columns and "severity" in columns:
+        room = _message_room(console, [*fixed_widths, 9])
+        if room is not None and room < location_width:
+            columns.discard("severity")
     table = Table(expand=True)
-    table.add_column("Type", width=6, overflow="fold")
-    advice_only = all(get_finding_type(item, category) == "advice" for item in show)
-    priority_label = "Advice priority" if advice_only else "Severity"
+    if verbose:
+        table.add_column("Type", width=6, overflow="fold")
     if "severity" in columns:
-        table.add_column(priority_label, width=9, overflow="fold")
+        table.add_column("Severity", width=9, overflow="fold")
     table.add_column("Rule", width=rule_width, overflow="fold")
     table.add_column("Message", overflow="fold")
     if "location" in columns:
         table.add_column("Location", width=location_width, overflow="fold")
-    for item, (rule, name, detail, location) in zip(show, cells):
+    legend = {}
+    for row_info, (rule, name, detail, location) in zip(show, cells):
+        item = row_info["items"][0]
+        if row_info["kind"] != "single":
+            detail = _group_detail(row_info, detail, root_path)
+        rule_id = _item_rule(item, category)
+        fix = ""
+        if category != "analysis_errors":
+            fix = finding_fix(item, category)
+        if fix:
+            legend.setdefault((rule_id, fix), name)
+        if verbose and fix:
+            detail += f"\nFix: {fix}"
         severity = _finding_severity(item, category)
-        row = [get_finding_type(item, category).title()]
+        row = []
+        if verbose:
+            row.append(get_finding_type(item, category).title())
         if "severity" in columns:
             row.append(escape(severity))
         else:
-            detail += f"\n{priority_label}: {severity}"
-        row.extend([escape(f"{name}\n{rule}"), escape(detail)])
+            detail += f"\nSeverity: {severity}"
+        url = rule_docs_url(rule_id)
+        row.extend(
+            [
+                f"{escape(name)}\n[link={escape(url)}]{escape(rule)}[/link]",
+                escape(detail),
+            ]
+        )
         if "location" in columns:
             row.append(escape(location))
         else:
@@ -393,6 +565,7 @@ def _render_finding_table(console, root_path, limit, title, items, category):
         console.print(
             f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
         )
+    _fix_legend(console, legend)
     console.print()
 
 
@@ -400,10 +573,9 @@ def _render_advice_groups(console, result, *, root_path=None, limit=None):
     groups = group_advice_for_display(result)
     if not groups:
         return
-    console.rule("[bold]Advice")
+    console.rule("[bold]Maintainability advice")
     table = Table(expand=True)
-    table.add_column("Type", width=6)
-    table.add_column("Advice priority", width=15, overflow="fold")
+    table.add_column("Severity", width=15, overflow="fold")
     table.add_column("Rule", width=20, overflow="fold")
     table.add_column("Count", width=5, justify="right")
     table.add_column("Top files", overflow="fold")
@@ -425,7 +597,6 @@ def _render_advice_groups(console, result, *, root_path=None, limit=None):
         if len(files) > len(top):
             file_labels.append(f"+{len(files) - len(top)} more files")
         table.add_row(
-            "Advice",
             escape(severities),
             escape(f"{group['name']}\n{group['rule_id']}"),
             str(group["count"]),
@@ -465,6 +636,7 @@ def _render_analysis_errors(
     *,
     root_path=None,
     limit=None,
+    verbose=False,
 ):
     errors = [
         error
@@ -518,7 +690,9 @@ def _render_analysis_errors(
                 "message": f"{kind.replace('_', ' ')}: {message}\nAffected: {affected}\nRuntime: {_analysis_error_runtime(error)}",
             }
         )
-    _render_finding_table(console, root_path, limit, title, rows, "analysis_errors")
+    _render_finding_table(
+        console, root_path, limit, title, rows, "analysis_errors", verbose=verbose
+    )
     # e.g. how to install a missing language engine; shown once per distinct fix.
     for suggestion in dict.fromkeys(
         str(error.get("suggestion") or "").strip() for error in errors
@@ -677,9 +851,10 @@ def _render_assessment(
         for row in checks:
             maintenance.add_row(*(escape(value) for value in row))
         console.print(maintenance)
-    console.print(
-        "[muted]Risk includes Defect and Review findings; review evidence before acting.[/muted]"
-    )
+        console.print(
+            "[muted]Spread counts listed advice; advice hidden by default is not "
+            "included (--all-advice adds it).[/muted]"
+        )
     console.print()
 
 
@@ -835,7 +1010,7 @@ def _render_result_tree(console: Console, result, root_path=None):
             line = finding.get("line") or finding.get("lineno") or 1
             severity = _finding_severity(finding, category)
             finding_type = get_finding_type(finding, category)
-            priority_label = "Advice priority" if finding_type == "advice" else "Severity"
+            priority_label = "Severity"
             msg = (
                 f"Type: {finding_type.title()}  {priority_label}: {severity}\n"
                 f"{rule} · {name}\n{detail}\n{location}"
@@ -934,7 +1109,7 @@ def _render_reliability(console: Console, root_path, limit, items):
     )
 
 
-def _render_sca(console: Console, limit, items, root_path=None):
+def _render_sca(console: Console, limit, items, root_path=None, *, verbose=False):
     """Advisories as one row per package; licences and other SCA findings as rows."""
     from skylos.reporting.sca_summary import is_advisory, is_license_finding
 
@@ -949,6 +1124,7 @@ def _render_sca(console: Console, limit, items, root_path=None):
         "Dependency Licenses",
         [item for item in items if is_license_finding(item)],
         "dependency_vulnerabilities",
+        verbose=verbose,
     )
     _render_finding_table(
         console,
@@ -961,6 +1137,7 @@ def _render_sca(console: Console, limit, items, root_path=None):
             if not is_advisory(item) and not is_license_finding(item)
         ],
         "dependency_vulnerabilities",
+        verbose=verbose,
     )
 
 
@@ -1013,6 +1190,71 @@ def _render_publisher_changes(console: Console, limit, items):
     )
 
 
+_DEAD_CODE_PILLS = (
+    ("unused_functions", "function", "functions"),
+    ("unused_classes", "class", "classes"),
+    ("unused_imports", "import", "imports"),
+    ("unused_variables", "variable", "variables"),
+    ("unused_parameters", "parameter", "parameters"),
+    ("unused_files", "file", "files"),
+)
+_SECTION_LABELS = {
+    "defect": "Bugs",
+    "review": "Needs review",
+}
+
+
+def _dead_code_breakdown(result):
+    parts = []
+    for key, singular, plural in _DEAD_CODE_PILLS:
+        count = len(result.get(key) or [])
+        if count:
+            parts.append(f"{count} {_plural_word(count, singular, plural)}")
+    if not parts:
+        return None
+    return "[warn]Dead code:[/warn] " + " · ".join(parts)
+
+
+def _uncertain_dead_code_note(result):
+    text = dead_code_uncertainty_text(dead_code_uncertainty_summary(result))
+    if not text:
+        return None
+    return f"[muted]{escape(text)} These symbols are not listed.[/muted]"
+
+
+def _summary_pills(result, summ, *, verbose):
+    pills = [_dead_code_breakdown(result), _architecture_advisory_pill(result)]
+    if result.get("publisher_change_findings"):
+        pills.append(
+            _results_pill(
+                "Publisher review",
+                len(result.get("publisher_change_findings") or []),
+                bad_style="warn",
+            )
+        )
+    held_back = suppressed_breakdown(result)
+    if held_back["ignore_comments"]:
+        pills.append(
+            f"[muted]Suppressed by skylos: ignore comments: {held_back['ignore_comments']}[/muted]"
+        )
+    if held_back["unproven"]:
+        pills.append(
+            f"[muted]Held back as unproven by the detector: {held_back['unproven']}[/muted]"
+        )
+    grep_verify = None
+    if isinstance(summ, dict):
+        grep_verify = summ.get("grep_verify")
+    if verbose or (
+        isinstance(grep_verify, dict)
+        and grep_verify.get("enabled")
+        and grep_verify.get("complete") is False
+    ):
+        pills.append(_grep_verify_pill(summ))
+    if verbose:
+        pills.append(_dead_code_evidence_pill(result))
+    return " · ".join(part for part in pills if part)
+
+
 def render_results(
     console: Console,
     result,
@@ -1023,68 +1265,34 @@ def render_results(
     copy_badge: bool = True,
     expand_advice: bool = False,
     all_advice: bool = False,
+    config=None,
+    verbose: bool = False,
 ):
+    full_result = result
     result, visibility = prepare_advice_view(
         result, project_root=root_path, all_advice=all_advice
     )
     summ = result.get("analysis_summary", {})
-    console.print(
-        Panel.fit(
-            f"[brand]Static Analysis Results[/brand]\n{_finding_type_headline(result)}\n[muted]Analyzed {summ.get('total_files', '?')} file(s)[/muted]",
-            border_style="brand",
-        )
-    )
+    from skylos.ui.risk_view import render_scan_overview
 
-    console.print(
-        " ".join(
-            part
-            for part in [
-                _results_pill(
-                    "Unused functions", len(result.get("unused_functions", []))
-                ),
-                _results_pill("Unused imports", len(result.get("unused_imports", []))),
-                _results_pill(
-                    "Unused params", len(result.get("unused_parameters", []))
-                ),
-                _results_pill("Unused vars", len(result.get("unused_variables", []))),
-                _results_pill("Unused classes", len(result.get("unused_classes", []))),
-                _results_pill("Unused files", len(result.get("unused_files", []))),
-                _results_pill("AI defects", len(result.get("ai_defects", []) or [])),
-                _results_pill(
-                    "Quality", len(result.get("quality", []) or []), bad_style="warn"
-                ),
-                _architecture_advisory_pill(result),
-                _results_pill(
-                    "Reliability",
-                    len(result.get("reliability", []) or []),
-                    bad_style="warn",
-                ),
-                _results_pill(
-                    "Custom",
-                    len(result.get("custom_rules", []) or []),
-                    bad_style="warn",
-                ),
-                (
-                    _results_pill(
-                        "Publisher review",
-                        len(result.get("publisher_change_findings") or []),
-                        bad_style="warn",
-                    )
-                    if result.get("publisher_change_findings")
-                    else None
-                ),
-                _results_pill(
-                    "Suppressed",
-                    len(result.get("suppressed", []) or []),
-                    ok_style="muted",
-                    bad_style="muted",
-                ),
-                _grep_verify_pill(summ),
-                _dead_code_evidence_pill(result),
-            ]
-            if part
-        )
+    render_scan_overview(
+        console,
+        full_result,
+        root_path=root_path,
+        config=config,
+        files_label=summ.get("total_files", "?"),
     )
+    pills = _summary_pills(result, summ, verbose=verbose)
+    if pills:
+        console.print(pills)
+    if verbose:
+        console.print(
+            f"[muted]By finding type: {escape(_finding_type_headline(result))}[/muted]"
+        )
+    else:
+        note = _uncertain_dead_code_note(result)
+        if note:
+            console.print(note)
     if _architecture_advisory_pill(result):
         console.print(
             "[muted]Architecture advice describes maintainability; gate decisions use "
@@ -1137,7 +1345,9 @@ def render_results(
             f"[muted]{label} includes all analyzed findings, including those outside this display.[/muted]"
         )
 
-    _render_analysis_errors(console, result, root_path=root_path, limit=limit)
+    _render_analysis_errors(
+        console, result, root_path=root_path, limit=limit, verbose=verbose
+    )
 
     for finding_type in ("defect", "review", "advice"):
         if finding_type == "advice" and not expand_advice:
@@ -1146,17 +1356,25 @@ def render_results(
         view = _finding_view(result, finding_type)
         if not any(view.values()):
             continue
-        label = "Defects" if finding_type == "defect" else finding_type.title()
+        label = _SECTION_LABELS.get(finding_type, "Maintainability advice")
         console.rule(f"[bold]{label}")
         if tree:
             _render_result_tree(console, view, root_path=root_path)
             continue
         for category, title in _FINDING_TITLES:
             if category == "dependency_vulnerabilities":
-                _render_sca(console, limit, view.get(category), root_path)
+                _render_sca(
+                    console, limit, view.get(category), root_path, verbose=verbose
+                )
                 continue
             _render_finding_table(
-                console, root_path, limit, title, view.get(category), category
+                console,
+                root_path,
+                limit,
+                title,
+                view.get(category),
+                category,
+                verbose=verbose,
             )
         if view.get("publisher_change_findings"):
             console.print(

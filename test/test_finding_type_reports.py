@@ -92,22 +92,22 @@ def test_grouping_keeps_complete_counts_types_severity_and_result(
     output = _render(renderer, result, width, expand_advice=expanded)
     normalized = " ".join(output.split())
 
-    assert "1 defect · 1 review · 3 advice in 1 group" in normalized
+    assert "5 issues: security 1, quality 4" in normalized
     assert (
         output.index("DEFECT-MESSAGE")
         < output.index("REVIEW-MESSAGE")
         < output.index("SKY-C303")
     )
-    assert "Type" in output and "Severity" in output
-    assert "LOW" in output and "CRITICAL" in output and "MEDIUM" in output
-    assert "Advice priority" in normalized
-    assert "original severities remain in JSON and gates" in normalized
+    assert "Severity" in output
+    assert "LOW" in output and "CRITICAL" in output and "HIGH" in output
+    assert "Advice priority" not in normalized
+    assert "its severity says how far a measurement exceeds its limit" in normalized
     assert result["quality"][0]["severity"] == "HIGH"
     assert "c.py:3" in output and "c.py:4" in output
     if expanded:
         for message in ("ADVICE-FIRST", "ADVICE-SECOND", "ADVICE-THIRD"):
             assert message in output
-        assert output.count("SKY-C303") == 3
+        assert output.count("SKY-C303") == 3 + int(renderer is render_results)
         for location in ("a.py:5", "a.py:7", "b.py:9"):
             assert location in output
     else:
@@ -150,7 +150,7 @@ def test_complete_headline_and_grade_scope_survive_display_limit(renderer):
     result["analysis_summary"]["grade_includes_filtered_findings"] = True
     output = _render(renderer, result, 120, limit=1)
 
-    assert "1 defect · 1 review · 3 advice in 1 group" in " ".join(output.split())
+    assert "5 issues: security 1, quality 4" in " ".join(output.split())
     assert (
         "Grade includes all analyzed findings, including those outside this display."
         in output
@@ -232,7 +232,7 @@ def test_tree_includes_types_severity_and_all_finding_categories():
     ):
         assert text in output
     assert "Type: Review  Severity: HIGH" in output
-    assert "Type: Advice  Advice priority: LOW" in output
+    assert "Type: Advice  Severity: LOW" in output
     assert max(map(len, output.splitlines())) <= 80
     assert result == original
 
@@ -297,19 +297,25 @@ def test_every_finding_table_has_type_and_severity(section):
             }
         ]
     }
-    render_results(console, result, copy_badge=False, expand_advice=True)
-    tables = [
-        call.args[0]
-        for call in console.print.call_args_list
-        if call.args and isinstance(call.args[0], Table)
-    ]
+    for verbose in (False, True):
+        console = Mock()
+        render_results(
+            console, result, copy_badge=False, expand_advice=True, verbose=verbose
+        )
+        tables = [
+            call.args[0]
+            for call in console.print.call_args_list
+            if call.args and isinstance(call.args[0], Table)
+        ]
 
-    assert len(tables) == 1
-    columns = {column.header: list(column._cells) for column in tables[0].columns}
-    assert columns["Type"] == ["Review"]
-    assert columns["Severity"] == ["CRITICAL"]
-    assert "Finding detail" in columns["Message"][0]
-    assert columns["Location"] == ["a.py:2"]
+        assert len(tables) == 1
+        columns = {column.header: list(column._cells) for column in tables[0].columns}
+        assert ("Type" in columns) is verbose
+        if verbose:
+            assert columns["Type"] == ["Review"]
+        assert columns["Severity"] == ["CRITICAL"]
+        assert "Finding detail" in columns["Message"][0]
+        assert columns["Location"] == ["a.py:2"]
 
 
 def test_signals_and_code_health_are_visible_without_duplication():
@@ -333,7 +339,7 @@ def test_signals_and_code_health_are_visible_without_duplication():
     }
     for renderer in (render_results, render_pretty_results):
         output = _render(renderer, result, 120, expand_advice=True)
-        assert "1 defect · 0 review · 1 advice in 1 group" in " ".join(output.split())
+        assert "2 issues: quality 2" in " ".join(output.split())
         assert output.count("Code health defect") == 1
         assert output.count("Architecture advice") == 1
 

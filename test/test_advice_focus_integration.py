@@ -91,7 +91,12 @@ def _render(kind, result, root, *, expand=False, all_advice=False):
         render_pretty_results(console, result, **options)
     else:
         render_results(
-            console, result, tree=kind == "tree", copy_badge=False, **options
+            console,
+            result,
+            tree=kind == "tree",
+            copy_badge=False,
+            verbose=True,
+            **options,
         )
     return output.getvalue()
 
@@ -152,13 +157,17 @@ def test_focus_selection_matches_expanded_and_grouped_views(
     normalized = " ".join(text.split())
 
     assert result == before
-    assert "1 defect · 1 review" in normalized
+    if kind == "pretty":
+        assert "issues: quality" in normalized
+    else:
+        assert "1 defect · 1 review" in normalized
     assert "Defect remains" in text and "Custom review remains" in text
     assert "SKY-Q301" in text and "SKY-Q306" in text and "SKY-C304" in text
     assert "FAIL · configured policy blocked this scan" in normalized
     assert "8 advice findings · 7 rules checked · 3 affected files" in normalized
     if all_advice:
-        assert "5 advice entries (8 findings)" in normalized
+        if kind != "pretty":
+            assert "5 advice entries (8 findings)" in normalized
         assert "SKY-Q802" in text and "SKY-Q803" in text and "SKY-Q302" in text
         assert "optional advice findings" not in text
         if expand:
@@ -166,7 +175,8 @@ def test_focus_selection_matches_expanded_and_grouped_views(
     else:
         # The agreeing function metrics are listed; Boolean traps, test-only
         # nesting and architecture scores are measured and counted.
-        assert "1 advice entry (3 findings)" in normalized
+        if kind != "pretty":
+            assert "1 advice entry (3 findings)" in normalized
         assert "5 further advice findings measured, not listed" in normalized
         assert "--all-advice" in text
         assert "SKY-Q802" not in text and "SKY-Q803" not in text
@@ -200,14 +210,13 @@ def test_all_optional_still_reports_recovery_and_raw_gate(kind, tmp_path):
 
 
 @pytest.mark.parametrize("kind", ["rich", "pretty", "llm"])
-def test_advice_priority_is_capped_while_raw_severity_is_retained(kind, tmp_path):
+def test_advice_shows_the_same_severity_as_json_and_the_gate(kind, tmp_path):
     result = {"quality": [_finding("SKY-C303")]}
 
     text = _render(kind, result, tmp_path, all_advice=True)
 
-    assert "Advice priority" in text
-    assert "MEDIUM" in text
-    assert result["quality"][0]["severity"] == "HIGH"
+    assert "Advice priority" not in text
+    assert "HIGH" in text and "MEDIUM" not in text
     assert result["quality"][0]["severity"] == "HIGH"
 
 

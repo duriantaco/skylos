@@ -148,13 +148,16 @@ def _ci_workflow_exists(project_root) -> bool:
     return (project_root / ".github" / "workflows" / "skylos.yml").exists()
 
 
-def _print_local_next_steps(console, project_root) -> None:
+def _print_local_next_steps(console, project_root, *, first_fix=None) -> None:
     from skylos.cloud.cloud_receipt import local_next_steps
 
     steps = local_next_steps(ci_configured=_ci_workflow_exists(project_root))
     width = max(len(command) for command, _ in steps)
     label = "Next:"
     console.print()
+    if first_fix:
+        console.print(f"[bold]{label:<5}[/bold] {escape(first_fix)}", soft_wrap=True)
+        label = ""
     for command, purpose in steps:
         console.print(
             f"[bold]{label:<5}[/bold] [brand]{escape(command.ljust(width))}[/brand]"
@@ -1361,6 +1364,11 @@ def _run_scan_command(
                     category=_cli_category,
                     file_filter=_cli_file_filter,
                 )
+            from skylos.reporting.top_risks import add_report_guidance
+
+            add_report_guidance(
+                json_output_result, project_root=project_root, config=config
+            )
             display_payload = json_output_result
             if getattr(args, "json_ci", False):
                 display_payload = _build_ci_json_payload(json_output_result)
@@ -1662,9 +1670,30 @@ def _run_scan_command(
             upload_receipt, upload_exit_code = upload_formatted_result(defer_exit=True)
             if upload_receipt is not None:
                 display_payload["upload"] = upload_receipt
-            output_result_json = json.dumps(display_payload)
+            report_format = getattr(args, "report_format", None)
+            if report_format:
+                from skylos.reporting.report_page import render_report
+
+                output_result_json = render_report(
+                    json_output_result,
+                    report_format,
+                    project_root=project_root,
+                    config=config,
+                )
+            else:
+                output_result_json = json.dumps(display_payload)
             if args.output:
                 _write_scan_output(args.output, output_result_json)
+                if report_format:
+                    verdict = (json_output_result.get("issue_summary") or {}).get(
+                        "verdict"
+                    ) or {}
+                    print(
+                        f"Report written to {args.output}: {verdict.get('text', '')}",
+                        file=sys.stderr,
+                    )
+            elif report_format:
+                print(output_result_json, end="")
             else:
                 print(output_result_json)
 
@@ -2008,6 +2037,7 @@ def _run_scan_command(
                 display_result,
                 root_path=project_root,
                 limit=_cli_limit,
+                config=config,
                 **advice_options,
             )
             if args.output:
@@ -2019,6 +2049,9 @@ def _run_scan_command(
                     **advice_options,
                 )
         else:
+            view_options = {"config": config}
+            if getattr(args, "verbose", False):
+                view_options["verbose"] = True
             render_results(
                 console,
                 display_result,
@@ -2027,6 +2060,7 @@ def _run_scan_command(
                 limit=_cli_limit,
                 copy_badge=not getattr(args, "no_clipboard", False),
                 **advice_options,
+                **view_options,
             )
             if args.output:
                 _write_rich_report_output(
@@ -2036,6 +2070,7 @@ def _run_scan_command(
                     root_path=project_root,
                     limit=_cli_limit,
                     **advice_options,
+                    **view_options,
                 )
 
     display_filtered = bool(
@@ -2145,6 +2180,11 @@ def _run_scan_command(
             "[muted]Source analysis complete; preparing Cloud upload.[/muted]"
         )
 
+    first_fix = None
+    if not args.json and getattr(args, "format", "rich") != "pretty":
+        from skylos.ui.risk_view import next_fix_line
+
+        first_fix = next_fix_line(output_result, root_path=project_root, config=config)
     if (
         not args.json
         and getattr(args, "format", "rich") != "pretty"
@@ -2170,7 +2210,7 @@ def _run_scan_command(
             total_findings += len(result.get(k, []) or [])
 
         if total_findings > 0:
-            _print_local_next_steps(console, project_root)
+            _print_local_next_steps(console, project_root, first_fix=first_fix)
         elif not getattr(args, "diff", None) and changed_files is None:
             console.print()
             console.print("[good]No findings reported at current settings.[/good]")
@@ -2183,6 +2223,9 @@ def _run_scan_command(
             nudge = pick_nudge(result, args, project_root)
             if nudge:
                 console.print(f"\n  {nudge}")
+
+    elif first_fix:
+        console.print(f"[bold]Next:[/bold] {escape(first_fix)}", soft_wrap=True)
 
     forgotten = result.get("forgotten", [])
     if forgotten:

@@ -20,7 +20,10 @@ def assessment_rows(assessment, *, gate=None) -> list[tuple[str, str]]:
     risk_count = risk.get("finding_count", 0)
     if risk_status in {"critical", "high", "medium", "low"}:
         noun = "finding" if risk_count == 1 else "findings"
-        risk_text = f"{risk_status.upper()} · {risk_count} unresolved {noun}"
+        risk_text = (
+            f"{risk_status.upper()} · {risk_count} risk {noun} "
+            "(all issues except dead code and advice)"
+        )
         unknown = _mapping(risk.get("severity_counts")).get("UNKNOWN", 0)
         if unknown:
             risk_text += f" · {unknown} with unknown severity"

@@ -686,7 +686,11 @@ class Base2(ABC):
         )
         assert all("Martin I/A/D" in f["metric_origin"] for f in iad_findings)
         assert all("Advisory:" in f["message"] for f in iad_findings)
-        assert all(f["docs_url"].endswith(f["rule_id"]) for f in iad_findings)
+        assert all(
+            f["docs_url"].startswith("https://docs.skylos.dev/rules-reference#")
+            and f["rule_id"].lower() in f["docs_url"]
+            for f in iad_findings
+        )
         assert all(f.get("remediations") for f in iad_findings)
         remediation_titles = {
             item["title"]

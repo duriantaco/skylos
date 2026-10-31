@@ -23,7 +23,7 @@ def test_pretty_renderer_counts_architecture_advisories_separately():
     render_pretty_results(console, result)
     output = console.export_text()
 
-    assert "0 defects · 0 review · 0 advice in 0 groups" in output
+    assert "0 issues" in output
     assert "Architecture: 1 advisory module (2 signals)" in output
     assert "architecture_metrics.advisories" in output
     assert "HIGH" not in output
@@ -252,7 +252,8 @@ def test_pretty_renderer_shows_circular_dependencies(with_location):
     output = console.export_text()
 
     assert "circular dependencies: 1" in output
-    assert output.count("SKY-CIRC") == 1
+    assert output.count("SKY-CIRC") == 2
+    assert "Top risks" in output.split("SKY-CIRC")[0]
     assert ("pkg/left.py:4" if with_location else "?:1") in output
     assert cycle["message"] in output
     assert "No findings to display" not in output

@@ -195,10 +195,15 @@ def build_main_parser(*, version: str) -> argparse.ArgumentParser:
             "github",
             "gitlab",
             "concise",
+            "report-md",
+            "report-html",
         ),
         default="rich",
         help=(
             "Output format. Use 'pretty' for grouped human output or "
+            "'report-md'/'report-html' for a one-page summary to share "
+            "(verdict, top risks with fixes, counts, coverage gaps; see "
+            "skylos report), or "
             "'concise' for IDE-friendly file:line findings only. Without "
             "--gate, 'concise' exits 1 when it lists findings (repository-policy "
             "advice alone does not count; --force exits 0). "
@@ -215,7 +220,16 @@ def build_main_parser(*, version: str) -> argparse.ArgumentParser:
         help="Comment out selected dead code instead of deleting item",
     )
     parser.add_argument("--output", "-o", type=str, help="Write output to file")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose")
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help=(
+            "Show detail in the rich report: finding Type, a Fix line on every "
+            "row, every test-code finding, full dead-code evidence, and "
+            "progress logs"
+        ),
+    )
     parser.add_argument(
         "--confidence",
         "-c",
@@ -533,6 +547,8 @@ def apply_main_output_format(
     flag_by_format = {
         "json": "json",
         "json-ci": "json",
+        "report-md": "json",
+        "report-html": "json",
         "llm": "llm",
         "github": "github",
     }
@@ -558,6 +574,10 @@ def apply_main_output_format(
     # variant shares the plain `json` output path; only the payload building
     # differs, so the two are distinguished here rather than downstream.
     setattr(args, "json_ci", output_format == "json-ci")
+    report_format = None
+    if output_format in {"report-md", "report-html"}:
+        report_format = output_format.removeprefix("report-")
+    setattr(args, "report_format", report_format)
 
     return args
 

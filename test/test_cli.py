@@ -61,6 +61,9 @@ def _with_finding_type_metadata(result, *, strict=False):
     expected.setdefault("analysis_summary", {})["finding_type_counts"] = (
         summarize_finding_types(expected)
     )
+    from skylos.reporting.top_risks import add_report_guidance
+
+    add_report_guidance(expected, config={})
     return expected
 
 
@@ -1165,7 +1168,7 @@ def test_rich_summary_counts_architecture_advisories_separately():
     printed = "\n".join(
         str(call.args[0]) for call in console.print.call_args_list if call.args
     )
-    assert "Quality: 0" in printed
+    assert "Quality: " not in printed
     assert "Architecture advisories: 1" in printed
 
 
@@ -1584,12 +1587,12 @@ def test_render_results_includes_ai_defect_summary_and_table():
         ],
     }
 
-    cli.render_results(console, result, tree=False, root_path="/root")
+    cli.render_results(console, result, tree=False, root_path="/root", verbose=True)
 
     printed = "\n".join(
         str(call.args[0]) for call in console.print.call_args_list if call.args
     )
-    assert "AI defects: 1" in printed
+    assert "SKY-L012" in printed and "blocks the gate" in printed
     console.rule.assert_any_call("[bold]AI Code")
 
     tables = [
@@ -1642,7 +1645,7 @@ def test_render_results_includes_unused_files_in_summary_and_table():
     )
 
     rendered = output.getvalue()
-    assert "Unused files: 1" in rendered
+    assert "Dead code: 1 file" in rendered
     assert "Unused Files" in rendered
     assert "SKY-E003" in rendered
     assert "src/unused.js:1" in rendered
@@ -1712,7 +1715,7 @@ def test_render_results_ai_defect_message_is_visible_at_narrow_terminal_width():
 
     rendered = output.getvalue()
     assert "AI Code" in rendered
-    assert "Review" in rendered
+    assert "Needs review" in rendered
     assert "Call to a missing" in rendered
     assert "local helper" in rendered
     assert "security.require_" in rendered
@@ -1802,9 +1805,8 @@ def test_render_results_unused_table_keeps_confidence_in_readable_message():
     for col in t.columns:
         headers.append(col.header)
 
-    assert "Type" in headers and "Severity" in headers
+    assert "Type" not in headers and "Severity" in headers
     columns = {column.header: list(column._cells) for column in t.columns}
-    assert columns["Type"] == ["Review", "Review", "Review"]
     for message, confidence in zip(columns["Message"], (95, 80, 50)):
         assert f"Confidence: {confidence}%" in message
 
@@ -1849,7 +1851,7 @@ def test_render_results_unused_table_includes_compact_dead_code_reason():
 
     table = tables[0]
     headers = [column.header for column in table.columns]
-    assert "Type" in headers and "Severity" in headers
+    assert "Type" not in headers and "Severity" in headers
     message_col = next(column for column in table.columns if column.header == "Message")
     assert "Evidence: uncertain · no refs · not exported" in list(message_col._cells)[0]
 
@@ -1871,7 +1873,7 @@ def test_render_results_shows_grep_verify_summary():
         "secrets": [],
     }
 
-    cli.render_results(console, result, tree=False, root_path="/root")
+    cli.render_results(console, result, tree=False, root_path="/root", verbose=True)
 
     printed = "\n".join(
         str(call.args[0]) for call in console.print.call_args_list if call.args
@@ -1935,7 +1937,7 @@ def test_render_results_shows_analysis_errors_without_grade():
         "secrets": [],
     }
 
-    cli.render_results(console, result, tree=False, root_path="/root")
+    cli.render_results(console, result, tree=False, root_path="/root", verbose=True)
 
     tables = [
         call.args[0]
@@ -3230,7 +3232,7 @@ def test_main_rich_output_writes_report_file(monkeypatch, tmp_path):
 
     output = output_path.read_text(encoding="utf-8")
     assert "Static Analysis Results" in output
-    assert "0 defects · 1 review · 0 advice in 0 groups" in output
+    assert "1 issue: dead code 1" in output
     assert "Unused Functions" in output
     assert "dead" in output
 
@@ -3454,6 +3456,11 @@ def test_main_circular_dependency_reporting_and_exit_codes(
         if output_format == "rich":
             assert "Circular Dependencies" in report
             assert "pkg.left → pkg.right → pkg.left" in report
+        elif output_format == "pretty":
+            assert report.count("SKY-CIRC") == 2
+            assert "Top risks" in report.split("SKY-CIRC")[0]
+            assert "pkg/left.py:4" in report
+            assert cycle["message"] in report
         else:
             assert report.count("SKY-CIRC") == 1
             assert "pkg/left.py:4" in report

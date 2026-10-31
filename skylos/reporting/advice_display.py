@@ -38,7 +38,8 @@ SEVERITY_RANK = {
 }
 _UNKNOWN_NAMES = {"<?>", "<module>", "anonymous", "<anonymous>"}
 ADVICE_PRIORITY_NOTE = (
-    "Advice priority is capped at MEDIUM; original severities remain in JSON and gates."
+    "Advice is maintainability guidance: its severity says how far a measurement "
+    "exceeds its limit, not a security risk. Listed advice counts toward the gate's quality limit."
 )
 
 
@@ -171,15 +172,10 @@ def default_display_severity(section) -> str:
 
 
 def advice_priority(finding: Mapping, category=None) -> str:
-    """Human advice priority; original severity remains evidence and gate input."""
-    severity = str(finding.get("severity") or "MEDIUM").strip().upper()
-    if (
-        category in (None, "quality")
-        and get_finding_type(finding, category) == "advice"
-        and severity in {"HIGH", "CRITICAL"}
-    ):
-        return "MEDIUM"
-    return severity
+    """The severity every view shows for an advice finding: the same value
+    JSON, SARIF and the gate use. Advice is ranked after risk findings by its
+    type, not by rewriting its severity."""
+    return str(finding.get("severity") or "MEDIUM").strip().upper()
 
 
 def _compatible_names(names) -> bool:

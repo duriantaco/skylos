@@ -378,8 +378,8 @@ def test_long_custom_rule_id_keeps_message_and_location_at_80_columns():
 
     rendered = output.getvalue()
     rows = [line.split("│") for line in rendered.splitlines() if line.startswith("│")]
-    rule_cells = "".join(row[2].strip() for row in rows if len(row) >= 5)
-    message_cells = " ".join(row[3].strip() for row in rows if len(row) >= 5)
+    rule_cells = "".join(row[-3].strip() for row in rows if len(row) >= 4)
+    message_cells = " ".join(row[-2].strip() for row in rows if len(row) >= 4)
     assert rule_id in rule_cells
     assert message in message_cells
     assert location in message_cells

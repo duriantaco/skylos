@@ -250,9 +250,9 @@ def test_nonquality_buckets_cannot_be_filtered_by_new_advice_metadata(category):
 
 
 @pytest.mark.parametrize("severity", ["HIGH", "CRITICAL"])
-def test_advice_priority_cap_does_not_change_risk_or_raw_severity(severity):
+def test_advice_shows_its_raw_severity_and_never_rewrites_it(severity):
     row = _finding("SKY-Q501", severity=severity)
-    assert advice_priority(row, "quality") == "MEDIUM"
+    assert advice_priority(row, "quality") == severity
     assert row["severity"] == severity
     assert advice_priority({**row, "source": "custom"}, "quality") == severity
     assert advice_priority(row, "security") == severity
@@ -270,7 +270,7 @@ def test_lower_advice_priorities_are_preserved(severity):
 
 @pytest.mark.parametrize("kind", ["rich", "pretty", "tree", "llm"])
 @pytest.mark.parametrize("expanded", [False, True])
-def test_every_human_view_caps_advice_priority_and_keeps_complete_records(
+def test_every_human_view_shows_raw_advice_severity_and_keeps_complete_records(
     kind, expanded, tmp_path
 ):
     row = _finding("SKY-Q501", type="class")
@@ -281,7 +281,7 @@ def test_every_human_view_caps_advice_priority_and_keeps_complete_records(
             report, tmp_path, expand_advice=expanded, all_advice=True
         )
         if expanded:
-            assert "SKY-Q501 | MEDIUM | Quality" in output
+            assert "SKY-Q501 | HIGH | Quality" in output
             assert '"severity": "HIGH"' in output
     else:
         stream = StringIO()
@@ -307,6 +307,8 @@ def test_every_human_view_caps_advice_priority_and_keeps_complete_records(
                 all_advice=True,
             )
         output = stream.getvalue()
-    assert "MEDIUM" in output and "Advice priority" in output
-    assert "original severities remain in JSON and gates" in output
+    assert "HIGH" in output and "Advice priority" not in output
+    assert "its severity says how far a measurement exceeds its limit" in " ".join(
+        output.split()
+    )
     assert report == before
