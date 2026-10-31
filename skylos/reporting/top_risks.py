@@ -238,11 +238,11 @@ def scan_verdict(result, *, project_root=None, config=None, rows=None) -> dict:
     elif high:
         status = "review"
         noun = _plural(high, "high-severity issue", "high-severity issues")
-        text = f"No blocking issues; {high} {noun} to review"
+        text = f"Needs review: {high} {noun} (nothing blocks the gate)"
     elif rows:
         status = "review"
         noun = _plural(len(rows), "issue", "issues")
-        text = f"No blocking issues; {len(rows)} {noun} to review"
+        text = f"Needs review: {len(rows)} {noun} (nothing blocks the gate)"
     else:
         status = "ready"
         text = "No blocking issues or risk findings"
