@@ -10,6 +10,7 @@ from .danger_fs.path_flow import scan as scan_path
 from .danger_web.xss_flow import scan as scan_xss
 from .danger_redirect.redirect_flow import scan as scan_redirect
 from .danger_cors.cors_flow import scan as scan_cors
+from .danger_web.route_auth import scan as scan_route_auth
 from .danger_jwt.jwt_flow import scan as scan_jwt
 from .danger_access.access_flow import scan as scan_access
 from .danger_mcp.mcp_flow import scan as scan_mcp
@@ -390,6 +391,7 @@ _CORS_TOKENS = (
     "cors_allow_all_origins",
     "origins",
 )
+_ROUTE_TOKENS = (".post(", ".put(", ".patch(", ".delete(", ".route(", ".api_route(")
 _JWT_TOKENS = ("jwt", "verify_signature", "algorithms")
 _MCP_TOKENS = ("mcp", "fastmcp")
 _WEBHOOK_TOKENS = ("webhook", "webhooks")
@@ -581,6 +583,7 @@ def scan_file_with_tree(
         scan_xss(tree, file_path, findings, project_root=project_root)
         scan_redirect(tree, file_path, findings)
         scan_cors(tree, file_path, findings)
+        scan_route_auth(tree, file_path, findings)
         scan_jwt(tree, file_path, findings)
         scan_access(tree, file_path, findings)
         scan_mcp(tree, file_path, findings)
@@ -610,6 +613,8 @@ def scan_file_with_tree(
         scan_redirect(tree, file_path, findings)
     if _has_any(source_lower, _CORS_TOKENS):
         scan_cors(tree, file_path, findings)
+    if _has_any(source_lower, _ROUTE_TOKENS):
+        scan_route_auth(tree, file_path, findings)
     if "jwt" in source_lower and _has_any(source_lower, _JWT_TOKENS):
         scan_jwt(tree, file_path, findings)
     if "fields" in source_lower and "__all__" in source_lower:

@@ -151,6 +151,7 @@ _RULE_SUGGESTIONS: dict[str, str] = {
     "SKY-D280": "Authenticate mutating API routes before performing protected actions.",
     "SKY-D281": "Use parameterized queries instead of building SQL with string interpolation.",
     "SKY-D282": "Use a webhook library or HMAC comparison that verifies the provider signature.",
+    "SKY-D283": "Require authentication (a dependency, decorator or middleware that rejects unauthenticated callers) on routes that control devices, delete data, administer or run commands.",
     "SKY-S101": "Move the secret to environment variables or a secrets manager, then rotate it.",
     "SKY-S102": "Move the secret to server-only code and rotate it; expose only non-sensitive values through public client configuration.",
 }
