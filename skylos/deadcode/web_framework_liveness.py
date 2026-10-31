@@ -1309,7 +1309,7 @@ def find_web_framework_targets(
 
     executed = _executed_definitions(index)
     callback_bindings = any(
-        name.split(".", 1)[0] in {"flask", "flask_login"} - index.shadowed
+        name.split(".", 1)[0] in {"django", "flask", "flask_login"} - index.shadowed
         for _, name in index.imports
     )
     modules = [
