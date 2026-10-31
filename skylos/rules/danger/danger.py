@@ -568,7 +568,9 @@ def _scan_trojan_source_text(src: str, file_path: Path, findings: list[dict]) ->
             break
 
 
-def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None):
+def scan_file_with_tree(
+    tree, file_path, findings, *, source: str | None = None, project_root=None
+):
     """Run taint-flow scanners on an already-parsed AST (no re-read/re-parse)."""
     if source is None:
         scan_sql(tree, file_path, findings)
@@ -576,7 +578,7 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         scan_sql_raw(tree, file_path, findings)
         scan_ssrf(tree, file_path, findings)
         scan_path(tree, file_path, findings)
-        scan_xss(tree, file_path, findings)
+        scan_xss(tree, file_path, findings, project_root=project_root)
         scan_redirect(tree, file_path, findings)
         scan_cors(tree, file_path, findings)
         scan_jwt(tree, file_path, findings)
@@ -603,7 +605,7 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
     if _has_any(source_lower, _PATH_TOKENS):
         scan_path(tree, file_path, findings)
     if _has_any(source_lower, _XSS_TOKENS):
-        scan_xss(tree, file_path, findings)
+        scan_xss(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _REDIRECT_TOKENS):
         scan_redirect(tree, file_path, findings)
     if _has_any(source_lower, _CORS_TOKENS):
@@ -681,7 +683,7 @@ def _scan_file(file_path: Path, findings, project_root=None):
     _scan_trojan_source_text(src, file_path, findings)
     tree = ast.parse(src)
 
-    scan_file_with_tree(tree, file_path, findings, source=src)
+    scan_file_with_tree(tree, file_path, findings, source=src, project_root=project_root)
 
     checker = _DangerousCallsChecker(file_path, findings, project_root)
     checker.visit(tree)
