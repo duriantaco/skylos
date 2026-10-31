@@ -1118,7 +1118,12 @@ def cmd_upgrade() -> None:
     if plan not in PRO_PLANS:
         print(f"\nCurrent plan: {plan_display_name(plan)}")
         print(
-            f"This needs the {PAID_PLAN_NAME} plan. Buying any credit pack turns it on."
+            f"This needs the {PAID_PLAN_NAME} plan. Any credit pack turns it on "
+            "for 12 months for up to 3 people. Larger teams need the "
+            f"{PAID_PLAN_NAME} pass."
+        )
+        print(
+            "The PR check and merge gate are free on every plan: run skylos cicd init."
         )
         print(f"See: {PRICING_URL}\n")
         return

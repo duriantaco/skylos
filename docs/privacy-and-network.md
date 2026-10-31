@@ -24,7 +24,7 @@ of them sends source code, file paths or findings:
 |:---|:---|:---|:---|
 | A scan (`skylos .`, `skylos agent scan --changed`, `skylos agent audit`) while a token can be found | `GET /api/sync/rules`: downloads your project's Cloud custom rules | your token | set `SKYLOS_CUSTOM_RULES='[]'` (or to your rules as JSON), or remove the token (see below). `--no-upload` does not stop it |
 | `skylos doctor` in text mode while a token can be found | `GET /api/credits/balance` | your token | `skylos doctor --format json` |
-| The MCP server started with `SKYLOS_API_KEY` | `GET /api/sync/whoami` at start and every 15 minutes; `POST /api/credits/deduct` with the tool's credit key for each paid tool call (not for `remediate` dry runs) | your API key, the credit key | start the server without `SKYLOS_API_KEY` (local-only mode). It uses `SKYLOS_CLOUD_URL`, not `SKYLOS_API_URL` |
+| The MCP server started with `SKYLOS_API_KEY` | `GET /api/sync/whoami` at start and every 15 minutes; `POST /api/credits/deduct` with the tool's credit key for each call of the scan tools (`analyze`, `security_scan`, `quality_check`, `architecture_check`, `health_score`, `secrets_scan`, `provenance_scan`), which cost 0 credits, and for each `remediate` run right before its first model call (10 credits; not for dry runs, refused calls or runs with nothing to fix) | your API key, the credit key | start the server without `SKYLOS_API_KEY` (local-only mode). It uses `SKYLOS_CLOUD_URL`, not `SKYLOS_API_URL` |
 
 "A token can be found" means `SKYLOS_TOKEN`, a saved login in
 `~/.skylos/credentials.json`, or, in a CI job that grants an OIDC token (for

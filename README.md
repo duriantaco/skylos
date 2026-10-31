@@ -688,8 +688,9 @@ findings or a run summary. There is no update check and no analytics.
   code or findings: a scan downloads your Cloud custom rules when a token can
   be found (`SKYLOS_CUSTOM_RULES='[]'` skips it); `skylos doctor` checks your
   credit balance (`--format json` skips it); and the MCP server started with
-  `SKYLOS_API_KEY` checks the key every 15 minutes and deducts credits for
-  paid tools.
+  `SKYLOS_API_KEY` checks the key every 15 minutes and asks Skylos Cloud to
+  charge each scan or remediate call. Only remediate costs credits (10 a call),
+  and only when it calls a model; dry runs send no charge request.
 - `skylos feedback` makes no request itself: it opens a form on skylos.dev
   (or, with `--github`, GitHub's issue form) in your browser. The page
   address carries the Skylos version, OS, Python version and the last failed
@@ -1205,7 +1206,7 @@ outcomes and the maintainers' reasons.
 | Jenkins, CircleCI and any other CI | [Skylos on any CI](./docs/ci-platforms.md) | `skylos cicd init` writes or prints the pull request gate for your CI; `--diff` uses the PR target branch |
 | VS Code extension | [VS Code extension](./editors/vscode/README.md) | in-editor findings and AI-assisted fixes |
 | Claude Code / Codex / Cursor hooks | [Agent-loop hooks](./docs/agent-hooks.md) | check each agent edit, file read, and package install locally |
-| MCP server | [MCP setup](https://docs.skylos.dev/mcp-server) | expose Skylos scans to AI agents and coding assistants; `analyze` works without a token (five calls per rolling 24 hours), other tools need a free Skylos project token; authenticated scans can use credits |
+| MCP server | [MCP setup](https://docs.skylos.dev/mcp-server) | expose Skylos scans to AI agents and coding assistants; `analyze` works without a token (five calls per rolling 24 hours), other tools need a free Skylos project token; scans cost no credits, remediate costs 10 credits a call |
 | Ruff | [Python linting](./docs/python-linting.md) | optional Python linting through `skylos lint` |
 | Docker image | [Installation](https://docs.skylos.dev/installation) | run Skylos without a local Python install |
 | Skylos Cloud | [Skylos Cloud](./docs/skylos-cloud.md) | `skylos cloud`: upload findings, see each branch's quality gate and how it changed |
@@ -1298,8 +1299,12 @@ optional through `skylos[llm]` and agent commands.
 **Is Skylos free?**
 
 The Skylos CLI is free and open source (Apache-2.0). Skylos Cloud has a Free
-plan for one project and a Workspace plan; buying any one-time credit pack
-turns Workspace on for good, with no seats or subscriptions.
+plan for one project and a Workspace plan. Your first workspace gets a 14-day
+Workspace trial with 50 credits, no card needed. Any credit pack (from $9 for
+50 credits) turns on Workspace for 12 months for up to 3 people. The Workspace
+pass ($990 once) has unlimited members. Prices are in USD, plus sales tax or
+VAT. Payments are one-time: nothing renews, and there are no seats or
+subscriptions. Credits never expire.
 
 **Does the MCP server need an account?**
 
@@ -1307,10 +1312,10 @@ Without `SKYLOS_API_KEY` the MCP server only exposes `analyze` (dead code,
 five calls per rolling 24 hours). Every other MCP tool (`verify_change`, `verify_agent`,
 `security_scan`, `secrets_scan`, and so on) returns an authentication error
 until the server is started with `SKYLOS_API_KEY` set; create a free key in
-the Skylos Cloud dashboard settings. Unauthenticated `analyze` calls are free.
-Authenticated `analyze`, security, quality, secrets and provenance scans can
-use credits; Skylos Cloud sets the current cost. `remediate` currently costs
-10 credits per call that generates fixes; a dry run (the default) is free.
+the Skylos Cloud dashboard settings. MCP scans (analyze, security, quality,
+secrets, provenance) cost no credits. `remediate` costs 10 credits per real
+run, charged when it starts generating fixes; dry runs (the default), refused
+calls and runs with nothing to fix are free.
 The CLI equivalents (`skylos verify`, `skylos defend`, `skylos . -a`) and
 `skylos agent install-hooks` run on your machine with no account or key;
 their dependency and package checks still query public registries (see

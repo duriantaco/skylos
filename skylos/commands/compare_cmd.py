@@ -284,7 +284,7 @@ def _render_upload_result(
     message = f"Scanner Proof upload failed: {error}"
     upgrade_url = str(upload_result.get("upgrade_url") or "").strip()
     if upgrade_url:
-        message = f"{message}\nUpgrade Workspace Governance: {upgrade_url}"
+        message = f"{message}\nGet the Workspace plan: {upgrade_url}"
     if args.output_format == "json":
         print(message, file=sys.stderr)
     else:

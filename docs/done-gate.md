@@ -165,7 +165,7 @@ test has these options:
 
 - Skylos Cloud: on a failed scan whose done receipt blocks, "Merge anyway"
   with a reason (3 to 1,000 characters) by someone with the `override:gates`
-  permission (Pro plan). The override is audited and lifts the failed
+  permission (Workspace plan). The override is audited and lifts the failed
   receipt in Cloud's verdict and GitHub check; agent policy rules still
   block.
 - Lower the policy at the base: set `test_tampering = "advise"` in

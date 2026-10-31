@@ -529,6 +529,17 @@ def get_credit_balance(token=None) -> dict | None:
     return None
 
 
+LOW_CREDIT_THRESHOLD = 10
+
+
+def is_low_credit_balance(balance) -> bool:
+    return (
+        isinstance(balance, (int, float))
+        and not isinstance(balance, bool)
+        and balance <= LOW_CREDIT_THRESHOLD
+    )
+
+
 def print_credit_status(token=None, quiet=False):
     data = get_credit_balance(token)
     if not data or quiet:
@@ -539,7 +550,7 @@ def print_credit_status(token=None, quiet=False):
     # Every plan has a credit balance, Enterprise included (no unlimited
     # credits since 14 Oct 2026).
     print(f"Credits: {balance:,}")
-    if balance < 10:
+    if is_low_credit_balance(balance):
         print(f"Low credits! Buy more: {BASE_URL}/dashboard/billing")
 
     return data
@@ -1607,15 +1618,14 @@ def _print_quality_gate_result(
             detail = f"{detail}; {history}"
         print(f"❌ FAIL {subject}: FAILED ({detail})")
     if plan == "free":
-        print("\n⚠️  Quality gate failed but continuing (Free plan)")
-        print("💡 The Workspace plan blocks commits and CI on a failed gate")
-        print(f"   Learn more: {BASE_URL}/dashboard/settings?upgrade=true")
+        print("\n💡 The PR check and merge gate are free on every plan.")
+        print("   Run skylos cicd init to block pull requests on a failed gate.")
 
 
 def _print_credit_balance_after_upload(credits_left) -> None:
     if credits_left is None:
         return
-    if credits_left < 50:
+    if is_low_credit_balance(credits_left):
         print(
             f"\n⚠️  Credits remaining: {credits_left}. Top up at skylos.dev/dashboard/billing"
         )
@@ -3193,11 +3203,7 @@ def _defense_upload_error_result(response, quiet: bool) -> dict | None:
             "success": False,
             "error": "Invalid Skylos token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
         }
-    return {
-        "success": False,
-        "error": "No credits remaining. Buy more at skylos.dev/dashboard/credits",
-        "code": "NO_CREDITS",
-    }
+    return _describe_http_failure(response).as_result()
 
 
 def _print_defense_upload_success(defense_data: dict, response) -> None:
@@ -3212,7 +3218,7 @@ def _print_defense_upload_success(defense_data: dict, response) -> None:
     if scan_id:
         print(f"\n🔗 View: {BASE_URL}/dashboard/scans/{scan_id}")
     credits_left = data.get("credits_remaining")
-    if credits_left is not None and credits_left < 50:
+    if is_low_credit_balance(credits_left):
         print(
             f"\n⚠️  Credits remaining: {credits_left}. Top up at skylos.dev/dashboard/billing"
         )

@@ -330,8 +330,8 @@ _INVALID_TOKEN = (
     "Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
 )
 _NO_CREDITS = (
-    "No credits remaining.",
-    "Buy more at skylos.dev/dashboard/billing, then upload again.",
+    "Your Skylos Cloud plan does not allow this upload (HTTP 402).",
+    "Uploads never cost credits. Free covers 1 project; see skylos.dev/dashboard/billing.",
 )
 _TOO_LARGE = (
     "The scan is too large for Skylos Cloud to accept in one request.",

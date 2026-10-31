@@ -328,7 +328,7 @@ def delivery_receipt(value) -> dict:
     summary = f"{counts['created']} created, {counts['updated']} updated, {counts['resolved']} resolved"
     exit_code = 2
     if safe_reason == "plan_required":
-        message = "Scan saved. GitLab comments require an eligible Cloud plan; upgrade and check the project integration setup."
+        message = "Scan saved. GitLab comments need the Workspace plan."
     elif status in ("published", "noop"):
         if safe_reason not in ("complete", "partial_scope_no_resolution"):
             return invalid
