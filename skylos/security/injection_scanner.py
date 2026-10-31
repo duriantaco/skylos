@@ -48,6 +48,24 @@ _CLAUSE_START = (
     r"|\b(?:please|then|now|also|just|always|must|should|shall|will|can|could"
     r"|would|may|might|to|you|(?<!input\s)and)\s+)"
 )
+_SKIP_DIRECTIVE_RE = re.compile(
+    r"skip\s+(security|analysis|review|scanning|checks?)\b", re.I
+)
+_COMPOUND_CHECK_SUBJECT_RE = re.compile(
+    r"(?:^|[.!?\n\"'])[ \t]*(?:[-*+][ \t]+)?"
+    r"(?:the|a|an|this|that|these|those)[ \t]+"
+    r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*-$",
+    re.I,
+)
+_CHECK_VERIFICATION_RE = {
+    "check": re.compile(
+        r"\s{1,16}(?:now\s{1,16})?(?:verifies|validates|confirms|ensures)\b", re.I
+    ),
+    "checks": re.compile(
+        r"\s{1,16}(?:now\s{1,16})?(?:verify|validate|confirm|ensure)\b", re.I
+    ),
+}
+_COMPOUND_CHECK_PREFIX_CHARS = 192
 
 _PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"ignore\s+(all\s+)?previous\s+instructions?", re.I), "HIGH"),
@@ -68,10 +86,7 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"pretend\s+(you\s+are|to\s+be)\b", re.I), "HIGH"),
     (re.compile(r"new\s+instructions?:\s", re.I), "HIGH"),
     (re.compile(r"do\s+not\s+(flag|report|detect|scan|warn|alert)\b", re.I), "MEDIUM"),
-    (
-        re.compile(r"skip\s+(security|analysis|review|scanning|checks?)\b", re.I),
-        "MEDIUM",
-    ),
+    (_SKIP_DIRECTIVE_RE, "MEDIUM"),
     (re.compile(r"approve\s+all\s+(changes?|code|commits?)\b", re.I), "MEDIUM"),
     (re.compile(r"mark\s+(this|all|everything)\s+(as\s+)?safe\b", re.I), "MEDIUM"),
     (
@@ -137,6 +152,24 @@ _PROMPT_KEYS_RE = re.compile(
 )
 
 
+def _pattern_matches(pattern: re.Pattern, text: str):
+    """Keep individual directives, excluding a narrow descriptive noun shape."""
+    for match in pattern.finditer(text):
+        if pattern is _SKIP_DIRECTIVE_RE:
+            predicate = _CHECK_VERIFICATION_RE.get(match.group(1).lower())
+            if (
+                predicate is not None
+                and _COMPOUND_CHECK_SUBJECT_RE.search(
+                    text,
+                    max(0, match.start() - _COMPOUND_CHECK_PREFIX_CHARS),
+                    match.start(),
+                )
+                and predicate.match(text, match.end())
+            ):
+                continue
+        yield match
+
+
 def _instruction_pattern_evidence(
     text: str, segment_type: str, line_no: int, primary: re.Pattern
 ) -> dict:
@@ -149,7 +182,7 @@ def _instruction_pattern_evidence(
     complete = True
     patterns = sorted(_PATTERNS, key=lambda item: item[0] is not primary)
     for pattern, severity in patterns:
-        for match in pattern.finditer(text):
+        for match in _pattern_matches(pattern, text):
             if len(signals) >= MAX_PATTERN_EVIDENCE:
                 complete = False
                 break
@@ -321,13 +354,13 @@ def scan_file(
         matched_patterns = [
             (pattern, severity)
             for pattern, severity in _PATTERNS
-            if pattern.search(normalized)
+            if next(_pattern_matches(pattern, normalized), None) is not None
         ]
         matched_patterns.sort(key=lambda item: severity_order[item[1]], reverse=True)
         for pattern, base_severity in matched_patterns:
             if high_only and base_severity != "HIGH":
                 continue
-            if pattern.search(normalized):
+            if next(_pattern_matches(pattern, normalized), None) is not None:
                 severity = _adjust_severity(
                     base_severity, segment_type, is_high_risk_file
                 )
@@ -388,7 +421,7 @@ def scan_file(
     for decoded_text, line_no in decoded_blobs:
         normalized = normalize(decoded_text)
         for pattern, base_severity in _PATTERNS:
-            if pattern.search(normalized):
+            if next(_pattern_matches(pattern, normalized), None) is not None:
                 snippet = decoded_text.strip()[:80]
                 payload_severity, payload_rule = high_signal("HIGH")
                 findings.append(
