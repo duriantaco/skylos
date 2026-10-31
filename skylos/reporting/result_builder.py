@@ -196,7 +196,7 @@ def build_analysis_result(
         workspace_inventory=workspace_inventory,
     )
     graded_files = files
-    apply_report_scope(result, analyzer)
+    apply_report_scope(result, analyzer, modmap=modmap, raw_imports=all_raw_imports)
     if isinstance(getattr(analyzer, "_review_context", None), dict):
         _attach_effective_review_config_hashes(result, project_cfg)
     measured_paths = {str(file) for file in graded_files}

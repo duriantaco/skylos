@@ -1000,6 +1000,14 @@ def _group_kcore(frag_list, adj, cfg: CloneConfig, k: int):
     return _group_connected(frag_list, sub_adj, cfg)
 
 
+def imported_outside_tests(module, imported_modules) -> bool:
+    """Non-test code imports ``module`` or a test package that holds it."""
+    return bool(module) and any(
+        module == name or (module.startswith(name + ".") and is_test_package_name(name))
+        for name in imported_modules
+    )
+
+
 def without_test_only_groups(
     groups: List[CloneGroup],
     project_root: Path | str | None = None,
@@ -1032,11 +1040,7 @@ def without_test_only_groups(
         # The module itself, or a test package above it (its ``__init__`` can
         # re-export it); importing ``pkg`` does not reach ``pkg.tests.x``.
         module = module_names.get(_resolved(fragment.file_path))
-        return bool(module) and any(
-            module == name
-            or (module.startswith(name + ".") and is_test_package_name(name))
-            for name in imported_modules
-        )
+        return imported_outside_tests(module, imported_modules)
 
     return [
         group
