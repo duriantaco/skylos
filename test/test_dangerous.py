@@ -933,6 +933,110 @@ def test_yaml_positional_safe_loader_does_not_trigger(tmp_path):
     assert "SKY-D206" not in _rule_ids(out)
 
 
+_STRICT_LOADER = (
+    "import yaml\n"
+    "class StrictLoader(yaml.SafeLoader):\n"
+    "    def construct_mapping(self, node, deep=False):\n"
+    "        result = {}\n"
+    "        for key_node, value_node in node.value:\n"
+    "            key = self.construct_object(key_node, deep=deep)\n"
+    "            if key in result:\n"
+    "                raise ValueError(key)\n"
+    "            result[key] = self.construct_object(value_node, deep=deep)\n"
+    "        return result\n"
+)
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        _STRICT_LOADER + "yaml.load('a: 1', Loader=StrictLoader)\n",
+        _STRICT_LOADER + "yaml.load('a: 1', StrictLoader)\n",
+        _STRICT_LOADER
+        + "class Stricter(StrictLoader):\n    pass\n"
+        + "yaml.load('a: 1', Loader=Stricter)\n",
+        "from yaml import CSafeLoader as Fast\n"
+        "import yaml\n"
+        "class L(Fast):\n    pass\n"
+        "yaml.load('a: 1', Loader=L)\n",
+    ],
+)
+def test_yaml_safe_loader_subclass_does_not_trigger(tmp_path, code):
+    out = _scan_one(tmp_path, "yaml_safe_subclass.py", code)
+    assert "SKY-D206" not in _rule_ids(out)
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        _STRICT_LOADER
+        + "StrictLoader.add_constructor('!x', lambda l, n: None)\n"
+        + "yaml.load('a: 1', Loader=StrictLoader)\n",
+        _STRICT_LOADER
+        + "yaml.add_multi_constructor('!', lambda l, s, n: None, Loader=StrictLoader)\n"
+        + "yaml.load('a: 1', Loader=StrictLoader)\n",
+        "import yaml\n"
+        "class L(yaml.SafeLoader):\n"
+        "    yaml_constructors = dict(yaml.UnsafeLoader.yaml_constructors)\n"
+        "yaml.load('a: 1', Loader=L)\n",
+        "import yaml\n"
+        "class L(yaml.SafeLoader):\n"
+        "    def construct_object(self, node, deep=False):\n"
+        "        return yaml.constructor.UnsafeConstructor.construct_object(self, node, deep)\n"
+        "yaml.load('a: 1', Loader=L)\n",
+        "import yaml\n"
+        "class L(yaml.SafeLoader, yaml.UnsafeLoader):\n    pass\n"
+        "yaml.load('a: 1', Loader=L)\n",
+        "import yaml\n"
+        "class L(yaml.FullLoader):\n    pass\n"
+        "yaml.load('a: 1', Loader=L)\n",
+        _STRICT_LOADER
+        + "StrictLoader = yaml.UnsafeLoader\n"
+        + "yaml.load('a: 1', Loader=StrictLoader)\n",
+        _STRICT_LOADER
+        + "def read(StrictLoader):\n"
+        + "    return yaml.load('a: 1', Loader=StrictLoader)\n",
+        _STRICT_LOADER
+        + "register(StrictLoader)\n"
+        + "yaml.load('a: 1', Loader=StrictLoader)\n",
+        _STRICT_LOADER
+        + "setattr(StrictLoader, name, value)\n"
+        + "yaml.load('a: 1', Loader=StrictLoader)\n",
+        _STRICT_LOADER
+        + "yaml.SafeLoader.yaml_constructors = {}\n"
+        + "yaml.load('a: 1', Loader=StrictLoader)\n",
+        _STRICT_LOADER
+        + "yaml.SafeLoader.yaml_constructors['!x'] = object\n"
+        + "yaml.load('a: 1', Loader=StrictLoader)\n",
+        "import yaml\n"
+        "def build():\n"
+        "    class L(yaml.SafeLoader):\n        pass\n"
+        "    return yaml.load('a: 1', Loader=L)\n",
+        "import yaml\n"
+        "from loaders import StrictLoader\n"
+        "yaml.load('a: 1', Loader=StrictLoader)\n",
+        "import yaml\n"
+        "class SafeLoader(yaml.UnsafeLoader):\n    pass\n"
+        "class L(SafeLoader):\n    pass\n"
+        "yaml.load('a: 1', Loader=L)\n",
+        "import yaml\n"
+        "class SafeLoader(yaml.UnsafeLoader):\n    pass\n"
+        "yaml.load('a: 1', Loader=SafeLoader)\n",
+        "import yaml\n"
+        "class CSafeLoader(yaml.SafeLoader):\n    pass\n"
+        "CSafeLoader.add_constructor('!x', object)\n"
+        "yaml.load('a: 1', CSafeLoader)\n",
+        "import yaml\n"
+        "@decorate\n"
+        "class L(yaml.SafeLoader):\n    pass\n"
+        "yaml.load('a: 1', Loader=L)\n",
+    ],
+)
+def test_yaml_loader_subclass_without_safe_proof_still_reports(tmp_path, code):
+    out = _scan_one(tmp_path, "yaml_unsafe_subclass.py", code)
+    assert "SKY-D206" in _rule_ids(out)
+
+
 def test_subprocess_without_shell_true_is_ok(tmp_path):
     code = "import subprocess\nsubprocess.run(['echo','hi'])\n"
     out = _scan_one(tmp_path, "b_subproc_ok.py", code)

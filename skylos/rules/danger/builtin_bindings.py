@@ -20,8 +20,11 @@ class _Scope:
 
 
 class _ScopeBuilder:
-    def __init__(self, names: frozenset[str]) -> None:
+    def __init__(
+        self, names: frozenset[str], isolated_runners: frozenset[int] = frozenset()
+    ) -> None:
         self.names = names
+        self.isolated_runners = isolated_runners
         self.module = _Scope("module", None)
         self.loads: list[tuple[ast.Name, _Scope]] = []
         self.dynamic_globals = False
@@ -131,7 +134,7 @@ class _ScopeBuilder:
             return
         if node.id in self.names:
             self.loads.append((node, scope))
-        if node.id in _DYNAMIC_CODE:
+        if node.id in _DYNAMIC_CODE and id(node) not in self.isolated_runners:
             self.dynamic_globals = True
         if node.id in self.builtin_aliases and id(node) not in self.attribute_reads:
             self.dynamic_builtins = True
@@ -234,8 +237,24 @@ def _is_namespace(node: ast.AST) -> bool:
     return isinstance(node, ast.Attribute) and node.attr == "__dict__"
 
 
-def builtin_references(tree: ast.AST, names: Iterable[str]) -> frozenset[int]:
-    builder = _ScopeBuilder(frozenset(names))
+def builtin_references(
+    tree: ast.AST,
+    names: Iterable[str],
+    *,
+    isolated_code_calls: frozenset[int] = frozenset(),
+) -> frozenset[int]:
+    """Ids of ``Name`` loads of ``names`` that resolve to the builtins.
+
+    ``isolated_code_calls`` are ids of ``exec``/``eval`` calls proved to run
+    in a fresh namespace dict; they cannot bind this module's globals."""
+    runners: frozenset[int] = frozenset()
+    if isolated_code_calls:
+        runners = frozenset(
+            id(node.func)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and id(node) in isolated_code_calls
+        )
+    builder = _ScopeBuilder(frozenset(names), runners)
     try:
         if isinstance(tree, ast.Module):
             builder.visit_all(tree.body, builder.module)

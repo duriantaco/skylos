@@ -2,6 +2,8 @@ import ast
 import re
 from skylos.rules.base import SkylosRule
 from .pickle_provenance import safe_pickle_loads
+from .source_owned_code import source_owned_code_calls
+from .yaml_loader_provenance import yaml_loader_classes, yaml_load_call_name
 from skylos.security.command_guard import scan_shell_command
 from skylos.security.sensitive_data import first_sensitive_name
 from skylos.security.command_guard_types import (
@@ -43,6 +45,7 @@ DANGEROUS_CALLS = {
         "pickle.loads can execute code; only deserialize bytes from trusted sources",
     ),
     "yaml.load": ("SKY-D206", "HIGH", "yaml.load without SafeLoader"),
+    "yaml.load_all": ("SKY-D206", "HIGH", "yaml.load_all without SafeLoader"),
     "hashlib.md5": (
         "SKY-D207",
         "MEDIUM",
@@ -519,12 +522,23 @@ def _is_safe_yaml_loader(value: ast.AST, aliases=None) -> bool:
     return name.split(".")[-1] in {"SafeLoader", "CSafeLoader"}
 
 
-def _yaml_load_without_safeloader(node: ast.Call, aliases=None):
+def _is_safe_loader_argument(value: ast.AST, aliases, loader_classes) -> bool:
+    safe_classes, local_classes = loader_classes
+    if isinstance(value, ast.Name) and value.id in local_classes:
+        return value.id in safe_classes
+    return _is_safe_yaml_loader(value, aliases)
+
+
+def _yaml_load_without_safeloader(
+    node: ast.Call, aliases=None, loader_classes=(frozenset(), frozenset())
+):
     for kw in node.keywords or []:
         if kw.arg == "Loader":
-            if _is_safe_yaml_loader(kw.value, aliases):
+            if _is_safe_loader_argument(kw.value, aliases, loader_classes):
                 return False
-    if len(node.args) >= 2 and _is_safe_yaml_loader(node.args[1], aliases):
+    if len(node.args) >= 2 and _is_safe_loader_argument(
+        node.args[1], aliases, loader_classes
+    ):
         return False
     return True
 
@@ -707,6 +721,11 @@ class DangerousCallsRule(SkylosRule):
         self.assigned_calls_by_scope: dict[int, dict[str, str]] = {}
         self._parents_annotated = False
         self._safe_pickle_loads = set()
+        self._source_owned_code = frozenset()
+        self._module = None
+        self._safe_yaml_loaders = None
+        self._yaml_filename = None
+        self._yaml_project_root = None
 
     def _annotate_parents(self, node: ast.AST) -> None:
         for child in ast.iter_child_nodes(node):
@@ -728,6 +747,13 @@ class DangerousCallsRule(SkylosRule):
                 return id(current)
             current = getattr(current, "parent", None)
         return 0
+
+    def _yaml_loader_classes(self):
+        if self._safe_yaml_loaders is None:
+            self._safe_yaml_loaders = yaml_loader_classes(
+                self._module, self._yaml_filename, self._yaml_project_root
+            )
+        return self._safe_yaml_loaders
 
     def _assigned_calls_for(self, node: ast.AST) -> dict[str, str]:
         return self.assigned_calls_by_scope.setdefault(self._scope_key(node), {})
@@ -764,6 +790,13 @@ class DangerousCallsRule(SkylosRule):
             self._annotate_parents(node)
             self._parents_annotated = True
             self._safe_pickle_loads = safe_pickle_loads(node, context.get("filename"))
+            self._source_owned_code = source_owned_code_calls(
+                node, context.get("filename"), context.get("project_root")
+            )
+            self._module = node
+            self._yaml_filename = context.get("filename")
+            self._yaml_project_root = context.get("project_root")
+            self._safe_yaml_loaders = None
             self.assigned_calls_by_scope.setdefault(id(node), {})
             return None
         if isinstance(node, ast.Import):
@@ -781,6 +814,7 @@ class DangerousCallsRule(SkylosRule):
         name = _qualified_name_from_call(
             node, self.aliases, self._assigned_calls_for(node)
         )
+        name = yaml_load_call_name(node, self._module) or name
         if not name:
             return None
 
@@ -793,13 +827,18 @@ class DangerousCallsRule(SkylosRule):
             if rule_key == "pickle.loads" and id(node) in self._safe_pickle_loads:
                 continue
 
+            if rule_key in {"exec", "eval"} and id(node) in self._source_owned_code:
+                continue
+
             rule_id = tup[0]
             severity = tup[1]
             message = tup[2]
             opts = tup[3] if len(tup) > 3 else None
 
-            if rule_key == "yaml.load":
-                if not _yaml_load_without_safeloader(node, self.aliases):
+            if rule_key in {"yaml.load", "yaml.load_all"}:
+                if not _yaml_load_without_safeloader(
+                    node, self.aliases, self._yaml_loader_classes()
+                ):
                     continue
 
             if opts and "kw_equals" in opts:

@@ -20,6 +20,7 @@ from .danger_llm.llm_flow import scan as scan_llm
 from .danger_ml.model_deserialization import scan as scan_ml_model_load
 from .danger_logging import scan as scan_secret_logging
 from .pickle_provenance import safe_pickle_loads
+from .yaml_loader_provenance import yaml_loader_classes, yaml_load_call_name
 from skylos.security.command_guard import (
     findings_for_command,
     is_external_url,
@@ -56,14 +57,17 @@ _BIDI_CONTROL_CHARS = {
 
 
 class _DangerousCallsChecker(ast.NodeVisitor):
-    def __init__(self, file_path, findings):
+    def __init__(self, file_path, findings, project_root=None):
         self.file_path = file_path
+        self._project_root = project_root
         self.findings = findings
         self._symbol_stack = ["<module>"]
         self.aliases = {}
         self.assigned_calls_stack = [{}]
         self._parents_annotated = False
         self._safe_pickle_loads = set()
+        self._module = None
+        self._safe_yaml_loaders = None
 
     def _annotate_parents(self, node: ast.AST) -> None:
         for child in ast.iter_child_nodes(node):
@@ -106,8 +110,17 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         self.assigned_calls_stack.pop()
         self._symbol_stack.pop()
 
+    def _yaml_loader_classes(self):
+        if self._safe_yaml_loaders is None:
+            self._safe_yaml_loaders = yaml_loader_classes(
+                self._module, self.file_path, self._project_root
+            )
+        return self._safe_yaml_loaders
+
     def visit_Module(self, node):
         self._safe_pickle_loads = safe_pickle_loads(node, self.file_path)
+        self._module = node
+        self._safe_yaml_loaders = None
         if not self._parents_annotated:
             self._annotate_parents(node)
             self._parents_annotated = True
@@ -143,6 +156,7 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         name = qualified_name_from_call(
             node, self.aliases, self.assigned_calls_stack[-1]
         )
+        name = yaml_load_call_name(node, self._module) or name
         if name:
             for rule_key, tup in DANGEROUS_CALLS.items():
                 rule_id, severity, message = tup[0], tup[1], tup[2]
@@ -157,8 +171,11 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                 if rule_key == "pickle.loads" and id(node) in self._safe_pickle_loads:
                     continue
 
-                if rule_key == "yaml.load" and not _yaml_load_without_safeloader(
-                    node, self.aliases
+                if rule_key in {
+                    "yaml.load",
+                    "yaml.load_all",
+                } and not _yaml_load_without_safeloader(
+                    node, self.aliases, self._yaml_loader_classes()
                 ):
                     continue
 
@@ -659,14 +676,14 @@ def dedupe_findings(findings: list[dict]) -> list[dict]:
     return deduped
 
 
-def _scan_file(file_path: Path, findings):
+def _scan_file(file_path: Path, findings, project_root=None):
     src = file_path.read_text(encoding="utf-8", errors="ignore")
     _scan_trojan_source_text(src, file_path, findings)
     tree = ast.parse(src)
 
     scan_file_with_tree(tree, file_path, findings, source=src)
 
-    checker = _DangerousCallsChecker(file_path, findings)
+    checker = _DangerousCallsChecker(file_path, findings, project_root)
     checker.visit(tree)
 
 
@@ -678,7 +695,7 @@ def scan_ctx(_, files):
             continue
 
         try:
-            _scan_file(file_path, findings)
+            _scan_file(file_path, findings, _)
         except Exception as e:
             print(f"Scan failed for {file_path}: {e}", file=sys.stderr)
 
