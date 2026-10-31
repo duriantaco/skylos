@@ -59,11 +59,12 @@ def test_incomplete_or_unexpected_delivery_outcomes_fail_independently(status, r
 @pytest.mark.parametrize(
     "status", ["published", "noop", "skipped", "partial", "failed"]
 )
-def test_plan_requirement_gives_a_clear_upgrade_and_setup_message(status):
+def test_plan_requirement_names_the_workspace_plan(status):
     result = delivery_receipt(_receipt(status, "plan_required"))
     assert result["gitlab_delivery_exit_code"] == 2
-    assert "upgrade" in result["gitlab_delivery_message"]
-    assert "setup" in result["gitlab_delivery_message"]
+    assert (
+        "GitLab comments need the Workspace plan." in result["gitlab_delivery_message"]
+    )
 
 
 @pytest.mark.parametrize(

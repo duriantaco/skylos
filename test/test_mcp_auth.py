@@ -818,42 +818,118 @@ class TestRemediateCredits:
         mock_req.post.assert_not_called()
         assert agent_cls.return_value.run.call_args.kwargs["dry_run"] is True
 
-    def test_generating_fixes_is_charged(self, tmp_path, monkeypatch):
-        self._paid_session(monkeypatch)
-        mock_req = self._deduct_ok()
-        agent_cls = self._agent()
+    def _danger(self, path):
+        return {
+            "rule_id": "SKY-D201",
+            "severity": "HIGH",
+            "message": "eval",
+            "file": str(path),
+            "line": 1,
+        }
 
+    def _real_run(self, scan, mock_req, events, *, fix=None, **kwargs):
+        from skylos.llm.orchestrator import RemediationAgent
+
+        def post(*args, **post_kwargs):
+            events.append("deduct")
+            return mock_req.post.return_value
+
+        def model_call(*args, **fix_kwargs):
+            events.append("model")
+            if fix is not None:
+                return fix()
+            return None
+
+        mock_req.post.side_effect = post
+        fixer = MagicMock()
+        fixer.fix.side_effect = model_call
         with (
             patch.dict("sys.modules", {"requests": mock_req}),
-            patch("skylos.llm.orchestrator.RemediationAgent", agent_cls),
             patch("skylos.llm.runtime.llm_extra_installed", return_value=True),
+            patch.object(RemediationAgent, "_scan", return_value=scan),
+            patch.object(RemediationAgent, "_create_fixer", return_value=fixer),
         ):
-            self._remediate()(str(tmp_path), dry_run=False)
+            return json.loads(self._remediate()(dry_run=False, **kwargs))
 
-        mock_req.post.assert_called_once()
+    def test_real_run_is_charged_once_right_before_the_first_model_call(
+        self, tmp_path, monkeypatch
+    ):
+        self._paid_session(monkeypatch)
+        first = tmp_path / "a.py"
+        second = tmp_path / "b.py"
+        first.write_text("eval(x)\n")
+        second.write_text("eval(y)\n")
+        mock_req = self._deduct_ok()
+        events = []
+        calls = iter([RuntimeError("provider down"), None])
+
+        def fix():
+            outcome = next(calls)
+            if outcome is not None:
+                raise outcome
+            return None
+
+        reply = self._real_run(
+            {"danger": [self._danger(first), self._danger(second)]},
+            mock_req,
+            events,
+            fix=fix,
+            path=str(tmp_path),
+        )
+
+        assert events == ["deduct", "model", "model"]
         assert mock_req.post.call_args.kwargs["json"] == {
             "feature_key": "mcp_remediate"
         }
-        assert agent_cls.return_value.run.call_args.kwargs["dry_run"] is False
+        assert reply["failed"] == 1
+        assert reply["skipped"] == 1
 
-    def test_generating_fixes_without_credits_does_not_run(self, tmp_path, monkeypatch):
+    def test_real_run_without_credits_never_calls_the_model(
+        self, tmp_path, monkeypatch
+    ):
         self._paid_session(monkeypatch)
+        target = tmp_path / "a.py"
+        target.write_text("eval(x)\n")
         mock_resp = MagicMock()
         mock_resp.status_code = 402
         mock_resp.json.return_value = {"required": 10, "available": 0}
         mock_req = MagicMock()
         mock_req.post.return_value = mock_resp
-        agent_cls = self._agent()
+        events = []
 
-        with (
-            patch.dict("sys.modules", {"requests": mock_req}),
-            patch("skylos.llm.orchestrator.RemediationAgent", agent_cls),
-            patch("skylos.llm.runtime.llm_extra_installed", return_value=True),
-        ):
-            reply = json.loads(self._remediate()(str(tmp_path), dry_run=False))
+        reply = self._real_run(
+            {"danger": [self._danger(target)]}, mock_req, events, path=str(tmp_path)
+        )
 
         assert "Insufficient credits" in reply["error"]
-        agent_cls.assert_not_called()
+        assert events == ["deduct"]
+        assert target.read_text() == "eval(x)\n"
+
+    @pytest.mark.parametrize("case", ["no_findings", "repository_level", "max_zero"])
+    def test_real_run_with_nothing_to_fix_is_not_charged(
+        self, tmp_path, monkeypatch, case
+    ):
+        session = self._paid_session(monkeypatch)
+        target = tmp_path / "a.py"
+        target.write_text("eval(x)\n")
+        scan = {"danger": [self._danger(target)]}
+        max_fixes = 5
+        if case == "no_findings":
+            scan = {"danger": []}
+        if case == "repository_level":
+            scan = {"quality": [{**self._danger(tmp_path), "rule_id": "SKY-R104"}]}
+        if case == "max_zero":
+            max_fixes = 0
+        mock_req = self._deduct_ok()
+        events = []
+
+        reply = self._real_run(
+            scan, mock_req, events, path=str(tmp_path), max_fixes=max_fixes
+        )
+
+        assert "error" not in reply
+        assert events == []
+        assert len(session._call_counts["remediate"]) == 1
 
     def test_generating_fixes_without_the_llm_extra_is_refused_before_charging(
         self, tmp_path, monkeypatch

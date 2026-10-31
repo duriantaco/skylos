@@ -3,7 +3,12 @@ import math
 from rich.console import Console
 from rich.markup import escape
 
-from skylos.api import BASE_URL, get_project_token, print_credit_status
+from skylos.api import (
+    BASE_URL,
+    get_project_token,
+    is_low_credit_balance,
+    print_credit_status,
+)
 from skylos.cloud.plan_names import plan_display_name
 
 
@@ -51,7 +56,7 @@ def run_credits_command() -> int:
         console.print(f"[bold]{escape(str(org_name))}[/bold] ({escape(plan_name)} plan)")
     # Every plan has a credit balance, Enterprise included.
     console.print(f"Balance: [bold]{balance:,}[/bold] credits")
-    if balance < 10:
+    if is_low_credit_balance(balance):
         console.print("[yellow]Low credits![/yellow]")
 
     if recent:

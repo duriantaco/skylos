@@ -215,8 +215,9 @@ def test_free_plan_advisory_lines_stay(capsys, machine_zone_not_utc):
     )
     body["plan"] = "free"
     _result, out = _finalize(capsys, body)
-    assert "⚠️  Quality gate failed but continuing (Free plan)" in out
-    assert "💡 The Workspace plan blocks commits and CI on a failed gate" in out
+    assert "💡 The PR check and merge gate are free on every plan." in out
+    assert "Run skylos cicd init to block pull requests on a failed gate." in out
+    assert "Workspace plan blocks" not in out
 
 
 @pytest.mark.parametrize("previous", [_previous(True), None])
