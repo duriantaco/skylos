@@ -11,6 +11,7 @@ import ast
 from functools import lru_cache
 import os
 from pathlib import Path
+import stat
 
 from .danger_fs.closed_world import _SKIP_DIRS
 
@@ -23,24 +24,59 @@ _MAX_NODES = 1_000_000
 @lru_cache(maxsize=16)
 def _parse_snapshot(root, inventory, limits):
     max_file_bytes, max_nodes = limits
+    try:
+        base = Path(root).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return {}, False
     trees = {}
     count = 0
     for relative, *_metadata in inventory:
-        path = Path(root) / relative
         try:
-            source = path.read_bytes()
-            if len(source) > max_file_bytes:
+            member = Path(relative)
+            if member.is_absolute() or ".." in member.parts:
                 return {}, False
+            candidate = base / member
+            path = candidate.resolve()
+            if path != candidate:
+                return {}, False
+            path.relative_to(base)
+            flags = (
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+                | getattr(os, "O_BINARY", 0)
+            )
+            fd = os.open(path, flags)
+            try:
+                opened = os.fstat(fd)
+                if not stat.S_ISREG(opened.st_mode) or opened.st_size > max_file_bytes:
+                    return {}, False
+                if (
+                    opened.st_mtime_ns,
+                    opened.st_ctime_ns,
+                    opened.st_size,
+                    opened.st_ino,
+                ) != tuple(_metadata):
+                    return {}, False
+                with os.fdopen(fd, "rb", buffering=0, closefd=False) as stream:
+                    source = stream.read(max_file_bytes + 1)
+                if len(source) != opened.st_size or len(source) > max_file_bytes:
+                    return {}, False
+                for current in (os.fstat(fd), path.stat(follow_symlinks=False)):
+                    if (
+                        current.st_mtime_ns,
+                        current.st_ctime_ns,
+                        current.st_size,
+                        current.st_ino,
+                    ) != tuple(_metadata):
+                        return {}, False
+            finally:
+                os.close(fd)
             tree = ast.parse(source, filename=str(path))
-        except (OSError, SyntaxError, ValueError, RecursionError):
+        except (OSError, SyntaxError, ValueError, RecursionError, RuntimeError):
             return {}, False
         count += sum(1 for _node in ast.walk(tree))
         if count > max_nodes:
-            return {}, False
-        stat = path.stat()
-        if (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino) != tuple(
-            _metadata
-        ):
             return {}, False
         trees[path] = tree
     return trees, True
