@@ -356,6 +356,7 @@ def _run_init(tmp_path, monkeypatch, output, *argv):
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cicd_cmd, "_git_output", lambda *args: "")
+    monkeypatch.setattr(cicd_cmd, "_cloud_login_found", lambda _root: True)
     code, printed = _cicd(["init", "--output", str(output), "--no-done", *argv])
     return code, yaml.safe_load(output.read_text()), printed
 

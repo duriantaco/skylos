@@ -104,7 +104,8 @@ The Jenkins and "other CI" commands install plain `skylos`. Dart support,
 agents do not have. To scan Dart files, install `skylos[dart]` on an agent that
 has one; without it, Skylos reports the Dart files as not analyzed and the gate
 stops with exit 2. The GitLab, Bitbucket, CircleCI and Azure templates run on
-images with a compiler and install `skylos[dart]`.
+images with a compiler and install `skylos[dart]` when the repository has Dart
+files, plain `skylos` otherwise. The GitHub workflow does the same.
 
 The stage fetches the target branch only when the clone does not have it. If
 that fetch fails on a private repository, the shell step has no Git
@@ -147,7 +148,9 @@ skylos . --danger --quality --ai-defects --secrets --sca --baseline --gate --dif
 
 ## Skylos Cloud
 
-`skylos cicd init` adds Cloud uploads only for GitHub Actions, through GitHub
+`skylos cicd init` adds Cloud uploads only for GitHub Actions, and only when
+this machine is logged in to Skylos Cloud (`skylos login`, `SKYLOS_TOKEN` or
+the repository's `.skylos/link.json`) or you pass `--upload`, through GitHub
 OIDC: default-branch pushes run `skylos cloud`, and pull requests to the
 default branch upload through `pull_request_target` jobs that never give PR
 files a credential (see

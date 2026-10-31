@@ -701,7 +701,9 @@ def test_detect_done_setup_survives_invalid_pyproject(tmp_path):
     )
 
 
-def _run_cicd_init(tmp_path, monkeypatch, *argv, git=None, console=None):
+def _run_cicd_init(
+    tmp_path, monkeypatch, *argv, git=None, console=None, logged_in=True
+):
     from unittest.mock import Mock
 
     import skylos.commands.cicd_cmd as cicd_cmd
@@ -709,6 +711,8 @@ def _run_cicd_init(tmp_path, monkeypatch, *argv, git=None, console=None):
     git = git or {}
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cicd_cmd, "_git_output", lambda *args: git.get(args, ""))
+    if logged_in is not None:
+        monkeypatch.setattr(cicd_cmd, "_cloud_login_found", lambda _root: logged_in)
     console = console or Mock()
     output = tmp_path / ".github" / "workflows" / "skylos.yml"
     exit_code = cicd_cmd.run_cicd_command(
@@ -792,6 +796,114 @@ def test_cicd_init_risk_review_flag(tmp_path, monkeypatch):
     assert "Skylos risk review" in printed
     assert "bot approvals do not count" in printed
     assert "Wait for: Skylos Quality Gate, Skylos risk review" in printed
+
+
+NOT_LOGGED_IN_NOTE = (
+    "Cloud upload: off (not logged in to Skylos Cloud). "
+    "To add it: skylos login, then skylos cicd init --upload"
+)
+
+
+def test_cicd_init_leaves_cloud_upload_out_when_not_logged_in(tmp_path, monkeypatch):
+    _write(tmp_path / "lib.py", "x = 1\n")
+    exit_code, workflow, printed = _run_cicd_init(
+        tmp_path, monkeypatch, logged_in=False
+    )
+
+    assert exit_code == 0
+    assert set(workflow["jobs"]) == {"skylos"}
+    assert "pull_request_target" not in (workflow.get("on") or workflow[True])
+    assert NOT_LOGGED_IN_NOTE in printed
+    assert "GitHub OIDC" not in printed
+
+
+def test_cicd_init_upload_flags_decide_whatever_the_login(tmp_path, monkeypatch):
+    _write(tmp_path / "lib.py", "x = 1\n")
+    _, workflow, printed = _run_cicd_init(
+        tmp_path, monkeypatch, "--upload", logged_in=False
+    )
+    assert set(workflow["jobs"]) == {"skylos", "cloud-upload", *PR_UPLOAD_JOBS}
+    assert "not logged in" not in printed
+
+    _, workflow, printed = _run_cicd_init(
+        tmp_path, monkeypatch, "--no-upload", "--force", logged_in=True
+    )
+    assert set(workflow["jobs"]) == {"skylos"}
+    assert "not logged in" not in printed
+
+
+@pytest.mark.parametrize("source", ["env", "link", "saved", "none", "broken"])
+def test_cicd_init_upload_default_follows_the_cloud_login(
+    tmp_path, monkeypatch, source
+):
+    import skylos.api as api
+
+    def saved_token():
+        if source == "broken":
+            raise OSError("keyring unavailable")
+        if source == "saved":
+            return "saved-token"
+        return None
+
+    monkeypatch.delenv("SKYLOS_TOKEN", raising=False)
+    monkeypatch.setattr(api, "get_project_token", saved_token)
+    if source == "env":
+        monkeypatch.setenv("SKYLOS_TOKEN", "env-token")
+    if source == "link":
+        _write(tmp_path / ".skylos" / "link.json", "{}")
+    _write(tmp_path / "lib.py", "x = 1\n")
+
+    _, workflow, printed = _run_cicd_init(tmp_path, monkeypatch, logged_in=None)
+
+    if source in {"none", "broken"}:
+        assert set(workflow["jobs"]) == {"skylos"}
+        assert NOT_LOGGED_IN_NOTE in printed
+    else:
+        assert set(workflow["jobs"]) == {"skylos", "cloud-upload", *PR_UPLOAD_JOBS}
+        assert "not logged in" not in printed
+
+
+def _skylos_installs(workflow):
+    return {
+        line.strip()
+        for job in workflow["jobs"].values()
+        for step in job["steps"]
+        for line in str(step.get("run") or "").splitlines()
+        if "pip install" in line and "skylos" in line
+    }
+
+
+@pytest.mark.parametrize(
+    "dart_file, flags, extras",
+    [
+        (None, (), {""}),
+        ("app/lib/main.dart", (), {"[dart]", ""}),
+        ("node_modules/pkg/lib/vendored.dart", (), {""}),
+        ("build/web/generated.dart", (), {""}),
+        (None, ("--llm", "--model", "gpt-4.1"), {"", "[llm]"}),
+        (
+            "app/lib/main.dart",
+            ("--llm", "--model", "gpt-4.1"),
+            {"[dart]", "[dart,llm]", ""},
+        ),
+    ],
+)
+def test_cicd_init_installs_the_dart_extra_only_for_dart_repositories(
+    tmp_path, monkeypatch, dart_file, flags, extras
+):
+    from skylos import __version__
+
+    _write(tmp_path / "lib.py", "x = 1\n")
+    if dart_file:
+        _write(tmp_path / dart_file, "void main() {}\n")
+
+    _, workflow, _ = _run_cicd_init(tmp_path, monkeypatch, *flags)
+
+    assert "cloud-upload" in workflow["jobs"] and "pr-scan" in workflow["jobs"]
+    assert _skylos_installs(workflow) == {
+        "python -I -m pip install " + shlex.quote(f"skylos{extra}=={__version__}")
+        for extra in extras
+    }
 
 
 def test_cicd_init_uses_origin_head_as_default_branch(tmp_path, monkeypatch):

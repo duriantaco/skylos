@@ -242,6 +242,7 @@ def print_init_next_steps(
     branch_detected: bool,
     risk_review: bool = False,
     pr_upload: bool = False,
+    upload_note: str | None = None,
 ) -> None:
     """Say what each generated job does and how to open the first gated PR."""
     pr = "pull_request" in triggers
@@ -313,6 +314,8 @@ def print_init_next_steps(
                 "never checks it out uploads it with GitHub OIDC",
                 "starts with PRs opened or updated after this file is merged",
             )
+    if upload_note and "push" in triggers:
+        console.print(escape(upload_note), soft_wrap=True)
     if "push" in triggers and not branch_detected:
         console.print(
             f"[yellow]No origin/HEAD, so pushes to {branch_text} trigger it; "
