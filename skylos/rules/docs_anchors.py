@@ -89,6 +89,7 @@ RULE_DOCS_ANCHORS = {
     "SKY-D280": "sky-d280--nextjs-mutating-route-missing-authentication",
     "SKY-D281": "sky-d281--nextjs-server-action-sql-injection",
     "SKY-D282": "sky-d282--webhook-signature-verification-issue",
+    "SKY-D283": "sky-d283--unauthenticated-control-destructive-or-admin-route",
     "SKY-D290": "sky-d290--dangerous-github-actions-trigger",
     "SKY-D291": "sky-d291--broad-github-token-permissions",
     "SKY-D292": "sky-d292--unpinned-action-reference",

@@ -289,6 +289,10 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     },
     "SKY-D230": _OPEN_REDIRECT,
     "SKY-D231": _CORS,
+    "SKY-D283": {
+        "default": "Require an authenticated, authorised caller before the route runs its action.",
+        "python": "Add an auth dependency (FastAPI Depends/Security) or a login-required decorator, and check the caller may run this action.",
+    },
     "SKY-D232": {
         "default": "Verify JWT signatures with a fixed algorithm list and key; reject 'none'."
     },
