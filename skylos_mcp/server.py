@@ -1040,16 +1040,28 @@ def _access_error(tool_name: str) -> str | None:
     return None
 
 
-def _charge_error(tool_name: str, *, charge: bool = True) -> str | None:
-    if not charge:
-        record_uncharged_call(tool_name)
-        return None
-
+def _charge_error(tool_name: str) -> str | None:
     ok, credit_err = deduct_credits(tool_name)
     if not ok:
         return json.dumps({"error": credit_err})
 
     return None
+
+
+class _ChargeRefused(Exception):
+    pass
+
+
+class _ChargeAtModelStart:
+    def __init__(self, tool_name: str):
+        self.tool_name = tool_name
+        self.attempted = False
+
+    def __call__(self) -> None:
+        self.attempted = True
+        ok, credit_err = deduct_credits(self.tool_name)
+        if not ok:
+            raise _ChargeRefused(credit_err)
 
 
 def _gate(tool_name: str) -> str | None:
@@ -1443,7 +1455,10 @@ def _register_tools(mcp):
         when required), and sends affected code to that provider. It does not
         run your tests.
         Review every change and run trusted tests before keeping it.
-        Dry runs use no credits; a run that generates fixes is charged."""
+        Costs 10 Skylos credits per real run, charged when the run starts
+        generating fixes, right before the first model call; a run that fails
+        after that is still charged. Dry runs, refused calls and runs with
+        nothing to fix are free. Scan tools cost no credits."""
         access_err = _access_error("remediate")
         if access_err:
             return access_err
@@ -1463,10 +1478,7 @@ def _register_tools(mcp):
             if llm_err:
                 return llm_err
 
-        charge_err = _charge_error("remediate", charge=not dry_run)
-        if charge_err:
-            return charge_err
-
+        charge = _ChargeAtModelStart("remediate")
         try:
             from skylos.llm.orchestrator import RemediationAgent
 
@@ -1482,10 +1494,14 @@ def _register_tools(mcp):
                 dry_run=dry_run,
                 max_fixes=max_fixes,
                 quiet=True,
+                before_model_call=charge,
             )
             return json.dumps(summary, indent=2)
         except Exception as e:
             return json.dumps({"error": str(e)})
+        finally:
+            if not charge.attempted:
+                record_uncharged_call("remediate")
 
     @_tool("Verify dead code with an LLM", open_world=True)
     def verify_dead_code(
