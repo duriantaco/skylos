@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import bisect
 import builtins
 import csv
 import io
@@ -182,6 +183,48 @@ SEV_MEDIUM = "MEDIUM"
 IMPORT_RE = re.compile(r"^\s*import\s+([A-Za-z_][\w\.]*)", re.MULTILINE)
 FROM_RE = re.compile(r"^\s*from\s+([A-Za-z_][\w\.]*)\s+import\b", re.MULTILINE)
 _IMPORT_LINE_RE = re.compile(r"^\s*(?:import|from)\s+([A-Za-z_]\w*)(?=\.|\s|$)")
+_LINE_BREAK_RE = re.compile(r"\r\n|\r|\n")
+_REQUIRES_PYTHON_FLOOR_RE = re.compile(r">=\s*(\d+)\.(\d+)")
+REMOVED_STDLIB_MODULES = {
+    "formatter": (3, 10),
+    "parser": (3, 10),
+    "symbol": (3, 10),
+    "binhex": (3, 11),
+    "asynchat": (3, 12),
+    "asyncore": (3, 12),
+    "distutils": (3, 12),
+    "imp": (3, 12),
+    "smtpd": (3, 12),
+    "aifc": (3, 13),
+    "audioop": (3, 13),
+    "cgi": (3, 13),
+    "cgitb": (3, 13),
+    "chunk": (3, 13),
+    "crypt": (3, 13),
+    "imghdr": (3, 13),
+    "lib2to3": (3, 13),
+    "mailcap": (3, 13),
+    "msilib": (3, 13),
+    "nis": (3, 13),
+    "nntplib": (3, 13),
+    "ossaudiodev": (3, 13),
+    "pipes": (3, 13),
+    "sndhdr": (3, 13),
+    "spwd": (3, 13),
+    "sunau": (3, 13),
+    "telnetlib": (3, 13),
+    "uu": (3, 13),
+    "xdrlib": (3, 13),
+}
+TYPE_CHECKING_MODULES = frozenset({"typing", "typing_extensions"})
+_NAMED_BINDING_NODES = (
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+    ast.ClassDef,
+    ast.ExceptHandler,
+    ast.MatchAs,
+    ast.MatchStar,
+)
 
 REQ_LINE_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)")
 
@@ -198,6 +241,45 @@ def _normalize_name(name):
     cleaned = cleaned.lower()
     cleaned = re.sub(r"[-_.]+", "-", cleaned)
     return cleaned
+
+
+def _requires_python_floor(repo_root):
+    text = read_project_text_no_symlink(
+        repo_root,
+        "pyproject.toml",
+        max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+        encoding="utf-8",
+    )
+    if text is None:
+        return None
+    try:
+        data = tomllib.loads(text)
+    except (tomllib.TOMLDecodeError, RecursionError, ValueError):
+        return None
+    project = data.get("project")
+    if not isinstance(project, dict):
+        return None
+    requires_python = project.get("requires-python")
+    if not isinstance(requires_python, str):
+        return None
+    match = _REQUIRES_PYTHON_FLOOR_RE.search(requires_python)
+    if match is None:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def _project_stdlib_modules(repo_root):
+    """The running interpreter's stdlib plus modules later Pythons removed.
+
+    A removed module still counts while the project's ``requires-python``
+    floor is below the removal version or is not declared.
+    """
+    modules = _get_stdlib_modules()
+    floor = _requires_python_floor(repo_root)
+    for name, removed_in in REMOVED_STDLIB_MODULES.items():
+        if floor is None or floor < removed_in:
+            modules.add(name)
+    return modules
 
 
 def _get_stdlib_modules():
@@ -2746,7 +2828,7 @@ def _build_dependency_context(repo_root, py_files=None):
         "known_python_files": known_python_files,
         "source_roots": source_roots - marker_required_roots,
         "package_directories": package_directories,
-        "stdlib": _get_stdlib_modules(),
+        "stdlib": _project_stdlib_modules(repo_root),
         "local_modules": local_modules,
         "file_local_cache": {},
         "package_context_cache": {},
@@ -3287,11 +3369,27 @@ def _imported_submodules(src, mod):
     return _index_imported_submodules(src).get(mod, frozenset())
 
 
-def _index_imported_submodules(src):
-    """Keep regex candidate semantics, including source that cannot be parsed."""
+def _index_imported_submodules(src, statement_lines=None):
+    """Keep regex candidate semantics, including source that cannot be parsed.
+
+    For parsed source, ``statement_lines`` keeps only matches on real import
+    statements, so import text inside strings and docstrings is not an import.
+    """
     submodules = {}
+    line_starts = None
+    if statement_lines is not None:
+        line_starts = [
+            0,
+            *(match.end() for match in _LINE_BREAK_RE.finditer(src or "")),
+        ]
     for pattern in (IMPORT_RE, FROM_RE):
         for match in pattern.finditer(src or ""):
+            if (
+                line_starts is not None
+                and bisect.bisect_right(line_starts, match.start(1))
+                not in statement_lines
+            ):
+                continue
             root, _, rest = match.group(1).partition(".")
             portions = submodules.setdefault(root, set())
             if rest:
@@ -3337,20 +3435,28 @@ class _SourceImportAnalysis:
     """Import facts for one source snapshot; no source or AST is retained."""
 
     def __init__(self, src, *, submodules=None):
-        if submodules is None:
+        nodes = ()
+        tree = _parse_import_source(src)
+        statement_lines = None
+        source_lines = (src or "").splitlines()
+        self.type_checking_only = frozenset()
+        if tree is not None:
+            nodes = tuple(ast.walk(tree))
+            statement_lines = _import_statement_lines(nodes)
+            submodules = _index_imported_submodules(src, statement_lines)
+            source_lines = _LINE_BREAK_RE.split(src or "")
+            self.type_checking_only = _type_checking_only_roots(nodes)
+        elif submodules is None:
             submodules = _index_imported_submodules(src)
         self.submodules = submodules
         self.modules = frozenset(self.submodules)
         self.lines = {}
-        for line_no, line in enumerate((src or "").splitlines(), start=1):
+        for line_no, line in enumerate(source_lines, start=1):
+            if statement_lines is not None and line_no not in statement_lines:
+                continue
             match = _IMPORT_LINE_RE.match(line)
             if match:
                 self.lines.setdefault(match.group(1), line_no)
-
-        nodes = ()
-        tree = _parse_import_source(src)
-        if tree is not None:
-            nodes = tuple(ast.walk(tree))
         optional_paths = frozenset()
         uncertain_paths = frozenset()
         if src and "except" in src:
@@ -3366,6 +3472,112 @@ class _SourceImportAnalysis:
 
     def requirements(self, mod):
         return self._requirements.get(mod, (frozenset({mod}), ()))
+
+
+def _import_statement_lines(nodes):
+    lines = set()
+    for node in nodes:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            lines.update(range(node.lineno, (node.end_lineno or node.lineno) + 1))
+    return frozenset(lines)
+
+
+def _import_node_roots(node):
+    if isinstance(node, ast.Import):
+        return [alias.name.split(".")[0] for alias in node.names]
+    if isinstance(node, ast.ImportFrom) and not node.level and node.module:
+        return [node.module.split(".")[0]]
+    return []
+
+
+def _type_checking_guards(nodes):
+    """Names proven to be ``typing.TYPE_CHECKING`` and modules proven to be ``typing``.
+
+    Every binding of the name in the file must be that import; any other
+    binding (assignment, parameter, definition, other import) disproves it.
+    """
+    flag_imports = {}
+    module_imports = {}
+    other = set()
+    for node in nodes:
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                bound = alias.asname or alias.name
+                if (
+                    not node.level
+                    and node.module in TYPE_CHECKING_MODULES
+                    and alias.name == "TYPE_CHECKING"
+                ):
+                    flag_imports[bound] = True
+                else:
+                    other.add(bound)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    bound = alias.asname
+                    if alias.name in TYPE_CHECKING_MODULES:
+                        module_imports[bound] = True
+                    else:
+                        other.add(bound)
+                else:
+                    bound = alias.name.split(".")[0]
+                    if bound in TYPE_CHECKING_MODULES:
+                        module_imports[bound] = True
+                    else:
+                        other.add(bound)
+        elif isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            other.add(node.id)
+        elif isinstance(node, _NAMED_BINDING_NODES) and node.name:
+            other.add(node.name)
+        elif isinstance(node, ast.arg):
+            other.add(node.arg)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            other.add(node.rest)
+    return set(flag_imports) - other, set(module_imports) - other
+
+
+def _type_checking_only_roots(nodes):
+    """Import roots that appear only inside ``if TYPE_CHECKING:`` bodies."""
+    flags, modules = _type_checking_guards(nodes)
+    if not flags and not modules:
+        return frozenset()
+    guarded = set()
+    for node in nodes:
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        proven = (isinstance(test, ast.Name) and test.id in flags) or (
+            isinstance(test, ast.Attribute)
+            and test.attr == "TYPE_CHECKING"
+            and isinstance(test.value, ast.Name)
+            and test.value.id in modules
+        )
+        if not proven:
+            continue
+        for statement in node.body:
+            for child in ast.walk(statement):
+                if isinstance(child, (ast.Import, ast.ImportFrom)):
+                    guarded.add(id(child))
+    guarded_roots = set()
+    runtime_roots = set()
+    for node in nodes:
+        roots = _import_node_roots(node)
+        if id(node) in guarded:
+            guarded_roots.update(roots)
+        else:
+            runtime_roots.update(roots)
+    return frozenset(guarded_roots - runtime_roots)
+
+
+def _type_checking_only_undeclared(template, mod, analysis):
+    """A real package imported only for type checking needs no runtime declaration.
+
+    A package that does not exist (SKY-D222) is still reported: installing the
+    name to satisfy a type checker would run whoever registers it.
+    """
+    return (
+        template["rule_id"] == RULE_ID_UNDECLARED and mod in analysis.type_checking_only
+    )
 
 
 def _undeclared_template(mod, message):
@@ -4040,7 +4252,9 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
                 required_paths=required_paths,
                 from_imports=from_imports,
             )
-            if template is None:
+            if template is None or _type_checking_only_undeclared(
+                template, mod, analysis
+            ):
                 continue
             if _is_repository_module_import(template, mod, ctx, src):
                 continue
@@ -4167,7 +4381,7 @@ def scan_diff_added_imports(
             required_paths=required_paths,
             from_imports=from_imports,
         )
-        if template is None:
+        if template is None or _type_checking_only_undeclared(template, mod, analysis):
             continue
 
         finding = dict(template)

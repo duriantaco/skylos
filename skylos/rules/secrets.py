@@ -13,6 +13,7 @@ from html import unescape
 from html.parser import HTMLParser
 from math import log2
 from pathlib import PurePosixPath
+from urllib.parse import unquote
 
 from skylos.rules import secret_shapes
 
@@ -3805,6 +3806,12 @@ _CREDENTIAL_REFERENCE_MARKERS = (
     "projects/",
 )
 
+_PLACEHOLDER_ARTICLES = frozenset({"a", "an", "the", "my", "your", "some"})
+
+_MULTI_HOST_LATER_USERINFO_RE = re.compile(
+    r"\d{1,5},(?:[^,]*,)*(?P<user>[^,:]*):(?P<pw>[^,]*)\Z"
+)
+
 _PLACEHOLDER_HOSTS = frozenset(
     {"host", "hostname", "server", "your-host", "yourhost", "your_host", "domain"}
 )
@@ -4024,16 +4031,41 @@ def _mask_credential(value: str) -> str:
     return "*" * 8
 
 
+def _is_placeholder_url_password(password: str, user: str) -> bool:
+    """Placeholder check that also reads the percent-decoded password.
+
+    ``a%20secret`` is "a secret": articles plus placeholder words only.
+    """
+    if _is_placeholder_credential(password, user=user):
+        return True
+    decoded = unquote(password)
+    if decoded != password and _is_placeholder_credential(decoded, user=unquote(user)):
+        return True
+    words = decoded.lower().split()
+    content = [word for word in words if word not in _PLACEHOLDER_ARTICLES]
+    return (
+        len(words) > 1
+        and bool(content)
+        and all(word in _CREDENTIAL_PLACEHOLDER_VALUES for word in content)
+    )
+
+
 def _url_credential_candidates(line_content: str):
     for match in URL_CREDENTIAL_RE.finditer(line_content):
         user = match.group("user")
         password = match.group("pw")
+        start = match.start("pw")
+        later_host = _MULTI_HOST_LATER_USERINFO_RE.match(password)
+        if later_host is not None:
+            user = later_host.group("user")
+            start += later_host.start("pw")
+            password = later_host.group("pw")
         host = match.group("host").lower()
-        if _is_placeholder_credential(password, user=user):
+        if _is_placeholder_url_password(password, user):
             continue
         if host in _PLACEHOLDER_HOSTS or "example" in host:
             continue
-        yield match.group("scheme"), match.start("pw"), match.end("pw"), password
+        yield match.group("scheme"), start, start + len(password), password
 
 
 def _config_credential_candidates(line_content: str):

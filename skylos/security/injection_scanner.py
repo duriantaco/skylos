@@ -66,6 +66,11 @@ _CHECK_VERIFICATION_RE = {
     ),
 }
 _COMPOUND_CHECK_PREFIX_CHARS = 192
+_NEW_INSTRUCTION_RE = re.compile(r"new\s+instructions?:\s", re.I)
+_PLACEHOLDER_TO_END_RE = re.compile(
+    r"\s*(?:\{[A-Za-z_][\w.]*(?:![rsa])?(?::[^{}\n]*)?\}|\{\d*\}|%[rs])"
+    r"[\s.,;:!?'\")\]]*\Z"
+)
 
 _PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"ignore\s+(all\s+)?previous\s+instructions?", re.I), "HIGH"),
@@ -84,7 +89,7 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"you\s+are\s+now\s+(a|an|the)\b", re.I), "HIGH"),
     (re.compile(r"(?:^|\.\s+)act\s+as\s+(a|an|the)\b", re.I), "HIGH"),
     (re.compile(r"pretend\s+(you\s+are|to\s+be)\b", re.I), "HIGH"),
-    (re.compile(r"new\s+instructions?:\s", re.I), "HIGH"),
+    (_NEW_INSTRUCTION_RE, "HIGH"),
     (re.compile(r"do\s+not\s+(flag|report|detect|scan|warn|alert)\b", re.I), "MEDIUM"),
     (_SKIP_DIRECTIVE_RE, "MEDIUM"),
     (re.compile(r"approve\s+all\s+(changes?|code|commits?)\b", re.I), "MEDIUM"),
@@ -153,8 +158,16 @@ _PROMPT_KEYS_RE = re.compile(
 
 
 def _pattern_matches(pattern: re.Pattern, text: str):
-    """Keep individual directives, excluding a narrow descriptive noun shape."""
+    """Keep individual directives, excluding narrow non-directive shapes.
+
+    A descriptive noun before a check verb, and ``new instruction:`` followed
+    only by a format placeholder, carry no literal instruction text.
+    """
     for match in pattern.finditer(text):
+        if pattern is _NEW_INSTRUCTION_RE and _PLACEHOLDER_TO_END_RE.match(
+            text, match.end()
+        ):
+            continue
         if pattern is _SKIP_DIRECTIVE_RE:
             predicate = _CHECK_VERIFICATION_RE.get(match.group(1).lower())
             if (
