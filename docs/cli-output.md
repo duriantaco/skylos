@@ -1024,6 +1024,16 @@ HIGH. A CRITICAL finding in a test file (`tests/`, `test_*.py`, `*.test.ts`,
 `conftest.py`, ...) is reported as HIGH with `"original_severity": "CRITICAL"`
 and `"severity_reason": "test_file"`; `analysis_summary.test_file_severity_capped`
 counts them. Secrets keep CRITICAL wherever they are committed.
+`exec`/`eval` findings (SKY-D201/D202, reported for every call) are MEDIUM in a
+module proved to be test-only, in a scan of the whole repository: the module
+is in a top-level `tests/` or `test/` folder, is a test module (a test or
+test-framework import), no non-test module imports it, and no non-test module
+mentions its name or builds a path into that folder (so function-level,
+`try` and `importlib` imports keep HIGH), and the code it runs does not come
+from network or stdin input. They keep
+`"original_severity": "HIGH"` with `"severity_reason": "test_only_module"`,
+stay listed, and are counted in
+`analysis_summary.test_only_code_execution_lowered`.
 
 ### Architecture advisories in full scans
 
