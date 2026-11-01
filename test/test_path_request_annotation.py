@@ -222,3 +222,48 @@ def test_annotated_parameter_still_reports_when_a_route_passes_request_data(tmp_
         tmp_path, {"app/__init__.py": "", "app/kernel.py": kernel, "app/api.py": api}
     )
     assert {"SKY-D215", "SKY-D324"} <= reported
+
+
+GUARDS_THAT_DO_NOT_GUARD = {
+    "useless_checks_on_a_request_type": (
+        "import os\n"
+        "from django.http import HttpRequest\n\n\n"
+        "def translate(request: HttpRequest):\n"
+        "    if not isinstance(request, HttpRequest):\n"
+        "        print('unexpected request type')\n"
+        "    if request:\n"
+        "        pass\n"
+        "    return open(os.path.join('/srv/out', request.GET['name'])).read()\n"
+    ),
+    "non_request_annotation_on_another_parameter": (
+        "import os\n"
+        "from dataclasses import dataclass\n\n\n"
+        "@dataclass\n"
+        "class TranslateRequest:\n"
+        "    output: str\n\n\n"
+        "def translate(job: TranslateRequest, request):\n"
+        "    if isinstance(job, TranslateRequest):\n"
+        "        return open(os.path.join('/srv/out', request.args['name'])).read()\n"
+        "    return ''\n"
+    ),
+    "non_request_type_check_without_an_annotation": (
+        "import os\n"
+        "from dataclasses import dataclass\n\n\n"
+        "@dataclass\n"
+        "class TranslateRequest:\n"
+        "    output: str\n\n\n"
+        "def translate(request):\n"
+        "    if isinstance(request, TranslateRequest):\n"
+        "        pass\n"
+        "    return open(os.path.join('/srv/out', request.args['name'])).read()\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("form", sorted(GUARDS_THAT_DO_NOT_GUARD))
+def test_checks_that_do_not_change_the_request_type_still_report(tmp_path, form):
+    reported, _ = _scan(
+        tmp_path,
+        {"app/__init__.py": "", "app/kernel.py": GUARDS_THAT_DO_NOT_GUARD[form]},
+    )
+    assert "SKY-D215" in reported
