@@ -85,6 +85,13 @@ COMPLIANCE_MAPPINGS = {
             "title": "Security Misconfiguration",
         },
     ],
+    "SKY-D283": [
+        {
+            "framework": "OWASP_TOP10",
+            "requirement": "A01:2021",
+            "title": "Broken Access Control",
+        },
+    ],
     "SKY-D232": [
         {
             "framework": "OWASP_TOP10",

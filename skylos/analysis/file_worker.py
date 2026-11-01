@@ -250,6 +250,25 @@ def _danger_findings(
     return dedupe_findings(findings), analysis_error
 
 
+def _without_superseded_route_reviews(quality: list, danger: list) -> list:
+    """A route reported as SKY-D283 drops its SKY-F102 review of the same
+    handler; the security finding carries the same claim with its evidence."""
+    lines = {
+        finding.get("line")
+        for finding in danger
+        if finding.get("rule_id") == "SKY-D283"
+    }
+    if not lines:
+        return quality
+    return [
+        finding
+        for finding in quality
+        if finding.get("rule_id") != "SKY-F102"
+        or finding.get("value") == "defeated_owner_guard"
+        or finding.get("line") not in lines
+    ]
+
+
 def _custom_findings(tree, file, extra_visitors: Iterable[type] | None) -> list:
     findings = []
     for visitor_class in extra_visitors or ():
@@ -517,6 +536,8 @@ def _process_python_file(file, mod, cfg, source, options: _WorkerOptions) -> tup
         file, prepared, cfg, options, annotation_coverage=annotation_coverage
     )
     danger, danger_error = _danger_findings(file, prepared, options)
+    if options.full_scan and options.enable_danger_rules:
+        quality = _without_superseded_route_reviews(quality, danger)
     errors = [error for error in (quality_error, danger_error) if error]
     analysis_error = errors[0] if len(errors) == 1 else errors or None
     custom = _custom_findings(prepared.tree, file, options.extra_visitors)

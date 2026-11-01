@@ -836,6 +836,14 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-D283",
+        "Unauthenticated control, destructive or admin route",
+        "security",
+        "HIGH",
+        aliases=("missing authentication", "unauthenticated route"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-D290",
         "GitHub Actions dangerous trigger",
         "security",

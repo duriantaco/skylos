@@ -9,6 +9,13 @@ from pathlib import Path
 
 from skylos.rules.base import SkylosRule
 from skylos.rules.quality._object_auth import defeated_owner_guard
+from skylos.rules.quality._route_exposure import (
+    ModuleFacts,
+    exposure_severity,
+    route_actions,
+    route_guard_possible,
+    route_words,
+)
 from skylos.rules.quality._receivers import (
     class_method_nodes,
     context_method_kinds,
@@ -1824,6 +1831,93 @@ class TypeAnnotationPracticeRule(SkylosRule):
         return findings or None
 
 
+class _ModuleRoutes:
+    """Route handlers of one module and the module facts F102 relies on."""
+
+    def __init__(self, module: ast.Module):
+        self.module = module
+        self.guarded_routers = _guarded_router_names(module)
+        self.mock_patch_decorators = _mock_patch_decorators(module)
+        self.module_functions = {
+            statement.name: statement
+            for statement in module.body
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        self.module_loggers = _logger_names(
+            statement
+            for statement in module.body
+            if not isinstance(
+                statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            )
+        )
+
+    def handlers(self):
+        for function in ast.walk(self.module):
+            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            route_decorators = [
+                decorator
+                for decorator in function.decorator_list
+                if id(decorator) not in self.mock_patch_decorators
+                and _route_methods(decorator)[0] is not None
+            ]
+            if route_decorators:
+                yield function, route_decorators
+
+    @staticmethod
+    def methods(route_decorators) -> set[str]:
+        methods = set()
+        for decorator in route_decorators:
+            _, decorator_methods = _route_methods(decorator)
+            methods.update(decorator_methods)
+        return methods
+
+    def is_open_state_change(self, function, route_decorators, methods) -> bool:
+        return _route_changes_state(
+            function,
+            route_decorators,
+            methods,
+            self.module_functions,
+            self.module_loggers,
+        ) and not _route_has_auth_guard(function, self.guarded_routers)
+
+
+def open_unguarded_routes(module: ast.Module, filename=None) -> list[dict]:
+    """Mutating routes of an app this module creates that fail the F102 test
+    and that nothing on the route, in its body or in the module can
+    authenticate. Each entry names the privileged actions it performs."""
+    if _is_non_production_path(filename):
+        return []
+    routes = _ModuleRoutes(module)
+    facts = ModuleFacts(module)
+    if facts.request_auth_possible() or not facts.apps:
+        return []
+    found = []
+    for function, route_decorators in routes.handlers():
+        if not all(facts.owns_app(decorator) for decorator in route_decorators):
+            continue
+        methods = routes.methods(route_decorators)
+        if not routes.is_open_state_change(function, route_decorators, methods):
+            continue
+        if route_guard_possible(function, route_decorators, facts):
+            continue
+        paths = _route_paths(route_decorators)
+        actions = route_actions(route_words(function, paths), methods)
+        entry = {
+            "function": function,
+            "methods": sorted(methods & MUTATING_HTTP_METHODS),
+            "paths": paths,
+            "actions": actions,
+            "severity": None,
+        }
+        if actions:
+            entry["severity"] = exposure_severity(facts, function, actions)
+            entry["binds_all_interfaces"] = facts.binds_all_interfaces()
+            entry["auth_seen_in_module"] = facts.shows_auth()
+        found.append(entry)
+    return found
+
+
 class FrameworkPracticeRule(SkylosRule):
     rule_id = "SKY-F101"
     name = "Framework Route Practices"
@@ -1838,32 +1932,8 @@ class FrameworkPracticeRule(SkylosRule):
 
         findings = []
         response_contracts = None
-        guarded_routers = _guarded_router_names(node)
-        mock_patch_decorators = _mock_patch_decorators(node)
-        module_functions = {
-            statement.name: statement
-            for statement in node.body
-            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
-        }
-        module_loggers = _logger_names(
-            statement
-            for statement in node.body
-            if not isinstance(
-                statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-            )
-        )
-        for function in ast.walk(node):
-            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-
-            route_decorators = [
-                decorator
-                for decorator in function.decorator_list
-                if id(decorator) not in mock_patch_decorators
-                and _route_methods(decorator)[0] is not None
-            ]
-            if not route_decorators:
-                continue
+        routes = _ModuleRoutes(node)
+        for function, route_decorators in routes.handlers():
 
             if response_contracts is None:
                 from skylos.rules.quality._framework_practices import FrameworkResponseContracts
@@ -1899,36 +1969,29 @@ class FrameworkPracticeRule(SkylosRule):
                         }
                     )
 
-            methods = set()
-            for decorator in route_decorators:
-                _, decorator_methods = _route_methods(decorator)
-                methods.update(decorator_methods)
-
-            if _route_changes_state(
-                function, route_decorators, methods, module_functions, module_loggers
-            ) and not _route_has_auth_guard(function, guarded_routers):
-                findings.append(
-                    {
-                        "rule_id": "SKY-F102",
-                        "kind": "framework_security",
-                        "severity": "MEDIUM",
-                        "type": "route",
-                        "name": function.name,
-                        "simple_name": function.name,
-                        "value": ",".join(sorted(methods & MUTATING_HTTP_METHODS)),
-                        "threshold": 0,
-                        "message": (
-                            f"Function '{function.name}' uses a decorator matching a "
-                            "mutating HTTP method, with no obvious auth, permission, "
-                            "security, or dependency guard. Review whether it registers "
-                            "a route and whether access is protected."
-                        ),
-                        "file": filename,
-                        "basename": _basename(filename),
-                        "line": function.lineno,
-                        "col": function.col_offset,
-                    }
-                )
+            methods = routes.methods(route_decorators)
+            if routes.is_open_state_change(function, route_decorators, methods):
+                finding = {
+                    "rule_id": "SKY-F102",
+                    "kind": "framework_security",
+                    "severity": "MEDIUM",
+                    "type": "route",
+                    "name": function.name,
+                    "simple_name": function.name,
+                    "value": ",".join(sorted(methods & MUTATING_HTTP_METHODS)),
+                    "threshold": 0,
+                    "message": (
+                        f"Function '{function.name}' uses a decorator matching a "
+                        "mutating HTTP method, with no obvious auth, permission, "
+                        "security, or dependency guard. Review whether it registers "
+                        "a route and whether access is protected."
+                    ),
+                    "file": filename,
+                    "basename": _basename(filename),
+                    "line": function.lineno,
+                    "col": function.col_offset,
+                }
+                findings.append(finding)
 
             if any(_is_fastapi_route(decorator) for decorator in route_decorators):
                 identifiers, principals = _route_object_inputs(function)

@@ -143,7 +143,7 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D227 | HIGH | XSS: unsafe template rendering | Python | CWE-79 / A03 |
 | D228 | HIGH | XSS: unescaped HTML output | Python | CWE-79 / A03 |
 | D230 | HIGH | Open redirect | Python, TS/JS, Go, Java, audit | CWE-601 / A01 |
-| D231 | HIGH | CORS misconfiguration | Python | A05 |
+| D231 | HIGH | CORS misconfiguration: wildcard origin with credentials; wildcard origin (`CORSMiddleware`, flask-cors) in a module whose app has state-changing routes without an auth guard (reported on the origin setting; HIGH when one of those routes is a SKY-D283 privileged route, MEDIUM otherwise; open means the SKY-D283 test without the action word); a literal `Access-Control-Allow-Origin: *` key in a response dict (any module); a header (dict, subscript or `set`/`add`/`setdefault`, including an f-string) echoing the request's `Origin` without a membership, equality or `fullmatch` allowlist check that guards the header, an early reject or a reset to a fixed origin, or a same-module helper returning such a check. A substring test against a string, a prefix check, an ignored result, the wrong branch, a `fullmatch` pattern with a `.*`/`.+` run, or an allowlist containing `*` or `null` does not count. A wildcard middleware in a module that only serves reads, or whose routes something may authenticate, is not reported | Python | CWE-942 / A05 |
 | D232 | CRITICAL | JWT verification disabled or unsafe algorithm | Python | A02 |
 | D233 | HIGH-CRITICAL | Unsafe deserialization: marshal, shelve, jsonpickle, dill | Python | A08 |
 | D234 | HIGH | Mass assignment | Python | A01 |
@@ -175,6 +175,7 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D280 | HIGH | Next.js mutating API route missing auth checks | TS/JS | A01 |
 | D281 | CRITICAL | Untrusted server action input reaching raw SQL text | TS/JS | CWE-89 |
 | D282 | HIGH | Webhook handler missing signature verification | Python, TS/JS | CWE-347 |
+| D283 | HIGH-CRITICAL | Unauthenticated route that controls a device or the host, deletes data, administers or runs commands (see the SKY-F102 notes) | Python (FastAPI, Flask, Quart, Starlette, Sanic) | CWE-306, CWE-862 / A01 |
 | D510 | HIGH | Prototype pollution via `__proto__` | TS/JS | CWE-1321 |
 
 For D251, a bare `sessionId` name is not treated as credential evidence by
@@ -1253,7 +1254,7 @@ is `except*`, nor clauses with a comment in them (a documented placeholder).
 | T105 | MEDIUM | Unvalidated JSON result asserted as a domain type | TypeScript |
 | T106 | MEDIUM | Unsafe exported API type | TypeScript |
 | F101 | MEDIUM | FastAPI response model / return typing practice | Python |
-| F102 | MEDIUM/HIGH | Framework route auth guard or defeated ownership check | Python |
+| F102 | MEDIUM/HIGH | Framework route auth guard or defeated ownership check; privileged action routes are SKY-D283 | Python |
 | R101 | MEDIUM | Repository missing Python type-check command | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
 | R102 | MEDIUM | Repository missing Python lint command | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
 | R103 | MEDIUM | Repository missing Skylos quality gate | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
@@ -1633,6 +1634,50 @@ Fetching an object without an ownership comparison does not alone trigger
 this additional review. Arbitrary permission helpers, ORM query scoping,
 Django/Flask ownership flows, and unsupported control flow remain outside
 this narrow check; absence of F102 is not proof of authorization.
+
+SKY-D283 is the security finding for a route SKY-F102 would review when its
+function name, path (path parameters excluded) or HTTP method names a
+privileged action: device or host control (`arm`, `disarm`, `takeoff`,
+`fire`, `power`, `poweroff`, `reboot`, `shutdown`, `restart`, `halt`,
+`control`), destruction (`delete`, `drop`, `destroy`, `purge`, `wipe`, `erase`,
+`truncate`, or the DELETE method), administration (`admin`, `superuser`,
+`sudo`, `impersonate`) or commands (`exec`, `execute`, `shell`, `command`,
+`cmd`). Words are whole words, and letters with trailing digits stay one word
+(`farm`, `alarms` and `arm64` are not `arm`). `launch` and `eval` are left out:
+LTI launches, campaign launches and model evaluation are ordinary routes.
+It is reported only when nothing can authenticate the caller, otherwise the
+route keeps its SKY-F102 review:
+- the route is registered on an app object the same module creates
+  (`FastAPI()`, `Flask()`, `Quart()`, `Starlette()`, `Sanic()`), or on an
+  `APIRouter`/`Blueprint` the module creates and mounts on that app with no
+  guard options; routers mounted from another module are not judged, since
+  the mounting site can add a guard;
+- the route has no decorator besides its route decorators, no decorator
+  option other than routing metadata (`auth=`, `guards=`, `dependencies=` and
+  unknown options count as guards), and no `Depends`/`Security`/`Header`/
+  `Cookie`/security-scheme parameter, including through a module alias such
+  as `CurrentUser = Annotated[User, Depends(...)]`;
+- the handler does not read request (or Flask `g`) headers, cookies,
+  session, user or client, name authentication in an identifier or string
+  (`url_for("login")`), reject with 401/403 (including `return body, 401`), or
+  pass the request to other code;
+- the module has no middleware other than CORS/GZip/TrustedHost/HTTPS
+  redirect (including `app.wsgi_app = ...` wrapping), no app/router guard
+  options, no hook registered by call, and no request hook
+  (`@app.middleware`, `before_request`) that may authenticate. A hook another
+  module registers on the same app object is not visible here.
+It is CRITICAL when the module also starts the server on every interface
+(`0.0.0.0` or `::`, literally or as the default of an `os.environ.get`/
+`os.getenv` lookup bound once), shows no authentication anywhere (no name
+reading as auth, including `session`), and the handler performs the action
+(a call named for a specific action word, not `control`/`command`/`admin`,
+or a process, signal or file-removal call). Unlike SKY-D280 (any Next.js
+mutating route without auth), SKY-D283 needs the privileged action evidence;
+other open mutating routes stay SKY-F102. `--diff` reports SKY-D283 only when
+the route itself changed. A scan with
+security checks reports SKY-D283 and drops the SKY-F102 review of the same
+handler; a `--quality`-only scan keeps SKY-F102. `ignore[SKY-F102]` and a bare
+`# noqa` do not hide SKY-D283. Plain reads (GET) are never reported.
 
 P401 reports `read()`/`readlines()` calls that request everything: no size,
 `None`, a negative size or `readlines(0)`, including sizes resolved from simple

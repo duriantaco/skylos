@@ -48,8 +48,8 @@ from skylos.rules.danger.danger_fs.closed_world import (
 )
 from skylos.rules.danger.danger_fs.path_flow import (
     _allowlist_names,
+    polarity_names,
     _commonpath_elements,
-    _test_is_negative,
 )
 from skylos.rules.danger.module_namespace import (
     attribute_write_names,
@@ -64,6 +64,13 @@ from skylos.rules.danger.untrusted_sources import (
 )
 from skylos.rules.quality._test_code import is_python_test_file
 
+try:
+    from re import _constants as _regex_codes
+    from re import _parser as _regex_syntax
+except ImportError:
+    import sre_constants as _regex_codes
+    import sre_parse as _regex_syntax
+
 PROVENANCE_VERSION = 1
 RESOLVED_CALLER_SOURCE = "resolved_caller"
 UNTRUSTED = "untrusted"
@@ -75,6 +82,7 @@ PARAMETER = "parameter"
 TRAVERSAL_RULE = "SKY-D215"
 ALLOWLIST_CHECK = "is checked against a constant allowlist"
 CONTAINMENT_CHECK = "is checked to stay inside a base directory"
+PATTERN_CHECK = "fully matches a pattern of filename characters"
 _PATH_CONSTRUCTORS = frozenset({"pathlib.Path", "pathlib.PosixPath", "pathlib.WindowsPath"})
 _REALPATH_FUNCTIONS = frozenset({"os.path.realpath", "posixpath.realpath", "ntpath.realpath"})
 _COMMONPATH_FUNCTIONS = frozenset({"os.path.commonpath", "posixpath.commonpath", "ntpath.commonpath"})
@@ -521,6 +529,7 @@ class _Sites:
     possible: list = field(default_factory=list)
     escapes: list = field(default_factory=list)
     entries: list = field(default_factory=list)
+    computed: list = field(default_factory=list)
 
 
 def _target_names(target):
@@ -644,6 +653,101 @@ def _constant_literal(node):
             for key, value in zip(node.keys, node.values)
         )
     return False
+
+
+_PATTERN_FLAGS = {
+    "I": re.IGNORECASE,
+    "IGNORECASE": re.IGNORECASE,
+    "A": re.ASCII,
+    "ASCII": re.ASCII,
+    "U": re.UNICODE,
+    "UNICODE": re.UNICODE,
+}
+_PATTERN_REPEATS = frozenset(
+    code
+    for code in (
+        _regex_codes.MAX_REPEAT,
+        _regex_codes.MIN_REPEAT,
+        getattr(_regex_codes, "POSSESSIVE_REPEAT", None),
+    )
+    if code is not None
+)
+_PATTERN_ATOMIC = getattr(_regex_codes, "ATOMIC_GROUP", None)
+_PATTERN_CATEGORIES = frozenset(
+    {_regex_codes.CATEGORY_DIGIT, _regex_codes.CATEGORY_WORD}
+)
+_MAX_PATTERN_RANGE = 4096
+
+
+def _filename_code(code):
+    char = chr(code)
+    return char.isalnum() or char in "-_"
+
+
+def _filename_set(items):
+    for op, value in items:
+        if op is _regex_codes.LITERAL:
+            if not _filename_code(value):
+                return False
+        elif op is _regex_codes.RANGE:
+            low, high = value
+            if high - low > _MAX_PATTERN_RANGE:
+                return False
+            if not all(_filename_code(code) for code in range(low, high + 1)):
+                return False
+        elif op is _regex_codes.CATEGORY:
+            if value not in _PATTERN_CATEGORIES:
+                return False
+        else:
+            return False
+    return True
+
+
+def _filename_items(items, depth=0):
+    """Every character the parsed pattern can match is a letter, digit,
+    ``-`` or ``_``: no separator, dot, drive colon or NUL."""
+    if depth > 32:
+        return False
+    for op, value in items:
+        if op is _regex_codes.LITERAL:
+            if not _filename_code(value):
+                return False
+        elif op is _regex_codes.IN:
+            if not _filename_set(value):
+                return False
+        elif op in _PATTERN_REPEATS:
+            if not _filename_items(value[2], depth + 1):
+                return False
+        elif op is _regex_codes.SUBPATTERN:
+            if not _filename_items(value[-1], depth + 1):
+                return False
+        elif op is _regex_codes.BRANCH:
+            if not all(_filename_items(part, depth + 1) for part in value[1]):
+                return False
+        elif _PATTERN_ATOMIC is not None and op is _PATTERN_ATOMIC:
+            if not _filename_items(value, depth + 1):
+                return False
+        elif op is not _regex_codes.AT:
+            return False
+    return True
+
+
+def _filename_pattern(text, flags):
+    if not isinstance(text, str) or flags & re.VERBOSE:
+        return False
+    try:
+        parsed = _regex_syntax.parse(text, flags)
+    except (re.error, OverflowError, RecursionError, ValueError, TypeError):
+        return False
+    return _filename_items(parsed)
+
+
+def _filename_allowlist_value(value):
+    return (
+        isinstance(value, str)
+        and value not in {"", ".", ".."}
+        and not any(char in value for char in "/\\:\x00")
+    )
 
 
 def _mutable_literal(node):
@@ -2131,9 +2235,13 @@ class _Project:
                 self._classify_call(call_unit, scope, call, fn, owner, sites)
         for call_unit, call, scope in self.computed_calls:
             if id(call) not in seen_calls and self._computed_call_reaches(call_unit, scope, call, unit, fn, definer):
-                sites.escapes.append(
-                    _step(call_unit, call, f"`{_describe(call.func)}` picks its target at run time and may call `{_function_label(fn)}`")
+                step = _step(
+                    call_unit,
+                    call,
+                    f"`{_describe(call.func)}` picks its target at run time and may call `{_function_label(fn)}`",
                 )
+                sites.escapes.append(step)
+                sites.computed.append((step, call_unit))
         return sites
 
     def _computed_call_reaches(self, unit, scope, call, fn_unit, fn, definer):
@@ -2945,6 +3053,7 @@ class _Tracer:
         self.filename_proofs = rule == TRAVERSAL_RULE
         self.filename_runtime_stable = {}
         self.unit_runtime_stable = {}
+        self.process_members = {}
         self.plain_model_memo = {}
 
     def _limit(self, unit, node, text):
@@ -3146,20 +3255,23 @@ class _Tracer:
         owner, binds = found
         if self.filename_proofs:
             guard = self._guard_statement(unit, scope, node, node.id)
-            if guard is not None and guard[1][0] == "passes a body-proven filename check":
+            proofs = {
+                "passes a body-proven filename check": self._filename_equality_guard,
+                PATTERN_CHECK: self._filename_pattern_guard,
+                ALLOWLIST_CHECK: self._filename_allowlist_guard,
+            }
+            if guard is not None and guard[1][0] in proofs:
                 if not any(
                     bind.kind != "param"
                     and guard[0].lineno <= getattr(bind.node, "lineno", 0) <= node.lineno
                     for bind in binds
                 ):
-                    step = _step(
-                        unit, node, f"`{node.id}` passes a body-proven filename check"
-                    )
-                    hidden = (
-                        self._filename_equality_guard(unit, scope, guard[0], node.id)
-                        or ()
-                    )
-                    return _with_hidden_callers(_Facts.leaf(SAFE, step), hidden, step)
+                    hidden = proofs[guard[1][0]](unit, scope, guard[0], node.id)
+                    if hidden is not None:
+                        step = _step(unit, node, f"`{node.id}` {guard[1][0]}")
+                        return _with_hidden_callers(
+                            _Facts.leaf(SAFE, step), hidden, step
+                        )
         binds = self._visible_binds(unit, owner, binds, node)
         facts = _Facts()
         for bind in binds:
@@ -3488,7 +3600,7 @@ class _Tracer:
 
     def _branch_check(self, unit, scope, test, name):
         """How ``test`` holding checks ``name`` for the body of its ``if``."""
-        if not _test_is_negative(test) and name in self._allowlisted(unit, scope, test):
+        if name in self._allowlisted(unit, scope, test, True):
             return ALLOWLIST_CHECK, SAFE
         status = self._contained(unit, scope, test, True, name)
         if status is not None:
@@ -3515,7 +3627,13 @@ class _Tracer:
                 is not None
             ):
                 return "passes a body-proven filename check", SAFE
-            if _test_is_negative(statement.test) and name in self._allowlisted(unit, scope, statement.test):
+            if (
+                self.filename_proofs
+                and self._filename_pattern_guard(unit, scope, statement, name)
+                is not None
+            ):
+                return PATTERN_CHECK, SAFE
+            if name in self._allowlisted(unit, scope, statement.test, False):
                 return ALLOWLIST_CHECK, SAFE
             status = self._contained(unit, scope, statement.test, False, name)
             if status is not None:
@@ -3861,19 +3979,23 @@ class _Tracer:
             return "resolved_string"
         return None
 
-    def _allowlisted(self, unit, scope, test):
-        """Names ``test`` checks for membership in a collection of constants
-        that nothing can change: a literal, or a constant module table."""
-        names = set()
-        for node in ast.walk(test):
-            if not isinstance(node, ast.Compare) or not _allowlist_names(node):
-                continue
+    def _allowlisted(self, unit, scope, test, holds):
+        """Names ``test`` proves are members of a collection of constants
+        that nothing can change (a literal, or a constant module table) when
+        it evaluates to ``holds``."""
+
+        def members(node):
+            names = _allowlist_names(node)
+            if not names:
+                return set()
             collection = node.comparators[0]
             if isinstance(collection, ast.Call) and isinstance(collection.func, ast.Attribute):
                 collection = collection.func.value
             if _constant_literal(collection) or self.project.constant_table(unit, scope, collection):
-                names |= _allowlist_names(node)
-        return names
+                return names
+            return set()
+
+        return polarity_names(test, holds, lambda call: set(), members)
 
     def _attribute(self, unit, scope, node, env):
         source = self._attribute_source(unit, scope, node)
@@ -4941,7 +5063,7 @@ class _Tracer:
             if framework_parameter:
                 route_escape = framework_escape
             if (
-                not self._hidden_callers(sites, route_escape, escapes)
+                not self._hidden_callers(unit, sites, route_escape, escapes)
                 or len(sites.resolved) > _MAX_SITES
             ):
                 return False
@@ -4956,14 +5078,18 @@ class _Tracer:
                     return False
         return True
 
-    @staticmethod
-    def _hidden_callers(sites, route_escape, escapes):
+    def _hidden_callers(self, unit, sites, route_escape, escapes):
         """Accept callers the project cannot show only when they are importers
-        outside the project or calls on an unresolved receiver, and only when
-        the caller keeps them as unknown evidence (as the tracer does)."""
+        outside the project, calls on an unresolved receiver, or run-time
+        dispatch in a module that cannot share a process with ``unit``, and
+        only when the caller keeps them as unknown evidence (as the tracer
+        does)."""
+        separate = self._out_of_process_dispatch(unit, sites)
         hidden = [step for step in sites.escapes if step != route_escape]
         if (
-            not all(step.endswith(PUBLIC_IMPORTERS) for step in hidden)
+            not all(
+                step.endswith(PUBLIC_IMPORTERS) or step in separate for step in hidden
+            )
             or len(sites.possible) > _MAX_SITES
         ):
             return False
@@ -4981,6 +5107,21 @@ class _Tracer:
             return False
         escapes.extend(hidden)
         return True
+
+    def _out_of_process_dispatch(self, unit, sites):
+        """Run-time dispatch steps from modules that cannot run in a process
+        with ``unit``: whatever they pass is not the value ``unit`` receives."""
+        if not sites.computed:
+            return frozenset()
+        members = self.process_members.get(id(unit))
+        if members is None:
+            members = frozenset(
+                id(member) for member in self.project.process_units((unit,))
+            )
+            self.process_members[id(unit)] = members
+        return frozenset(
+            step for step, caller in sites.computed if id(caller) not in members
+        )
 
     def _framework_route_escape(self, unit, fn):
         """The escape step of a plain FastAPI route decorator, or None."""
@@ -5096,7 +5237,7 @@ class _Tracer:
                 return None
         elif sites.entries or not sites.resolved:
             return None
-        if not self._hidden_callers(sites, route, escapes):
+        if not self._hidden_callers(unit, sites, route, escapes):
             return None
         if not sites.resolved:
             return models
@@ -6297,6 +6438,194 @@ class _Tracer:
                 for value in values
             ):
                 return tuple(dict.fromkeys(escapes))
+        return None
+
+    def _filename_pattern_guard(self, unit, scope, statement, name):
+        """Hidden-caller steps (possibly none) when ``statement`` rejects
+        ``name`` unless it fully matches a constant pattern of filename
+        characters, else None."""
+        test = statement.test
+        call = None
+        if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+            call = test.operand
+        elif (
+            isinstance(test, ast.Compare)
+            and len(test.ops) == 1
+            and isinstance(test.ops[0], ast.Is)
+            and isinstance(test.comparators[0], ast.Constant)
+            and test.comparators[0].value is None
+        ):
+            call = test.left
+        if not isinstance(call, ast.Call) or not self.project.complete:
+            return None
+        checked = self._pattern_subject(unit, scope, call)
+        if not isinstance(checked, ast.Name) or checked.id != name:
+            return None
+        if not self._filename_runtime_is_stable((unit,)):
+            return None
+        escapes = []
+        if not self._native_string(unit, scope, checked, None, frozenset(), escapes):
+            return None
+        return tuple(dict.fromkeys(escapes))
+
+    def _pattern_subject(self, unit, scope, call):
+        """The value ``call`` fully matches against a filename-only pattern."""
+        func = call.func
+        if not isinstance(func, ast.Attribute) or func.attr != "fullmatch":
+            return None
+        if self._external_call(unit, scope, call, {"re.fullmatch"}):
+            arguments = list(call.args)
+            keywords = {keyword.arg: keyword.value for keyword in call.keywords}
+            if None in keywords or set(keywords) - {"pattern", "string", "flags"}:
+                return None
+            for position, key in enumerate(("pattern", "string", "flags")):
+                if key in keywords:
+                    if position < len(arguments):
+                        return None
+                    arguments.append(keywords[key])
+            if len(arguments) not in {2, 3}:
+                return None
+            flags = 0
+            if len(arguments) == 3:
+                flags = self._pattern_flags(unit, scope, arguments[2])
+            text = self._pattern_text(unit, scope, arguments[0])
+            if flags is None or not _filename_pattern(text, flags):
+                return None
+            return arguments[1]
+        if not isinstance(func.value, ast.Name) or len(call.args) != 1 or call.keywords:
+            return None
+        compiled = self._pattern_constant(unit, scope, func.value)
+        if compiled is None:
+            return None
+        return call.args[0]
+
+    def _pattern_constant(self, unit, scope, node):
+        found = unit.lookup(scope, node.id)
+        if found is None:
+            return None
+        owner, binds = found
+        if owner.kind != "module" or len(binds) != 1:
+            return None
+        bind = binds[0]
+        if bind.kind != "assign" or not bind.top_level or bind.scope is not owner:
+            return None
+        dynamic, rebound = unit.rebinding()
+        if dynamic or node.id in rebound or unit.star_import:
+            return None
+        value = bind.value
+        if not isinstance(value, ast.Call) or not self._external_call(
+            unit, owner, value, {"re.compile"}
+        ):
+            return None
+        keywords = {keyword.arg: keyword.value for keyword in value.keywords}
+        if None in keywords or set(keywords) - {"flags"}:
+            return None
+        arguments = list(value.args)
+        if "flags" in keywords:
+            arguments.append(keywords["flags"])
+        if len(arguments) not in {1, 2}:
+            return None
+        flags = 0
+        if len(arguments) == 2:
+            flags = self._pattern_flags(unit, owner, arguments[1])
+        text = self._pattern_text(unit, owner, arguments[0])
+        if flags is None or not _filename_pattern(text, flags):
+            return None
+        return value
+
+    def _pattern_text(self, unit, scope, node):
+        if isinstance(node, ast.Constant):
+            return node.value
+        if not isinstance(node, ast.Name):
+            return None
+        found = unit.lookup(scope, node.id)
+        if found is None:
+            return None
+        owner, binds = found
+        if owner.kind != "module" or len(binds) != 1:
+            return None
+        bind = binds[0]
+        if bind.kind != "assign" or not bind.top_level or bind.scope is not owner:
+            return None
+        dynamic, rebound = unit.rebinding()
+        if dynamic or node.id in rebound or unit.star_import:
+            return None
+        if not isinstance(bind.value, ast.Constant):
+            return None
+        return bind.value.value
+
+    def _pattern_flags(self, unit, scope, node):
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            left = self._pattern_flags(unit, scope, node.left)
+            right = self._pattern_flags(unit, scope, node.right)
+            if left is None or right is None:
+                return None
+            return left | right
+        values = list(self.project.values(unit, scope, node) or ())
+        if len(values) != 1:
+            return None
+        value = values[0]
+        if value.kind != "ext" or self._external_rebound(value.name):
+            return None
+        module, _, flag = value.name.rpartition(".")
+        if module not in {"re", "re.RegexFlag"} or flag not in _PATTERN_FLAGS:
+            return None
+        return _PATTERN_FLAGS[flag]
+
+    def _filename_allowlist_guard(self, unit, scope, statement, name):
+        """Hidden-caller steps (possibly none) when ``statement`` rejects
+        ``name`` unless it is one of a constant set of filename literals,
+        else None."""
+        test = statement.test
+        if (
+            not isinstance(test, ast.Compare)
+            or len(test.ops) != 1
+            or not isinstance(test.ops[0], ast.NotIn)
+            or not isinstance(test.left, ast.Name)
+            or test.left.id != name
+            or not self.project.complete
+        ):
+            return None
+        members = self._allowlist_members(unit, scope, test.comparators[0])
+        if not members or not all(
+            isinstance(member, ast.Constant) and _filename_allowlist_value(member.value)
+            for member in members
+        ):
+            return None
+        if not self._filename_runtime_is_stable((unit,)):
+            return None
+        escapes = []
+        if not self._native_string(unit, scope, test.left, None, frozenset(), escapes):
+            return None
+        return tuple(dict.fromkeys(escapes))
+
+    def _allowlist_members(self, unit, scope, node):
+        if isinstance(node, (ast.Set, ast.Tuple, ast.List)):
+            return list(node.elts)
+        if isinstance(node, ast.Call):
+            if (
+                len(node.args) != 1
+                or node.keywords
+                or not self._external_call(
+                    unit, scope, node, {"builtins.frozenset", "builtins.tuple"}
+                )
+                or not isinstance(node.args[0], (ast.Set, ast.Tuple, ast.List))
+            ):
+                return None
+            return list(node.args[0].elts)
+        if not isinstance(node, ast.Name) or not self.project.constant_table(
+            unit, scope, node
+        ):
+            return None
+        found = unit.lookup(scope, node.id)
+        if found is None:
+            return None
+        owner, binds = found
+        if owner.kind != "module" or len(binds) != 1 or binds[0].kind != "assign":
+            return None
+        value = binds[0].value
+        if isinstance(value, (ast.Set, ast.Tuple)):
+            return list(value.elts)
         return None
 
     @staticmethod
