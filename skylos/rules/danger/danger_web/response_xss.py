@@ -40,7 +40,6 @@ from functools import lru_cache, reduce
 from pathlib import Path
 
 from skylos.rules.danger.calls import _is_test_module
-from skylos.rules.danger.danger_fs.closed_world import _SKIP_DIRS
 from skylos.rules.danger.module_namespace import (
     attribute_write_names,
     has_mock_api_patching,
@@ -74,6 +73,8 @@ _MAX_LABELS = 4
 _MAX_LOOP_PASSES = 3
 _MAX_HELPER_DEPTH = 3
 _OPAQUE = "?"
+_TABLE = "~"
+_TABLE_ENCODER = "module-table-encoder"
 _UNRESOLVED = "unresolved-transform"
 _PASS_THROUGH_TEXT = frozenset(
     {
@@ -366,7 +367,7 @@ class _Value:
 
 
 def _label_order(label: str):
-    return (label.startswith(_OPAQUE), label)
+    return (label[:1] in (_OPAQUE, _TABLE), label)
 
 
 def _labels(*groups) -> frozenset:
@@ -376,9 +377,13 @@ def _labels(*groups) -> frozenset:
     return frozenset(sorted(merged, key=_label_order)[:_MAX_LABELS])
 
 
+def _direct(label: str) -> bool:
+    return label[:1] not in (_OPAQUE, _TABLE)
+
+
 def _plain(label: str) -> str:
-    if label.startswith(_OPAQUE):
-        return label[len(_OPAQUE) :]
+    if label[:1] in (_OPAQUE, _TABLE):
+        return label[1:]
     return label
 
 
@@ -689,8 +694,6 @@ _DYNAMIC_CALLS = frozenset(
         "__import__",
     }
 )
-_MAX_SCANNED_FILES = 4000
-_MAX_SCANNED_BYTES = 64_000_000
 
 
 def _is_name(node, name) -> bool:
@@ -763,6 +766,7 @@ class _EncoderProof:
         }
         self.nodes = [node for node in ast.walk(func) if node is not func]
         self.params = {param.arg for param in _params(func)}
+        self.partial = False
 
     def param(self):
         func = self.func
@@ -1154,7 +1158,33 @@ class _EncoderProof:
             if not all(_read_only_use(use, self.parents) for use in self._loads(name)):
                 return None
             return value
-        return self.module.module_literal(name, kinds)
+        found = self.module.module_literal(name, kinds)
+        if found is None:
+            return None
+        value, mutable = found
+        if mutable:
+            self.partial = True
+        return value
+
+
+_DYNAMIC_NAMES = _DYNAMIC_CALLS | {"importlib"}
+
+
+def _dynamic_node(node) -> bool:
+    if isinstance(node, ast.Name) and node.id in _DYNAMIC_NAMES:
+        return True
+    if isinstance(node, ast.Attribute):
+        if node.attr in _DYNAMIC_CALLS or node.attr == "__dict__":
+            return True
+        if node.attr == "modules" and _is_name(node.value, "sys"):
+            return True
+    if isinstance(node, ast.Import):
+        return any(alias.name.split(".")[0] == "importlib" for alias in node.names)
+    if isinstance(node, ast.ImportFrom):
+        if (node.module or "").split(".")[0] == "importlib":
+            return True
+        return any(alias.name in _DYNAMIC_NAMES for alias in node.names)
+    return False
 
 
 def _text_literal(node) -> bool:
@@ -1217,99 +1247,7 @@ def _flatten_add(node):
     return [node]
 
 
-def _module_dotted(path: Path, root: Path):
-    try:
-        relative = path.relative_to(root)
-    except ValueError:
-        return None
-    parts = list(relative.with_suffix("").parts)
-    if parts and parts[0] == "src":
-        parts = parts[1:]
-    if parts and parts[-1] == "__init__":
-        parts = parts[:-1]
-    if not parts:
-        return None
-    return ".".join(parts)
-
-
-def _project_files(root: Path):
-    """The project's Python files under ``root``, or None when there are
-    too many to read cheaply (a proof needing them then fails)."""
-    files = []
-    total = 0
-    for directory, dirs, names in os.walk(root):
-        dirs[:] = [name for name in dirs if name not in _SKIP_DIRS]
-        for name in names:
-            if not name.endswith(".py"):
-                continue
-            path = Path(directory) / name
-            try:
-                if path.is_symlink():
-                    continue
-                total += path.stat().st_size
-            except OSError:
-                continue
-            files.append(path)
-            if len(files) > _MAX_SCANNED_FILES or total > _MAX_SCANNED_BYTES:
-                return None
-    return files
-
-
-def _foreign_uses_are_reads(tree, name: str, module_name: str) -> bool:
-    """No ``from <module> import NAME`` and no ``<module>.NAME`` other than
-    a subscript read or a membership test in another project module."""
-    parents = {
-        id(child): parent
-        for parent in ast.walk(tree)
-        for child in ast.iter_child_nodes(parent)
-    }
-    last = module_name.rsplit(".", 1)[-1]
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and any(
-            alias.name in (name, "*") for alias in node.names
-        ):
-            target = (node.module or "").rsplit(".", 1)[-1]
-            if target in (last, "") or node.module == module_name:
-                return False
-        if isinstance(node, ast.Global) and name in node.names:
-            return False
-        if isinstance(node, ast.Attribute) and node.attr == name:
-            if not isinstance(node.ctx, ast.Load):
-                return False
-            if not _read_only_use(node, parents):
-                return False
-    return True
-
-
 _FORMATTER = string.Formatter()
-
-
-@lru_cache(maxsize=256)
-def _foreign_reads_only(root: str, path: str, stamp: int, name: str) -> bool:
-    """Every other project module that mentions ``name`` neither imports it
-    from its module nor uses ``<module>.name`` other than as a read."""
-    module_name = _module_dotted(Path(path), Path(root))
-    if module_name is None:
-        return False
-    files = _project_files(Path(root))
-    if files is None:
-        return False
-    for other in files:
-        try:
-            resolved = other.resolve()
-            if str(resolved) == path:
-                continue
-            stat = resolved.stat()
-            with open(resolved, "rb", opener=_no_follow) as handle:
-                source = handle.read(_MAX_PROJECT_MODULE_BYTES + 1)
-        except OSError:
-            return False
-        if name.encode() not in source:
-            continue
-        tree = _parse_project_module(str(resolved), stat.st_mtime_ns, stat.st_size)
-        if tree is None or not _foreign_uses_are_reads(tree, name, module_name):
-            return False
-    return True
 
 
 def _combined_kind(kinds):
@@ -1488,6 +1426,7 @@ class _Module:
         self._encoders: dict = {}
         self._literals: dict = {}
         self._variables = None
+        self._dynamic = None
         self.callables: dict = {}
         self.free_names: dict = {}
 
@@ -1712,9 +1651,11 @@ class _Module:
         return module, node
 
     def module_literal(self, name: str, kinds):
-        """The literal a module-level ``name`` is bound to once, when every
-        read of it here and in the other project modules is a membership
-        test or a subscript read; else None."""
+        """``(literal, mutable)`` for a module-level ``name`` bound exactly
+        once to a literal and only read in this module (membership tests and
+        subscript reads), else None. A mutable list, set or dict can still be
+        changed at run time by another module, which a static read of this
+        one cannot see."""
         key = (name, kinds)
         if key in self._literals:
             return self._literals[key]
@@ -1727,7 +1668,8 @@ class _Module:
             and _is_name(stmt.targets[0], name)
         ]
         if self.counts().get(name) == 1 and len(found) == 1:
-            value = _literal_value(found[0].value, kinds, self)
+            assigned = found[0].value
+            value = _literal_value(assigned, kinds, self)
             parents = self._parent_map()
             uses = [
                 node
@@ -1736,23 +1678,20 @@ class _Module:
                 and node.id == name
                 and isinstance(node.ctx, ast.Load)
             ]
-            if (
-                value is not None
-                and all(_read_only_use(use, parents) for use in uses)
-                and self._foreign_reads_only(name)
-            ):
-                result = value
+            if value is not None and all(_read_only_use(use, parents) for use in uses):
+                mutable = isinstance(assigned, (ast.List, ast.Set, ast.Dict))
+                result = (value, mutable)
         self._literals[key] = result
         return result
 
-    def _foreign_reads_only(self, name: str) -> bool:
-        path = Path(self.file_path).resolve()
-        root = self._scan_root()
-        try:
-            stamp = path.stat().st_mtime_ns
-        except OSError:
-            return False
-        return _foreign_reads_only(str(root), str(path), stamp, name)
+    def dynamic_namespace(self) -> bool:
+        """The module reaches names through its namespace at run time
+        (``globals()``, ``vars()``, ``__dict__``, ``sys.modules``,
+        ``importlib``, ``getattr``/``setattr``, ``exec``...), so a named
+        literal may not be what its single binding says."""
+        if self._dynamic is None:
+            self._dynamic = any(_dynamic_node(node) for node in ast.walk(self.tree))
+        return self._dynamic
 
     def variables(self) -> frozenset:
         """Names a module-level assignment binds."""
@@ -1774,9 +1713,18 @@ class _Module:
         return self._variables
 
     def encoder_param(self, func):
+        """``(parameter, partial)`` when ``func`` provably encodes that
+        parameter for HTML text, else None. ``partial`` marks a proof that
+        rests on a mutable module-level allowlist or entity table."""
         key = id(func)
         if key not in self._encoders:
-            self._encoders[key] = _EncoderProof(self, func).param()
+            result = None
+            if not self.dynamic_namespace():
+                proof = _EncoderProof(self, func)
+                param = proof.param()
+                if param is not None:
+                    result = (param, proof.partial)
+            self._encoders[key] = result
         return self._encoders[key]
 
     def classes(self) -> dict:
@@ -2868,8 +2816,11 @@ class _Run:
         if bound is None:
             return None
         encoded = (module or self.module).encoder_param(helper)
-        if encoded is not None and encoded in bound:
-            return _CLEAN_TEXT
+        if encoded is not None and encoded[0] in bound:
+            if not encoded[1]:
+                return _CLEAN_TEXT
+            labels = _all_labels(bound[encoded[0]])
+            return _Value(TEXT, frozenset(_TABLE + _plain(label) for label in labels))
         if closure is not None:
             for name in self._free_names(helper):
                 if name in closure.values and name not in bound:
@@ -3124,7 +3075,7 @@ def _as_helper_result(value: _Value) -> _Value:
     dict, list, number, response or project object) counts as text."""
     if value.kind != OTHER or isinstance(value.const, frozenset):
         return value
-    if any(not label.startswith(_OPAQUE) for label in value.labels):
+    if any(_direct(label) for label in value.labels):
         return _Value(TEXT, value.labels)
     return value
 
@@ -3219,7 +3170,8 @@ def _view_entries(module: _Module):
 
 
 def _finding(file_path, func, node: ast.Return, body: _Value, framework: str) -> dict:
-    direct = sorted(label for label in body.labels if not label.startswith(_OPAQUE))
+    direct = sorted(label for label in body.labels if _direct(label))
+    unresolved = any(label.startswith(_OPAQUE) for label in body.labels)
     labels = direct or sorted({_plain(label) for label in body.labels})
     view = "Django view"
     if framework == FLASK:
@@ -3229,7 +3181,7 @@ def _finding(file_path, func, node: ast.Return, body: _Value, framework: str) ->
         f"XSS ({view} returns request data in an HTML response without "
         f"escaping it: {labels[0]})"
     )
-    if not direct:
+    if not direct and unresolved:
         step = (
             "reaches the response body only through calls the analysis does "
             "not resolve, which may escape it"
@@ -3237,6 +3189,15 @@ def _finding(file_path, func, node: ast.Return, body: _Value, framework: str) ->
         message = (
             f"XSS ({view} returns request data in an HTML response through "
             f"calls that may not escape it: {labels[0]})"
+        )
+    elif not direct:
+        step = (
+            "reaches the response body through a project encoder whose "
+            "allowlist or entity table is a mutable module-level object"
+        )
+        message = (
+            f"XSS ({view} returns request data encoded with a module-level "
+            f"table another module could change: {labels[0]})"
         )
     finding = {
         "rule_id": "SKY-D228",
@@ -3266,12 +3227,21 @@ def _finding(file_path, func, node: ast.Return, body: _Value, framework: str) ->
             }
         },
     }
-    if not direct:
+    if not direct and unresolved:
         finding["low_risk_context"] = {
             "reason": _UNRESOLVED,
             "detail": (
                 "request data reaches the HTML body only through a call, method "
                 "or helper loop the analysis cannot resolve"
+            ),
+        }
+    elif not direct:
+        finding["low_risk_context"] = {
+            "reason": _TABLE_ENCODER,
+            "detail": (
+                "an allowlist encoder proves the value escaped, but its table "
+                "is a mutable module-level object another module could change "
+                "at run time"
             ),
         }
     return finding

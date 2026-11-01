@@ -1069,13 +1069,13 @@ ENCODERS = {
         TABLE_ENCODER,
         "'Hi ' + encode(request.args['q'])",
         (),
-        False,
+        "table",
     ),
     "encoder in another module": (
         "from myproject.codec import encode\n",
         "'Hi ' + encode(request.args['q'])",
         (("myproject/codec.py", TABLE_ENCODER),),
-        False,
+        "table",
     ),
     "join of a generator": (
         "def encode(text):\n"
@@ -1211,11 +1211,8 @@ def test_hand_written_encoders_are_proved_from_their_structure(
         + f"    return {expression}\n"
     )
     result = _analyze(tmp_path, monkeypatch, source, modules=[*PROJECT, *modules])
-    expected = []
-    if listed:
-        expected = [_line(source, f"    return {expression}")]
-    assert _listed_lines(result, symbol="page") == expected
-    assert _reported_lines(result, symbol="page") == expected
+    outcome = {True: "listed", False: "quiet"}.get(listed, listed)
+    _assert_outcome(result, source, f"    return {expression}", outcome)
 
 
 HEX_ENCODER = (
@@ -1251,7 +1248,7 @@ TIGHT = {
     "table read by another module": (
         TABLE_ENCODER,
         (("myproject/report.py", "import app\nFIRST = app.ENTITIES[60]\n"),),
-        False,
+        "table",
     ),
     "nested function writes the accumulator": (
         "def encode(text):\n"
@@ -1397,12 +1394,12 @@ TIGHT = {
     "table imported and written by another module": (
         TABLE_ENCODER,
         (("myproject/patch.py", "from app import ENTITIES\nENTITIES[60] = '<'\n"),),
-        True,
+        "table",
     ),
     "table written through the module by another module": (
         TABLE_ENCODER,
         (("myproject/patch.py", "import app\napp.ENTITIES[60] = '<'\n"),),
-        True,
+        "table",
     ),
 }
 
@@ -1422,8 +1419,167 @@ def test_encoder_proof_rejects_every_way_around_it(
         + "    return 'Hi ' + encode(request.args['q'])\n"
     )
     result = _analyze(tmp_path, monkeypatch, source, modules=[*PROJECT, *modules])
-    expected = []
-    if listed:
-        expected = [_line(source, "    return 'Hi '")]
-    assert _listed_lines(result, symbol="page") == expected
-    assert _reported_lines(result, symbol="page") == expected
+    outcome = {True: "listed", False: "quiet"}.get(listed, listed)
+    _assert_outcome(result, source, "    return 'Hi '", outcome)
+
+
+def _assert_outcome(result, source, line_text, outcome):
+    line = _line(source, line_text)
+    rows = [
+        f
+        for f in result.get("danger", [])
+        if f["rule_id"] == "SKY-D228" and f["symbol"] == "page"
+    ]
+    if outcome == "quiet":
+        assert rows == []
+    elif outcome == "listed":
+        assert [(f["line"], f["listing"]["listed"]) for f in rows] == [(line, True)]
+    else:
+        assert [
+            (f["line"], f["listing"]["listed"], f["low_risk_context"]["reason"])
+            for f in rows
+        ] == [(line, False, "module-table-encoder")]
+        passed, _ = check_gate(result, {"gate": {"max_high": 0}})
+        assert passed is False
+
+
+SAFE_LIST_ENCODER = (
+    "SAFE = [',', '.']\n"
+    "def encode(text):\n"
+    "    out = ''\n"
+    "    for char in text:\n"
+    "        if char.isalnum() or char in SAFE:\n"
+    "            out += char\n"
+    "        else:\n"
+    "            out += '&#' + str(ord(char)) + ';'\n"
+    "    return out\n"
+)
+TIERS = {
+    "inline allowlist": (
+        SAFE_LIST_ENCODER.replace("char in SAFE", "char in (',', '.')").replace(
+            "SAFE = [',', '.']\n", ""
+        ),
+        (),
+        "quiet",
+    ),
+    "local allowlist list": (
+        SAFE_LIST_ENCODER.replace("SAFE = [',', '.']\n", "").replace(
+            "    out = ''\n", "    SAFE = [',', '.']\n    out = ''\n", 1
+        ),
+        (),
+        "quiet",
+    ),
+    "module tuple allowlist with a local table": (
+        "SAFE = (',', '.')\n"
+        "def encode(text):\n"
+        "    names = {60: 'lt', 62: 'gt'}\n"
+        "    out = ''\n"
+        "    for char in text:\n"
+        "        if char in SAFE:\n"
+        "            out += char\n"
+        "        elif ord(char) in names:\n"
+        "            out += f'&{names[ord(char)]};'\n"
+        "        else:\n"
+        "            out += f'&#{ord(char)};'\n"
+        "    return out\n",
+        (),
+        "quiet",
+    ),
+    "module frozenset allowlist": (
+        SAFE_LIST_ENCODER.replace("SAFE = [',', '.']", "SAFE = frozenset({',', '.'})"),
+        (),
+        "quiet",
+    ),
+    "module list allowlist": (SAFE_LIST_ENCODER, (), "table"),
+    "module dict entity table": (TABLE_ENCODER, (), "table"),
+    "another module rewrites the list through getattr": (
+        SAFE_LIST_ENCODER,
+        (("myproject/patch.py", "import app\ngetattr(app, 'SAFE')[:] = ['<', '>']\n"),),
+        "table",
+    ),
+    "another module rewrites the list through __dict__": (
+        SAFE_LIST_ENCODER,
+        (("myproject/patch.py", "import app\napp.__dict__['SAFE'][:] = ['<', '>']\n"),),
+        "table",
+    ),
+    "another module rewrites the list directly": (
+        SAFE_LIST_ENCODER,
+        (("myproject/patch.py", "import app\napp.SAFE[:] = ['<', '>']\n"),),
+        "table",
+    ),
+    "owner module rewrites the list through globals()": (
+        SAFE_LIST_ENCODER + "globals()['SAFE'][:] = ['<', '>']\n",
+        (),
+        "listed",
+    ),
+    "owner module reads its namespace with vars()": (
+        SAFE_LIST_ENCODER + "vars()['SAFE'].append('<')\n",
+        (),
+        "listed",
+    ),
+    "owner module uses getattr anywhere": (
+        SAFE_LIST_ENCODER.replace("SAFE = [',', '.']", "SAFE = (',', '.')")
+        + "def lookup(name):\n    return getattr(name, 'x')\n",
+        (),
+        "listed",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "helpers, modules, outcome", list(TIERS.values()), ids=list(TIERS)
+)
+def test_named_allowlists_and_tables_by_proof_tier(
+    tmp_path, monkeypatch, helpers, modules, outcome
+):
+    source = (
+        "from flask import Flask, request\n"
+        + helpers
+        + "app = Flask(__name__)\n"
+        + "@app.route('/')\n"
+        + "def page():\n"
+        + "    return 'Hi ' + encode(request.args['q'])\n"
+    )
+    result = _analyze(tmp_path, monkeypatch, source, modules=[*PROJECT, *modules])
+    _assert_outcome(result, source, "    return 'Hi '", outcome)
+
+
+class _NoWalk:
+    def __init__(self, real):
+        self._real = real
+
+    def walk(self, *args, **kwargs):
+        raise AssertionError("response_xss walked the disk")
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_only_files_the_view_imports_are_read(tmp_path, monkeypatch):
+    from skylos.rules.danger.danger_web import response_xss
+
+    opened = []
+    parse = response_xss._parse_project_module
+
+    def recording(path, mtime_ns, size):
+        opened.append(path)
+        return parse.__wrapped__(path, mtime_ns, size)
+
+    monkeypatch.setattr(response_xss, "os", _NoWalk(response_xss.os))
+    monkeypatch.setattr(response_xss, "_parse_project_module", recording)
+    modules = [
+        *PROJECT,
+        ("myproject/codec.py", TABLE_ENCODER),
+        ("myproject/unrelated.py", "ENTITIES = {60: '<'}\nSAFE_PUNCTUATION = ['<']\n"),
+    ]
+    source = (
+        "from flask import Flask, request\n"
+        "from myproject.codec import encode\n"
+        "app = Flask(__name__)\n"
+        "@app.route('/')\n"
+        "def page():\n"
+        "    return 'Hi ' + encode(request.args['q'])\n"
+    )
+    result = _analyze(tmp_path, monkeypatch, source, modules=modules)
+    _assert_outcome(result, source, "    return 'Hi '", "table")
+    assert {path.rsplit("/", 2)[-1] for path in opened} == {"codec.py"}
