@@ -79,6 +79,7 @@ SAFE = "safe"
 UNKNOWN = "unknown"
 INCOMPLETE = "incomplete"
 PARAMETER = "parameter"
+COMPONENT = "component"
 TRAVERSAL_RULE = "SKY-D215"
 ALLOWLIST_CHECK = "is checked against a constant allowlist"
 CONTAINMENT_CHECK = "is checked to stay inside a base directory"
@@ -237,6 +238,42 @@ _D215_SANITIZERS = frozenset(
      "werkzeug.utils.secure_filename", "werkzeug.secure_filename"}
 )  # fmt: skip
 _BASENAME_PARTS = frozenset({"name", "stem", "suffix", "suffixes"})
+_SEPARATOR_CHARS = frozenset("/\\:")
+_POSIX_SEPARATORS = frozenset("/")
+_WINDOWS_SEPARATORS = frozenset("/\\:")
+_MAX_SEPARATOR_CHAIN = 8
+_CASE_METHODS = frozenset(
+    {"strip", "lstrip", "rstrip", "lower", "upper", "casefold", "title",
+     "capitalize", "swapcase"}
+)  # fmt: skip
+_COMPONENT_CALLS = frozenset(
+    {"builtins.str", "builtins.sorted", "builtins.list", "builtins.tuple",
+     "builtins.set", "builtins.frozenset", "builtins.reversed", "builtins.next",
+     "builtins.iter", "builtins.min", "builtins.max", "builtins.dict",
+     "builtins.enumerate", "builtins.zip", "os.path.join", "os.path.abspath",
+     "os.path.realpath", "os.path.normpath", "os.path.dirname",
+     "os.path.splitext", "os.path.split", "os.path.relpath",
+     "os.path.commonprefix", "os.path.basename", "posixpath.join",
+     "posixpath.basename", "posixpath.dirname", "ntpath.basename", "os.fspath",
+     "os.fsencode", "os.fsdecode", "pathlib.Path", "pathlib.PurePath",
+     "pathlib.PosixPath", "pathlib.PurePosixPath", "copy.copy", "copy.deepcopy",
+     "shlex.quote", "textwrap.dedent"}
+)  # fmt: skip
+_COMPONENT_METHODS = frozenset(
+    {*_CASE_METHODS, "zfill", "ljust", "rjust", "center", "removeprefix",
+     "removesuffix", "split", "rsplit", "splitlines", "partition", "rpartition",
+     "join", "expandtabs", "joinpath", "resolve", "absolute", "with_name",
+     "with_suffix", "with_stem", "relative_to", "get", "items", "values", "keys",
+     "copy", "pop", "setdefault", "__fspath__", "__str__"}
+)  # fmt: skip
+_TEMPLATE_METHODS = frozenset({"format", "format_map"})
+_WINDOWS_MODULES = frozenset({"ntpath", "nturl2path", "msvcrt", "winreg", "_winapi"})
+_WINDOWS_PATH_TYPES = frozenset({"PureWindowsPath", "WindowsPath"})
+_PLATFORM_NAMES = frozenset(
+    {"os.name", "sys.platform", "platform.system", "platform.platform",
+     "platform.uname", "sys.getwindowsversion"}
+)  # fmt: skip
+_WINDOWS_PLATFORM_WORDS = frozenset({"nt", "cygwin", "msys"})
 _WEB_FRAMEWORKS = frozenset(
     {"django", "rest_framework", "flask", "quart", "werkzeug", "starlette",
      "fastapi", "aiohttp", "sanic", "bottle", "pyramid", "falcon", "tornado",
@@ -434,10 +471,11 @@ def _with_hidden_callers(facts, escapes, step):
 class _Facts:
     """Chains of located steps, origin first, grouped by what the origin is."""
 
-    KINDS = (UNTRUSTED, INCOMPLETE, OPERATOR, SAFE, UNKNOWN, PARAMETER)
+    KINDS = (UNTRUSTED, INCOMPLETE, OPERATOR, SAFE, UNKNOWN, PARAMETER, COMPONENT)
 
     def __init__(self):
         self.chains = {kind: [] for kind in self.KINDS}
+        self.raw_parameters = set()
 
     @classmethod
     def leaf(cls, kind, step):
@@ -453,12 +491,14 @@ class _Facts:
                     break
                 if chain not in mine:
                     mine.append(chain)
+        self.raw_parameters |= other.raw_parameters
         return self
 
     def then(self, step):
         facts = _Facts()
         for kind in self.KINDS:
             facts.chains[kind] = [_extend(chain, step) for chain in self.chains[kind]]
+        facts.raw_parameters = set(self.raw_parameters)
         return facts
 
     def moved(self, source, target, step):
@@ -466,6 +506,7 @@ class _Facts:
         facts = _Facts()
         for kind in self.KINDS:
             facts.chains[kind] = list(self.chains[kind])
+        facts.raw_parameters = set(self.raw_parameters)
         for chain in self.chains[source]:
             if len(facts.chains[target]) < _MAX_CHAINS:
                 facts.chains[target].append(_extend(chain, step))
@@ -551,6 +592,71 @@ def _dotted(node):
 
 
 _OPERATORS = {ast.Div: "/", ast.Add: "+", ast.Mod: "%", ast.Mult: "*", ast.Sub: "-"}
+
+
+def _separator_free_literal(node):
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and not set(node.value) & _SEPARATOR_CHARS
+    )
+
+
+def _replacement_removes(call):
+    """Separators a ``str.replace`` call removes from every position, or None
+    when its replacement text may contain one."""
+    if len(call.args) not in (2, 3):
+        return None
+    if any(keyword.arg != "count" for keyword in call.keywords):
+        return None
+    if len(call.args) == 3 and call.keywords:
+        return None
+    if not _separator_free_literal(call.args[1]):
+        return None
+    if len(call.args) == 3 or call.keywords:
+        return frozenset()
+    old = call.args[0]
+    if isinstance(old, ast.Constant) and isinstance(old.value, str) and old.value in _SEPARATOR_CHARS:
+        return frozenset({old.value})
+    return frozenset()
+
+
+def _translation_value_is_separator_free(value):
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, str):
+        return not set(value) & _SEPARATOR_CHARS
+    if isinstance(value, int):
+        return 0 <= value < 0x110000 and chr(value) not in _SEPARATOR_CHARS
+    return False
+
+
+def _windows_module(tree):
+    """The module uses Windows path semantics or tests for a Windows host."""
+    platform_test = False
+    windows_word = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(alias.name.split(".", 1)[0] in _WINDOWS_MODULES for alias in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and node.module.split(".", 1)[0] in _WINDOWS_MODULES:
+                return True
+        elif isinstance(node, ast.Name):
+            if node.id in _WINDOWS_PATH_TYPES:
+                return True
+        elif isinstance(node, ast.Attribute):
+            if node.attr in _WINDOWS_PATH_TYPES:
+                return True
+            if _dotted(node) in _PLATFORM_NAMES:
+                platform_test = True
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            word = node.value.strip().lower()
+            if word in _WINDOWS_PLATFORM_WORDS or word.startswith("win"):
+                windows_word = True
+    return platform_test and windows_word
 
 
 def _describe(node, depth=0):
@@ -1043,6 +1149,7 @@ class _Project:
         self._imports = {}
         self._importers = None
         self._dynamic_loaders = {}
+        self._windows_units = {}
 
     @classmethod
     def load(cls, root, files=None, complete=True):
@@ -2596,6 +2703,13 @@ class _Project:
                 return _step(unit, call, f"`{cls_node.name}` is registered with a DRF router")
         return ""
 
+    def targets_windows(self, unit):
+        cached = self._windows_units.get(id(unit))
+        if cached is None:
+            cached = _windows_module(unit.tree)
+            self._windows_units[id(unit)] = cached
+        return cached
+
     def framework_context(self, unit):
         """The module imports a web framework, so a parameter named
         ``request`` follows that framework's convention."""
@@ -3001,7 +3115,7 @@ def _default_of(fn, name):
 
 
 def _same_facts(left, right):
-    return all(
+    return left.raw_parameters == right.raw_parameters and all(
         set(left.chains[kind]) == set(right.chains[kind]) for kind in _Facts.KINDS
     )
 
@@ -3030,9 +3144,12 @@ def _env_key(env):
 class _Tracer:
     """Where the value of a path expression can come from, as located steps."""
 
-    def __init__(self, project, rule):
+    def __init__(self, project, rule, *, separator_proofs=True, windows=False):
         self.project = project
         self.rule = rule
+        self.separator_proofs = separator_proofs and rule == TRAVERSAL_RULE
+        self.windows = windows
+        self.raw_tracer = None
         self.work = 0
         self.depth_of = {}
         self.lows = []
@@ -3162,6 +3279,151 @@ class _Tracer:
             facts.add(self.trace(unit, scope, node, env))
         return facts
 
+    def _raw_union(self, unit, scope, nodes, env):
+        """``nodes`` traced without separator proofs, for a step after them
+        that can produce separators again."""
+        raw = self.raw_tracer
+        if raw is None:
+            raw = _Tracer(self.project, self.rule, separator_proofs=False)
+            self.raw_tracer = raw
+        limited = raw.limited
+        facts = raw._union(unit, scope, nodes, env)
+        if raw.limited != limited:
+            self.limited += 1
+        return facts
+
+    def _reintroduced(self, unit, scope, nodes, env, node):
+        """Facts of ``nodes`` at a step that can turn other characters into
+        path separators (decoding, formatting, an unproved replacement): a
+        separator proof below the step no longer holds, and a parameter that
+        reaches the step is recorded so its callers' values are traced raw."""
+        facts = self._union(unit, scope, nodes, env)
+        if not self.separator_proofs:
+            return facts
+        if facts.chains[COMPONENT]:
+            facts = self._raw_union(unit, scope, nodes, env)
+        for chain in facts.chains[PARAMETER]:
+            facts.raw_parameters.add(chain[0])
+        return facts
+
+    def _separator_proof(self, unit, scope, node):
+        """A ``str.replace``/``str.translate`` chain that removes every path
+        separator of the target platform and adds none. Like ``basename``,
+        what remains is a single path component, which may still be ``..``."""
+        if not self.separator_proofs or node.func.attr not in {"replace", "translate"}:
+            return None
+        removed = self._removed_separators(unit, scope, node, 0)
+        if removed is None:
+            return None
+        required = _POSIX_SEPARATORS
+        if self.windows or self.project.targets_windows(unit):
+            required = _WINDOWS_SEPARATORS
+        if not required <= removed:
+            return None
+        return _step(unit, node, f"`{_describe(node)}` removes every path separator, leaving one path component")
+
+    def _removed_separators(self, unit, scope, node, depth):
+        if depth > _MAX_SEPARATOR_CHAIN:
+            return None
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            return None
+        if any(isinstance(argument, ast.Starred) for argument in node.args):
+            return None
+        if any(keyword.arg is None for keyword in node.keywords):
+            return None
+        values = self.project.values(unit, scope, node.func)
+        if values and any(value.kind in {"fn", "partial", "cls"} for value in values):
+            return None
+        attr = node.func.attr
+        if attr == "replace":
+            own = _replacement_removes(node)
+        elif attr == "translate":
+            own = self._translation_removes(unit, scope, node)
+        elif attr in _CASE_METHODS and not node.keywords and all(
+            isinstance(argument, ast.Constant) and isinstance(argument.value, str)
+            for argument in node.args
+        ):
+            own = frozenset()
+        else:
+            return None
+        if own is None:
+            return None
+        inner = self._removed_separators(unit, scope, node.func.value, depth + 1)
+        if inner is None:
+            return own
+        return own | inner
+
+    def _translation_removes(self, unit, scope, call):
+        """Separators a ``str.translate`` table maps away, or None unless
+        every value in the table is a literal without a separator."""
+        if len(call.args) != 1 or call.keywords:
+            return None
+        pairs = self._translation_pairs(unit, scope, call.args[0])
+        if pairs is None:
+            return None
+        removed = set()
+        for key, value in pairs:
+            if not _translation_value_is_separator_free(value):
+                return None
+            if key is not None and 0 <= key < 0x110000 and chr(key) in _SEPARATOR_CHARS:
+                removed.add(chr(key))
+        return frozenset(removed)
+
+    def _translation_pairs(self, unit, scope, table):
+        if isinstance(table, ast.Dict):
+            return self._literal_pairs(unit, scope, table, False)
+        if not isinstance(table, ast.Call) or table.keywords:
+            return None
+        if any(isinstance(argument, ast.Starred) for argument in table.args):
+            return None
+        if not self._external_call(unit, scope, table, {"builtins.str.maketrans"}):
+            return None
+        if len(table.args) == 1 and isinstance(table.args[0], ast.Dict):
+            return self._literal_pairs(unit, scope, table.args[0], True)
+        texts = []
+        for argument in table.args:
+            if not isinstance(argument, ast.Constant) or not isinstance(argument.value, str):
+                return None
+            texts.append(argument.value)
+        if len(texts) not in (2, 3) or len(texts[0]) != len(texts[1]):
+            return None
+        pairs = [(ord(source), target) for source, target in zip(texts[0], texts[1])]
+        if len(texts) == 3:
+            pairs.extend((ord(char), None) for char in texts[2])
+        return pairs
+
+    def _literal_pairs(self, unit, scope, table, character_keys):
+        pairs = []
+        for key, value in zip(table.keys, table.values):
+            if key is None or not isinstance(value, ast.Constant):
+                return None
+            pairs.append((self._translation_key(unit, scope, key, character_keys), value.value))
+        return pairs
+
+    def _translation_key(self, unit, scope, key, character_keys):
+        if isinstance(key, ast.Constant):
+            if isinstance(key.value, int) and not isinstance(key.value, bool):
+                return key.value
+            if character_keys and isinstance(key.value, str) and len(key.value) == 1:
+                return ord(key.value)
+            return None
+        if not isinstance(key, ast.Call) or len(key.args) != 1 or key.keywords:
+            return None
+        character = key.args[0]
+        if not isinstance(character, ast.Constant) or not isinstance(character.value, str) or len(character.value) != 1:
+            return None
+        if not self._external_call(unit, scope, key, {"builtins.ord"}):
+            return None
+        return ord(character.value)
+
+    def _keeps_component(self, unit, scope, node):
+        attr = node.func.attr
+        if attr == "replace":
+            return _replacement_removes(node) is not None
+        if attr == "translate":
+            return self._translation_removes(unit, scope, node) is not None
+        return attr in _COMPONENT_METHODS
+
     def _trace(self, unit, scope, expr, env):
         if isinstance(expr, ast.Constant):
             return _Facts.leaf(SAFE, _step(unit, expr, "literal"))
@@ -3173,6 +3435,10 @@ class _Tracer:
         if isinstance(expr, ast.FormattedValue):
             return self.trace(unit, scope, expr.value, env)
         if isinstance(expr, ast.BinOp):
+            if isinstance(expr.op, ast.Mod):
+                return self._reintroduced(unit, scope, [expr.left], env, expr).add(
+                    self.trace(unit, scope, expr.right, env)
+                )
             return self._union(unit, scope, [expr.left, expr.right], env)
         if isinstance(expr, ast.BoolOp):
             return self._union(unit, scope, expr.values, env)
@@ -3758,7 +4024,7 @@ class _Tracer:
 
     def _base_status(self, unit, scope, base):
         facts = self.trace(unit, scope, base)
-        if facts.chains[UNTRUSTED] or facts.chains[INCOMPLETE]:
+        if facts.chains[UNTRUSTED] or facts.chains[INCOMPLETE] or facts.chains[COMPONENT]:
             return None
         if facts.chains[UNKNOWN] or facts.chains[PARAMETER] or facts.empty():
             if self._configured_closure_root(unit, scope, base):
@@ -4333,6 +4599,10 @@ class _Tracer:
             for value in values:
                 if value.kind in {"ext", "extattr"}:
                     names.add(value.name)
+        if isinstance(func, ast.Attribute):
+            proof = self._separator_proof(unit, scope, node)
+            if proof is not None:
+                return _Facts.leaf(COMPONENT, proof)
         source = self._call_source(unit, scope, node, names)
         if source is not None:
             return source
@@ -4366,17 +4636,27 @@ class _Tracer:
         if names and names <= _TRANSPARENT_CALLS:
             if not arguments:
                 return _Facts.leaf(SAFE, _step(unit, node, f"`{_describe(node)}` without arguments"))
-            return self._union(unit, scope, arguments, env).then(_step(unit, node, f"passes through `{_describe(node)}`"))
+            step = _step(unit, node, f"passes through `{_describe(node)}`")
+            if names <= _COMPONENT_CALLS:
+                return self._union(unit, scope, arguments, env).then(step)
+            return self._reintroduced(unit, scope, arguments, env, node).then(step)
         if isinstance(func, ast.Attribute):
             receiver = self.trace(unit, scope, func.value, env)
             if func.attr in _FORMAT_ONLY_METHODS:
                 if not arguments:
                     return _Facts.leaf(SAFE, _step(unit, node, f"`.{func.attr}()` formats a date or time"))
-                return self._union(unit, scope, arguments, env).then(_step(unit, node, f"`.{func.attr}()` formats a date or time"))
+                return self._reintroduced(unit, scope, arguments, env, node).then(_step(unit, node, f"`.{func.attr}()` formats a date or time"))
             if func.attr in _TRANSPARENT_METHODS and not (values and any(value.kind == "fn" for value in values)):
-                return _Facts().add(receiver).add(self._union(unit, scope, arguments, env)).then(
-                    _step(unit, node, f"passes through `.{func.attr}()`")
-                )
+                step = _step(unit, node, f"passes through `.{func.attr}()`")
+                if not self.separator_proofs or self._keeps_component(unit, scope, node):
+                    return _Facts().add(receiver).add(self._union(unit, scope, arguments, env)).then(step)
+                if func.attr in _TEMPLATE_METHODS:
+                    return self._reintroduced(unit, scope, [func.value], env, node).add(
+                        self._union(unit, scope, arguments, env)
+                    ).then(step)
+                return self._reintroduced(unit, scope, [func.value, *arguments], env, node).then(step)
+            if receiver.chains[COMPONENT]:
+                receiver = self._reintroduced(unit, scope, [func.value], env, node)
             if receiver.chains[UNTRUSTED]:
                 return receiver.then(_step(unit, node, f"derived by `.{func.attr}()`"))
         return _Facts.leaf(UNKNOWN, _step(unit, node, f"return value of `{_describe(node)}` is not followed"))
@@ -4721,7 +5001,10 @@ class _Tracer:
             step = _step(unit, call, f"call `{_describe(call)}` binds `{name}`")
             passed = _Facts()
             for expr, expr_unit, expr_scope in self.project.bind_argument(fn, site, name):
-                passed.add(self.trace(expr_unit, expr_scope, expr, env))
+                if name in summary.raw_parameters:
+                    passed.add(self._reintroduced(expr_unit, expr_scope, [expr], env, call))
+                else:
+                    passed.add(self.trace(expr_unit, expr_scope, expr, env))
             if passed.empty():
                 passed = _Facts.leaf(SAFE, step)
             else:
@@ -6760,8 +7043,12 @@ def _provenance_record(status, function, facts, project, limits):
     }
     for kind in _Facts.KINDS:
         chains = facts.chains[kind]
-        if chains and kind != PARAMETER:
-            record[kind] = [list(chain) for chain in chains]
+        if not chains or kind == PARAMETER:
+            continue
+        if kind == COMPONENT:
+            record.setdefault(SAFE, []).extend(list(chain) for chain in chains)
+            continue
+        record[kind] = [list(chain) for chain in chains]
     if limits:
         record["limits"] = list(limits)
     return record
@@ -6946,11 +7233,17 @@ def _classify(project, tracers, finding):
         facts = _Facts.leaf(UNKNOWN, f"{finding.get('file')}:{finding.get('line')} path operand is not located in the indexed source")
         return UNKNOWN, _provenance_record(UNKNOWN, str(finding.get("symbol") or ""), facts, project, limits), None
     rule = finding.get("rule_id")
-    tracer = tracers.get(rule)
+    windows = rule == TRAVERSAL_RULE and project.targets_windows(unit)
+    key = rule
+    if windows:
+        key = (rule, "windows")
+    tracer = tracers.get(key)
     if tracer is None:
-        tracer = _Tracer(project, rule)
-        tracers[rule] = tracer
+        tracer = _Tracer(project, rule, windows=windows)
+        tracers[key] = tracer
     tracer.work = 0
+    if tracer.raw_tracer is not None:
+        tracer.raw_tracer.work = 0
     facts = tracer.trace(unit, unit.scope_of(operand), operand).then(_sink_step(unit, finding, operand))
     if tracer.work > _MAX_WORK:
         limits.append("analysis budget reached for this finding")
