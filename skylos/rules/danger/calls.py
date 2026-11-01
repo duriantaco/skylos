@@ -7,6 +7,8 @@ from .yaml_loader_provenance import yaml_loader_classes, yaml_load_call_name
 from .untrusted_sources import UntrustedSourceIndex
 from .import_proof import provider_binding_is_stable
 from .tls_provenance import tls_verification_disabled as _tls_verification_disabled
+from .flow_env import ValueFlow, literal_truth
+from .module_namespace import module_name_for, module_rebinding
 from skylos.security.command_guard import scan_shell_command
 from skylos.security.sensitive_data import first_sensitive_name
 from skylos.security.command_guard_types import (
@@ -29,13 +31,23 @@ _DANGEROUS_COMMAND_RULES = frozenset(
 )
 
 DANGEROUS_CALLS = {
-    "eval": ("SKY-D201", "HIGH", "Use of eval()"),
-    "exec": ("SKY-D202", "HIGH", "Use of exec()"),
+    "eval": (
+        "SKY-D201",
+        "HIGH",
+        "Use of eval()",
+        {"constant_argument": "code"},
+    ),
+    "exec": (
+        "SKY-D202",
+        "HIGH",
+        "Use of exec()",
+        {"constant_argument": "code"},
+    ),
     "os.system": (
         "SKY-D203",
         "CRITICAL",
         "Use of os.system()",
-        {"constant_command_severity": "LOW"},
+        {"constant_command_severity": "LOW", "constant_argument": "command"},
     ),
     "pickle.load": (
         "SKY-D204",
@@ -46,9 +58,20 @@ DANGEROUS_CALLS = {
         "SKY-D205",
         "CRITICAL",
         "pickle.loads can execute code; only deserialize bytes from trusted sources",
+        {"constant_argument": "data"},
     ),
-    "yaml.load": ("SKY-D206", "HIGH", "yaml.load without SafeLoader"),
-    "yaml.load_all": ("SKY-D206", "HIGH", "yaml.load_all without SafeLoader"),
+    "yaml.load": (
+        "SKY-D206",
+        "HIGH",
+        "yaml.load without SafeLoader",
+        {"constant_argument": "stream"},
+    ),
+    "yaml.load_all": (
+        "SKY-D206",
+        "HIGH",
+        "yaml.load_all without SafeLoader",
+        {"constant_argument": "stream"},
+    ),
     "hashlib.md5": (
         "SKY-D207",
         "MEDIUM",
@@ -107,7 +130,11 @@ DANGEROUS_CALLS = {
         "SKY-D209",
         "HIGH",
         "subprocess call with shell=True",
-        {"kw_equals": {"shell": True}, "constant_command_severity": "LOW"},
+        {
+            "kw_equals": {"shell": True},
+            "constant_command_severity": "LOW",
+            "constant_argument": "command",
+        },
     ),
     # TLS verification off is a deployment hazard: like D346 (debug mode),
     # it is not reported in test modules (``production_only``), where it is
@@ -340,10 +367,18 @@ def _call_severity(node: ast.Call, severity: str, opts) -> str:
     return lowered
 
 
-def _call_low_risk_context(node: ast.Call, severity: str, rule_severity: str, opts):
+def _call_low_risk_context(
+    node: ast.Call,
+    severity: str,
+    rule_severity: str,
+    opts,
+    filename=None,
+    project_root=None,
+):
     """Evidence that a true call finding is low-risk where it occurs: a fixed
-    shell command (Bandit rates these low), or a weak hash over data that is
-    neither a credential nor an identity (CodeQL reports only those)."""
+    shell command (Bandit rates these low), a weak hash over data that is
+    neither a credential nor an identity (CodeQL reports only those), or a
+    code, data or command argument that every path builds from literals."""
     if not opts:
         return None
     if opts.get("constant_command_severity") and severity != rule_severity:
@@ -361,6 +396,12 @@ def _call_low_risk_context(node: ast.Call, severity: str, rule_severity: str, op
                 "reason": "non-sensitive-hash-input",
                 "detail": "the hashed data is not a credential, identity or certificate",
             }
+    kind = opts.get("constant_argument")
+    if kind and _constant_argument_proved(node, kind, filename, project_root):
+        return {
+            "reason": "constant-argument",
+            "detail": "every value that reaches the argument is built from literals",
+        }
     return None
 
 
@@ -552,6 +593,831 @@ def _yaml_load_without_safeloader(
     ):
         return False
     return True
+
+
+_UNKNOWN = "unknown"
+_OPAQUE = "constant"
+_MUTABLE = "mutable"
+_UNKNOWN_LABELS = frozenset({_UNKNOWN})
+_OPAQUE_LABELS = frozenset({_OPAQUE})
+_MAX_EXACT_VALUES = 8
+_MAX_EXACT_LENGTH = 4096
+_CONSTANT_ARGUMENT_KEYWORDS = {
+    "code": frozenset(),
+    "data": frozenset({"data"}),
+    "stream": frozenset({"stream"}),
+    "command": frozenset({"command", "args"}),
+}
+_CANDIDATE_KEYWORDS = frozenset({"data", "stream", "command", "args"})
+_CONSTANT_SINK_NAMES = frozenset(
+    {
+        "Popen",
+        "call",
+        "check_call",
+        "check_output",
+        "eval",
+        "exec",
+        "getoutput",
+        "getstatusoutput",
+        "load",
+        "load_all",
+        "loads",
+        "run",
+        "system",
+    }
+)
+_PURE_BUILTINS = frozenset(
+    {
+        "abs",
+        "ascii",
+        "bin",
+        "bool",
+        "bytes",
+        "chr",
+        "dict",
+        "float",
+        "frozenset",
+        "hex",
+        "int",
+        "len",
+        "list",
+        "max",
+        "min",
+        "oct",
+        "ord",
+        "repr",
+        "round",
+        "set",
+        "sorted",
+        "str",
+        "tuple",
+    }
+)
+_CONTAINER_BUILTINS = frozenset({"dict", "list", "set", "sorted"})
+_PURE_IMPORTED_FUNCTIONS = frozenset(
+    {
+        "base64.a85decode",
+        "base64.a85encode",
+        "base64.b16decode",
+        "base64.b16encode",
+        "base64.b32decode",
+        "base64.b32encode",
+        "base64.b64decode",
+        "base64.b64encode",
+        "base64.b85decode",
+        "base64.b85encode",
+        "base64.decodebytes",
+        "base64.encodebytes",
+        "base64.standard_b64decode",
+        "base64.standard_b64encode",
+        "base64.urlsafe_b64decode",
+        "base64.urlsafe_b64encode",
+        "binascii.a2b_base64",
+        "binascii.a2b_hex",
+        "binascii.b2a_base64",
+        "binascii.b2a_hex",
+        "binascii.hexlify",
+        "binascii.unhexlify",
+    }
+)
+_TEXT_METHODS = frozenset(
+    {
+        "capitalize",
+        "casefold",
+        "center",
+        "decode",
+        "encode",
+        "endswith",
+        "expandtabs",
+        "format",
+        "hex",
+        "join",
+        "ljust",
+        "lower",
+        "lstrip",
+        "partition",
+        "removeprefix",
+        "removesuffix",
+        "replace",
+        "rjust",
+        "rpartition",
+        "rsplit",
+        "rstrip",
+        "split",
+        "splitlines",
+        "startswith",
+        "strip",
+        "swapcase",
+        "title",
+        "upper",
+        "zfill",
+    }
+)
+_EXACT_TEXT_METHODS = frozenset(
+    {
+        "decode",
+        "encode",
+        "lower",
+        "lstrip",
+        "removeprefix",
+        "removesuffix",
+        "replace",
+        "rstrip",
+        "strip",
+        "upper",
+    }
+)
+_CONTAINER_READ_METHODS = frozenset({"copy", "get", "items", "keys", "values"})
+_FRAME_ACCESS = frozenset(
+    {
+        "_getframe",
+        "ag_frame",
+        "cr_frame",
+        "currentframe",
+        "f_back",
+        "f_locals",
+        "f_trace",
+        "getinnerframes",
+        "getouterframes",
+        "gi_frame",
+        "setprofile",
+        "settrace",
+        "tb_frame",
+    }
+)
+_BUILTIN_NAMESPACES = frozenset({"builtins", "__builtins__"})
+
+
+def _exact_labels(value) -> frozenset:
+    if isinstance(value, (str, bytes)) and len(value) > _MAX_EXACT_LENGTH:
+        return _OPAQUE_LABELS
+    if (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and value.bit_length() > _MAX_EXACT_LENGTH
+    ):
+        return _OPAQUE_LABELS
+    if value is None or isinstance(value, (str, bytes, int, float, complex)):
+        return frozenset({("value", type(value).__name__, value)})
+    return _OPAQUE_LABELS
+
+
+def _exact_values(labels: frozenset):
+    """The exact constants ``labels`` stand for, or None if any is unknown."""
+    if not labels or not all(isinstance(label, tuple) for label in labels):
+        return None
+    return [label[2] for label in labels]
+
+
+def _without_exact(labels: frozenset) -> frozenset:
+    return frozenset(label for label in labels if not isinstance(label, tuple))
+
+
+def _bounded_labels(values) -> frozenset:
+    labels = frozenset()
+    for value in values:
+        labels |= _exact_labels(value)
+    if len(labels) > _MAX_EXACT_VALUES:
+        return _without_exact(labels) | _OPAQUE_LABELS
+    return labels
+
+
+def _product(left, right):
+    if len(left) * len(right) > _MAX_EXACT_VALUES:
+        return None
+    return [(a, b) for a in left for b in right]
+
+
+def _constant_elements(labels: frozenset) -> frozenset:
+    """Items iterated or unpacked from a value with these labels."""
+    if _UNKNOWN in labels:
+        return _UNKNOWN_LABELS
+    elements = _without_exact(labels)
+    if len(elements) != len(labels):
+        elements |= _OPAQUE_LABELS
+    return elements
+
+
+def _constant_collect(node: ast.AST, labels: frozenset) -> frozenset:
+    if _UNKNOWN in labels:
+        return _UNKNOWN_LABELS
+    return labels | {_MUTABLE}
+
+
+def _dotted_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted_name(node.value)
+        if base:
+            return f"{base}.{node.attr}"
+    return None
+
+
+def _binding_names(module: ast.AST):
+    """How often each name is bound anywhere in the module, and the names
+    bound only by imports."""
+    counts: dict[str, int] = {}
+    imported: dict[str, int] = {}
+
+    def bind(name):
+        counts[name] = counts.get(name, 0) + 1
+
+    type_params = tuple(
+        node
+        for node in (
+            getattr(ast, "TypeVar", None),
+            getattr(ast, "ParamSpec", None),
+            getattr(ast, "TypeVarTuple", None),
+        )
+        if node is not None
+    )
+    for node in ast.walk(module):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            bind(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bind(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                local = alias.asname or alias.name.split(".", 1)[0]
+                bind(local)
+                imported[local] = imported.get(local, 0) + 1
+        elif isinstance(node, ast.arg):
+            bind(node.arg)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bind(node.name)
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            bind(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            bind(node.rest)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for name in node.names:
+                bind(name)
+        elif type_params and isinstance(node, type_params):
+            bind(node.name)
+    import_only = frozenset(
+        name for name, count in imported.items() if counts.get(name) == count
+    )
+    return counts, import_only
+
+
+def _module_reaches_frames_or_builtins(module: ast.AST) -> tuple[bool, bool]:
+    """``(frames, builtins)``: the module touches frame objects (whose locals
+    other code can write), or the builtins namespace (where builtins can be
+    replaced)."""
+    frames = False
+    builtins = False
+    for node in ast.walk(module):
+        if isinstance(node, ast.Name):
+            name = node.id
+        elif isinstance(node, ast.Attribute):
+            name = node.attr
+            if node.attr in {"stack", "trace"} and _dotted_name(node.value) == (
+                "inspect"
+            ):
+                frames = True
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            if any(alias.name in _BUILTIN_NAMESPACES for alias in node.names) or (
+                isinstance(node, ast.ImportFrom) and node.module in _BUILTIN_NAMESPACES
+            ):
+                builtins = True
+            continue
+        else:
+            continue
+        if name in _FRAME_ACCESS:
+            frames = True
+        if name in _BUILTIN_NAMESPACES:
+            builtins = True
+    return frames, builtins
+
+
+class _ConstantContext:
+    """Module facts the constant-argument proof trusts: whether code can
+    replace frame locals or builtins at run time, how often each name is
+    bound, and the import bindings of pure standard-library codecs. Module
+    globals are never trusted: another module can assign them."""
+
+    def __init__(self, module, filename, project_root):
+        self.module = module
+        self.filename = filename
+        self.project_root = project_root
+        module_name = None
+        if filename:
+            module_name = module_name_for(filename)
+        runners = frozenset(
+            id(node)
+            for node in ast.walk(module)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"exec", "eval"}
+        )
+        self.locals_dynamic, _ = module_rebinding(
+            module, module_name, isolated_code_calls=runners
+        )
+        self.globals_dynamic, self.rebound = module_rebinding(module, module_name)
+        self.bindings, self.import_only = _binding_names(module)
+        self.frames, self.builtins_reachable = _module_reaches_frames_or_builtins(
+            module
+        )
+        self.flows = {}
+        self.pure_calls = {}
+
+    def builtin_is_trusted(self, name: str) -> bool:
+        return (
+            name in _PURE_BUILTINS
+            and self.bindings.get(name, 0) == 0
+            and not self.globals_dynamic
+            and not self.builtins_reachable
+            and name not in self.rebound
+        )
+
+    def pure_function(self, func: ast.AST, scope: ast.AST) -> bool:
+        dotted = _dotted_name(func)
+        if not dotted or dotted.split(".", 1)[0] not in self.import_only:
+            return False
+        key = (id(scope), dotted)
+        cached = self.pure_calls.get(key)
+        if cached is not None:
+            return cached
+        index = getattr(self.module, "_skylos_yaml_direct_imports", None)
+        if index is None:
+            index = UntrustedSourceIndex(self.module)
+            self.module._skylos_yaml_direct_imports = index
+        function = None
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            function = scope
+        resolved = index.resolved_import(function, dotted)
+        result = bool(
+            resolved in _PURE_IMPORTED_FUNCTIONS
+            and provider_binding_is_stable(
+                resolved,
+                self.module,
+                self.filename or "<tree-only>",
+                self.project_root,
+            )
+        )
+        self.pure_calls[key] = result
+        return result
+
+    def static_labels(self, node: ast.AST) -> frozenset:
+        """Labels of an expression that reads no name."""
+        if isinstance(node, ast.Name):
+            return _UNKNOWN_LABELS
+        if isinstance(node, ast.NamedExpr):
+            return _UNKNOWN_LABELS
+        if isinstance(node, ast.IfExp):
+            truth = literal_truth(node.test)
+            labels = frozenset()
+            if truth is not False:
+                labels |= self.static_labels(node.body)
+            if truth is not True:
+                labels |= self.static_labels(node.orelse)
+            return labels
+        if isinstance(node, ast.BoolOp):
+            labels = frozenset()
+            for item in node.values:
+                labels |= self.static_labels(item)
+            return labels
+        if isinstance(
+            node,
+            (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp, ast.Lambda),
+        ):
+            return _UNKNOWN_LABELS
+        return _constant_evaluate(self, self.module, node, self.static_labels)
+
+
+def _constant_context(module, filename, project_root) -> _ConstantContext:
+    key = (str(filename), str(project_root))
+    cache = getattr(module, "_skylos_constant_arguments", None)
+    if cache is None:
+        cache = {}
+        module._skylos_constant_arguments = cache
+    context = cache.get(key)
+    if context is None:
+        context = _ConstantContext(module, filename, project_root)
+        cache[key] = context
+    return context
+
+
+def _formatted_text(value, conversion: int):
+    if conversion == ord("r"):
+        return repr(value)
+    if conversion == ord("a"):
+        return ascii(value)
+    return str(value)
+
+
+def _joined_labels(node: ast.JoinedStr, value) -> frozenset:
+    texts = [""]
+    exact = True
+    for part in node.values:
+        if isinstance(part, ast.Constant) and isinstance(part.value, str):
+            pieces = [part.value]
+        elif isinstance(part, ast.FormattedValue):
+            labels = value(part.value)
+            if _UNKNOWN in labels:
+                return _UNKNOWN_LABELS
+            if part.format_spec is not None:
+                if _UNKNOWN in value(part.format_spec):
+                    return _UNKNOWN_LABELS
+                exact = False
+                continue
+            values = _exact_values(labels)
+            if values is None:
+                exact = False
+                continue
+            pieces = [_formatted_text(item, part.conversion) for item in values]
+        else:
+            return _UNKNOWN_LABELS
+        if exact:
+            pairs = _product(texts, pieces)
+            if pairs is None:
+                exact = False
+                continue
+            texts = [left + right for left, right in pairs]
+            if any(len(text) > _MAX_EXACT_LENGTH for text in texts):
+                exact = False
+    if not exact:
+        return _OPAQUE_LABELS
+    return _bounded_labels(texts)
+
+
+def _binary_labels(node: ast.BinOp, value) -> frozenset:
+    left = value(node.left)
+    right = value(node.right)
+    if _UNKNOWN in left or _UNKNOWN in right:
+        return _UNKNOWN_LABELS
+    if isinstance(node.op, ast.Add):
+        left_values = _exact_values(left)
+        right_values = _exact_values(right)
+        if left_values is not None and right_values is not None:
+            pairs = _product(left_values, right_values)
+            if pairs is not None and all(
+                type(a) is type(b) and isinstance(a, (str, bytes)) for a, b in pairs
+            ):
+                return _bounded_labels(a + b for a, b in pairs)
+    combined = left | right
+    if _MUTABLE in combined:
+        return combined | _OPAQUE_LABELS
+    return _OPAQUE_LABELS
+
+
+def _subscript_labels(node: ast.Subscript, value) -> frozenset:
+    base = value(node.value)
+    index = node.slice
+    if isinstance(index, ast.Slice):
+        parts = [index.lower, index.upper, index.step]
+        bounds = []
+        for part in parts:
+            if part is None:
+                bounds.append([None])
+                continue
+            labels = value(part)
+            if _UNKNOWN in labels:
+                return _UNKNOWN_LABELS
+            bounds.append(_exact_values(labels))
+        if _UNKNOWN in base:
+            return _UNKNOWN_LABELS
+        if _MUTABLE in base:
+            return base
+        values = _exact_values(base)
+        if values is None or any(
+            bound is None
+            or len(bound) != 1
+            or not isinstance(bound[0], (int, type(None)))
+            or isinstance(bound[0], bool)
+            for bound in bounds
+        ):
+            return _OPAQUE_LABELS
+        if not all(isinstance(item, (str, bytes)) for item in values):
+            return _OPAQUE_LABELS
+        cut = slice(bounds[0][0], bounds[1][0], bounds[2][0])
+        try:
+            return _bounded_labels(item[cut] for item in values)
+        except (TypeError, ValueError):
+            return _OPAQUE_LABELS
+    key = value(index)
+    if _UNKNOWN in base or _UNKNOWN in key:
+        return _UNKNOWN_LABELS
+    if _MUTABLE in base:
+        return base
+    values = _exact_values(base)
+    keys = _exact_values(key)
+    if (
+        values is None
+        or keys is None
+        or len(keys) != 1
+        or not isinstance(keys[0], int)
+        or isinstance(keys[0], bool)
+        or not all(isinstance(item, str) for item in values)
+    ):
+        return _OPAQUE_LABELS
+    try:
+        return _bounded_labels(item[keys[0]] for item in values)
+    except IndexError:
+        return frozenset()
+
+
+def _exact_text_method(method: str, receivers, arguments):
+    results = []
+    for receiver in receivers:
+        if method == "replace" and len(arguments) >= 2:
+            new = arguments[1]
+            if isinstance(new, (str, bytes)) and len(receiver) * max(len(new), 1) > (
+                8 * _MAX_EXACT_LENGTH
+            ):
+                return None
+        results.append(getattr(receiver, method)(*arguments))
+    return results
+
+
+def _method_labels(context, scope, node: ast.Call, value, arguments) -> frozenset:
+    method = node.func.attr
+    receiver = value(node.func.value)
+    if _UNKNOWN in receiver or not receiver:
+        return _UNKNOWN_LABELS
+    if _MUTABLE in receiver:
+        if method in _CONTAINER_READ_METHODS:
+            return receiver | arguments
+        return _UNKNOWN_LABELS
+    if method not in _TEXT_METHODS:
+        return _UNKNOWN_LABELS
+    receivers = _exact_values(receiver)
+    if receivers is not None and not all(
+        isinstance(item, (str, bytes)) for item in receivers
+    ):
+        return _UNKNOWN_LABELS
+    if receivers is None or method not in _EXACT_TEXT_METHODS or node.keywords:
+        return _OPAQUE_LABELS
+    exact_arguments = []
+    for argument in node.args:
+        values = _exact_values(value(argument))
+        if values is None or len(values) != 1:
+            return _OPAQUE_LABELS
+        exact_arguments.append(values[0])
+    try:
+        results = _exact_text_method(method, receivers, exact_arguments)
+    except (TypeError, ValueError, LookupError, UnicodeError):
+        return _UNKNOWN_LABELS
+    if results is None:
+        return _OPAQUE_LABELS
+    return _bounded_labels(results)
+
+
+def _builtin_labels(name: str, node: ast.Call, value, arguments) -> frozenset:
+    if name in _CONTAINER_BUILTINS:
+        return arguments | {_MUTABLE}
+    if name in {"tuple", "frozenset"}:
+        return _without_exact(arguments) | _OPAQUE_LABELS
+    if name in {"str", "repr", "ascii"} and len(node.args) == 1 and not node.keywords:
+        values = _exact_values(value(node.args[0]))
+        if values is not None and all(
+            isinstance(item, (str, bytes, int, float, bool, type(None)))
+            for item in values
+        ):
+            converted = {"str": str, "repr": repr, "ascii": ascii}[name]
+            return _bounded_labels(converted(item) for item in values)
+    return _OPAQUE_LABELS
+
+
+def _call_labels(context, scope, node: ast.Call, value) -> frozenset:
+    arguments = frozenset()
+    for argument in node.args:
+        arguments |= value(argument)
+    for keyword in node.keywords:
+        arguments |= value(keyword.value)
+    if _UNKNOWN in arguments:
+        return _UNKNOWN_LABELS
+    func = node.func
+    if isinstance(func, ast.Attribute) and context.pure_function(func, scope):
+        return _OPAQUE_LABELS
+    if isinstance(func, ast.Attribute):
+        return _method_labels(context, scope, node, value, arguments)
+    if isinstance(func, ast.Name) and context.builtin_is_trusted(func.id):
+        return _builtin_labels(func.id, node, value, arguments)
+    if isinstance(func, ast.Name) and context.pure_function(func, scope):
+        return _OPAQUE_LABELS
+    return _UNKNOWN_LABELS
+
+
+def _constant_evaluate(context, scope, node: ast.AST, value) -> frozenset:
+    """Labels for the constant-argument proof: exact constants, ``constant``
+    (built from literals, exact value not kept), ``mutable`` (a builtin
+    container built from literals; its item labels are included) or
+    ``unknown``."""
+    if isinstance(node, ast.Constant):
+        return _exact_labels(node.value)
+    if isinstance(node, ast.JoinedStr):
+        return _joined_labels(node, value)
+    if isinstance(node, ast.BinOp):
+        return _binary_labels(node, value)
+    if isinstance(node, (ast.UnaryOp, ast.Compare)):
+        operands = [node.operand]
+        if isinstance(node, ast.Compare):
+            operands = [node.left, *node.comparators]
+        for operand in operands:
+            if _UNKNOWN in value(operand):
+                return _UNKNOWN_LABELS
+        return _OPAQUE_LABELS
+    if isinstance(node, ast.Tuple):
+        labels = frozenset()
+        for item in node.elts:
+            labels |= value(item)
+        if _UNKNOWN in labels:
+            return _UNKNOWN_LABELS
+        return _without_exact(labels) | _OPAQUE_LABELS
+    if isinstance(node, (ast.List, ast.Set)):
+        labels = frozenset({_MUTABLE})
+        for item in node.elts:
+            labels |= value(item)
+        if _UNKNOWN in labels:
+            return _UNKNOWN_LABELS
+        return labels
+    if isinstance(node, ast.Dict):
+        labels = frozenset({_MUTABLE})
+        for key, item in zip(node.keys, node.values):
+            if key is not None:
+                labels |= value(key)
+            labels |= value(item)
+        if _UNKNOWN in labels:
+            return _UNKNOWN_LABELS
+        return labels
+    if isinstance(node, ast.Starred):
+        return value(node.value)
+    if isinstance(node, ast.Subscript):
+        return _subscript_labels(node, value)
+    if isinstance(node, ast.Call):
+        return _call_labels(context, scope, node, value)
+    return _UNKNOWN_LABELS
+
+
+def _constant_argument_node(node: ast.Call, keywords) -> ast.AST | None:
+    if any(isinstance(argument, ast.Starred) for argument in node.args) or any(
+        keyword.arg is None for keyword in node.keywords
+    ):
+        return None
+    if node.args:
+        return node.args[0]
+    for keyword in node.keywords:
+        if keyword.arg in keywords:
+            return keyword.value
+    return None
+
+
+def _constant_scope(node: ast.AST) -> ast.AST | None:
+    current = getattr(node, "parent", None)
+    while current is not None:
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
+            return current
+        if isinstance(current, (ast.Lambda, ast.ClassDef)):
+            return None
+        current = getattr(current, "parent", None)
+    return None
+
+
+def _scope_escapes(scope: ast.AST):
+    """``(escaping, shared_items, rebound)``: names read other than as
+    ``name[key]`` or referenced from a nested scope; names whose item is used
+    other than as the base of a store, so a mutable item may be aliased; and
+    names nested scopes declare ``nonlocal``."""
+    escaping = set()
+    shared_items = set()
+    rebound = set()
+    pending = list(ast.iter_child_nodes(scope))
+    while pending:
+        current = pending.pop()
+        if isinstance(
+            current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+        ):
+            for part in ast.walk(current):
+                if isinstance(part, ast.Name):
+                    escaping.add(part.id)
+                elif isinstance(part, ast.Nonlocal):
+                    rebound.update(part.names)
+            continue
+        if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load):
+            parent = getattr(current, "parent", None)
+            if not (isinstance(parent, ast.Subscript) and parent.value is current):
+                escaping.add(current.id)
+            else:
+                top = parent
+                while (
+                    isinstance(getattr(top, "parent", None), ast.Subscript)
+                    and isinstance(top.parent.ctx, ast.Load)
+                    and top.parent.value is top
+                ):
+                    top = top.parent
+                holder = getattr(top, "parent", None)
+                if not (
+                    isinstance(holder, ast.Subscript)
+                    and holder.value is top
+                    and isinstance(holder.ctx, (ast.Store, ast.Del))
+                ) and isinstance(top.ctx, ast.Load):
+                    shared_items.add(current.id)
+        pending.extend(ast.iter_child_nodes(current))
+    return frozenset(escaping), frozenset(shared_items), frozenset(rebound)
+
+
+def _constant_flow_results(context: _ConstantContext, scope: ast.AST, required=None):
+    key = id(scope)
+    cached = context.flows.get(key)
+    if cached is not None and (required is None or id(required) in cached[0]):
+        return cached[1]
+    candidates = []
+    if required is not None:
+        candidates.append(required)
+    pending = list(ast.iter_child_nodes(scope))
+    while pending:
+        current = pending.pop()
+        if isinstance(
+            current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+        ):
+            continue
+        if isinstance(current, ast.Call):
+            name = _call_attribute_name(current)
+            if name in _CONSTANT_SINK_NAMES:
+                argument = _constant_argument_node(current, _CANDIDATE_KEYWORDS)
+                if argument is not None:
+                    candidates.append(argument)
+        pending.extend(ast.iter_child_nodes(current))
+    escaping, shared_items, rebound = _scope_escapes(scope)
+
+    def outer(name):
+        return _UNKNOWN_LABELS
+
+    def read(name, labels):
+        if name in rebound:
+            return _UNKNOWN_LABELS
+        if (name in escaping or name in shared_items) and _MUTABLE in labels:
+            return labels | _UNKNOWN_LABELS
+        return labels
+
+    def read_item(name, labels):
+        if name in shared_items and _MUTABLE in labels:
+            return labels | _UNKNOWN_LABELS
+        return labels
+
+    def evaluate(node, value):
+        return _constant_evaluate(context, scope, node, value)
+
+    flow = ValueFlow(
+        scope,
+        evaluate,
+        outer=outer,
+        top=_UNKNOWN_LABELS,
+        element=_constant_elements,
+        collect=_constant_collect,
+        read=read,
+        read_item=read_item,
+        opaque=escaping,
+    )
+    results = flow.run(candidates)
+    context.flows[key] = (frozenset(id(node) for node in candidates), results)
+    return results
+
+
+def _shell_text_is_inert(text: str) -> bool:
+    if _has_shell_expansion(text):
+        return False
+    return not any(
+        risk.rule_id in _DANGEROUS_COMMAND_RULES for risk in scan_shell_command(text)
+    )
+
+
+def _constant_argument_proved(
+    node: ast.Call, kind: str, filename, project_root
+) -> bool:
+    """Every assignment that reaches the code, data or command argument of
+    ``node`` inside its function is built from literals: no parameter, global,
+    closure variable, attribute, unknown call or escaped container. At module
+    level only an argument that reads no name qualifies. A command must also
+    be fixed text with no shell expansion or command-guard risk."""
+    keywords = _CONSTANT_ARGUMENT_KEYWORDS.get(kind)
+    if keywords is None:
+        return False
+    argument = _constant_argument_node(node, keywords)
+    module = _module_of(node)
+    scope = _constant_scope(node)
+    if argument is None or module is None or scope is None:
+        return False
+    context = _constant_context(module, filename, project_root)
+    if context.locals_dynamic or context.frames:
+        return False
+    if isinstance(scope, ast.Module):
+        labels = context.static_labels(argument)
+    else:
+        results = _constant_flow_results(context, scope, argument)
+        if results is None:
+            return False
+        labels = results.get(id(argument))
+    if not labels or _UNKNOWN in labels:
+        return False
+    if kind != "command":
+        return True
+    texts = _exact_values(labels)
+    if texts is None or not all(isinstance(text, str) for text in texts):
+        return False
+    return all(_shell_text_is_inert(text) for text in texts)
 
 
 _WEAK_RANDOM_SECURITY_KEYWORDS = {
@@ -1170,7 +2036,14 @@ class DangerousCallsRule(SkylosRule):
                 "line": node.lineno,
                 "col": node.col_offset,
             }
-            low_risk = _call_low_risk_context(node, finding["severity"], severity, opts)
+            low_risk = _call_low_risk_context(
+                node,
+                finding["severity"],
+                severity,
+                opts,
+                context.get("filename"),
+                context.get("project_root"),
+            )
             if low_risk is not None:
                 finding["low_risk_context"] = low_risk
             findings.append(finding)

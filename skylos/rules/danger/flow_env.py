@@ -443,8 +443,9 @@ class ValueFlow:
     imports, nested definitions, widened loop names). ``element(labels)``
     gives the labels of items iterated or unpacked from a value. ``collect``
     gives the labels of a comprehension from its element labels. ``read``
-    may adjust the labels of a name read in this scope. Names in ``opaque``
-    never keep precise per-key facts.
+    may adjust the labels of a name read in this scope and ``read_item`` those
+    of a precise per-key fact. Aliases are not tracked: names in ``opaque``
+    (aliased, escaped or shared with nested scopes) never keep per-key facts.
     """
 
     def __init__(
@@ -457,6 +458,7 @@ class ValueFlow:
         element=None,
         collect=None,
         read=None,
+        read_item=None,
         opaque=frozenset(),
         max_steps=MAX_STEPS,
     ):
@@ -467,6 +469,7 @@ class ValueFlow:
         self._element = element
         self._collect = collect
         self._read = read
+        self._read_item = read_item
         self._opaque = frozenset(opaque)
         self._max_steps = max_steps
         self._steps = 0
@@ -582,7 +585,10 @@ class ValueFlow:
         known, key = _literal_key(key_node)
         if not known:
             return None
-        return self.state.items.get((name, key))
+        fact = self.state.items.get((name, key))
+        if fact is None or self._read_item is None:
+            return fact
+        return frozenset(self._read_item(name, fact))
 
     def value(self, node: ast.AST | None) -> frozenset:
         """Labels of ``node`` in the current state."""
