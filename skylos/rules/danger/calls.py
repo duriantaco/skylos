@@ -1,4 +1,5 @@
 import ast
+import bisect
 import re
 from skylos.rules.base import SkylosRule
 from .pickle_provenance import safe_pickle_loads
@@ -1619,6 +1620,86 @@ def _call_attribute_name(call: ast.Call) -> str | None:
     return None
 
 
+_MODULE_FLOW_BUDGET = 200000
+
+
+def _rebound_names(statement: ast.AST) -> list[str]:
+    if isinstance(statement, ast.Assign):
+        return [
+            target.id for target in statement.targets if isinstance(target, ast.Name)
+        ]
+    if (
+        isinstance(statement, ast.AnnAssign)
+        and statement.value is not None
+        and isinstance(statement.target, ast.Name)
+    ):
+        return [statement.target.id]
+    return []
+
+
+class _ModuleCalls:
+    """One pass over a module: how often each name is defined, names bound
+    other than by a definition, direct call sites by callee name, method
+    calls by attribute, calls that pass a name as an argument, and a work
+    budget shared by every caller and flow walk in the module."""
+
+    def __init__(self, module: ast.AST):
+        self.definitions: dict[str, int] = {}
+        self.rebound: set[str] = set()
+        self.calls: dict[str, list[ast.Call]] = {}
+        self.method_calls: dict[str, list[ast.Call]] = {}
+        self.callbacks: dict[str, list[ast.Call]] = {}
+        self.blocks = {}
+        self.budget = _MODULE_FLOW_BUDGET
+        for node in ast.walk(module):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                self.definitions[node.name] = self.definitions.get(node.name, 0) + 1
+            elif isinstance(node, ast.Name):
+                if not isinstance(node.ctx, ast.Load):
+                    self.rebound.add(node.id)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    self.rebound.add(alias.asname or alias.name.split(".", 1)[0])
+            elif isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name):
+                    self.calls.setdefault(node.func.id, []).append(node)
+                elif isinstance(node.func, ast.Attribute):
+                    self.method_calls.setdefault(node.func.attr, []).append(node)
+                for argument in [*node.args, *(kw.value for kw in node.keywords)]:
+                    if isinstance(argument, ast.Name):
+                        self.callbacks.setdefault(argument.id, []).append(node)
+                    elif isinstance(argument, ast.Attribute):
+                        self.callbacks.setdefault(argument.attr, []).append(node)
+
+    def spend(self, amount: int = 1) -> bool:
+        self.budget -= amount
+        return self.budget >= 0
+
+    def block_index(self, parent: ast.AST, field: str):
+        """Positions of a block's statements and, per name, the positions of
+        statements that rebind it."""
+        key = (id(parent), field)
+        cached = self.blocks.get(key)
+        if cached is None:
+            block = getattr(parent, field)
+            positions = {id(item): position for position, item in enumerate(block)}
+            rebinds: dict[str, list[int]] = {}
+            for position, item in enumerate(block):
+                for name in _rebound_names(item):
+                    rebinds.setdefault(name, []).append(position)
+            cached = (positions, rebinds)
+            self.blocks[key] = cached
+        return cached
+
+
+def _module_calls(module: ast.AST) -> _ModuleCalls:
+    index = getattr(module, "_skylos_module_calls", None)
+    if index is None:
+        index = _ModuleCalls(module)
+        module._skylos_module_calls = index
+    return index
+
+
 def _scope_name_loads(scope: ast.AST) -> dict[str, list[ast.Name]]:
     """Loads of each name in ``scope``, excluding nested function and class
     bodies, cached on the scope node."""
@@ -1641,22 +1722,7 @@ def _scope_name_loads(scope: ast.AST) -> dict[str, list[ast.Name]]:
     return loads
 
 
-def _rebinds_name(statement: ast.AST, name: str) -> bool:
-    if isinstance(statement, ast.Assign):
-        return any(
-            isinstance(target, ast.Name) and target.id == name
-            for target in statement.targets
-        )
-    if isinstance(statement, ast.AnnAssign):
-        return (
-            statement.value is not None
-            and isinstance(statement.target, ast.Name)
-            and statement.target.id == name
-        )
-    return False
-
-
-def _rebinding_cutoff(statement: ast.AST, name: str):
+def _rebinding_cutoff(statement: ast.AST, name: str, index: _ModuleCalls):
     """End of the first later statement in an enclosing block that rebinds
     ``name`` unconditionally; uses after it read the new value."""
     cutoff = None
@@ -1672,15 +1738,17 @@ def _rebinding_cutoff(statement: ast.AST, name: str):
             block = getattr(parent, field, None)
             if not isinstance(block, list):
                 continue
-            index = next((i for i, item in enumerate(block) if item is current), None)
-            if index is None:
+            positions, rebinds = index.block_index(parent, field)
+            position = positions.get(id(current))
+            if position is None:
                 continue
-            for sibling in block[index + 1 :]:
-                if _rebinds_name(sibling, name):
-                    end = (sibling.end_lineno, sibling.end_col_offset)
-                    if cutoff is None or end < cutoff:
-                        cutoff = end
-                    break
+            later = rebinds.get(name, ())
+            following = bisect.bisect_right(later, position)
+            if following < len(later):
+                sibling = block[later[following]]
+                end = (sibling.end_lineno, sibling.end_col_offset)
+                if cutoff is None or end < cutoff:
+                    cutoff = end
         current = parent
     return cutoff
 
@@ -1692,15 +1760,19 @@ def _name_reaches_security_use(
     if hops <= 0 or not isinstance(target, ast.Name):
         return False
     scope = _enclosing_scope(statement)
-    if scope is None:
+    module = _module_of(statement)
+    if scope is None or module is None:
         return False
     key = (id(scope), target.id, id(statement))
     if key in seen:
         return False
     seen.add(key)
+    index = _module_calls(module)
     start = (statement.end_lineno, statement.end_col_offset)
-    cutoff = _rebinding_cutoff(statement, target.id)
+    cutoff = _rebinding_cutoff(statement, target.id, index)
     for load in _scope_name_loads(scope).get(target.id, ()):
+        if not index.spend():
+            return False
         position = (load.lineno, load.col_offset)
         if position < start:
             continue
@@ -1726,37 +1798,22 @@ def _result_reaches_security_use(
     """Calls of a module-level helper that returns a weak random value."""
     if hops <= 0 or not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return False
-    module = _module_of(function)
-    if module is None or not any(item is function for item in module.body):
+    module = getattr(function, "parent", None)
+    if not isinstance(module, ast.Module):
         return False
     key = ("result", id(function))
     if key in seen:
         return False
     seen.add(key)
-    definitions = 0
-    calls = []
-    for child in ast.walk(module):
-        if (
-            isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-            and child.name == function.name
-        ):
-            definitions += 1
-        elif isinstance(child, ast.Name) and child.id == function.name:
-            if not isinstance(child.ctx, ast.Load):
-                return False
-            parent = getattr(child, "parent", None)
-            if isinstance(parent, ast.Call) and parent.func is child:
-                calls.append(parent)
-        elif isinstance(child, (ast.Import, ast.ImportFrom)) and any(
-            (alias.asname or alias.name.split(".", 1)[0]) == function.name
-            for alias in child.names
-        ):
-            return False
-    if definitions != 1:
+    index = _module_calls(module)
+    if index.definitions.get(function.name) != 1 or function.name in index.rebound:
         return False
-    return any(
-        _weak_random_value_reaches_security_use(call, hops - 1, seen) for call in calls
-    )
+    for call in index.calls.get(function.name, ()):
+        if not index.spend():
+            return False
+        if _weak_random_value_reaches_security_use(call, hops - 1, seen):
+            return True
+    return False
 
 
 def _weak_random_value_reaches_security_use(
