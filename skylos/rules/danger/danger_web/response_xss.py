@@ -33,12 +33,14 @@ from __future__ import annotations
 import ast
 import os
 import re
+import string
 import sys
 from dataclasses import dataclass
 from functools import lru_cache, reduce
 from pathlib import Path
 
 from skylos.rules.danger.calls import _is_test_module
+from skylos.rules.danger.danger_fs.closed_world import _SKIP_DIRS
 from skylos.rules.danger.module_namespace import (
     attribute_write_names,
     has_mock_api_patching,
@@ -671,7 +673,24 @@ _SAFE_CHARACTER_TESTS = frozenset(
     {"isalnum", "isalpha", "isdigit", "isdecimal", "isnumeric"}
 )
 _MARKUP = frozenset("<>&\"'")
-_NUMBER_TEXT = frozenset({"hex", "oct", "str", "int", "format"})
+_NUMBER_TEXT = frozenset({"hex", "oct", "str", "int"})
+_NUMBER_SPEC = re.compile(r"\d*[dxXobn]\Z")
+_DYNAMIC_CALLS = frozenset(
+    {
+        "exec",
+        "eval",
+        "compile",
+        "locals",
+        "globals",
+        "vars",
+        "setattr",
+        "getattr",
+        "delattr",
+        "__import__",
+    }
+)
+_MAX_SCANNED_FILES = 4000
+_MAX_SCANNED_BYTES = 64_000_000
 
 
 def _is_name(node, name) -> bool:
@@ -696,14 +715,43 @@ def _starts_entity(node) -> bool:
     )
 
 
+def _number_spec(spec) -> bool:
+    """A literal format spec that prints an integer as digits."""
+    return isinstance(spec, str) and bool(_NUMBER_SPEC.match(spec))
+
+
+def _binds(node, name) -> bool:
+    """``node`` binds ``name`` other than through a plain ``Name`` store."""
+    if isinstance(node, ast.ExceptHandler):
+        return node.name == name
+    if isinstance(node, (ast.MatchAs, ast.MatchStar)):
+        return node.name == name
+    if isinstance(node, ast.MatchMapping):
+        return node.rest == name
+    if isinstance(node, ast.alias):
+        return (node.asname or node.name.split(".")[0]) == name
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return name in node.names
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name == name
+    return False
+
+
 class _EncoderProof:
     """Structural proof that a function returns its text parameter only
-    through a character allowlist or as character references: a ``for c in
-    s`` loop (or ``''.join`` of a comprehension over ``s``) whose every
-    addition of the raw ``c`` sits under a test that ``c`` is alphanumeric or
-    in a literal collection free of ``< > & " '``, and whose other additions
-    are constants or references that start with ``&`` built only from
-    ``ord(c)`` or a literal entity table."""
+    through a character allowlist or as numeric/entity references.
+
+    The function has no nested scope, ``global``/``nonlocal`` or dynamic
+    namespace call. One top-level ``for c in s`` loop over an unbound
+    parameter fills an accumulator that starts as ``''`` (only ``+=``) or
+    ``[]`` (only ``.append``); every return gives it (or its ``''.join``).
+    Alternatively it returns ``''.join`` of one comprehension over ``s``.
+    The raw ``c`` is added only under a true-branch test that it is
+    alphanumeric or in a literal free of ``< > & " '``; every other piece is a
+    constant, or starts with ``&`` with holes of ``ord(c)`` printed as digits
+    or a lookup in a literal entity table. Named allowlists and tables are
+    bound once to a literal and only read by membership and subscript, here
+    and in every other project module."""
 
     def __init__(self, module, func):
         self.module = module
@@ -713,12 +761,12 @@ class _EncoderProof:
             for parent in ast.walk(func)
             for child in ast.iter_child_nodes(parent)
         }
-        self.nodes = list(_own_nodes(func))
+        self.nodes = [node for node in ast.walk(func) if node is not func]
         self.params = {param.arg for param in _params(func)}
 
     def param(self):
         func = self.func
-        if func.decorator_list or _is_generator(func):
+        if func.decorator_list or _is_generator(func) or not self._plain_body():
             return None
         returns = [node for node in self.nodes if isinstance(node, ast.Return)]
         if not returns or any(node.value is None for node in returns):
@@ -728,13 +776,38 @@ class _EncoderProof:
             return None
         return found.pop()
 
+    def _plain_body(self) -> bool:
+        for node in self.nodes:
+            if isinstance(
+                node,
+                (
+                    ast.FunctionDef,
+                    ast.AsyncFunctionDef,
+                    ast.Lambda,
+                    ast.ClassDef,
+                    ast.Global,
+                    ast.Nonlocal,
+                ),
+            ):
+                return False
+            if isinstance(node, ast.Call):
+                callee = node.func
+                if isinstance(callee, ast.Name) and callee.id in _DYNAMIC_CALLS:
+                    return False
+                if isinstance(callee, ast.Attribute) and callee.attr in _DYNAMIC_CALLS:
+                    return False
+        return True
+
     def _stores(self, name):
         return [
             node
             for node in self.nodes
-            if isinstance(node, ast.Name)
-            and node.id == name
-            and not isinstance(node.ctx, ast.Load)
+            if (
+                isinstance(node, ast.Name)
+                and node.id == name
+                and not isinstance(node.ctx, ast.Load)
+            )
+            or _binds(node, name)
         ]
 
     def _loads(self, name):
@@ -769,14 +842,18 @@ class _EncoderProof:
             return self._accumulated(value.id, False)
         return None
 
-    def _source(self, generator_target, iterable):
-        if not isinstance(generator_target, ast.Name):
+    def _source(self, target, iterable):
+        if not isinstance(target, ast.Name):
             return None
         if not isinstance(iterable, ast.Name) or iterable.id not in self.params:
             return None
         if self._stores(iterable.id):
             return None
-        return generator_target.id, iterable.id
+        if [node for node in self._stores(target.id) if node is not target] != []:
+            return None
+        if target.id == iterable.id or target.id in self.params:
+            return None
+        return target.id, iterable.id
 
     def _comprehension(self, node):
         if len(node.generators) != 1 or node.generators[0].is_async:
@@ -814,7 +891,7 @@ class _EncoderProof:
         if as_list and not (isinstance(init.value, ast.List) and not init.value.elts):
             return None
         if not as_list and not (
-            isinstance(init.value, ast.Constant) and isinstance(init.value.value, str)
+            isinstance(init.value, ast.Constant) and init.value.value == ""
         ):
             return None
         loops = [
@@ -822,14 +899,14 @@ class _EncoderProof:
             for stmt in body
             if isinstance(stmt, ast.For) and body.index(stmt) > body.index(init)
         ]
-        if len(loops) != 1:
+        if len(loops) != 1 or loops[0].orelse:
             return None
         loop = loops[0]
         source = self._source(loop.target, loop.iter)
         if source is None:
             return None
         char, param = source
-        if self._stores(char) != [loop.target]:
+        if name in (char, param):
             return None
         additions = []
         for store in self._stores(name):
@@ -837,7 +914,9 @@ class _EncoderProof:
                 continue
             parent = self.parents.get(id(store))
             if as_list or not (
-                isinstance(parent, ast.AugAssign)
+                isinstance(store, ast.Name)
+                and isinstance(parent, ast.AugAssign)
+                and parent.target is store
                 and isinstance(parent.op, ast.Add)
                 and self._inside(parent, loop)
             ):
@@ -845,9 +924,13 @@ class _EncoderProof:
             additions.append((parent, parent.value))
         for load in self._loads(name):
             parent = self.parents.get(id(load))
-            if isinstance(parent, ast.Return):
+            if isinstance(parent, ast.Return) and parent.value is load and not as_list:
                 continue
-            if as_list and self._join_argument(parent) is load:
+            if (
+                as_list
+                and self._join_argument(parent) is load
+                and isinstance(self.parents.get(id(parent)), ast.Return)
+            ):
                 continue
             call = self.parents.get(id(parent))
             if not (
@@ -858,6 +941,7 @@ class _EncoderProof:
                 and call.func is parent
                 and len(call.args) == 1
                 and not call.keywords
+                and isinstance(self.parents.get(id(call)), ast.Expr)
                 and self._inside(call, loop)
             ):
                 return None
@@ -925,18 +1009,7 @@ class _EncoderProof:
             if not node.values or not _starts_entity(node.values[0]):
                 return False
             return all(
-                isinstance(part, ast.Constant)
-                or (
-                    isinstance(part, ast.FormattedValue)
-                    and self._reference(part.value, char)
-                    and (
-                        part.format_spec is None
-                        or all(
-                            isinstance(item, ast.Constant)
-                            for item in part.format_spec.values
-                        )
-                    )
-                )
+                isinstance(part, ast.Constant) or self._hole(part, char)
                 for part in node.values
             )
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
@@ -952,10 +1025,51 @@ class _EncoderProof:
             and node.func.attr == "format"
             and _starts_entity(node.func.value)
         ):
-            return all(self._reference(arg, char) for arg in node.args) and all(
-                self._reference(kw.value, char) for kw in node.keywords
-            )
+            return self._format_call(node, char)
         return False
+
+    def _hole(self, part, char) -> bool:
+        if not isinstance(part, ast.FormattedValue) or part.conversion != -1:
+            return False
+        if part.format_spec is None:
+            return self._reference(part.value, char)
+        spec = part.format_spec
+        if not all(isinstance(item, ast.Constant) for item in spec.values):
+            return False
+        text = "".join(str(item.value) for item in spec.values)
+        return _number_spec(text) and self._number(part.value, char)
+
+    def _format_call(self, node, char) -> bool:
+        if any(isinstance(arg, ast.Starred) for arg in node.args):
+            return False
+        if any(kw.arg is None for kw in node.keywords):
+            return False
+        named = {kw.arg: kw.value for kw in node.keywords}
+        try:
+            fields = list(_FORMATTER.parse(node.func.value.value))
+        except ValueError:
+            return False
+        automatic = 0
+        for _, field, spec, conversion in fields:
+            if field is None:
+                continue
+            if conversion is not None:
+                return False
+            if field == "":
+                field = str(automatic)
+                automatic += 1
+            if field.isdigit() and int(field) < len(node.args):
+                value = node.args[int(field)]
+            elif field in named:
+                value = named[field]
+            else:
+                return False
+            if spec:
+                if not (_number_spec(spec) and self._number(value, char)):
+                    return False
+            elif not self._reference(value, char):
+                return False
+        return True
 
     def _reference(self, node, char) -> bool:
         return self._number(node, char) or self._table(node, char)
@@ -975,10 +1089,15 @@ class _EncoderProof:
         if self._builtin(node, {"ord"}):
             return len(node.args) == 1 and _is_name(node.args[0], char)
         if self._builtin(node, _NUMBER_TEXT):
+            return len(node.args) == 1 and self._number(node.args[0], char)
+        if self._builtin(node, {"format"}):
+            if len(node.args) == 1:
+                return self._number(node.args[0], char)
             return (
-                bool(node.args)
+                len(node.args) == 2
                 and self._number(node.args[0], char)
-                and all(isinstance(arg, ast.Constant) for arg in node.args[1:])
+                and isinstance(node.args[1], ast.Constant)
+                and _number_spec(node.args[1].value)
             )
         if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Slice):
             bounds = (node.slice.lower, node.slice.upper, node.slice.step)
@@ -988,14 +1107,15 @@ class _EncoderProof:
         return False
 
     def _table(self, node, char) -> bool:
-        if not isinstance(node, ast.Subscript):
+        if not isinstance(node, ast.Subscript) or not isinstance(node.ctx, ast.Load):
             return False
         key = node.slice
-        if not (_is_name(key, char) or self._builtin(key, {"ord"})):
-            return False
-        if self._builtin(key, {"ord"}) and not (
-            len(key.args) == 1 and _is_name(key.args[0], char)
-        ):
+        ordinal = (
+            self._builtin(key, {"ord"})
+            and len(key.args) == 1
+            and _is_name(key.args[0], char)
+        )
+        if not (_is_name(key, char) or ordinal):
             return False
         table = self._literal(node.value, (ast.Dict,))
         return isinstance(table, ast.Dict) and all(
@@ -1006,70 +1126,78 @@ class _EncoderProof:
         )
 
     def _literal(self, node, kinds):
-        """A literal of ``kinds`` written in place, or bound once to a name
-        (in the function or the module) that is only read by membership
-        tests and subscripts."""
-        if isinstance(node, kinds) or (
-            isinstance(node, ast.Constant) and isinstance(node.value, str)
-        ):
+        """A literal of ``kinds`` written in place, or a name bound once to
+        one and only read by membership tests and subscripts: in this
+        function, or at module level in a module no other project module
+        imports it from or reaches it in through anything but such reads."""
+        if isinstance(node, kinds) or _text_literal(node):
             return node
+        frozen = _frozenset_literal(node, self.module)
+        if frozen is not None:
+            return frozen
         if not isinstance(node, ast.Name):
             return None
+        name = node.id
         local = [
             stmt
             for stmt in self.func.body
             if isinstance(stmt, ast.Assign)
             and len(stmt.targets) == 1
-            and _is_name(stmt.targets[0], node.id)
+            and _is_name(stmt.targets[0], name)
         ]
-        if self._stores(node.id) or local:
-            if len(local) != 1 or len(self._stores(node.id)) != 1:
+        if local or self._stores(name):
+            if len(local) != 1 or self._stores(name) != [local[0].targets[0]]:
                 return None
-            uses = self._loads(node.id)
-            value = local[0].value
-            scope = self.func
-        else:
-            if self.module.counts().get(node.id) != 1:
+            value = _literal_value(local[0].value, kinds, self.module)
+            if value is None:
                 return None
-            found = [
-                stmt
-                for stmt in self.module.tree.body
-                if isinstance(stmt, ast.Assign)
-                and len(stmt.targets) == 1
-                and _is_name(stmt.targets[0], node.id)
-            ]
-            if len(found) != 1:
+            if not all(_read_only_use(use, self.parents) for use in self._loads(name)):
                 return None
-            value = found[0].value
-            scope = self.module.tree
-            uses = [
-                item
-                for item in ast.walk(scope)
-                if isinstance(item, ast.Name)
-                and item.id == node.id
-                and isinstance(item.ctx, ast.Load)
-            ]
-        if not (
-            isinstance(value, kinds)
-            or (isinstance(value, ast.Constant) and isinstance(value.value, str))
-        ):
-            return None
-        parents = self.parents
-        if scope is not self.func:
-            parents = self.module._parent_map()
-        for use in uses:
-            parent = parents.get(id(use))
-            if isinstance(parent, ast.Subscript) and parent.value is use:
-                continue
-            if (
-                isinstance(parent, ast.Compare)
-                and len(parent.ops) == 1
-                and isinstance(parent.ops[0], (ast.In, ast.NotIn))
-                and parent.comparators[0] is use
-            ):
-                continue
-            return None
+            return value
+        return self.module.module_literal(name, kinds)
+
+
+def _text_literal(node) -> bool:
+    return isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+
+def _frozenset_literal(node, module):
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "frozenset"
+        and module.builtin_is_stable("frozenset")
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], (ast.List, ast.Tuple, ast.Set))
+    ):
+        return node.args[0]
+    return None
+
+
+def _literal_value(value, kinds, module):
+    if isinstance(value, kinds) or _text_literal(value):
         return value
+    if ast.Set in kinds:
+        return _frozenset_literal(value, module)
+    return None
+
+
+def _read_only_use(use, parents) -> bool:
+    """``NAME[k]`` read or the right side of ``c in NAME``."""
+    parent = parents.get(id(use))
+    if (
+        isinstance(parent, ast.Subscript)
+        and parent.value is use
+        and isinstance(parent.ctx, ast.Load)
+    ):
+        return True
+    return (
+        isinstance(parent, ast.Compare)
+        and len(parent.ops) == 1
+        and isinstance(parent.ops[0], (ast.In, ast.NotIn))
+        and parent.comparators[0] is use
+    )
 
 
 def _markup_free(node) -> bool:
@@ -1087,6 +1215,101 @@ def _flatten_add(node):
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         return [*_flatten_add(node.left), *_flatten_add(node.right)]
     return [node]
+
+
+def _module_dotted(path: Path, root: Path):
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return None
+    parts = list(relative.with_suffix("").parts)
+    if parts and parts[0] == "src":
+        parts = parts[1:]
+    if parts and parts[-1] == "__init__":
+        parts = parts[:-1]
+    if not parts:
+        return None
+    return ".".join(parts)
+
+
+def _project_files(root: Path):
+    """The project's Python files under ``root``, or None when there are
+    too many to read cheaply (a proof needing them then fails)."""
+    files = []
+    total = 0
+    for directory, dirs, names in os.walk(root):
+        dirs[:] = [name for name in dirs if name not in _SKIP_DIRS]
+        for name in names:
+            if not name.endswith(".py"):
+                continue
+            path = Path(directory) / name
+            try:
+                if path.is_symlink():
+                    continue
+                total += path.stat().st_size
+            except OSError:
+                continue
+            files.append(path)
+            if len(files) > _MAX_SCANNED_FILES or total > _MAX_SCANNED_BYTES:
+                return None
+    return files
+
+
+def _foreign_uses_are_reads(tree, name: str, module_name: str) -> bool:
+    """No ``from <module> import NAME`` and no ``<module>.NAME`` other than
+    a subscript read or a membership test in another project module."""
+    parents = {
+        id(child): parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    last = module_name.rsplit(".", 1)[-1]
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and any(
+            alias.name in (name, "*") for alias in node.names
+        ):
+            target = (node.module or "").rsplit(".", 1)[-1]
+            if target in (last, "") or node.module == module_name:
+                return False
+        if isinstance(node, ast.Global) and name in node.names:
+            return False
+        if isinstance(node, ast.Attribute) and node.attr == name:
+            if not isinstance(node.ctx, ast.Load):
+                return False
+            if not _read_only_use(node, parents):
+                return False
+    return True
+
+
+_FORMATTER = string.Formatter()
+
+
+@lru_cache(maxsize=256)
+def _foreign_reads_only(root: str, path: str, stamp: int, name: str) -> bool:
+    """Every other project module that mentions ``name`` neither imports it
+    from its module nor uses ``<module>.name`` other than as a read."""
+    module_name = _module_dotted(Path(path), Path(root))
+    if module_name is None:
+        return False
+    files = _project_files(Path(root))
+    if files is None:
+        return False
+    for other in files:
+        try:
+            resolved = other.resolve()
+            if str(resolved) == path:
+                continue
+            stat = resolved.stat()
+            with open(resolved, "rb", opener=_no_follow) as handle:
+                source = handle.read(_MAX_PROJECT_MODULE_BYTES + 1)
+        except OSError:
+            return False
+        if name.encode() not in source:
+            continue
+        tree = _parse_project_module(str(resolved), stat.st_mtime_ns, stat.st_size)
+        if tree is None or not _foreign_uses_are_reads(tree, name, module_name):
+            return False
+    return True
 
 
 def _combined_kind(kinds):
@@ -1263,6 +1486,8 @@ class _Module:
         self._helpers = None
         self._classes = None
         self._encoders: dict = {}
+        self._literals: dict = {}
+        self._variables = None
         self.callables: dict = {}
         self.free_names: dict = {}
 
@@ -1485,6 +1710,68 @@ class _Module:
         if node is None or not any(node is item for item in module.tree.body):
             return None
         return module, node
+
+    def module_literal(self, name: str, kinds):
+        """The literal a module-level ``name`` is bound to once, when every
+        read of it here and in the other project modules is a membership
+        test or a subscript read; else None."""
+        key = (name, kinds)
+        if key in self._literals:
+            return self._literals[key]
+        result = None
+        found = [
+            stmt
+            for stmt in self.tree.body
+            if isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and _is_name(stmt.targets[0], name)
+        ]
+        if self.counts().get(name) == 1 and len(found) == 1:
+            value = _literal_value(found[0].value, kinds, self)
+            parents = self._parent_map()
+            uses = [
+                node
+                for node in ast.walk(self.tree)
+                if isinstance(node, ast.Name)
+                and node.id == name
+                and isinstance(node.ctx, ast.Load)
+            ]
+            if (
+                value is not None
+                and all(_read_only_use(use, parents) for use in uses)
+                and self._foreign_reads_only(name)
+            ):
+                result = value
+        self._literals[key] = result
+        return result
+
+    def _foreign_reads_only(self, name: str) -> bool:
+        path = Path(self.file_path).resolve()
+        root = self._scan_root()
+        try:
+            stamp = path.stat().st_mtime_ns
+        except OSError:
+            return False
+        return _foreign_reads_only(str(root), str(path), stamp, name)
+
+    def variables(self) -> frozenset:
+        """Names a module-level assignment binds."""
+        if self._variables is None:
+            names = set()
+            for stmt in self.tree.body:
+                targets = []
+                if isinstance(stmt, ast.Assign):
+                    targets = stmt.targets
+                elif isinstance(stmt, (ast.AnnAssign, ast.AugAssign)):
+                    targets = [stmt.target]
+                for target in targets:
+                    names.update(
+                        node.id
+                        for node in ast.walk(target)
+                        if isinstance(node, ast.Name)
+                    )
+            self._variables = frozenset(names)
+        return self._variables
 
     def encoder_param(self, func):
         key = id(func)
@@ -1793,7 +2080,11 @@ class _Run:
 
     def _touch(self, name, labels, env, skip=False):
         """An in-place change through ``name``: every name that may share its
-        object gains ``labels``, and a response may no longer be HTML."""
+        object gains ``labels``, and a response may no longer be HTML. A
+        module-level variable written here holds that data for the rest of
+        the function."""
+        if labels and name not in env.values and name in self.module.variables():
+            env.values[name] = _Value(OTHER, labels)
         for other in self.aliases.get(name, (name,)):
             if (skip and other == name) or other not in env.values:
                 continue
@@ -1837,7 +2128,7 @@ class _Run:
                 self._touch(container.id, labels, env, skip=True)
                 return
         root = _chain_root(container)
-        if root and root in env.values:
+        if root:
             self._touch(root, labels, env)
 
     def _header_write(self, name, key_node, key_value, value, env):
@@ -1866,7 +2157,7 @@ class _Run:
                     self._set_response(base.id, UNKNOWN, current.body, env)
                 return
         root = _chain_root(base)
-        if root and root in env.values:
+        if root:
             self._touch(root, _all_labels(value), env)
 
     def _augmented(self, node: ast.AugAssign, env):
@@ -2544,7 +2835,7 @@ class _Run:
             values.append(receiver)
         for index, operand in enumerate(operands):
             root = _chain_root(operand)
-            if not root or root not in env.values:
+            if not root:
                 continue
             labels = _labels(
                 *(_all_labels(value) for i, value in enumerate(values) if i != index)

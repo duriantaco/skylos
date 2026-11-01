@@ -1216,3 +1216,214 @@ def test_hand_written_encoders_are_proved_from_their_structure(
         expected = [_line(source, f"    return {expression}")]
     assert _listed_lines(result, symbol="page") == expected
     assert _reported_lines(result, symbol="page") == expected
+
+
+HEX_ENCODER = (
+    "def encode(text):\n"
+    "    out = ''\n"
+    "    for char in text:\n"
+    "        if char.isalnum():\n"
+    "            out += char\n"
+    "        else:\n"
+    "            out += f'&#x{ord(char):04x};'\n"
+    "    return out\n"
+)
+
+
+def _encoder(body_before="", in_loop="", piece="'&#' + str(ord(char)) + ';'", tail=""):
+    return (
+        "def encode(text):\n"
+        "    out = ''\n"
+        + body_before
+        + "    for char in text:\n"
+        + in_loop
+        + "        if char.isalnum():\n"
+        + "            out += char\n"
+        + "        else:\n"
+        + f"            out += {piece}\n"
+        + tail
+        + "    return out\n"
+    )
+
+
+TIGHT = {
+    "four-digit hex spec": (HEX_ENCODER, (), False),
+    "table read by another module": (
+        TABLE_ENCODER,
+        (("myproject/report.py", "import app\nFIRST = app.ENTITIES[60]\n"),),
+        False,
+    ),
+    "nested function writes the accumulator": (
+        "def encode(text):\n"
+        "    out = ''\n"
+        "    def inject():\n"
+        "        nonlocal out\n"
+        "        out += text\n"
+        "    for c in text:\n"
+        "        if c.isalnum():\n"
+        "            out += c\n"
+        "        else:\n"
+        "            out += '&#' + str(ord(c)) + ';'\n"
+        "    inject()\n"
+        "    return out\n",
+        (),
+        True,
+    ),
+    "named allowlist mutated before use": (
+        "SAFE = ['a', 'b']\n"
+        "def encode(text):\n"
+        "    out = ''\n"
+        "    SAFE[0] = '<'\n"
+        "    SAFE[1] = '>'\n"
+        "    for c in text:\n"
+        "        if c.isalnum() or c in SAFE:\n"
+        "            out += c\n"
+        "        else:\n"
+        "            out += '&#' + str(ord(c)) + ';'\n"
+        "    return out\n",
+        (),
+        True,
+    ),
+    "entity table mutated with request data": (
+        "TABLE = {60: 'lt', 62: 'gt'}\n"
+        "def encode(text):\n"
+        "    out = ''\n"
+        "    TABLE[60] = text\n"
+        "    for c in text:\n"
+        "        out += f'&{TABLE[ord(c)]};'\n"
+        "    return out\n",
+        (),
+        True,
+    ),
+    "format spec c through format()": (
+        _encoder(piece="'&' + format(ord(char), 'c') + ';'"),
+        (),
+        True,
+    ),
+    "format spec c in an f-string": (_encoder(piece="f'&{ord(char):c};'"), (), True),
+    "format spec c in str.format": (
+        _encoder(piece="'&#{:c};'.format(ord(char))"),
+        (),
+        True,
+    ),
+    "computed format spec": (
+        "WIDTH = 4\n" + _encoder(piece="f'&#{ord(char):{WIDTH}};'"),
+        (),
+        True,
+    ),
+    "conversion on ord": (_encoder(piece="f'&{ord(char)!r};'"), (), True),
+    "global statement": (
+        "out = ''\n"
+        + _encoder(body_before="    global out\n").replace("    out = ''\n", "", 1),
+        (),
+        True,
+    ),
+    "exec in the helper": (_encoder(body_before="    exec('pass')\n"), (), True),
+    "accumulator reassigned": (_encoder(tail="    out = out + text\n"), (), True),
+    "accumulator walrus": (_encoder(tail="    (out := text)\n"), (), True),
+    "accumulator passed to a call": (_encoder(tail="    print(out)\n"), (), True),
+    "accumulator aliased": (_encoder(tail="    copy = out\n"), (), True),
+    "try/finally returning something else": (
+        "def encode(text):\n"
+        "    out = ''\n"
+        "    try:\n"
+        "        for char in text:\n"
+        "            if char.isalnum():\n"
+        "                out += char\n"
+        "    finally:\n"
+        "        return text\n",
+        (),
+        True,
+    ),
+    "loop variable rebound": (_encoder(in_loop="        char = text\n"), (), True),
+    "loop variable bound by except": (
+        _encoder(
+            in_loop="        try:\n            pass\n        except ValueError as char:\n            pass\n"
+        ),
+        (),
+        True,
+    ),
+    "loop variable rebound by a nested loop": (
+        _encoder(in_loop="        for char in text:\n            pass\n"),
+        (),
+        True,
+    ),
+    "loop source rebound": (
+        _encoder(body_before="    text = text + '<b>'\n"),
+        (),
+        True,
+    ),
+    "module allowlist mutated by a method": (
+        "SAFE = [',']\nSAFE.append('<')\n"
+        + TABLE_ENCODER.split("ENTITIES = ", 1)[0].replace(
+            "SAFE_PUNCTUATION = (',', '.', '-', ' ')\n", ""
+        )
+        + "def encode(text):\n"
+        "    out = ''\n"
+        "    for char in text:\n"
+        "        if char in SAFE:\n"
+        "            out += char\n"
+        "    return out\n",
+        (),
+        True,
+    ),
+    "module allowlist passed to a call": (
+        "SAFE = [',']\nregister(SAFE)\n"
+        "def encode(text):\n"
+        "    out = ''\n"
+        "    for char in text:\n"
+        "        if char in SAFE:\n"
+        "            out += char\n"
+        "    return out\n",
+        (),
+        True,
+    ),
+    "module allowlist aliased": (
+        "SAFE = [',']\nOTHER = SAFE\n"
+        "def encode(text):\n"
+        "    out = ''\n"
+        "    for char in text:\n"
+        "        if char in SAFE:\n"
+        "            out += char\n"
+        "    return out\n",
+        (),
+        True,
+    ),
+    "global table rebound elsewhere in the module": (
+        TABLE_ENCODER + "def reset():\n    global ENTITIES\n    ENTITIES = {60: '<'}\n",
+        (),
+        True,
+    ),
+    "table imported and written by another module": (
+        TABLE_ENCODER,
+        (("myproject/patch.py", "from app import ENTITIES\nENTITIES[60] = '<'\n"),),
+        True,
+    ),
+    "table written through the module by another module": (
+        TABLE_ENCODER,
+        (("myproject/patch.py", "import app\napp.ENTITIES[60] = '<'\n"),),
+        True,
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "helpers, modules, listed", list(TIGHT.values()), ids=list(TIGHT)
+)
+def test_encoder_proof_rejects_every_way_around_it(
+    tmp_path, monkeypatch, helpers, modules, listed
+):
+    source = (
+        "from flask import Flask, request\n"
+        + helpers
+        + "app = Flask(__name__)\n"
+        + "@app.route('/')\n"
+        + "def page():\n"
+        + "    return 'Hi ' + encode(request.args['q'])\n"
+    )
+    result = _analyze(tmp_path, monkeypatch, source, modules=[*PROJECT, *modules])
+    expected = []
+    if listed:
+        expected = [_line(source, "    return 'Hi '")]
+    assert _listed_lines(result, symbol="page") == expected
+    assert _reported_lines(result, symbol="page") == expected
