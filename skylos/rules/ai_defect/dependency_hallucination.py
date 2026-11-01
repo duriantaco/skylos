@@ -184,7 +184,6 @@ IMPORT_RE = re.compile(r"^\s*import\s+([A-Za-z_][\w\.]*)", re.MULTILINE)
 FROM_RE = re.compile(r"^\s*from\s+([A-Za-z_][\w\.]*)\s+import\b", re.MULTILINE)
 _IMPORT_LINE_RE = re.compile(r"^\s*(?:import|from)\s+([A-Za-z_]\w*)(?=\.|\s|$)")
 _LINE_BREAK_RE = re.compile(r"\r\n|\r|\n")
-_REQUIRES_PYTHON_FLOOR_RE = re.compile(r">=\s*(\d+)\.(\d+)")
 REMOVED_STDLIB_MODULES = {
     "formatter": (3, 10),
     "parser": (3, 10),
@@ -243,7 +242,7 @@ def _normalize_name(name):
     return cleaned
 
 
-def _requires_python_floor(repo_root):
+def _requires_python_specifiers(repo_root):
     text = read_project_text_no_symlink(
         repo_root,
         "pyproject.toml",
@@ -262,23 +261,71 @@ def _requires_python_floor(repo_root):
     requires_python = project.get("requires-python")
     if not isinstance(requires_python, str):
         return None
-    match = _REQUIRES_PYTHON_FLOOR_RE.search(requires_python)
-    if match is None:
+    try:
+        return SpecifierSet(requires_python)
+    except (InvalidSpecifier, ValueError):
         return None
-    return int(match.group(1)), int(match.group(2))
+
+
+def _supports_python_before(specifiers, removed_in):
+    """Test the whole conjunction at release boundaries and their successors.
+
+    Python's release numbers are discrete. Exact pins, wildcard exclusions and
+    strict bounds can change membership at a specified release or its successor;
+    the minor releases cover intervals without an explicit patch boundary.
+    """
+    candidates = {Version(str(major)) for major in range(removed_in[0] + 1)}
+    candidates.update(
+        Version(f"{removed_in[0]}.{minor}") for minor in range(removed_in[1])
+    )
+    for specifier in specifiers:
+        try:
+            boundary = Version(specifier.version.removesuffix(".*"))
+        except (InvalidVersion, ValueError):
+            return True
+        candidates.add(boundary)
+        release = boundary.release
+        stable = (*release, *(0 for _ in range(max(0, 3 - len(release)))))
+        candidates.add(Version(".".join(map(str, stable))))
+        for width in range(1, len(stable) + 1):
+            successor = (*stable[: width - 1], stable[width - 1] + 1)
+            candidates.add(Version(".".join(map(str, successor))))
+        base = boundary.base_version
+        phase_base = base
+        if boundary.pre:
+            label, number = boundary.pre
+            candidates.add(Version(f"{base}{label}{number + 1}"))
+            phase_base = f"{base}{label}{number}"
+        if boundary.post is not None:
+            candidates.add(Version(f"{phase_base}.post{boundary.post + 1}"))
+            phase_base = f"{phase_base}.post{boundary.post}"
+        if boundary.dev is not None:
+            candidates.add(Version(f"{phase_base}.dev{boundary.dev + 1}"))
+    for candidate in tuple(candidates):
+        base = candidate.base_version
+        for phase in (".dev0", "a0", "b0", "rc0", ".post0"):
+            candidates.add(Version(base + phase))
+    return any(
+        (candidate.release + (0, 0))[:2] < removed_in
+        and specifiers.contains(candidate, prereleases=True)
+        for candidate in candidates
+    )
 
 
 def _project_stdlib_modules(repo_root):
-    """The running interpreter's stdlib plus modules later Pythons removed.
-
-    A removed module still counts while the project's ``requires-python``
-    floor is below the removal version or is not declared.
-    """
+    """Classify removed modules using the project's supported Python versions."""
     modules = _get_stdlib_modules()
-    floor = _requires_python_floor(repo_root)
+    specifiers = _requires_python_specifiers(repo_root)
+    available = {}
     for name, removed_in in REMOVED_STDLIB_MODULES.items():
-        if floor is None or floor < removed_in:
+        if removed_in not in available:
+            available[removed_in] = specifiers is None or _supports_python_before(
+                specifiers, removed_in
+            )
+        if available[removed_in]:
             modules.add(name)
+        else:
+            modules.discard(name)
     return modules
 
 
@@ -3434,18 +3481,40 @@ def _requirements_by_root(nodes, optional_paths):
 class _SourceImportAnalysis:
     """Import facts for one source snapshot; no source or AST is retained."""
 
-    def __init__(self, src, *, submodules=None):
+    def __init__(self, src, *, submodules=None, native_ast=False):
         nodes = ()
         tree = _parse_import_source(src)
         statement_lines = None
         source_lines = (src or "").splitlines()
         self.type_checking_only = frozenset()
+        self.type_checking_sources = frozenset()
+        embedded_lines = {}
         if tree is not None:
             nodes = tuple(ast.walk(tree))
             statement_lines = _import_statement_lines(nodes)
             submodules = _index_imported_submodules(src, statement_lines)
             source_lines = _LINE_BREAK_RE.split(src or "")
             self.type_checking_only = _type_checking_only_roots(nodes)
+            self.type_checking_sources = frozenset(
+                node.module
+                for node in nodes
+                if isinstance(node, ast.ImportFrom)
+                and not node.level
+                and node.module in TYPE_CHECKING_MODULES
+            ) | frozenset(
+                alias.name
+                for node in nodes
+                if isinstance(node, ast.Import)
+                for alias in node.names
+                if alias.name in TYPE_CHECKING_MODULES
+            )
+            embedded, embedded_lines, embedded_nodes = _literal_exec_imports(
+                tree, nodes, native_ast=native_ast
+            )
+            for mod, portions in embedded.items():
+                submodules[mod] = submodules.get(mod, frozenset()) | portions
+            self.type_checking_only -= embedded.keys()
+            nodes += embedded_nodes
         elif submodules is None:
             submodules = _index_imported_submodules(src)
         self.submodules = submodules
@@ -3457,6 +3526,8 @@ class _SourceImportAnalysis:
             match = _IMPORT_LINE_RE.match(line)
             if match:
                 self.lines.setdefault(match.group(1), line_no)
+        for mod, line_no in embedded_lines.items():
+            self.lines[mod] = min(self.lines.get(mod, line_no), line_no)
         optional_paths = frozenset()
         uncertain_paths = frozenset()
         if src and "except" in src:
@@ -3472,6 +3543,376 @@ class _SourceImportAnalysis:
 
     def requirements(self, mod):
         return self._requirements.get(mod, (frozenset({mod}), ()))
+
+
+def _source_bound_names(nodes):
+    names = set()
+    for node in nodes:
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            names.add(node.id)
+        elif isinstance(node, _NAMED_BINDING_NODES) and node.name:
+            names.add(node.name)
+        elif isinstance(node, ast.arg):
+            names.add(node.arg)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            names.add(node.rest)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+    return names
+
+
+def _has_namespace_effects(nodes, *, allow_exec=False):
+    names = {
+        "eval",
+        "globals",
+        "locals",
+        "vars",
+        "__builtins__",
+        "setattr",
+        "delattr",
+        "getattr",
+        "__import__",
+    }
+    protocols = {"__getattribute__", "__getattr__", "__setattr__", "__delattr__"}
+    sys_aliases = {
+        alias.asname or alias.name
+        for node in nodes
+        if isinstance(node, ast.Import)
+        for alias in node.names
+        if alias.name == "sys"
+    }
+    if not allow_exec:
+        names.add("exec")
+    return any(
+        (isinstance(node, ast.Name) and node.id in names)
+        or (
+            isinstance(node, ast.Attribute)
+            and (
+                node.attr
+                in {"__dict__", "__globals__", "__builtins__", *names, *protocols}
+                or (
+                    node.attr == "modules"
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id in sys_aliases
+                )
+                or (node.attr == "TYPE_CHECKING" and not isinstance(node.ctx, ast.Load))
+            )
+        )
+        or (
+            isinstance(node, ast.ImportFrom)
+            and any(alias.name == "*" for alias in node.names)
+        )
+        or (
+            isinstance(node, ast.Import)
+            and any(alias.name == "builtins" for alias in node.names)
+        )
+        or (isinstance(node, ast.ImportFrom) and node.module == "builtins")
+        or (
+            isinstance(node, ast.ImportFrom)
+            and node.module == "sys"
+            and any(alias.name == "modules" for alias in node.names)
+        )
+        for node in nodes
+    )
+
+
+def _literal_exec_imports(tree, nodes, *, depth=0, native_ast=False, budget=None):
+    """Import facts from bounded, source-owned literal code passed to builtin exec.
+
+    Bare unshadowed exec/compile, literal concatenation and single source-level
+    string bindings are supported. No fixture code or compiler is executed.
+    """
+    submodules = {}
+    lines = {}
+    imported_nodes = []
+    if depth >= 4:
+        return submodules, lines, ()
+    if budget is None:
+        budget = {"steps": 0, "parses": 0, "bytes": 0, "nodes": 0}
+    parents = {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
+    scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+
+    def owner(node):
+        child = node
+        parent = parents.get(id(child))
+        while parent is not None:
+            if isinstance(parent, scopes):
+                body = parent.body
+                if child is body or (isinstance(body, list) and child in body):
+                    return parent
+            child = parent
+            parent = parents.get(id(child))
+        return tree
+
+    bound = {}
+    globals_by_scope = {}
+    nonlocals_by_scope = {}
+    for node in nodes:
+        if isinstance(node, ast.Global):
+            globals_by_scope.setdefault(owner(node), set()).update(node.names)
+        elif isinstance(node, ast.Nonlocal):
+            nonlocals_by_scope.setdefault(owner(node), set()).update(node.names)
+    for node in nodes:
+        scope = owner(node)
+        names = _source_bound_names((node,))
+        if isinstance(node, ast.arg):
+            current = parents.get(id(node))
+            while current is not None and not isinstance(current, scopes):
+                current = parents.get(id(current))
+            if current is not None:
+                scope = current
+        for name in names:
+            target = scope
+            if name in globals_by_scope.get(scope, ()):
+                target = tree
+            bucket = bound.setdefault(target, {})
+            bucket[name] = bucket.get(name, 0) + 1
+    uncertain_names = set()
+    for scope, names in nonlocals_by_scope.items():
+        for name in names:
+            target = owner(scope)
+            while target is not tree:
+                if (
+                    not isinstance(target, ast.ClassDef)
+                    and name in bound.get(target, {})
+                    and name not in nonlocals_by_scope.get(target, ())
+                ):
+                    break
+                target = owner(target)
+            count = bound.get(scope, {}).pop(name, 0)
+            if target is tree:
+                uncertain_names.add(name)
+            else:
+                bound[target][name] += count
+
+    def binding_scope(name, scope):
+        first = True
+        while scope is not None:
+            if name in globals_by_scope.get(scope, ()):
+                scope = tree
+            if (first or not isinstance(scope, ast.ClassDef)) and name in bound.get(
+                scope, {}
+            ):
+                return scope
+            first = False
+            scope = None if scope is tree else owner(scope)
+        return None
+
+    assignments = {}
+    for node in nodes:
+        scope = owner(node)
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if (
+                isinstance(target, ast.Name)
+                and target.id not in uncertain_names
+                and bound.get(scope, {}).get(target.id) == 1
+                and parents.get(id(node)) is scope
+            ):
+                assignments[scope, target.id] = node.value
+    ast_modules = set()
+    ast_flags = set()
+    if native_ast:
+        for node in nodes:
+            scope = owner(node)
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    name = alias.asname or alias.name
+                    if alias.name == "ast" and bound.get(scope, {}).get(name) == 1:
+                        ast_modules.add((scope, name))
+            elif (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "ast"
+                and not node.level
+            ):
+                for alias in node.names:
+                    name = alias.asname or alias.name
+                    if (
+                        alias.name == "PyCF_ONLY_AST"
+                        and bound.get(scope, {}).get(name) == 1
+                    ):
+                        ast_flags.add((scope, name))
+    unsafe_ast = (
+        _has_namespace_effects(nodes, allow_exec=True)
+        or sum(isinstance(node, ast.Name) and node.id == "exec" for node in nodes) > 1
+    )
+    for node in nodes:
+        if not isinstance(node, ast.Name):
+            continue
+        key = (binding_scope(node.id, owner(node)), node.id)
+        if key in ast_modules:
+            parent = parents.get(id(node))
+            if not (
+                isinstance(parent, ast.Attribute)
+                and parent.value is node
+                and isinstance(parent.ctx, ast.Load)
+                and not parent.attr.startswith("__")
+            ):
+                unsafe_ast = True
+
+    def integer_flags(node, scope):
+        if isinstance(node, ast.Constant) and isinstance(node.value, int):
+            return node.value
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            left = integer_flags(node.left, scope)
+            right = integer_flags(node.right, scope)
+            if left is not None and right is not None:
+                return left | right
+            return None
+        if unsafe_ast:
+            return None
+        if isinstance(node, ast.Name):
+            if (binding_scope(node.id, scope), node.id) in ast_flags:
+                return 1024
+            return None
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr == "PyCF_ONLY_AST"
+            and isinstance(node.value, ast.Name)
+            and (binding_scope(node.value.id, scope), node.value.id) in ast_modules
+        ):
+            return 1024
+        return None
+
+    cache = {}
+
+    def literal(node, call_line, scope, resolving=frozenset(), level=0):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if len(node.value) <= 256_000:
+                return node.value, node
+            return None
+        if isinstance(node, ast.Name):
+            target = binding_scope(node.id, scope)
+            value = assignments.get((target, node.id))
+            if (
+                value is not None
+                and value.lineno < call_line
+                and (target, node.id) in cache
+            ):
+                return cache[target, node.id]
+        budget["steps"] += 1
+        if budget["steps"] > 512 or level > 32:
+            return None
+        if isinstance(node, ast.Name) and node.id not in resolving:
+            target = binding_scope(node.id, scope)
+            value = assignments.get((target, node.id))
+            if value is not None and value.lineno < call_line:
+                key = (target, node.id)
+                if key not in cache:
+                    cache[key] = literal(
+                        value, value.lineno, target, resolving | {node.id}, level + 1
+                    )
+                return cache[key]
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left = literal(node.left, call_line, scope, resolving, level + 1)
+            right = literal(node.right, call_line, scope, resolving, level + 1)
+            if left is not None and right is not None:
+                if len(left[0]) + len(right[0]) <= 256_000:
+                    return left[0] + right[0], node
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "compile"
+            and binding_scope("compile", scope) is None
+        ):
+            fields = ("source", "filename", "mode", "flags", "dont_inherit", "optimize")
+            if len(node.args) > len(fields) or any(
+                isinstance(arg, ast.Starred) for arg in node.args
+            ):
+                return None
+            arguments = dict(zip(fields, node.args))
+            for keyword in node.keywords:
+                if keyword.arg is None or keyword.arg in arguments:
+                    return None
+                arguments[keyword.arg] = keyword.value
+            mode = arguments.get("mode")
+            if not (
+                "source" in arguments
+                and "filename" in arguments
+                and isinstance(mode, ast.Constant)
+                and mode.value in {"exec", "single"}
+            ):
+                return None
+            flags = integer_flags(arguments.get("flags"), scope)
+            if flags is not None and flags & 1024:
+                return None
+            return literal(arguments["source"], call_line, scope, resolving, level + 1)
+        return None
+
+    seen = set()
+    for node in nodes:
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "exec"
+            and node.args
+            and binding_scope("exec", owner(node)) is None
+        ):
+            continue
+        value = literal(node.args[0], node.lineno, owner(node))
+        if value is None:
+            continue
+        source, origin = value
+        if len(source) > MAX_DEPENDENCY_MANIFEST_BYTES:
+            continue
+        identity = source, origin.lineno, origin.end_lineno
+        if identity in seen:
+            continue
+        seen.add(identity)
+        embedded_tree = None
+        if (
+            budget["parses"] < 32
+            and budget["bytes"] + len(source) <= 1_000_000
+            and budget["nodes"] < 100_000
+        ):
+            budget["parses"] += 1
+            budget["bytes"] += len(source)
+            embedded_tree = _parse_import_source(source)
+        embedded_nodes = ()
+        statement_lines = None
+        if embedded_tree is not None:
+            embedded_nodes = tuple(ast.walk(embedded_tree))
+            if budget["nodes"] + len(embedded_nodes) > 100_000:
+                embedded_tree = None
+                embedded_nodes = ()
+            else:
+                budget["nodes"] += len(embedded_nodes)
+                statement_lines = _import_statement_lines(embedded_nodes)
+        embedded = _index_imported_submodules(source, statement_lines)
+        source_lines = _LINE_BREAK_RE.split(source)
+        for mod, portions in embedded.items():
+            submodules[mod] = submodules.get(mod, frozenset()) | portions
+        for line_no, text in enumerate(source_lines, 1):
+            if statement_lines is not None and line_no not in statement_lines:
+                continue
+            match = _IMPORT_LINE_RE.match(text)
+            if match:
+                physical = min(origin.lineno + line_no - 1, origin.end_lineno)
+                lines.setdefault(match.group(1), physical)
+        if embedded_tree is not None:
+            nested, nested_lines, nested_nodes = _literal_exec_imports(
+                embedded_tree, embedded_nodes, depth=depth + 1, budget=budget
+            )
+            for mod, portions in nested.items():
+                submodules[mod] = submodules.get(mod, frozenset()) | portions
+            for mod, line_no in nested_lines.items():
+                physical = min(origin.lineno + line_no - 1, origin.end_lineno)
+                lines.setdefault(mod, physical)
+            embedded_nodes += nested_nodes
+            for child in embedded_nodes:
+                if hasattr(child, "lineno"):
+                    child.lineno = min(
+                        origin.lineno + child.lineno - 1, origin.end_lineno
+                    )
+                if hasattr(child, "end_lineno") and child.end_lineno is not None:
+                    child.end_lineno = min(
+                        origin.lineno + child.end_lineno - 1, origin.end_lineno
+                    )
+            imported_nodes.extend(embedded_nodes)
+    return submodules, lines, tuple(imported_nodes)
 
 
 def _import_statement_lines(nodes):
@@ -3496,6 +3937,8 @@ def _type_checking_guards(nodes):
     Every binding of the name in the file must be that import; any other
     binding (assignment, parameter, definition, other import) disproves it.
     """
+    if _has_namespace_effects(nodes):
+        return set(), set()
     flag_imports = {}
     module_imports = {}
     other = set()
@@ -3508,7 +3951,7 @@ def _type_checking_guards(nodes):
                     and node.module in TYPE_CHECKING_MODULES
                     and alias.name == "TYPE_CHECKING"
                 ):
-                    flag_imports[bound] = True
+                    flag_imports[bound] = node.module
                 else:
                     other.add(bound)
         elif isinstance(node, ast.Import):
@@ -3516,13 +3959,13 @@ def _type_checking_guards(nodes):
                 if alias.asname:
                     bound = alias.asname
                     if alias.name in TYPE_CHECKING_MODULES:
-                        module_imports[bound] = True
+                        module_imports[bound] = alias.name
                     else:
                         other.add(bound)
                 else:
                     bound = alias.name.split(".")[0]
-                    if bound in TYPE_CHECKING_MODULES:
-                        module_imports[bound] = True
+                    if alias.name in TYPE_CHECKING_MODULES:
+                        module_imports[bound] = alias.name
                     else:
                         other.add(bound)
         elif isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
@@ -3533,7 +3976,35 @@ def _type_checking_guards(nodes):
             other.add(node.arg)
         elif isinstance(node, ast.MatchMapping) and node.rest:
             other.add(node.rest)
-    return set(flag_imports) - other, set(module_imports) - other
+    parents = {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
+    unsafe_modules = set()
+    for node in nodes:
+        if not isinstance(node, ast.Name) or node.id not in module_imports:
+            continue
+        parent = parents.get(id(node))
+        if not (
+            isinstance(parent, ast.Attribute)
+            and parent.value is node
+            and isinstance(parent.ctx, ast.Load)
+            and not parent.attr.startswith("__")
+        ):
+            unsafe_modules.add(module_imports[node.id])
+    return (
+        {
+            name
+            for name, provider in flag_imports.items()
+            if provider not in unsafe_modules
+        }
+        - other,
+        {
+            name
+            for name, provider in module_imports.items()
+            if provider not in unsafe_modules
+        }
+        - other,
+    )
 
 
 def _type_checking_only_roots(nodes):
@@ -3569,14 +4040,28 @@ def _type_checking_only_roots(nodes):
     return frozenset(guarded_roots - runtime_roots)
 
 
-def _type_checking_only_undeclared(template, mod, analysis):
+def _type_checking_only_undeclared(
+    template, mod, analysis, ctx, importer, *, direct_script=False
+):
     """A real package imported only for type checking needs no runtime declaration.
 
     A package that does not exist (SKY-D222) is still reported: installing the
     name to satisfy a type checker would run whoever registers it.
     """
-    return (
-        template["rule_id"] == RULE_ID_UNDECLARED and mod in analysis.type_checking_only
+    if (
+        template["rule_id"] != RULE_ID_UNDECLARED
+        or mod not in analysis.type_checking_only
+    ):
+        return False
+    return all(
+        _native_module_origin(provider, ctx, importer, direct_script=direct_script)
+        for provider in analysis.type_checking_sources
+    )
+
+
+def _native_module_origin(provider, ctx, importer, *, direct_script=False):
+    return provider not in ctx["local_modules"] and not _is_file_local_import(
+        provider, ctx, importer, direct_script=direct_script
     )
 
 
@@ -4231,11 +4716,17 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
             continue
 
         submodules = _index_imported_submodules(src)
-        if not submodules:
+        if not submodules and "exec" not in src:
             continue
         direct_script = _has_direct_script_evidence(src)
         local_fallbacks = _local_import_fallbacks(src, ctx, importer)
-        analysis = _SourceImportAnalysis(src, submodules=submodules)
+        analysis = _SourceImportAnalysis(
+            src,
+            submodules=submodules,
+            native_ast=_native_module_origin(
+                "ast", ctx, importer, direct_script=direct_script
+            ),
+        )
         for mod in sorted(analysis.modules):
             if _is_build_backend_import(file_path, mod):
                 continue
@@ -4253,7 +4744,7 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
                 from_imports=from_imports,
             )
             if template is None or _type_checking_only_undeclared(
-                template, mod, analysis
+                template, mod, analysis, ctx, importer, direct_script=direct_script
             ):
                 continue
             if _is_repository_module_import(template, mod, ctx, src):
@@ -4353,7 +4844,9 @@ def scan_diff_added_imports(
                 encoding="utf-8",
                 errors="ignore",
             )
-            analysis_cache[script_key] = _SourceImportAnalysis(source)
+            analysis_cache[script_key] = _SourceImportAnalysis(
+                source, native_ast=_native_module_origin("ast", ctx, importer)
+            )
             direct_script_cache[script_key] = False
             local_fallback_cache[script_key] = frozenset()
             if source is not None:
@@ -4381,7 +4874,14 @@ def scan_diff_added_imports(
             required_paths=required_paths,
             from_imports=from_imports,
         )
-        if template is None or _type_checking_only_undeclared(template, mod, analysis):
+        if template is None or _type_checking_only_undeclared(
+            template,
+            mod,
+            analysis,
+            ctx,
+            _contained_importer_path(root, file_label, diff_path=True),
+            direct_script=direct_script_cache[script_key],
+        ):
             continue
 
         finding = dict(template)

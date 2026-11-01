@@ -3806,11 +3806,12 @@ _CREDENTIAL_REFERENCE_MARKERS = (
     "projects/",
 )
 
-_PLACEHOLDER_ARTICLES = frozenset({"a", "an", "the", "my", "your", "some"})
+_URL_PASSWORD_PLACEHOLDER_PHRASES = frozenset({"a secret"})
 
-_MULTI_HOST_LATER_USERINFO_RE = re.compile(
-    r"\d{1,5},(?:[^,]*,)*(?P<user>[^,:]*):(?P<pw>[^,]*)\Z"
+_URL_PLACEHOLDER_HOST_RE = re.compile(
+    r"(?:foo|bar|baz|qux)(?:\.(?:com|net|org|test|invalid))?\Z", re.IGNORECASE
 )
+_URL_PLACEHOLDER_PORT_RE = re.compile(r"[0-9]{1,5}\Z")
 
 _PLACEHOLDER_HOSTS = frozenset(
     {"host", "hostname", "server", "your-host", "yourhost", "your_host", "domain"}
@@ -4032,21 +4033,46 @@ def _mask_credential(value: str) -> str:
 
 
 def _is_placeholder_url_password(password: str, user: str) -> bool:
-    """Placeholder check that also reads the percent-decoded password.
-
-    ``a%20secret`` is "a secret": articles plus placeholder words only.
-    """
-    if _is_placeholder_credential(password, user=user):
-        return True
+    """Decode literal passwords once, recognizing only exact sample values."""
     decoded = unquote(password)
-    if decoded != password and _is_placeholder_credential(decoded, user=unquote(user)):
-        return True
-    words = decoded.lower().split()
-    content = [word for word in words if word not in _PLACEHOLDER_ARTICLES]
-    return (
-        len(words) > 1
-        and bool(content)
-        and all(word in _CREDENTIAL_PLACEHOLDER_VALUES for word in content)
+    if decoded != password:
+        # Encoded characters are literal credential bytes, not template or
+        # secret-manager references. Substring hints and same-user heuristics
+        # cannot establish that the decoded password is a sample value.
+        lowered = decoded.lower()
+        return (
+            lowered in _CREDENTIAL_PLACEHOLDER_VALUES
+            or lowered in _URL_PASSWORD_PLACEHOLDER_PHRASES
+        )
+    return _is_placeholder_credential(password, user=user)
+
+
+def _is_placeholder_multihost_url(user: str, password: str, host: str) -> bool:
+    """Recognize a complete sample, without assigning host-list semantics.
+
+    Ordinary URI passwords may contain commas and colons. Only a value made
+    entirely from sample hosts, ports and userinfo is a placeholder here.
+    """
+    if not (
+        _URL_PLACEHOLDER_HOST_RE.fullmatch(user)
+        and _URL_PLACEHOLDER_HOST_RE.fullmatch(host)
+    ):
+        return False
+    segments = password.split(",")
+    if len(segments) < 2 or not _URL_PLACEHOLDER_PORT_RE.fullmatch(segments[0]):
+        return False
+    for segment in segments[1:-1]:
+        middle_host, separator, port = segment.partition(":")
+        if not (
+            _URL_PLACEHOLDER_HOST_RE.fullmatch(middle_host)
+            and (not separator or _URL_PLACEHOLDER_PORT_RE.fullmatch(port))
+        ):
+            return False
+    later_user, separator, later_password = segments[-1].partition(":")
+    return bool(
+        separator
+        and later_user.lower() in _CREDENTIAL_PLACEHOLDER_VALUES
+        and later_password.lower() in _CREDENTIAL_PLACEHOLDER_VALUES
     )
 
 
@@ -4055,13 +4081,10 @@ def _url_credential_candidates(line_content: str):
         user = match.group("user")
         password = match.group("pw")
         start = match.start("pw")
-        later_host = _MULTI_HOST_LATER_USERINFO_RE.match(password)
-        if later_host is not None:
-            user = later_host.group("user")
-            start += later_host.start("pw")
-            password = later_host.group("pw")
         host = match.group("host").lower()
         if _is_placeholder_url_password(password, user):
+            continue
+        if _is_placeholder_multihost_url(user, password, host):
             continue
         if host in _PLACEHOLDER_HOSTS or "example" in host:
             continue

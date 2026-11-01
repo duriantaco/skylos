@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ast
 import bisect
 import re
 import unicodedata
+from collections import Counter
 from pathlib import Path
 
 from skylos.security.canonicalize import (
@@ -67,10 +69,31 @@ _CHECK_VERIFICATION_RE = {
 }
 _COMPOUND_CHECK_PREFIX_CHARS = 192
 _NEW_INSTRUCTION_RE = re.compile(r"new\s+instructions?:\s", re.I)
-_PLACEHOLDER_TO_END_RE = re.compile(
-    r"\s*(?:\{[A-Za-z_][\w.]*(?:![rsa])?(?::[^{}\n]*)?\}|\{\d*\}|%[rs])"
-    r"[\s.,;:!?'\")\]]*\Z"
+_MESSAGE_FORMAT_SPEC = (
+    r"(?:(?:[^\s{}])?[<>=^])?[+ -]?z?#?0?\d*[,_]?(?:\.\d+)?[bcdeEfFgGnosxX%]?"
 )
+_PLACEHOLDER_DESCRIPTION_RE = re.compile(
+    r"(?i:(?:continuing|resuming)(?:\s+chat)?\s+with\s+(?:the\s+)?new\s+instructions?:\s+)"
+    r"(?:\{(?:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*|\d*)(?:![rsa])?"
+    rf"(?::{_MESSAGE_FORMAT_SPEC})?\}}|%[rs])[\s.,;:!?'\")\]]*\Z",
+)
+_STRING_START_RE = re.compile(r'''(?i:[rubf]*)("""|\'\'\'|"|')''')
+_NAMESPACE_WRITERS = {
+    "exec",
+    "eval",
+    "globals",
+    "locals",
+    "vars",
+    "getattr",
+    "setattr",
+    "delattr",
+    "__getattr__",
+    "__getattribute__",
+    "__setattr__",
+    "__delattr__",
+    "__dict__",
+    "__builtins__",
+}
 
 _PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"ignore\s+(all\s+)?previous\s+instructions?", re.I), "HIGH"),
@@ -157,16 +180,16 @@ _PROMPT_KEYS_RE = re.compile(
 )
 
 
-def _pattern_matches(pattern: re.Pattern, text: str):
+def _pattern_matches(
+    pattern: re.Pattern, text: str, *, placeholder_description: bool = False
+):
     """Keep individual directives, excluding narrow non-directive shapes.
 
-    A descriptive noun before a check verb, and ``new instruction:`` followed
-    only by a format placeholder, carry no literal instruction text.
+    A placeholder exception requires proof from the complete Python message
+    expression; extracted lines, fragments and decoded payloads lack it.
     """
     for match in pattern.finditer(text):
-        if pattern is _NEW_INSTRUCTION_RE and _PLACEHOLDER_TO_END_RE.match(
-            text, match.end()
-        ):
+        if pattern is _NEW_INSTRUCTION_RE and placeholder_description:
             continue
         if pattern is _SKIP_DIRECTIVE_RE:
             predicate = _CHECK_VERIFICATION_RE.get(match.group(1).lower())
@@ -183,8 +206,213 @@ def _pattern_matches(pattern: re.Pattern, text: str):
         yield match
 
 
+def _placeholder_root(node: ast.AST) -> str | None:
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    if isinstance(node, ast.Name):
+        return node.id
+    return None
+
+
+def _placeholder_input(node: ast.AST, bound_names: set[str]) -> bool:
+    root = _placeholder_root(node)
+    if root is not None:
+        return root not in bound_names
+    return isinstance(node, ast.Constant) and not isinstance(node.value, (str, bytes))
+
+
+def _python_placeholder_descriptions(
+    source: str, segments: list[tuple[str, int, str]]
+) -> set[tuple[int, str]]:
+    """Prove a complete descriptive message, without following call names.
+
+    This deliberately does not evaluate strings or follow assigned values.
+    Rebindings, composed messages and nontrivial substitutions keep the signal.
+    """
+    if not _NEW_INSTRUCTION_RE.search(source):
+        return set()
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError):
+        return set()
+
+    # AST columns are UTF-8 byte offsets. Index physical lines once instead of
+    # splitting the entire file for every string argument.
+    source_bytes = source.encode("utf-8")
+    line_starts = [
+        0,
+        *(match.end() for match in re.finditer(rb"\r\n|\r|\n", source_bytes)),
+    ]
+    bound_names = set()
+    local_callables = set()
+    name_loads = []
+    nodes = tuple(ast.walk(tree))
+    parents = {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
+    instruction_literals = []
+    for node in nodes:
+        parent = parents.get(id(node))
+        if (
+            isinstance(node, ast.JoinedStr)
+            or isinstance(node, ast.Constant)
+            and isinstance(node.value, (str, bytes))
+        ) and not (
+            isinstance(parent, ast.JoinedStr)
+            or isinstance(parent, ast.FormattedValue)
+            and parent.format_spec is node
+        ):
+            if node.end_lineno is not None and node.end_col_offset is not None:
+                start = line_starts[node.lineno - 1] + node.col_offset
+                end = line_starts[node.end_lineno - 1] + node.end_col_offset
+                if _NEW_INSTRUCTION_RE.search(
+                    normalize(source_bytes[start:end].decode("utf-8"))
+                ):
+                    instruction_literals.append(node)
+        if (
+            isinstance(node, ast.Name)
+            and node.id in _NAMESPACE_WRITERS
+            or isinstance(node, ast.Attribute)
+            and node.attr in _NAMESPACE_WRITERS
+            or isinstance(node, ast.alias)
+            and node.name in _NAMESPACE_WRITERS | {"*"}
+        ):
+            return set()
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            name_loads.append(node)
+        if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(
+            node.ctx, ast.Store
+        ):
+            target = node
+            if isinstance(target, ast.Subscript):
+                target = target.value
+            root = _placeholder_root(target)
+            if root is not None:
+                bound_names.add(root)
+        elif isinstance(node, ast.alias):
+            bound_names.add(node.asname or node.name.split(".")[0])
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound_names.add(node.name)
+            local_callables.add(node.name)
+        elif isinstance(node, ast.arguments):
+            positional = [*node.posonlyargs, *node.args]
+            if node.defaults:
+                bound_names.update(arg.arg for arg in positional[-len(node.defaults) :])
+            bound_names.update(
+                arg.arg
+                for arg, default in zip(node.kwonlyargs, node.kw_defaults)
+                if default is not None
+            )
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+            if node.name is not None:
+                bound_names.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest is not None:
+            bound_names.add(node.rest)
+
+    candidates = []
+    message_inputs = set()
+    for call in nodes:
+        if not isinstance(call, ast.Call):
+            continue
+        if (
+            isinstance(call.func, ast.Name)
+            and call.func.id in bound_names
+            or isinstance(call.func, ast.Attribute)
+            and call.func.attr in local_callables
+            or not isinstance(call.func, (ast.Name, ast.Attribute))
+        ):
+            # A known local helper can mutate another candidate's inputs even
+            # when this call also receives a descriptive message.
+            continue
+        arguments = [*call.args, *(kw.value for kw in call.keywords)]
+        for message in arguments:
+            if not isinstance(message, (ast.Constant, ast.JoinedStr)):
+                continue
+            if isinstance(message, ast.Constant) and not isinstance(message.value, str):
+                continue
+            if message.end_lineno is None or message.end_col_offset is None:
+                continue
+            start = line_starts[message.lineno - 1] + message.col_offset
+            end = line_starts[message.end_lineno - 1] + message.end_col_offset
+            literal = source_bytes[start:end].decode("utf-8")
+            opening = _STRING_START_RE.match(literal)
+            if opening is None:
+                continue
+            delimiter = opening.group(1)
+            text = normalize(literal[opening.end() : -len(delimiter)])
+            if not _PLACEHOLDER_DESCRIPTION_RE.fullmatch(text):
+                continue
+            if not all(
+                arg is message or _placeholder_input(arg, bound_names)
+                for arg in arguments
+            ):
+                continue
+            if isinstance(message, ast.JoinedStr) and any(
+                isinstance(value, ast.FormattedValue)
+                and not _placeholder_input(value.value, bound_names)
+                for value in message.values
+            ):
+                continue
+            inputs = [arg for arg in arguments if arg is not message]
+            if isinstance(message, ast.JoinedStr):
+                inputs.extend(
+                    value.value
+                    for value in message.values
+                    if isinstance(value, ast.FormattedValue)
+                )
+            roots = set()
+            for value in inputs:
+                root = _placeholder_root(value)
+                if root is not None:
+                    roots.add(root)
+                message_inputs.update(
+                    id(node)
+                    for node in ast.walk(value)
+                    if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+                )
+            candidates.append(((message.lineno, text), roots, message))
+    escaped_names = {node.id for node in name_loads if id(node) not in message_inputs}
+    proven = [
+        (key, message)
+        for key, roots, message in candidates
+        if not roots.intersection(escaped_names)
+    ]
+    proven_ids = {id(message) for _key, message in proven}
+    # Extraction records a line but no column. An unproved literal on that
+    # line must never borrow another expression's proof, even if extraction
+    # misses the proved expression or merges adjacent source literals.
+    unsafe_lines = sorted(
+        {
+            line
+            for literal in instruction_literals
+            if id(literal) not in proven_ids
+            for line in range(literal.lineno, literal.end_lineno + 1)
+        }
+    )
+    descriptions = Counter(
+        key
+        for key, message in proven
+        if (
+            (index := bisect.bisect_left(unsafe_lines, message.lineno))
+            == len(unsafe_lines)
+            or unsafe_lines[index] > message.end_lineno
+        )
+    )
+    occurrences = Counter(
+        (line, normalize(text))
+        for text, line, segment_type in segments
+        if segment_type == "string"
+    )
+    return {key for key, count in descriptions.items() if count == occurrences[key]}
+
+
 def _instruction_pattern_evidence(
-    text: str, segment_type: str, line_no: int, primary: re.Pattern
+    text: str,
+    segment_type: str,
+    line_no: int,
+    primary: re.Pattern,
+    *,
+    placeholder_description: bool = False,
 ) -> dict:
     """Describe the matched instructions without treating their context as safe.
 
@@ -195,7 +423,9 @@ def _instruction_pattern_evidence(
     complete = True
     patterns = sorted(_PATTERNS, key=lambda item: item[0] is not primary)
     for pattern, severity in patterns:
-        for match in _pattern_matches(pattern, text):
+        for match in _pattern_matches(
+            pattern, text, placeholder_description=placeholder_description
+        ):
             if len(signals) >= MAX_PATTERN_EVIDENCE:
                 complete = False
                 break
@@ -208,7 +438,8 @@ def _instruction_pattern_evidence(
             signals.append(
                 {
                     "matched_text": match.group()[:MAX_PATTERN_TEXT_CHARS],
-                    "matched_text_truncated": len(match.group()) > MAX_PATTERN_TEXT_CHARS,
+                    "matched_text_truncated": len(match.group())
+                    > MAX_PATTERN_TEXT_CHARS,
                     "context": context,
                     "base_severity": severity,
                     "line_offset_in_extracted_text": text.count("\n", 0, match.start()),
@@ -266,9 +497,7 @@ def scan_file(
 
     ext = filepath.suffix.lower()
     basename = filepath.name
-    if not is_agent_instruction and any(
-        basename.startswith(p) for p in _SKIP_PREFIXES
-    ):
+    if not is_agent_instruction and any(basename.startswith(p) for p in _SKIP_PREFIXES):
         return []
 
     try:
@@ -338,9 +567,7 @@ def scan_file(
             return findings
 
     if not high_only:
-        _add_source_homoglyph_findings(
-            findings, filepath, source, is_agent_instruction
-        )
+        _add_source_homoglyph_findings(findings, filepath, source, is_agent_instruction)
     if len(findings) >= MAX_FINDINGS_PER_FILE:
         return findings
 
@@ -353,6 +580,9 @@ def scan_file(
         filepath,
         keep_comments=is_agent_instruction or is_reviewer_config,
     )
+    placeholder_descriptions = set()
+    if segment_ext == ".py":
+        placeholder_descriptions = _python_placeholder_descriptions(source, segments)
 
     is_high_risk_file = basename.lower() in _HIGH_RISK_FILENAMES
     seen_findings: set[tuple[int, str]] = set()
@@ -361,19 +591,41 @@ def scan_file(
 
     for text, line_no, segment_type in segments:
         normalized = normalize(text)
+        placeholder_description = (
+            segment_type == "string"
+            and (line_no, normalized) in placeholder_descriptions
+        )
 
         # A broad medium signal must not mask a higher-risk instruction later
         # in the same text merely because its regex appears first in the list.
         matched_patterns = [
             (pattern, severity)
             for pattern, severity in _PATTERNS
-            if next(_pattern_matches(pattern, normalized), None) is not None
+            if next(
+                _pattern_matches(
+                    pattern,
+                    normalized,
+                    placeholder_description=placeholder_description,
+                ),
+                None,
+            )
+            is not None
         ]
         matched_patterns.sort(key=lambda item: severity_order[item[1]], reverse=True)
         for pattern, base_severity in matched_patterns:
             if high_only and base_severity != "HIGH":
                 continue
-            if next(_pattern_matches(pattern, normalized), None) is not None:
+            if (
+                next(
+                    _pattern_matches(
+                        pattern,
+                        normalized,
+                        placeholder_description=placeholder_description,
+                    ),
+                    None,
+                )
+                is not None
+            ):
                 severity = _adjust_severity(
                     base_severity, segment_type, is_high_risk_file
                 )
@@ -402,7 +654,11 @@ def scan_file(
                 seen_findings.add(dedup_key)
 
                 pattern_evidence = _instruction_pattern_evidence(
-                    normalized, segment_type, line_no, pattern
+                    normalized,
+                    segment_type,
+                    line_no,
+                    pattern,
+                    placeholder_description=placeholder_description,
                 )
                 matched_context = pattern_evidence["signals"][0]["context"]
                 snippet = matched_context[:100]
@@ -506,7 +762,11 @@ def _only_orthographic_joiners(lines: list[str], line_no: int, joiner: str) -> b
             after = line[index + 1]
         if _joins_script_letters(before) and _joins_script_letters(after):
             continue
-        emoji_pair = bool(before and after) and _is_pictographic(before) and _is_pictographic(after)
+        emoji_pair = (
+            bool(before and after)
+            and _is_pictographic(before)
+            and _is_pictographic(after)
+        )
         if joiner == "\u200d" and emoji_pair:
             continue
         return False
@@ -533,7 +793,9 @@ def _only_emoji_joiners(lines: list[str], line_no: int) -> bool:
             continue
         before = line[index - 1] if index > 0 else ""
         after = line[index + 1] if index + 1 < len(line) else ""
-        if not (before and after and _is_pictographic(before) and _is_pictographic(after)):
+        if not (
+            before and after and _is_pictographic(before) and _is_pictographic(after)
+        ):
             return False
     return True
 
@@ -929,7 +1191,9 @@ def _make_finding(
     }
 
 
-def is_scannable_path(filepath: str | Path, scan_path: str | Path | None = None) -> bool:
+def is_scannable_path(
+    filepath: str | Path, scan_path: str | Path | None = None
+) -> bool:
     if scan_path is not None:
         path = Path(scan_path)
     else:
