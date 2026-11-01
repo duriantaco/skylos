@@ -48,11 +48,6 @@ FIRST_PATH_PARAMETERS = {
     "shutil.move": "src",
     "shutil.rmtree": "path",
 }
-MODULE_OPEN_PATH_PARAMETERS = {
-    "builtins.open": "file",
-    "io.open": "file",
-    "codecs.open": "filename",
-}
 
 
 # Framework helpers that serve a file from a caller-supplied filesystem path.
@@ -1630,30 +1625,23 @@ class _PathFlowChecker(TaintVisitor):
 
     def visit_Call(self, node: ast.Call):
         qn = _qualified_name(node)
-        canonical = self._canonical_call_name(node)
-        open_keyword = MODULE_OPEN_PATH_PARAMETERS.get(canonical)
         method_sink = isinstance(node.func, ast.Attribute) and node.func.attr in {
             *self.PATHLIB_WRITE_METHODS, *self.PATHLIB_READ_METHODS, "open"
         }
-        if open_keyword is not None:
-            method_sink = False
         method_operand = None
         bound_path_method = True
         if method_sink:
             method_operand, bound_path_method = self._method_path_operand(node)
         archive_method = _archive_call_name(node)
         first_path = None
-        if open_keyword is not None:
-            first_path = _bound_argument(node, 0, open_keyword)
-        elif qn in FIRST_PATH_PARAMETERS:
+        if qn in FIRST_PATH_PARAMETERS:
             first_path = _bound_argument(node, 0, FIRST_PATH_PARAMETERS[qn])
 
         if archive_method and self._archive_extraction_is_reportable(node):
             self._flag_archive_extract_if_unsafe(node)
 
         if (
-            open_keyword is None
-            and isinstance(node.func, ast.Attribute)
+            isinstance(node.func, ast.Attribute)
             and node.func.attr in self.PATHLIB_SINK_METHODS
             and self._is_path_like_expr(node.func.value)
             and (not method_sink or method_operand is not None)
@@ -1663,6 +1651,7 @@ class _PathFlowChecker(TaintVisitor):
         if first_path is not None:
             self._flag_if_tainted_path(node, first_path)
 
+        canonical = self._canonical_call_name(node)
         if canonical == "shutil.unpack_archive" and not _unpack_filter_is_safe(node):
             self._flag_archive_extract_if_unsafe(node)
         if canonical in FILE_RESPONSE_SINKS:
@@ -1683,7 +1672,7 @@ class _PathFlowChecker(TaintVisitor):
                     node, operand, bound_method=bound_path_method
                 )
 
-        if (qn == "open" or open_keyword is not None) and first_path is not None:
+        if qn == "open" and first_path is not None:
             self._flag_open_operations(node, first_path)
 
         if qn == "os.open" and first_path is not None:
