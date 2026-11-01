@@ -682,7 +682,7 @@ CROSS_MODULE = {
         "def third(v):\n    return fourth(v)\n"
         "def second(v):\n    return third(v)\n"
         "def first(v):\n    return second(v)\n",
-        False,
+        True,
     ),
     "mutually recursive helpers": (
         "from myproject.utils import ping\n",
@@ -825,5 +825,81 @@ def test_app_factory_receivers_in_a_module_that_imports_fastapi(
     expected = []
     if reported:
         expected = [_line(source, "        return ")]
+    assert _listed_lines(result, symbol="page") == expected
+    assert _reported_lines(result, symbol="page") == expected
+
+
+DEEP_CHAINS = {
+    "same-module chain past the budget": (
+        (),
+        "def d(x):\n    return x\n"
+        "def c(x):\n    return d(x)\n"
+        "def b(x):\n    return c(x)\n"
+        "def a(x):\n    return b(x)\n",
+        True,
+    ),
+    "chain past the budget across modules": (
+        (
+            (
+                "myproject/one.py",
+                "from myproject.two import b\ndef a(x):\n    return b(x)\n",
+            ),
+            (
+                "myproject/two.py",
+                "from myproject.three import c\ndef b(x):\n    return c(x.strip())\n",
+            ),
+            ("myproject/three.py", "from .four import d\ndef c(x):\n    return d(x)\n"),
+            ("myproject/four.py", "def d(x):\n    return x\n"),
+        ),
+        "from myproject.one import a\n",
+        True,
+    ),
+    "html.escape within the budget": (
+        (),
+        "import html\n"
+        "def d(x):\n    return x\n"
+        "def c(x):\n    return d(x)\n"
+        "def b(x):\n    return c(html.escape(x))\n"
+        "def a(x):\n    return b(x)\n",
+        False,
+    ),
+    "markupsafe.escape within the budget across modules": (
+        (
+            (
+                "myproject/one.py",
+                "import markupsafe\nfrom myproject.two import b\n"
+                "def a(x):\n    return b(markupsafe.escape(x))\n",
+            ),
+            (
+                "myproject/two.py",
+                "from myproject.three import c\ndef b(x):\n    return c(x)\n",
+            ),
+            ("myproject/three.py", "from .four import d\ndef c(x):\n    return d(x)\n"),
+            ("myproject/four.py", "def d(x):\n    return x\n"),
+        ),
+        "from myproject.one import a\n",
+        False,
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "modules, helpers, reported", list(DEEP_CHAINS.values()), ids=list(DEEP_CHAINS)
+)
+def test_helper_chains_past_the_depth_budget_stay_listed_unless_escaped(
+    tmp_path, monkeypatch, modules, helpers, reported
+):
+    source = (
+        "from flask import Flask, request\n"
+        + helpers
+        + "app = Flask(__name__)\n"
+        + "@app.route('/')\n"
+        + "def page():\n"
+        + "    return 'Hi ' + a(request.args['q'])\n"
+    )
+    result = _analyze(tmp_path, monkeypatch, source, modules=[*PROJECT, *modules])
+    expected = []
+    if reported:
+        expected = [_line(source, "    return 'Hi '")]
     assert _listed_lines(result, symbol="page") == expected
     assert _reported_lines(result, symbol="page") == expected

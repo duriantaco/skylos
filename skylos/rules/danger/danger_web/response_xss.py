@@ -1090,12 +1090,13 @@ class _Module:
 class _Run:
     """Abstract interpretation of one function body."""
 
-    def __init__(self, module: _Module, func, framework, sink, depth=0):
+    def __init__(self, module: _Module, func, framework, sink, depth=0, chain=()):
         self.module = module
         self.func = func
         self.framework = framework
         self.sink = sink
         self.depth = depth
+        self.chain = chain
         self.returns: list[_Value] = []
         self.reports: list[tuple[ast.Return, _Value]] = []
         self.loops: list[_LoopFrame] = []
@@ -1702,8 +1703,9 @@ class _Run:
         """A helper whose result keeps request data listed: no loop, branch
         or comprehension that could rebuild the value character by character
         (an escaper the analysis cannot read). Calls inside it are judged the
-        same way, up to ``_MAX_HELPER_DEPTH`` levels; a deeper, recursive or
-        unresolved call leaves its result unresolved."""
+        same way, up to ``_MAX_HELPER_DEPTH`` levels; a recursive or unresolved
+        call leaves its result unresolved, and a helper past the budget passes
+        its arguments' request data through."""
         return not any(isinstance(node, _BRANCHES) for node in _own_nodes(helper))
 
     def _known_call(self, node, qualified, env):
@@ -1953,10 +1955,16 @@ class _Run:
             self._touch(root, _opaque_labels(labels), env)
 
     def _helper_call(self, helper, node, args, keyword_pairs, module=None):
-        """The value a module-level helper returns for these arguments, or
-        None when the call cannot be bound to its parameters."""
-        if self.depth >= _MAX_HELPER_DEPTH:
+        """The value a project helper returns for these arguments; None when
+        the call cannot be bound to its parameters or re-enters a helper
+        already on the chain (recursion stays unresolved). Past the depth
+        budget the helper is not read, and its arguments' request data is
+        kept as it is, listed: only an escape proved within the budget clears
+        it."""
+        if id(helper) in self.chain:
             return None
+        if self.depth >= _MAX_HELPER_DEPTH:
+            return _past_budget(args, keyword_pairs)
         if any(isinstance(arg, ast.Starred) for arg in node.args):
             return None
         if any(key is None for key, _ in keyword_pairs):
@@ -1996,7 +2004,7 @@ class _Run:
             bound[param.arg] = _CLEAN_OTHER
         key = (
             id(helper),
-            self.depth,
+            self.chain,
             tuple(sorted(bound.items(), key=lambda item: item[0])),
         )
         if key in self.module.summaries:
@@ -2006,7 +2014,12 @@ class _Run:
         self.module.in_progress.add(key)
         try:
             run = _Run(
-                module or self.module, helper, self.framework, False, self.depth + 1
+                module or self.module,
+                helper,
+                self.framework,
+                False,
+                self.depth + 1,
+                (*self.chain, id(helper)),
             )
             result = run.run(_Env(bound))
         finally:
@@ -2139,6 +2152,13 @@ class _Run:
         if value.kind == TEXT and self.framework == FLASK:
             return value, HTML
         return None, None
+
+
+def _past_budget(args, keyword_pairs) -> _Value:
+    values = [*args, *(value for _, value in keyword_pairs)]
+    if values and all(value.kind == TEXT for value in values):
+        return _text(*values)
+    return _other(*values)
 
 
 def _replaces_markup(node: ast.Call) -> bool:
