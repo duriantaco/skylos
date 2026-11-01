@@ -746,6 +746,23 @@ _FRAME_ACCESS = frozenset(
     }
 )
 _BUILTIN_NAMESPACES = frozenset({"builtins", "__builtins__"})
+_CODE_ESCAPES = frozenset(
+    {
+        "__import__",
+        "breakpoint",
+        "compile",
+        "delattr",
+        "eval",
+        "exec",
+        "getattr",
+        "globals",
+        "input",
+        "locals",
+        "open",
+        "setattr",
+        "vars",
+    }
+)
 
 
 def _exact_labels(value) -> frozenset:
@@ -1376,6 +1393,44 @@ def _constant_flow_results(context: _ConstantContext, scope: ast.AST, required=N
     return results
 
 
+def _constant_code_is_closed(node: ast.Call, codes, context) -> bool:
+    """Fixed code that cannot reach data from outside it: it reads no name
+    bound in this module, no code-running or input builtin and no dunder
+    attribute, and no name at all when a namespace is passed, since the
+    namespace can supply it."""
+    namespaces = len(node.args) > 1 or any(
+        keyword.arg in {"globals", "locals"} for keyword in node.keywords
+    )
+    mode = "exec"
+    if _call_attribute_name(node) == "eval":
+        mode = "eval"
+    for code in codes:
+        if isinstance(code, bytes):
+            try:
+                code = code.decode("utf-8")
+            except UnicodeDecodeError:
+                return False
+        if not isinstance(code, str):
+            return False
+        try:
+            tree = ast.parse(code, mode=mode)
+        except (SyntaxError, ValueError):
+            continue
+        except (MemoryError, RecursionError):
+            return False
+        for part in ast.walk(tree):
+            if isinstance(part, ast.Name) and isinstance(part.ctx, ast.Load):
+                if (
+                    namespaces
+                    or part.id in _CODE_ESCAPES
+                    or context.bindings.get(part.id, 0)
+                ):
+                    return False
+            elif isinstance(part, ast.Attribute) and part.attr.startswith("__"):
+                return False
+    return True
+
+
 def _shell_text_is_inert(text: str) -> bool:
     if _has_shell_expansion(text):
         return False
@@ -1390,8 +1445,9 @@ def _constant_argument_proved(
     """Every assignment that reaches the code, data or command argument of
     ``node`` inside its function is built from literals: no parameter, global,
     closure variable, attribute, unknown call or escaped container. At module
-    level only an argument that reads no name qualifies. A command must also
-    be fixed text with no shell expansion or command-guard risk."""
+    level only an argument that reads no name qualifies. Code must be fixed
+    text that reads nothing from outside it, and a command fixed text with no
+    shell expansion or command-guard risk."""
     keywords = _CONSTANT_ARGUMENT_KEYWORDS.get(kind)
     if keywords is None:
         return False
@@ -1412,6 +1468,9 @@ def _constant_argument_proved(
         labels = results.get(id(argument))
     if not labels or _UNKNOWN in labels:
         return False
+    if kind == "code":
+        codes = _exact_values(labels)
+        return codes is not None and _constant_code_is_closed(node, codes, context)
     if kind != "command":
         return True
     texts = _exact_values(labels)

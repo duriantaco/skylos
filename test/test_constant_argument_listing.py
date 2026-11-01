@@ -239,6 +239,24 @@ LISTED = {
         "    hook(inspect.currentframe())\n"
         "    return eval(code)\n",
     ),
+    "code_reads_tainted_local": (
+        "SKY-D201",
+        "from flask import request\n"
+        "def run():\n"
+        "    x = request.args['q']\n"
+        "    return eval('eval(x)')\n",
+    ),
+    "code_reads_namespace": (
+        "SKY-D202",
+        "import os\n"
+        "from flask import request\n"
+        "def handler():\n"
+        "    exec('go(arg)', {'go': os.system, 'arg': request.args['q']})\n",
+    ),
+    "code_runs_input": (
+        "SKY-D202",
+        "def run():\n    exec('exec(input())')\n",
+    ),
     "attribute_value": (
         "SKY-D201",
         "class Job:\n"
