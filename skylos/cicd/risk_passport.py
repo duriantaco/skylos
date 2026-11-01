@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from typing import Any
+import re
 
 from skylos.cicd.evidence import (
     build_evidence_cards,
     evidence_counts,
+    evidence_status_counts,
     redact_sensitive_text,
 )
 
@@ -153,6 +155,7 @@ def build_risk_passport(
         "ai_agents": sorted(str(agent) for agent in agents if str(agent).strip()),
         "provenance_confidence": provenance_data.get("confidence") or "unavailable",
         "changed_line_evidence": counts,
+        "changed_line_evidence_status": evidence_status_counts(cards),
         "high_risk_ai_files": sorted(high_risk_ai_files),
         "high_risk_agent_associated_files": sorted(high_risk_associated_files),
         "security_controls_weakened": sorted(weakened_controls),
@@ -168,12 +171,14 @@ def format_risk_passport_markdown(passport: dict[str, Any] | None) -> list[str]:
     if not passport:
         return []
 
-    counts = passport.get("changed_line_evidence") or {}
-    evidence_text = (
-        f"Proven {int(counts.get('proven') or 0)} / "
-        f"Likely {int(counts.get('likely') or 0)} / "
-        f"Speculative {int(counts.get('speculative') or 0)}"
-    )
+    counts = passport.get("changed_line_evidence_status")
+    evidence_text = "Not recorded (legacy policy labels are not runtime proof)"
+    if isinstance(counts, dict):
+        evidence_text = (
+            f"Source path found {int(counts.get('source_path') or 0)} / "
+            f"Static match {int(counts.get('static_match') or 0)} / "
+            f"Needs context {int(counts.get('needs_context') or 0)}"
+        )
 
     lines = [
         "",
@@ -201,11 +206,24 @@ def format_risk_passport_markdown(passport: dict[str, Any] | None) -> list[str]:
     if reasons or warnings:
         lines.extend(["", "**Reasons:**"])
         for reason in reasons[:5]:
-            lines.append(f"- BLOCK: {redact_sensitive_text(reason)}")
+            lines.append(f"- BLOCK: {_display_reason(reason)}")
         for warning in warnings[:5]:
-            lines.append(f"- WARN: {redact_sensitive_text(warning)}")
+            lines.append(f"- WARN: {_display_reason(warning)}")
 
     return lines
+
+
+def _display_reason(reason: Any) -> str:
+    text = redact_sensitive_text(reason)
+    # Keep the stored policy reason compatible; do not present its legacy
+    # classification as evidence that a vulnerability has been reproduced.
+    text = re.sub(
+        r": (?:proven|likely) ((?:CRITICAL|HIGH) security finding)$", r": \1", text
+    )
+    return text.replace(
+        "High-severity speculative finding in ",
+        "High-severity finding needs context in ",
+    )
 
 
 def _defense_risk(

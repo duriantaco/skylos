@@ -58,6 +58,10 @@ class FixBatch:
     source: str = ""
     fix_description: str = ""
     regression_tests: list[RegressionTestCandidate] = field(default_factory=list)
+    fix_status: str = "proposed"
+    checks: list[dict] = field(default_factory=list)
+    static_verification: dict = field(default_factory=dict)
+    context_snapshot: str = ""
 
     @property
     def top_severity(self) -> str:
@@ -104,11 +108,19 @@ class RemediationPlan:
                 "status": batch.status,
                 "top_severity": batch.top_severity,
                 "description": batch.fix_description,
+                "fix_status": batch.fix_status,
+                "checks": batch.checks,
+                "static_verification": batch.static_verification,
+                "context_snapshot": batch.context_snapshot,
             }
             if batch.regression_tests:
                 regression_tests = []
                 for regression_test in batch.regression_tests:
-                    regression_tests.append(regression_test.to_summary())
+                    record = regression_test.to_summary()
+                    record["description"] = (
+                        "Generated static finding-absence check; runtime exploitation not reproduced."
+                    )
+                    regression_tests.append(record)
                 batch_summary["regression_tests"] = regression_tests
             batch_summaries.append(batch_summary)
 
@@ -116,6 +128,20 @@ class RemediationPlan:
             "total_findings": self.total_findings,
             "planned": sum(len(b.findings) for b in self.batches),
             "fixed": self.fixed_count,
+            "checks_failed": sum(
+                len(b.findings)
+                for b in self.batches
+                if b.status == "fixed" and b.fix_status == "failed"
+            ),
+            "checks_passed": sum(
+                len(b.findings) for b in self.batches if b.fix_status == "checks_passed"
+            ),
+            "incomplete": sum(
+                len(b.findings)
+                for b in self.batches
+                if b.status == "fixed"
+                and b.fix_status in ("incomplete", "outdated", "proposed")
+            ),
             "failed": self.failed_count,
             "skipped": self.skipped_count,
             "batches": batch_summaries,

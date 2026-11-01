@@ -20,6 +20,7 @@ from skylos.rules.secrets import (
 )
 
 EvidenceLabel = Literal["proven", "likely", "speculative"]
+EvidenceStatus = Literal["source_path", "static_match", "needs_context"]
 EvidenceKind = Literal[
     "security",
     "security_regression",
@@ -33,6 +34,8 @@ EvidenceKind = Literal[
 
 @dataclass(frozen=True)
 class EvidenceCard:
+    # Legacy ranking fields: retained for risk-policy compatibility, not proof
+    # or calibrated probabilities. Public cards use evidence_status instead.
     label: EvidenceLabel
     kind: EvidenceKind
     confidence: int
@@ -45,6 +48,8 @@ class EvidenceCard:
     impact: str = ""
     suggested_fix: str | None = None
     gate_blocking: bool = False
+    evidence_status: EvidenceStatus = "needs_context"
+    limitations: tuple[str, ...] = ()
 
 
 _SECRET_PATTERNS = tuple(pattern for _, pattern in PROVIDER_PATTERNS) + (
@@ -373,6 +378,8 @@ def build_evidence_card(finding: dict[str, Any]) -> EvidenceCard:
         impact=_impact(kind, control_type, rule_id),
         suggested_fix=_suggested_fix(finding, kind, rule_id, control_type),
         gate_blocking=severity in {"CRITICAL", "HIGH"},
+        evidence_status=_evidence_status(finding, kind),
+        limitations=_evidence_limitations(finding, kind),
     )
 
 
@@ -393,6 +400,56 @@ def evidence_label_title(label: EvidenceLabel) -> str:
         "likely": "Likely",
         "speculative": "Speculative",
     }[label]
+
+
+def evidence_status_title(status: EvidenceStatus) -> str:
+    return {
+        "source_path": "Source path found",
+        "static_match": "Static match",
+        "needs_context": "Needs context",
+    }[status]
+
+
+def evidence_status_counts(cards: list[EvidenceCard]) -> dict[EvidenceStatus, int]:
+    counts: dict[EvidenceStatus, int] = {
+        "source_path": 0,
+        "static_match": 0,
+        "needs_context": 0,
+    }
+    for card in cards:
+        counts[card.evidence_status] += 1
+    return counts
+
+
+def _evidence_status(finding: dict[str, Any], kind: EvidenceKind) -> EvidenceStatus:
+    # Model/verifier assertions, confidence values and generic graph links are
+    # not execution receipts or complete source-to-sink evidence.
+    if str(finding.get("_source") or "").lower() == "llm":
+        return "needs_context"
+    if _security_evidence(finding) == "hypothesis":
+        return "needs_context"
+    rule_id = str(finding.get("rule_id") or "")
+    if kind == "security" and rule_id in _STRUCTURED_SECURITY_FLOW_RULES:
+        if structured_security_evidence_is_complete(
+            rule_id, _security_evidence_packet(finding)
+        ):
+            return "source_path"
+        return "needs_context"
+    return "static_match"
+
+
+def _evidence_limitations(
+    finding: dict[str, Any], kind: EvidenceKind
+) -> tuple[str, ...]:
+    limits = ["No runtime reproducer was executed for this finding."]
+    if kind in {"security", "security_regression"}:
+        limits.append(
+            "Static evidence does not establish runtime reachability, guard "
+            "effectiveness or complete external callers."
+        )
+    if _evidence_status(finding, kind) == "needs_context":
+        limits.append("Review the unresolved context before accepting this claim.")
+    return tuple(limits)
 
 
 def sanitize_untrusted_text(
@@ -787,7 +844,9 @@ def _evidence_lines(
         return (f"PR diff removed or weakened {_control_phrase(control_type)}.",)
 
     if _verification_verdict(finding) == "VERIFIED":
-        lines.append("Skylos verification marked this finding as verified.")
+        lines.append(
+            "A verifier review marked this finding as verified; this is not an execution result."
+        )
     elif label == "speculative":
         lines.append("The finding is not backed by verifier-confirmed evidence yet.")
     elif str(finding.get("_source") or "").lower() == "llm":
@@ -813,6 +872,9 @@ def _evidence_lines(
             "malformed; the finding remains a review candidate."
         )
     if packet is not None:
+        lines.extend(_structured_evidence_lines(packet, "source", "Source"))
+        lines.extend(_structured_evidence_lines(packet, "sink", "Sink"))
+        lines.extend(_structured_evidence_lines(packet, "path", "Path step"))
         lines.extend(
             _structured_evidence_lines(packet, "guards_seen", "Guard observed")
         )

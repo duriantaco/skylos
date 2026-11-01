@@ -82,7 +82,10 @@ def build_grounding_context(
 
 
 def _parse_project_graph(
-    project_root: str | Path, files: list[str | Path]
+    project_root: str | Path,
+    files: list[str | Path],
+    *,
+    source_bytes_by_path: dict[str, bytes] | None = None,
 ) -> _ProjectGraph:
     root = Path(project_root).resolve()
     file_paths = [Path(path).resolve() for path in files if Path(path).suffix == ".py"]
@@ -93,8 +96,16 @@ def _parse_project_graph(
     parsed: dict[str, _ParsedFile] = {}
     symbols: dict[str, SymbolDef] = {}
     for file_path in file_paths:
+        source_bytes = None
+        if source_bytes_by_path is not None:
+            source_bytes = source_bytes_by_path.get(_norm_path(file_path))
+            if source_bytes is None:
+                continue
         parsed_file = _parse_file(
-            file_path, module_by_path[_norm_path(file_path)], root
+            file_path,
+            module_by_path[_norm_path(file_path)],
+            root,
+            source_bytes=source_bytes,
         )
         if not parsed_file:
             continue
@@ -132,8 +143,11 @@ def _build_call_edges(
     return call_edges, reverse_edges
 
 
-def _parse_file(file_path: Path, module: str, root: Path) -> _ParsedFile | None:
-    source_bytes = read_bounded_bytes(file_path, MAX_SOURCE_BYTES, root=root)
+def _parse_file(
+    file_path: Path, module: str, root: Path, *, source_bytes: bytes | None = None
+) -> _ParsedFile | None:
+    if source_bytes is None:
+        source_bytes = read_bounded_bytes(file_path, MAX_SOURCE_BYTES, root=root)
     if source_bytes is None:
         return None
     try:
@@ -173,7 +187,12 @@ def _iter_defs(parsed: _ParsedFile, tree: ast.AST):
             )
         elif isinstance(node, ast.ClassDef):
             class_name = f"{parsed.module}.{node.name}"
-            yield class_name, node.lineno, getattr(node, "end_lineno", node.lineno), "class"
+            yield (
+                class_name,
+                node.lineno,
+                getattr(node, "end_lineno", node.lineno),
+                "class",
+            )
             for item in node.body:
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     yield (
@@ -227,7 +246,9 @@ def _resolve_import_aliases(
                     continue
                 local = alias.asname or alias.name
                 imported_symbol = f"{module}.{alias.name}".strip(".")
-                imported_module = imported_symbol if imported_symbol in path_by_module else module
+                imported_module = (
+                    imported_symbol if imported_symbol in path_by_module else module
+                )
                 if imported_symbol in symbols:
                     parsed.import_aliases[local] = imported_symbol
                 elif imported_module in path_by_module:
@@ -463,4 +484,6 @@ def _norm_path(path: str | Path) -> str:
 
 def _is_test_path(path: Path) -> bool:
     name = path.name.lower()
-    return name.startswith("test_") or name.endswith("_test.py") or "tests" in path.parts
+    return (
+        name.startswith("test_") or name.endswith("_test.py") or "tests" in path.parts
+    )

@@ -6223,11 +6223,22 @@ def main() -> None:
 
                 remediation_exit = 1
                 if (
-                    getattr(agent_args, "dry_run", False)
-                    or summary.get("fixed", 0) > 0
-                    or summary.get("total_findings", 0) == 0
+                    summary.get("failed", 0) == 0
+                    and summary.get("checks_failed", 0) == 0
+                    and (
+                        getattr(agent_args, "dry_run", False)
+                        or summary.get("fixed", 0) > 0
+                        or summary.get("total_findings", 0) == 0
+                    )
                 ):
                     remediation_exit = 0
+                if (
+                    getattr(agent_args, "auto_pr", False)
+                    and not getattr(agent_args, "dry_run", False)
+                    and summary.get("fixed", 0) > 0
+                    and not summary.get("pr_url")
+                ):
+                    remediation_exit = 1
                 sys.exit(remediation_exit)
 
     if len(sys.argv) > 1 and sys.argv[1] == "run":

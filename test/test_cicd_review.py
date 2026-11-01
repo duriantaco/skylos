@@ -467,7 +467,8 @@ def test_pr_review_carries_dead_code_reason_into_comment():
     assert "No static references were found." in _format_review_comment(finding)
     card = _format_evidence_card_comment(finding)
     assert "No static references were found." in card
-    assert "Confidence:** 95%" in card
+    assert "Confidence:" not in card
+    assert "Checks:** Not run" in card
 
 
 def test_diff_range_lookup_uses_selected_project(tmp_path):
@@ -1082,12 +1083,13 @@ def test_format_evidence_card_comment():
 
     comment = _format_evidence_card_comment(finding)
 
-    assert "Risk: Proven security finding" in comment
+    assert "**Evidence:** Static match · **Severity:** HIGH" in comment
     assert "SKY-D211" in comment
     assert "Evidence:" in comment
     assert "Impact:" in comment
     assert "Suggested fix:" in comment
-    assert "Confidence:" in comment
+    assert "Confidence:" not in comment
+    assert "Checks:** Not run" in comment
 
 
 def test_format_evidence_card_comment_includes_fallback_suggested_fix():
@@ -1102,7 +1104,7 @@ def test_format_evidence_card_comment_includes_fallback_suggested_fix():
 
     comment = _format_evidence_card_comment(finding)
 
-    assert "Risk: Likely quality issue" in comment
+    assert "**Evidence:** Static match · **Severity:** MEDIUM" in comment
     assert "Suggested fix:" in comment
     assert "Refactor the affected code" in comment
 
@@ -1119,7 +1121,7 @@ def test_format_evidence_card_comment_supports_reliability():
 
     comment = _format_evidence_card_comment(finding)
 
-    assert "Risk: Likely reliability issue" in comment
+    assert "**Evidence:** Static match · **Severity:** MEDIUM" in comment
     assert "SKY-DEP003" in comment
 
 
@@ -1245,8 +1247,8 @@ def test_summary_comment_includes_evidence_counts_when_enabled():
 
     body = captured["body"]
     assert "### Evidence" in body
-    assert "| Proven | 1 |" in body
-    assert "| Speculative | 1 |" in body
+    assert "| Static match | 1 |" in body
+    assert "| Needs context | 1 |" in body
 
 
 def test_summary_comment_includes_risk_passport_when_supplied():

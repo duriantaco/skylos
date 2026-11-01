@@ -9,6 +9,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 from rich.console import Console
@@ -18,11 +19,12 @@ from skylos.cicd.evidence import (
     EvidenceCard,
     build_evidence_card,
     build_evidence_cards,
-    evidence_counts,
-    evidence_label_title,
+    evidence_status_counts,
+    evidence_status_title,
     sanitize_markdown_text,
     sanitize_untrusted_text,
 )
+from skylos.cicd.context_packet import build_pr_context
 from skylos.cicd.risk_passport import (
     build_risk_passport,
     format_risk_passport_markdown,
@@ -143,6 +145,9 @@ def run_pr_review(
         provenance=provenance,
         defense_report=defense_report,
     )
+    # Collect source context in trusted review code. A finding or model reply
+    # cannot supply this packet or promote itself to an executed reproduction.
+    context_packet = build_pr_context(review_root, findings) if evidence_cards else None
 
     identity = _TokenIdentity()
     review_outcome = None
@@ -156,6 +161,7 @@ def run_pr_review(
             project_root=review_root,
             max_comments=max_comments,
             identity=identity,
+            context_packet=context_packet,
         )
     # Past the inline-comment cap, or when posting the review failed, a
     # finding has no inline comment: the summary is where it is named.
@@ -1025,7 +1031,7 @@ _RULE_SUGGESTIONS: dict[str, str] = {
     "SKY-D311": "Set `if-no-files-found: error` on `actions/upload-artifact` for required outputs.",
     "SKY-D312": "Use `npm ci --ignore-scripts` or an equivalent package-manager flag unless lifecycle scripts are required.",
     "SKY-D313": "Add `timeout-minutes` to privileged or release-like jobs.",
-    "SKY-D350": "Add an actor gate to the agent job, for example `contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)`, or remove secrets and write permissions from it.",
+    "SKY-D350": 'Add an actor gate to the agent job, for example `contains(fromJSON(\'["OWNER","MEMBER","COLLABORATOR"]\'), github.event.comment.author_association)`, or remove secrets and write permissions from it.',
     "SKY-D351": "Remove `*` from `allowed_non_write_users`, `allowed_bots` or `allow-users`; if outsiders must trigger it, keep the job read-only and give the agent no shell.",
     "SKY-D352": "Replace `Bash`, `--dangerously-skip-permissions`, `--yolo` or `danger-full-access` with a short allowlist of specific read-only commands.",
     "SKY-D353": "Stop interpolating `${{ github.event.* }}` text into the prompt; pass the issue or PR number and let the agent read the text as data.",
@@ -1141,39 +1147,33 @@ def _format_review_comment(finding: dict) -> str:
 
 
 def _format_evidence_card_comment(
-    finding: dict, card: EvidenceCard | None = None
+    finding: dict,
+    card: EvidenceCard | None = None,
+    *,
+    context_packet: dict | None = None,
+    repo: str = "",
+    project_root: str | os.PathLike[str] | None = None,
 ) -> str:
     card = card or build_evidence_card(finding)
     safe_rule_id = sanitize_markdown_text(card.rule_id, max_length=120)
     rule_str = f" `{safe_rule_id}`" if safe_rule_id else ""
-    risk = (
-        "dead code"
-        if finding.get("category") == "dead_code"
-        else {
-            "security": "security finding",
-            "security_regression": "security regression",
-            "secret": "secret exposure",
-            "reliability": "reliability issue",
-            "quality": "quality issue",
-            "dependency": "dependency issue",
-            "custom": "custom rule match",
-        }[card.kind]
+    severity = str(finding.get("severity") or "").upper()
+    if severity not in {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"}:
+        severity = "UNKNOWN"
+    relative = (
+        _project_relative_file(card.file, project_root) if project_root else card.file
     )
-    raw_location = f"{card.file}:{card.line}" if card.file else str(card.line)
+    raw_location = (
+        f"{relative or card.file}:{card.line}" if card.file else str(card.line)
+    )
     location = sanitize_markdown_text(raw_location, max_length=600)
 
     parts = [
-        f"**Risk: {evidence_label_title(card.label)} {risk}**{rule_str}",
+        f"**{sanitize_markdown_text(card.title, max_length=120)}**{rule_str}",
         "",
-        sanitize_markdown_text(card.title, max_length=120),
-        "",
+        f"**Evidence:** {evidence_status_title(card.evidence_status)} · **Severity:** {severity}",
         f"**Location:** `{location}`",
-        "",
-        "**Evidence:**",
     ]
-
-    for item in card.evidence or ("No extra evidence attached.",):
-        parts.append(f"- {sanitize_markdown_text(item, max_length=500)}")
 
     if card.impact:
         parts.extend(
@@ -1189,11 +1189,112 @@ def _format_evidence_card_comment(
             ]
         )
 
-    parts.extend(["", f"**Confidence:** {card.confidence}%"])
+    parts.extend(
+        [
+            "",
+            "**Checks:** Not run for this finding. Related test files are suggestions, not results.",
+            "",
+            "<details>",
+            "<summary>Evidence and context</summary>",
+            "",
+            "**Evidence:**",
+        ]
+    )
+    for item in card.evidence or ("No extra evidence attached.",):
+        parts.append(f"- {sanitize_markdown_text(item, max_length=500)}")
+
+    packet = context_packet if isinstance(context_packet, dict) else {}
+    digests = packet.get("file_digests")
+    digest = digests.get(relative) if isinstance(digests, dict) else None
+    snapshot = packet.get("snapshot_id")
+    if isinstance(snapshot, str) and re.fullmatch(r"[0-9a-f]{64}", snapshot):
+        parts.extend(["", f"**Context snapshot:** `{snapshot}`"])
+    if isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest):
+        parts.append(f"**File SHA-256:** `{digest}`")
+
+    nodes = packet.get("nodes")
+    edges = packet.get("edges")
+    if isinstance(nodes, list) and isinstance(edges, list):
+        # Generic graph links provide context, not security-flow proof.
+        indexed = {
+            node.get("id"): node
+            for node in nodes[:24]
+            if isinstance(node, dict) and isinstance(node.get("id"), str)
+        }
+        relevant = []
+        for edge in edges[:48]:
+            if not isinstance(edge, dict):
+                continue
+            start, end = indexed.get(edge.get("from")), indexed.get(edge.get("to"))
+            if (
+                not start
+                or not end
+                or relative not in {start.get("file"), end.get("file")}
+            ):
+                continue
+            relevant.append(f"{start['id']} → {end['id']}")
+        if relevant:
+            parts.extend(["", "**Nearby static calls (context only):**"])
+            parts.extend(
+                f"- {sanitize_markdown_text(item, max_length=500)}"
+                for item in relevant[:6]
+            )
+
+    related = packet.get("related_tests")
+    if isinstance(related, list) and related:
+        parts.extend(["", "**Related test candidates — Not run:**"])
+        parts.extend(
+            f"- `{sanitize_markdown_text(item, max_length=300)}`"
+            for item in related[:5]
+            if isinstance(item, str)
+        )
+    limits = list(card.limitations)
+    if packet:
+        limits.append(
+            "Context was collected for this review. The original scan source "
+            "snapshot was not supplied, so finding and context bytes may differ."
+        )
+    if isinstance(packet.get("limitations"), list):
+        limits.extend(
+            item for item in packet["limitations"][:8] if isinstance(item, str)
+        )
+    parts.extend(["", "**Limits:**"])
+    parts.extend(
+        f"- {sanitize_markdown_text(item, max_length=500)}"
+        for item in dict.fromkeys(limits)
+    )
+    parts.extend(["", "</details>"])
+
+    source_url = _evidence_source_url(repo, relative, card.line, packet)
+    if source_url:
+        parts.extend(["", f"[View collected source]({source_url})"])
 
     footer = "\n\n---\n_🤖 Analyzed by [Skylos](https://github.com/duriantaco/skylos) • [Add to your repo](https://github.com/duriantaco/skylos#cicd)_"
     parts.append(footer)
     return "\n".join(parts)
+
+
+def _evidence_source_url(
+    repo: str, path: str | None, line: int, packet: dict
+) -> str | None:
+    """Link only to bytes the trusted collector matched to a full commit ID."""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        return None
+    if not isinstance(path, str) or not path or path.startswith(("/", "\\")):
+        return None
+    if any(part in {"", ".", ".."} for part in path.split("/")) or "\\" in path:
+        return None
+    head = packet.get("head_sha")
+    committed = packet.get("committed_files")
+    if not isinstance(head, str) or not re.fullmatch(
+        r"(?:[0-9a-f]{40}|[0-9a-f]{64})", head
+    ):
+        return None
+    if not isinstance(committed, list) or path not in committed:
+        return None
+    if not isinstance(line, int) or isinstance(line, bool) or line < 1:
+        return None
+    return f"https://github.com/{repo}/blob/{head}/{quote(path, safe='/')}#L{line}"
 
 
 def _to_relative_path(filepath: str) -> str:
@@ -1220,7 +1321,9 @@ def _to_relative_path(filepath: str) -> str:
 # summary or hide an inline finding.
 SUMMARY_MARKER = "<!-- skylos-review -->"
 _SUMMARY_HEADING = "## Skylos Analysis Summary"
-_SUMMARY_STATE_RE = re.compile(r"<!-- skylos-review-state: changed=(\d{1,9}) max=(\d{1,9}) -->")
+_SUMMARY_STATE_RE = re.compile(
+    r"<!-- skylos-review-state: changed=(\d{1,9}) max=(\d{1,9}) -->"
+)
 _LEGACY_CHANGED_COUNT_RE = re.compile(r"\*\*(\d{1,9})\*\* issue\(s\) on changed lines")
 _FINDING_KEY_RE = re.compile(r"<!-- skylos-finding:([0-9a-f]{20}) -->")
 _LEGACY_INLINE_FOOTER = "Analyzed by [Skylos]"
@@ -1312,7 +1415,13 @@ class _TokenIdentity:
                 )
                 login = json.loads(result.stdout).get("login")
                 self._login = login if isinstance(login, str) and login else None
-            except (subprocess.SubprocessError, OSError, TypeError, ValueError, AttributeError):
+            except (
+                subprocess.SubprocessError,
+                OSError,
+                TypeError,
+                ValueError,
+                AttributeError,
+            ):
                 # GITHUB_TOKEN and GitHub App tokens cannot read /user.
                 self._login = None
         return self._login
@@ -1369,6 +1478,7 @@ def _post_pr_review(
     project_root: str | os.PathLike[str] | None = None,
     max_comments: int | None = None,
     identity: _TokenIdentity | None = None,
+    context_packet: dict | None = None,
 ) -> _CommentOutcome:
     comments = []
     seen_keys: set[str] = set()
@@ -1386,7 +1496,9 @@ def _post_pr_review(
             continue
         seen_keys.add(key)
         body = (
-            _format_evidence_card_comment(f)
+            _format_evidence_card_comment(
+                f, context_packet=context_packet, repo=repo, project_root=project_root
+            )
             if evidence_cards
             else _format_review_comment(f)
         )
@@ -1675,7 +1787,7 @@ def _post_summary_comment(
 
     if evidence_cards:
         cards = build_evidence_cards(all_findings)
-        counts = evidence_counts(cards)
+        counts = evidence_status_counts(cards)
         if cards:
             lines.extend(
                 [
@@ -1686,10 +1798,10 @@ def _post_summary_comment(
                     "|-------|-------|",
                 ]
             )
-            for label in ("proven", "likely", "speculative"):
+            for label in ("source_path", "static_match", "needs_context"):
                 count = counts[label]
                 if count > 0:
-                    lines.append(f"| {evidence_label_title(label)} | {count} |")
+                    lines.append(f"| {evidence_status_title(label)} | {count} |")
 
     critical_findings = [
         f for f in diff_findings if f.get("severity") in ("CRITICAL", "HIGH")
@@ -1763,9 +1875,7 @@ def _post_summary_comment(
                 f"| {sanitize_markdown_text(where, max_length=300)} |"
             )
         if len(left_unused) > _MAX_LEFT_UNUSED_ROWS:
-            lines.extend(
-                ["", f"…and {len(left_unused) - _MAX_LEFT_UNUSED_ROWS} more."]
-            )
+            lines.extend(["", f"…and {len(left_unused) - _MAX_LEFT_UNUSED_ROWS} more."])
 
     if isinstance(assessment, dict) and assessment:
         lines.extend(_format_assessment_markdown(assessment))
@@ -1812,7 +1922,9 @@ def _post_summary_comment(
             lines.append(
                 f"| {display} | {cat['score']}{delta_str} | {cat['letter']} | {issue} |"
             )
-        lines.extend(["", "Historical result; this score is not a current risk assessment."])
+        lines.extend(
+            ["", "Historical result; this score is not a current risk assessment."]
+        )
 
     lines.extend(
         [
@@ -1849,9 +1961,7 @@ def _post_summary_comment(
             note = f"could not edit the earlier summary ({_gh_error_text(exc)})"
 
     try:
-        _gh_write(
-            ["pr", "comment", str(pr_number), "--body", body, "--repo", repo]
-        )
+        _gh_write(["pr", "comment", str(pr_number), "--body", body, "--repo", repo])
     except (subprocess.SubprocessError, OSError) as exc:
         return _CommentOutcome("failed", error=_gh_error_text(exc), note=note)
     return _CommentOutcome("created", note=note)
@@ -1926,14 +2036,25 @@ def _format_assessment_markdown(assessment: dict) -> list[str]:
     for label, detail in assessment_rows(assessment):
         safe_detail = sanitize_markdown_text(detail, max_length=500)
         lines.append(f"| {label} | {safe_detail} |")
-    lines.extend(["", sanitize_markdown_text(assessment_coverage_text(assessment), max_length=1000)])
+    lines.extend(
+        [
+            "",
+            sanitize_markdown_text(
+                assessment_coverage_text(assessment), max_length=1000
+            ),
+        ]
+    )
     checks = maintainability_rows(assessment)
     if checks:
-        lines.extend(["", "| Check | Spread | Magnitude |", "|-------|--------|-----------|"])
+        lines.extend(
+            ["", "| Check | Spread | Magnitude |", "|-------|--------|-----------|"]
+        )
         for row in checks:
             safe = [sanitize_markdown_text(value, max_length=250) for value in row]
             lines.append("| " + " | ".join(safe) + " |")
-    lines.extend(["", "Risk includes Defect and Review findings; review evidence before acting."])
+    lines.extend(
+        ["", "Risk includes Defect and Review findings; review evidence before acting."]
+    )
     return lines
 
 

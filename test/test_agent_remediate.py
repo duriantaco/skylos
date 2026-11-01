@@ -343,7 +343,9 @@ class TestRemediationExecutor:
     def test_run_tests_no_suite(self, tmp_path):
         executor = RemediationExecutor(project_root=tmp_path)
         result = executor.run_tests()
-        assert result.passed is True
+        assert result.passed is False
+        assert result.status == "not_run"
+        assert result.executed is False
         assert "Test execution disabled" in result.output
 
     def test_run_tests_with_custom_cmd(self, tmp_path):
@@ -385,7 +387,9 @@ class TestRemediationExecutor:
         executor = RemediationExecutor(project_root=tmp_path)
         result = executor.run_tests()
 
-        assert result.passed is True
+        assert result.passed is False
+        assert result.status == "not_run"
+        assert result.executed is False
         assert "Test execution disabled" in result.output
         assert not marker.exists()
 
@@ -500,7 +504,9 @@ class TestPRDescription:
 
         body = build_pr_description(summary)
 
-        assert "Verification Proof" in body
+        assert "Generated static regression checks" in body
+        assert "Tests: **Not run**" in body
+        assert "Verification Proof" not in body
         assert "tests/test_skylos_sqli_app_py_123.py" in body
         assert "SKY-D211" in body
 
@@ -767,6 +773,7 @@ class TestOrchestrator:
             description="Use sha256",
         )
         executor = MagicMock()
+        executor.project_root = tmp_path
         executor.apply_fix.return_value = True
         executor.run_tests.return_value = SimpleNamespace(passed=True)
         executor.verify_fix.return_value = VerifyResult(
@@ -777,11 +784,11 @@ class TestOrchestrator:
         agent = RemediationAgent()
         agent._process_batch(batch, fixer, executor, lambda _message: None)
 
-        assert batch.status == "not_resolved"
+        assert batch.status == "not_resolved", batch.fix_description
         assert "Could not verify fix" in batch.fix_description
         executor.revert_fix.assert_called_once_with(str(test_file))
 
-    def test_process_batch_writes_sqli_regression_test_after_verification(
+    def test_process_batch_generates_sqli_static_check_with_not_run_status(
         self, tmp_path
     ):
         from skylos.llm.orchestrator import RemediationAgent
@@ -824,7 +831,9 @@ class TestOrchestrator:
         agent = RemediationAgent()
         agent._process_batch(batch, fixer, executor, lambda _message: None)
 
-        assert batch.status == "fixed"
+        assert batch.status == "fixed", batch.fix_description
+        assert batch.fix_status == "incomplete"
+        assert all(check["status"] == "not_run" for check in batch.checks)
         assert len(batch.regression_tests) == 1
         generated = tmp_path / batch.regression_tests[0].test_file
         assert generated.exists()

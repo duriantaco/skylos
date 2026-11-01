@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import sys
+import hashlib
 from pathlib import Path
 
 from .planner import RemediationPlanner, RemediationPlan, FixBatch
-from .executor import RemediationExecutor
+from .executor import RemediationExecutor, MAX_REMEDIATION_FILE_BYTES
+from skylos.core.safe_cache_io import read_text_no_symlink
 from .prompts import build_pr_description
 from skylos.remediation.regression_tests import generate_regression_test_candidate
 
@@ -108,14 +110,20 @@ class RemediationAgent:
 
                 if batch.status == "fixed":
                     fixed_files.append(batch.file)
-                    log("    ✓ Fixed successfully")
+                    label = (
+                        "Checks passed"
+                        if batch.fix_status == "checks_passed"
+                        else "Fix applied; checks incomplete"
+                    )
+                    log(f"    ✓ {label}")
                 else:
                     log(f"    ✗ Status: {batch.status} — {batch.fix_description}")
         finally:
             self._pending_model_start = None
 
+        self._finalize_batch_checks(plan, executor, log)
         fixed_count = sum(1 for b in plan.batches if b.status == "fixed")
-        log(f"\n  Results: {fixed_count}/{len(plan.batches)} files fixed")
+        log(f"\n  Results: {fixed_count}/{len(plan.batches)} files changed")
 
         pr_url = None
         if auto_pr and fixed_files:
@@ -206,6 +214,7 @@ class RemediationAgent:
         p = Path(file_path)
         if not p.exists():
             batch.status = "failed"
+            batch.fix_status = "failed"
             batch.fix_description = "File not found"
             return
         if not p.is_file():
@@ -213,11 +222,39 @@ class RemediationAgent:
             batch.fix_description = "Repository-level finding; no file to edit"
             return
 
-        source = p.read_text(encoding="utf-8")
+        if not executor.is_safe_file_path(file_path):
+            batch.status = "failed"
+            batch.fix_status = "failed"
+            batch.fix_description = "File unavailable or outside project root"
+            return
+        source = read_text_no_symlink(
+            p, max_bytes=MAX_REMEDIATION_FILE_BYTES, encoding="utf-8", newline=""
+        )
+        if source is None:
+            batch.status = "failed"
+            batch.fix_status = "failed"
+            batch.fix_description = "Could not read source file"
+            return
         batch.source = source
 
         primary = batch.findings[0]
 
+        if not executor.capture_verification_baseline(
+            file_path, [item.rule_id for item in batch.findings]
+        ):
+            batch.status = "failed"
+            batch.fix_status = "incomplete"
+            batch.fix_description = (
+                "Could not capture a complete static baseline before editing"
+            )
+            return
+        try:
+            context = self._fix_context(batch, executor)
+        except Exception as exc:
+            batch.status = "failed"
+            batch.fix_status = "incomplete"
+            batch.fix_description = f"Could not build source-bound fix context: {exc}"
+            return
         self._start_model_work()
         try:
             fix = fixer.fix(
@@ -225,9 +262,11 @@ class RemediationAgent:
                 file_path,
                 primary.line,
                 primary.message,
+                context=context,
             )
         except Exception as e:
             batch.status = "failed"
+            batch.fix_status = "failed"
             batch.fix_description = f"Fix generation error: {e}"
             return
 
@@ -242,32 +281,82 @@ class RemediationAgent:
             batch.fix_description = "Fix confidence too low"
             return
 
-        if not executor.apply_fix(file_path, fix.fixed_code):
+        if not executor.apply_fix(file_path, fix.fixed_code, expected_source=source):
             batch.status = "failed"
+            batch.fix_status = "failed"
             batch.fix_description = "Could not write fixed file"
             return
 
-        test_result = executor.run_tests()
-        if not test_result.passed:
+        self._attach_regression_test(batch, executor)
+        source_files = [file_path]
+        test_result = executor.run_tests(source_files=source_files)
+        batch.checks.append(_check_summary(test_result, "project_command"))
+        if getattr(test_result, "status", "") in ("failed", "outdated"):
             executor.revert_fix(file_path)
+            executor.revert_regression_tests(batch.regression_tests)
+            batch.regression_tests.clear()
             batch.status = "test_failed"
-            batch.fix_description = f"Tests failed after fix ({test_result.command})"
+            batch.fix_status = (
+                "outdated" if test_result.status == "outdated" else "failed"
+            )
+            batch.fix_description = (
+                f"Tests did not pass after fix ({test_result.command})"
+            )
             return
+        if batch.regression_tests:
+            regression_result = executor.run_regression_tests(
+                batch.regression_tests, source_files=source_files
+            )
+            batch.checks.append(
+                _check_summary(regression_result, "generated_static_regression")
+            )
+            if regression_result.status in ("failed", "outdated"):
+                executor.revert_fix(file_path)
+                executor.revert_regression_tests(batch.regression_tests)
+                batch.regression_tests.clear()
+                batch.status = "test_failed"
+                batch.fix_status = (
+                    "outdated" if regression_result.status == "outdated" else "failed"
+                )
+                batch.fix_description = "Generated static regression check did not pass"
+                return
 
         rule_ids = [f.rule_id for f in batch.findings]
         verify = executor.verify_fix(file_path, rule_ids)
+        batch.static_verification = verify.to_summary()
         if not verify.finding_resolved:
             executor.revert_fix(file_path)
+            executor.revert_regression_tests(batch.regression_tests)
+            batch.regression_tests.clear()
             batch.status = "not_resolved"
+            batch.fix_status = "incomplete" if verify.verification_error else "failed"
             if verify.verification_error:
                 batch.fix_description = f"Could not verify fix after remediation: {verify.verification_error}"
+            elif verify.new_findings:
+                batch.fix_description = "Fix introduced new static findings; reverted"
             else:
                 batch.fix_description = (
                     f"Finding still present after fix: {verify.remaining_rule_ids}"
                 )
             return
-
-        self._attach_regression_test(batch, executor)
+        relative_file = (
+            p.resolve().relative_to(Path(executor.project_root).resolve()).as_posix()
+        )
+        checked_digests = [
+            check.get("source_digests", {}).get(relative_file)
+            for check in batch.checks
+            if check.get("executed")
+        ]
+        if checked_digests and any(
+            value != verify.source_digest for value in checked_digests
+        ):
+            batch.fix_status = "outdated"
+        elif verify.status == "passed" and all(
+            check["status"] == "passed" and check["executed"] for check in batch.checks
+        ):
+            batch.fix_status = "checks_passed"
+        else:
+            batch.fix_status = "incomplete"
 
         batch.status = "fixed"
         desc = getattr(fix, "description", "")
@@ -275,6 +364,104 @@ class RemediationAgent:
             batch.fix_description = desc[:200]
         else:
             batch.fix_description = primary.message
+
+    def _finalize_batch_checks(
+        self, plan: RemediationPlan, executor: RemediationExecutor, log
+    ) -> None:
+        applied = [batch for batch in plan.batches if batch.status == "fixed"]
+        if len(applied) < 2:
+            return
+        if not self.allow_test_execution:
+            for batch in applied[:-1]:
+                batch.fix_status = "outdated"
+                for check in batch.checks:
+                    check["current"] = False
+                batch.static_verification.setdefault("limitations", []).append(
+                    "Later files were edited after this check; a final shared check was not run."
+                )
+            return
+
+        log("  Rechecking all applied files after the final edit...")
+        candidates = [
+            candidate for batch in applied for candidate in batch.regression_tests
+        ]
+        files = [batch.file for batch in applied]
+        files.extend(candidate.test_file for candidate in candidates)
+        checks = [
+            _check_summary(
+                executor.run_tests(source_files=files), "final_project_command"
+            )
+        ]
+        if candidates:
+            checks.append(
+                _check_summary(
+                    executor.run_regression_tests(candidates, source_files=files),
+                    "final_generated_static_regression",
+                )
+            )
+        for batch in applied:
+            for prior in batch.checks:
+                prior["current"] = False
+            batch.checks.extend(dict(check, current=True) for check in checks)
+            verification = executor.verify_fix(
+                batch.file, [item.rule_id for item in batch.findings]
+            )
+            batch.static_verification = verification.to_summary()
+            if not verification.finding_resolved:
+                batch.fix_status = (
+                    "incomplete" if verification.verification_error else "failed"
+                )
+            elif any(check["status"] == "outdated" for check in checks):
+                batch.fix_status = "outdated"
+            elif any(check["status"] == "failed" for check in checks):
+                batch.fix_status = "failed"
+            elif verification.status != "passed" or any(
+                check["status"] != "passed" or not check["executed"] for check in checks
+            ):
+                batch.fix_status = "incomplete"
+            else:
+                relative = (
+                    Path(batch.file)
+                    .resolve()
+                    .relative_to(executor.project_root)
+                    .as_posix()
+                )
+                batch.fix_status = (
+                    "checks_passed"
+                    if all(
+                        check.get("source_digests", {}).get(relative)
+                        == verification.source_digest
+                        for check in checks
+                    )
+                    else "outdated"
+                )
+            if batch.fix_status != "checks_passed":
+                batch.fix_description += f" (Final checks: {batch.fix_status.replace('_', ' ')}; changes kept for review.)"
+
+    def _fix_context(self, batch: FixBatch, executor: RemediationExecutor) -> str:
+        from skylos.cicd.context_packet import (
+            build_pr_context,
+            format_context_for_model,
+        )
+        from .context import ContextBuilder
+
+        findings = [
+            dict(
+                item.raw,
+                file=item.file,
+                line=item.line,
+                rule_id=item.rule_id,
+                message=item.message,
+            )
+            for item in batch.findings
+        ]
+        packet = build_pr_context(executor.project_root, findings)
+        batch.context_snapshot = str(packet.get("snapshot_id", ""))
+        primary = batch.findings[0]
+        local = ContextBuilder().build_fix_context(
+            batch.source, batch.file, primary.line, primary.message
+        )
+        return format_context_for_model(packet) + "\n\n" + local
 
     def _attach_regression_test(
         self,
@@ -319,7 +506,29 @@ class RemediationAgent:
             return None
 
         files = [b.file for b in fixed_batches]
+        files.extend(
+            str(executor.project_root / candidate.test_file)
+            for batch in fixed_batches
+            for candidate in batch.regression_tests
+        )
         finding_count = sum(len(b.findings) for b in fixed_batches)
+        expected = {}
+        for batch in fixed_batches:
+            relative = (
+                Path(batch.file).resolve().relative_to(executor.project_root).as_posix()
+            )
+            expected[relative] = batch.static_verification.get("source_digest", "")
+            for candidate in batch.regression_tests:
+                expected[candidate.test_file] = (
+                    "sha256:"
+                    + hashlib.sha256(candidate.content.encode("utf-8")).hexdigest()
+                )
+        if not executor.publication_sources_match(expected):
+            _publication_outdated(fixed_batches)
+            log(
+                "  Checked source changed or its receipt is unavailable; PR publication refused."
+            )
+            return None
 
         commit_msg = (
             f"fix: remediate {finding_count} security/quality findings\n\n"
@@ -327,18 +536,31 @@ class RemediationAgent:
             f"Files: {', '.join(Path(f).name for f in files)}"
         )
 
+        base_commit = executor.current_commit()
         if not executor.commit_fixes(commit_msg, files):
             log("  Failed to commit.")
             return None
 
-        if not executor.push_branch(branch):
+        checked_commit = executor.current_commit()
+        if not checked_commit or not executor.publication_sources_match(
+            expected, commit=checked_commit, base_commit=base_commit
+        ):
+            _publication_outdated(fixed_batches)
+            log(
+                "  Committed source differs from checked bytes; PR publication refused."
+            )
+            return None
+        for batch in fixed_batches:
+            batch.static_verification["commit"] = checked_commit
+        if not executor.push_branch(branch, expected_commit=checked_commit):
             log("  Failed to push branch.")
             return None
 
         summary = plan.summary()
         body = build_pr_description(summary)
         title = f"fix: skylos remediation ({finding_count} issues)"
-        pr_url = executor.create_pr(branch, title, body)
+        draft = any(batch.fix_status != "checks_passed" for batch in fixed_batches)
+        pr_url = executor.create_pr(branch, title, body, draft=draft)
         if pr_url:
             log(f"  PR created: {pr_url}")
         return pr_url
@@ -347,7 +569,10 @@ class RemediationAgent:
         s = plan.summary()
         log(f"\n  Total findings: {s['total_findings']}")
         log(f"  Planned: {s['planned']}")
-        log(f"  Fixed: {s['fixed']}")
+        log(f"  Fixes applied: {s['fixed']}")
+        log(f"  Checks passed: {s['checks_passed']}")
+        log(f"  Checks incomplete: {s['incomplete']}")
+        log(f"  Checks failed: {s['checks_failed']}")
         log(f"  Failed: {s['failed']}")
         log(f"  Skipped: {s['skipped']}")
 
@@ -386,3 +611,25 @@ def _project_root_for_path(path: Path) -> Path:
     if path.is_dir():
         return path
     return path.parent
+
+
+def _check_summary(result, kind: str) -> dict:
+    if hasattr(result, "to_summary"):
+        record = result.to_summary()
+    else:
+        # Legacy integrations without an execution receipt cannot claim checks passed.
+        record = {
+            "status": "not_run",
+            "executed": False,
+            "command": getattr(result, "command", ""),
+            "source_digests": {},
+        }
+    return dict(record, kind=kind)
+
+
+def _publication_outdated(batches: list[FixBatch]) -> None:
+    for batch in batches:
+        batch.fix_status = "outdated"
+        batch.fix_description += " (Source changed after checks; publication refused.)"
+        for check in batch.checks:
+            check["current"] = False

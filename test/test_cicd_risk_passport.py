@@ -185,7 +185,7 @@ def test_format_risk_passport_markdown_renders_summary():
 
     assert "### AI PR Risk Passport" in body
     assert "**Merge recommendation: WARN**" in body
-    assert "Proven 1 / Likely 0 / Speculative 1" in body
+    assert "Not recorded (legacy policy labels are not runtime proof)" in body
     assert "output_validation" in body
 
 

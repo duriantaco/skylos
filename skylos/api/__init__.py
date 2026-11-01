@@ -988,6 +988,24 @@ def _prepare_report_upload(
             result_json, commit_hash=commit, repo_root=git_root
         ),
     )
+    # Build source context here rather than accepting client/model assertions
+    # about evidence or checks. Cloud independently validates immutable blobs.
+    if analyzer_owned and git_root and metadata.get("source_revision_state") == "clean":
+        from skylos.cicd.context_packet import build_upload_context
+
+        context_findings = [
+            {"file": row.get("file_path"), "line": row.get("line_number")}
+            for row in all_findings
+            if str(row.get("rule_id") or "").startswith("SKY-D")
+        ][:24]
+        try:
+            packet = build_upload_context(git_root, context_findings, commit or "")
+        except Exception as exc:
+            # Optional graph enrichment must not prevent a finding upload.
+            logger.debug("PR context unavailable (%s)", type(exc).__name__)
+            packet = None
+        if packet:
+            metadata["pr_context"] = packet
     if gitlab_managed:
         from skylos.cloud.gitlab import scan_receipt
 
