@@ -16,7 +16,7 @@ from skylos.analyzer import analyze
 from test.fixture_paths import write_fixture
 
 
-def _d251_lines(tmp_path, monkeypatch, source):
+def _d251_lines(tmp_path, monkeypatch, source, listed_only=False):
     monkeypatch.setenv("SKYLOS_JOBS", "1")
     write_fixture(tmp_path, "app.py", source)
     write_fixture(tmp_path, "pyproject.toml", '[project]\nname="proof"\n')
@@ -35,6 +35,7 @@ def _d251_lines(tmp_path, monkeypatch, source):
         finding["line"]
         for finding in result.get("danger", [])
         if finding["rule_id"] == "SKY-D251"
+        and (not listed_only or finding["listing"]["listed"])
     )
 
 
@@ -321,6 +322,38 @@ STILL_REPORTED = {
         event = stripe.Webhook.construct_event("{}", "sig", endpoint_secret)
         logging.info("event %s", event["id"])
     """,
+    "default_url_constant_built_from_secret": """
+        import logging
+        import os
+
+        import requests
+
+        DEFAULT_URL = f"https://api.example.test/items?token={os.environ['API_TOKEN']}"
+        resp = requests.get(DEFAULT_URL)
+        logging.info("fetched %s", resp.url)
+    """,
+    "module_constant_token_in_session_headers": """
+        import logging
+        import os
+
+        import requests
+
+        TOKEN = os.environ["API_TOKEN"]
+        DEFAULT_HEADERS = {"Authorization": f"Bearer {TOKEN}"}
+        session = requests.Session()
+        resp = session.get("https://api.example.test", headers=DEFAULT_HEADERS)
+        logging.info("sent %s", resp.request.headers)
+    """,
+    "constant_named_payload_is_the_secret": """
+        import logging
+        import os
+
+        import stripe
+
+        SAMPLE_PAYLOAD = os.environ["WEBHOOK_SECRET"]
+        event = stripe.Webhook.construct_event(SAMPLE_PAYLOAD, "sig", "whsec_public")
+        logging.info("event %s", event)
+    """,
     "configured_module_member_itself": """
         import os
 
@@ -347,7 +380,7 @@ def test_credential_reachable_from_the_result_still_reports(
 ):
     source = _source(STILL_REPORTED[name])
     last_line = source.count("\n")
-    assert _d251_lines(tmp_path, monkeypatch, source) == [last_line]
+    assert _d251_lines(tmp_path, monkeypatch, source, listed_only=True) == [last_line]
 
 
 @pytest.mark.parametrize(

@@ -15,7 +15,7 @@ from skylos.analyzer import analyze
 from test.fixture_paths import write_fixture
 
 
-def _d211_lines(tmp_path, monkeypatch, source):
+def _d211_lines(tmp_path, monkeypatch, source, listed_only=False):
     monkeypatch.setenv("SKYLOS_JOBS", "1")
     write_fixture(tmp_path, "app.py", textwrap.dedent(source).lstrip("\n"))
     write_fixture(tmp_path, "pyproject.toml", '[project]\nname="proof"\n')
@@ -34,6 +34,7 @@ def _d211_lines(tmp_path, monkeypatch, source):
         finding["line"]
         for finding in result.get("danger", [])
         if finding["rule_id"] == "SKY-D211"
+        and (not listed_only or finding["listing"]["listed"])
     )
 
 
@@ -383,6 +384,90 @@ STILL_REPORTED = {
         """,
         11,
     ),
+    "class_name_rebound_at_runtime": (
+        """
+        from app.repos import load_repo
+
+
+        class Repo:
+            SQL = "SELECT * FROM users"
+
+
+        Repo = load_repo()
+
+
+        def run(cursor):
+            cursor.execute(Repo.SQL)
+        """,
+        12,
+    ),
+    "class_alias_write_from_request": (
+        """
+        from flask import request
+
+
+        class Repo:
+            SQL = "SELECT * FROM users"
+
+
+        def configure():
+            alias = Repo
+            alias.SQL = request.args["q"]
+
+
+        def run(cursor):
+            cursor.execute(Repo.SQL)
+        """,
+        14,
+    ),
+    "classmethod_with_module_subclass_override": (
+        """
+        import os
+
+
+        class Repo:
+            SQL = "SELECT * FROM users"
+
+            @classmethod
+            def run(cls, cursor):
+                cursor.execute(cls.SQL)
+
+
+        class Configured(Repo):
+            SQL = os.getenv("REPO_SQL")
+        """,
+        9,
+    ),
+    "class_passed_to_a_wrapper": (
+        """
+        class Repo:
+            SQL = "SELECT * FROM users"
+
+
+        def run(klass, cursor):
+            cursor.execute(klass.SQL)
+
+
+        def handler(cursor):
+            run(Repo, cursor)
+        """,
+        6,
+    ),
+    "class_name_check_does_not_guard_concatenation": (
+        """
+        from flask import request
+
+
+        class Repo:
+            SQL = "SELECT * FROM users WHERE "
+
+
+        def run(cursor):
+            if Repo.SQL.startswith("SELECT"):
+                cursor.execute(Repo.SQL + request.args["where"])
+        """,
+        10,
+    ),
     "constant_inherited_from_an_imported_base": (
         """
         from lib import Base
@@ -406,4 +491,4 @@ def test_class_attribute_that_can_carry_input_still_reports(
     tmp_path, monkeypatch, name
 ):
     source, line = STILL_REPORTED[name]
-    assert line in _d211_lines(tmp_path, monkeypatch, source)
+    assert line in _d211_lines(tmp_path, monkeypatch, source, listed_only=True)
