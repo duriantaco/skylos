@@ -9,10 +9,12 @@ source; literal replacement and projections onto public fields do not.
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass
+import copy
+from dataclasses import dataclass, replace
 import re
 import string
 
+from .module_namespace import module_name_for, module_rebinding
 from .untrusted_sources import UntrustedSourceIndex
 
 
@@ -46,6 +48,100 @@ _BUILTINS = {
     "bool",
 }
 _TRY_NODES = (ast.Try,) + ((ast.TryStar,) if hasattr(ast, "TryStar") else ())
+_HTTP_VERBS = frozenset(
+    {"get", "post", "put", "patch", "delete", "head", "options", "request", "stream"}
+)
+_HTTP_REQUEST_FUNCTIONS = frozenset(
+    {
+        f"{module}.{verb}"
+        for module in ("requests", "requests.api", "httpx")
+        for verb in _HTTP_VERBS
+    }
+    | {"urllib3.request", "aiohttp.request"}
+)
+_HTTP_CLIENT_TYPES = frozenset(
+    {
+        "requests.Session",
+        "requests.session",
+        "requests.sessions.Session",
+        "httpx.Client",
+        "httpx.AsyncClient",
+        "aiohttp.ClientSession",
+        "urllib3.PoolManager",
+        "urllib3.ProxyManager",
+        "urllib3.HTTPConnectionPool",
+        "urllib3.HTTPSConnectionPool",
+        "urllib3.connection_from_url",
+    }
+)
+_HTTP_CLIENT_METHODS = _HTTP_VERBS | {
+    "send",
+    "urlopen",
+    "request_encode_url",
+    "request_encode_body",
+}
+_RESPONSE_DATA_MEMBERS = frozenset(
+    {
+        "status_code",
+        "status",
+        "reason",
+        "reason_phrase",
+        "ok",
+        "text",
+        "content",
+        "json",
+        "data",
+        "headers",
+        "cookies",
+        "links",
+        "encoding",
+        "apparent_encoding",
+        "charset_encoding",
+        "content_type",
+        "content_length",
+        "elapsed",
+        "http_version",
+        "version",
+        "is_redirect",
+        "is_permanent_redirect",
+        "is_success",
+        "is_error",
+        "is_client_error",
+        "is_server_error",
+        "is_informational",
+        "read",
+        "aread",
+        "iter_content",
+        "iter_lines",
+        "iter_bytes",
+        "iter_text",
+        "iter_raw",
+        "getheader",
+        "getheaders",
+        "close",
+        "aclose",
+        "release",
+    }
+)
+_KEY_ARGUMENT_DECODERS = {
+    "stripe.Webhook.construct_event": (2, "secret"),
+    "jwt.decode_complete": (1, "key"),
+    "jwt.api_jwt.decode_complete": (1, "key"),
+}
+_CREDENTIAL_FREE_RESULTS = frozenset(
+    {
+        "hmac.compare_digest",
+        "secrets.compare_digest",
+        "stripe.WebhookSignature.verify_header",
+        "bcrypt.checkpw",
+        "werkzeug.security.check_password_hash",
+        "jwt.decode",
+        "jwt.api_jwt.decode",
+        "jose.jwt.decode",
+        "jose.jws.verify",
+        "authlib.jose.jwt.decode",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -56,9 +152,12 @@ class _Value:
     items: tuple[_Value, ...] | None = None
     pairs: tuple[tuple[str | int, _Value], ...] | None = None
     fields: tuple[tuple[str, _Value], ...] | None = None
+    http: str | None = None
 
 
 _UNKNOWN = _Value()
+_HTTP_CLIENT = "client"
+_HTTP_RESPONSE = "response"
 
 
 def _combined(values):
@@ -98,6 +197,30 @@ def _joined(left, right):
     return _Value(sources=left.sources | right.sources)
 
 
+class _MemberAssignments(ast.NodeTransformer):
+    """Turn ``root.member = value`` (a plain, non-dunder member of one of
+    ``roots``) into the bare expression ``value`` and record the member
+    written. The value is kept, so any call or namespace write inside it still
+    counts for import provenance."""
+
+    def __init__(self, roots):
+        self.roots = roots
+        self.members = {}
+
+    def visit_Assign(self, node):
+        if node.targets and all(
+            isinstance(target, ast.Attribute)
+            and isinstance(target.value, ast.Name)
+            and target.value.id in self.roots
+            and not (target.attr.startswith("__") and target.attr.endswith("__"))
+            for target in node.targets
+        ):
+            for target in node.targets:
+                self.members.setdefault(target.value.id, set()).add(target.attr)
+            return ast.copy_location(ast.Expr(value=self.visit(node.value)), node)
+        return self.generic_visit(node)
+
+
 class _LocalNames(ast.NodeVisitor):
     def __init__(self):
         self.names = set()
@@ -129,6 +252,11 @@ class _LoggingFlow:
         self.symbol = "<module>"
         self.findings = {}
         self.imports = UntrustedSourceIndex(tree)
+        self.tree = tree
+        self._dynamic_namespace = None
+        self._configured_imports = None
+        self.written_members = {}
+        self.import_names = set()
         self.function = None
         self._call_refs = []
         declared = _LocalNames()
@@ -200,6 +328,14 @@ class _LoggingFlow:
             base = self.expr(target.value)
             if base.api:
                 self.values[base.api + "." + target.attr] = value
+                if (
+                    value.sources
+                    and isinstance(target.value, ast.Name)
+                    and base.api in self.written_members
+                ):
+                    self.values[target.value.id] = replace(
+                        base, sources=base.sources | value.sources
+                    )
             elif base is not _UNKNOWN:
                 fields = dict(base.fields or ())
                 inherited = base.sources - _combined(fields.values()).sources
@@ -313,7 +449,11 @@ class _LoggingFlow:
     def _member(self, base, name):
         if base.api:
             qualified = base.api + "." + name
+            if name in self.written_members.get(base.api, ()):
+                return self.values.get(qualified, _UNKNOWN)
             return self.values.get(qualified, _Value(api=qualified))
+        if base.http == _HTTP_RESPONSE and name in _RESPONSE_DATA_MEMBERS:
+            return _UNKNOWN
         if base.fields is not None:
             return dict(base.fields).get(
                 name,
@@ -390,8 +530,21 @@ class _LoggingFlow:
                 + [v for k, v in keywords.items() if k in {"msg", "args", "extra"}],
             )
             return _UNKNOWN
-        if api in {"builtins.len", "builtins.bool"}:
+        if api in {"builtins.len", "builtins.bool"} or api in _CREDENTIAL_FREE_RESULTS:
             return _UNKNOWN
+        passed = args + [value for _, value in keyword_args]
+        if api in _HTTP_CLIENT_TYPES:
+            return _Value(sources=_combined(passed).sources, http=_HTTP_CLIENT)
+        if api in _HTTP_REQUEST_FUNCTIONS:
+            return _Value(sources=_combined(passed).sources, http=_HTTP_RESPONSE)
+        if api in _KEY_ARGUMENT_DECODERS and not any(
+            isinstance(arg, ast.Starred) for arg in node.args
+        ):
+            position, keyword = _KEY_ARGUMENT_DECODERS[api]
+            return _combined(
+                [value for index, value in enumerate(args) if index != position]
+                + [value for name, value in keyword_args if name != keyword]
+            )
         if api in {"builtins.str", "builtins.repr", "builtins.ascii", "json.dumps"}:
             return _combined(args[:1])
         if api == "builtins.dict":
@@ -407,6 +560,14 @@ class _LoggingFlow:
             return _combined(args + list(keywords.values()))
         if isinstance(node.func, ast.Attribute):
             method = node.func.attr
+            if base.http == _HTTP_CLIENT and method in _HTTP_CLIENT_METHODS:
+                return _Value(
+                    sources=_combined([base] + passed).sources, http=_HTTP_RESPONSE
+                )
+            if base.http == _HTTP_RESPONSE and method == "raise_for_status":
+                return base
+            if base.http == _HTTP_RESPONSE and method in _RESPONSE_DATA_MEMBERS:
+                return _combined(passed)
             if base.pairs is not None and method == "update":
                 updated = base
                 for value in args:
@@ -554,29 +715,101 @@ class _LoggingFlow:
         if continuing:
             names = set().union(*(state.keys() for state in continuing))
             self.values = {
-                name: _joined_states(
-                    [state.get(name, _UNKNOWN) for state in continuing]
-                )
-                for name in names
+                name: self._joined_branch_value(name, continuing) for name in names
             }
         else:
             self.values = saved
         return bool(continuing)
 
+    def _joined_branch_value(self, name, states):
+        """A name bound only on some paths is unbound on the others, where a
+        read raises NameError, so an import that every binding path agrees on
+        is the only value a later read can see. Only names bound by an import
+        statement qualify. Builtins are excluded: their unbound alternative is
+        the builtin itself. So is a module that can bind globals out of sight
+        (star import, ``globals()``, ``exec``)."""
+        present = [state[name] for state in states if name in state]
+        if (
+            name in self.import_names
+            and name not in _BUILTINS
+            and len(present) < len(states)
+            and present[0].api
+            and all(value == present[0] for value in present)
+            and not self._namespace_is_dynamic()
+        ):
+            return present[0]
+        return _joined_states([state.get(name, _UNKNOWN) for state in states])
+
+    def _namespace_is_dynamic(self):
+        if self._dynamic_namespace is None:
+            self._dynamic_namespace = module_rebinding(
+                self.tree, module_name_for(self.filename)
+            )[0]
+        return self._dynamic_namespace
+
+    def _import_value(self, name):
+        self.import_names.add(name)
+        resolved = self.imports.resolved_import(self.function, name)
+        if resolved is None and self.function is None:
+            resolved = self._configured_import(name)
+        return _Value(api=resolved)
+
+    def _configured_import(self, name):
+        """The module a module-level import binds when the shared index
+        declines it only because the module assigns plain members on it
+        (``stripe.api_key = ...``). Such an assignment replaces that member
+        alone; the members written never resolve to the library's own."""
+        if self._configured_imports is None:
+            self._configured_imports = {}
+            roots = set()
+            pending = list(self.tree.body)
+            while pending:
+                node = pending.pop()
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    roots.update(
+                        alias.asname or alias.name.split(".")[0] for alias in node.names
+                    )
+                elif not isinstance(
+                    node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                ):
+                    pending.extend(
+                        child
+                        for child in ast.iter_child_nodes(node)
+                        if isinstance(
+                            child, (ast.stmt, ast.excepthandler, ast.match_case)
+                        )
+                    )
+            if not any(
+                isinstance(node, ast.Attribute)
+                and isinstance(node.ctx, ast.Store)
+                and isinstance(node.value, ast.Name)
+                and node.value.id in roots
+                for node in ast.walk(self.tree)
+            ):
+                return None
+            pruner = _MemberAssignments(roots)
+            pruned = UntrustedSourceIndex(pruner.visit(copy.deepcopy(self.tree)))
+            resolved = {
+                root: pruned.resolved_import(None, root) for root in pruner.members
+            }
+            if resolved and all(resolved.values()):
+                self._configured_imports = resolved
+                for root, members in pruner.members.items():
+                    self.written_members.setdefault(resolved[root], set()).update(
+                        members
+                    )
+        return self._configured_imports.get(name)
+
     def statement(self, node):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 name = alias.asname or alias.name.split(".")[0]
-                self.values[name] = _Value(
-                    api=self.imports.resolved_import(self.function, name)
-                )
+                self.values[name] = self._import_value(name)
         elif isinstance(node, ast.ImportFrom):
             if node.module and not node.level:
                 for alias in node.names:
                     name = alias.asname or alias.name
-                    self.values[name] = _Value(
-                        api=self.imports.resolved_import(self.function, name)
-                    )
+                    self.values[name] = self._import_value(name)
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
             value = self.expr(node.value)
             for target in (
