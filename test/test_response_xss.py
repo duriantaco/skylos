@@ -1583,3 +1583,106 @@ def test_only_files_the_view_imports_are_read(tmp_path, monkeypatch):
     result = _analyze(tmp_path, monkeypatch, source, modules=modules)
     _assert_outcome(result, source, "    return 'Hi '", "table")
     assert {path.rsplit("/", 2)[-1] for path in opened} == {"codec.py"}
+
+
+SAFE_TUPLE_ENCODER = SAFE_LIST_ENCODER.replace("SAFE = [',', '.']", "SAFE = (',', '.')")
+IMPORTED_ENCODER = SAFE_TUPLE_ENCODER.replace(
+    "SAFE = (',', '.')\n", "from myproject.consts import SAFE\n"
+)
+DYNAMIC = {
+    "sys imported under another name": (
+        "import sys as runtime\n"
+        + SAFE_TUPLE_ENCODER
+        + "runtime.modules[__name__].SAFE = ('<', '>')\n",
+        (),
+        "listed",
+    ),
+    "modules imported from sys under another name": (
+        "from sys import modules as registry\n"
+        + SAFE_TUPLE_ENCODER
+        + "registry[__name__].SAFE = ('<', '>')\n",
+        (),
+        "listed",
+    ),
+    "globals aliased": (
+        SAFE_TUPLE_ENCODER + "g = globals\ng()['SAFE'] = ('<', '>')\n",
+        (),
+        "listed",
+    ),
+    "function __globals__": (
+        SAFE_TUPLE_ENCODER + "encode.__globals__['SAFE'] = ('<', '>')\n",
+        (),
+        "listed",
+    ),
+    "frame globals": (
+        "import inspect\n"
+        + SAFE_TUPLE_ENCODER
+        + "inspect.currentframe().f_globals['SAFE'] = ('<', '>')\n",
+        (),
+        "listed",
+    ),
+    "builtins under another name": (
+        "import builtins as b\n"
+        + SAFE_TUPLE_ENCODER
+        + "b.globals()['SAFE'] = ('<',)\n",
+        (),
+        "listed",
+    ),
+    "star import in the owner module": (
+        "from os.path import *\n" + SAFE_TUPLE_ENCODER,
+        (),
+        "listed",
+    ),
+    "imported allowlist whose owner uses sys.modules": (
+        IMPORTED_ENCODER,
+        (
+            (
+                "myproject/consts.py",
+                "import sys\nSAFE = (',', '.')\nsys.modules[__name__].SAFE = ('<',)\n",
+            ),
+        ),
+        "listed",
+    ),
+    "imported allowlist from an unresolved owner": (
+        SAFE_TUPLE_ENCODER.replace(
+            "SAFE = (',', '.')\n", "from elsewhere import SAFE\n"
+        ),
+        (),
+        "listed",
+    ),
+    "imported allowlist from a clean owner": (
+        IMPORTED_ENCODER,
+        (("myproject/consts.py", "SAFE = (',', '.')\n"),),
+        "quiet",
+    ),
+    "imported mutable allowlist from a clean owner": (
+        IMPORTED_ENCODER,
+        (("myproject/consts.py", "SAFE = [',', '.']\n"),),
+        "table",
+    ),
+    "sys used only for argv and stdout": (
+        "import sys\n"
+        + SAFE_TUPLE_ENCODER
+        + "DEBUG = '--debug' in sys.argv\nOUT = sys.stdout\n",
+        (),
+        "quiet",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "helpers, modules, outcome", list(DYNAMIC.values()), ids=list(DYNAMIC)
+)
+def test_owner_module_dynamic_access_rejects_the_encoder_proof(
+    tmp_path, monkeypatch, helpers, modules, outcome
+):
+    source = (
+        "from flask import Flask, request\n"
+        + helpers
+        + "app = Flask(__name__)\n"
+        + "@app.route('/')\n"
+        + "def page():\n"
+        + "    return 'Hi ' + encode(request.args['q'])\n"
+    )
+    result = _analyze(tmp_path, monkeypatch, source, modules=[*PROJECT, *modules])
+    _assert_outcome(result, source, "    return 'Hi '", outcome)

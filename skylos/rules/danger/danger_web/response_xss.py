@@ -1167,23 +1167,62 @@ class _EncoderProof:
         return value
 
 
-_DYNAMIC_NAMES = _DYNAMIC_CALLS | {"importlib"}
+_DYNAMIC_NAMES = frozenset(
+    {
+        "globals",
+        "vars",
+        "locals",
+        "getattr",
+        "setattr",
+        "delattr",
+        "exec",
+        "eval",
+        "compile",
+        "__import__",
+        "__builtins__",
+    }
+)
+_DYNAMIC_ATTRIBUTES = frozenset(
+    {
+        "__dict__",
+        "__globals__",
+        "__builtins__",
+        "f_globals",
+        "f_locals",
+        "f_back",
+        "modules",
+        "_getframe",
+        "currentframe",
+        "__setattr__",
+        "__setitem__",
+        "__getattribute__",
+    }
+)
+_DYNAMIC_MODULES = frozenset({"importlib", "inspect", "builtins", "gc", "ctypes"})
+_DYNAMIC_SYS_NAMES = frozenset({"modules", "_getframe", "*"})
 
 
 def _dynamic_node(node) -> bool:
-    if isinstance(node, ast.Name) and node.id in _DYNAMIC_NAMES:
-        return True
+    """A way to reach module globals by name at run time: a namespace or
+    reflection builtin referenced in any context, an attribute such as
+    ``modules``/``__globals__``/``f_globals`` on any object (attribute names
+    cannot be aliased without ``getattr``), an import of a reflection module
+    in any form, ``from sys import modules``/``_getframe``, or a star
+    import."""
+    if isinstance(node, ast.Name):
+        return node.id in _DYNAMIC_NAMES
     if isinstance(node, ast.Attribute):
-        if node.attr in _DYNAMIC_CALLS or node.attr == "__dict__":
-            return True
-        if node.attr == "modules" and _is_name(node.value, "sys"):
-            return True
+        return node.attr in _DYNAMIC_ATTRIBUTES
     if isinstance(node, ast.Import):
-        return any(alias.name.split(".")[0] == "importlib" for alias in node.names)
+        return any(alias.name.split(".")[0] in _DYNAMIC_MODULES for alias in node.names)
     if isinstance(node, ast.ImportFrom):
-        if (node.module or "").split(".")[0] == "importlib":
+        root = (node.module or "").split(".")[0]
+        names = {alias.name for alias in node.names}
+        if root in _DYNAMIC_MODULES or "*" in names:
             return True
-        return any(alias.name in _DYNAMIC_NAMES for alias in node.names)
+        if root == "sys" and names & _DYNAMIC_SYS_NAMES:
+            return True
+        return bool(names & (_DYNAMIC_NAMES | _DYNAMIC_ATTRIBUTES | _DYNAMIC_MODULES))
     return False
 
 
@@ -1630,6 +1669,16 @@ class _Module:
         return _module_file(bases, parts, root)
 
     def _definition_in(self, path: Path, name: str):
+        module = self._load_module(path)
+        if module is None:
+            return None
+        node = module.helpers().get(name) or module.classes().get(name)
+        if node is None or not any(node is item for item in module.tree.body):
+            return None
+        return module, node
+
+    def _load_module(self, path: Path):
+        """The project module at ``path``, parsed once and never imported."""
         if path == Path(self.file_path).resolve():
             return None
         if path not in self._project_modules:
@@ -1642,21 +1691,15 @@ class _Module:
             if tree is not None:
                 module = _Module(tree, path, self.project_root)
             self._project_modules[path] = module
-        module = self._project_modules[path]
-        if module is None:
-            return None
-        node = module.helpers().get(name) or module.classes().get(name)
-        if node is None or not any(node is item for item in module.tree.body):
-            return None
-        return module, node
+        return self._project_modules[path]
 
-    def module_literal(self, name: str, kinds):
+    def module_literal(self, name: str, kinds, hops: int = 1):
         """``(literal, mutable)`` for a module-level ``name`` bound exactly
         once to a literal and only read in this module (membership tests and
         subscript reads), else None. A mutable list, set or dict can still be
         changed at run time by another module, which a static read of this
         one cannot see."""
-        key = (name, kinds)
+        key = (name, kinds, hops)
         if key in self._literals:
             return self._literals[key]
         result = None
@@ -1667,7 +1710,10 @@ class _Module:
             and len(stmt.targets) == 1
             and _is_name(stmt.targets[0], name)
         ]
-        if self.counts().get(name) == 1 and len(found) == 1:
+        imported = self._imported_literal(name, kinds, hops)
+        if imported is not None:
+            result = imported
+        elif self.counts().get(name) == 1 and len(found) == 1:
             assigned = found[0].value
             value = _literal_value(assigned, kinds, self)
             parents = self._parent_map()
@@ -1683,6 +1729,50 @@ class _Module:
                 result = (value, mutable)
         self._literals[key] = result
         return result
+
+    def _imported_literal(self, name: str, kinds, hops: int):
+        """A module-level ``from <owner> import NAME``: the literal NAME is
+        bound to in its owner, which must pass the same single-binding and
+        dynamic-access checks; only read here."""
+        imports = [
+            (stmt, alias)
+            for stmt in self.tree.body
+            if isinstance(stmt, ast.ImportFrom)
+            for alias in stmt.names
+            if (alias.asname or alias.name) == name
+        ]
+        if len(imports) != 1 or self.counts().get(name) != 1 or hops <= 0:
+            return None
+        stmt, alias = imports[0]
+        owner = self._import_owner(stmt)
+        if owner is None or owner.dynamic_namespace():
+            return None
+        parents = self._parent_map()
+        uses = [
+            node
+            for node in ast.walk(self.tree)
+            if isinstance(node, ast.Name)
+            and node.id == name
+            and isinstance(node.ctx, ast.Load)
+        ]
+        if not all(_read_only_use(use, parents) for use in uses):
+            return None
+        return owner.module_literal(alias.name, kinds, hops - 1)
+
+    def _import_owner(self, stmt: ast.ImportFrom):
+        if stmt.level:
+            base = Path(self.file_path).resolve().parent
+            for _ in range(stmt.level - 1):
+                base = base.parent
+            parts = []
+            if stmt.module:
+                parts = stmt.module.split(".")
+            path = _module_file([base], parts, self._scan_root())
+        else:
+            path = self._project_module_path(stmt.module or "")
+        if path is None:
+            return None
+        return self._load_module(path)
 
     def dynamic_namespace(self) -> bool:
         """The module reaches names through its namespace at run time
