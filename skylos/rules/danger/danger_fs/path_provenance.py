@@ -31,6 +31,7 @@ first, and the step that stayed unresolved.
 from __future__ import annotations
 
 import ast
+import builtins
 import os
 import re
 import sys
@@ -274,6 +275,16 @@ _PLATFORM_NAMES = frozenset(
      "platform.uname", "sys.getwindowsversion"}
 )  # fmt: skip
 _WINDOWS_PLATFORM_WORDS = frozenset({"nt", "cygwin", "msys"})
+_REQUEST_TYPE_NAMES = frozenset(
+    {*REQUEST_ANNOTATIONS, "WSGIRequest", "ASGIRequest", "BaseRequest",
+     "HTTPServerRequest", "HttpRequestBase"}
+)  # fmt: skip
+_UNINFORMATIVE_TYPES = frozenset({"typing.Any", "typing_extensions.Any", "builtins.object"})
+_OPTIONAL_LIKE_TYPES = frozenset(
+    {"typing.Optional", "typing_extensions.Optional", "typing.Union",
+     "typing_extensions.Union", "typing.Annotated", "typing_extensions.Annotated"}
+)  # fmt: skip
+_MAX_ANNOTATION_DEPTH = 6
 _WEB_FRAMEWORKS = frozenset(
     {"django", "rest_framework", "flask", "quart", "werkzeug", "starlette",
      "fastapi", "aiohttp", "sanic", "bottle", "pyramid", "falcon", "tornado",
@@ -1150,6 +1161,7 @@ class _Project:
         self._importers = None
         self._dynamic_loaders = {}
         self._windows_units = {}
+        self._string_annotations = {}
 
     @classmethod
     def load(cls, root, files=None, complete=True):
@@ -2703,6 +2715,87 @@ class _Project:
                 return _step(unit, call, f"`{cls_node.name}` is registered with a DRF router")
         return ""
 
+    def declared_non_request(self, unit, fn, param):
+        """``param`` is annotated with a type that is not a web framework
+        request, so the ``request`` naming convention does not describe it and
+        its callers decide what it holds."""
+        annotation = getattr(param, "annotation", None)
+        info = self.function_info.get(id(fn))
+        if annotation is None or info is None:
+            return False
+        return self._non_request_type(unit, info[1], annotation, 0)
+
+    def _non_request_type(self, unit, scope, node, depth):
+        if depth > _MAX_ANNOTATION_DEPTH:
+            return False
+        if isinstance(node, ast.Constant):
+            parsed = self._string_annotation(node)
+            if parsed is None:
+                return False
+            return self._non_request_type(unit, scope, parsed, depth + 1)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            return self._non_request_members(unit, scope, [node.left, node.right], depth)
+        if isinstance(node, ast.Subscript):
+            outer = self.values(unit, scope, node.value)
+            if outer and all(value.kind == "ext" and value.name in _OPTIONAL_LIKE_TYPES for value in outer):
+                members = [node.slice]
+                if isinstance(node.slice, ast.Tuple):
+                    members = list(node.slice.elts)
+                if any(value.name.endswith(".Annotated") for value in outer):
+                    members = members[:1]
+                return self._non_request_members(unit, scope, members, depth)
+            return self._non_request_type(unit, scope, node.value, depth + 1)
+        if not isinstance(node, (ast.Name, ast.Attribute)):
+            return False
+        values = self.values(unit, scope, node)
+        if not values:
+            return False
+        return all(self._non_request_value(value) for value in values)
+
+    def _non_request_members(self, unit, scope, members, depth):
+        informative = [
+            member
+            for member in members
+            if not (isinstance(member, ast.Constant) and member.value is None)
+        ]
+        if not informative:
+            return False
+        return all(self._non_request_type(unit, scope, member, depth + 1) for member in informative)
+
+    def _string_annotation(self, node):
+        if not isinstance(node.value, str) or len(node.value) > 200:
+            return None
+        key = id(node)
+        if key not in self._string_annotations:
+            parsed = None
+            try:
+                parsed = ast.parse(node.value.strip(), mode="eval").body
+            except (SyntaxError, ValueError):
+                parsed = None
+            self._string_annotations[key] = (node, parsed)
+        return self._string_annotations[key][1]
+
+    def _non_request_value(self, value):
+        if value.kind == "cls":
+            order, external = self.mro(value.node)
+            if any(cls.name in _REQUEST_TYPE_NAMES for _, cls in order):
+                return False
+            return all(self._non_request_external(name) for name in external)
+        if value.kind != "ext" or value.name in _UNINFORMATIVE_TYPES:
+            return False
+        if value.name.startswith("builtins."):
+            return isinstance(getattr(builtins, value.name.split(".", 1)[1], None), type)
+        return self._non_request_external(value.name)
+
+    @staticmethod
+    def _non_request_external(name):
+        segments = name.split(".")
+        if len(segments) < 2:
+            return False
+        if segments[0] in _WEB_FRAMEWORKS or segments[-1] in _REQUEST_TYPE_NAMES:
+            return False
+        return name not in _UNINFORMATIVE_TYPES
+
     def targets_windows(self, unit):
         cached = self._windows_units.get(id(unit))
         if cached is None:
@@ -2949,9 +3042,10 @@ class _Project:
                     annotated = node.attr
                 if annotated in REQUEST_ANNOTATIONS and self.framework_context(unit):
                     return UNTRUSTED, _step(unit, fn, f"request object `{name}` of `{label}`")
-        if name in REQUEST_NAMES and self.framework_context(unit):
+        convention = name in REQUEST_NAMES and not self.declared_non_request(unit, fn, param)
+        if convention and self.framework_context(unit):
             return UNTRUSTED, _step(unit, fn, f"request data `{name}` of `{label}` (web framework module)")
-        if name in REQUEST_NAMES and _reads_request_attributes(fn, name):
+        if convention and _reads_request_attributes(fn, name):
             return UNTRUSTED, _step(unit, fn, f"request data `{name}` of `{label}` (reads HTTP request fields)")
         info = self.function_info.get(id(fn))
         owner = None
@@ -4536,6 +4630,8 @@ class _Tracer:
             else:
                 function = bind.scope.node
                 if unit.is_test and (_function_label(function).startswith("test") or _is_fixture(function)):
+                    return False
+                if self.project.declared_non_request(unit, function, bind.node):
                     return False
         return True
 
