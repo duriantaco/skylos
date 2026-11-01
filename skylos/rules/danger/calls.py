@@ -865,10 +865,9 @@ _NATIVE_SAFE_YAML_LOADERS = frozenset(
 
 _YAML_PROOF_NODE_LIMIT = 50000
 _IMPORT_MACHINERY_MODULES = frozenset({"builtins", "importlib", "imp"})
-_IMPORT_MACHINERY_NAMES = frozenset(
-    {"__import__", "__builtins__", "setattr", "globals", "vars", "exec", "eval"}
-)
-_IMPORT_MACHINERY_ATTRIBUTES = _IMPORT_MACHINERY_NAMES | {"modules"}
+_IMPORT_HOOK_NAMES = frozenset({"__import__", "__builtins__"})
+_CODE_RUNNER_NAMES = frozenset({"exec", "eval", "compile"})
+_SYS_IMPORT_STATE = frozenset({"modules", "_getframe", "settrace", "setprofile"})
 
 
 def _non_import_binding_names(node: ast.AST) -> list[str]:
@@ -888,57 +887,105 @@ def _non_import_binding_names(node: ast.AST) -> list[str]:
     return []
 
 
+def _sys_attribute_reaches_imports(attribute: str | None) -> bool:
+    return (
+        attribute is None
+        or attribute in _SYS_IMPORT_STATE
+        or attribute.startswith("__")
+    )
+
+
 class _YamlLoaderNamespace:
     """One capped pass over a module for the YAML loader proofs: the absolute
     ``from`` imports that bind each name and the names bound any other way
     (assignment, parameter, definition, handler or match name, ``del``,
-    ``global``/``nonlocal``, module or relative import). ``refused`` when the
-    module can reach the import machinery (a name or attribute
-    ``__import__``/``__builtins__``/``setattr``/``globals``/``vars``/``exec``/
-    ``eval``, the attribute ``modules``, an import of ``builtins``,
-    ``importlib`` or ``imp``), has a star import, or is larger than the
-    scan cap; a refused module proves no loader safe."""
+    ``global``/``nonlocal``, module or relative import).
+
+    ``refused`` when the module can reach the import machinery: a name,
+    attribute or string ``__import__``/``__builtins__``; an import of
+    ``builtins``, ``importlib`` or ``imp``; a star import; a name ``exec``,
+    ``eval`` or ``compile``; or a sys module reference (any ``import sys
+    [as X]``, ``from ... import sys`` or ``X.sys``) that is not the receiver
+    of an ordinary attribute, such as ``sys.modules``, ``sys._getframe``,
+    ``sys.settrace``, ``sys.setprofile``, a ``sys`` dunder, ``getattr(sys,
+    ...)`` or ``vars(sys)``. Also refused past the scan cap. A refused module
+    proves no loader safe. ``model.modules()``, ``app.exec()``,
+    ``setattr(cfg, ...)`` and ``sys.argv`` do not refuse."""
 
     def __init__(self, tree: ast.Module):
         self.imports: dict[str, set[str]] = {}
         self.other: set[str] = set()
         self.refused = False
         self.rebinding = {}
+        self.sys_names: set[str] = set()
+        self.name_loads: dict[str, list[int]] = {}
+        self.sys_attributes: list[int] = []
+        self.receivers: dict[int, str] = {}
         for count, node in enumerate(ast.walk(tree)):
             if count >= _YAML_PROOF_NODE_LIMIT:
                 self.refused = True
                 return
             self._record(node)
+        if not self.refused:
+            self.refused = self._sys_reference_escapes()
 
     def _record(self, node: ast.AST) -> None:
         if isinstance(node, ast.ImportFrom):
-            if (node.module or "").split(".", 1)[0] in _IMPORT_MACHINERY_MODULES:
-                self.refused = True
-            for alias in node.names:
-                if alias.name == "*" or alias.name in _IMPORT_MACHINERY_ATTRIBUTES:
-                    self.refused = True
-                local = alias.asname or alias.name
-                if node.level or not node.module:
-                    self.other.add(local)
-                else:
-                    qualified = f"{node.module}.{alias.name}"
-                    self.imports.setdefault(local, set()).add(qualified)
+            self._record_from_import(node)
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 root = alias.name.split(".", 1)[0]
                 if root in _IMPORT_MACHINERY_MODULES:
                     self.refused = True
+                if alias.name == "sys" or (root == "sys" and not alias.asname):
+                    self.sys_names.add(alias.asname or root)
                 self.other.add(alias.asname or root)
         elif isinstance(node, ast.Name):
-            if node.id in _IMPORT_MACHINERY_NAMES:
+            if node.id in _IMPORT_HOOK_NAMES:
                 self.refused = True
-            if not isinstance(node.ctx, ast.Load):
+            if isinstance(node.ctx, ast.Load):
+                if node.id in _CODE_RUNNER_NAMES:
+                    self.refused = True
+                self.name_loads.setdefault(node.id, []).append(id(node))
+            else:
                 self.other.add(node.id)
         elif isinstance(node, ast.Attribute):
-            if node.attr in _IMPORT_MACHINERY_ATTRIBUTES:
+            if node.attr in _IMPORT_HOOK_NAMES:
+                self.refused = True
+            self.receivers[id(node.value)] = node.attr
+            if node.attr == "sys" and isinstance(node.ctx, ast.Load):
+                self.sys_attributes.append(id(node))
+        elif isinstance(node, ast.Constant):
+            if isinstance(node.value, str) and node.value in _IMPORT_HOOK_NAMES:
                 self.refused = True
         else:
             self.other.update(_non_import_binding_names(node))
+
+    def _record_from_import(self, node: ast.ImportFrom) -> None:
+        if (node.module or "").split(".", 1)[0] in _IMPORT_MACHINERY_MODULES:
+            self.refused = True
+        for alias in node.names:
+            if alias.name == "*" or alias.name in _IMPORT_HOOK_NAMES:
+                self.refused = True
+            if node.module == "sys" and _sys_attribute_reaches_imports(alias.name):
+                self.refused = True
+            local = alias.asname or alias.name
+            if alias.name == "sys":
+                self.sys_names.add(local)
+            if node.level or not node.module:
+                self.other.add(local)
+            else:
+                qualified = f"{node.module}.{alias.name}"
+                self.imports.setdefault(local, set()).add(qualified)
+
+    def _sys_reference_escapes(self) -> bool:
+        references = list(self.sys_attributes)
+        for name in self.sys_names:
+            references.extend(self.name_loads.get(name, ()))
+        return any(
+            _sys_attribute_reaches_imports(self.receivers.get(reference))
+            for reference in references
+        )
 
     def fallback_targets(self, tree: ast.Module, name: str, module_name=None):
         """What every binding of ``name`` imports, as in ``try: from yaml

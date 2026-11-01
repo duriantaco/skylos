@@ -148,6 +148,24 @@ REPORTED = {
         "modules['yaml'] = types.SimpleNamespace(SafeLoader=yaml.UnsafeLoader)\n"
         "from yaml import SafeLoader\n" + YAML_READ
     ),
+    "sys_modules_through_alias": (
+        "import sys as rt, types, yaml\n"
+        "rt.modules['yaml'] = types.SimpleNamespace(SafeLoader=yaml.UnsafeLoader)\n"
+        "from yaml import SafeLoader\n" + YAML_READ
+    ),
+    "sys_modules_through_os": (
+        "import os, types, yaml\n"
+        "os.sys.modules['yaml'] = types.SimpleNamespace(SafeLoader=yaml.UnsafeLoader)\n"
+        "from yaml import SafeLoader\n" + YAML_READ
+    ),
+    "builtins_dict_import_hook": (
+        "import types, yaml\n"
+        "proxy = types.SimpleNamespace(SafeLoader=yaml.UnsafeLoader)\n"
+        "def fake(name, *args, **kwargs):\n"
+        "    return proxy\n"
+        "globals()['__builtins__']['__import__'] = fake\n"
+        "from yaml import SafeLoader\n" + YAML_READ
+    ),
     "sys_modules_through_getattr": (
         "import sys, types, yaml\n"
         "getattr(sys, 'modules')['yaml'] = types.SimpleNamespace(\n"
@@ -205,6 +223,22 @@ QUIET = {
         "    except ImportError:\n"
         "        from yaml import SafeLoader\n"
         "    return yaml.load(stream, Loader=SafeLoader)\n"
+    ),
+    "pydrive2_with_torch_modules": PYDRIVE2 + "def count(model):\n"
+    "    total = 0\n"
+    "    for m in model.modules():\n"
+    "        total += 1\n"
+    "    return total\n",
+    "pydrive2_with_setattr": PYDRIVE2 + "class Config:\n"
+    "    pass\n"
+    "cfg = Config()\n"
+    "setattr(cfg, 'x', 1)\n",
+    "pydrive2_with_qt_exec": PYDRIVE2 + "def run(app):\n    return app.exec()\n",
+    "single_binding_with_vars_and_modules": (
+        "import yaml\n"
+        "def read(stream, model):\n"
+        "    print(vars(model), list(model.modules()))\n"
+        "    return yaml.load(stream, Loader=yaml.SafeLoader)\n"
     ),
     "pydrive2_with_sys_argv": "import sys\n"
     + PYDRIVE2
