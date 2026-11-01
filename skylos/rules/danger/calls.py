@@ -315,7 +315,7 @@ def _call_low_risk_context(node: ast.Call, severity: str, rule_severity: str, op
             "detail": "the command is a fixed string with no input",
         }
     if opts.get("security_optout"):
-        names = _hash_input_names(node)
+        names = _hash_input_names(node, opts.get("hash_data_index", 0))
         if names is None:
             return None
         sensitive = first_sensitive_name(names)
@@ -385,11 +385,12 @@ def _hash_object_name(node: ast.Call) -> str | None:
     return None
 
 
-def _hash_input_names(node: ast.Call) -> list[str] | None:
+def _hash_input_names(node: ast.Call, data_index: int = 0) -> list[str] | None:
     """Names that feed the hashed bytes: the call's data argument, values
     assigned to those names in the same scope, and ``.update()`` arguments on
-    the hash object. None when the data cannot be read from the code."""
-    data = list(node.args[:1])
+    the hash object. None when the data cannot be read from the code.
+    ``data_index`` is the data argument's position (1 for ``hashlib.new``)."""
+    data = list(node.args[data_index : data_index + 1])
     for kw in node.keywords:
         if kw.arg in {"string", "data"}:
             data.append(kw.value)
@@ -421,6 +422,23 @@ def _hash_input_names(node: ast.Call) -> list[str] | None:
         for name in list(names):
             names.extend(_bound_value_names(scope, name))
     return names
+
+
+_HASHLIB_NEW_WEAK = {"md5": "hashlib.md5", "sha1": "hashlib.sha1"}
+
+
+def _hashlib_new_weak_rule(node: ast.Call, name: str | None) -> str | None:
+    """``hashlib.new("md5", data)`` is ``hashlib.md5(data)``: the rule key of
+    the weak constructor a literal algorithm name selects, or None."""
+    if name != "hashlib.new":
+        return None
+    algorithm = node.args[0] if node.args else None
+    for kw in node.keywords:
+        if kw.arg == "name":
+            algorithm = kw.value
+    if not (isinstance(algorithm, ast.Constant) and isinstance(algorithm.value, str)):
+        return None
+    return _HASHLIB_NEW_WEAK.get(algorithm.value.lower())
 
 
 def _kw_equals(node: ast.Call, requirements):
@@ -773,13 +791,15 @@ class DangerousCallsRule(SkylosRule):
             return None
 
         findings = []
+        weak_hash_key = _hashlib_new_weak_rule(node, name)
+        rule_name = weak_hash_key or name
 
         for rule_key, tup in DANGEROUS_CALLS.items():
             if tup[0] == "SKY-D210":
                 # TLS checks need scoped provider/configuration evidence,
                 # including aliases and visible local lookalikes.
                 continue
-            if not _matches_rule(name, rule_key):
+            if not _matches_rule(rule_name, rule_key):
                 continue
 
             if rule_key == "pickle.loads" and id(node) in self._safe_pickle_loads:
@@ -792,6 +812,8 @@ class DangerousCallsRule(SkylosRule):
             severity = tup[1]
             message = tup[2]
             opts = tup[3] if len(tup) > 3 else None
+            if weak_hash_key is not None:
+                opts = {**opts, "hash_data_index": 1}
 
             if rule_key in {"yaml.load", "yaml.load_all"}:
                 if not _yaml_load_without_safeloader(
