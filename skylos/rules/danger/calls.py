@@ -392,7 +392,7 @@ def _call_low_risk_context(
         if names is None:
             return None
         sensitive = first_sensitive_name(names)
-        if sensitive is None:
+        if sensitive is None and not _hash_parameters_receive_sensitive(node, names):
             return {
                 "reason": "non-sensitive-hash-input",
                 "detail": "the hashed data is not a credential, identity or certificate",
@@ -520,6 +520,128 @@ def _hashlib_new_weak_rule(node: ast.Call, name: str | None) -> str | None:
     if not (isinstance(algorithm, ast.Constant) and isinstance(algorithm.value, str)):
         return None
     return _HASHLIB_NEW_WEAK.get(algorithm.value.lower())
+
+
+_HASH_CALLER_DEPTH = 3
+
+
+def _parameter_names(function: ast.AST) -> list[str]:
+    arguments = function.args
+    names = [
+        argument.arg
+        for argument in [
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+        ]
+    ]
+    for argument in (arguments.vararg, arguments.kwarg):
+        if argument is not None:
+            names.append(argument.arg)
+    return names
+
+
+def _is_static_method(function: ast.AST) -> bool:
+    return any(
+        (isinstance(decorator, ast.Name) and decorator.id == "staticmethod")
+        or (isinstance(decorator, ast.Attribute) and decorator.attr == "staticmethod")
+        for decorator in function.decorator_list
+    )
+
+
+def _call_site_arguments(call: ast.Call, function, parameter: str, method: bool):
+    """Expressions a call site may pass as ``parameter`` of ``function``. A
+    method may be called bound or through its class, so both positions
+    count; unpacked arguments count for every parameter."""
+    arguments = function.args
+    positional = [
+        argument.arg for argument in [*arguments.posonlyargs, *arguments.args]
+    ]
+    plain = [
+        argument for argument in call.args if not isinstance(argument, ast.Starred)
+    ]
+    expressions = [
+        argument.value for argument in call.args if isinstance(argument, ast.Starred)
+    ]
+    if expressions:
+        expressions.extend(plain)
+    elif parameter in positional:
+        indexes = {positional.index(parameter)}
+        if method and not _is_static_method(function):
+            indexes.add(positional.index(parameter) - 1)
+        for index in indexes:
+            if 0 <= index < len(plain):
+                expressions.append(plain[index])
+    if arguments.vararg is not None and parameter == arguments.vararg.arg:
+        expressions.extend(plain[max(len(positional) - 1, 0) :])
+    named = set(_parameter_names(function))
+    for keyword in call.keywords:
+        if keyword.arg is None or keyword.arg == parameter:
+            expressions.append(keyword.value)
+        elif (
+            arguments.kwarg is not None
+            and parameter == arguments.kwarg.arg
+            and keyword.arg not in named
+        ):
+            expressions.append(keyword.value)
+    return expressions
+
+
+def _parameters_receive_sensitive(function, names, depth: int, seen: set) -> bool:
+    """Whether a same-module caller passes a credential-named value, or one
+    derived from it, into a parameter of ``function`` named in ``names``.
+    Work beyond the module budget keeps the finding listed."""
+    if depth <= 0 or not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    if id(function) in seen:
+        return False
+    seen.add(id(function))
+    parameters = [name for name in _parameter_names(function) if name in names]
+    module = _module_of(function)
+    if not parameters or module is None:
+        return False
+    index = _module_calls(module)
+    method = isinstance(getattr(function, "parent", None), ast.ClassDef)
+    sites = []
+    callers = index.calls
+    if method:
+        callers = index.method_calls
+    for call in callers.get(function.name, ()):
+        for parameter in parameters:
+            sites.extend(
+                (call, expression)
+                for expression in _call_site_arguments(
+                    call, function, parameter, method
+                )
+            )
+    for call in index.callbacks.get(function.name, ()):
+        for expression in [*call.args, *(keyword.value for keyword in call.keywords)]:
+            reference = _dotted_name(expression)
+            if reference is None or reference.rsplit(".", 1)[-1] != function.name:
+                sites.append((call, expression))
+    for call, expression in sites:
+        caller_names = _expression_names(expression)
+        if not index.spend(len(caller_names) + 1):
+            return True
+        scope = _enclosing_scope(call)
+        if scope is not None:
+            for name in list(caller_names):
+                caller_names.extend(_bound_value_names(scope, name))
+        if first_sensitive_name(caller_names) is not None:
+            return True
+        if _parameters_receive_sensitive(
+            _enclosing_function(call), set(caller_names), depth - 1, seen
+        ):
+            return True
+    return False
+
+
+def _hash_parameters_receive_sensitive(node: ast.Call, names) -> bool:
+    """A weak hash of a parameter is sensitive when a caller hashes a
+    credential through it, as in ``digest(password)``."""
+    return _parameters_receive_sensitive(
+        _enclosing_function(node), set(names), _HASH_CALLER_DEPTH, set()
+    )
 
 
 def _kw_equals(node: ast.Call, requirements):
