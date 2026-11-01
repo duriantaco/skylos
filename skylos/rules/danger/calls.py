@@ -183,6 +183,43 @@ DANGEROUS_CALLS = {
     ),
 }
 
+_WEAK_RANDOM_FINDING = (
+    "SKY-D250",
+    "MEDIUM",
+    "Weak random source; use secrets or os.urandom for security-sensitive values",
+    {"weak_random": True},
+)
+_WEAK_RANDOM_FUNCTIONS = (
+    "random",
+    "randint",
+    "randrange",
+    "choice",
+    "choices",
+    "randbytes",
+    "getrandbits",
+    "uniform",
+    "triangular",
+    "normalvariate",
+    "gauss",
+    "lognormvariate",
+    "expovariate",
+    "vonmisesvariate",
+    "gammavariate",
+    "betavariate",
+    "binomialvariate",
+    "paretovariate",
+    "weibullvariate",
+    "sample",
+)
+DANGEROUS_CALLS.update(
+    {
+        f"{owner}.{function}": _WEAK_RANDOM_FINDING
+        for owner in ("random", "random.Random")
+        for function in _WEAK_RANDOM_FUNCTIONS
+        if f"{owner}.{function}" not in DANGEROUS_CALLS
+    }
+)
+
 
 def _resolve_expr_name(node: ast.AST, aliases=None, assigned_calls=None):
     aliases = aliases or {}
@@ -554,27 +591,343 @@ def _name_looks_security_sensitive(name: str | None) -> bool:
     return bool(tokens & _WEAK_RANDOM_SECURITY_KEYWORDS)
 
 
+_SESSION_STORES = frozenset({"session"})
+_COOKIE_SETTERS = frozenset({"set_cookie", "set_signed_cookie"})
+_COOKIE_JARS = frozenset({"cookies", "COOKIES"})
+_WEAK_RANDOM_FLOW_HOPS = 4
+
+
+def _is_session_store(node: ast.AST) -> bool:
+    if isinstance(node, ast.Name):
+        return node.id in _SESSION_STORES
+    if isinstance(node, ast.Attribute):
+        return node.attr in _SESSION_STORES
+    return False
+
+
 def _target_looks_security_sensitive(target: ast.AST) -> bool:
     if isinstance(target, ast.Name):
         return _name_looks_security_sensitive(target.id)
     if isinstance(target, ast.Attribute):
         return _name_looks_security_sensitive(target.attr)
     if isinstance(target, ast.Subscript):
+        if _is_session_store(target.value):
+            return True
         if isinstance(target.slice, ast.Constant) and isinstance(
             target.slice.value, str
         ):
             return _name_looks_security_sensitive(target.slice.value)
+        if isinstance(target.slice, ast.Name) and _name_looks_security_sensitive(
+            target.slice.id
+        ):
+            return True
+        if isinstance(target.slice, ast.Attribute) and _name_looks_security_sensitive(
+            target.slice.attr
+        ):
+            return True
         return _target_looks_security_sensitive(target.value)
     return False
 
 
-def _enclosing_function_name(node: ast.AST) -> str | None:
+def _enclosing_function(node: ast.AST) -> ast.AST | None:
     current = getattr(node, "parent", None)
     while current is not None:
         if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            return current.name
+            return current
         current = getattr(current, "parent", None)
     return None
+
+
+def _enclosing_function_name(node: ast.AST) -> str | None:
+    function = _enclosing_function(node)
+    if function is None:
+        return None
+    return function.name
+
+
+def _reads_cookie_jar(node: ast.AST) -> bool:
+    return any(
+        isinstance(child, ast.Attribute) and child.attr in _COOKIE_JARS
+        for child in ast.walk(node)
+    )
+
+
+def _call_attribute_name(call: ast.Call) -> str | None:
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    return None
+
+
+def _scope_name_loads(scope: ast.AST) -> dict[str, list[ast.Name]]:
+    """Loads of each name in ``scope``, excluding nested function and class
+    bodies, cached on the scope node."""
+    cached = getattr(scope, "_skylos_weak_random_loads", None)
+    if cached is not None:
+        return cached
+    loads: dict[str, list[ast.Name]] = {}
+    pending = list(ast.iter_child_nodes(scope))
+    while pending:
+        current = pending.pop()
+        if isinstance(
+            current,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef),
+        ):
+            continue
+        if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load):
+            loads.setdefault(current.id, []).append(current)
+        pending.extend(ast.iter_child_nodes(current))
+    scope._skylos_weak_random_loads = loads
+    return loads
+
+
+def _rebinds_name(statement: ast.AST, name: str) -> bool:
+    if isinstance(statement, ast.Assign):
+        return any(
+            isinstance(target, ast.Name) and target.id == name
+            for target in statement.targets
+        )
+    if isinstance(statement, ast.AnnAssign):
+        return (
+            statement.value is not None
+            and isinstance(statement.target, ast.Name)
+            and statement.target.id == name
+        )
+    return False
+
+
+def _rebinding_cutoff(statement: ast.AST, name: str):
+    """End of the first later statement in an enclosing block that rebinds
+    ``name`` unconditionally; uses after it read the new value."""
+    cutoff = None
+    current = statement
+    while current is not None and not isinstance(
+        current,
+        (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef, ast.Module),
+    ):
+        parent = getattr(current, "parent", None)
+        if parent is None:
+            break
+        for field in ("body", "orelse", "finalbody"):
+            block = getattr(parent, field, None)
+            if not isinstance(block, list):
+                continue
+            index = next((i for i, item in enumerate(block) if item is current), None)
+            if index is None:
+                continue
+            for sibling in block[index + 1 :]:
+                if _rebinds_name(sibling, name):
+                    end = (sibling.end_lineno, sibling.end_col_offset)
+                    if cutoff is None or end < cutoff:
+                        cutoff = end
+                    break
+        current = parent
+    return cutoff
+
+
+def _name_reaches_security_use(
+    target: ast.AST, statement: ast.AST, hops: int, seen: set
+) -> bool:
+    """Later reads of a local name bound to a weak random value."""
+    if hops <= 0 or not isinstance(target, ast.Name):
+        return False
+    scope = _enclosing_scope(statement)
+    if scope is None:
+        return False
+    key = (id(scope), target.id, id(statement))
+    if key in seen:
+        return False
+    seen.add(key)
+    start = (statement.end_lineno, statement.end_col_offset)
+    cutoff = _rebinding_cutoff(statement, target.id)
+    for load in _scope_name_loads(scope).get(target.id, ()):
+        position = (load.lineno, load.col_offset)
+        if position < start:
+            continue
+        if cutoff is not None and position >= cutoff:
+            continue
+        if _weak_random_value_reaches_security_use(load, hops - 1, seen):
+            return True
+    return False
+
+
+def _module_of(node: ast.AST) -> ast.AST | None:
+    current = node
+    while getattr(current, "parent", None) is not None:
+        current = current.parent
+    if isinstance(current, ast.Module):
+        return current
+    return None
+
+
+def _result_reaches_security_use(
+    function: ast.AST | None, hops: int, seen: set
+) -> bool:
+    """Calls of a module-level helper that returns a weak random value."""
+    if hops <= 0 or not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    module = _module_of(function)
+    if module is None or not any(item is function for item in module.body):
+        return False
+    key = ("result", id(function))
+    if key in seen:
+        return False
+    seen.add(key)
+    definitions = 0
+    calls = []
+    for child in ast.walk(module):
+        if (
+            isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and child.name == function.name
+        ):
+            definitions += 1
+        elif isinstance(child, ast.Name) and child.id == function.name:
+            if not isinstance(child.ctx, ast.Load):
+                return False
+            parent = getattr(child, "parent", None)
+            if isinstance(parent, ast.Call) and parent.func is child:
+                calls.append(parent)
+        elif isinstance(child, (ast.Import, ast.ImportFrom)) and any(
+            (alias.asname or alias.name.split(".", 1)[0]) == function.name
+            for alias in child.names
+        ):
+            return False
+    if definitions != 1:
+        return False
+    return any(
+        _weak_random_value_reaches_security_use(call, hops - 1, seen) for call in calls
+    )
+
+
+def _weak_random_value_reaches_security_use(
+    node: ast.AST, hops: int, seen: set
+) -> bool:
+    """Whether the value of ``node`` flows, within its function, through
+    string conversion, slicing, formatting and encoding calls into a
+    credential-named store, keyword or return, the session, a cookie value,
+    or an equality check against a request cookie."""
+    current: ast.AST = node
+    while True:
+        parent = getattr(current, "parent", None)
+        if parent is None:
+            return False
+
+        if isinstance(parent, ast.Assign):
+            if current is not parent.value:
+                return False
+            if any(_target_looks_security_sensitive(t) for t in parent.targets):
+                return True
+            return any(
+                _name_reaches_security_use(t, parent, hops, seen)
+                for t in parent.targets
+            )
+
+        if isinstance(parent, ast.AnnAssign):
+            if current is not parent.value:
+                return False
+            if _target_looks_security_sensitive(parent.target):
+                return True
+            return _name_reaches_security_use(parent.target, parent, hops, seen)
+
+        if isinstance(parent, ast.AugAssign):
+            if current is not parent.value:
+                return False
+            if _target_looks_security_sensitive(parent.target):
+                return True
+            return _name_reaches_security_use(parent.target, parent, hops, seen)
+
+        if isinstance(parent, ast.NamedExpr):
+            if _target_looks_security_sensitive(parent.target):
+                return True
+            statement = parent
+            while statement is not None and not isinstance(statement, ast.stmt):
+                statement = getattr(statement, "parent", None)
+            if statement is not None and _name_reaches_security_use(
+                parent.target, statement, hops, seen
+            ):
+                return True
+            current = parent
+            continue
+
+        if isinstance(parent, ast.keyword):
+            if _name_looks_security_sensitive(parent.arg):
+                return True
+            call = getattr(parent, "parent", None)
+            if (
+                parent.arg == "value"
+                and isinstance(call, ast.Call)
+                and _call_attribute_name(call) in _COOKIE_SETTERS
+            ):
+                return True
+            current = parent
+            continue
+
+        if isinstance(parent, ast.Return):
+            function = _enclosing_function(parent)
+            if function is not None and _name_looks_security_sensitive(function.name):
+                return True
+            return _result_reaches_security_use(function, hops, seen)
+
+        if isinstance(parent, ast.Call):
+            name = _call_attribute_name(parent)
+            if current is not parent.func:
+                if name in _COOKIE_SETTERS and any(
+                    arg is current for arg in parent.args[1:2]
+                ):
+                    return True
+                if name == "compare_digest" and any(
+                    _reads_cookie_jar(arg) for arg in parent.args if arg is not current
+                ):
+                    return True
+            current = parent
+            continue
+
+        if isinstance(parent, ast.Compare):
+            operands = [parent.left, *parent.comparators]
+            if any(isinstance(op, (ast.Eq, ast.NotEq)) for op in parent.ops) and any(
+                _reads_cookie_jar(operand)
+                for operand in operands
+                if operand is not current
+            ):
+                return True
+            current = parent
+            continue
+
+        if isinstance(parent, ast.Subscript):
+            if current is not parent.value:
+                return False
+            current = parent
+            continue
+
+        if isinstance(parent, ast.Attribute):
+            call = getattr(parent, "parent", None)
+            if not (isinstance(call, ast.Call) and call.func is parent):
+                return False
+            current = parent
+            continue
+
+        if isinstance(parent, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+            if current is not parent.elt:
+                return False
+            current = parent
+            continue
+
+        if isinstance(
+            parent,
+            (
+                ast.BinOp,
+                ast.BoolOp,
+                ast.FormattedValue,
+                ast.IfExp,
+                ast.JoinedStr,
+                ast.UnaryOp,
+            ),
+        ):
+            current = parent
+            continue
+
+        return False
 
 
 def _weak_random_has_security_context(
@@ -587,44 +940,7 @@ def _weak_random_has_security_context(
     if _name_looks_security_sensitive(function_name):
         return True
 
-    current: ast.AST = node
-    while True:
-        parent = getattr(current, "parent", None)
-        if parent is None:
-            return False
-
-        if isinstance(parent, ast.Assign):
-            return any(_target_looks_security_sensitive(t) for t in parent.targets)
-
-        if isinstance(parent, ast.AnnAssign):
-            return _target_looks_security_sensitive(parent.target)
-
-        if isinstance(parent, ast.keyword):
-            if _name_looks_security_sensitive(parent.arg):
-                return True
-            current = parent
-            continue
-
-        if isinstance(parent, ast.Return):
-            return _name_looks_security_sensitive(_enclosing_function_name(parent))
-
-        if isinstance(
-            parent,
-            (
-                ast.BinOp,
-                ast.BoolOp,
-                ast.Call,
-                ast.Compare,
-                ast.FormattedValue,
-                ast.IfExp,
-                ast.JoinedStr,
-                ast.UnaryOp,
-            ),
-        ):
-            current = parent
-            continue
-
-        return False
+    return _weak_random_value_reaches_security_use(node, _WEAK_RANDOM_FLOW_HOPS, set())
 
 
 # App factories / constructors whose ``.run(debug=True)`` starts the Werkzeug
