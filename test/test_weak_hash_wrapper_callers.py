@@ -3,6 +3,7 @@ a credential, or a value derived from one, keeps md5/sha1/hashlib.new listed;
 a wrapper whose callers all pass non-credential data stays demoted."""
 
 import json
+import time
 
 import pytest
 
@@ -163,3 +164,33 @@ def test_wrapper_hashing_only_non_credential_data_stays_demoted(hash_rows, case)
     assert row["rule_id"] == rule_id
     assert row["low_risk_context"]["reason"] == "non-sensitive-hash-input"
     assert not is_listed(row, "danger")
+
+
+def _wide_caller_graph(width: int) -> str:
+    lines = [
+        "import hashlib",
+        "def digest(data):",
+        "    return hashlib.md5(data).hexdigest()",
+    ]
+    lower = ["digest"]
+    for depth in range(3):
+        upper = [f"f{depth}_{index}" for index in range(width)]
+        for name in upper:
+            body = "; ".join(f"{callee}(data)" for callee in lower)
+            lines.append(f"def {name}(data): {body}")
+        lower = upper
+    return "\n".join(lines) + "\n"
+
+
+def test_wide_caller_graph_is_traced_in_bounded_time(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n")
+    package = tmp_path / "app"
+    package.mkdir()
+    (package / "graph.py").write_text(_wide_caller_graph(48))
+    start = time.process_time()
+    result = json.loads(
+        analyze(str(tmp_path), enable_danger=True, grep_verify=False, all_advice=False)
+    )
+    elapsed = time.process_time() - start
+    assert "SKY-D207" in {row.get("rule_id") for row in result.get("danger", [])}
+    assert elapsed < 10
