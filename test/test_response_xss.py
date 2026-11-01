@@ -354,33 +354,6 @@ HIDDEN = {
 
 
 READABLE = {
-    "allowlist escaper loop": (
-        "    return 'Results ' + encode(request.args['q'])\n"
-        "def encode(text):\n"
-        "    out = ''\n"
-        "    for char in text:\n"
-        "        if char.isalnum():\n"
-        "            out += char\n"
-        "        else:\n"
-        "            out += '&#' + str(ord(char)) + ';'\n"
-        "    return out\n"
-    ),
-    "same-module chain into an escaper loop": (
-        "    return 'Results ' + outer(request.args['q'])\n"
-        "def outer(value):\n"
-        "    return encode(value)\n"
-        "def encode(text):\n"
-        "    out = ''\n"
-        "    for char in text:\n"
-        "        if char.isalnum():\n"
-        "            out += char\n"
-        "    return out\n"
-    ),
-    "allowlist escaper comprehension": (
-        "    return 'Results ' + encode(request.args['q'])\n"
-        "def encode(text):\n"
-        "    return ''.join(c for c in text if c.isalnum())\n"
-    ),
     "hand-written replace of markup": (
         "    q = request.args['q'].replace('&', '&amp;').replace('<', '&lt;')\n"
         "    return 'Results ' + q\n"
@@ -648,19 +621,6 @@ CROSS_MODULE = {
         "def bold(value):\n    return f'<b>{value}</b>'\n",
         True,
     ),
-    "allowlist escaper loop": (
-        "from myproject.utils import encode\n",
-        "encode(request.args['q'])",
-        "def encode(text):\n"
-        "    out = ''\n"
-        "    for char in text:\n"
-        "        if char.isalnum():\n"
-        "            out += char\n"
-        "        else:\n"
-        "            out += '&#' + str(ord(char)) + ';'\n"
-        "    return out\n",
-        True,
-    ),
     "pass-through helper chain": (
         "from myproject.utils import outer\n",
         "outer(request.args['q'])",
@@ -671,19 +631,6 @@ CROSS_MODULE = {
         "from myproject.utils import outer\n",
         "outer(request.args['q'])",
         "from myproject.text import tidy\ndef outer(value):\n    return tidy(value)\n",
-        True,
-    ),
-    "chain whose inner helper is an escaper loop": (
-        "from myproject.utils import outer\n",
-        "outer(request.args['q'])",
-        "def inner(text):\n"
-        "    out = ''\n"
-        "    for char in text:\n"
-        "        if char.isalnum():\n"
-        "            out += char\n"
-        "    return out\n"
-        "def outer(value):\n"
-        "    return inner(value)\n",
         True,
     ),
     "chain deeper than three helpers": (
@@ -1090,3 +1037,182 @@ def test_nested_functions_read_the_enclosing_request_data(tmp_path, monkeypatch)
     )
     result = _analyze(tmp_path, monkeypatch, source)
     assert _listed_lines(result, symbol="page") == [_line(source, "    return 'Hi '")]
+
+
+ENCODER = (
+    "def encode(text):\n"
+    "    out = ''\n"
+    "    for char in text:\n"
+    "        if char.isalnum():\n"
+    "            out += char\n"
+    "        else:\n"
+    "            out += '&#' + str(ord(char)) + ';'\n"
+    "    return out\n"
+)
+TABLE_ENCODER = (
+    "SAFE_PUNCTUATION = (',', '.', '-', ' ')\n"
+    "ENTITIES = {34: 'quot', 38: 'amp', 60: 'lt', 62: 'gt'}\n"
+    "def encode(text):\n"
+    "    out = ''\n"
+    "    for char in text:\n"
+    "        if char.isalnum() or char in SAFE_PUNCTUATION:\n"
+    "            out += char\n"
+    "        elif ord(char) in ENTITIES:\n"
+    "            out += f'&{ENTITIES[ord(char)]};'\n"
+    "        else:\n"
+    "            out += f'&#x{hex(ord(char))[2:]};'\n"
+    "    return out\n"
+)
+ENCODERS = {
+    "allowlist encoder loop": (ENCODER, "'Hi ' + encode(request.args['q'])", (), False),
+    "encoder with a punctuation tuple and an entity table": (
+        TABLE_ENCODER,
+        "'Hi ' + encode(request.args['q'])",
+        (),
+        False,
+    ),
+    "encoder in another module": (
+        "from myproject.codec import encode\n",
+        "'Hi ' + encode(request.args['q'])",
+        (("myproject/codec.py", TABLE_ENCODER),),
+        False,
+    ),
+    "join of a generator": (
+        "def encode(text):\n"
+        "    return ''.join(c if c.isalnum() else f'&#{ord(c)};' for c in text)\n",
+        "'Hi ' + encode(request.args['q'])",
+        (),
+        False,
+    ),
+    "join of a filtered comprehension": (
+        "def encode(text):\n    return ''.join([c for c in text if c.isdigit()])\n",
+        "'Hi ' + encode(request.args['q'])",
+        (),
+        False,
+    ),
+    "list accumulator": (
+        "def encode(text):\n"
+        "    parts = []\n"
+        "    for char in text:\n"
+        "        if char.isalpha():\n"
+        "            parts.append(char)\n"
+        "        else:\n"
+        "            parts.append('&#{};'.format(ord(char)))\n"
+        "    return ''.join(parts)\n",
+        "'Hi ' + encode(request.args['q'])",
+        (),
+        False,
+    ),
+    "alias of the encoder": None,
+    "correct replace chain": None,
+    "raw character appended in the else branch": (
+        ENCODER.replace("out += '&#' + str(ord(char)) + ';'", "out += char"),
+        "'Hi ' + encode(request.args['q'])",
+        (),
+        True,
+    ),
+    "punctuation list containing <": (
+        TABLE_ENCODER.replace("(',', '.', '-', ' ')", "(',', '.', '<', ' ')"),
+        "'Hi ' + encode(request.args['q'])",
+        (),
+        True,
+    ),
+    "guard that does not guard": (
+        "FLAG = True\n"
+        + ENCODER.replace("if char.isalnum():", "if char.isalnum() or FLAG:"),
+        "'Hi ' + encode(request.args['q'])",
+        (),
+        True,
+    ),
+    "entity branch embedding the raw character": (
+        TABLE_ENCODER.replace("f'&#x{hex(ord(char))[2:]};'", "f'&{char};'"),
+        "'Hi ' + encode(request.args['q'])",
+        (),
+        True,
+    ),
+    "returning the input instead of the accumulator": (
+        ENCODER.replace("    return out\n", "    return text\n"),
+        "'Hi ' + encode(request.args['q'])",
+        (),
+        True,
+    ),
+    "replace chain skipping <": (
+        "",
+        "'Hi ' + request.args['q'].replace('&', '&amp;').replace('>', '&gt;')",
+        (),
+        True,
+    ),
+    "replace chain with a non-entity for <": (
+        "",
+        "'Hi ' + request.args['q'].replace('&', '&amp;').replace('<', '').replace('>', '&gt;')",
+        (),
+        True,
+    ),
+    "replace chain with & after <": (
+        "",
+        "'Hi ' + request.args['q'].replace('<', '&lt;').replace('>', '&gt;').replace('&', '&amp;')",
+        (),
+        True,
+    ),
+    "replace chain on one variable, another returned": None,
+    "alias of the encoder applied to something else": None,
+    "wrapper calling the encoder with a different argument": (
+        ENCODER + "def show(value, label):\n    return encode(label) + value\n",
+        "'Hi ' + show(request.args['q'], 'x')",
+        (),
+        True,
+    ),
+}
+ENCODERS["alias of the encoder"] = (
+    ENCODER + "def aliased_ok(value):\n    esc = encode\n    return esc(value)\n",
+    "'Hi ' + aliased_ok(request.args['q'])",
+    (),
+    False,
+)
+ENCODERS["correct replace chain"] = (
+    "def clean(value):\n"
+    "    value = value.replace('&', '&amp;')\n"
+    "    value = value.replace('<', '&lt;')\n"
+    "    value = value.replace('>', '&gt;')\n"
+    "    return value\n",
+    "'Hi ' + clean(request.args['q'])",
+    (),
+    False,
+)
+ENCODERS["replace chain on one variable, another returned"] = (
+    "def other(value):\n"
+    "    safe = value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')\n"
+    "    return value\n",
+    "'Hi ' + other(request.args['q'])",
+    (),
+    True,
+)
+ENCODERS["alias of the encoder applied to something else"] = (
+    ENCODER
+    + "def aliased(value):\n    esc = encode\n    esc('fixed')\n    return value\n",
+    "'Hi ' + aliased(request.args['q'])",
+    (),
+    True,
+)
+
+
+@pytest.mark.parametrize(
+    "helpers, expression, modules, listed", list(ENCODERS.values()), ids=list(ENCODERS)
+)
+def test_hand_written_encoders_are_proved_from_their_structure(
+    tmp_path, monkeypatch, helpers, expression, modules, listed
+):
+    source = (
+        "from flask import Flask, request\n"
+        + helpers
+        + "app = Flask(__name__)\n"
+        + "@app.route('/')\n"
+        + "def page():\n"
+        + f"    return {expression}\n"
+    )
+    result = _analyze(tmp_path, monkeypatch, source, modules=[*PROJECT, *modules])
+    expected = []
+    if listed:
+        expected = [_line(source, f"    return {expression}")]
+    assert _listed_lines(result, symbol="page") == expected
+    assert _reported_lines(result, symbol="page") == expected

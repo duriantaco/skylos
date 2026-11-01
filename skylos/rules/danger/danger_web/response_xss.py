@@ -360,6 +360,7 @@ class _Value:
     rest: frozenset = frozenset()
     html: str = ""
     body: object = None
+    steps: tuple = ()
 
 
 def _label_order(label: str):
@@ -483,7 +484,10 @@ def _join(a: _Value | None, b: _Value | None) -> _Value | None:
         const = a.const
     elif isinstance(a.const, frozenset) and isinstance(b.const, frozenset):
         const = a.const | b.const
-    return _Value(a.kind, _labels(a.labels, b.labels), const=const)
+    steps = ()
+    if a.steps == b.steps:
+        steps = a.steps
+    return _Value(a.kind, _labels(a.labels, b.labels), const=const, steps=steps)
 
 
 def _dict_value(keys: dict, rest=frozenset(), labels=frozenset()) -> _Value:
@@ -663,6 +667,428 @@ def _too_large(func: ast.AST) -> bool:
     return False
 
 
+_SAFE_CHARACTER_TESTS = frozenset(
+    {"isalnum", "isalpha", "isdigit", "isdecimal", "isnumeric"}
+)
+_MARKUP = frozenset("<>&\"'")
+_NUMBER_TEXT = frozenset({"hex", "oct", "str", "int", "format"})
+
+
+def _is_name(node, name) -> bool:
+    return isinstance(node, ast.Name) and node.id == name
+
+
+def _entity(text) -> bool:
+    return (
+        isinstance(text, str)
+        and len(text) > 2
+        and text.startswith("&")
+        and text.endswith(";")
+        and not any(char in text for char in "<>")
+    )
+
+
+def _starts_entity(node) -> bool:
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.startswith("&")
+    )
+
+
+class _EncoderProof:
+    """Structural proof that a function returns its text parameter only
+    through a character allowlist or as character references: a ``for c in
+    s`` loop (or ``''.join`` of a comprehension over ``s``) whose every
+    addition of the raw ``c`` sits under a test that ``c`` is alphanumeric or
+    in a literal collection free of ``< > & " '``, and whose other additions
+    are constants or references that start with ``&`` built only from
+    ``ord(c)`` or a literal entity table."""
+
+    def __init__(self, module, func):
+        self.module = module
+        self.func = func
+        self.parents = {
+            id(child): parent
+            for parent in ast.walk(func)
+            for child in ast.iter_child_nodes(parent)
+        }
+        self.nodes = list(_own_nodes(func))
+        self.params = {param.arg for param in _params(func)}
+
+    def param(self):
+        func = self.func
+        if func.decorator_list or _is_generator(func):
+            return None
+        returns = [node for node in self.nodes if isinstance(node, ast.Return)]
+        if not returns or any(node.value is None for node in returns):
+            return None
+        found = {self._returned(node.value) for node in returns}
+        if len(found) != 1:
+            return None
+        return found.pop()
+
+    def _stores(self, name):
+        return [
+            node
+            for node in self.nodes
+            if isinstance(node, ast.Name)
+            and node.id == name
+            and not isinstance(node.ctx, ast.Load)
+        ]
+
+    def _loads(self, name):
+        return [
+            node
+            for node in self.nodes
+            if isinstance(node, ast.Name)
+            and node.id == name
+            and isinstance(node.ctx, ast.Load)
+        ]
+
+    def _join_argument(self, value):
+        if (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Attribute)
+            and value.func.attr == "join"
+            and isinstance(value.func.value, ast.Constant)
+            and isinstance(value.func.value.value, str)
+            and len(value.args) == 1
+            and not value.keywords
+        ):
+            return value.args[0]
+        return None
+
+    def _returned(self, value):
+        joined = self._join_argument(value)
+        if isinstance(joined, (ast.GeneratorExp, ast.ListComp)):
+            return self._comprehension(joined)
+        if isinstance(joined, ast.Name):
+            return self._accumulated(joined.id, True)
+        if isinstance(value, ast.Name):
+            return self._accumulated(value.id, False)
+        return None
+
+    def _source(self, generator_target, iterable):
+        if not isinstance(generator_target, ast.Name):
+            return None
+        if not isinstance(iterable, ast.Name) or iterable.id not in self.params:
+            return None
+        if self._stores(iterable.id):
+            return None
+        return generator_target.id, iterable.id
+
+    def _comprehension(self, node):
+        if len(node.generators) != 1 or node.generators[0].is_async:
+            return None
+        generator = node.generators[0]
+        source = self._source(generator.target, generator.iter)
+        if source is None:
+            return None
+        char, param = source
+        if not self._piece(node.elt, char, list(generator.ifs)):
+            return None
+        return param
+
+    def _piece(self, node, char, guards):
+        if _is_name(node, char):
+            return any(self._safe_test(test, char) for test in guards)
+        if isinstance(node, ast.IfExp):
+            return self._piece(node.body, char, [*guards, node.test]) and self._piece(
+                node.orelse, char, guards
+            )
+        return self._encoded(node, char)
+
+    def _accumulated(self, name, as_list):
+        body = self.func.body
+        inits = [
+            stmt
+            for stmt in body
+            if isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and _is_name(stmt.targets[0], name)
+        ]
+        if len(inits) != 1:
+            return None
+        init = inits[0]
+        if as_list and not (isinstance(init.value, ast.List) and not init.value.elts):
+            return None
+        if not as_list and not (
+            isinstance(init.value, ast.Constant) and isinstance(init.value.value, str)
+        ):
+            return None
+        loops = [
+            stmt
+            for stmt in body
+            if isinstance(stmt, ast.For) and body.index(stmt) > body.index(init)
+        ]
+        if len(loops) != 1:
+            return None
+        loop = loops[0]
+        source = self._source(loop.target, loop.iter)
+        if source is None:
+            return None
+        char, param = source
+        if self._stores(char) != [loop.target]:
+            return None
+        additions = []
+        for store in self._stores(name):
+            if store is init.targets[0]:
+                continue
+            parent = self.parents.get(id(store))
+            if as_list or not (
+                isinstance(parent, ast.AugAssign)
+                and isinstance(parent.op, ast.Add)
+                and self._inside(parent, loop)
+            ):
+                return None
+            additions.append((parent, parent.value))
+        for load in self._loads(name):
+            parent = self.parents.get(id(load))
+            if isinstance(parent, ast.Return):
+                continue
+            if as_list and self._join_argument(parent) is load:
+                continue
+            call = self.parents.get(id(parent))
+            if not (
+                as_list
+                and isinstance(parent, ast.Attribute)
+                and parent.attr == "append"
+                and isinstance(call, ast.Call)
+                and call.func is parent
+                and len(call.args) == 1
+                and not call.keywords
+                and self._inside(call, loop)
+            ):
+                return None
+            additions.append((call, call.args[0]))
+        if not additions:
+            return None
+        for statement, piece in additions:
+            if _is_name(piece, char):
+                if not self._guarded(statement, char, loop):
+                    return None
+            elif not self._encoded(piece, char):
+                return None
+        return param
+
+    def _inside(self, node, root) -> bool:
+        while node is not None and node is not root:
+            node = self.parents.get(id(node))
+        return node is root
+
+    def _guarded(self, node, char, root) -> bool:
+        child = node
+        while child is not root:
+            parent = self.parents.get(id(child))
+            if parent is None:
+                return False
+            if (
+                isinstance(parent, ast.If)
+                and any(item is child for item in parent.body)
+                and self._safe_test(parent.test, char)
+            ):
+                return True
+            child = parent
+        return False
+
+    def _safe_test(self, test, char) -> bool:
+        if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
+            return any(self._safe_test(value, char) for value in test.values)
+        if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.Or):
+            return all(self._safe_test(value, char) for value in test.values)
+        if (
+            isinstance(test, ast.Call)
+            and isinstance(test.func, ast.Attribute)
+            and test.func.attr in _SAFE_CHARACTER_TESTS
+            and _is_name(test.func.value, char)
+            and not test.args
+            and not test.keywords
+        ):
+            return True
+        if (
+            isinstance(test, ast.Compare)
+            and _is_name(test.left, char)
+            and len(test.ops) == 1
+            and isinstance(test.ops[0], ast.In)
+        ):
+            literal = self._literal(test.comparators[0], (ast.List, ast.Tuple, ast.Set))
+            return literal is not None and _markup_free(literal)
+        return False
+
+    def _encoded(self, node, char) -> bool:
+        """A piece that cannot carry the raw character: a constant, or a
+        reference starting with ``&`` built from ``ord(c)``/an entity table."""
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return True
+        if isinstance(node, ast.JoinedStr):
+            if not node.values or not _starts_entity(node.values[0]):
+                return False
+            return all(
+                isinstance(part, ast.Constant)
+                or (
+                    isinstance(part, ast.FormattedValue)
+                    and self._reference(part.value, char)
+                    and (
+                        part.format_spec is None
+                        or all(
+                            isinstance(item, ast.Constant)
+                            for item in part.format_spec.values
+                        )
+                    )
+                )
+                for part in node.values
+            )
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            parts = _flatten_add(node)
+            return _starts_entity(parts[0]) and all(
+                (isinstance(part, ast.Constant) and isinstance(part.value, str))
+                or self._reference(part, char)
+                for part in parts[1:]
+            )
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "format"
+            and _starts_entity(node.func.value)
+        ):
+            return all(self._reference(arg, char) for arg in node.args) and all(
+                self._reference(kw.value, char) for kw in node.keywords
+            )
+        return False
+
+    def _reference(self, node, char) -> bool:
+        return self._number(node, char) or self._table(node, char)
+
+    def _builtin(self, node, names) -> bool:
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in names
+            and self.module.builtin_is_stable(node.func.id)
+            and not node.keywords
+        )
+
+    def _number(self, node, char) -> bool:
+        if isinstance(node, ast.Constant) and isinstance(node.value, int):
+            return True
+        if self._builtin(node, {"ord"}):
+            return len(node.args) == 1 and _is_name(node.args[0], char)
+        if self._builtin(node, _NUMBER_TEXT):
+            return (
+                bool(node.args)
+                and self._number(node.args[0], char)
+                and all(isinstance(arg, ast.Constant) for arg in node.args[1:])
+            )
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Slice):
+            bounds = (node.slice.lower, node.slice.upper, node.slice.step)
+            return self._number(node.value, char) and all(
+                bound is None or isinstance(bound, ast.Constant) for bound in bounds
+            )
+        return False
+
+    def _table(self, node, char) -> bool:
+        if not isinstance(node, ast.Subscript):
+            return False
+        key = node.slice
+        if not (_is_name(key, char) or self._builtin(key, {"ord"})):
+            return False
+        if self._builtin(key, {"ord"}) and not (
+            len(key.args) == 1 and _is_name(key.args[0], char)
+        ):
+            return False
+        table = self._literal(node.value, (ast.Dict,))
+        return isinstance(table, ast.Dict) and all(
+            isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+            and not any(item in value.value for item in "<>\"'")
+            for value in table.values
+        )
+
+    def _literal(self, node, kinds):
+        """A literal of ``kinds`` written in place, or bound once to a name
+        (in the function or the module) that is only read by membership
+        tests and subscripts."""
+        if isinstance(node, kinds) or (
+            isinstance(node, ast.Constant) and isinstance(node.value, str)
+        ):
+            return node
+        if not isinstance(node, ast.Name):
+            return None
+        local = [
+            stmt
+            for stmt in self.func.body
+            if isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and _is_name(stmt.targets[0], node.id)
+        ]
+        if self._stores(node.id) or local:
+            if len(local) != 1 or len(self._stores(node.id)) != 1:
+                return None
+            uses = self._loads(node.id)
+            value = local[0].value
+            scope = self.func
+        else:
+            if self.module.counts().get(node.id) != 1:
+                return None
+            found = [
+                stmt
+                for stmt in self.module.tree.body
+                if isinstance(stmt, ast.Assign)
+                and len(stmt.targets) == 1
+                and _is_name(stmt.targets[0], node.id)
+            ]
+            if len(found) != 1:
+                return None
+            value = found[0].value
+            scope = self.module.tree
+            uses = [
+                item
+                for item in ast.walk(scope)
+                if isinstance(item, ast.Name)
+                and item.id == node.id
+                and isinstance(item.ctx, ast.Load)
+            ]
+        if not (
+            isinstance(value, kinds)
+            or (isinstance(value, ast.Constant) and isinstance(value.value, str))
+        ):
+            return None
+        parents = self.parents
+        if scope is not self.func:
+            parents = self.module._parent_map()
+        for use in uses:
+            parent = parents.get(id(use))
+            if isinstance(parent, ast.Subscript) and parent.value is use:
+                continue
+            if (
+                isinstance(parent, ast.Compare)
+                and len(parent.ops) == 1
+                and isinstance(parent.ops[0], (ast.In, ast.NotIn))
+                and parent.comparators[0] is use
+            ):
+                continue
+            return None
+        return value
+
+
+def _markup_free(node) -> bool:
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, str) and not (set(node.value) & _MARKUP)
+    return all(
+        isinstance(item, ast.Constant)
+        and isinstance(item.value, str)
+        and not (set(item.value) & _MARKUP)
+        for item in node.elts
+    )
+
+
+def _flatten_add(node):
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return [*_flatten_add(node.left), *_flatten_add(node.right)]
+    return [node]
+
+
 def _combined_kind(kinds):
     if "json" in kinds:
         return "json"
@@ -836,6 +1262,7 @@ class _Module:
         self._counts = None
         self._helpers = None
         self._classes = None
+        self._encoders: dict = {}
         self.callables: dict = {}
         self.free_names: dict = {}
 
@@ -1059,6 +1486,12 @@ class _Module:
             return None
         return module, node
 
+    def encoder_param(self, func):
+        key = id(func)
+        if key not in self._encoders:
+            self._encoders[key] = _EncoderProof(self, func).param()
+        return self._encoders[key]
+
     def classes(self) -> dict:
         """Module-level classes bound once in the module."""
         if self._classes is None:
@@ -1217,7 +1650,9 @@ class _Run:
             env.values[node.name] = _Value(OTHER, const=("function", id(node)))
             return env
         if isinstance(node, ast.ClassDef):
-            env.values[node.name] = _Value(OTHER, const=frozenset({id(node)}))
+            env.values[node.name] = _Value(
+                OTHER, const=frozenset({(self.module, node, False)})
+            )
             return env
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             for alias in node.names:
@@ -1506,7 +1941,11 @@ class _Run:
             return env.values[node.id]
         cls = self.module.classes().get(node.id)
         if cls is not None:
-            return _Value(OTHER, const=frozenset({id(cls)}))
+            return _Value(OTHER, const=frozenset({(self.module, cls, False)}))
+        helper = self.module.helpers().get(node.id)
+        if helper is not None:
+            self.module.callables[id(helper)] = helper
+            return _Value(OTHER, const=("helper", id(helper)))
         if self.module.flask:
             qualified = self.module.index.resolved_import(self.func, node.id)
             if qualified == "flask.request":
@@ -1724,7 +2163,7 @@ class _Run:
                 return self._summary(helper, node, args, keywords)
             cls = self.module.classes().get(func.id)
             if cls is not None:
-                return _instance(cls, values)
+                return _instance(self.module, cls, values)
             found = self.module.relative_definition(func.id)
             if found is not None:
                 return self._definition_call(found, node, args, keywords)
@@ -1743,13 +2182,50 @@ class _Run:
             and isinstance(receiver.const, frozenset)
             and receiver.const
         ):
+            proved = self._method_summary(receiver, func.attr, node, args, keywords)
+            if proved is not None:
+                return proved
             return _union_text(receiver, *values)
         return None
+
+    def _method_summary(self, receiver, name, node, args, keywords):
+        """A method of a project class whose summary is clean for every
+        class the receiver may be (a constant, a number, an escape); None
+        when that is not proved, and the call keeps its arguments' data."""
+        results = []
+        for module, cls, instance in receiver.const:
+            methods = [
+                item
+                for item in cls.body
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and item.name == name
+            ]
+            if len(methods) != 1:
+                return None
+            method = methods[0]
+            decorators = {_dotted(item) for item in method.decorator_list}
+            if decorators - {"staticmethod", "classmethod"}:
+                return None
+            call_args = list(args)
+            if "classmethod" in decorators or (
+                instance and "staticmethod" not in decorators
+            ):
+                call_args = [receiver, *args]
+            try:
+                result = self._helper_call(
+                    method, node, call_args, keywords, module, decorated=True
+                )
+            except (_BudgetExceeded, RecursionError):
+                return None
+            if result is None or _all_labels(result):
+                return None
+            results.append(result)
+        return reduce(_join, results)
 
     def _definition_call(self, found, node, args, keywords):
         module, definition = found
         if isinstance(definition, ast.ClassDef):
-            return _instance(definition, [*args, *(v for _, v in keywords)])
+            return _instance(module, definition, [*args, *(v for _, v in keywords)])
         return self._summary(definition, node, args, keywords, module)
 
     def _local_call(self, value, node, args, keywords, env):
@@ -1771,6 +2247,8 @@ class _Run:
             return self._lambda_call(target, node, args, keywords, env)
         if kind == "function" and target is not None:
             return self._summary(target, node, args, keywords, closure=env)
+        if kind == "helper" and target is not None:
+            return self._summary(target, node, args, keywords)
         return None
 
     def _summary(self, helper, node, args, keywords, module=None, closure=None):
@@ -1900,6 +2378,8 @@ class _Run:
         if receiver.kind == MAPPING:
             return self._mapping_method(node, method, receiver, args, keywords)
         if receiver.kind == TEXT:
+            if method == "replace":
+                return _replaced(node, receiver, others)
             if method in _TEXT_METHODS:
                 return _text(receiver, *others)
             if method in _TEXTS_METHODS:
@@ -2074,7 +2554,14 @@ class _Run:
             self._touch(root, labels, env)
 
     def _helper_call(
-        self, helper, node, args, keyword_pairs, module=None, closure=None
+        self,
+        helper,
+        node,
+        args,
+        keyword_pairs,
+        module=None,
+        closure=None,
+        decorated=False,
     ):
         """The value a readable function returns for these arguments, or None
         when it must be treated as passing them through: a helper already on
@@ -2082,13 +2569,16 @@ class _Run:
         or a call that cannot be bound to its parameters."""
         if id(helper) in self.chain or self.depth >= _MAX_HELPER_DEPTH:
             return None
-        if helper.decorator_list:
+        if helper.decorator_list and not decorated:
             return None
         if _is_generator(helper):
             return _texts(*args, *(value for _, value in keyword_pairs))
         bound = _bind(helper.args, node, args, keyword_pairs, self._default)
         if bound is None:
             return None
+        encoded = (module or self.module).encoder_param(helper)
+        if encoded is not None and encoded in bound:
+            return _CLEAN_TEXT
         if closure is not None:
             for name in self._free_names(helper):
                 if name in closure.values and name not in bound:
@@ -2254,11 +2744,46 @@ def _union_text(*values) -> _Value:
     return _CLEAN_OTHER
 
 
-def _instance(cls: ast.ClassDef, values) -> _Value:
+def _instance(module, cls: ast.ClassDef, values) -> _Value:
     """An object of a project class, built from ``values``: its attributes
-    and methods keep their request data."""
+    and methods keep their request data unless a method is proved clean."""
     labels = _labels(*(_all_labels(value) for value in values))
-    return _Value(OTHER, labels, const=frozenset({id(cls)}))
+    return _Value(OTHER, labels, const=frozenset({(module, cls, True)}))
+
+
+def _replaced(node: ast.Call, receiver: _Value, others) -> _Value:
+    """``text.replace(old, new)``. A chain that replaces ``&`` first, then
+    ``<`` and ``>``, each with an entity, escapes HTML text as
+    ``html.escape(text, quote=False)`` does; any other order or replacement
+    proves nothing."""
+    labels = _all_labels(_text(receiver, *others))
+    literal = (
+        len(node.args) == 2
+        and not node.keywords
+        and all(
+            isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+            for arg in node.args
+        )
+    )
+    if not literal or not labels:
+        return _Value(TEXT, labels)
+    old, new = node.args[0].value, node.args[1].value
+    steps = receiver.steps
+    if "!" in steps:
+        return _Value(TEXT, labels, steps=steps)
+    if old == "&":
+        steps = ("!",)
+        if not receiver.steps and _entity(new):
+            steps = ("&",)
+    elif old in ("<", ">"):
+        steps = ("!",)
+        if receiver.steps[:1] == ("&",) and _entity(new):
+            steps = (*receiver.steps, old)
+    elif any(char in new for char in "<>"):
+        steps = ("!",)
+    if steps[:1] == ("&",) and "<" in steps and ">" in steps:
+        return _CLEAN_TEXT
+    return _Value(TEXT, labels, steps=steps)
 
 
 def _bind(arguments: ast.arguments, node: ast.Call, args, keyword_pairs, default):
@@ -2356,7 +2881,9 @@ def _django_params(func, module) -> dict[str, _Value] | None:
         if param.arg in {"self", "cls"}:
             values[param.arg] = _CLEAN_OTHER
             if owner is not None:
-                values[param.arg] = _Value(OTHER, const=frozenset({id(owner)}))
+                values[param.arg] = _Value(
+                    OTHER, const=frozenset({(module, owner, True)})
+                )
             continue
         if _is_request_param(param):
             found = True
