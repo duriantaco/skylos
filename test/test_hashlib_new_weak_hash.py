@@ -53,6 +53,15 @@ CASES = {
         "def fingerprint(url):\n"
         "    return hashlib.new('md5', url.encode()).hexdigest()[:8]\n"
     ),
+    "parameter_input": (
+        "import hashlib\n"
+        "def digest(data):\n"
+        "    return hashlib.new('md5', data).hexdigest()\n"
+        "def cache_key(url):\n"
+        "    return digest(url.encode())\n"
+        "def etag(body):\n"
+        "    return digest(body)\n"
+    ),
     "optout": (
         "import hashlib\n"
         "def digest(password):\n"
@@ -113,10 +122,11 @@ def test_weak_hashlib_new_of_credentials_is_listed(weak_hash_rows, case, rule_id
     assert is_listed(row, "danger")
 
 
+@pytest.mark.parametrize("case", ["url_input", "parameter_input"])
 def test_weak_hashlib_new_of_non_sensitive_data_is_demoted_not_dropped(
-    weak_hash_rows,
+    weak_hash_rows, case
 ):
-    [row] = weak_hash_rows["url_input"]
+    [row] = weak_hash_rows[case]
     assert row["rule_id"] == "SKY-D207"
     assert row["low_risk_context"]["reason"] == "non-sensitive-hash-input"
     assert not is_listed(row, "danger")

@@ -392,7 +392,7 @@ def _call_low_risk_context(
         if names is None:
             return None
         sensitive = first_sensitive_name(names)
-        if sensitive is None and not _hash_parameters_receive_sensitive(node, names):
+        if sensitive is None:
             return {
                 "reason": "non-sensitive-hash-input",
                 "detail": "the hashed data is not a credential, identity or certificate",
@@ -406,35 +406,27 @@ def _call_low_risk_context(
     return None
 
 
-def _node_names(child: ast.AST) -> list[str]:
-    if isinstance(child, ast.Name):
-        return [child.id]
-    if isinstance(child, ast.Attribute):
-        return [child.attr]
-    if isinstance(child, ast.Subscript):
-        key = child.slice
-        if isinstance(key, ast.Constant) and isinstance(key.value, str):
-            return [key.value]
-        return []
-    if (
-        isinstance(child, ast.Call)
-        and isinstance(child.func, ast.Attribute)
-        and child.func.attr == "get"
-    ):
-        return [
-            arg.value
-            for arg in child.args[:1]
-            if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
-        ]
-    return []
-
-
 def _expression_names(node: ast.AST | None) -> list[str]:
     names = []
     if node is None:
         return names
     for child in ast.walk(node):
-        names.extend(_node_names(child))
+        if isinstance(child, ast.Name):
+            names.append(child.id)
+        elif isinstance(child, ast.Attribute):
+            names.append(child.attr)
+        elif isinstance(child, ast.Subscript):
+            key = child.slice
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                names.append(key.value)
+        elif isinstance(child, ast.Call):
+            for arg in child.args[:1]:
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    if (
+                        isinstance(child.func, ast.Attribute)
+                        and child.func.attr == "get"
+                    ):
+                        names.append(arg.value)
     return names
 
 
@@ -449,20 +441,16 @@ def _enclosing_scope(node: ast.AST) -> ast.AST | None:
     return last
 
 
-def _assigned_local_names(child: ast.AST) -> set[str]:
-    if isinstance(child, ast.Assign):
-        targets = child.targets
-    elif isinstance(child, (ast.AugAssign, ast.AnnAssign)):
-        targets = [child.target]
-    else:
-        return set()
-    return {target.id for target in targets if isinstance(target, ast.Name)}
-
-
 def _bound_value_names(scope: ast.AST, name: str) -> list[str]:
     names = []
     for child in ast.walk(scope):
-        if name in _assigned_local_names(child):
+        if isinstance(child, ast.Assign):
+            targets = child.targets
+        elif isinstance(child, (ast.AugAssign, ast.AnnAssign)):
+            targets = [child.target]
+        else:
+            continue
+        if any(isinstance(t, ast.Name) and t.id == name for t in targets):
             names.extend(_expression_names(child.value))
     return names
 
@@ -532,343 +520,6 @@ def _hashlib_new_weak_rule(node: ast.Call, name: str | None) -> str | None:
     if not (isinstance(algorithm, ast.Constant) and isinstance(algorithm.value, str)):
         return None
     return _HASHLIB_NEW_WEAK.get(algorithm.value.lower())
-
-
-_HASH_CALLER_DEPTH = 3
-_HASH_TRACE_BUDGET = 100000
-
-
-def _parameter_names(function: ast.AST) -> list[str]:
-    arguments = function.args
-    names = [
-        argument.arg
-        for argument in [
-            *arguments.posonlyargs,
-            *arguments.args,
-            *arguments.kwonlyargs,
-        ]
-    ]
-    for argument in (arguments.vararg, arguments.kwarg):
-        if argument is not None:
-            names.append(argument.arg)
-    return names
-
-
-def _is_static_method(function: ast.AST) -> bool:
-    return any(
-        (isinstance(decorator, ast.Name) and decorator.id == "staticmethod")
-        or (isinstance(decorator, ast.Attribute) and decorator.attr == "staticmethod")
-        for decorator in function.decorator_list
-    )
-
-
-def _call_site_arguments(call: ast.Call, function, parameter: str, method: bool):
-    """Expressions a call site may pass as ``parameter`` of ``function``. A
-    method may be called bound or through its class, so both positions
-    count; unpacked arguments count for every parameter."""
-    arguments = function.args
-    positional = [
-        argument.arg for argument in [*arguments.posonlyargs, *arguments.args]
-    ]
-    plain = [
-        argument for argument in call.args if not isinstance(argument, ast.Starred)
-    ]
-    expressions = [
-        argument.value for argument in call.args if isinstance(argument, ast.Starred)
-    ]
-    if expressions:
-        expressions.extend(plain)
-    elif parameter in positional:
-        indexes = {positional.index(parameter)}
-        if method and not _is_static_method(function):
-            indexes.add(positional.index(parameter) - 1)
-        for index in indexes:
-            if 0 <= index < len(plain):
-                expressions.append(plain[index])
-    if arguments.vararg is not None and parameter == arguments.vararg.arg:
-        expressions.extend(plain[max(len(positional) - 1, 0) :])
-    named = set(_parameter_names(function))
-    for keyword in call.keywords:
-        if keyword.arg is None or keyword.arg == parameter:
-            expressions.append(keyword.value)
-        elif (
-            arguments.kwarg is not None
-            and parameter == arguments.kwarg.arg
-            and keyword.arg not in named
-        ):
-            expressions.append(keyword.value)
-    return expressions
-
-
-class _TraceBudgetSpent(Exception):
-    pass
-
-
-class _CallerTrace:
-    """Weak-hash caller tracing for one module: parameter names per function,
-    assigned values per caller scope, value names per scope and name, name
-    sensitivity, results per traced state, and a work budget charged before
-    each enumeration or walk. The budget is separate from the weak random
-    flow budget, so hash tracing cannot cut those walks short."""
-
-    def __init__(self, index: "_ModuleCalls", module: ast.AST):
-        self.index = index
-        self.module = module
-        self.budget = _HASH_TRACE_BUDGET
-        self.parameters = {}
-        self.assignments = {}
-        self.bound = {}
-        self.sensitive = {}
-        self.results = {}
-        self.classes = None
-        self.class_members = {}
-
-    def module_class(self, name: str):
-        """The module-level class ``name`` when it is defined once and never
-        rebound, else None."""
-        if self.index.definitions.get(name) != 1 or name in self.index.rebound:
-            return None
-        if self.classes is None:
-            body = getattr(self.module, "body", [])
-            self.charge(len(body) + 1)
-            self.classes = {
-                item.name: item for item in body if isinstance(item, ast.ClassDef)
-            }
-        return self.classes.get(name)
-
-    def class_defines(self, cls: ast.ClassDef, name: str) -> bool:
-        members = self.class_members.get(cls)
-        if members is None:
-            self.charge(len(cls.body) + 1)
-            members = {
-                item.name
-                for item in cls.body
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-            }
-            self.class_members[cls] = members
-        return name in members
-
-    def subclass_of(self, cls: ast.ClassDef, ancestor: ast.ClassDef) -> bool:
-        """Whether ``cls`` derives from ``ancestor`` through bases named by
-        module-level classes; a base defined elsewhere proves nothing."""
-        pending = [cls]
-        seen = set()
-        while pending:
-            current = pending.pop()
-            if current is ancestor:
-                return True
-            if current in seen:
-                continue
-            seen.add(current)
-            self.charge(len(current.bases) + 1)
-            for base in current.bases:
-                if isinstance(base, ast.Name):
-                    found = self.module_class(base.id)
-                    if found is not None:
-                        pending.append(found)
-        return False
-
-    def receiver_class(self, call: ast.Call):
-        """The class a method call's receiver names: ``self``/``cls`` of the
-        enclosing method, or a module-level class; None when unknown."""
-        receiver = call.func.value
-        if not isinstance(receiver, ast.Name):
-            return None
-        method = _enclosing_function(call)
-        owner = getattr(method, "parent", None)
-        if isinstance(owner, ast.ClassDef) and not _is_static_method(method):
-            positional = [*method.args.posonlyargs, *method.args.args]
-            if positional and positional[0].arg == receiver.id:
-                return owner
-        return self.module_class(receiver.id)
-
-    def dispatches_elsewhere(self, call: ast.Call, function) -> bool:
-        """A call such as ``self._build(username, password)`` inside another
-        class that defines its own ``_build`` cannot run ``function`` unless
-        ``function``'s class derives from that class."""
-        owner = function.parent
-        receiver = self.receiver_class(call)
-        return (
-            receiver is not None
-            and receiver is not owner
-            and self.class_defines(receiver, function.name)
-            and not self.subclass_of(owner, receiver)
-        )
-
-    def charge(self, amount: int = 1) -> None:
-        self.budget -= amount
-        if self.budget < 0:
-            raise _TraceBudgetSpent
-
-    def walk_names(self, node: ast.AST) -> list[str]:
-        names = []
-        for child in ast.walk(node):
-            self.charge()
-            names.extend(_node_names(child))
-        return names
-
-    def parameter_names(self, function) -> list[str]:
-        cached = self.parameters.get(function)
-        if cached is None:
-            arguments = function.args
-            self.charge(
-                len(arguments.posonlyargs)
-                + len(arguments.args)
-                + len(arguments.kwonlyargs)
-                + 3
-            )
-            cached = _parameter_names(function)
-            self.parameters[function] = cached
-        return cached
-
-    def state(self, function, names: set):
-        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            return None
-        parameters = frozenset(
-            name for name in self.parameter_names(function) if name in names
-        )
-        if not parameters:
-            return None
-        return (function, parameters)
-
-    def assigned_values(self, scope: ast.AST) -> dict:
-        cached = self.assignments.get(scope)
-        if cached is None:
-            cached = {}
-            for child in ast.walk(scope):
-                self.charge()
-                for name in _assigned_local_names(child):
-                    if child.value is not None:
-                        cached.setdefault(name, []).append(child.value)
-            self.assignments[scope] = cached
-        return cached
-
-    def bound_names(self, scope: ast.AST, name: str) -> list[str]:
-        key = (scope, name)
-        cached = self.bound.get(key)
-        if cached is None:
-            cached = []
-            for value in self.assigned_values(scope).get(name, ()):
-                cached.extend(self.walk_names(value))
-            self.bound[key] = cached
-        return cached
-
-    def caller_names(self, call: ast.Call, expression: ast.AST) -> set:
-        """Names the argument reads, plus one assignment hop in the caller's
-        scope, as ``_bound_value_names`` would add them."""
-        names = set(self.walk_names(expression))
-        scope = _enclosing_scope(call)
-        if scope is not None:
-            for name in list(names):
-                bound = self.bound_names(scope, name)
-                self.charge(len(bound) + 1)
-                names.update(bound)
-        return names
-
-    def any_sensitive(self, names: set) -> bool:
-        self.charge(len(names))
-        for name in names:
-            cached = self.sensitive.get(name)
-            if cached is None:
-                self.charge(8)
-                cached = first_sensitive_name([name]) is not None
-                self.sensitive[name] = cached
-            if cached:
-                return True
-        return False
-
-    def sites(self, function, parameters: frozenset) -> list:
-        """(call, argument) pairs where a same-module call may pass one of
-        ``parameters``, including functions passed as callbacks."""
-        method = isinstance(getattr(function, "parent", None), ast.ClassDef)
-        callers = self.index.calls
-        if method:
-            callers = self.index.method_calls
-        candidates = callers.get(function.name, ())
-        callbacks = self.index.callbacks.get(function.name, ())
-        self.charge(len(candidates) + len(callbacks) + 1)
-        width = len(self.parameter_names(function))
-        sites = []
-        for call in candidates:
-            if method and self.dispatches_elsewhere(call, function):
-                continue
-            for parameter in parameters:
-                self.charge(len(call.args) + len(call.keywords) + width + 1)
-                sites.extend(
-                    (call, expression)
-                    for expression in _call_site_arguments(
-                        call, function, parameter, method
-                    )
-                )
-        for call in callbacks:
-            self.charge(len(call.args) + len(call.keywords) + 1)
-            for expression in [
-                *call.args,
-                *(keyword.value for keyword in call.keywords),
-            ]:
-                reference = _dotted_name(expression)
-                if reference is None or reference.rsplit(".", 1)[-1] != function.name:
-                    sites.append((call, expression))
-        return sites
-
-
-def _caller_trace(module: ast.AST) -> _CallerTrace:
-    trace = getattr(module, "_skylos_caller_trace", None)
-    if trace is None:
-        trace = _CallerTrace(_module_calls(module), module)
-        module._skylos_caller_trace = trace
-    return trace
-
-
-def _callers_pass_sensitive(trace: _CallerTrace, start) -> bool:
-    """Breadth first over (function, parameters) states, each expanded once:
-    True only when a credential-named or credential-derived argument reaches
-    the hashed parameters within ``_HASH_CALLER_DEPTH`` caller levels.
-    Callers left beyond that depth prove nothing, so the parameter-name
-    decision stands. A state already queued, at the same or a lower level, is
-    not queued again, so cycles end there."""
-    seen = {start}
-    frontier = [start]
-    for _ in range(_HASH_CALLER_DEPTH):
-        following = []
-        for function, parameters in frontier:
-            for call, expression in trace.sites(function, parameters):
-                names = trace.caller_names(call, expression)
-                if trace.any_sensitive(names):
-                    return True
-                state = trace.state(_enclosing_function(call), names)
-                if state is not None and state not in seen:
-                    seen.add(state)
-                    following.append(state)
-        frontier = following
-    return False
-
-
-def _hash_parameters_receive_sensitive(node: ast.Call, names) -> bool:
-    """A weak hash of a parameter is sensitive when a caller is proved to hash
-    a credential through it, as in ``digest(password)``. Without that proof
-    (no credential within the depth, a cycle, or an exhausted trace budget)
-    the answer is False and the parameter-name decision stands."""
-    function = _enclosing_function(node)
-    if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return False
-    wanted = set(names)
-    parameters = frozenset(
-        name for name in _parameter_names(function) if name in wanted
-    )
-    module = _module_of(function)
-    if not parameters or module is None:
-        return False
-    start = (function, parameters)
-    trace = _caller_trace(module)
-    cached = trace.results.get(start)
-    if cached is None:
-        try:
-            cached = _callers_pass_sensitive(trace, start)
-        except _TraceBudgetSpent:
-            return False
-        trace.results[start] = cached
-    return cached
 
 
 def _kw_equals(node: ast.Call, requirements):
@@ -2160,16 +1811,13 @@ def _rebound_names(statement: ast.AST) -> list[str]:
 
 class _ModuleCalls:
     """One pass over a module: how often each name is defined, names bound
-    other than by a definition, direct call sites by callee name, method
-    calls by attribute, calls that pass a name as an argument, and a work
+    other than by a definition, direct call sites by callee name, and a work
     budget shared by the weak random flow walks in the module."""
 
     def __init__(self, module: ast.AST):
         self.definitions: dict[str, int] = {}
         self.rebound: set[str] = set()
         self.calls: dict[str, list[ast.Call]] = {}
-        self.method_calls: dict[str, list[ast.Call]] = {}
-        self.callbacks: dict[str, list[ast.Call]] = {}
         self.blocks = {}
         self.budget = _MODULE_FLOW_BUDGET
         for node in ast.walk(module):
@@ -2184,13 +1832,6 @@ class _ModuleCalls:
             elif isinstance(node, ast.Call):
                 if isinstance(node.func, ast.Name):
                     self.calls.setdefault(node.func.id, []).append(node)
-                elif isinstance(node.func, ast.Attribute):
-                    self.method_calls.setdefault(node.func.attr, []).append(node)
-                for argument in [*node.args, *(kw.value for kw in node.keywords)]:
-                    if isinstance(argument, ast.Name):
-                        self.callbacks.setdefault(argument.id, []).append(node)
-                    elif isinstance(argument, ast.Attribute):
-                        self.callbacks.setdefault(argument.attr, []).append(node)
 
     def spend(self, amount: int = 1) -> bool:
         self.budget -= amount
