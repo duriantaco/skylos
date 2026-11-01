@@ -104,19 +104,6 @@ _PASS_THROUGH_TEXT = frozenset(
     }
 )
 _PASS_THROUGH_OBJECTS = frozenset({"json.loads"})
-_BRANCHES = (
-    ast.For,
-    ast.AsyncFor,
-    ast.While,
-    ast.If,
-    ast.IfExp,
-    ast.Match,
-    ast.Try,
-    ast.ListComp,
-    ast.SetComp,
-    ast.DictComp,
-    ast.GeneratorExp,
-)
 _MAX_FUNCTION_NODES = 20000
 _MAX_STEPS = 400000
 _MAX_PROJECT_MODULE_BYTES = 1_000_000
@@ -494,6 +481,8 @@ def _join(a: _Value | None, b: _Value | None) -> _Value | None:
     const = None
     if a.const == b.const:
         const = a.const
+    elif isinstance(a.const, frozenset) and isinstance(b.const, frozenset):
+        const = a.const | b.const
     return _Value(a.kind, _labels(a.labels, b.labels), const=const)
 
 
@@ -846,6 +835,9 @@ class _Module:
         self._patched = None
         self._counts = None
         self._helpers = None
+        self._classes = None
+        self.callables: dict = {}
+        self.free_names: dict = {}
 
     def aliases_for(self, func):
         key = id(func)
@@ -991,9 +983,9 @@ class _Module:
             return "json"
         return None
 
-    def project_function(self, qualified: str):
-        """``(module, function)`` for a plain module-level function defined
-        in a project module found statically under the scan root, else None.
+    def project_definition(self, qualified: str):
+        """``(module, node)`` for a module-level function or class defined in
+        a project module found statically under the scan root, else None.
         Modules are parsed once, never imported, and capped in size."""
         if qualified in self._project_functions:
             return self._project_functions[qualified]
@@ -1001,13 +993,13 @@ class _Module:
         module_name, _, name = qualified.rpartition(".")
         path = self._project_module_path(module_name)
         if path is not None:
-            result = self._function_in(path, name)
+            result = self._definition_in(path, name)
         self._project_functions[qualified] = result
         return result
 
-    def relative_function(self, local: str):
-        """The project function a module-level ``from .mod import name``
-        binds to ``local``, resolved from this file's package directory."""
+    def relative_definition(self, local: str):
+        """The project function or class a module-level ``from .mod import
+        name`` binds to ``local``, resolved from this file's package."""
         key = ("relative", local)
         if key in self._project_functions:
             return self._project_functions[key]
@@ -1024,10 +1016,12 @@ class _Module:
             base = Path(self.file_path).resolve().parent
             for _ in range(node.level - 1):
                 base = base.parent
-            parts = (node.module or "").split(".") if node.module else []
+            parts = []
+            if node.module:
+                parts = node.module.split(".")
             path = _module_file([base], parts, self._scan_root())
             if path is not None:
-                result = self._function_in(path, alias.name)
+                result = self._definition_in(path, alias.name)
         self._project_functions[key] = result
         return result
 
@@ -1044,7 +1038,7 @@ class _Module:
         bases = [Path(self.file_path).resolve().parent, root, root / "src"]
         return _module_file(bases, parts, root)
 
-    def _function_in(self, path: Path, name: str):
+    def _definition_in(self, path: Path, name: str):
         if path == Path(self.file_path).resolve():
             return None
         if path not in self._project_modules:
@@ -1060,14 +1054,31 @@ class _Module:
         module = self._project_modules[path]
         if module is None:
             return None
-        helper = module.helpers().get(name)
-        if helper is None or not any(helper is node for node in module.tree.body):
+        node = module.helpers().get(name) or module.classes().get(name)
+        if node is None or not any(node is item for item in module.tree.body):
             return None
-        return module, helper
+        return module, node
+
+    def classes(self) -> dict:
+        """Module-level classes bound once in the module."""
+        if self._classes is None:
+            counts = self.counts()
+            self._classes = {
+                node.name: node
+                for node in self.tree.body
+                if isinstance(node, ast.ClassDef) and counts.get(node.name) == 1
+            }
+        return self._classes
+
+    def enclosing_class(self, func):
+        parent = self._parent_map().get(id(func))
+        if isinstance(parent, ast.ClassDef):
+            return parent
+        return None
 
     def helpers(self) -> dict:
-        """Undecorated, non-generator functions bound once in the module, so
-        a call by their name always runs that body."""
+        """Functions (outside class bodies) bound once in the module, so a
+        call by their name always reaches that definition."""
         if self._helpers is None:
             counts = self.counts()
             self._helpers = {}
@@ -1079,9 +1090,7 @@ class _Module:
                 stack.extend(ast.iter_child_nodes(node))
                 if (
                     isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and not node.decorator_list
                     and counts.get(node.name) == 1
-                    and not _is_generator(node)
                 ):
                     self._helpers[node.name] = node
         return self._helpers
@@ -1108,6 +1117,28 @@ class _Run:
         if end is not None:
             self.returns.append(_NONE_VALUE)
         return reduce(_join, self.returns, None) or _NONE_VALUE
+
+    def _default(self, node) -> _Value:
+        """A parameter default: a literal keeps its type, anything else is
+        evaluated without the caller's locals."""
+        return self.ev(node, _Env())
+
+    def _free_names(self, func) -> frozenset:
+        key = id(func)
+        if key not in self.module.free_names:
+            loaded = set()
+            stored = {param.arg for param in _params(func)}
+            for extra in (func.args.vararg, func.args.kwarg):
+                if extra is not None:
+                    stored.add(extra.arg)
+            for node in _own_nodes(func):
+                if isinstance(node, ast.Name):
+                    if isinstance(node.ctx, ast.Load):
+                        loaded.add(node.id)
+                    else:
+                        stored.add(node.id)
+            self.module.free_names[key] = frozenset(loaded - stored)
+        return self.module.free_names[key]
 
     def _resolve(self, node: ast.AST, env: _Env) -> str | None:
         dotted = _dotted(node)
@@ -1181,8 +1212,12 @@ class _Run:
             if self.loops:
                 self.loops[-1].continues.append(env)
             return None
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            env.values[node.name] = _CLEAN_OTHER
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            self.module.callables[id(node)] = node
+            env.values[node.name] = _Value(OTHER, const=("function", id(node)))
+            return env
+        if isinstance(node, ast.ClassDef):
+            env.values[node.name] = _Value(OTHER, const=frozenset({id(node)}))
             return env
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             for alias in node.names:
@@ -1469,6 +1504,9 @@ class _Run:
     def _ev_Name(self, node, env):
         if node.id in env.values:
             return env.values[node.id]
+        cls = self.module.classes().get(node.id)
+        if cls is not None:
+            return _Value(OTHER, const=frozenset({id(cls)}))
         if self.module.flask:
             qualified = self.module.index.resolved_import(self.func, node.id)
             if qualified == "flask.request":
@@ -1568,7 +1606,8 @@ class _Run:
         return _other(operand)
 
     def _ev_Lambda(self, node, env):
-        return _CLEAN_OTHER
+        self.module.callables[id(node)] = node
+        return _Value(OTHER, const=("lambda", id(node)))
 
     def _ev_Await(self, node, env):
         return self.ev(node.value, env)
@@ -1651,22 +1690,10 @@ class _Run:
             receiver = self.ev(func.value, env)
         args = [self.ev(arg, env) for arg in node.args]
         keywords = [(kw.arg, self.ev(kw.value, env)) for kw in node.keywords]
-        if isinstance(func, ast.Name) and func.id not in env.values:
-            builtin = self._builtin_call(func.id, args, keywords)
-            if builtin is not None:
-                return builtin
-            helper = self.module.helpers().get(func.id)
-            if helper is not None and qualified is None:
-                result = self._helper_call(helper, node, args, keywords)
-                if result is not None and not self._resolved_helper(helper):
-                    result = _opaqued(result)
-                if result is not None:
-                    self._writes_into(node, args, keywords, receiver, env)
-                    return result
-        project = self._project_call(node, qualified, args, keywords, env)
-        if project is not None:
-            self._writes_into(node, args, keywords, receiver, env)
-            return project
+        readable = self._readable_call(node, qualified, receiver, args, keywords, env)
+        if readable is not None:
+            self._writes_into(node, args, keywords, receiver, env, opaque=False)
+            return readable
         if receiver is not None and qualified is None:
             method = self._method_call(node, func, receiver, args, keywords, env)
             if method is not None:
@@ -1674,39 +1701,112 @@ class _Run:
         self._writes_into(node, args, keywords, receiver, env)
         return _opaque(*args, *(value for _, value in keywords), receiver)
 
-    def _project_call(self, node, qualified, args, keywords, env):
-        """One-level summary of a plain function in another project module,
-        imported absolutely or with ``from .mod import name``."""
-        found = None
+    def _readable_call(self, node, qualified, receiver, args, keywords, env):
+        """The value of a call into code the analysis can read: a builtin, a
+        project function or class (this module, an absolute or a relative
+        import), a method of a project class or object, a nested function, a
+        lambda or a partial of one. None for code it cannot read."""
         func = node.func
+        values = [*args, *(value for _, value in keywords)]
+        if isinstance(func, ast.Lambda):
+            self.module.callables[id(func)] = func
+            return self._lambda_call(func, node, args, keywords, env)
+        if isinstance(func, ast.Name) and func.id in env.values:
+            return self._local_call(env.values[func.id], node, args, keywords, env)
+        if isinstance(func, (ast.Call, ast.Subscript)):
+            return self._local_call(self.ev(func, env), node, args, keywords, env)
+        if isinstance(func, ast.Name) and qualified is None:
+            builtin = self._builtin_call(func.id, args, keywords)
+            if builtin is not None:
+                return builtin
+            helper = self.module.helpers().get(func.id)
+            if helper is not None:
+                return self._summary(helper, node, args, keywords)
+            cls = self.module.classes().get(func.id)
+            if cls is not None:
+                return _instance(cls, values)
+            found = self.module.relative_definition(func.id)
+            if found is not None:
+                return self._definition_call(found, node, args, keywords)
+            return None
         if qualified is not None and self.module.names_are_stable(_dotted(func)):
-            found = self.module.project_function(qualified)
-        elif (
-            qualified is None
-            and isinstance(func, ast.Name)
-            and func.id not in env.values
-            and func.id not in self.module.helpers()
+            found = self.module.project_definition(qualified)
+            if found is not None:
+                return self._definition_call(found, node, args, keywords)
+            owner = self.module.project_definition(qualified.rpartition(".")[0])
+            if owner is not None and isinstance(owner[1], ast.ClassDef):
+                return _union_text(*values)
+            return None
+        if (
+            receiver is not None
+            and receiver.kind == OTHER
+            and isinstance(receiver.const, frozenset)
+            and receiver.const
         ):
-            found = self.module.relative_function(func.id)
-        if found is None:
-            return None
-        module, helper = found
-        try:
-            result = self._helper_call(helper, node, args, keywords, module)
-        except (_BudgetExceeded, RecursionError):
-            return None
-        if result is not None and not self._resolved_helper(helper):
-            result = _opaqued(result)
-        return result
+            return _union_text(receiver, *values)
+        return None
 
-    def _resolved_helper(self, helper) -> bool:
-        """A helper whose result keeps request data listed: no loop, branch
-        or comprehension that could rebuild the value character by character
-        (an escaper the analysis cannot read). Calls inside it are judged the
-        same way, up to ``_MAX_HELPER_DEPTH`` levels; a recursive or unresolved
-        call leaves its result unresolved, and a helper past the budget passes
-        its arguments' request data through."""
-        return not any(isinstance(node, _BRANCHES) for node in _own_nodes(helper))
+    def _definition_call(self, found, node, args, keywords):
+        module, definition = found
+        if isinstance(definition, ast.ClassDef):
+            return _instance(definition, [*args, *(v for _, v in keywords)])
+        return self._summary(definition, node, args, keywords, module)
+
+    def _local_call(self, value, node, args, keywords, env):
+        """A call through a local name: a nested function, lambda, partial or
+        project class the analysis created; anything else is dynamic."""
+        values = [*args, *(v for _, v in keywords)]
+        const = value.const
+        if isinstance(const, frozenset) and const:
+            return _union_text(value, *values)
+        if not isinstance(const, tuple) or len(const) != 2:
+            return None
+        kind, ident = const
+        if kind == "partial":
+            if ident:
+                return _union_text(value, *values)
+            return None
+        target = self.module.callables.get(ident)
+        if kind == "lambda" and isinstance(target, ast.Lambda):
+            return self._lambda_call(target, node, args, keywords, env)
+        if kind == "function" and target is not None:
+            return self._summary(target, node, args, keywords, closure=env)
+        return None
+
+    def _summary(self, helper, node, args, keywords, module=None, closure=None):
+        """What a readable function returns for these arguments. Request
+        data in an argument is dropped only when the body proves it (an
+        escape, a number, a constant); recursion, the depth budget, a
+        decorator or arguments that cannot be bound keep it."""
+        values = [*args, *(v for _, v in keywords)]
+        try:
+            result = self._helper_call(helper, node, args, keywords, module, closure)
+        except (_BudgetExceeded, RecursionError):
+            if module is None or module is self.module:
+                raise
+            result = None
+        if result is None:
+            return _union_text(*values)
+        return _as_helper_result(result)
+
+    def _lambda_call(self, lam, node, args, keywords, env):
+        values = [*args, *(v for _, v in keywords)]
+        if id(lam) in self.chain or self.depth >= _MAX_HELPER_DEPTH:
+            return _union_text(*values)
+        bound = _bind(lam.args, node, args, keywords, self._default)
+        if bound is None:
+            return _union_text(*values)
+        inner = env.copy()
+        inner.values.update(bound)
+        run = _Run(
+            self.module,
+            self.func,
+            self.framework,
+            False,
+            self.depth + 1,
+            (*self.chain, id(lam)),
+        )
+        return _as_helper_result(run.ev(lam.body, inner))
 
     def _known_call(self, node, qualified, env):
         if qualified in _ESCAPES and self.module.escape_is_trusted(
@@ -1724,6 +1824,12 @@ class _Run:
             if not values or any(isinstance(arg, ast.Starred) for arg in node.args[:1]):
                 return _text(*values)
             return _text(values[0])
+        if qualified == "functools.partial" and node.args:
+            values = [self.ev(arg, env) for arg in node.args[1:]]
+            values.extend(self.ev(kw.value, env) for kw in node.keywords)
+            readable = self._readable_target(node.args[0], env)
+            labels = _labels(*(_all_labels(value) for value in values))
+            return _Value(OTHER, labels, const=("partial", readable))
         if qualified in _PASS_THROUGH_TEXT:
             values = [self.ev(arg, env) for arg in node.args]
             return _text(*values, *(self.ev(kw.value, env) for kw in node.keywords))
@@ -1743,6 +1849,20 @@ class _Run:
                 node, env, ("content", "content_type", "status", "reason", "charset")
             )
         return None
+
+    def _readable_target(self, target, env) -> bool:
+        if isinstance(target, ast.Lambda):
+            return True
+        if isinstance(target, ast.Name) and target.id in env.values:
+            const = env.values[target.id].const
+            return isinstance(const, tuple) and const[0] in {"function", "lambda"}
+        if isinstance(target, ast.Name):
+            if target.id in self.module.helpers() or target.id in self.module.classes():
+                return True
+            if self.module.relative_definition(target.id) is not None:
+                return True
+        qualified = self._resolve(target, env)
+        return bool(qualified and self.module.project_definition(qualified))
 
     def _builtin_call(self, name, args, keywords):
         if name not in _TEXT_BUILTINS | _NUMBER_BUILTINS | _CONTAINER_BUILTINS | {
@@ -1780,12 +1900,6 @@ class _Run:
         if receiver.kind == MAPPING:
             return self._mapping_method(node, method, receiver, args, keywords)
         if receiver.kind == TEXT:
-            if method == "translate" or (
-                method == "replace" and _replaces_markup(node)
-            ):
-                return _Value(
-                    TEXT, _opaque_labels(_all_labels(_text(receiver, *others)))
-                )
             if method in _TEXT_METHODS:
                 return _text(receiver, *others)
             if method in _TEXTS_METHODS:
@@ -1936,9 +2050,12 @@ class _Run:
         self._set_response(name, UNKNOWN, response.body, env)
         return _NONE_VALUE
 
-    def _writes_into(self, node: ast.Call, args, keyword_pairs, receiver, env):
-        """An unknown call may store any argument's data into a mutable
-        argument or its receiver, and may change a response it is given."""
+    def _writes_into(
+        self, node: ast.Call, args, keyword_pairs, receiver, env, opaque=True
+    ):
+        """A call may store any argument's data into a mutable argument or
+        its receiver, and may change a response it is given. Data written by
+        code the analysis cannot read is marked unresolved."""
         operands = [_unstarred(arg) for arg in node.args]
         operands.extend(kw.value for kw in node.keywords)
         values = [*args, *(value for _, value in keyword_pairs)]
@@ -1952,56 +2069,30 @@ class _Run:
             labels = _labels(
                 *(_all_labels(value) for i, value in enumerate(values) if i != index)
             )
-            self._touch(root, _opaque_labels(labels), env)
+            if opaque:
+                labels = _opaque_labels(labels)
+            self._touch(root, labels, env)
 
-    def _helper_call(self, helper, node, args, keyword_pairs, module=None):
-        """The value a project helper returns for these arguments; None when
-        the call cannot be bound to its parameters or re-enters a helper
-        already on the chain (recursion stays unresolved). Past the depth
-        budget the helper is not read, and its arguments' request data is
-        kept as it is, listed: only an escape proved within the budget clears
-        it."""
-        if id(helper) in self.chain:
+    def _helper_call(
+        self, helper, node, args, keyword_pairs, module=None, closure=None
+    ):
+        """The value a readable function returns for these arguments, or None
+        when it must be treated as passing them through: a helper already on
+        the chain (recursion), past the depth budget, decorated, a generator,
+        or a call that cannot be bound to its parameters."""
+        if id(helper) in self.chain or self.depth >= _MAX_HELPER_DEPTH:
             return None
-        if self.depth >= _MAX_HELPER_DEPTH:
-            return _past_budget(args, keyword_pairs)
-        if any(isinstance(arg, ast.Starred) for arg in node.args):
+        if helper.decorator_list:
             return None
-        if any(key is None for key, _ in keyword_pairs):
+        if _is_generator(helper):
+            return _texts(*args, *(value for _, value in keyword_pairs))
+        bound = _bind(helper.args, node, args, keyword_pairs, self._default)
+        if bound is None:
             return None
-        arguments = helper.args
-        positional = [*arguments.posonlyargs, *arguments.args]
-        if len(args) > len(positional) and arguments.vararg is None:
-            return None
-        bound = {param.arg: value for param, value in zip(positional, args)}
-        if arguments.vararg is not None:
-            bound[arguments.vararg.arg] = _other(*args[len(positional) :])
-        named = {param.arg for param in positional} | {
-            param.arg for param in arguments.kwonlyargs
-        }
-        spill = []
-        for key, value in keyword_pairs:
-            if key in bound:
-                return None
-            if key in named:
-                bound[key] = value
-            elif arguments.kwarg is not None:
-                spill.append(value)
-            else:
-                return None
-        if arguments.kwarg is not None:
-            bound[arguments.kwarg.arg] = _other(*spill)
-        defaulted = positional[len(positional) - len(arguments.defaults) :]
-        defaults = {param.arg for param in defaulted}
-        for param, default in zip(arguments.kwonlyargs, arguments.kw_defaults):
-            if default is not None:
-                defaults.add(param.arg)
-        for param in [*positional, *arguments.kwonlyargs]:
-            if param.arg in bound:
-                continue
-            if param.arg not in defaults:
-                return None
-            bound[param.arg] = _CLEAN_OTHER
+        if closure is not None:
+            for name in self._free_names(helper):
+                if name in closure.values and name not in bound:
+                    bound[name] = closure.values[name]
         key = (
             id(helper),
             self.chain,
@@ -2154,25 +2245,72 @@ class _Run:
         return None, None
 
 
-def _past_budget(args, keyword_pairs) -> _Value:
-    values = [*args, *(value for _, value in keyword_pairs)]
-    if values and all(value.kind == TEXT for value in values):
-        return _text(*values)
-    return _other(*values)
+def _union_text(*values) -> _Value:
+    """The arguments' request data as text: what a readable call keeps
+    when the analysis cannot prove it drops or escapes that data."""
+    labels = _labels(*(_all_labels(value) for value in values))
+    if labels:
+        return _Value(TEXT, labels)
+    return _CLEAN_OTHER
 
 
-def _replaces_markup(node: ast.Call) -> bool:
-    """``s.replace(old, new)`` where ``old`` may be ``<``, ``>`` or ``&``:
-    a hand-written escape step the analysis does not evaluate."""
-    if not node.args:
-        return True
-    old = node.args[0]
-    if not (isinstance(old, ast.Constant) and isinstance(old.value, (str, bytes))):
-        return True
-    text = old.value
-    if isinstance(text, bytes):
-        text = text.decode("latin-1")
-    return any(char in text for char in "<>&")
+def _instance(cls: ast.ClassDef, values) -> _Value:
+    """An object of a project class, built from ``values``: its attributes
+    and methods keep their request data."""
+    labels = _labels(*(_all_labels(value) for value in values))
+    return _Value(OTHER, labels, const=frozenset({id(cls)}))
+
+
+def _bind(arguments: ast.arguments, node: ast.Call, args, keyword_pairs, default):
+    """Each parameter's value for this call, or None when the binding is
+    not known (``*args``/``**kwargs`` at the call, a missing or repeated
+    argument)."""
+    if any(isinstance(arg, ast.Starred) for arg in node.args):
+        return None
+    if any(key is None for key, _ in keyword_pairs):
+        return None
+    positional = [*arguments.posonlyargs, *arguments.args]
+    if len(args) > len(positional) and arguments.vararg is None:
+        return None
+    bound = {param.arg: value for param, value in zip(positional, args)}
+    if arguments.vararg is not None:
+        bound[arguments.vararg.arg] = _other(*args[len(positional) :])
+    named = {param.arg for param in positional}
+    named |= {param.arg for param in arguments.kwonlyargs}
+    spill = []
+    for key, value in keyword_pairs:
+        if key in bound:
+            return None
+        if key in named:
+            bound[key] = value
+        elif arguments.kwarg is not None:
+            spill.append(value)
+        else:
+            return None
+    if arguments.kwarg is not None:
+        bound[arguments.kwarg.arg] = _other(*spill)
+    defaulted = positional[len(positional) - len(arguments.defaults) :]
+    defaults = {param.arg: value for param, value in zip(defaulted, arguments.defaults)}
+    for param, value in zip(arguments.kwonlyargs, arguments.kw_defaults):
+        if value is not None:
+            defaults[param.arg] = value
+    for param in [*positional, *arguments.kwonlyargs]:
+        if param.arg in bound:
+            continue
+        if param.arg not in defaults:
+            return None
+        bound[param.arg] = default(defaults[param.arg])
+    return bound
+
+
+def _as_helper_result(value: _Value) -> _Value:
+    """A readable helper's result: tainted and not provably non-text (a
+    dict, list, number, response or project object) counts as text."""
+    if value.kind != OTHER or isinstance(value.const, frozenset):
+        return value
+    if any(not label.startswith(_OPAQUE) for label in value.labels):
+        return _Value(TEXT, value.labels)
+    return value
 
 
 def _unstarred(node: ast.AST) -> ast.AST:
@@ -2210,12 +2348,15 @@ def _flask_params(func, rules) -> dict[str, _Value]:
     return values
 
 
-def _django_params(func) -> dict[str, _Value] | None:
+def _django_params(func, module) -> dict[str, _Value] | None:
     values = {}
     found = False
+    owner = module.enclosing_class(func)
     for param in _params(func):
         if param.arg in {"self", "cls"}:
             values[param.arg] = _CLEAN_OTHER
+            if owner is not None:
+                values[param.arg] = _Value(OTHER, const=frozenset({id(owner)}))
             continue
         if _is_request_param(param):
             found = True
@@ -2254,7 +2395,7 @@ def _view_entries(module: _Module):
                 yield node, FLASK, _flask_params(node, rules)
                 continue
         if module.django:
-            params = _django_params(node)
+            params = _django_params(node, module)
             if params is not None:
                 yield node, DJANGO, params
 

@@ -329,6 +329,31 @@ def test_must_still_report_controls(tmp_path, monkeypatch, body):
 
 
 HIDDEN = {
+    "unresolved imported helper": (
+        "    from myproject.utils import escape_html\n"
+        "    return 'Results ' + escape_html(request.args['q'])\n"
+    ),
+    "method on an unknown object": (
+        "    wrapped = wrap(request)\n"
+        "    value = wrapped.param('q')\n"
+        "    return f'{value}'\n"
+    ),
+    "value stored into an unknown object": (
+        "    store = Store()\n"
+        "    store.put('k', request.args['q'])\n"
+        "    return f\"{store.fetch('k')}\"\n"
+    ),
+    "configparser get": (
+        "    import configparser\n"
+        "    conf = configparser.ConfigParser()\n"
+        "    conf.add_section('s')\n"
+        "    conf.set('s', 'k', request.args['q'])\n"
+        "    return f\"{conf.get('s', 'k')}\"\n"
+    ),
+}
+
+
+READABLE = {
     "allowlist escaper loop": (
         "    return 'Results ' + encode(request.args['q'])\n"
         "def encode(text):\n"
@@ -356,32 +381,18 @@ HIDDEN = {
         "def encode(text):\n"
         "    return ''.join(c for c in text if c.isalnum())\n"
     ),
-    "unresolved imported helper": (
-        "    from myproject.utils import escape_html\n"
-        "    return 'Results ' + escape_html(request.args['q'])\n"
-    ),
-    "method on an unknown object": (
-        "    wrapped = wrap(request)\n"
-        "    value = wrapped.param('q')\n"
-        "    return f'{value}'\n"
-    ),
-    "value stored into an unknown object": (
-        "    store = Store()\n"
-        "    store.put('k', request.args['q'])\n"
-        "    return f\"{store.fetch('k')}\"\n"
-    ),
-    "configparser get": (
-        "    import configparser\n"
-        "    conf = configparser.ConfigParser()\n"
-        "    conf.add_section('s')\n"
-        "    conf.set('s', 'k', request.args['q'])\n"
-        "    return f\"{conf.get('s', 'k')}\"\n"
-    ),
     "hand-written replace of markup": (
         "    q = request.args['q'].replace('&', '&amp;').replace('<', '&lt;')\n"
         "    return 'Results ' + q\n"
     ),
 }
+
+
+@pytest.mark.parametrize("body", list(READABLE.values()), ids=list(READABLE))
+def test_readable_transforms_keep_request_data_listed(tmp_path, monkeypatch, body):
+    source = _view(body)
+    result = _analyze(tmp_path, monkeypatch, source)
+    assert _listed_lines(result) == [_line(source, "    return ")]
 
 
 @pytest.mark.parametrize("body", list(HIDDEN.values()), ids=list(HIDDEN))
@@ -648,7 +659,7 @@ CROSS_MODULE = {
         "        else:\n"
         "            out += '&#' + str(ord(char)) + ';'\n"
         "    return out\n",
-        False,
+        True,
     ),
     "pass-through helper chain": (
         "from myproject.utils import outer\n",
@@ -673,7 +684,7 @@ CROSS_MODULE = {
         "    return out\n"
         "def outer(value):\n"
         "    return inner(value)\n",
-        False,
+        True,
     ),
     "chain deeper than three helpers": (
         "from myproject.utils import first\n",
@@ -688,7 +699,7 @@ CROSS_MODULE = {
         "from myproject.utils import ping\n",
         "ping(request.args['q'])",
         "def ping(v):\n    return pong(v)\ndef pong(v):\n    return ping(v)\n",
-        False,
+        True,
     ),
     "unresolvable module": (
         "from elsewhere.utils import identity\n",
@@ -903,3 +914,179 @@ def test_helper_chains_past_the_depth_budget_stay_listed_unless_escaped(
         expected = [_line(source, "    return 'Hi '")]
     assert _listed_lines(result, symbol="page") == expected
     assert _reported_lines(result, symbol="page") == expected
+
+
+SHAPES = {
+    "recursive list walker": (
+        "def last(items, picked=''):\n"
+        "    if items:\n"
+        "        return last(items[1:], items[0])\n"
+        "    return picked\n",
+        "'Hi ' + last([request.args['q']])",
+        True,
+    ),
+    "recursive dict walker": (
+        "def walk(box):\n"
+        "    if isinstance(box, dict):\n"
+        "        return walk(box['value'])\n"
+        "    return box\n",
+        "'Hi ' + walk({'value': {'value': request.args['q']}})",
+        True,
+    ),
+    "mixed arguments past the budget": (
+        "def d(x, n):\n    return x\n"
+        "def c(x, n):\n    return d(x, n)\n"
+        "def b(x, n):\n    return c(x, n)\n"
+        "def a(x):\n    return b(x, 0)\n",
+        "a(request.args['q'])",
+        True,
+    ),
+    "keyword and default arguments": (
+        "def h(x, sep=', '):\n    return sep.join([x, 'end'])\n",
+        "'Hi ' + h(x=request.args['q'])",
+        True,
+    ),
+    "double-star call": (
+        "def h(x, sep=', '):\n    return x\n",
+        "'Hi ' + h(**{'x': request.args['q']})",
+        True,
+    ),
+    "star parameters": (
+        "def h(*parts):\n    return ' '.join(parts)\n",
+        "'Hi ' + h(request.args['q'], 'x')",
+        True,
+    ),
+    "starred call": (
+        "def h(first, second):\n    return first\n",
+        "'Hi ' + h(*[request.args['q'], 'x'])",
+        True,
+    ),
+    "instance method": (
+        "class Fmt:\n    def show(self, v):\n        return v\n",
+        "'Hi ' + Fmt().show(request.args['q'])",
+        True,
+    ),
+    "classmethod and staticmethod": (
+        "class Fmt:\n"
+        "    @classmethod\n"
+        "    def show(cls, v):\n        return v\n"
+        "    @staticmethod\n"
+        "    def tidy(v):\n        return v.strip()\n",
+        "'Hi ' + Fmt.show(Fmt.tidy(request.args['q']))",
+        True,
+    ),
+    "object built from request data": (
+        "class Box:\n"
+        "    def __init__(self, value):\n        self.value = value\n"
+        "    def get(self):\n        return self.value\n",
+        "'Hi ' + Box(request.args['q']).get()",
+        True,
+    ),
+    "wrapping decorator": (
+        "import functools\n"
+        "def deco(f):\n"
+        "    @functools.wraps(f)\n"
+        "    def wrapper(*a, **k):\n        return f(*a, **k)\n"
+        "    return wrapper\n"
+        "@deco\n"
+        "def h(v):\n    return v\n",
+        "'Hi ' + h(request.args['q'])",
+        True,
+    ),
+    "functools.partial": (
+        "import functools\ndef h(prefix, v):\n    return prefix + v\n",
+        "functools.partial(h, 'Hi ')(request.args['q'])",
+        True,
+    ),
+    "partial holding request data": (
+        "from functools import partial\ndef h(v, suffix):\n    return v + suffix\n",
+        "'Hi ' + partial(h, request.args['q'])('!')",
+        True,
+    ),
+    "lambda": (
+        "",
+        "'Hi ' + (lambda v: v.strip())(request.args['q'])",
+        True,
+    ),
+    "generator joined": (
+        "def gen(v):\n    yield v\n    yield '!'\n",
+        "'Hi ' + ''.join(gen(request.args['q']))",
+        True,
+    ),
+    "try/except": (
+        "def h(v):\n"
+        "    try:\n        return v.encode().decode()\n"
+        "    except ValueError:\n        return v\n",
+        "'Hi ' + h(request.args['q'])",
+        True,
+    ),
+    "early return": (
+        "def h(v):\n    if not v:\n        return ''\n    return v\n",
+        "'Hi ' + h(request.args['q'])",
+        True,
+    ),
+    "f-string and format": (
+        "def h(v):\n    return f'<{v}>' + '[{}]'.format(v)\n",
+        "'Hi ' + h(request.args['q'])",
+        True,
+    ),
+    "escape inside the budget": (
+        "import html\ndef h(v):\n    return html.escape(v)\n",
+        "'Hi ' + h(request.args['q'])",
+        False,
+    ),
+    "helper returning len": (
+        "def h(v):\n    return str(len(v))\n",
+        "'Hi ' + h(request.args['q'])",
+        False,
+    ),
+    "helper returning a constant": (
+        "def h(v):\n    return 'fixed'\n",
+        "'Hi ' + h(request.args['q'])",
+        False,
+    ),
+    "helper returning int": (
+        "def h(v):\n    return int(v)\n",
+        "f\"Hi {h(request.args['q'])}\"",
+        False,
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "helpers, expression, listed", list(SHAPES.values()), ids=list(SHAPES)
+)
+def test_readable_helper_shapes_keep_request_data_unless_proved(
+    tmp_path, monkeypatch, helpers, expression, listed
+):
+    source = (
+        "from flask import Flask, request\n"
+        + helpers
+        + "app = Flask(__name__)\n"
+        + "@app.route('/')\n"
+        + "def page():\n"
+        + f"    return {expression}\n"
+    )
+    result = _analyze(tmp_path, monkeypatch, source)
+    expected = []
+    if listed:
+        expected = [_line(source, f"    return {expression}")]
+    assert _listed_lines(result, symbol="page") == expected
+    assert _reported_lines(result, symbol="page") == expected
+
+
+def test_nested_functions_read_the_enclosing_request_data(tmp_path, monkeypatch):
+    source = (
+        "from flask import Flask, request\n"
+        "app = Flask(__name__)\n"
+        "@app.route('/')\n"
+        "def page():\n"
+        "    q = request.args['q']\n"
+        "    def inner():\n"
+        "        return q\n"
+        "    def same(v):\n"
+        "        return v\n"
+        "    return 'Hi ' + inner() + same(q)\n"
+    )
+    result = _analyze(tmp_path, monkeypatch, source)
+    assert _listed_lines(result, symbol="page") == [_line(source, "    return 'Hi '")]
