@@ -36,6 +36,7 @@ def _analyze(tmp_path, monkeypatch, source, name="app.py"):
             enable_sca=False,
             grep_verify=False,
             grep_cache=False,
+            all_advice=False,
         )
     )
     assert not result.get("analysis_errors")
@@ -45,6 +46,16 @@ def _analyze(tmp_path, monkeypatch, source, name="app.py"):
 def _reported_lines(result):
     return sorted(
         f["line"] for f in result.get("danger", []) if f["rule_id"] == "SKY-D228"
+    )
+
+
+def _listed_lines(result):
+    return sorted(
+        f["line"]
+        for f in result.get("danger", [])
+        if f["rule_id"] == "SKY-D228"
+        and f["listing"]["listed"]
+        and f["symbol"] == "search"
     )
 
 
@@ -122,15 +133,22 @@ REPORTED = {
         "        return f'bad {v}', 400\n"
         "    return 'ok'\n"
     ),
-    "unknown wrapper object": (
-        "    wrapped = wrap(request)\n"
-        "    value = wrapped.param('q')\n"
-        "    return f'{value}'\n"
+    "replace of ordinary text": (
+        "    return 'Results ' + request.args['q'].replace(' ', '_').strip()\n"
     ),
-    "value stored into an unknown object": (
-        "    store = Store()\n"
-        "    store.put('k', request.args['q'])\n"
-        "    return f\"{store.fetch('k')}\"\n"
+    "base64 round trip": (
+        "    import base64\n"
+        "    raw = base64.b64encode(request.args['q'].encode('utf-8'))\n"
+        "    return 'got ' + base64.b64decode(raw).decode('utf-8')\n"
+    ),
+    "url decoding": (
+        "    from urllib.parse import unquote_plus\n"
+        "    return 'got ' + unquote_plus(request.query_string.decode())\n"
+    ),
+    "json.loads then subscript": (
+        "    import json\n"
+        "    data = json.loads(request.get_data(as_text=True))\n"
+        "    return f\"name {data['name']}\"\n"
     ),
     "json body": "    data = request.get_json()\n    return 'name: ' + str(data['name'])\n",
     "bytes body": "    return request.get_data()\n",
@@ -272,9 +290,13 @@ CONTROLS = {
     "wrapper function passing its argument through": (
         "    return same(request.args['name'])\ndef same(value):\n    return value\n"
     ),
-    "project escape helper is not trusted by name": (
-        "    from myproject.utils import escape_html\n"
-        "    return 'Results ' + escape_html(request.args['q'])\n"
+    "wrapper adding markup": (
+        "    return wrap(request.args['q'])\ndef wrap(x):\n    return f'<b>{x}</b>'\n"
+    ),
+    "wrapper using str and strip": (
+        "    return 'Hi ' + tidy(request.args['q'])\n"
+        "def tidy(value):\n"
+        "    return str(value).strip().lower()\n"
     ),
     "local function named escape": (
         "    return 'Results ' + escape(request.args['q'])\n"
@@ -292,7 +314,72 @@ def test_must_still_report_controls(tmp_path, monkeypatch, body):
         prefix = FLASK + "from flask import request as req\n"
     source = _view(body, prefix=prefix)
     result = _analyze(tmp_path, monkeypatch, source)
+    assert _listed_lines(result) == [_line(source, "    return ")]
+
+
+HIDDEN = {
+    "allowlist escaper loop": (
+        "    return 'Results ' + encode(request.args['q'])\n"
+        "def encode(text):\n"
+        "    out = ''\n"
+        "    for char in text:\n"
+        "        if char.isalnum():\n"
+        "            out += char\n"
+        "        else:\n"
+        "            out += '&#' + str(ord(char)) + ';'\n"
+        "    return out\n"
+    ),
+    "allowlist escaper comprehension": (
+        "    return 'Results ' + encode(request.args['q'])\n"
+        "def encode(text):\n"
+        "    return ''.join(c for c in text if c.isalnum())\n"
+    ),
+    "unresolved imported helper": (
+        "    from myproject.utils import escape_html\n"
+        "    return 'Results ' + escape_html(request.args['q'])\n"
+    ),
+    "method on an unknown object": (
+        "    wrapped = wrap(request)\n"
+        "    value = wrapped.param('q')\n"
+        "    return f'{value}'\n"
+    ),
+    "value stored into an unknown object": (
+        "    store = Store()\n"
+        "    store.put('k', request.args['q'])\n"
+        "    return f\"{store.fetch('k')}\"\n"
+    ),
+    "configparser get": (
+        "    import configparser\n"
+        "    conf = configparser.ConfigParser()\n"
+        "    conf.add_section('s')\n"
+        "    conf.set('s', 'k', request.args['q'])\n"
+        "    return f\"{conf.get('s', 'k')}\"\n"
+    ),
+    "hand-written replace of markup": (
+        "    q = request.args['q'].replace('&', '&amp;').replace('<', '&lt;')\n"
+        "    return 'Results ' + q\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("body", list(HIDDEN.values()), ids=list(HIDDEN))
+def test_unresolved_transforms_stay_raw_and_gated_but_are_not_listed(
+    tmp_path, monkeypatch, body
+):
+    source = _view(body)
+    result = _analyze(tmp_path, monkeypatch, source)
     assert _reported_lines(result) == [_line(source, "    return ")]
+    assert _listed_lines(result) == []
+    finding = next(f for f in result["danger"] if f["rule_id"] == "SKY-D228")
+    assert finding["severity"] == "HIGH"
+    assert finding["low_risk_context"]["reason"] == "unresolved-transform"
+    assert finding["listing"] == {
+        "version": 1,
+        "listed": False,
+        "reason": "low-risk-context",
+    }
+    passed, _ = check_gate(result, {"gate": {"max_high": 0}})
+    assert passed is False
 
 
 @pytest.mark.parametrize(

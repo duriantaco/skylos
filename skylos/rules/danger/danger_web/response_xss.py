@@ -69,6 +69,52 @@ DJANGO = "django"
 _MAX_LABELS = 4
 _MAX_LOOP_PASSES = 3
 _MAX_HELPER_DEPTH = 4
+_OPAQUE = "?"
+_UNRESOLVED = "unresolved-transform"
+_PASS_THROUGH_TEXT = frozenset(
+    {
+        f"base64.{name}"
+        for name in (
+            "b64decode",
+            "b64encode",
+            "urlsafe_b64decode",
+            "urlsafe_b64encode",
+            "standard_b64decode",
+            "standard_b64encode",
+            "b32decode",
+            "b32encode",
+            "b16decode",
+            "b16encode",
+            "b85decode",
+            "b85encode",
+            "a85decode",
+            "a85encode",
+            "decodebytes",
+            "encodebytes",
+        )
+    }
+    | {
+        "codecs.decode",
+        "codecs.encode",
+        "urllib.parse.unquote",
+        "urllib.parse.unquote_plus",
+        "urllib.parse.unquote_to_bytes",
+    }
+)
+_PASS_THROUGH_OBJECTS = frozenset({"json.loads"})
+_BRANCHES = (
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.If,
+    ast.IfExp,
+    ast.Match,
+    ast.Try,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.GeneratorExp,
+)
 _MAX_FUNCTION_NODES = 20000
 _MAX_STEPS = 400000
 
@@ -318,11 +364,41 @@ class _Value:
     body: object = None
 
 
+def _label_order(label: str):
+    return (label.startswith(_OPAQUE), label)
+
+
 def _labels(*groups) -> frozenset:
     merged = frozenset().union(*groups)
     if len(merged) <= _MAX_LABELS:
         return merged
-    return frozenset(sorted(merged)[:_MAX_LABELS])
+    return frozenset(sorted(merged, key=_label_order)[:_MAX_LABELS])
+
+
+def _plain(label: str) -> str:
+    if label.startswith(_OPAQUE):
+        return label[len(_OPAQUE) :]
+    return label
+
+
+def _opaque_labels(labels) -> frozenset:
+    return frozenset(_OPAQUE + _plain(label) for label in labels)
+
+
+def _opaqued(value):
+    """``value`` with every label marked as having passed through a call the
+    analysis does not resolve: still request data, but possibly escaped."""
+    if value is None:
+        return None
+    return _Value(
+        value.kind,
+        _opaque_labels(value.labels),
+        const=value.const,
+        keys=tuple((key, _opaqued(item)) for key, item in value.keys),
+        rest=_opaque_labels(value.rest),
+        html=value.html,
+        body=_opaqued(value.body),
+    )
 
 
 def _all_labels(value: _Value | None) -> frozenset:
@@ -344,6 +420,10 @@ _MUTABLE = frozenset({DICT, TEXTS, OTHER})
 
 def _other(*values) -> _Value:
     return _Value(OTHER, _labels(*(_all_labels(value) for value in values)))
+
+
+def _opaque(*values) -> _Value:
+    return _Value(OTHER, _opaque_labels(_labels(*(_all_labels(v) for v in values))))
 
 
 def _text(*values) -> _Value:
@@ -841,7 +921,7 @@ class _Run:
             for item in node.items:
                 value = self.ev(item.context_expr, env)
                 if item.optional_vars is not None:
-                    self._assign(item.optional_vars, _other(value), None, env)
+                    self._assign(item.optional_vars, _opaque(value), None, env)
             return self._block(node.body, env)
         if isinstance(node, ast.Try) or type(node).__name__ == "TryStar":
             return self._try(node, env)
@@ -1332,6 +1412,8 @@ class _Run:
             helper = self.module.helpers().get(func.id)
             if helper is not None and qualified is None:
                 result = self._helper_call(helper, node, args, keywords)
+                if result is not None and not self._resolved_helper(helper):
+                    result = _opaqued(result)
                 if result is not None:
                     self._writes_into(node, args, keywords, receiver, env)
                     return result
@@ -1340,7 +1422,15 @@ class _Run:
             if method is not None:
                 return method
         self._writes_into(node, args, keywords, receiver, env)
-        return _other(*args, *(value for _, value in keywords), receiver)
+        return _opaque(*args, *(value for _, value in keywords), receiver)
+
+    def _resolved_helper(self, helper) -> bool:
+        """A helper whose result keeps request data listed: one level of
+        summary, with no loop, branch or comprehension that could rebuild the
+        value character by character (an escaper the analysis cannot read)."""
+        if self.depth > 0:
+            return False
+        return not any(isinstance(node, _BRANCHES) for node in _own_nodes(helper))
 
     def _known_call(self, node, qualified, env):
         if qualified in _ESCAPES and self.module.escape_is_trusted(
@@ -1358,6 +1448,12 @@ class _Run:
             if not values or any(isinstance(arg, ast.Starred) for arg in node.args[:1]):
                 return _text(*values)
             return _text(values[0])
+        if qualified in _PASS_THROUGH_TEXT:
+            values = [self.ev(arg, env) for arg in node.args]
+            return _text(*values, *(self.ev(kw.value, env) for kw in node.keywords))
+        if qualified in _PASS_THROUGH_OBJECTS:
+            values = [self.ev(arg, env) for arg in node.args]
+            return _other(*values, *(self.ev(kw.value, env) for kw in node.keywords))
         if qualified in _MARK_SAFE:
             return _text(*(self.ev(arg, env) for arg in node.args))
         if qualified in _MAKE_RESPONSE:
@@ -1408,6 +1504,12 @@ class _Run:
         if receiver.kind == MAPPING:
             return self._mapping_method(node, method, receiver, args, keywords)
         if receiver.kind == TEXT:
+            if method == "translate" or (
+                method == "replace" and _replaces_markup(node)
+            ):
+                return _Value(
+                    TEXT, _opaque_labels(_all_labels(_text(receiver, *others)))
+                )
             if method in _TEXT_METHODS:
                 return _text(receiver, *others)
             if method in _TEXTS_METHODS:
@@ -1574,7 +1676,7 @@ class _Run:
             labels = _labels(
                 *(_all_labels(value) for i, value in enumerate(values) if i != index)
             )
-            self._touch(root, labels, env)
+            self._touch(root, _opaque_labels(labels), env)
 
     def _helper_call(self, helper, node, args, keyword_pairs):
         """The value a module-level helper returns for these arguments, or
@@ -1759,6 +1861,20 @@ class _Run:
         return None, None
 
 
+def _replaces_markup(node: ast.Call) -> bool:
+    """``s.replace(old, new)`` where ``old`` may be ``<``, ``>`` or ``&``:
+    a hand-written escape step the analysis does not evaluate."""
+    if not node.args:
+        return True
+    old = node.args[0]
+    if not (isinstance(old, ast.Constant) and isinstance(old.value, (str, bytes))):
+        return True
+    text = old.value
+    if isinstance(text, bytes):
+        text = text.decode("latin-1")
+    return any(char in text for char in "<>&")
+
+
 def _unstarred(node: ast.AST) -> ast.AST:
     if isinstance(node, ast.Starred):
         return node.value
@@ -1844,17 +1960,29 @@ def _view_entries(module: _Module):
 
 
 def _finding(file_path, func, node: ast.Return, body: _Value, framework: str) -> dict:
-    labels = sorted(body.labels)
+    direct = sorted(label for label in body.labels if not label.startswith(_OPAQUE))
+    labels = direct or sorted({_plain(label) for label in body.labels})
     view = "Django view"
     if framework == FLASK:
         view = "Flask view"
-    return {
+    step = "reaches the response body without HTML escaping"
+    message = (
+        f"XSS ({view} returns request data in an HTML response without "
+        f"escaping it: {labels[0]})"
+    )
+    if not direct:
+        step = (
+            "reaches the response body only through calls the analysis does "
+            "not resolve, which may escape it"
+        )
+        message = (
+            f"XSS ({view} returns request data in an HTML response through "
+            f"calls that may not escape it: {labels[0]})"
+        )
+    finding = {
         "rule_id": "SKY-D228",
         "severity": "HIGH",
-        "message": (
-            f"XSS ({view} returns request data in an HTML response without "
-            f"escaping it: {labels[0]})"
-        ),
+        "message": message,
         "file": str(file_path),
         "line": node.lineno,
         "col": node.col_offset,
@@ -1867,7 +1995,7 @@ def _finding(file_path, func, node: ast.Return, body: _Value, framework: str) ->
                 "sink": f"HTML response body returned by `{func.name}` ({view})",
                 "path": [
                     f"untrusted input from {labels[0]}",
-                    "reaches the response body without HTML escaping",
+                    step,
                     "served as text/html",
                 ],
                 "guards_seen": [],
@@ -1879,6 +2007,15 @@ def _finding(file_path, func, node: ast.Return, body: _Value, framework: str) ->
             }
         },
     }
+    if not direct:
+        finding["low_risk_context"] = {
+            "reason": _UNRESOLVED,
+            "detail": (
+                "request data reaches the HTML body only through a call, method "
+                "or helper loop the analysis cannot resolve"
+            ),
+        }
+    return finding
 
 
 def scan(tree, file_path, findings, *, project_root=None):
