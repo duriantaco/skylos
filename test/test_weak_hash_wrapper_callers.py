@@ -75,6 +75,35 @@ LISTED = {
         "def login(password):\n"
         "    relay(b'public', password.encode())\n",
     ),
+    "subclass_override_receives_password": (
+        "SKY-D207",
+        "import hashlib\n"
+        "class Base:\n"
+        "    def __init__(self, password):\n"
+        "        self.token = self._build(password)\n"
+        "    def _build(self, value):\n"
+        "        return value\n"
+        "class Child(Base):\n"
+        "    def _build(self, value):\n"
+        "        return hashlib.md5(value).hexdigest()\n",
+    ),
+    "password_three_levels_up": (
+        "SKY-D207",
+        "import hashlib\n"
+        "def inner(blob):\n    return hashlib.md5(blob).hexdigest()\n"
+        "def middle(value):\n    return inner(value)\n"
+        "def outer(item):\n    return middle(item)\n"
+        "def login(password):\n    return outer(password)\n",
+    ),
+    "callback_wrapper": (
+        "SKY-D207",
+        "import hashlib\n"
+        + WRAPPER.format(call="hashlib.md5(data)")
+        + "def batch(password):\n    return list(map(digest, [password]))\n",
+    ),
+}
+
+DEMOTED = {
     "cycle_beyond_trace_depth": (
         "SKY-D207",
         "import hashlib\n"
@@ -86,15 +115,44 @@ LISTED = {
         "def step_b(value, rounds):\n    return step_c(value, rounds)\n"
         "def step_c(value, rounds):\n    return digest(value, rounds)\n",
     ),
-    "callback_wrapper": (
-        "SKY-D207",
+    "same_named_method_in_other_class": (
+        "SKY-D208",
         "import hashlib\n"
-        + WRAPPER.format(call="hashlib.md5(data)")
-        + "def batch(password):\n    return list(map(digest, [password]))\n",
+        "import os\n"
+        "class BasicAuth:\n"
+        "    def __init__(self, username, password):\n"
+        "        self._header = self._build_auth_header(username, password)\n"
+        "    def _build_auth_header(self, username, password):\n"
+        "        return username + ':' + password\n"
+        "class DigestAuth:\n"
+        "    def _get_client_nonce(self, nonce):\n"
+        "        return hashlib.sha1(nonce + os.urandom(8)).hexdigest()\n"
+        "    def _build_auth_header(self, request, challenge):\n"
+        "        return self._get_client_nonce(challenge.nonce)\n",
     ),
-}
-
-DEMOTED = {
+    "nonce_helper_deep_callers": (
+        "SKY-D208",
+        "import hashlib\n"
+        "import os\n"
+        "import time\n"
+        "class DigestAuth:\n"
+        "    def _get_client_nonce(self, nonce_count, nonce):\n"
+        "        s = str(nonce_count).encode()\n"
+        "        s += nonce\n"
+        "        s += time.ctime().encode()\n"
+        "        s += os.urandom(8)\n"
+        "        return hashlib.sha1(s).hexdigest()[:16].encode()\n"
+        "    def _build_auth_header(self, request, challenge):\n"
+        "        return self._get_client_nonce(self._nonce_count, challenge.nonce)\n"
+        "    def _respond(self, request, challenge):\n"
+        "        return self._build_auth_header(request, challenge)\n"
+        "    def _retry(self, request, challenge):\n"
+        "        return self._respond(request, challenge)\n"
+        "    def auth_flow(self, request, challenge):\n"
+        "        return self._retry(request, challenge)\n"
+        "def send(auth, request, challenge):\n"
+        "    return auth.auth_flow(request, challenge)\n",
+    ),
     "non_credential_callers": (
         "SKY-D207",
         "import hashlib\n"

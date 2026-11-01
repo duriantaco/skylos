@@ -611,14 +611,89 @@ class _CallerTrace:
     each enumeration or walk. The budget is separate from the weak random
     flow budget, so hash tracing cannot cut those walks short."""
 
-    def __init__(self, index: "_ModuleCalls"):
+    def __init__(self, index: "_ModuleCalls", module: ast.AST):
         self.index = index
+        self.module = module
         self.budget = _HASH_TRACE_BUDGET
         self.parameters = {}
         self.assignments = {}
         self.bound = {}
         self.sensitive = {}
         self.results = {}
+        self.classes = None
+        self.class_members = {}
+
+    def module_class(self, name: str):
+        """The module-level class ``name`` when it is defined once and never
+        rebound, else None."""
+        if self.index.definitions.get(name) != 1 or name in self.index.rebound:
+            return None
+        if self.classes is None:
+            body = getattr(self.module, "body", [])
+            self.charge(len(body) + 1)
+            self.classes = {
+                item.name: item for item in body if isinstance(item, ast.ClassDef)
+            }
+        return self.classes.get(name)
+
+    def class_defines(self, cls: ast.ClassDef, name: str) -> bool:
+        members = self.class_members.get(cls)
+        if members is None:
+            self.charge(len(cls.body) + 1)
+            members = {
+                item.name
+                for item in cls.body
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            self.class_members[cls] = members
+        return name in members
+
+    def subclass_of(self, cls: ast.ClassDef, ancestor: ast.ClassDef) -> bool:
+        """Whether ``cls`` derives from ``ancestor`` through bases named by
+        module-level classes; a base defined elsewhere proves nothing."""
+        pending = [cls]
+        seen = set()
+        while pending:
+            current = pending.pop()
+            if current is ancestor:
+                return True
+            if current in seen:
+                continue
+            seen.add(current)
+            self.charge(len(current.bases) + 1)
+            for base in current.bases:
+                if isinstance(base, ast.Name):
+                    found = self.module_class(base.id)
+                    if found is not None:
+                        pending.append(found)
+        return False
+
+    def receiver_class(self, call: ast.Call):
+        """The class a method call's receiver names: ``self``/``cls`` of the
+        enclosing method, or a module-level class; None when unknown."""
+        receiver = call.func.value
+        if not isinstance(receiver, ast.Name):
+            return None
+        method = _enclosing_function(call)
+        owner = getattr(method, "parent", None)
+        if isinstance(owner, ast.ClassDef) and not _is_static_method(method):
+            positional = [*method.args.posonlyargs, *method.args.args]
+            if positional and positional[0].arg == receiver.id:
+                return owner
+        return self.module_class(receiver.id)
+
+    def dispatches_elsewhere(self, call: ast.Call, function) -> bool:
+        """A call such as ``self._build(username, password)`` inside another
+        class that defines its own ``_build`` cannot run ``function`` unless
+        ``function``'s class derives from that class."""
+        owner = function.parent
+        receiver = self.receiver_class(call)
+        return (
+            receiver is not None
+            and receiver is not owner
+            and self.class_defines(receiver, function.name)
+            and not self.subclass_of(owner, receiver)
+        )
 
     def charge(self, amount: int = 1) -> None:
         self.budget -= amount
@@ -715,6 +790,8 @@ class _CallerTrace:
         width = len(self.parameter_names(function))
         sites = []
         for call in candidates:
+            if method and self.dispatches_elsewhere(call, function):
+                continue
             for parameter in parameters:
                 self.charge(len(call.args) + len(call.keywords) + width + 1)
                 sites.extend(
@@ -738,26 +815,24 @@ class _CallerTrace:
 def _caller_trace(module: ast.AST) -> _CallerTrace:
     trace = getattr(module, "_skylos_caller_trace", None)
     if trace is None:
-        trace = _CallerTrace(_module_calls(module))
+        trace = _CallerTrace(_module_calls(module), module)
         module._skylos_caller_trace = trace
     return trace
 
 
 def _callers_pass_sensitive(trace: _CallerTrace, start) -> bool:
     """Breadth first over (function, parameters) states, each expanded once:
-    a credential-named or credential-derived argument within
-    ``_HASH_CALLER_DEPTH`` caller levels, or callers still left at that
-    depth, keep the finding listed. A state already queued, at the same or a
-    lower level, is not queued again, so cycles end there."""
+    True only when a credential-named or credential-derived argument reaches
+    the hashed parameters within ``_HASH_CALLER_DEPTH`` caller levels.
+    Callers left beyond that depth prove nothing, so the parameter-name
+    decision stands. A state already queued, at the same or a lower level, is
+    not queued again, so cycles end there."""
     seen = {start}
     frontier = [start]
-    for level in range(_HASH_CALLER_DEPTH + 1):
+    for _ in range(_HASH_CALLER_DEPTH):
         following = []
         for function, parameters in frontier:
-            sites = trace.sites(function, parameters)
-            if sites and level == _HASH_CALLER_DEPTH:
-                return True
-            for call, expression in sites:
+            for call, expression in trace.sites(function, parameters):
                 names = trace.caller_names(call, expression)
                 if trace.any_sensitive(names):
                     return True
@@ -770,9 +845,10 @@ def _callers_pass_sensitive(trace: _CallerTrace, start) -> bool:
 
 
 def _hash_parameters_receive_sensitive(node: ast.Call, names) -> bool:
-    """A weak hash of a parameter is sensitive when a caller hashes a
-    credential through it, as in ``digest(password)``. Running out of the
-    trace budget keeps the finding listed."""
+    """A weak hash of a parameter is sensitive when a caller is proved to hash
+    a credential through it, as in ``digest(password)``. Without that proof
+    (no credential within the depth, a cycle, or an exhausted trace budget)
+    the answer is False and the parameter-name decision stands."""
     function = _enclosing_function(node)
     if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return False
@@ -790,7 +866,7 @@ def _hash_parameters_receive_sensitive(node: ast.Call, names) -> bool:
         try:
             cached = _callers_pass_sensitive(trace, start)
         except _TraceBudgetSpent:
-            return True
+            return False
         trace.results[start] = cached
     return cached
 
