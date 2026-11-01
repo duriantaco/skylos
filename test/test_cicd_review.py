@@ -132,6 +132,40 @@ def test_filter_findings_empty_ranges():
     assert filter_findings_to_diff(findings, []) == []
 
 
+def test_optional_context_failure_keeps_original_pr_findings():
+    results = {
+        "danger": [
+            {
+                "file": "a.py",
+                "line": 1,
+                "severity": "HIGH",
+                "rule_id": "SKY-D201",
+                "message": "Unsafe evaluation",
+            }
+        ]
+    }
+    with (
+        patch("skylos.cicd.review._gh_available", return_value=True),
+        patch(
+            "skylos.cicd.review.get_changed_line_ranges",
+            return_value=[{"file": "a.py", "start": 1, "end": 1}],
+        ),
+        patch("skylos.cicd.review._detect_regressions_from_diff", return_value=[]),
+        patch("skylos.cicd.review._resolve_review_provenance", return_value=None),
+        patch(
+            "skylos.cicd.review.build_pr_context",
+            side_effect=RecursionError("source parse budget"),
+        ),
+        patch("skylos.cicd.review._post_pr_review") as post_review,
+        patch("skylos.cicd.review._post_summary_comment") as post_summary,
+    ):
+        run_pr_review(results, pr_number=1, repo="owner/repo", evidence_cards=True)
+    assert post_review.call_args.args[0][0]["rule_id"] == "SKY-D201"
+    assert len(post_summary.call_args.args[0]) == 1
+    packet = post_review.call_args.kwargs["context_packet"]
+    assert "could not be collected" in " ".join(packet["limitations"])
+
+
 def test_pr_review_ignores_old_finding_after_deletion_only_hunk():
     diff = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +0,0 @@\n-# note\n"
     results = {

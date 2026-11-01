@@ -147,7 +147,17 @@ def run_pr_review(
     )
     # Collect source context in trusted review code. A finding or model reply
     # cannot supply this packet or promote itself to an executed reproduction.
-    context_packet = build_pr_context(review_root, findings) if evidence_cards else None
+    context_packet = None
+    if evidence_cards:
+        try:
+            context_packet = build_pr_context(review_root, findings)
+        except Exception as exc:
+            logger.debug("PR context unavailable (%s)", type(exc).__name__)
+            context_packet = {
+                "limitations": [
+                    "Source context could not be collected; original findings remain available."
+                ]
+            }
 
     identity = _TokenIdentity()
     review_outcome = None
@@ -1251,7 +1261,7 @@ def _format_evidence_card_comment(
     limits = list(card.limitations)
     if packet:
         limits.append(
-            "Context was collected for this review. The original scan source "
+            "Context, when available, is collected separately from the scan. The original scan source "
             "snapshot was not supplied, so finding and context bytes may differ."
         )
     if isinstance(packet.get("limitations"), list):
