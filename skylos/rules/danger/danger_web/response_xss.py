@@ -1505,6 +1505,7 @@ class _Module:
         self._literals: dict = {}
         self._variables = None
         self._dynamic = None
+        self._source_aliases = None
         self._stable_names: dict = {}
         self.callables: dict = {}
         self.free_names: dict = {}
@@ -1848,6 +1849,43 @@ class _Module:
         self._stable_names[name] = stable
         return stable
 
+    def source_aliases(self):
+        """``(request names, flask module names)`` every ``from flask import
+        request [as x]`` and ``import flask [as f]`` in the module binds. A
+        source keeps its identity even where proof-grade import resolution
+        gives up (a computed ``globals()`` write): treating such a name as
+        request data can only add taint."""
+        if self._source_aliases is None:
+            names, modules = set(), set()
+            for node in ast.walk(self.tree):
+                if isinstance(node, ast.ImportFrom) and node.module == "flask":
+                    if not node.level:
+                        names.update(
+                            alias.asname or alias.name
+                            for alias in node.names
+                            if alias.name == "request"
+                        )
+                elif isinstance(node, ast.Import):
+                    modules.update(
+                        alias.asname or "flask"
+                        for alias in node.names
+                        if alias.name == "flask"
+                    )
+            self._source_aliases = (frozenset(names), frozenset(modules))
+        return self._source_aliases
+
+    def may_be_request(self, func, name: str) -> bool:
+        if self.index.resolved_import(func, name) == "flask.request":
+            return True
+        return name in self.source_aliases()[0]
+
+    def integrity(self) -> bool:
+        """The single integrity decision for this module: no dynamic
+        namespace access. Without it no helper here may clear request data:
+        the encoder proof is refused and every helper summary keeps the
+        union of its arguments' taint."""
+        return not self.dynamic_namespace()
+
     def dynamic_namespace(self) -> bool:
         """The module reaches names through its namespace at run time
         (``globals()``, ``vars()``, ``__dict__``, ``sys.modules``,
@@ -1876,20 +1914,28 @@ class _Module:
             self._variables = frozenset(names)
         return self._variables
 
-    def encoder_param(self, func):
-        """``(parameter, partial)`` when ``func`` provably encodes that
-        parameter for HTML text, else None. ``partial`` marks a proof that
-        rests on a mutable module-level allowlist or entity table."""
+    def encoder_shape(self, func):
+        """``(parameter, partial)`` when ``func`` has the structure of an
+        allowlist encoder, before any integrity check, else None."""
         key = id(func)
         if key not in self._encoders:
             result = None
-            if not self.dynamic_namespace():
+            if not func.decorator_list:
                 proof = _EncoderProof(self, func)
                 param = proof.param()
                 if param is not None:
                     result = (param, proof.partial)
             self._encoders[key] = result
         return self._encoders[key]
+
+    def encoder_param(self, func):
+        """The one encoder trust decision: ``(parameter, partial)`` when
+        ``func`` provably encodes that parameter for HTML text and this
+        module's integrity holds, else None. ``partial`` marks a proof that
+        rests on a mutable module-level allowlist or entity table."""
+        if not self.integrity():
+            return None
+        return self.encoder_shape(func)
 
     def classes(self) -> dict:
         """Module-level classes bound once in the module."""
@@ -1971,6 +2017,14 @@ class _Run:
                         stored.add(node.id)
             self.module.free_names[key] = frozenset(loaded - stored)
         return self.module.free_names[key]
+
+    def _request_attribute(self, node: ast.Attribute, env: _Env) -> bool:
+        if self._resolve(node, env) == "flask.request":
+            return True
+        if node.attr != "request" or not isinstance(node.value, ast.Name):
+            return False
+        flask_names = self.module.source_aliases()[1]
+        return node.value.id in flask_names and node.value.id not in env.values
 
     def _resolve(self, node: ast.AST, env: _Env) -> str | None:
         dotted = _dotted(node)
@@ -2349,16 +2403,14 @@ class _Run:
         if helper is not None:
             self.module.callables[id(helper)] = helper
             return _Value(OTHER, const=("helper", id(helper)))
-        if self.module.flask:
-            qualified = self.module.index.resolved_import(self.func, node.id)
-            if qualified == "flask.request":
-                return _Value(
-                    REQUEST, frozenset({f"request object `{node.id}`"}), const=FLASK
-                )
+        if self.module.flask and self.module.may_be_request(self.func, node.id):
+            return _Value(
+                REQUEST, frozenset({f"request object `{node.id}`"}), const=FLASK
+            )
         return _CLEAN_OTHER
 
     def _ev_Attribute(self, node, env):
-        if self.module.flask and self._resolve(node, env) == "flask.request":
+        if self.module.flask and self._request_attribute(node, env):
             return _Value(
                 REQUEST, frozenset({f"request object `{_dotted(node)}`"}), const=FLASK
             )
@@ -2597,6 +2649,8 @@ class _Run:
         when that is not proved, and the call keeps its arguments' data."""
         results = []
         for module, cls, instance in receiver.const:
+            if not module.integrity():
+                return None
             methods = [
                 item
                 for item in cls.body
@@ -2668,7 +2722,20 @@ class _Run:
             result = None
         if result is None:
             return _union_text(*values)
-        return _as_helper_result(result)
+        return _as_helper_result(
+            self._kept(result, helper, module or self.module, values)
+        )
+
+    def _kept(self, result, helper, module, values):
+        """Where ``module``'s integrity fails, a summary cannot clear its
+        arguments' request data: an encoder-shaped helper keeps it as text
+        (listed); any other helper keeps it as unresolved data, since which
+        code a call reaches is no longer proved."""
+        if module.integrity():
+            return result
+        if helper is not None and module.encoder_shape(helper) is not None:
+            return _join(result, _union_text(*values))
+        return _join(result, _opaque(*values))
 
     def _lambda_call(self, lam, node, args, keywords, env):
         values = [*args, *(v for _, v in keywords)]
@@ -2687,7 +2754,8 @@ class _Run:
             self.depth + 1,
             (*self.chain, id(lam)),
         )
-        return _as_helper_result(run.ev(lam.body, inner))
+        result = self._kept(run.ev(lam.body, inner), None, self.module, values)
+        return _as_helper_result(result)
 
     def _known_call(self, node, qualified, env):
         if qualified in _ESCAPES and self.module.escape_is_trusted(

@@ -1755,3 +1755,59 @@ def test_tables_written_by_name_lose_the_encoder_proof(
     )
     result = _analyze(tmp_path, monkeypatch, source, modules=[*PROJECT, *modules])
     _assert_outcome(result, source, "    return 'Hi '", outcome)
+
+
+COMPUTED_WRITE = "globals()['SA' + 'FE'] = ('<', '>')\n"
+INTEGRITY = {
+    "computed globals write after the encoder": (
+        SAFE_TUPLE_ENCODER + COMPUTED_WRITE,
+        (),
+    ),
+    "computed globals write before the encoder": (
+        COMPUTED_WRITE + SAFE_TUPLE_ENCODER,
+        (),
+    ),
+    "computed globals write in an imported encoder module": (
+        "from myproject.codec import encode\n",
+        (("myproject/codec.py", SAFE_TUPLE_ENCODER + COMPUTED_WRITE),),
+    ),
+    "computed vars write": (
+        SAFE_TUPLE_ENCODER + "name = 'SA' + 'FE'\nvars()[name] = ('<', '>')\n",
+        (),
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "helpers, modules", list(INTEGRITY.values()), ids=list(INTEGRITY)
+)
+def test_failed_module_integrity_keeps_request_data_listed(
+    tmp_path, monkeypatch, helpers, modules
+):
+    source = (
+        "from flask import Flask, request\n"
+        + helpers
+        + "app = Flask(__name__)\n"
+        + "@app.route('/')\n"
+        + "def page():\n"
+        + "    return 'Hi ' + encode(request.args['q'])\n"
+    )
+    result = _analyze(tmp_path, monkeypatch, source, modules=[*PROJECT, *modules])
+    _assert_outcome(result, source, "    return 'Hi '", "listed")
+
+
+def test_unstable_module_does_not_turn_template_helpers_into_text(
+    tmp_path, monkeypatch
+):
+    source = (
+        "from flask import Flask, render_template\n"
+        "app = Flask(__name__)\n"
+        "FLAGS = [getattr(app, 'debug', False)]\n"
+        "def render(name, **context):\n"
+        "    return render_template(name, **context)\n"
+        "@app.route('/info/<page>')\n"
+        "def page(page):\n"
+        "    return render('info.html', active=page)\n"
+    )
+    result = _analyze(tmp_path, monkeypatch, source)
+    assert _listed_lines(result, symbol="page") == []
