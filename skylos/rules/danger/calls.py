@@ -587,18 +587,20 @@ def _call_site_arguments(call: ast.Call, function, parameter: str, method: bool)
     return expressions
 
 
-def _parameters_receive_sensitive(function, names, depth: int, seen: set) -> bool:
+def _parameters_receive_sensitive(function, names, depth: int, path) -> bool:
     """Whether a same-module caller passes a credential-named value, or one
     derived from it, into a parameter of ``function`` named in ``names``.
-    Work beyond the module budget keeps the finding listed."""
-    if depth <= 0 or not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    ``path`` holds the (function, parameters) states of the caller path being
+    followed, so a cycle stops only that path. Callers left beyond the trace
+    depth, or beyond the module work budget, keep the finding listed."""
+    if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return False
-    if id(function) in seen:
-        return False
-    seen.add(id(function))
     parameters = [name for name in _parameter_names(function) if name in names]
     module = _module_of(function)
     if not parameters or module is None:
+        return False
+    state = (id(function), frozenset(parameters))
+    if state in path:
         return False
     index = _module_calls(module)
     method = isinstance(getattr(function, "parent", None), ast.ClassDef)
@@ -619,6 +621,11 @@ def _parameters_receive_sensitive(function, names, depth: int, seen: set) -> boo
             reference = _dotted_name(expression)
             if reference is None or reference.rsplit(".", 1)[-1] != function.name:
                 sites.append((call, expression))
+    if not sites:
+        return False
+    if depth <= 0:
+        return True
+    path = path | {state}
     for call, expression in sites:
         caller_names = _expression_names(expression)
         if not index.spend(len(caller_names) + 1):
@@ -630,7 +637,7 @@ def _parameters_receive_sensitive(function, names, depth: int, seen: set) -> boo
         if first_sensitive_name(caller_names) is not None:
             return True
         if _parameters_receive_sensitive(
-            _enclosing_function(call), set(caller_names), depth - 1, seen
+            _enclosing_function(call), set(caller_names), depth - 1, path
         ):
             return True
     return False
@@ -640,7 +647,7 @@ def _hash_parameters_receive_sensitive(node: ast.Call, names) -> bool:
     """A weak hash of a parameter is sensitive when a caller hashes a
     credential through it, as in ``digest(password)``."""
     return _parameters_receive_sensitive(
-        _enclosing_function(node), set(names), _HASH_CALLER_DEPTH, set()
+        _enclosing_function(node), set(names), _HASH_CALLER_DEPTH, frozenset()
     )
 
 

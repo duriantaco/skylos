@@ -54,6 +54,37 @@ LISTED = {
         "def check(hasher, password):\n"
         "    return hasher.digest(password)\n",
     ),
+    "relay_call_order": (
+        "SKY-D207",
+        "import hashlib\n"
+        + WRAPPER.format(call="hashlib.new('md5', data)")
+        + "def relay(first, second):\n"
+        "    digest(first)\n"
+        "    digest(second)\n"
+        "def login(password):\n"
+        "    relay(b'public', password.encode())\n",
+    ),
+    "relay_call_order_swapped": (
+        "SKY-D207",
+        "import hashlib\n"
+        + WRAPPER.format(call="hashlib.new('md5', data)")
+        + "def relay(first, second):\n"
+        "    digest(second)\n"
+        "    digest(first)\n"
+        "def login(password):\n"
+        "    relay(b'public', password.encode())\n",
+    ),
+    "cycle_beyond_trace_depth": (
+        "SKY-D207",
+        "import hashlib\n"
+        "def digest(data, rounds):\n"
+        "    if rounds:\n"
+        "        return step_a(data, rounds - 1)\n"
+        "    return hashlib.md5(data).hexdigest()\n"
+        "def step_a(value, rounds):\n    return step_b(value, rounds)\n"
+        "def step_b(value, rounds):\n    return step_c(value, rounds)\n"
+        "def step_c(value, rounds):\n    return digest(value, rounds)\n",
+    ),
     "callback_wrapper": (
         "SKY-D207",
         "import hashlib\n"
@@ -78,6 +109,17 @@ DEMOTED = {
         "        return hashlib.sha1(data).hexdigest()\n"
         "def fingerprint(hasher, path):\n"
         "    return hasher.digest(path.encode())\n",
+    ),
+    "relay_non_credential": (
+        "SKY-D207",
+        "import hashlib\n"
+        + WRAPPER.format(call="hashlib.new('md5', data)")
+        + "def relay(first, second):\n"
+        "    digest(first)\n"
+        "    digest(second)\n"
+        "def publish(url, body):\n"
+        "    relay(b'public', url.encode())\n"
+        "    relay(body, b'static')\n",
     ),
     "no_callers": (
         "SKY-D207",
