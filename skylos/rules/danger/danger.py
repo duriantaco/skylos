@@ -12,7 +12,6 @@ from .danger_redirect.redirect_flow import scan as scan_redirect
 from .danger_cors.cors_flow import scan as scan_cors
 from .danger_web.route_auth import scan as scan_route_auth
 from .danger_web.cookie_flags import scan as scan_cookie_flags
-from .danger_web.response_xss import scan as scan_response_xss
 from .danger_jwt.jwt_flow import scan as scan_jwt
 from .danger_access.access_flow import scan as scan_access
 from .danger_mcp.mcp_flow import scan as scan_mcp
@@ -393,17 +392,6 @@ _XSS_TOKENS = (
     "autoescape false",
     "<",
 )
-_RESPONSE_XSS_FRAMEWORKS = ("flask", "django")
-_RESPONSE_XSS_TOKENS = (
-    "request",
-    ".route(",
-    ".get(",
-    ".post(",
-    ".put(",
-    ".patch(",
-    ".delete(",
-    "errorhandler",
-)
 _REDIRECT_TOKENS = ("redirect", "httpresponseredirect")
 _CORS_TOKENS = (
     "cors",
@@ -602,7 +590,6 @@ def scan_file_with_tree(
         scan_ssrf(tree, file_path, findings)
         scan_path(tree, file_path, findings, project_root=project_root)
         scan_xss(tree, file_path, findings, project_root=project_root)
-        scan_response_xss(tree, file_path, findings, project_root=project_root)
         scan_redirect(tree, file_path, findings, project_root=project_root)
         scan_cors(tree, file_path, findings)
         scan_route_auth(tree, file_path, findings, project_root=project_root)
@@ -632,10 +619,6 @@ def scan_file_with_tree(
         scan_path(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _XSS_TOKENS):
         scan_xss(tree, file_path, findings, project_root=project_root)
-    if _has_any(source_lower, _RESPONSE_XSS_FRAMEWORKS) and _has_any(
-        source_lower, _RESPONSE_XSS_TOKENS
-    ):
-        scan_response_xss(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _REDIRECT_TOKENS):
         scan_redirect(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _CORS_TOKENS):
