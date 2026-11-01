@@ -5,7 +5,7 @@ from skylos.rules.base import SkylosRule
 from .pickle_provenance import safe_pickle_loads
 from .source_owned_code import source_owned_code_calls
 from .yaml_loader_provenance import yaml_loader_classes, yaml_load_call_name
-from .untrusted_sources import UntrustedSourceIndex
+from .untrusted_sources import UntrustedSourceIndex, _unsafe_import_roots
 from .import_proof import provider_binding_is_stable
 from .tls_provenance import tls_verification_disabled as _tls_verification_disabled
 from .flow_env import ValueFlow, literal_truth
@@ -830,14 +830,94 @@ def _is_safe_yaml_loader(
         tree._skylos_yaml_direct_imports = index
     name = _resolve_expr_name(value)
     resolved = index.resolved_import(function, name) if name else None
-    return resolved in {
+    targets = frozenset()
+    if resolved is not None:
+        targets = frozenset({resolved})
+    elif isinstance(value, ast.Name):
+        targets = _yaml_loader_import_targets(tree, value.id, module_name_for(filename))
+    return (
+        bool(targets)
+        and targets <= _NATIVE_SAFE_YAML_LOADERS
+        and all(
+            provider_binding_is_stable(
+                target, tree, filename or "<tree-only>", project_root
+            )
+            for target in targets
+        )
+    )
+
+
+_NATIVE_SAFE_YAML_LOADERS = frozenset(
+    {
         "yaml.SafeLoader",
         "yaml.CSafeLoader",
+        "yaml.BaseLoader",
+        "yaml.CBaseLoader",
         "yaml.loader.SafeLoader",
+        "yaml.loader.BaseLoader",
         "yaml.cyaml.CSafeLoader",
-    } and provider_binding_is_stable(
-        resolved, tree, filename or "<tree-only>", project_root
-    )
+        "yaml.cyaml.CBaseLoader",
+    }
+)
+
+
+def _binds_name_without_import(node: ast.AST, name: str) -> bool:
+    if isinstance(node, ast.Name):
+        return node.id == name and not isinstance(node.ctx, ast.Load)
+    if isinstance(node, ast.arg):
+        return node.arg == name
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return name in node.names
+    if isinstance(node, ast.MatchMapping):
+        return node.rest == name
+    if isinstance(node, (ast.alias, ast.Import, ast.ImportFrom)):
+        return False
+    return getattr(node, "name", None) == name
+
+
+def _yaml_loader_import_targets(tree: ast.Module, name: str, module_name=None):
+    """What every binding of ``name`` anywhere in the module imports, when each
+    one is an absolute ``from`` import, as in ``try: from yaml import
+    CSafeLoader as SafeLoader`` / ``except ImportError: from yaml import
+    SafeLoader``. Any other binding (assignment, parameter, definition,
+    handler or match name, ``del``, ``global``/``nonlocal``, module, star or
+    relative import), a write through the name or ``globals()``, or a module
+    whose globals can be replaced at run time gives an empty set."""
+    cache = getattr(tree, "_skylos_yaml_loader_targets", None)
+    if cache is None:
+        cache = {}
+        tree._skylos_yaml_loader_targets = cache
+    key = (name, module_name)
+    if key not in cache:
+        cache[key] = _collect_yaml_loader_import_targets(tree, name, module_name)
+    return cache[key]
+
+
+def _collect_yaml_loader_import_targets(tree, name, module_name):
+    targets = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == "*":
+                    return frozenset()
+                if (alias.asname or alias.name) != name:
+                    continue
+                if node.level or not node.module:
+                    return frozenset()
+                targets.add(f"{node.module}.{alias.name}")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if (alias.asname or alias.name.split(".", 1)[0]) == name:
+                    return frozenset()
+        elif _binds_name_without_import(node, name):
+            return frozenset()
+    unsafe, unknown_global_write = _unsafe_import_roots(tree)
+    if unknown_global_write or name in unsafe:
+        return frozenset()
+    dynamic, rebound = module_rebinding(tree, module_name)
+    if dynamic or name in rebound:
+        return frozenset()
+    return frozenset(targets)
 
 
 def _is_safe_loader_argument(
