@@ -11,6 +11,7 @@ from .danger_web.xss_flow import scan as scan_xss
 from .danger_redirect.redirect_flow import scan as scan_redirect
 from .danger_cors.cors_flow import scan as scan_cors
 from .danger_web.route_auth import scan as scan_route_auth
+from .danger_web.cookie_flags import scan as scan_cookie_flags
 from .danger_jwt.jwt_flow import scan as scan_jwt
 from .danger_access.access_flow import scan as scan_access
 from .danger_mcp.mcp_flow import scan as scan_mcp
@@ -592,6 +593,7 @@ def scan_file_with_tree(
         scan_redirect(tree, file_path, findings, project_root=project_root)
         scan_cors(tree, file_path, findings)
         scan_route_auth(tree, file_path, findings, project_root=project_root)
+        scan_cookie_flags(tree, file_path, findings)
         scan_jwt(tree, file_path, findings)
         scan_access(tree, file_path, findings)
         scan_mcp(tree, file_path, findings)
@@ -623,6 +625,8 @@ def scan_file_with_tree(
         scan_cors(tree, file_path, findings)
     if _has_any(source_lower, _ROUTE_TOKENS):
         scan_route_auth(tree, file_path, findings, project_root=project_root)
+    if "_cookie(" in source_lower:
+        scan_cookie_flags(tree, file_path, findings)
     if "jwt" in source_lower and _has_any(source_lower, _JWT_TOKENS):
         scan_jwt(tree, file_path, findings)
     if "fields" in source_lower and "__all__" in source_lower:
