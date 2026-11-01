@@ -17,26 +17,14 @@ not tracked.
 The client turns expressions into labels (``evaluate``) and says what a name
 bound outside the scope may hold (``outer``) and what an unknown value is
 (``top``). Work is bounded: a run that exceeds its budget returns None.
-
-With literal folding on, an ``if``/``IfExp``/``match`` whose test is built only
-from literals and pure operators contributes only its live branch. Names never
-fold, including module constants. ``SKYLOS_DISABLE_LITERAL_FOLD=1`` turns
-folding off for the process; ``LITERAL_FOLD_ENABLED`` holds the setting.
 """
 
 from __future__ import annotations
 
 import ast
-import operator
-import os
-
-LITERAL_FOLD_ENABLED = os.environ.get("SKYLOS_DISABLE_LITERAL_FOLD", "") != "1"
 
 MAX_STEPS = 60000
 MAX_LOOP_PASSES = 5
-_MAX_LITERAL_LENGTH = 4096
-_MAX_INT_BITS = 4096
-_MAX_FOLD_DEPTH = 64
 
 _READ_ONLY_METHODS = frozenset(
     {
@@ -77,34 +65,6 @@ _READ_ONLY_METHODS = frozenset(
     }
 )
 
-_LITERAL_TYPES = (int, float, complex, str, bytes, bool, type(None))
-
-_BINARY = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.FloorDiv: operator.floordiv,
-    ast.Mod: operator.mod,
-    ast.Pow: operator.pow,
-    ast.LShift: operator.lshift,
-    ast.RShift: operator.rshift,
-    ast.BitOr: operator.or_,
-    ast.BitXor: operator.xor,
-    ast.BitAnd: operator.and_,
-}
-
-_COMPARE = {
-    ast.Eq: operator.eq,
-    ast.NotEq: operator.ne,
-    ast.Lt: operator.lt,
-    ast.LtE: operator.le,
-    ast.Gt: operator.gt,
-    ast.GtE: operator.ge,
-    ast.In: lambda left, right: left in right,
-    ast.NotIn: lambda left, right: left not in right,
-}
-
 _TRY_NODES = tuple(
     node for node in (ast.Try, getattr(ast, "TryStar", None)) if node is not None
 )
@@ -114,166 +74,12 @@ class FlowBudgetExceeded(Exception):
     """The run needed more work than its budget allows."""
 
 
-class _NotLiteral(Exception):
-    pass
-
-
-def _bounded(value):
-    if isinstance(value, (str, bytes)) and len(value) > _MAX_LITERAL_LENGTH:
-        raise _NotLiteral
-    if isinstance(value, int) and value.bit_length() > _MAX_INT_BITS:
-        raise _NotLiteral
-    if isinstance(value, tuple):
-        if len(value) > _MAX_LITERAL_LENGTH:
-            raise _NotLiteral
-        for item in value:
-            _bounded(item)
-    return value
-
-
-def _sized(value) -> int:
-    if isinstance(value, (str, bytes, tuple)):
-        return len(value)
-    if isinstance(value, int):
-        return value.bit_length()
-    return 1
-
-
-def _fold_binary(op: ast.operator, left, right):
-    function = _BINARY.get(type(op))
-    if function is None:
-        raise _NotLiteral
-    if isinstance(op, ast.Mod) and isinstance(left, (str, bytes)):
-        raise _NotLiteral
-    if isinstance(op, ast.Pow):
-        if not isinstance(right, (int, float)) or abs(right) > 64:
-            raise _NotLiteral
-        if isinstance(left, int) and _sized(left) * abs(right) > _MAX_INT_BITS:
-            raise _NotLiteral
-    if isinstance(op, ast.Mult):
-        for sequence, count in ((left, right), (right, left)):
-            if isinstance(sequence, (str, bytes, tuple)):
-                if not isinstance(count, int) or count * len(sequence) > (
-                    _MAX_LITERAL_LENGTH
-                ):
-                    raise _NotLiteral
-    if isinstance(op, ast.LShift) and (not isinstance(right, int) or right > 256):
-        raise _NotLiteral
-    return _bounded(function(left, right))
-
-
-def _fold(node: ast.AST, depth: int):
-    if depth > _MAX_FOLD_DEPTH:
-        raise _NotLiteral
-    if isinstance(node, ast.Constant):
-        if not isinstance(node.value, _LITERAL_TYPES):
-            raise _NotLiteral
-        return _bounded(node.value)
-    if isinstance(node, ast.Tuple) and isinstance(node.ctx, ast.Load):
-        return _bounded(tuple(_fold(item, depth + 1) for item in node.elts))
-    if isinstance(node, ast.UnaryOp):
-        value = _fold(node.operand, depth + 1)
-        if isinstance(node.op, ast.Not):
-            return not value
-        if isinstance(node.op, ast.USub):
-            return -value
-        if isinstance(node.op, ast.UAdd):
-            return +value
-        if isinstance(node.op, ast.Invert) and isinstance(value, int):
-            return ~value
-        raise _NotLiteral
-    if isinstance(node, ast.BinOp):
-        left = _fold(node.left, depth + 1)
-        right = _fold(node.right, depth + 1)
-        return _fold_binary(node.op, left, right)
-    if isinstance(node, ast.BoolOp):
-        values = [_fold(item, depth + 1) for item in node.values]
-        result = values[0]
-        for value in values[1:]:
-            if isinstance(node.op, ast.And) and not result:
-                return result
-            if isinstance(node.op, ast.Or) and result:
-                return result
-            result = value
-        return result
-    if isinstance(node, ast.Compare):
-        left = _fold(node.left, depth + 1)
-        for op, comparator in zip(node.ops, node.comparators):
-            function = _COMPARE.get(type(op))
-            if function is None:
-                raise _NotLiteral
-            right = _fold(comparator, depth + 1)
-            if not function(left, right):
-                return False
-            left = right
-        return True
-    if isinstance(node, ast.IfExp):
-        if _fold(node.test, depth + 1):
-            return _fold(node.body, depth + 1)
-        return _fold(node.orelse, depth + 1)
-    raise _NotLiteral
-
-
-def literal_value(node: ast.AST | None) -> tuple[bool, object]:
-    """``(True, value)`` when ``node`` is built only from literals (numbers,
-    strings, bytes, ``True``, ``False``, ``None``, tuples of these) and pure
-    operators; ``(False, None)`` for anything with a name, call, attribute or
-    subscript. Folding is bounded in size."""
-    if node is None:
-        return False, None
-    try:
-        return True, _fold(node, 0)
-    except (_NotLiteral, ArithmeticError, TypeError, ValueError, RecursionError):
-        return False, None
-
-
-def literal_truth(node: ast.AST | None) -> bool | None:
-    """The truth value of a literal-only test, or None when it does not fold
-    or literal folding is turned off."""
-    if not LITERAL_FOLD_ENABLED:
-        return None
-    known, value = literal_value(node)
-    if not known:
-        return None
-    try:
-        return bool(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _literal_key(node: ast.AST):
     if isinstance(node, ast.Constant) and isinstance(
         node.value, (str, bytes, int, bool, type(None))
     ):
         return True, node.value
     return False, None
-
-
-def _pattern_matches(pattern: ast.AST, value) -> bool | None:
-    """Whether a literal subject matches a case pattern: True, False, or None
-    when the pattern is not decided by literals alone."""
-    if isinstance(pattern, ast.MatchValue):
-        known, expected = literal_value(pattern.value)
-        if not known:
-            return None
-        try:
-            return bool(value == expected)
-        except (TypeError, ValueError):
-            return None
-    if isinstance(pattern, ast.MatchSingleton):
-        return value is pattern.value
-    if isinstance(pattern, ast.MatchAs):
-        if pattern.pattern is None:
-            return True
-        return _pattern_matches(pattern.pattern, value)
-    if isinstance(pattern, ast.MatchOr):
-        decisions = [_pattern_matches(item, value) for item in pattern.patterns]
-        if any(decision is True for decision in decisions):
-            return True
-        if all(decision is False for decision in decisions):
-            return False
-        return None
-    return None
 
 
 def _irrefutable(pattern: ast.AST) -> bool:
@@ -600,13 +406,7 @@ class ValueFlow:
         if isinstance(node, ast.NamedExpr):
             return self.value(node.value)
         if isinstance(node, ast.IfExp):
-            truth = literal_truth(node.test)
-            labels = frozenset()
-            if truth is not False:
-                labels |= self.value(node.body)
-            if truth is not True:
-                labels |= self.value(node.orelse)
-            return labels
+            return self.value(node.body) | self.value(node.orelse)
         if isinstance(node, ast.BoolOp):
             labels = frozenset()
             for item in node.values:
@@ -708,12 +508,8 @@ class ValueFlow:
                 self._effects(item, True)
         elif isinstance(node, ast.IfExp):
             self._effects(node.test, conditional)
-            truth = literal_truth(node.test)
-            branch_conditional = conditional or truth is None
-            if truth is not False:
-                self._effects(node.body, branch_conditional)
-            if truth is not True:
-                self._effects(node.orelse, branch_conditional)
+            self._effects(node.body, True)
+            self._effects(node.orelse, True)
         elif isinstance(
             node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)
         ):
@@ -985,16 +781,11 @@ class ValueFlow:
 
     def _if(self, node: ast.If) -> bool:
         self._effects(node.test)
-        truth = literal_truth(node.test)
         entry = self.state.copy()
         arrivals = []
-        if truth is not False:
+        for statements in (node.body, node.orelse):
             self.state = entry.copy()
-            if self._block(node.body):
-                arrivals.append(self.state)
-        if truth is not True:
-            self.state = entry.copy()
-            if self._block(node.orelse):
+            if self._block(statements):
                 arrivals.append(self.state)
         if not arrivals:
             return False
@@ -1135,31 +926,18 @@ class ValueFlow:
     def _match(self, node: ast.Match) -> bool:
         self._effects(node.subject)
         subject = self.value(node.subject)
-        known = False
-        literal = None
-        if LITERAL_FOLD_ENABLED:
-            known, literal = literal_value(node.subject)
         entry = self.state.copy()
         arrivals = []
         falls_through = True
         for case in node.cases:
-            decision = None
-            if known:
-                decision = _pattern_matches(case.pattern, literal)
-            if decision is False:
-                continue
             self.state = entry.copy()
             self._bind_pattern(case.pattern, subject)
-            guard = None
             if case.guard is not None:
                 self._effects(case.guard)
-                guard = literal_truth(case.guard)
             entry = self.merge([entry, self.state])
-            if guard is False:
-                continue
             if self._block(case.body):
                 arrivals.append(self.state)
-            if case.guard is None and (decision is True or _irrefutable(case.pattern)):
+            if case.guard is None and _irrefutable(case.pattern):
                 falls_through = False
                 break
         if falls_through:

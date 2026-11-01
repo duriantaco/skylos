@@ -11,7 +11,6 @@ import pytest
 from skylos.analyzer import analyze
 from skylos.core.gatekeeper import check_gate
 from skylos.reporting.listing import is_listed
-from skylos.rules.danger import flow_env
 
 RULES = {"SKY-D201", "SKY-D202", "SKY-D203", "SKY-D205", "SKY-D206", "SKY-D209"}
 
@@ -73,17 +72,6 @@ DEMOTED = {
         "SKY-D201",
         "HIGH",
         "try:\n    shell = eval('__IPYTHON__')\nexcept NameError:\n    shell = None\n",
-    ),
-    "literal_dead_branch": (
-        "SKY-D201",
-        "HIGH",
-        "from flask import request\n"
-        "def compute():\n"
-        "    if 7 * 42 > 200:\n"
-        "        bar = '1 + 1'\n"
-        "    else:\n"
-        "        bar = request.args['q']\n"
-        "    return eval(bar)\n",
     ),
 }
 
@@ -346,12 +334,3 @@ def test_gate_still_counts_demoted_constant_arguments(analyzed):
     assert demoted
     passed, _ = check_gate({"danger": demoted}, {"gate": {"max_security": 0}})
     assert passed is False
-
-
-def test_literal_fold_off_keeps_the_dead_branch(tmp_path, monkeypatch):
-    monkeypatch.setattr(flow_env, "LITERAL_FOLD_ENABLED", False)
-    code = DEMOTED["literal_dead_branch"][2]
-    rows = _rows_by_case(_analyze(tmp_path, {"literal_dead_branch": code}))
-    [row] = rows["literal_dead_branch"]
-    assert "low_risk_context" not in row
-    assert is_listed(row, "danger")

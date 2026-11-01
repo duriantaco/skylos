@@ -8,7 +8,7 @@ from .yaml_loader_provenance import yaml_loader_classes, yaml_load_call_name
 from .untrusted_sources import UntrustedSourceIndex, _unsafe_import_roots
 from .import_proof import provider_binding_is_stable
 from .tls_provenance import tls_verification_disabled as _tls_verification_disabled
-from .flow_env import ValueFlow, literal_truth
+from .flow_env import ValueFlow
 from .module_namespace import module_name_for, module_rebinding
 from skylos.security.command_guard import scan_shell_command
 from skylos.security.sensitive_data import first_sensitive_name
@@ -1535,13 +1535,7 @@ class _ConstantContext:
         if isinstance(node, ast.NamedExpr):
             return _UNKNOWN_LABELS
         if isinstance(node, ast.IfExp):
-            truth = literal_truth(node.test)
-            labels = frozenset()
-            if truth is not False:
-                labels |= self.static_labels(node.body)
-            if truth is not True:
-                labels |= self.static_labels(node.orelse)
-            return labels
+            return self.static_labels(node.body) | self.static_labels(node.orelse)
         if isinstance(node, ast.BoolOp):
             labels = frozenset()
             for item in node.values:
