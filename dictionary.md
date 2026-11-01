@@ -1849,8 +1849,9 @@ its `::class` registration in `$listen` or `Event::listen`.
 
 Code outside a repository imports a library's public API, so a public name that
 nothing in the repository uses is not dead when the library declares it public.
-Skylos follows the conventions PEP 8, the typing specification, Sphinx autodoc,
-mkdocstrings and Pyright define:
+Skylos recognizes a conservative static subset of common documentation, typing
+and lazy-export declarations. Its exclusions below are Skylos policy; documentation
+builders and type checkers have their own configurable selection rules.
 
 | Declaration | Kept live |
 |:---|:---|
@@ -1858,9 +1859,9 @@ mkdocstrings and Pyright define:
 | `__init__.py` re-exports | names imported into a package `__init__` without `__all__`, and `import x as x` aliases |
 | Attribute docstring or `#:` comment | a public module-level name in a public module with no `__all__`: `URL = "..."` followed by `"""Doc."""`, `#: Doc.` on the line above, or `URL = "..."  #: Doc.` |
 | Sphinx object directive or role | the named object: `.. autofunction::`, `.. autoclass::`, `.. autodata::`, `.. py:function::`, `autosummary` entries, `:func:`/`:class:`/`:data:`/`:const:`/`:obj:`/`:meth:` roles, resolved through `.. currentmodule::`; reST, `.txt` and MyST (`{eval-rst}`, ```` ```{autofunction} ````, `{py:func}`) |
-| `automodule` and mkdocstrings `:::` | the module's documented public members (docstring, attribute docstring or `#:`); every public member with `:undoc-members:` or `show_if_no_docstring: true`; only the listed ones with `:members: a, b` or `members: [a, b]`; nothing when the module defines `__all__` |
-| `.pyi` stub | names a sibling stub declares (limited to the stub's `__all__`), and re-exports in an `__init__.pyi` (every relative import when `__init__.py` calls `lazy_loader.attach_stub`) |
-| Lazy exports | names in the literal tables of a module whose PEP 562 `__getattr__` imports, whose `__getattr__` comes from `lazy_loader.attach(...)`, or that replaces `sys.modules[__name__]`; a table entry that names a submodule keeps the name only in that submodule |
+| `automodule` and mkdocstrings `:::` | the module's selected documented public members; supported explicit member lists and undocumented-member options can also select undocumented members. Local mkdocstrings filters apply to automatic selection. None of these widen `__all__`. |
+| `.pyi` stub | explicit declarations, including explicitly declared public methods, limited by the stub's and implementation's `__all__`; explicit re-exports in an `__init__.pyi`, or relative imports used by a proven `lazy_loader.attach_stub` getter |
+| Lazy exports | names whose supported getter flow returns an attribute from the exact imported module, or names supplied to canonical `lazy_loader.attach` / `attach_stub` calls. Unused tables and unresolved owners supply no export evidence. |
 
 Private `_names`, names in private `_modules`, tests, scripts, docs and
 examples are never declared public this way, nor is a name marked
@@ -1868,6 +1869,13 @@ examples are never declared public this way, nor is a name marked
 not read. A function docstring alone does not make a function public, and a
 documented class does not make its undocumented methods public. A
 `__getattr__` that only raises or warns does not export anything.
+
+Literal examples, comments and escaped documentation markup do not declare API.
+Evidence files must be regular files inside the scan root; symbolic links and
+oversized files do not supply evidence. Skylos does not build documentation or
+import the scanned package. Unsupported documentation options, complex filters,
+custom lazy-module replacements and unresolved dynamic behavior remain available
+for review rather than implicitly rescuing names.
 
 A project can declare public API that has no such marker with a dead-code
 entrypoint rule:
