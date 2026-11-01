@@ -834,7 +834,9 @@ def _is_safe_yaml_loader(
     if resolved is not None:
         targets = frozenset({resolved})
     elif isinstance(value, ast.Name):
-        targets = _yaml_loader_import_targets(tree, value.id, module_name_for(filename))
+        targets = _yaml_loader_namespace(tree).fallback_targets(
+            tree, value.id, module_name_for(filename)
+        )
     return (
         bool(targets)
         and targets <= _NATIVE_SAFE_YAML_LOADERS
@@ -861,68 +863,117 @@ _NATIVE_SAFE_YAML_LOADERS = frozenset(
 )
 
 
-def _binds_name_without_import(node: ast.AST, name: str) -> bool:
-    if isinstance(node, ast.Name):
-        return node.id == name and not isinstance(node.ctx, ast.Load)
+_YAML_PROOF_NODE_LIMIT = 50000
+_IMPORT_MACHINERY_MODULES = frozenset({"builtins", "importlib", "imp"})
+_IMPORT_MACHINERY_NAMES = frozenset(
+    {"__import__", "__builtins__", "setattr", "globals", "vars", "exec", "eval"}
+)
+_IMPORT_MACHINERY_ATTRIBUTES = _IMPORT_MACHINERY_NAMES | {"modules"}
+
+
+def _non_import_binding_names(node: ast.AST) -> list[str]:
     if isinstance(node, ast.arg):
-        return node.arg == name
+        return [node.arg]
     if isinstance(node, (ast.Global, ast.Nonlocal)):
-        return name in node.names
+        return list(node.names)
     if isinstance(node, ast.MatchMapping):
-        return node.rest == name
-    if isinstance(node, (ast.alias, ast.Import, ast.ImportFrom)):
-        return False
-    return getattr(node, "name", None) == name
+        if node.rest:
+            return [node.rest]
+        return []
+    if isinstance(node, ast.alias):
+        return []
+    name = getattr(node, "name", None)
+    if isinstance(name, str):
+        return [name]
+    return []
 
 
-def _yaml_loader_import_targets(tree: ast.Module, name: str, module_name=None):
-    """What every binding of ``name`` anywhere in the module imports, when each
-    one is an absolute ``from`` import, as in ``try: from yaml import
-    CSafeLoader as SafeLoader`` / ``except ImportError: from yaml import
-    SafeLoader``. Any other binding (assignment, parameter, definition,
-    handler or match name, ``del``, ``global``/``nonlocal``, module, star or
-    relative import), a write through the name or ``globals()``, or a module
-    whose globals can be replaced at run time gives an empty set."""
-    cache = getattr(tree, "_skylos_yaml_loader_targets", None)
-    if cache is None:
-        cache = {}
-        tree._skylos_yaml_loader_targets = cache
-    key = (name, module_name)
-    if key not in cache:
-        cache[key] = _collect_yaml_loader_import_targets(tree, name, module_name)
-    return cache[key]
+class _YamlLoaderNamespace:
+    """One capped pass over a module for the YAML loader proofs: the absolute
+    ``from`` imports that bind each name and the names bound any other way
+    (assignment, parameter, definition, handler or match name, ``del``,
+    ``global``/``nonlocal``, module or relative import). ``refused`` when the
+    module can reach the import machinery (a name or attribute
+    ``__import__``/``__builtins__``/``setattr``/``globals``/``vars``/``exec``/
+    ``eval``, the attribute ``modules``, an import of ``builtins``,
+    ``importlib`` or ``imp``), has a star import, or is larger than the
+    scan cap; a refused module proves no loader safe."""
 
+    def __init__(self, tree: ast.Module):
+        self.imports: dict[str, set[str]] = {}
+        self.other: set[str] = set()
+        self.refused = False
+        self.rebinding = {}
+        for count, node in enumerate(ast.walk(tree)):
+            if count >= _YAML_PROOF_NODE_LIMIT:
+                self.refused = True
+                return
+            self._record(node)
 
-def _collect_yaml_loader_import_targets(tree, name, module_name):
-    targets = set()
-    for node in ast.walk(tree):
+    def _record(self, node: ast.AST) -> None:
         if isinstance(node, ast.ImportFrom):
+            if (node.module or "").split(".", 1)[0] in _IMPORT_MACHINERY_MODULES:
+                self.refused = True
             for alias in node.names:
-                if alias.name == "*":
-                    return frozenset()
-                if (alias.asname or alias.name) != name:
-                    continue
+                if alias.name == "*" or alias.name in _IMPORT_MACHINERY_ATTRIBUTES:
+                    self.refused = True
+                local = alias.asname or alias.name
                 if node.level or not node.module:
-                    return frozenset()
-                targets.add(f"{node.module}.{alias.name}")
+                    self.other.add(local)
+                else:
+                    qualified = f"{node.module}.{alias.name}"
+                    self.imports.setdefault(local, set()).add(qualified)
         elif isinstance(node, ast.Import):
             for alias in node.names:
-                if (alias.asname or alias.name.split(".", 1)[0]) == name:
-                    return frozenset()
-        elif _binds_name_without_import(node, name):
+                root = alias.name.split(".", 1)[0]
+                if root in _IMPORT_MACHINERY_MODULES:
+                    self.refused = True
+                self.other.add(alias.asname or root)
+        elif isinstance(node, ast.Name):
+            if node.id in _IMPORT_MACHINERY_NAMES:
+                self.refused = True
+            if not isinstance(node.ctx, ast.Load):
+                self.other.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            if node.attr in _IMPORT_MACHINERY_ATTRIBUTES:
+                self.refused = True
+        else:
+            self.other.update(_non_import_binding_names(node))
+
+    def fallback_targets(self, tree: ast.Module, name: str, module_name=None):
+        """What every binding of ``name`` imports, as in ``try: from yaml
+        import CSafeLoader as SafeLoader`` / ``except ImportError: from yaml
+        import SafeLoader``; empty when any binding is not an absolute
+        ``from`` import, or when globals or ``name`` can be written at run
+        time."""
+        if self.refused or name in self.other or name not in self.imports:
             return frozenset()
-    unsafe, unknown_global_write = _unsafe_import_roots(tree)
-    if unknown_global_write or name in unsafe:
-        return frozenset()
-    dynamic, rebound = module_rebinding(tree, module_name)
-    if dynamic or name in rebound:
-        return frozenset()
-    return frozenset(targets)
+        verdict = self.rebinding.get(module_name)
+        if verdict is None:
+            unsafe, unknown_global_write = _unsafe_import_roots(tree)
+            dynamic, rebound = module_rebinding(tree, module_name)
+            verdict = (unknown_global_write or dynamic, frozenset(unsafe) | rebound)
+            self.rebinding[module_name] = verdict
+        dynamic, written = verdict
+        if dynamic or name in written:
+            return frozenset()
+        return frozenset(self.imports[name])
+
+
+def _yaml_loader_namespace(tree: ast.Module) -> _YamlLoaderNamespace:
+    namespace = getattr(tree, "_skylos_yaml_loader_namespace", None)
+    if namespace is None:
+        namespace = _YamlLoaderNamespace(tree)
+        tree._skylos_yaml_loader_namespace = namespace
+    return namespace
 
 
 def _is_safe_loader_argument(
     value: ast.AST, aliases, loader_classes, filename=None, project_root=None
 ) -> bool:
+    module = _module_of(value)
+    if module is not None and _yaml_loader_namespace(module).refused:
+        return False
     safe_classes, local_classes = loader_classes
     if isinstance(value, ast.Name) and value.id in local_classes:
         return value.id in safe_classes

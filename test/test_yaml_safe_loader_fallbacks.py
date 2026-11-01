@@ -6,6 +6,7 @@ CBaseLoader from yaml, yaml.loader or yaml.cyaml."""
 
 import ast
 import json
+import time
 
 import pytest
 
@@ -16,6 +17,7 @@ from skylos.rules.danger.calls import DangerousCallsRule
 from skylos.rules.danger.danger import scan_ctx
 
 READ = "def read(stream):\n    return load(stream, Loader=SafeLoader)\n"
+TIME_CEILING = 5
 
 PYDRIVE2 = (
     "from yaml import load\n"
@@ -25,6 +27,20 @@ PYDRIVE2 = (
     "    from yaml import SafeLoader\n"
     "\n"
     "\n" + READ
+)
+
+
+YAML_READ = "def read(stream):\n    return yaml.load(stream, Loader=SafeLoader)\n"
+
+IMPORT_HOOK = (
+    "import builtins, types, yaml\n"
+    "original = builtins.__import__\n"
+    "proxy = types.SimpleNamespace(\n"
+    "    CSafeLoader=yaml.UnsafeLoader, SafeLoader=yaml.UnsafeLoader\n"
+    ")\n"
+    "def fake(name, *args, **kwargs):\n"
+    "    return proxy\n"
+    "builtins.__import__ = fake\n"
 )
 
 
@@ -102,6 +118,43 @@ REPORTED = {
         "\n\n\ndef read",
         "\nimport yaml\nglobals()['SafeLoader'] = yaml.UnsafeLoader\ndef read",
     ),
+    "import_hook_fallback": IMPORT_HOOK + "try:\n"
+    "    from yaml import CSafeLoader as SafeLoader\n"
+    "except ImportError:\n"
+    "    from yaml import SafeLoader\n"
+    "builtins.__import__ = original\n" + YAML_READ,
+    "import_hook_single_binding": IMPORT_HOOK + "from yaml import SafeLoader\n"
+    "builtins.__import__ = original\n" + YAML_READ,
+    "import_hook_local_subclass": IMPORT_HOOK + "from yaml import SafeLoader\n"
+    "builtins.__import__ = original\n"
+    "class Strict(SafeLoader):\n"
+    "    pass\n"
+    "def read(stream):\n"
+    "    return yaml.load(stream, Loader=Strict)\n",
+    "importlib_swap": (
+        "import importlib\n"
+        "import yaml\n"
+        "importlib.import_module('yaml').SafeLoader = yaml.UnsafeLoader\n"
+        "from yaml import SafeLoader\n" + YAML_READ
+    ),
+    "sys_modules_swap": (
+        "import sys, types, yaml\n"
+        "sys.modules['yaml'] = types.SimpleNamespace(SafeLoader=yaml.UnsafeLoader)\n"
+        "from yaml import SafeLoader\n" + YAML_READ
+    ),
+    "sys_modules_imported_by_name": (
+        "import types, yaml\n"
+        "from sys import modules\n"
+        "modules['yaml'] = types.SimpleNamespace(SafeLoader=yaml.UnsafeLoader)\n"
+        "from yaml import SafeLoader\n" + YAML_READ
+    ),
+    "sys_modules_through_getattr": (
+        "import sys, types, yaml\n"
+        "getattr(sys, 'modules')['yaml'] = types.SimpleNamespace(\n"
+        "    SafeLoader=yaml.UnsafeLoader\n"
+        ")\n"
+        "from yaml import SafeLoader\n" + YAML_READ
+    ),
 }
 
 QUIET = {
@@ -153,6 +206,9 @@ QUIET = {
         "        from yaml import SafeLoader\n"
         "    return yaml.load(stream, Loader=SafeLoader)\n"
     ),
+    "pydrive2_with_sys_argv": "import sys\n"
+    + PYDRIVE2
+    + "def main():\n    return read(open(sys.argv[1]))\n",
 }
 
 
@@ -209,3 +265,29 @@ def test_unsafe_or_unproved_fallback_binding_stays_listed(
 def test_native_safe_loader_bindings_stay_quiet(tmp_path, analyzed_rows, case):
     assert _both(tmp_path, QUIET[case]) == [[], []]
     assert case not in analyzed_rows
+
+
+def test_many_unresolved_loader_names_are_checked_in_bounded_time(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("SKYLOS_JOBS", "1")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n")
+    calls = "".join(
+        f"yaml.load(data, Loader=missing_{index})\n" for index in range(400)
+    )
+    (tmp_path / "loads.py").write_text("import yaml\ndata = input()\n" + calls)
+    start = time.process_time()
+    report = json.loads(
+        analyze(
+            str(tmp_path),
+            enable_danger=True,
+            enable_dependency_hallucinations=False,
+            grep_verify=False,
+            grep_cache=False,
+            all_advice=False,
+        )
+    )
+    elapsed = time.process_time() - start
+    rows = [row for row in report.get("danger", []) if row["rule_id"] == "SKY-D206"]
+    assert len(rows) == 400
+    assert elapsed < TIME_CEILING
