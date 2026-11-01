@@ -4,41 +4,26 @@ from collections import Counter
 import sys
 from skylos.rules.danger.taint import TaintVisitor
 from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex, _dotted
+from skylos.rules.danger import import_proof
 
 
 REDIRECT_FUNCS = {"redirect", "HttpResponseRedirect", "HttpResponsePermanentRedirect"}
 
 REQUEST_ARGS_ATTRS = {"args", "params", "query", "GET"}
 
-# Route builders return a path (or an absolute URL) on the application's own
-# host. User values passed to them only fill path/query parameters, so the
-# redirect target cannot leave the site.
-INTERNAL_URL_BUILDERS = {"url_for", "reverse", "reverse_lazy", "url_path_for"}
-
-
-def _is_internal_url_builder(node):
-    if not isinstance(node, ast.Call):
-        return False
-    func = node.func
-    if isinstance(func, ast.Name):
-        return func.id in INTERNAL_URL_BUILDERS
-    if isinstance(func, ast.Attribute):
-        return func.attr in INTERNAL_URL_BUILDERS
-    return False
-
-
-def _starts_with_internal_url(node):
-    """``url_for(...)``, or a string that begins with one (``url_for(...) + '?q=' + x``)."""
-    if _is_internal_url_builder(node):
-        return True
-    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
-        return _starts_with_internal_url(node.left)
-    if isinstance(node, ast.JoinedStr) and node.values:
-        first = node.values[0]
-        return isinstance(first, ast.FormattedValue) and _is_internal_url_builder(
-            first.value
-        )
-    return False
+# Native route builders keep user values in path/query parameters. A matching
+# method or local function spelling alone says nothing about the target host.
+_NATIVE_URL_BUILDERS = frozenset(
+    {
+        "flask.url_for",
+        "flask.helpers.url_for",
+        "quart.url_for",
+        "django.urls.reverse",
+        "django.urls.reverse_lazy",
+        "django.core.urlresolvers.reverse",
+        "django.core.urlresolvers.reverse_lazy",
+    }
+)
 
 
 def _is_request_args_get(node):
@@ -361,13 +346,302 @@ class _RedirectFlowChecker(TaintVisitor):
             return True
         if isinstance(node, ast.NamedExpr):
             return self.is_tainted(node.value)
-        if _starts_with_internal_url(node):
+        if self._starts_with_internal_url(node):
             return False
         if isinstance(node, ast.IfExp):
             return self.is_tainted(node.body) or self.is_tainted(node.orelse)
         if isinstance(node, ast.BoolOp):
             return any(self.is_tainted(value) for value in node.values)
         return super().is_tainted(node)
+
+    def _starts_with_internal_url(self, node):
+        if isinstance(node, ast.Call):
+            if self._native_instance_path(node):
+                return True
+            dotted = _dotted(node.func)
+            if not dotted or not self._import_names_are_stable(dotted):
+                return False
+            imported = self.untrusted_sources.resolved_import(
+                self._current_function(), dotted
+            )
+            return bool(
+                imported in _NATIVE_URL_BUILDERS
+                and self._sanitizer_is_unpatched(imported)
+                and import_proof.provider_binding_is_stable(
+                    imported,
+                    self.untrusted_sources.module,
+                    self.file_path,
+                    getattr(self, "project_root", None),
+                )
+            )
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+            return self._starts_with_internal_url(node.left)
+        if isinstance(node, ast.JoinedStr) and node.values:
+            first = node.values[0]
+            return isinstance(
+                first, ast.FormattedValue
+            ) and self._starts_with_internal_url(first.value)
+        return False
+
+    def _native_instance_path(self, node):
+        """A native application plus a fixed-prefix, literal route table.
+
+        Native instance methods need receiver proof as well as provider proof.
+        In particular, a catch-all '/{path:path}' route is not a fixed-origin
+        guarantee merely because its router is Starlette.
+        """
+        if not (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "url_path_for"
+            and isinstance(node.func.value, ast.Name)
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            return False
+        tree = self.untrusted_sources.module
+        receiver = node.func.value.id
+        if not self._import_names_are_stable(receiver):
+            return False
+        if not self._sanitizer_is_unpatched("starlette.url_path_for"):
+            return False
+        # Index only module bindings. A local parameter with the same spelling
+        # in an unrelated handler cannot invalidate the application binding.
+        bindings = {}
+        pending = list(tree.body)
+        while pending:
+            current = pending.pop()
+            if isinstance(
+                current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                bindings.setdefault(current.name, []).append(None)
+                continue
+            if isinstance(current, (ast.Assign, ast.AnnAssign)):
+                targets = (
+                    current.targets
+                    if isinstance(current, ast.Assign)
+                    else [current.target]
+                )
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        bindings.setdefault(target.id, []).append(
+                            current.value if current in tree.body else None
+                        )
+            elif isinstance(current, (ast.Import, ast.ImportFrom)):
+                for alias in current.names:
+                    bindings.setdefault(
+                        alias.asname or alias.name.split(".", 1)[0], []
+                    ).append(None)
+            elif isinstance(current, ast.Name) and isinstance(current.ctx, ast.Del):
+                bindings.setdefault(current.id, []).append(None)
+            pending.extend(ast.iter_child_nodes(current))
+        seen = set()
+        root_name = receiver
+        constructor = None
+        for _ in range(32):
+            if root_name in seen:
+                return False
+            seen.add(root_name)
+            values = bindings.get(root_name, ())
+            if len(values) != 1:
+                return False
+            value = values[0]
+            if isinstance(value, ast.Name):
+                root_name = value.id
+            elif isinstance(value, ast.Call):
+                constructor = value
+                break
+            else:
+                return False
+        if constructor is None:
+            return False
+        aliases = {root_name}
+        for _ in range(32):
+            expanded = aliases | {
+                name
+                for name, values in bindings.items()
+                if len(values) == 1
+                and isinstance(values[0], ast.Name)
+                and values[0].id in aliases
+            }
+            if expanded == aliases:
+                break
+            aliases = expanded
+        else:
+            return False
+        if receiver not in aliases:
+            return False
+        function = self._current_function()
+        if function is not None:
+            if any(
+                arg.arg in aliases
+                for arg in ast.walk(function.args)
+                if isinstance(arg, ast.arg)
+            ):
+                return False
+            if any(
+                isinstance(part, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and part is not function
+                and part.name in aliases
+                or isinstance(part, (ast.Import, ast.ImportFrom))
+                and any(
+                    (alias.asname or alias.name.split(".", 1)[0]) in aliases
+                    for alias in part.names
+                )
+                for part in ast.walk(function)
+            ):
+                return False
+            if any(
+                isinstance(part, ast.Name)
+                and part.id in aliases
+                and isinstance(part.ctx, (ast.Store, ast.Del))
+                for part in ast.walk(function)
+            ):
+                return False
+        parents = {
+            id(child): parent
+            for parent in ast.walk(tree)
+            for child in ast.iter_child_nodes(parent)
+        }
+        for part in ast.walk(tree):
+            if (
+                not isinstance(part, ast.Name)
+                or part.id not in aliases
+                or not isinstance(part.ctx, ast.Load)
+            ):
+                continue
+            # Same-spelled parameters/local variables in another scope are
+            # separate objects, rather than escapes of the module instance.
+            scope = parents.get(id(part))
+            local = False
+            while scope is not None and scope is not tree:
+                if isinstance(
+                    scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+                ):
+                    scoped = (
+                        list(scope.body)
+                        if not isinstance(scope, ast.Lambda)
+                        else [scope.body]
+                    )
+                    local_names = {
+                        arg.arg
+                        for arg in ast.walk(scope.args)
+                        if isinstance(arg, ast.arg)
+                    }
+                    globals_ = set()
+                    while scoped:
+                        item = scoped.pop()
+                        if isinstance(
+                            item,
+                            (
+                                ast.FunctionDef,
+                                ast.AsyncFunctionDef,
+                                ast.ClassDef,
+                                ast.Lambda,
+                            ),
+                        ):
+                            if not isinstance(item, ast.Lambda):
+                                local_names.add(item.name)
+                            continue
+                        if isinstance(item, ast.Name) and isinstance(
+                            item.ctx, (ast.Store, ast.Del)
+                        ):
+                            local_names.add(item.id)
+                        elif isinstance(item, (ast.Import, ast.ImportFrom)):
+                            local_names.update(
+                                alias.asname or alias.name.split(".", 1)[0]
+                                for alias in item.names
+                            )
+                        elif isinstance(item, ast.Global):
+                            globals_.update(item.names)
+                        scoped.extend(ast.iter_child_nodes(item))
+                    if part.id in globals_:
+                        break
+                    if part.id in local_names:
+                        local = True
+                        break
+                scope = parents.get(id(scope))
+            if local:
+                continue
+            parent = parents.get(id(part))
+            if (
+                isinstance(parent, ast.Assign)
+                and parent.value is part
+                and all(
+                    isinstance(target, ast.Name) and target.id in aliases
+                    for target in parent.targets
+                )
+            ):
+                continue
+            if (
+                isinstance(parent, ast.AnnAssign)
+                and parent.value is part
+                and isinstance(parent.target, ast.Name)
+                and parent.target.id in aliases
+            ):
+                continue
+            if (
+                isinstance(parent, ast.Attribute)
+                and parent.value is part
+                and parent.attr == "url_path_for"
+            ):
+                call = parents.get(id(parent))
+                if isinstance(call, ast.Call) and call.func is parent:
+                    continue
+            return False
+        imported = self.untrusted_sources.resolved_import(
+            None, _dotted(constructor.func)
+        )
+        if imported not in {
+            "starlette.applications.Starlette",
+            "starlette.routing.Router",
+            "fastapi.FastAPI",
+            "fastapi.applications.FastAPI",
+        }:
+            return False
+        if not import_proof.provider_binding_is_stable(
+            imported, tree, self.file_path, getattr(self, "project_root", None)
+        ):
+            return False
+        routes = next(
+            (kw.value for kw in constructor.keywords if kw.arg == "routes"), None
+        )
+        if not isinstance(routes, (ast.List, ast.Tuple)) or any(
+            kw.arg is None for kw in constructor.keywords
+        ):
+            return False
+        found = False
+        for route in routes.elts:
+            if not isinstance(route, ast.Call) or any(
+                kw.arg is None for kw in route.keywords
+            ):
+                return False
+            provider = self.untrusted_sources.resolved_import(None, _dotted(route.func))
+            if (
+                provider != "starlette.routing.Route"
+                or not import_proof.provider_binding_is_stable(
+                    provider, tree, self.file_path, getattr(self, "project_root", None)
+                )
+            ):
+                return False
+            path = (
+                route.args[0]
+                if route.args
+                else next((kw.value for kw in route.keywords if kw.arg == "path"), None)
+            )
+            name = next((kw.value for kw in route.keywords if kw.arg == "name"), None)
+            if (
+                not isinstance(path, ast.Constant)
+                or not isinstance(path.value, str)
+                or not isinstance(name, ast.Constant)
+                or not isinstance(name.value, str)
+            ):
+                return False
+            if name.value == node.args[0].value:
+                if not _fixed_local_prefix(path):
+                    return False
+                found = True
+        return found
 
     def visit_NamedExpr(self, node):
         if isinstance(node.target, ast.Name):
@@ -541,7 +815,7 @@ class _RedirectFlowChecker(TaintVisitor):
                         "symbol": self._current_symbol(),
                     }
                 )
-            elif _starts_with_internal_url(url_arg):
+            elif self._starts_with_internal_url(url_arg):
                 pass
             elif self.is_tainted(url_arg):
                 self.findings.append(
@@ -559,9 +833,10 @@ class _RedirectFlowChecker(TaintVisitor):
         self.generic_visit(node)
 
 
-def scan(tree, file_path, findings):
+def scan(tree, file_path, findings, *, project_root=None):
     try:
         checker = _RedirectFlowChecker(file_path, findings, tree)
+        checker.project_root = project_root
         checker.visit(tree)
     except Exception as e:
         print(f"Redirect flow analysis failed for {file_path}: {e}", file=sys.stderr)

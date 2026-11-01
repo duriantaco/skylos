@@ -125,10 +125,12 @@ class _Analysis:
         module_name: str | None,
         parents=None,
         isolated_code_calls: frozenset[int] = frozenset(),
+        isolated_namespace_reads: frozenset[int] = frozenset(),
     ):
         self.tree = tree
         self.module_name = module_name
         self.isolated_code_calls = isolated_code_calls
+        self.isolated_namespace_reads = isolated_namespace_reads
         self.parents = (
             parents
             if parents is not None
@@ -406,7 +408,11 @@ class _Analysis:
                     isinstance(arg, ast.Starred) for arg in node.args[:2]
                 ):
                     return True, frozenset()
-                if self._is_namespace(node) and not self._is_read(node):
+                if (
+                    self._is_namespace(node)
+                    and id(node) not in self.isolated_namespace_reads
+                    and not self._is_read(node)
+                ):
                     return True, frozenset()
             elif isinstance(node, ast.Name):
                 if node.id in {"exec", "eval"}:
@@ -454,6 +460,7 @@ def module_rebinding(
     parents=None,
     *,
     isolated_code_calls: frozenset[int] = frozenset(),
+    isolated_namespace_reads: frozenset[int] = frozenset(),
 ) -> tuple[bool, frozenset[str]]:
     """``(dynamic, rebound)`` for the module ``tree``.
 
@@ -469,20 +476,30 @@ def module_rebinding(
     be passed to reuse a map the caller already built.
     ``isolated_code_calls`` (ids of ``exec``/``eval`` calls) are calls the
     caller proved run in a fresh namespace dict, so they cannot write this
-    module's globals; every other code runner still counts as dynamic."""
+    module's globals; every other code runner still counts as dynamic.
+    ``isolated_namespace_reads`` contains only calls a consumer proved copy a
+    native mapping into an isolated receiver without exposing that mapping.
+    Neither optional proof changes the default handling of namespace writes."""
     if tree is None:
         return False, frozenset()
-    return _Analysis(tree, module_name, parents, isolated_code_calls).run()
+    return _Analysis(
+        tree, module_name, parents, isolated_code_calls, isolated_namespace_reads
+    ).run()
 
 
 def attribute_write_names(
-    tree: ast.AST | None, *, isolated_writes: frozenset[int] = frozenset()
+    tree: ast.AST | None,
+    *,
+    isolated_writes: frozenset[int] = frozenset(),
+    resolved_attribute_names: dict[int, str] | None = None,
 ) -> tuple[frozenset[str], bool]:
     """Attribute names the module writes on any object (``x.basename = ...``,
     ``del x.basename``, ``setattr(x, "basename", ...)``), and whether it
     writes one with a computed name (``setattr(x, name, ...)`` on anything
     but ``self``/``cls``). A function imported by name is not the library's
-    own if the module may have replaced it on the library module first."""
+    own if the module may have replaced it on the library module first.
+    ``resolved_attribute_names`` optionally supplies source-proven literal keys,
+    keyed by the key expression's AST identity; names alone prove nothing."""
     names: set[str] = set()
     computed = False
     for node in ast.walk(tree) if tree is not None else ():
@@ -499,6 +516,8 @@ def attribute_write_names(
             attr = node.args[1] if len(node.args) > 1 else None
             if isinstance(attr, ast.Constant) and isinstance(attr.value, str):
                 names.add(attr.value)
+            elif resolved_attribute_names and id(attr) in resolved_attribute_names:
+                names.add(resolved_attribute_names[id(attr)])
             elif not (
                 node.args
                 and isinstance(node.args[0], ast.Name)

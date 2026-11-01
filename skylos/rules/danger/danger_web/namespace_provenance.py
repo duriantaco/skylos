@@ -105,6 +105,13 @@ class _Unit:
         }
         self.imports = UntrustedSourceIndex(tree)
         self.bindings = {}
+        self.literal_cache = {}
+        self.mutable_names = {
+            name
+            for node in self.nodes
+            if isinstance(node, (ast.Global, ast.Nonlocal))
+            for name in node.names
+        }
         self.annotations = set()
         self.builtins = builtin_references(
             tree,
@@ -202,10 +209,12 @@ class _Unit:
         return None, []
 
 
-def _barrier(unit, path):
+def _barrier(unit, path, reads=frozenset(), constructors=frozenset()):
     if (
         has_mock_api_patching(unit.tree)
-        or module_rebinding(unit.tree, module_name_for(path))[0]
+        or module_rebinding(
+            unit.tree, module_name_for(path), isolated_namespace_reads=reads
+        )[0]
     ):
         return True
     for node in unit.nodes:
@@ -248,7 +257,13 @@ def _barrier(unit, path):
             and node.id in _DYNAMIC
             and id(node) in unit.builtins
         ):
-            return True
+            parent = unit.parents.get(id(node))
+            if not (
+                isinstance(parent, ast.Call)
+                and parent.func is node
+                and id(parent) in reads
+            ):
+                return True
         if not isinstance(node, (ast.Name, ast.Attribute)) or not isinstance(
             node.ctx, ast.Load
         ):
@@ -321,8 +336,7 @@ def _barrier(unit, path):
             if (
                 isinstance(parent, ast.Call)
                 and parent.func is node
-                and not parent.args
-                and not parent.keywords
+                and id(parent) in constructors
             ):
                 continue
             return True
@@ -335,7 +349,7 @@ def _barrier(unit, path):
                 return True
             continue
         if isinstance(parent, ast.Call) and parent.func is node:
-            if origin == "argparse.Namespace" and (parent.args or parent.keywords):
+            if origin == "argparse.Namespace" and id(parent) not in constructors:
                 return True
             continue
         return True
@@ -367,6 +381,100 @@ def _helper_reference(unit, node, function):
         return False
     owner, values = unit.binding(node)
     return owner is unit.scope(function) and len(values) == 1 and values[0] is None
+
+
+def _literal_key(expr, unit, budget, seen=frozenset()):
+    """Resolve a lexical literal, without trusting a name or an annotation."""
+    budget[0] -= 1
+    if budget[0] < 0 or len(seen) >= 16:
+        return None
+    if isinstance(expr, ast.Constant) and type(expr.value) is str:
+        return expr.value, frozenset()
+    if not isinstance(expr, ast.Name) or expr.id in unit.mutable_names:
+        return None
+    owner, values = unit.binding(expr)
+    marker = (id(owner), expr.id)
+    if marker in seen:
+        return None
+    if marker in unit.literal_cache:
+        return unit.literal_cache[marker]
+    result = None
+    if len(values) == 1 and values[0] is not None:
+        assignment = unit.parents.get(id(values[0]))
+        if (
+            isinstance(assignment, (ast.Assign, ast.AnnAssign))
+            and unit.parents.get(id(assignment)) is owner
+        ):
+            resolved = _literal_key(values[0], unit, budget, seen | {marker})
+            if resolved is not None:
+                result = resolved[0], resolved[1] | {expr.id}
+    unit.literal_cache[marker] = result
+    return result
+
+
+def _literal_writes(unit, budget):
+    resolved = {}
+    protected = set()
+    for node in unit.nodes:
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"setattr", "delattr"}
+            and id(node.func) in unit.builtins
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Name)
+        ):
+            continue
+        key = _literal_key(node.args[1], unit, budget)
+        if key is not None:
+            resolved[id(node.args[1])] = key[0]
+            protected.update(key[1])
+    return resolved, protected
+
+
+def _input_data(expr, unit, function, parameters, reads, budget):
+    """Normal input data copied directly into a fresh native Namespace."""
+    budget[0] -= 1
+    if budget[0] < 0:
+        return False
+    if isinstance(expr, ast.Name) and expr.id in parameters:
+        owner, values = unit.binding(expr)
+        return owner is function and values == [None]
+    if isinstance(expr, ast.Dict):
+        return all(
+            (key is None or _input_data(key, unit, function, parameters, reads, budget))
+            and _input_data(value, unit, function, parameters, reads, budget)
+            for key, value in zip(expr.keys, expr.values)
+        )
+    if (
+        isinstance(expr, ast.Call)
+        and isinstance(expr.func, ast.Name)
+        and expr.func.id == "vars"
+        and id(expr.func) in unit.builtins
+        and len(expr.args) == 1
+        and not expr.keywords
+        and isinstance(expr.args[0], ast.Name)
+        and expr.args[0].id in parameters
+    ):
+        owner, values = unit.binding(expr.args[0])
+        if owner is function and values == [None]:
+            reads.add(id(expr))
+            return True
+        return False
+    return _data(expr, unit, function, budget)
+
+
+def _constructor_data(node, unit, function, parameters, reads, budget):
+    return (
+        isinstance(node, ast.Call)
+        and not node.args
+        and unit.origin(node.func) == "argparse.Namespace"
+        and all(
+            keyword.arg not in _PROTOCOLS
+            and _input_data(keyword.value, unit, function, parameters, reads, budget)
+            for keyword in node.keywords
+        )
+    )
 
 
 def _data(expr, unit, function, budget, seen=None):
@@ -474,17 +582,26 @@ def _callers_are_data(function, units, budget):
                 or not isinstance(unit.parents.get(id(parent)), ast.Expr)
             ):
                 return False
-            if (
-                len(parent.args) != 1
-                or parent.keywords
-                or not _data(parent.args[0], unit, function, budget)
+            parameters = function.args.posonlyargs + function.args.args
+            if len(parent.args) > len(parameters):
+                return False
+            arguments = dict(zip((arg.arg for arg in parameters), parent.args))
+            for keyword in parent.keywords:
+                if (
+                    keyword.arg not in {arg.arg for arg in parameters}
+                    or keyword.arg in arguments
+                ):
+                    return False
+                arguments[keyword.arg] = keyword.value
+            if len(arguments) != len(parameters) or not all(
+                _data(value, unit, function, budget) for value in arguments.values()
             ):
                 return False
     return True
 
 
-def _function_writes(function, unit, units, budget):
-    """Accept one native-data merge shape; other statements retain uncertainty."""
+def _function_effects(function, unit, units, budget):
+    """Prove a fresh native copy/merge and its read/write call identities."""
     if (
         function.decorator_list
         or function.args.defaults
@@ -494,11 +611,11 @@ def _function_writes(function, unit, units, budget):
         or function.args.kwonlyargs
         or isinstance(unit.scope(function), ast.ClassDef)
     ):
-        return set()
-    parameters = function.args.posonlyargs + function.args.args
-    if len(parameters) != 1:
-        return set()
-    data_name = parameters[0].arg
+        return None
+    arguments = function.args.posonlyargs + function.args.args
+    if not 1 <= len(arguments) <= 2:
+        return None
+    parameters = {argument.arg for argument in arguments}
     body = list(function.body)
     if (
         body
@@ -507,45 +624,53 @@ def _function_writes(function, unit, units, budget):
         and isinstance(body[0].value.value, str)
     ):
         body = body[1:]
-    if len(body) < 3:
-        return set()
+    if not body:
+        return None
+    reads = set()
+    if len(body) == 1 and isinstance(body[0], ast.Return):
+        constructor = body[0].value
+        if _constructor_data(
+            constructor, unit, function, parameters, reads, budget
+        ) and _callers_are_data(function, units, budget):
+            return set(), reads, {id(constructor)}
+        return None
     first = body.pop(0)
     if not isinstance(first, (ast.Assign, ast.AnnAssign)):
-        return set()
+        return None
     targets = first.targets if isinstance(first, ast.Assign) else [first.target]
     if len(targets) != 1 or not isinstance(targets[0], ast.Name):
-        return set()
+        return None
     constructor = first.value
-    if (
-        not isinstance(constructor, ast.Call)
-        or constructor.args
-        or constructor.keywords
-        or unit.origin(constructor.func) != "argparse.Namespace"
-    ):
-        return set()
+    if not _constructor_data(constructor, unit, function, parameters, reads, budget):
+        return None
     names = {targets[0].id}
-    while len(body) > 2:
+    while len(body) > 1 and isinstance(body[0], ast.Assign):
         alias = body.pop(0)
         if (
-            not isinstance(alias, ast.Assign)
-            or len(alias.targets) != 1
+            len(alias.targets) != 1
             or not isinstance(alias.targets[0], ast.Name)
             or not isinstance(alias.value, ast.Name)
             or alias.value.id not in names
+            or alias.targets[0].id in names
         ):
-            return set()
-        if alias.targets[0].id in names:
-            return set()
+            return None
         names.add(alias.targets[0].id)
-    if data_name in names:
-        return set()
-    loop, returned = body
+    if names & parameters or not body:
+        return None
+    returned = body[-1]
     if (
         not isinstance(returned, ast.Return)
         or not isinstance(returned.value, ast.Name)
         or returned.value.id not in names
     ):
-        return set()
+        return None
+    if len(body) == 1:
+        if _callers_are_data(function, units, budget):
+            return set(), reads, {id(constructor)}
+        return None
+    if len(body) != 2:
+        return None
+    loop = body[0]
     if (
         not isinstance(loop, ast.For)
         or loop.orelse
@@ -553,10 +678,10 @@ def _function_writes(function, unit, units, budget):
         or len(loop.target.elts) != 2
         or not all(isinstance(item, ast.Name) for item in loop.target.elts)
     ):
-        return set()
+        return None
     key, value = (item.id for item in loop.target.elts)
-    if key == value or {key, value} & (names | {data_name}):
-        return set()
+    if key == value or {key, value} & (names | parameters):
+        return None
     iterable = loop.iter
     if (
         not isinstance(iterable, ast.Call)
@@ -565,11 +690,11 @@ def _function_writes(function, unit, units, budget):
         or not isinstance(iterable.func, ast.Attribute)
         or iterable.func.attr != "items"
         or not isinstance(iterable.func.value, ast.Name)
-        or iterable.func.value.id != data_name
+        or iterable.func.value.id not in parameters
     ):
-        return set()
+        return None
     if len(loop.body) != 1 or not isinstance(loop.body[0], ast.Expr):
-        return set()
+        return None
     writer = loop.body[0].value
     if (
         not isinstance(writer, ast.Call)
@@ -578,34 +703,30 @@ def _function_writes(function, unit, units, budget):
         or id(writer.func) not in unit.builtins
         or len(writer.args) != 3
         or writer.keywords
-    ):
-        return set()
-    if (
-        not all(isinstance(arg, ast.Name) for arg in writer.args)
+        or not all(isinstance(arg, ast.Name) for arg in writer.args)
         or writer.args[0].id not in names
         or writer.args[1].id != key
         or writer.args[2].id != value
+        or not _callers_are_data(function, units, budget)
     ):
-        return set()
-    if not _callers_are_data(function, units, budget):
-        return set()
-    return {id(writer)}
+        return None
+    return {id(writer)}, reads, {id(constructor)}
 
 
-def isolated_namespace_writes(tree, file_path, project_root):
-    """Return only source-proven writer-call IDs; incomplete context proves none."""
+def sanitizer_namespace_effects(tree, file_path, project_root):
+    """Return source-proven writes, reads and literal keys; uncertainty proves none."""
     if (
         not isinstance(project_root, (str, Path))
         or not project_root
         or not isinstance(tree, ast.Module)
     ):
-        return frozenset()
+        return None
     try:
         current_nodes = []
         for node in ast.walk(tree):
             current_nodes.append(node)
             if len(current_nodes) > _MAX_STEPS:
-                return frozenset()
+                return None
         current = _Unit(tree, current_nodes)
         constructors = [
             node
@@ -613,19 +734,20 @@ def isolated_namespace_writes(tree, file_path, project_root):
             if isinstance(node, ast.Call)
             and current.origin(node.func) == "argparse.Namespace"
         ]
-        if not constructors:
-            return frozenset()
+        initial_keys, _protected = _literal_writes(current, [_MAX_STEPS])
+        if not constructors and not initial_keys:
+            return None
         path = Path(file_path).resolve()
         trees, complete = project_source_snapshot(project_root)
         if not complete or path not in trees or ast.dump(trees[path]) != ast.dump(tree):
-            return frozenset()
+            return None
         if any(
             member.name in {"argparse.py", "html.py", "markupsafe.py", "bleach.py"}
             or member.name == "__init__.py"
             and member.parent.name in {"argparse", "html", "markupsafe", "bleach"}
             for member in trees
         ):
-            return frozenset()
+            return None
         protected = {"argparse", "html", "markupsafe", "bleach"}
         root = Path(project_root).resolve()
         directories = {root}
@@ -643,7 +765,7 @@ def isolated_namespace_writes(tree, file_path, project_root):
                     metadata_steps > _MAX_STEPS
                     or entry.name.split(".", 1)[0].casefold() in protected
                 ):
-                    return frozenset()
+                    return None
         units = [current]
         count = len(current.nodes)
         for member, source in trees.items():
@@ -653,7 +775,7 @@ def isolated_namespace_writes(tree, file_path, project_root):
             for node in ast.walk(source):
                 count += 1
                 if count > _MAX_STEPS:
-                    return frozenset()
+                    return None
                 nodes.append(node)
             units.append(_Unit(source, nodes))
         definitions = {}
@@ -676,48 +798,50 @@ def isolated_namespace_writes(tree, file_path, project_root):
             if (len(definitions), len(unsupported_calls)) == before:
                 break
         else:
-            return frozenset()
+            return None
         for unit in units:
             unit.definitions = definitions
             unit.unsupported_calls = unsupported_calls
+        budget = [_MAX_STEPS]
+        ignored = set()
+        reads = set()
+        audited_constructors = set()
+        for node in current.nodes:
+            if isinstance(node, ast.FunctionDef):
+                effects = _function_effects(node, current, units, budget)
+                if effects is not None:
+                    ignored.update(effects[0])
+                    reads.update(effects[1])
+                    audited_constructors.update(effects[2])
+        resolved_keys = {}
+        protected_keys = set()
+        for unit in units:
+            keys, protected = _literal_writes(unit, budget)
+            resolved_keys.update(keys)
+            protected_keys.update(protected)
+        if budget[0] < 0:
+            return None
         if any(
-            _barrier(unit, member)
+            _barrier(unit, member, frozenset(reads), frozenset(audited_constructors))
             for unit, member in zip(
                 units, [path] + [member for member in trees if member != path]
             )
         ):
-            return frozenset()
-        budget = [_MAX_STEPS]
-        ignored = set()
-        audited_functions = set()
-        for node in current.nodes:
-            if isinstance(node, ast.FunctionDef):
-                writes = _function_writes(node, current, units, budget)
-                if writes:
-                    audited_functions.add(id(node))
-                    ignored.update(writes)
-        for unit in units:
-            for node in unit.nodes:
-                if (
-                    isinstance(node, ast.Call)
-                    and unit.origin(node.func) == "argparse.Namespace"
-                ):
-                    parent = unit.parents.get(id(node))
-                    owner = unit.scope(node)
-                    if (
-                        unit is not current
-                        or id(owner) not in audited_functions
-                        or not isinstance(parent, (ast.Assign, ast.AnnAssign))
-                        or unit.parents.get(id(parent)) is not owner
-                    ):
-                        return frozenset()
+            return None
         for unit in units:
             names, computed = attribute_write_names(
                 unit.tree,
                 isolated_writes=frozenset(ignored) if unit is current else frozenset(),
+                resolved_attribute_names=resolved_keys,
             )
-            if computed or names & {"escape", "clean", "Namespace"}:
-                return frozenset()
-        return frozenset(ignored)
+            if computed or names & ({"escape", "clean", "Namespace"} | protected_keys):
+                return None
+        return frozenset(ignored), frozenset(reads), resolved_keys
     except (OSError, TypeError, ValueError, RecursionError, RuntimeError):
-        return frozenset()
+        return None
+
+
+def isolated_namespace_writes(tree, file_path, project_root):
+    """Compatibility wrapper for source-proven receiver writes only."""
+    effects = sanitizer_namespace_effects(tree, file_path, project_root)
+    return effects[0] if effects is not None else frozenset()

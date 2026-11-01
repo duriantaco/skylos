@@ -984,6 +984,21 @@ class _PathFlowChecker(TaintVisitor):
             return self._get_basename_sanitized(node.id)
         return False
 
+    def _is_sanitizer_call(self, node):
+        if not super()._is_sanitizer_call(node):
+            return False
+        name = self.untrusted_sources.resolved_import(
+            self._current_function(), _qualified_name(node)
+        )
+        if name and name.endswith(".safe_join"):
+            # safe_join constrains the suffix to its directory. It cannot
+            # make a request-selected base directory safe.
+            if any(kw.arg is None for kw in node.keywords):
+                return False
+            base = _bound_argument(node, 0, "directory")
+            return base is not None and not self.is_tainted(base)
+        return True
+
     def is_tainted(self, node):
         if _is_path_name_projection(node) or is_traversal_safe_value(node):
             return False
@@ -1683,9 +1698,10 @@ class _PathFlowChecker(TaintVisitor):
         self.generic_visit(node)
 
 
-def scan(tree, file_path, findings):
+def scan(tree, file_path, findings, *, project_root=None):
     try:
         checker = _PathFlowChecker(file_path, findings, sanitizers=PATH_SANITIZERS)
+        checker.project_root = project_root
         checker.visit(tree)
     except Exception as e:
         print(f"Path traversal analysis failed for {file_path}: {e}", file=sys.stderr)

@@ -218,7 +218,9 @@ _TRANSPARENT_CALLS = frozenset(
      "yaml.load", "yaml.full_load", "tomllib.loads", "tomllib.load",
      "tomli.loads", "tomli.load", "ast.literal_eval", "base64.b64decode",
      "base64.urlsafe_b64decode", "codecs.decode", "urllib.parse.parse_qs",
-     "urllib.parse.parse_qsl"}
+     "urllib.parse.parse_qsl", "html.escape", "markupsafe.escape",
+     "markupsafe.Markup.escape", "werkzeug.utils.safe_join",
+     "werkzeug.security.safe_join", "flask.helpers.safe_join"}
 )  # fmt: skip
 _TRANSPARENT_METHODS = frozenset(
     {"strip", "lstrip", "rstrip", "lower", "upper", "title", "casefold",
@@ -4354,7 +4356,12 @@ class _Tracer:
             if self._downloaded(unit, scope, node.args[0], 0):
                 return _Facts.leaf(UNTRUSTED, _step(unit, node, "content of a file downloaded from the network"))
             return _Facts.leaf(UNKNOWN, _step(unit, node, f"content of the file opened by `{_describe(node)}`"))
-        if names and names <= _D215_SANITIZERS and self.rule == TRAVERSAL_RULE:
+        if (
+            names
+            and names <= _D215_SANITIZERS
+            and self.rule == TRAVERSAL_RULE
+            and not any(self._external_rebound(name) for name in names)
+        ):
             return _Facts.leaf(SAFE, _step(unit, node, f"`{_describe(node)}` keeps only the final path component"))
         if names and names <= _TRANSPARENT_CALLS:
             if not arguments:

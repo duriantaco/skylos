@@ -15,8 +15,13 @@ from skylos.rules.danger.danger_web.html_context import (
 from skylos.rules.danger.danger_web.url_patterns import FLAG_NAMES, url_pattern_is_safe
 from skylos.rules.danger.taint import TaintVisitor, XSS_SANITIZERS
 from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
-from skylos.rules.danger.module_namespace import attribute_write_names, has_mock_api_patching
-from .namespace_provenance import isolated_namespace_writes
+from skylos.rules.danger.module_namespace import (
+    attribute_write_names,
+    has_mock_api_patching,
+    module_rebinding,
+    module_name_for,
+)
+from .namespace_provenance import sanitizer_namespace_effects
 
 # Template-source sinks: the first argument (or ``source=``) is compiled as a
 # Jinja template, so untrusted text there is template code, not data.
@@ -341,14 +346,50 @@ class _XSSFlowChecker(TaintVisitor):
         self._has_api_patching = has_mock_api_patching(tree)
         self._project_root = project_root
 
+    def _namespace_effects(self):
+        cached = getattr(self, "_namespace_effects_cache", None)
+        if cached is None or cached[0] is not self._tree:
+            cached = (
+                self._tree,
+                sanitizer_namespace_effects(
+                    self._tree, self.file_path, self._project_root
+                ),
+            )
+            self._namespace_effects_cache = cached
+        return cached[1]
+
+    def _import_names_are_stable(self, call_name):
+        if super()._import_names_are_stable(call_name):
+            return True
+        effects = self._namespace_effects()
+        if effects is None or not effects[1]:
+            return False
+        cached = getattr(self, "_isolated_rebinding_cache", None)
+        if cached is None or cached[0] is not self._tree:
+            cached = (
+                self._tree,
+                module_rebinding(
+                    self._tree,
+                    module_name_for(self.file_path),
+                    isolated_namespace_reads=effects[1],
+                ),
+            )
+            self._isolated_rebinding_cache = cached
+        dynamic, rebound = cached[1]
+        return not dynamic and not any(part in rebound for part in call_name.split("."))
+
     def _sanitizer_is_unpatched(self, qualified):
         cached = getattr(self, "_attribute_writes_cache", None)
         if cached is None or cached[0] is not self._tree:
             written = attribute_write_names(self._tree)
             if written[1]:
-                isolated = isolated_namespace_writes(self._tree, self.file_path, self._project_root)
-                if isolated:
-                    written = attribute_write_names(self._tree, isolated_writes=isolated)
+                effects = self._namespace_effects()
+                if effects is not None:
+                    written = attribute_write_names(
+                        self._tree,
+                        isolated_writes=effects[0],
+                        resolved_attribute_names=effects[2],
+                    )
             cached = (self._tree, written)
             self._attribute_writes_cache = cached
         names, computed = cached[1]
