@@ -469,7 +469,9 @@ def _hashlib_new_weak_rule(node: ast.Call, name: str | None) -> str | None:
     the weak constructor a literal algorithm name selects, or None."""
     if name != "hashlib.new":
         return None
-    algorithm = node.args[0] if node.args else None
+    algorithm = None
+    if node.args:
+        algorithm = node.args[0]
     for kw in node.keywords:
         if kw.arg == "name":
             algorithm = kw.value
