@@ -15,9 +15,11 @@ from skylos.analyzer import analyze
 from test.fixture_paths import write_fixture
 
 
-def _d211_lines(tmp_path, monkeypatch, source, listed_only=False):
+def _d211_lines(tmp_path, monkeypatch, source, listed_only=False, providers=()):
     monkeypatch.setenv("SKYLOS_JOBS", "1")
     write_fixture(tmp_path, "app.py", textwrap.dedent(source).lstrip("\n"))
+    for name, text in providers:
+        write_fixture(tmp_path, name, textwrap.dedent(text).lstrip("\n"))
     write_fixture(tmp_path, "pyproject.toml", '[project]\nname="proof"\n')
     result = json.loads(
         analyze(
@@ -91,14 +93,17 @@ STATIC_CLASS_SQL = {
             conn = sqlite3.connect(path)
             return conn.execute(Repo.SQL).fetchall()
     """,
-    "final_class_with_imported_base": """
+    "final_class_with_module_base": """
+        import abc
         import typing as t
 
-        from app_base import sqlitedb
+
+        class Appl(abc.ABC):
+            pass
 
 
         @t.final
-        class FaviconCache(sqlitedb.Appl):
+        class FaviconCache(Appl):
             SQL_ITER = "SELECT sha256, bytes_c FROM blobs ORDER BY m_time"
 
             def maintenance(self, conn):
@@ -468,6 +473,40 @@ STILL_REPORTED = {
         """,
         10,
     ),
+    "final_class_with_imported_base": (
+        """
+        import typing as t
+
+        from app_base import sqlitedb
+
+
+        @t.final
+        class FaviconCache(sqlitedb.Appl):
+            SQL_ITER = "SELECT sha256, bytes_c FROM blobs ORDER BY m_time"
+
+            def maintenance(self, conn):
+                for row in conn.execute(self.SQL_ITER):
+                    print(row)
+        """,
+        11,
+    ),
+    "module_subclass_with_imported_mixin": (
+        """
+        from mixins import Configurable
+
+
+        class Repo:
+            SQL = "SELECT * FROM users"
+
+            def run(self, cursor):
+                cursor.execute(self.SQL)
+
+
+        class ConfiguredRepo(Repo, Configurable):
+            pass
+        """,
+        8,
+    ),
     "constant_inherited_from_an_imported_base": (
         """
         from lib import Base
@@ -484,6 +523,42 @@ STILL_REPORTED = {
         10,
     ),
 }
+
+
+def test_inherited_method_that_writes_the_attribute_still_reports(
+    tmp_path, monkeypatch
+):
+    source = """
+        from flask import request
+
+        from base import Base
+
+
+        class Repo(Base):
+            SQL = "SELECT 1"
+
+            def run(self, cursor):
+                cursor.execute(self.SQL)
+
+
+        def handler(cursor):
+            repo = Repo()
+            repo.configure(request.args["q"])
+            repo.run(cursor)
+    """
+    provider = """
+        class Base:
+            def configure(self, value):
+                self.SQL = value
+    """
+    lines = _d211_lines(
+        tmp_path,
+        monkeypatch,
+        source,
+        listed_only=True,
+        providers=[("base.py", provider)],
+    )
+    assert 10 in lines
 
 
 @pytest.mark.parametrize("name", sorted(STILL_REPORTED))

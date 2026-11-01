@@ -190,7 +190,6 @@ _TRUSTED_BUILTINS = _NUMERIC_CALLS | {"str"} | _CLASS_BUILTINS
 _PLAIN_CLASS_BASES = frozenset({"abc.ABC"})
 _PASSIVE_CLASS_DECORATORS = frozenset({"typing.final", "typing_extensions.final"})
 _RECEIVER_DECORATORS = frozenset({"abc.abstractmethod", "functools.cached_property"})
-_FIELD_MODEL_ROOTS = frozenset({"pydantic", "pydantic_settings", "sqlmodel"})
 _ATTRIBUTE_WRITERS = frozenset({"setattr", "delattr", "__setattr__", "__delattr__"})
 _DYNAMIC_ATTRIBUTE_REFERENCES = _ATTRIBUTE_WRITERS | {
     "__dict__",
@@ -271,22 +270,22 @@ def _scope_binding_names(nodes) -> list[str]:
     return names
 
 
-def _simple_class_bindings(node: ast.ClassDef) -> dict[str, tuple[ast.AST, bool]]:
+def _simple_class_bindings(node: ast.ClassDef) -> dict[str, ast.AST]:
     """``NAME = value`` and ``NAME: T = value`` statements at the top level of
-    a class body: the value and whether the binding is annotated."""
-    bindings: dict[str, tuple[ast.AST, bool]] = {}
+    a class body, by name."""
+    bindings: dict[str, ast.AST] = {}
     for statement in node.body:
         if isinstance(statement, ast.Assign) and all(
             isinstance(target, ast.Name) for target in statement.targets
         ):
             for target in statement.targets:
-                bindings[target.id] = (statement.value, False)
+                bindings[target.id] = statement.value
         elif (
             isinstance(statement, ast.AnnAssign)
             and isinstance(statement.target, ast.Name)
             and statement.value is not None
         ):
-            bindings[statement.target.id] = (statement.value, True)
+            bindings[statement.target.id] = statement.value
     return bindings
 
 
@@ -429,6 +428,7 @@ class _SQLFlowChecker(TaintVisitor):
         self.module_classes: dict[str, ast.ClassDef] = {}
         self.method_receivers: dict[int, tuple[ast.ClassDef, str]] = {}
         self.class_scope_names: dict[int, frozenset[str]] = {}
+        self.open_ancestors: set[int] = set()
         if isinstance(tree, ast.Module):
             self._index_class_sql_text(tree)
 
@@ -590,10 +590,10 @@ class _SQLFlowChecker(TaintVisitor):
     def _index_class_sql_text(self, tree: ast.Module) -> None:
         """Class attributes that hold fixed SQL text wherever this module reads
         them. Every class body in the module that binds the name binds it once,
-        at its top level, to SQL-safe text, in a class whose decorators,
-        metaclass and bases cannot turn the binding into a per-instance field.
-        Nothing in the module writes an attribute of that name, and nothing
-        writes attributes or class namespaces through a computed name."""
+        at its top level, to SQL-safe text, in a class whose whole hierarchy is
+        visible here (see ``_class_keeps_constants``). Nothing in the module
+        writes an attribute of that name, and nothing writes attributes or
+        class namespaces through a computed name."""
         classes = [node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
         if not classes:
             return
@@ -616,14 +616,17 @@ class _SQLFlowChecker(TaintVisitor):
             names = Counter(_scope_binding_names(node.body))
             self.class_scope_names[id(node)] = frozenset(names)
             simple = _simple_class_bindings(node)
+            keeps_constants = self._class_keeps_constants(node, frozenset())
+            if not keeps_constants:
+                self.open_ancestors.update(self._module_ancestors(node, frozenset()))
             for name, count in names.items():
                 binding = simple.get(name)
                 candidates[name] = candidates.get(name, True) and bool(
                     count == 1
                     and binding is not None
                     and name not in written
-                    and self._is_sql_safe_text(binding[0])
-                    and self._class_keeps_constants(node, binding[1], frozenset())
+                    and keeps_constants
+                    and self._is_sql_safe_text(binding)
                 )
         through_class = {
             node.attr
@@ -710,15 +713,14 @@ class _SQLFlowChecker(TaintVisitor):
             or self._resolved_name(node) in _PLAIN_CLASS_BASES
         )
 
-    def _class_keeps_constants(
-        self, node: ast.ClassDef, annotated: bool, seen: frozenset[int]
-    ) -> bool:
-        """A class-body binding stays a class attribute: no metaclass or class
-        keyword, no decorator other than ``typing.final``, and no base that
-        can collect it as a per-instance field. An annotated binding becomes a
-        field of dataclass-like bases (pydantic, msgspec, NamedTuple, settings
-        models), so it needs every base proven plain; pydantic v1 also
-        collects unannotated defaults."""
+    def _class_keeps_constants(self, node: ast.ClassDef, seen: frozenset[int]) -> bool:
+        """Every class in the hierarchy is visible to this module's checks: no
+        metaclass or class keyword, no decorator other than ``typing.final``,
+        and every base is builtin ``object``, ``abc.ABC`` or a module class
+        meeting the same rule. An imported or unresolved base can write the
+        attribute on the instance from code this module never sees, or turn
+        the binding into a per-instance field (dataclass-like and settings
+        models)."""
         if id(node) in seen or node.keywords:
             return False
         seen = seen | {id(node)}
@@ -728,17 +730,21 @@ class _SQLFlowChecker(TaintVisitor):
         for base in node.bases:
             local = self._module_class(base)
             if local is not None:
-                if not self._class_keeps_constants(local, annotated, seen):
+                if not self._class_keeps_constants(local, seen):
                     return False
-                continue
-            if self._is_plain_base(base):
-                continue
-            if annotated or _qualified_name_from_expr(base) is None:
-                return False
-            resolved = self._resolved_name(base)
-            if resolved is not None and resolved.split(".", 1)[0] in _FIELD_MODEL_ROOTS:
+            elif not self._is_plain_base(base):
                 return False
         return True
+
+    def _module_ancestors(self, node: ast.ClassDef, seen: frozenset[int]) -> set[int]:
+        """Ids of the module classes ``node`` inherits from."""
+        found: set[int] = set()
+        for base in node.bases:
+            local = self._module_class(base)
+            if local is not None and id(local) not in seen:
+                found.add(id(local))
+                found.update(self._module_ancestors(local, seen | {id(local)}))
+        return found
 
     def _method_receiver(self, method, through_class: bool) -> str | None:
         """The first parameter of a method defined at the top level of a
@@ -788,7 +794,9 @@ class _SQLFlowChecker(TaintVisitor):
 
     def _is_class_sql_text(self, node: ast.Attribute) -> bool:
         """``self.X``, ``cls.X`` or ``ClassName.X`` naming a class attribute
-        that holds fixed SQL text (see ``_index_class_sql_text``)."""
+        that holds fixed SQL text (see ``_index_class_sql_text``). A module
+        subclass with a hierarchy this module cannot see could reach the
+        owner's methods with its own ``self``, so it disables the owner."""
         if (
             not isinstance(node.value, ast.Name)
             or node.attr not in self.class_sql_text_attrs
@@ -800,9 +808,11 @@ class _SQLFlowChecker(TaintVisitor):
             if receiver is None or receiver[1] != node.value.id:
                 return False
             owner = receiver[0]
-        return self._class_keeps_constants(
-            owner, False, frozenset()
-        ) and self._class_provides(owner, node.attr, frozenset())
+        return (
+            id(owner) not in self.open_ancestors
+            and self._class_keeps_constants(owner, frozenset())
+            and self._class_provides(owner, node.attr, frozenset())
+        )
 
     def _builtin_called(self, node: ast.Call) -> str | None:
         func = node.func
