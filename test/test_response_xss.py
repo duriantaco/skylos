@@ -302,6 +302,13 @@ CONTROLS = {
         "def tidy(value):\n"
         "    return str(value).strip().lower()\n"
     ),
+    "same-module pass-through chain": (
+        "    return 'Hi ' + outer(request.args['q'])\n"
+        "def inner(value):\n"
+        "    return value.strip()\n"
+        "def outer(value):\n"
+        "    return inner(value)\n"
+    ),
     "local function named escape": (
         "    return 'Results ' + escape(request.args['q'])\n"
         "def escape(value):\n"
@@ -331,6 +338,17 @@ HIDDEN = {
         "            out += char\n"
         "        else:\n"
         "            out += '&#' + str(ord(char)) + ';'\n"
+        "    return out\n"
+    ),
+    "same-module chain into an escaper loop": (
+        "    return 'Results ' + outer(request.args['q'])\n"
+        "def outer(value):\n"
+        "    return encode(value)\n"
+        "def encode(text):\n"
+        "    out = ''\n"
+        "    for char in text:\n"
+        "        if char.isalnum():\n"
+        "            out += char\n"
         "    return out\n"
     ),
     "allowlist escaper comprehension": (
@@ -632,10 +650,44 @@ CROSS_MODULE = {
         "    return out\n",
         False,
     ),
-    "helper calling another helper": (
+    "pass-through helper chain": (
         "from myproject.utils import outer\n",
         "outer(request.args['q'])",
         "def inner(value):\n    return value\ndef outer(value):\n    return inner(value)\n",
+        True,
+    ),
+    "chain through a second module": (
+        "from myproject.utils import outer\n",
+        "outer(request.args['q'])",
+        "from myproject.text import tidy\ndef outer(value):\n    return tidy(value)\n",
+        True,
+    ),
+    "chain whose inner helper is an escaper loop": (
+        "from myproject.utils import outer\n",
+        "outer(request.args['q'])",
+        "def inner(text):\n"
+        "    out = ''\n"
+        "    for char in text:\n"
+        "        if char.isalnum():\n"
+        "            out += char\n"
+        "    return out\n"
+        "def outer(value):\n"
+        "    return inner(value)\n",
+        False,
+    ),
+    "chain deeper than three helpers": (
+        "from myproject.utils import first\n",
+        "first(request.args['q'])",
+        "def fourth(v):\n    return v\n"
+        "def third(v):\n    return fourth(v)\n"
+        "def second(v):\n    return third(v)\n"
+        "def first(v):\n    return second(v)\n",
+        False,
+    ),
+    "mutually recursive helpers": (
+        "from myproject.utils import ping\n",
+        "ping(request.args['q'])",
+        "def ping(v):\n    return pong(v)\ndef pong(v):\n    return ping(v)\n",
         False,
     ),
     "unresolvable module": (
@@ -654,7 +706,11 @@ def test_project_helpers_are_summarised_across_modules(
     tmp_path, monkeypatch, imports, call, helper, listed
 ):
     name = "app.py"
-    modules = [*PROJECT, ("myproject/utils.py", helper)]
+    modules = [
+        *PROJECT,
+        ("myproject/utils.py", helper),
+        ("myproject/text.py", "def tidy(value):\n    return value.strip()\n"),
+    ]
     if imports is None:
         name = "myproject/views.py"
         imports = "from .utils import identity\n"
@@ -692,3 +748,82 @@ def test_project_helper_that_escapes_clears_the_value(tmp_path, monkeypatch):
     )
     result = _analyze(tmp_path, monkeypatch, source, modules=modules)
     assert _reported_lines(result, symbol="search") == []
+
+
+FACTORY_CASES = [
+    (
+        "from flask import Flask, request\n"
+        "from fastapi import FastAPI\n"
+        "def init(app):\n"
+        "    @app.route('/')\n"
+        "    def page():\n"
+        "        return 'Hi ' + request.args['q']\n"
+        "    return app\n"
+        "flask_app = init(Flask(__name__))\n"
+        "api = FastAPI()\n",
+        True,
+    ),
+    (
+        "from flask import Flask, request\n"
+        "from fastapi import FastAPI\n"
+        "def init(app):\n"
+        "    @app.get('/')\n"
+        "    def page():\n"
+        "        return 'Hi ' + request.args['q']\n"
+        "    return app\n"
+        "flask_app = init(Flask(__name__))\n",
+        True,
+    ),
+    (
+        "from flask import request\n"
+        "from fastapi import FastAPI\n"
+        "def init(app):\n"
+        "    @app.get('/')\n"
+        "    def page():\n"
+        "        return 'Hi ' + request.args['q']\n"
+        "    return app\n"
+        "api = init(FastAPI())\n",
+        False,
+    ),
+    (
+        "from flask import request\n"
+        "from fastapi import FastAPI\n"
+        "def init(app):\n"
+        "    @app.get('/')\n"
+        "    def page():\n"
+        "        return 'Hi ' + request.args['q']\n"
+        "    return app\n",
+        False,
+    ),
+    (
+        "from flask import request\n"
+        "from starlette.applications import Starlette\n"
+        "app = Starlette()\n"
+        "@app.route('/')\n"
+        "def page(req):\n"
+        "    return 'Hi ' + request.args['q']\n",
+        False,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "source, reported",
+    FACTORY_CASES,
+    ids=[
+        "route via init(Flask())",
+        "get via init(Flask())",
+        "get via init(FastAPI())",
+        "get on an unresolved receiver",
+        "route on Starlette",
+    ],
+)
+def test_app_factory_receivers_in_a_module_that_imports_fastapi(
+    tmp_path, monkeypatch, source, reported
+):
+    result = _analyze(tmp_path, monkeypatch, source)
+    expected = []
+    if reported:
+        expected = [_line(source, "        return ")]
+    assert _listed_lines(result, symbol="page") == expected
+    assert _reported_lines(result, symbol="page") == expected

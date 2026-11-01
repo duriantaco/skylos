@@ -70,7 +70,7 @@ DJANGO = "django"
 
 _MAX_LABELS = 4
 _MAX_LOOP_PASSES = 3
-_MAX_HELPER_DEPTH = 4
+_MAX_HELPER_DEPTH = 3
 _OPAQUE = "?"
 _UNRESOLVED = "unresolved-transform"
 _PASS_THROUGH_TEXT = frozenset(
@@ -674,6 +674,14 @@ def _too_large(func: ast.AST) -> bool:
     return False
 
 
+def _combined_kind(kinds):
+    if "json" in kinds:
+        return "json"
+    if kinds == {FLASK}:
+        return FLASK
+    return None
+
+
 def _module_file(bases, parts, root: Path):
     """The one project file ``parts`` names under ``bases`` (``a/b.py`` or
     ``a/b/__init__.py``), inside ``root`` and not a symlink; None when there
@@ -737,7 +745,7 @@ def _route_rules(func: ast.AST, module):
         for kw in decorator.keywords:
             if kw.arg == "rule":
                 rule = kw.value
-        if rule is None or module.view_framework(decorator) != FLASK:
+        if rule is None or module.view_framework(decorator, func) != FLASK:
             continue
         found = True
         if isinstance(rule, ast.Constant) and isinstance(rule.value, str):
@@ -879,61 +887,103 @@ class _Module:
             return False
         return self.names_are_stable(dotted)
 
-    def view_framework(self, decorator: ast.Call):
-        """FLASK when a route decorator registers the view on a Flask app or
-        Blueprint; None for a FastAPI/Starlette router, or for a receiver of
-        unknown type in a module that also imports one of those."""
+    def view_framework(self, decorator: ast.Call, func):
+        """FLASK when a route decorator registers ``func`` on a Flask app or
+        Blueprint, None when it registers it on a FastAPI/Starlette router.
+        An unresolved receiver is Flask for ``.route``/``.errorhandler``
+        (FastAPI routes use ``.get``/``.post``...); for the other methods it is
+        Flask unless the module also imports FastAPI or Starlette."""
         target = decorator.func.value
         kind = None
         if isinstance(target, ast.Name):
-            kind = self._receiver_kind(target.id)
+            kind = self._receiver_kind(target.id, func)
         if kind == "json":
             return None
         if kind == FLASK or not self.json_framework:
             return FLASK
+        if decorator.func.attr in {"route", "errorhandler"}:
+            return FLASK
         return None
 
-    def _receiver_kind(self, name: str):
-        if name in self._receivers:
-            return self._receivers[name]
+    def _parent_map(self):
         if self._parents is None:
             self._parents = {
                 id(child): parent
                 for parent in ast.walk(self.tree)
                 for child in ast.iter_child_nodes(parent)
             }
+        return self._parents
+
+    def _enclosing_function(self, node):
+        parents = self._parent_map()
+        scope = parents.get(id(node))
+        while scope is not None and not isinstance(
+            scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)
+        ):
+            scope = parents.get(id(scope))
+        if isinstance(scope, ast.Module):
+            return None
+        return scope
+
+    def _receiver_kind(self, name: str, func=None):
+        """What ``name`` holds where ``func`` is defined: a parameter of the
+        enclosing function takes the kind every call site passes it (one
+        level, as in ``init(Flask(__name__))``); otherwise every assignment
+        of the name in the module must build the same kind."""
+        enclosing = None
+        if func is not None:
+            enclosing = self._enclosing_function(func)
+        if enclosing is not None and name in {p.arg for p in _params(enclosing)}:
+            return self._parameter_kind(enclosing, name)
+        return self._assigned_kind(name)
+
+    def _assigned_kind(self, name: str):
+        if name in self._receivers:
+            return self._receivers[name]
         kinds = set()
         for node in ast.walk(self.tree):
             if not isinstance(node, (ast.Assign, ast.AnnAssign)):
                 continue
             targets = getattr(node, "targets", None) or [node.target]
-            if not any(
-                isinstance(target, ast.Name) and target.id == name for target in targets
-            ):
-                continue
-            kinds.add(self._constructed_kind(node))
-        kind = None
-        if "json" in kinds:
-            kind = "json"
-        elif kinds == {FLASK}:
-            kind = FLASK
-        self._receivers[name] = kind
-        return kind
+            if any(isinstance(t, ast.Name) and t.id == name for t in targets):
+                kinds.add(self._expression_kind(node.value, node, assigned=False))
+        self._receivers[name] = _combined_kind(kinds)
+        return self._receivers[name]
 
-    def _constructed_kind(self, node):
-        value = node.value
+    def _parameter_kind(self, function, name: str):
+        key = (id(function), name)
+        if key in self._receivers:
+            return self._receivers[key]
+        params = [*function.args.posonlyargs, *function.args.args]
+        index = next((i for i, p in enumerate(params) if p.arg == name), None)
+        kinds = set()
+        if self.counts().get(function.name) == 1 and not function.decorator_list:
+            for node in ast.walk(self.tree):
+                if not (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == function.name
+                ):
+                    continue
+                argument = None
+                if index is not None and index < len(node.args):
+                    argument = node.args[index]
+                for kw in node.keywords:
+                    if kw.arg == name:
+                        argument = kw.value
+                kinds.add(self._expression_kind(argument, node, assigned=True))
+        self._receivers[key] = _combined_kind(kinds)
+        return self._receivers[key]
+
+    def _expression_kind(self, value, node, assigned):
+        if isinstance(value, ast.Name) and assigned:
+            return self._assigned_kind(value.id)
         if not isinstance(value, ast.Call):
             return None
         dotted = _dotted(value.func)
         if not dotted:
             return None
-        scope = self._parents.get(id(node))
-        while scope is not None and not isinstance(
-            scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)
-        ):
-            scope = self._parents.get(id(scope))
-        if isinstance(scope, ast.Module):
-            scope = None
+        scope = self._enclosing_function(node)
         qualified = self.index.resolved_import(scope, dotted) or ""
         if qualified in _FLASK_APPS:
             return FLASK
@@ -1626,8 +1676,6 @@ class _Run:
     def _project_call(self, node, qualified, args, keywords, env):
         """One-level summary of a plain function in another project module,
         imported absolutely or with ``from .mod import name``."""
-        if self.depth > 0:
-            return None
         found = None
         func = node.func
         if qualified is not None and self.module.names_are_stable(_dotted(func)):
@@ -1651,11 +1699,11 @@ class _Run:
         return result
 
     def _resolved_helper(self, helper) -> bool:
-        """A helper whose result keeps request data listed: one level of
-        summary, with no loop, branch or comprehension that could rebuild the
-        value character by character (an escaper the analysis cannot read)."""
-        if self.depth > 0:
-            return False
+        """A helper whose result keeps request data listed: no loop, branch
+        or comprehension that could rebuild the value character by character
+        (an escaper the analysis cannot read). Calls inside it are judged the
+        same way, up to ``_MAX_HELPER_DEPTH`` levels; a deeper, recursive or
+        unresolved call leaves its result unresolved."""
         return not any(isinstance(node, _BRANCHES) for node in _own_nodes(helper))
 
     def _known_call(self, node, qualified, env):
@@ -1946,7 +1994,11 @@ class _Run:
             if param.arg not in defaults:
                 return None
             bound[param.arg] = _CLEAN_OTHER
-        key = (id(helper), tuple(sorted(bound.items(), key=lambda item: item[0])))
+        key = (
+            id(helper),
+            self.depth,
+            tuple(sorted(bound.items(), key=lambda item: item[0])),
+        )
         if key in self.module.summaries:
             return self.module.summaries[key]
         if key in self.module.in_progress:
