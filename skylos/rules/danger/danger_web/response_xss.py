@@ -31,10 +31,12 @@ module is bounded by a step budget.
 from __future__ import annotations
 
 import ast
+import os
 import re
 import sys
 from dataclasses import dataclass
-from functools import reduce
+from functools import lru_cache, reduce
+from pathlib import Path
 
 from skylos.rules.danger.calls import _is_test_module
 from skylos.rules.danger.module_namespace import (
@@ -117,6 +119,15 @@ _BRANCHES = (
 )
 _MAX_FUNCTION_NODES = 20000
 _MAX_STEPS = 400000
+_MAX_PROJECT_MODULE_BYTES = 1_000_000
+_FLASK_APPS = frozenset(
+    {
+        "flask.Flask",
+        "flask.app.Flask",
+        "flask.Blueprint",
+        "flask.blueprints.Blueprint",
+    }
+)
 
 _ESCAPES = frozenset(
     {
@@ -663,9 +674,54 @@ def _too_large(func: ast.AST) -> bool:
     return False
 
 
-def _route_rules(func: ast.AST):
-    """Literal rule strings of a Flask route decorator on ``func``; None when
-    no decorator registers it as a view."""
+def _module_file(bases, parts, root: Path):
+    """The one project file ``parts`` names under ``bases`` (``a/b.py`` or
+    ``a/b/__init__.py``), inside ``root`` and not a symlink; None when there
+    is none, more than one, or it is too large."""
+    found = set()
+    for base in bases:
+        stem = base.joinpath(*parts)
+        for candidate in (stem.with_name(stem.name + ".py"), stem / "__init__.py"):
+            if not parts and candidate.name != "__init__.py":
+                continue
+            try:
+                if candidate.is_symlink() or not candidate.is_file():
+                    continue
+                resolved = candidate.resolve(strict=True)
+            except (OSError, RuntimeError):
+                continue
+            if resolved.is_relative_to(root):
+                found.add(resolved)
+    if len(found) != 1:
+        return None
+    path = found.pop()
+    try:
+        if path.stat().st_size > _MAX_PROJECT_MODULE_BYTES:
+            return None
+    except OSError:
+        return None
+    return path
+
+
+@lru_cache(maxsize=64)
+def _parse_project_module(path: str, mtime_ns: int, size: int):
+    try:
+        with open(path, "rb", opener=_no_follow) as handle:
+            source = handle.read(_MAX_PROJECT_MODULE_BYTES + 1)
+        if len(source) > _MAX_PROJECT_MODULE_BYTES:
+            return None
+        return ast.parse(source, filename=path)
+    except (OSError, SyntaxError, ValueError, RecursionError):
+        return None
+
+
+def _no_follow(path, flags):
+    return os.open(path, flags | getattr(os, "O_NOFOLLOW", 0))
+
+
+def _route_rules(func: ast.AST, module):
+    """Literal rule strings of the Flask route decorators on ``func``; None
+    when no decorator registers it as a Flask view."""
     rules = []
     found = False
     for decorator in func.decorator_list:
@@ -681,7 +737,7 @@ def _route_rules(func: ast.AST):
         for kw in decorator.keywords:
             if kw.arg == "rule":
                 rule = kw.value
-        if rule is None:
+        if rule is None or module.view_framework(decorator) != FLASK:
             continue
         found = True
         if isinstance(rule, ast.Constant) and isinstance(rule.value, str):
@@ -770,10 +826,13 @@ class _Module:
             elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
                 modules.add(node.module)
         roots = {name.split(".", 1)[0] for name in modules}
-        self.flask = "flask" in roots and not any(
-            root in roots for root in _JSON_FRAMEWORKS
-        )
+        self.flask = "flask" in roots
+        self.json_framework = any(root in roots for root in _JSON_FRAMEWORKS)
         self.django = "django" in roots
+        self._parents = None
+        self._receivers: dict = {}
+        self._project_functions: dict = {}
+        self._project_modules: dict = {}
         self._rebinding = None
         self._writes = None
         self._patched = None
@@ -819,6 +878,142 @@ class _Module:
         if self._patched or computed or qualified.rsplit(".", 1)[-1] in names:
             return False
         return self.names_are_stable(dotted)
+
+    def view_framework(self, decorator: ast.Call):
+        """FLASK when a route decorator registers the view on a Flask app or
+        Blueprint; None for a FastAPI/Starlette router, or for a receiver of
+        unknown type in a module that also imports one of those."""
+        target = decorator.func.value
+        kind = None
+        if isinstance(target, ast.Name):
+            kind = self._receiver_kind(target.id)
+        if kind == "json":
+            return None
+        if kind == FLASK or not self.json_framework:
+            return FLASK
+        return None
+
+    def _receiver_kind(self, name: str):
+        if name in self._receivers:
+            return self._receivers[name]
+        if self._parents is None:
+            self._parents = {
+                id(child): parent
+                for parent in ast.walk(self.tree)
+                for child in ast.iter_child_nodes(parent)
+            }
+        kinds = set()
+        for node in ast.walk(self.tree):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                continue
+            targets = getattr(node, "targets", None) or [node.target]
+            if not any(
+                isinstance(target, ast.Name) and target.id == name for target in targets
+            ):
+                continue
+            kinds.add(self._constructed_kind(node))
+        kind = None
+        if "json" in kinds:
+            kind = "json"
+        elif kinds == {FLASK}:
+            kind = FLASK
+        self._receivers[name] = kind
+        return kind
+
+    def _constructed_kind(self, node):
+        value = node.value
+        if not isinstance(value, ast.Call):
+            return None
+        dotted = _dotted(value.func)
+        if not dotted:
+            return None
+        scope = self._parents.get(id(node))
+        while scope is not None and not isinstance(
+            scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)
+        ):
+            scope = self._parents.get(id(scope))
+        if isinstance(scope, ast.Module):
+            scope = None
+        qualified = self.index.resolved_import(scope, dotted) or ""
+        if qualified in _FLASK_APPS:
+            return FLASK
+        if qualified.split(".", 1)[0] in _JSON_FRAMEWORKS:
+            return "json"
+        return None
+
+    def project_function(self, qualified: str):
+        """``(module, function)`` for a plain module-level function defined
+        in a project module found statically under the scan root, else None.
+        Modules are parsed once, never imported, and capped in size."""
+        if qualified in self._project_functions:
+            return self._project_functions[qualified]
+        result = None
+        module_name, _, name = qualified.rpartition(".")
+        path = self._project_module_path(module_name)
+        if path is not None:
+            result = self._function_in(path, name)
+        self._project_functions[qualified] = result
+        return result
+
+    def relative_function(self, local: str):
+        """The project function a module-level ``from .mod import name``
+        binds to ``local``, resolved from this file's package directory."""
+        key = ("relative", local)
+        if key in self._project_functions:
+            return self._project_functions[key]
+        result = None
+        found = [
+            (node, alias)
+            for node in self.tree.body
+            if isinstance(node, ast.ImportFrom) and node.level
+            for alias in node.names
+            if (alias.asname or alias.name) == local
+        ]
+        if len(found) == 1 and not self.counts().get(local, 0) > 1:
+            node, alias = found[0]
+            base = Path(self.file_path).resolve().parent
+            for _ in range(node.level - 1):
+                base = base.parent
+            parts = (node.module or "").split(".") if node.module else []
+            path = _module_file([base], parts, self._scan_root())
+            if path is not None:
+                result = self._function_in(path, alias.name)
+        self._project_functions[key] = result
+        return result
+
+    def _scan_root(self) -> Path:
+        if self.project_root:
+            return Path(self.project_root).resolve()
+        return Path(self.file_path).resolve().parent
+
+    def _project_module_path(self, module_name: str):
+        parts = module_name.split(".")
+        if not module_name or not all(part.isidentifier() for part in parts):
+            return None
+        root = self._scan_root()
+        bases = [Path(self.file_path).resolve().parent, root, root / "src"]
+        return _module_file(bases, parts, root)
+
+    def _function_in(self, path: Path, name: str):
+        if path == Path(self.file_path).resolve():
+            return None
+        if path not in self._project_modules:
+            module = None
+            try:
+                stat = path.stat()
+                tree = _parse_project_module(str(path), stat.st_mtime_ns, stat.st_size)
+            except OSError:
+                tree = None
+            if tree is not None:
+                module = _Module(tree, path, self.project_root)
+            self._project_modules[path] = module
+        module = self._project_modules[path]
+        if module is None:
+            return None
+        helper = module.helpers().get(name)
+        if helper is None or not any(helper is node for node in module.tree.body):
+            return None
+        return module, helper
 
     def helpers(self) -> dict:
         """Undecorated, non-generator functions bound once in the module, so
@@ -1417,12 +1612,43 @@ class _Run:
                 if result is not None:
                     self._writes_into(node, args, keywords, receiver, env)
                     return result
+        project = self._project_call(node, qualified, args, keywords, env)
+        if project is not None:
+            self._writes_into(node, args, keywords, receiver, env)
+            return project
         if receiver is not None and qualified is None:
             method = self._method_call(node, func, receiver, args, keywords, env)
             if method is not None:
                 return method
         self._writes_into(node, args, keywords, receiver, env)
         return _opaque(*args, *(value for _, value in keywords), receiver)
+
+    def _project_call(self, node, qualified, args, keywords, env):
+        """One-level summary of a plain function in another project module,
+        imported absolutely or with ``from .mod import name``."""
+        if self.depth > 0:
+            return None
+        found = None
+        func = node.func
+        if qualified is not None and self.module.names_are_stable(_dotted(func)):
+            found = self.module.project_function(qualified)
+        elif (
+            qualified is None
+            and isinstance(func, ast.Name)
+            and func.id not in env.values
+            and func.id not in self.module.helpers()
+        ):
+            found = self.module.relative_function(func.id)
+        if found is None:
+            return None
+        module, helper = found
+        try:
+            result = self._helper_call(helper, node, args, keywords, module)
+        except (_BudgetExceeded, RecursionError):
+            return None
+        if result is not None and not self._resolved_helper(helper):
+            result = _opaqued(result)
+        return result
 
     def _resolved_helper(self, helper) -> bool:
         """A helper whose result keeps request data listed: one level of
@@ -1678,7 +1904,7 @@ class _Run:
             )
             self._touch(root, _opaque_labels(labels), env)
 
-    def _helper_call(self, helper, node, args, keyword_pairs):
+    def _helper_call(self, helper, node, args, keyword_pairs, module=None):
         """The value a module-level helper returns for these arguments, or
         None when the call cannot be bound to its parameters."""
         if self.depth >= _MAX_HELPER_DEPTH:
@@ -1727,7 +1953,9 @@ class _Run:
             return None
         self.module.in_progress.add(key)
         try:
-            run = _Run(self.module, helper, self.framework, False, self.depth + 1)
+            run = _Run(
+                module or self.module, helper, self.framework, False, self.depth + 1
+            )
             result = run.run(_Env(bound))
         finally:
             self.module.in_progress.discard(key)
@@ -1949,7 +2177,7 @@ def _view_entries(module: _Module):
         if _is_generator(node):
             continue
         if module.flask:
-            rules = _route_rules(node)
+            rules = _route_rules(node, module)
             if rules is not None:
                 yield node, FLASK, _flask_params(node, rules)
                 continue

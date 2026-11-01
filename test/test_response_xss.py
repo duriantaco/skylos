@@ -24,9 +24,11 @@ DJANGO = (
 )
 
 
-def _analyze(tmp_path, monkeypatch, source, name="app.py"):
+def _analyze(tmp_path, monkeypatch, source, name="app.py", modules=()):
     monkeypatch.setenv("SKYLOS_JOBS", "1")
     write_fixture(tmp_path, name, source)
+    for module_name, text in modules:
+        write_fixture(tmp_path, module_name, text)
     write_fixture(tmp_path, "pyproject.toml", '[project]\nname="views"\n')
     result = json.loads(
         analyze(
@@ -43,19 +45,21 @@ def _analyze(tmp_path, monkeypatch, source, name="app.py"):
     return result
 
 
-def _reported_lines(result):
+def _reported_lines(result, symbol=None):
     return sorted(
-        f["line"] for f in result.get("danger", []) if f["rule_id"] == "SKY-D228"
+        f["line"]
+        for f in result.get("danger", [])
+        if f["rule_id"] == "SKY-D228" and symbol in (None, f["symbol"])
     )
 
 
-def _listed_lines(result):
+def _listed_lines(result, symbol="search"):
     return sorted(
         f["line"]
         for f in result.get("danger", [])
         if f["rule_id"] == "SKY-D228"
         and f["listing"]["listed"]
-        and f["symbol"] == "search"
+        and f["symbol"] == symbol
     )
 
 
@@ -550,3 +554,141 @@ def test_existing_literal_html_finding_is_not_duplicated(tmp_path, monkeypatch):
     findings = [f for f in result["danger"] if f["rule_id"] == "SKY-D228"]
     assert [f["line"] for f in findings] == [_line(source, "    return ")]
     assert findings[0]["message"] == "XSS (HTML built from unescaped user input)"
+
+
+def test_framework_is_decided_per_view_in_a_mixed_module(tmp_path, monkeypatch):
+    source = (
+        "from fastapi import FastAPI\n"
+        "from flask import Flask, request\n"
+        "app = Flask(__name__)\n"
+        "api = FastAPI()\n"
+        "@app.route('/page')\n"
+        "def page():\n"
+        "    return 'Hi ' + request.args['q']\n"
+        "@api.get('/json')\n"
+        "def data(q: str):\n"
+        "    return 'Hi ' + q\n"
+        "@app.get('/other/<name>')\n"
+        "def other(name):\n"
+        "    return 'Hi ' + name\n"
+    )
+    result = _analyze(tmp_path, monkeypatch, source)
+    findings = [f for f in result["danger"] if f["rule_id"] == "SKY-D228"]
+    assert sorted((f["symbol"], f["listing"]["listed"]) for f in findings) == [
+        ("other", True),
+        ("page", True),
+    ]
+
+
+def test_fastapi_import_alone_does_not_hide_a_flask_view(tmp_path, monkeypatch):
+    source = (
+        "from flask import Flask, request\n"
+        "from fastapi import FastAPI\n"
+        "app = Flask(__name__)\n"
+        "@app.route('/q')\n"
+        "def page():\n"
+        "    return 'Hi ' + request.args['q']\n"
+    )
+    result = _analyze(tmp_path, monkeypatch, source)
+    assert _listed_lines(result, symbol="page") == [_line(source, "    return ")]
+
+
+PROJECT = (("myproject/__init__.py", ""),)
+CROSS_MODULE = {
+    "identity helper": (
+        "from myproject.utils import identity\n",
+        "identity(request.args['q'])",
+        "def identity(value):\n    return value\n",
+        True,
+    ),
+    "module attribute call": (
+        "import myproject.utils\n",
+        "myproject.utils.identity(request.args['q'])",
+        "def identity(value):\n    return value\n",
+        True,
+    ),
+    "relative import": (
+        None,
+        "identity(request.args['q'])",
+        "def identity(value):\n    return value\n",
+        True,
+    ),
+    "markup wrapper": (
+        "from myproject.utils import bold\n",
+        "bold(request.args['q'])",
+        "def bold(value):\n    return f'<b>{value}</b>'\n",
+        True,
+    ),
+    "allowlist escaper loop": (
+        "from myproject.utils import encode\n",
+        "encode(request.args['q'])",
+        "def encode(text):\n"
+        "    out = ''\n"
+        "    for char in text:\n"
+        "        if char.isalnum():\n"
+        "            out += char\n"
+        "        else:\n"
+        "            out += '&#' + str(ord(char)) + ';'\n"
+        "    return out\n",
+        False,
+    ),
+    "helper calling another helper": (
+        "from myproject.utils import outer\n",
+        "outer(request.args['q'])",
+        "def inner(value):\n    return value\ndef outer(value):\n    return inner(value)\n",
+        False,
+    ),
+    "unresolvable module": (
+        "from elsewhere.utils import identity\n",
+        "identity(request.args['q'])",
+        "def identity(value):\n    return value\n",
+        False,
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "imports, call, helper, listed", list(CROSS_MODULE.values()), ids=list(CROSS_MODULE)
+)
+def test_project_helpers_are_summarised_across_modules(
+    tmp_path, monkeypatch, imports, call, helper, listed
+):
+    name = "app.py"
+    modules = [*PROJECT, ("myproject/utils.py", helper)]
+    if imports is None:
+        name = "myproject/views.py"
+        imports = "from .utils import identity\n"
+    source = (
+        "from flask import Flask, request\n"
+        + imports
+        + "app = Flask(__name__)\n"
+        + "@app.route('/search')\n"
+        + "def search():\n"
+        + f"    return 'Hi ' + {call}\n"
+    )
+    result = _analyze(tmp_path, monkeypatch, source, name=name, modules=modules)
+    assert _reported_lines(result, symbol="search") == [_line(source, "    return ")]
+    expected = []
+    if listed:
+        expected = [_line(source, "    return ")]
+    assert _listed_lines(result, symbol="search") == expected
+
+
+def test_project_helper_that_escapes_clears_the_value(tmp_path, monkeypatch):
+    modules = [
+        *PROJECT,
+        (
+            "myproject/utils.py",
+            "import html\ndef show(value):\n    return html.escape(value)\n",
+        ),
+    ]
+    source = (
+        "from flask import Flask, request\n"
+        "from myproject.utils import show\n"
+        "app = Flask(__name__)\n"
+        "@app.route('/search')\n"
+        "def search():\n"
+        "    return 'Hi ' + show(request.args['q'])\n"
+    )
+    result = _analyze(tmp_path, monkeypatch, source, modules=modules)
+    assert _reported_lines(result, symbol="search") == []
