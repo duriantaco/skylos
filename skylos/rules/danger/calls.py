@@ -397,7 +397,7 @@ def _call_low_risk_context(
                 "detail": "the hashed data is not a credential, identity or certificate",
             }
     kind = opts.get("constant_argument")
-    if kind and _constant_argument_proved(node, kind, filename, project_root):
+    if kind and _constant_argument_safely_proved(node, kind, filename, project_root):
         return {
             "reason": "constant-argument",
             "detail": "every value that reaches the argument is built from literals",
@@ -680,6 +680,9 @@ _PURE_IMPORTED_FUNCTIONS = frozenset(
         "binascii.unhexlify",
     }
 )
+_PURE_IMPORTED_NAMES = frozenset(
+    name.rsplit(".", 1)[-1] for name in _PURE_IMPORTED_FUNCTIONS
+)
 _TEXT_METHODS = frozenset(
     {
         "capitalize",
@@ -918,39 +921,60 @@ class _ConstantContext:
         self.module = module
         self.filename = filename
         self.project_root = project_root
-        module_name = None
+        self.module_name = None
         if filename:
-            module_name = module_name_for(filename)
-        runners = frozenset(
-            id(node)
-            for node in ast.walk(module)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id in {"exec", "eval"}
-        )
-        self.locals_dynamic, _ = module_rebinding(
-            module, module_name, isolated_code_calls=runners
-        )
-        self.globals_dynamic, self.rebound = module_rebinding(module, module_name)
-        self.bindings, self.import_only = _binding_names(module)
-        self.frames, self.builtins_reachable = _module_reaches_frames_or_builtins(
-            module
-        )
+            self.module_name = module_name_for(filename)
+        self._locals_dynamic = None
+        self._globals = None
+        self._bindings = None
+        self._reach = None
         self.flows = {}
         self.pure_calls = {}
 
+    def locals_dynamic(self) -> bool:
+        """Code can write frame locals or replace names behind the module."""
+        if self._locals_dynamic is None:
+            runners = frozenset(
+                id(node)
+                for node in ast.walk(self.module)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in {"exec", "eval"}
+            )
+            dynamic, _ = module_rebinding(
+                self.module, self.module_name, isolated_code_calls=runners
+            )
+            self._locals_dynamic = dynamic or self.reach()[0]
+        return self._locals_dynamic
+
+    def globals_rebinding(self):
+        if self._globals is None:
+            self._globals = module_rebinding(self.module, self.module_name)
+        return self._globals
+
+    def bindings(self):
+        if self._bindings is None:
+            self._bindings = _binding_names(self.module)
+        return self._bindings
+
+    def reach(self):
+        if self._reach is None:
+            self._reach = _module_reaches_frames_or_builtins(self.module)
+        return self._reach
+
     def builtin_is_trusted(self, name: str) -> bool:
-        return (
-            name in _PURE_BUILTINS
-            and self.bindings.get(name, 0) == 0
-            and not self.globals_dynamic
-            and not self.builtins_reachable
-            and name not in self.rebound
-        )
+        if name not in _PURE_BUILTINS or self.bindings()[0].get(name, 0):
+            return False
+        if self.reach()[1]:
+            return False
+        dynamic, rebound = self.globals_rebinding()
+        return not dynamic and name not in rebound
 
     def pure_function(self, func: ast.AST, scope: ast.AST) -> bool:
         dotted = _dotted_name(func)
-        if not dotted or dotted.split(".", 1)[0] not in self.import_only:
+        if not dotted or dotted.rsplit(".", 1)[-1] not in _PURE_IMPORTED_NAMES:
+            return False
+        if not dotted or dotted.split(".", 1)[0] not in self.bindings()[1]:
             return False
         key = (id(scope), dotted)
         cached = self.pure_calls.get(key)
@@ -1229,9 +1253,10 @@ def _constant_evaluate(context, scope, node: ast.AST, value) -> frozenset:
     if isinstance(node, ast.BinOp):
         return _binary_labels(node, value)
     if isinstance(node, (ast.UnaryOp, ast.Compare)):
-        operands = [node.operand]
         if isinstance(node, ast.Compare):
             operands = [node.left, *node.comparators]
+        else:
+            operands = [node.operand]
         for operand in operands:
             if _UNKNOWN in value(operand):
                 return _UNKNOWN_LABELS
@@ -1423,12 +1448,21 @@ def _constant_code_is_closed(node: ast.Call, codes, context) -> bool:
                 if (
                     namespaces
                     or part.id in _CODE_ESCAPES
-                    or context.bindings.get(part.id, 0)
+                    or context.bindings()[0].get(part.id, 0)
                 ):
                     return False
             elif isinstance(part, ast.Attribute) and part.attr.startswith("__"):
                 return False
     return True
+
+
+def _constant_argument_safely_proved(node, kind, filename, project_root) -> bool:
+    """The constant-argument proof only ever hides a finding, so any failure
+    to complete it keeps the finding listed."""
+    try:
+        return _constant_argument_proved(node, kind, filename, project_root)
+    except Exception:
+        return False
 
 
 def _shell_text_is_inert(text: str) -> bool:
@@ -1457,8 +1491,6 @@ def _constant_argument_proved(
     if argument is None or module is None or scope is None:
         return False
     context = _constant_context(module, filename, project_root)
-    if context.locals_dynamic or context.frames:
-        return False
     if isinstance(scope, ast.Module):
         labels = context.static_labels(argument)
     else:
@@ -1466,7 +1498,7 @@ def _constant_argument_proved(
         if results is None:
             return False
         labels = results.get(id(argument))
-    if not labels or _UNKNOWN in labels:
+    if not labels or _UNKNOWN in labels or context.locals_dynamic():
         return False
     if kind == "code":
         codes = _exact_values(labels)

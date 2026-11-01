@@ -257,6 +257,10 @@ LISTED = {
         "SKY-D202",
         "def run():\n    exec('exec(input())')\n",
     ),
+    "comparison_code": (
+        "SKY-D201",
+        "def run():\n    same = 'a' == 'b'\n    return eval(not same)\n",
+    ),
     "attribute_value": (
         "SKY-D201",
         "class Job:\n"
