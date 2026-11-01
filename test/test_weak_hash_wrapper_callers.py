@@ -182,7 +182,8 @@ def _wide_caller_graph(width: int) -> str:
     return "\n".join(lines) + "\n"
 
 
-def test_wide_caller_graph_is_traced_in_bounded_time(tmp_path):
+def test_wide_caller_graph_is_traced_in_bounded_time(tmp_path, monkeypatch):
+    monkeypatch.setenv("SKYLOS_JOBS", "1")
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n")
     package = tmp_path / "app"
     package.mkdir()
