@@ -1686,3 +1686,72 @@ def test_owner_module_dynamic_access_rejects_the_encoder_proof(
     )
     result = _analyze(tmp_path, monkeypatch, source, modules=[*PROJECT, *modules])
     _assert_outcome(result, source, "    return 'Hi '", outcome)
+
+
+ATTRGETTER_WRITE = (
+    "import sys\n"
+    "from operator import attrgetter\n"
+    "attrgetter('modules')(sys)[__name__].SAFE = ('<', '>')\n"
+)
+NAMED_WRITES = {
+    "attrgetter write in the view module": (
+        SAFE_TUPLE_ENCODER + ATTRGETTER_WRITE,
+        (),
+        "listed",
+    ),
+    "attrgetter write in an imported encoder module": (
+        "from myproject.codec import encode\n",
+        (("myproject/codec.py", SAFE_TUPLE_ENCODER + ATTRGETTER_WRITE),),
+        "listed",
+    ),
+    "attrgetter write in the owner of an imported allowlist": (
+        IMPORTED_ENCODER,
+        (("myproject/consts.py", "SAFE = (',', '.')\n" + ATTRGETTER_WRITE),),
+        "listed",
+    ),
+    "update with a keyword of the name": (
+        SAFE_TUPLE_ENCODER
+        + "from operator import attrgetter\n"
+        + "attrgetter('__globals__')(encode).update(SAFE=('<',))\n",
+        (),
+        "listed",
+    ),
+    "subscript store keyed by the name": (
+        SAFE_TUPLE_ENCODER
+        + "from operator import attrgetter\n"
+        + "holder = attrgetter('__globals__')(encode)\n"
+        + "holder['SAFE'] = ('<',)\n",
+        (),
+        "listed",
+    ),
+    "the name as a string passed to a call": (
+        SAFE_TUPLE_ENCODER + "install('SAFE', ('<',))\n",
+        (),
+        "listed",
+    ),
+    "unrelated attribute and string in the module": (
+        SAFE_TUPLE_ENCODER
+        + "class Config:\n    mode = 'lax'\n"
+        + "config = Config()\nconfig.mode = 'strict'\nLABEL = 'SAFE_MODE'\n",
+        (),
+        "quiet",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "helpers, modules, outcome", list(NAMED_WRITES.values()), ids=list(NAMED_WRITES)
+)
+def test_tables_written_by_name_lose_the_encoder_proof(
+    tmp_path, monkeypatch, helpers, modules, outcome
+):
+    source = (
+        "from flask import Flask, request\n"
+        + helpers
+        + "app = Flask(__name__)\n"
+        + "@app.route('/')\n"
+        + "def page():\n"
+        + "    return 'Hi ' + encode(request.args['q'])\n"
+    )
+    result = _analyze(tmp_path, monkeypatch, source, modules=[*PROJECT, *modules])
+    _assert_outcome(result, source, "    return 'Hi '", outcome)

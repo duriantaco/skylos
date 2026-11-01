@@ -1226,6 +1226,44 @@ def _dynamic_node(node) -> bool:
     return False
 
 
+def _docstrings(tree) -> set:
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(
+            node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            body = node.body
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                found.add(id(body[0].value))
+    return found
+
+
+def _name_written(tree, name: str) -> bool:
+    """``name`` is written by name somewhere in ``tree``: an attribute store
+    or ``del`` on any receiver, a subscript store or ``del`` keyed by its
+    string, a ``name=`` keyword in a call, or a string constant equal to it
+    outside docstrings."""
+    docstrings = _docstrings(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == name:
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                return True
+        elif isinstance(node, ast.keyword) and node.arg == name:
+            return True
+        elif (
+            isinstance(node, ast.Constant)
+            and node.value == name
+            and id(node) not in docstrings
+        ):
+            return True
+    return False
+
+
 def _text_literal(node) -> bool:
     return isinstance(node, ast.Constant) and isinstance(node.value, str)
 
@@ -1433,10 +1471,11 @@ class _LoopFrame:
 class _Module:
     """Facts shared by every function of one module."""
 
-    def __init__(self, tree, file_path, project_root):
+    def __init__(self, tree, file_path, project_root, root=None):
         self.tree = tree
         self.file_path = file_path
         self.project_root = project_root
+        self.root = root or self
         self.index = UntrustedSourceIndex(tree)
         self.steps = 0
         self.summaries: dict = {}
@@ -1466,6 +1505,7 @@ class _Module:
         self._literals: dict = {}
         self._variables = None
         self._dynamic = None
+        self._stable_names: dict = {}
         self.callables: dict = {}
         self.free_names: dict = {}
 
@@ -1689,7 +1729,7 @@ class _Module:
             except OSError:
                 tree = None
             if tree is not None:
-                module = _Module(tree, path, self.project_root)
+                module = _Module(tree, path, self.project_root, self.root)
             self._project_modules[path] = module
         return self._project_modules[path]
 
@@ -1724,7 +1764,12 @@ class _Module:
                 and node.id == name
                 and isinstance(node.ctx, ast.Load)
             ]
-            if value is not None and all(_read_only_use(use, parents) for use in uses):
+            if (
+                value is not None
+                and all(_read_only_use(use, parents) for use in uses)
+                and self.table_name_is_stable(name)
+                and self.root.table_name_is_stable(name)
+            ):
                 mutable = isinstance(assigned, (ast.List, ast.Set, ast.Dict))
                 result = (value, mutable)
         self._literals[key] = result
@@ -1757,6 +1802,10 @@ class _Module:
         ]
         if not all(_read_only_use(use, parents) for use in uses):
             return None
+        if not (
+            self.table_name_is_stable(name) and self.table_name_is_stable(alias.name)
+        ):
+            return None
         return owner.module_literal(alias.name, kinds, hops - 1)
 
     def _import_owner(self, stmt: ast.ImportFrom):
@@ -1773,6 +1822,31 @@ class _Module:
         if path is None:
             return None
         return self._load_module(path)
+
+    def table_name_is_stable(self, name: str) -> bool:
+        """Nothing in this module writes ``name`` by name: no attribute store
+        or ``del`` of that attribute on any receiver, no subscript store or
+        ``del`` keyed by its string, no ``name=`` keyword in any call, no
+        string constant equal to it outside docstrings. Also the identity
+        checks the html.escape trust uses: no mock patching, no
+        ``setattr`` with a computed name, no rebinding through the module
+        object."""
+        if name in self._stable_names:
+            return self._stable_names[name]
+        if self._patched is None:
+            self._patched = has_mock_api_patching(self.tree)
+        if self._writes is None:
+            self._writes = attribute_write_names(self.tree)
+        written, computed = self._writes
+        stable = not (
+            self._patched
+            or computed
+            or name in written
+            or not self.names_are_stable(name)
+            or _name_written(self.tree, name)
+        )
+        self._stable_names[name] = stable
+        return stable
 
     def dynamic_namespace(self) -> bool:
         """The module reaches names through its namespace at run time
