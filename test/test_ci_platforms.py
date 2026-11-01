@@ -499,6 +499,31 @@ def test_init_without_ci_files_still_writes_the_github_workflow(tmp_path, monkey
     assert "Setting up" not in printed
 
 
+@pytest.mark.parametrize("dart", [False, True])
+def test_init_image_template_installs_the_dart_extra_only_for_dart_files(
+    tmp_path, monkeypatch, dart
+):
+    from skylos import __version__
+
+    (tmp_path / "app.py").write_text("x = 1\n")
+    if dart:
+        (tmp_path / "lib").mkdir()
+        (tmp_path / "lib" / "main.dart").write_text("void main() {}\n")
+
+    exit_code, _ = _init(tmp_path, monkeypatch, "--ci", "gitlab")
+
+    assert exit_code == 0
+    script = yaml.safe_load((tmp_path / ".gitlab-ci.yml").read_text())["skylos"][
+        "script"
+    ]
+    extra = ""
+    if dart:
+        extra = "[dart]"
+    assert script[0] == "python -I -m pip install " + shlex.quote(
+        f"skylos{extra}=={__version__}"
+    )
+
+
 def test_init_writes_the_jenkinsfile_it_renders(tmp_path, monkeypatch):
     exit_code, printed = _init(tmp_path, monkeypatch, "--ci", "jenkins")
     expected = platforms.render(BY_KEY["jenkins"], Settings())

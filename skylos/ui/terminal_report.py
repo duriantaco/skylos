@@ -140,10 +140,13 @@ def render_pretty_results(
     limit: int | None = None,
     expand_advice: bool = False,
     all_advice: bool = False,
+    config=None,
 ) -> None:
+    full_result = result
     result, visibility = prepare_advice_view(
         result, project_root=root_path, all_advice=all_advice
     )
+    from skylos.reporting.issue_summary import issue_summary, total_text
     from skylos.reporting.sca_summary import group_advisories, is_advisory
 
     # Advisories print as one row per package; JSON keeps every advisory.
@@ -162,10 +165,12 @@ def render_pretty_results(
     header = Text.assemble(
         ("Skylos", "bold cyan"),
         (" static analysis", "bold"),
-        (f"  {_finding_type_headline(result)}", "dim"),
+        (f"  {total_text(issue_summary(full_result))}", "dim"),
         (f"  {total_files} file{'s' if total_files != 1 else ''} analyzed", "dim"),
     )
     console.print(header)
+    console.print(Text(f"  By finding type: {_finding_type_headline(result)}", style="dim"))
+    _print_top_risks(console, full_result, root_path=root_path, config=config)
     annotation_summary = typing_coverage_text(result.get("analysis_summary"))
     if annotation_summary:
         console.print(Text(annotation_summary, style="dim"))
@@ -360,6 +365,38 @@ def _finding_count_label(findings: list[PrettyFinding]) -> str:
     )
 
 
+def _print_top_risks(console, result, *, root_path=None, config=None):
+    """The verdict and up to five risks with fixes, before any finding list."""
+    from skylos.reporting.top_risks import rank_risks, scan_verdict, top_risks
+
+    rows = rank_risks(result, project_root=root_path, config=config)
+    verdict = scan_verdict(result, config=config, rows=rows)
+    style = "yellow"
+    if verdict["status"] == "not_ready":
+        style = "bold red"
+    elif verdict["status"] == "ready":
+        style = "green"
+    console.print(Text(f"  {verdict['text']}", style=style))
+    top = top_risks(result, rows=rows)
+    if not top:
+        return
+    console.print(Text("  Top risks (fix these first)", style="bold"))
+    for index, row in enumerate(top, 1):
+        tags = []
+        if row.blocking:
+            tags.append("blocks the gate")
+        if row.in_tests:
+            tags.append("test code")
+        if row.more:
+            tags.append(f"+{row.more} more like this")
+        head = f"  {index}. {row.severity} {row.rule_id} {row.title}  {row.location}"
+        if tags:
+            head += " (" + ", ".join(tags) + ")"
+        console.print(Text(_sanitize_terminal_text(head)))
+        console.print(Text(_sanitize_terminal_text(f"     Fix: {row.fix}"), style="dim"))
+        console.print(Text(f"     {row.docs_url}", style="dim"))
+
+
 def _finding_type_headline(result):
     counts = advice_display_counts(result)
     defect_label = "defect" if counts["defect"] == 1 else "defects"
@@ -381,7 +418,7 @@ def _print_advice_groups(console, result, *, root_path=None, limit=None):
     console.print(Text("  Advice", style="bold"))
     table = Table(box=None, padding=(0, 1), expand=True)
     table.add_column("Type", width=6)
-    table.add_column("Advice priority", width=15, overflow="fold")
+    table.add_column("Severity", width=15, overflow="fold")
     table.add_column("Rule", width=20, overflow="fold")
     table.add_column("Count", width=5, justify="right")
     table.add_column("Top files", overflow="fold")
@@ -551,7 +588,7 @@ def _context_details(item):
 
 
 def _print_finding(console: Console, finding: PrettyFinding, short_path: str) -> None:
-    priority_label = "Advice priority" if finding.finding_type == "advice" else "Severity"
+    priority_label = "Severity"
     first = Text.assemble(
         ("    ", ""),
         ("█", _severity_rail_style(finding.severity)),

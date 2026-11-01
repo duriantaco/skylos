@@ -97,7 +97,7 @@ def test_assessment_keeps_critical_review_and_measurements_without_score(
     )
     renderer(console, scan)
     text = " ".join(output.getvalue().split())
-    assert "CRITICAL" in text and "1 unresolved finding" in text
+    assert "CRITICAL" in text and "1 risk finding" in text
     assert "30/200 functions (15%)" in text
     assert "max 45" in text and "limit 10" in text and "4.5× limit" in text
     assert "Coverage: partial" in text and "not assessed: secrets" in text
@@ -135,7 +135,8 @@ def test_known_urgency_does_not_hide_findings_with_unknown_severity():
     payload["risk"]["severity_counts"] = {"CRITICAL": 1, "UNKNOWN": 1}
     payload["risk"]["finding_count"] = 2
     assert assessment_rows(payload)[0][1] == (
-        "CRITICAL · 2 unresolved findings · 1 with unknown severity"
+        "CRITICAL · 2 risk findings (all issues except dead code and advice)"
+        " · 1 with unknown severity"
     )
 
 

@@ -80,7 +80,14 @@ When changing templates:
   `cicd init` output with HEAD across its flags.
 - Jenkins and "other" install plain `skylos`: `skylos[dart]` builds from
   source and stock Jenkins agents have no C compiler. The `python:3.12`
-  templates keep `[dart]`.
+  templates and the GitHub workflow install `[dart]` only when the scan path
+  has Dart files (`has_dart_files` in `skylos/cicd/workflow.py`, the scanner's
+  discovery with .gitignore and default excludes).
+- Upload default: `cicd init` adds the Cloud upload jobs only when
+  `_cloud_login_found` sees `SKYLOS_TOKEN`, `.skylos/link.json` or a saved
+  login (`get_project_token`); otherwise it prints the `Cloud upload: off`
+  line. `--upload` / `--no-upload` always decide. Tests pin the login with
+  `monkeypatch.setattr(cicd_cmd, "_cloud_login_found", ...)`.
 - Jenkins with no configured URL sets no `JENKINS_URL`; detection also uses
   `JENKINS_HOME` or a `jenkins-` `BUILD_TAG`.
 - Test template changes in a CI container with a wheel of the working tree,

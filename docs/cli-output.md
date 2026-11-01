@@ -43,6 +43,61 @@ The default table report shows separate assessment readouts rather than a
 blended score badge. New source scans do not produce a codebase A–F grade.
 See [scan assessment](#scan-assessment).
 
+The first screen answers "what matters and what do I do": a verdict, one issue
+total, the checks that did not run, then up to five risks to fix first. Each
+risk shows its severity, rule, `file:line`, a one-line fix for its language and
+its rule docs link:
+
+```text
+╭──────────────────────────────────────────────────────────────────────╮
+│ Static Analysis Results · 295 files analysed                         │
+│ Not ready: 1 blocking issue                                          │
+│ 656 issues: security 123, AI defects 120, quality 334, dead code 79  │
+│ Not checked: dependencies (no packages were looked up)               │
+╰──────────────────────────────────────────────────────────────────────╯
+Top risks (fix these first)
+1. CRITICAL Command injection SKY-D212 · blocks the gate
+   scripts/activate_patch.sh:243
+   Fix: Quote every expansion ("$var"), allowlist the input, and never pass it
+   to eval, source or sh -c.
+   https://docs.skylos.dev/rules-reference#sky-d212--command-injection
+2. HIGH Path traversal SKY-D215 · +16 more like this
+   ...
+```
+
+Top risks are listed risk findings (not dead code or advice), ordered by: fails
+the gate on its own ("blocks the gate": a critical security issue, a secret,
+an AI-code issue at a blocking severity, a security control regression, or any
+finding of a category whose gate limit is 0), then severity, then production
+code before test code, then confidence. A finding that blocks the gate is
+ranked even when the default list hides it. Other findings of the same rule
+share one row ("+16 more like this").
+
+Finding tables below are sorted production code first, by severity; several
+test-code findings of one rule share one row with a count (`--verbose` lists
+each). `SKY-D223` undeclared imports show one row per package with the number
+of import sites. Dead-code rows keep the confidence and short reason tags on
+one line (`--verbose` shows every evidence sentence). Each table ends with
+**How to fix**: per rule, the one-line fix and its docs link. `--verbose` also
+puts the fix on every row and adds the finding Type column. JSON adds `fix` and
+`docs_url` to every finding, plus top-level `top_risks` and `issue_summary`
+(the total, counts by category with `null` for a check that did not run,
+hidden advice, suppressed and dismissed counts, and the verdict).
+
+The total is the same number everywhere: the closing line, the gate summary,
+`skylos suite`, `skylos report` and Skylos Cloud's listed count. A check that
+did not run is reported as "not checked", never 0; dependency vulnerabilities
+are "not checked" when no package was looked up (for example, no lockfile and
+only version ranges).
+
+For a page to share, `skylos report` writes a one-page HTML (or `--format md`)
+report: the verdict, the top five risks with fixes, counts by category, what was
+suppressed or dismissed, what was not covered, and the scan date, commit and
+Skylos version. It runs the same local `-a` scan (nothing is uploaded), or reads
+a saved `skylos . -a --format json` report; the HTML has no external assets
+and prints on one or two pages. `--format report-md`/`report-html` produce the
+same page from a normal scan command.
+
 A scan that ran more than dead-code checks (for example `-a`) ends with one
 issue count. It counts the listed findings by category: the records an upload
 marks as listed (`listed_finding_count`), which Skylos Cloud lists by default:
@@ -58,16 +113,18 @@ quality 9.` A dead-code-only scan keeps
 `No dead-code candidates found at current settings.` or its dead-code count.
 
 In an interactive terminal, a local scan with findings ends with one block that
-names the next command:
+names the next command. When the top risk is CRITICAL or HIGH, the first line
+names it:
 
 ```text
-Next: skylos cloud      track these per branch on Skylos Cloud (sends findings, not your repository)
+Next: fix SKY-D212 Command injection at scripts/activate_patch.sh:243 first (it blocks the gate)
+      skylos cloud      track these per branch on Skylos Cloud (sends findings, not your repository)
       skylos cicd init  check every pull request in CI
 ```
 
 The `skylos cicd init` line is left out once `.github/workflows/skylos.yml`
-exists. Runs without a terminal (CI included), machine formats,
-`--format pretty` and uploads print no block.
+exists. Runs without a terminal (CI included) and uploads print only the
+`Next: fix ... first` line; machine formats and `--format pretty` print no block.
 
 Use `pretty` when you want a compact, file-grouped terminal report:
 
@@ -641,8 +698,10 @@ grouping keeps related measurements together. The focused default view explains
 how many optional findings are available with `--all-advice`; `--expand-advice`
 exposes locations and messages within the selected view.
 
-Each built-in rule declares `finding_type` in the rule catalog. Reports show
-this as **Type**, separately from severity:
+Each built-in rule declares `finding_type` in the rule catalog. The terminal
+groups tables under **Bugs** (Defect), **Needs review** (Review) and
+**Maintainability advice** (Advice); JSON and `--verbose` show it as **Type**,
+separately from severity:
 
 | Type | Meaning | Examples |
 |---|---|---|
@@ -731,11 +790,10 @@ already includes a nested function's cognitive score, their metric entries share
 one enclosing entry. Every nested function keeps its name, line, measurements and
 original records. A missing, suppressed or ambiguous enclosing finding leaves the
 nested entry separate. Older saved reports without ownership evidence retain
-their existing entries. Human reports label advice severity as
-**Advice priority** and cap HIGH/CRITICAL advice at MEDIUM. Lower priorities are
-unchanged. The original severities remain in JSON, expanded record evidence,
-assessments and gate inputs. Defect, Review, security, secret and custom findings
-keep their original severity. Advice priority is not defect confidence.
+their existing entries. Every view shows each finding's own severity, the same
+value JSON, SARIF and the gate use; a HIGH complexity finding reads HIGH. For
+Advice the severity says how far a measurement exceeds its limit, not a security
+risk, and Advice never becomes a top risk.
 
 Missing annotations (`SKY-T101`/`SKY-T102`) are LOW-priority policy or coverage
 advice. They are generated by default only when an applicable annotation policy
@@ -852,7 +910,7 @@ The separate `skylos debt` and `skylos defend` scores retain their own contracts
 
 | Readout | Meaning |
 |---|---|
-| Risk | Highest unresolved severity and counts among Defect and Review findings, excluding dead-code candidates. Correctness findings in `quality` are included. |
+| Risk | Highest severity and count of risk findings: every listed issue except dead-code candidates and Advice. The row reads e.g. `CRITICAL · 353 risk findings (all issues except dead code and advice)`. Correctness findings in `quality` are included. |
 | Maintainability | Advice counts and groups, affected code units where measurable, and observed values against their rule limits. The row reads e.g. `0 advice findings · 5 rules checked · 0 affected files`: listed Advice, the maintainability rules that measured code, and the files with listed Advice. |
 | Dead code | Candidate counts, confidence and evidence for deciding what to review or remove. |
 | Gate | PASS or FAIL against the configured policy when a gate is evaluated, INCOMPLETE when required analysis did not finish; otherwise not evaluated. JSON: the top-level `gate` object ([Gate verdict](#gate-verdict)). |

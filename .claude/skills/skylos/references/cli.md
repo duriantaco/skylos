@@ -80,6 +80,13 @@ With `--gate` (or `--strict` without `--force`), `gate` holds `passed`,
 `analysis_summary.analysis_coverage` says what was not analysed (`status`
 `complete` / `partial` / `incomplete`, `exit_blocking`, `unchecked_files`,
 `unverified_dead_code_candidates`).
+Every finding carries `fix` (one line, for its language) and `docs_url`.
+`top_risks` lists up to five rows to fix first (`rule_id`, `severity`, `file`,
+`line`, `blocking`, `in_tests`, `fix`, `docs_url`, `more_like_this`), and
+`issue_summary` holds the one issue total (`total`, `by_category` with `null`
+for a check that did not run, `not_checked`, `hidden_advice`, `suppressed`,
+`dismissed`, `verdict`). Use `issue_summary.total`, not array lengths, when
+reporting how many issues a scan found.
 
 ## Filtering
 
@@ -167,6 +174,10 @@ control. Local rich scans with findings end with a `Next: skylos cloud` block.
 - `skylos commands`: list commands.
 - `skylos tour`: walkthrough.
 - `skylos init`: write project config.
+- `skylos report .`: one-page HTML (`--format md` for Markdown, `-o -` for
+  stdout) for a non-specialist: verdict, top five risks with fixes, counts by
+  category, suppressed/dismissed counts, coverage gaps, date/commit/version.
+  `skylos report scan.json` reuses a saved `-a --format json` scan.
 - `skylos suite .`: full local analysis bundle.
 - `skylos discover .`: inventory LLM/AI integrations (providers, agent tools,
   prompt sites, input sources); `--json` for machines.

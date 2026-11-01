@@ -97,6 +97,24 @@ def skylos_requirement(
     return shlex.quote(package)
 
 
+def has_dart_files(path: str | Path) -> bool:
+    """Whether a scan of ``path`` would read Dart files.
+
+    Uses the scanner's file discovery, so .gitignore and the default excluded
+    folders (build output, node_modules, virtualenvs, ...) apply.
+    """
+    from skylos.constants import parse_exclude_folders
+    from skylos.core.file_discovery import discover_source_files
+
+    return bool(
+        discover_source_files(
+            path,
+            [".dart"],
+            exclude_folders=sorted(parse_exclude_folders(use_defaults=True)),
+        )
+    )
+
+
 def _skylos_install_command(
     version: str | None = None, *, dart: bool = True, llm: bool = False
 ) -> str:
@@ -485,11 +503,12 @@ def _build_pr_upload_jobs(
     scan_target: str,
     analysis_flags: str,
     project_root: str,
+    use_dart: bool = True,
 ) -> str:
     root_arg = ""
     if project_root:
         root_arg = f" --project-root {shlex.quote(project_root)}"
-    scan_install = _skylos_install_command(skylos_version)
+    scan_install = _skylos_install_command(skylos_version, dart=use_dart)
     plain_install = _skylos_install_command(skylos_version, dart=False)
     return f"""
   pr-policy:
@@ -622,6 +641,7 @@ def generate_workflow(
     default_branch: str | None = None,
     use_risk_review: bool = False,
     use_pr_upload: bool = True,
+    use_dart: bool = True,
 ) -> str:
     """
     Generate the GitHub Actions workflow YAML for Skylos scans.
@@ -632,7 +652,9 @@ def generate_workflow(
     GitHub OIDC from a separate job. With use_pr_upload as well, pull requests
     to the default branch upload through pull_request_target: a read-only job
     scans the pull request head as data, and only the jobs that never check
-    out pull request files get id-token: write.
+    out pull request files get id-token: write. With use_dart, the jobs that
+    scan install the skylos[dart] extra, which builds the Dart parser with a
+    C compiler; leave it off for repositories without Dart files.
 
     Calls: skylos/cicd/workflow.py _build_trigger_block;
         skylos/cicd/workflow.py _skylos_install_command;
@@ -677,8 +699,10 @@ def generate_workflow(
         merge_queue=merge_queue,
         pr_upload=pr_upload_jobs,
     )
-    install_command = _skylos_install_command(skylos_version)
-    gate_install_command = _skylos_install_command(skylos_version, llm=use_llm)
+    install_command = _skylos_install_command(skylos_version, dart=use_dart)
+    gate_install_command = _skylos_install_command(
+        skylos_version, dart=use_dart, llm=use_llm
+    )
     scan_target = _shell_path(scan_path)
     analysis_flags = " ".join(
         ANALYSIS_FLAG_MAP[t]
@@ -906,6 +930,7 @@ jobs:
             scan_target=scan_target,
             analysis_flags=analysis_flags,
             project_root=project_root,
+            use_dart=use_dart,
         )
 
     if use_claude_security:

@@ -120,6 +120,7 @@ class Settings:
     scan_path: str = "."
     default_branch: str | None = None
     skylos_version: str | None = None
+    dart: bool = True
 
 
 @dataclass(frozen=True)
@@ -508,12 +509,13 @@ def render(platform: Platform, settings: Settings) -> Rendered:
     """The CI config for a non-GitHub platform; raises ValueError on bad input.
 
     Image-based templates run on python images that ship a C compiler, so they
-    install the Dart grammar like the GitHub workflow. Jenkins agents and
-    unknown CIs may have no compiler, so they install plain skylos.
+    install the Dart grammar like the GitHub workflow when ``settings.dart``
+    says the repository has Dart files. Jenkins agents and unknown CIs may
+    have no compiler, so they install plain skylos.
     """
     _validate(settings, platform)
     renderer = _RENDERERS.get(platform.key, _other)
-    dart = platform.key not in _UNKNOWN_AGENT_KEYS
+    dart = settings.dart and platform.key not in _UNKNOWN_AGENT_KEYS
     requirement = skylos_requirement(settings.skylos_version, dart=dart)
     return renderer(settings, requirement)
 

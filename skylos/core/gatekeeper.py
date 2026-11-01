@@ -885,6 +885,50 @@ def _gate_findings(results, config=None):
     }
 
 
+def blocking_gate_issues(results, config=None):
+    """Findings that fail the gate on their own, whatever the other counts.
+
+    These are the issues behind a limit of zero or a severity rule: critical
+    security issues, AI-code issues at a blocking severity, security control
+    regressions, and every finding of a category whose limit is 0. Count
+    limits above zero fail on totals instead, so their findings are not
+    listed here.
+    """
+    results = results or {}
+    config = config or {}
+    gate_config = _effective_gate_config(config)
+    found = _gate_findings(results, config)
+    blocking = []
+    cloud_gate = active_cloud_gate(config)
+    if cloud_gate is None:
+        groups = _gate_issue_groups(**found)
+        if gate_config.get("fail_on_critical", True):
+            blocking.extend(groups["max_critical"])
+        for key, _noun, _plural, _label in GATE_LIMITS:
+            limit = gate_config.get(key)
+            if isinstance(limit, int) and not isinstance(limit, bool) and limit == 0:
+                blocking.extend(groups[key])
+    else:
+        conditions = _cloud_gate_conditions(cloud_gate, found, results)
+        blocking.extend(conditions[0].issues)
+        for condition in conditions[1:]:
+            if condition.limit == 0:
+                blocking.extend(condition.issues)
+    if cloud_gate is None or cloud_gate["mode"] != "zero-new":
+        severities = gate_config.get(BLOCK_AI_DEFECT_SEVERITIES_KEY, ())
+        blocking.extend(
+            issue
+            for issue in found["ai_defects"]
+            if _issue_severity(issue) in severities
+        )
+    blocking.extend(_security_control_regressions(results))
+    unique = {}
+    for issue in blocking:
+        if isinstance(issue, dict):
+            unique.setdefault(id(issue), issue)
+    return list(unique.values())
+
+
 def _analysis_incomplete_reasons(results):
     """Everything not analysed, blockers and coverage gaps alike.
 
@@ -1337,23 +1381,62 @@ def _build_summary_rows(
     dependency_count,
     dead_code_count,
     security_regression_count=0,
+    total_count=None,
+    custom_rules_count=0,
 ):
-    return [
-        f"| Security (critical) | {critical_count} |",
-        f"| Security (high) | {high_count} |",
-        f"| Security (total) | {security_count} |",
+    from skylos.reporting.issue_summary import count_text
+
+    rows = [
+        f"| Security (critical) | {count_text(critical_count)} |",
+        f"| Security (high) | {count_text(high_count)} |",
+        f"| Security (total) | {count_text(security_count)} |",
         *(
             [f"| Security control regressions | {security_regression_count} |"]
             if security_regression_count
             else []
         ),
-        f"| Reliability | {reliability_count} |",
-        f"| AI defects | {ai_defects_count} |",
-        f"| Quality | {quality_count} |",
-        f"| Secrets | {secrets_count} |",
-        f"| Dependency vulnerabilities | {dependency_count} |",
-        f"| Dead Code | {dead_code_count} |",
+        f"| Reliability | {count_text(reliability_count)} |",
+        f"| AI defects | {count_text(ai_defects_count)} |",
+        f"| Quality | {count_text(quality_count)} |",
+        f"| Secrets | {count_text(secrets_count)} |",
+        f"| Dependency vulnerabilities | {count_text(dependency_count)} |",
+        f"| Dead Code | {count_text(dead_code_count)} |",
     ]
+    if custom_rules_count:
+        quality_row = rows.index(f"| Quality | {count_text(quality_count)} |")
+        rows.insert(quality_row + 1, f"| Custom rules | {custom_rules_count} |")
+    if total_count is not None:
+        rows.append(f"| **Total issues** | **{total_count}** |")
+    return rows
+
+
+def _summary_count_notes(summary, gate_extra):
+    from skylos.reporting.issue_summary import ISSUE_CATEGORIES
+
+    notes = []
+    if summary["hidden_advice"]:
+        hidden = summary["hidden_advice"]
+        noun = _count_noun(hidden, "advice finding")
+        notes.append(
+            f"Not counted: {noun} hidden by default (`--all-advice` lists and counts them)."
+        )
+    if gate_extra:
+        labels = dict(ISSUE_CATEGORIES)
+        parts = ", ".join(
+            f"{labels[category].lower()} {count}"
+            for category, count in gate_extra.items()
+        )
+        total = sum(gate_extra.values())
+        noun = _count_noun(total, "finding")
+        notes.append(
+            f"The gate also counts {noun} hidden from the list as low-risk or "
+            f"repeated advisories ({parts}); they are in the JSON report."
+        )
+    if "dependencies" in summary["not_checked"]:
+        notes.append(
+            "Dependency vulnerabilities: not checked (no packages were looked up)."
+        )
+    return notes
 
 
 def _append_failure_reasons(lines, reasons, *, heading="Failure Reasons"):
@@ -1388,18 +1471,21 @@ def _summary_status(passed, *, advisory, incomplete):
 def build_summary_markdown(
     results, passed, reasons, *, advisory=False, incomplete=False, coverage_gaps=()
 ):
-    results = results or {}
+    from skylos.reporting.issue_summary import (
+        gate_only_counts,
+        issue_summary,
+        listed_severity_counts,
+    )
 
-    danger = results.get("danger", []) or []
-    reliability = results.get("reliability", []) or []
-    ai_defects = results.get("ai_defects", []) or []
-    quality = _quality_findings_with_custom_rules(results)
-    secrets = results.get("secrets", []) or []
-    dependencies = results.get("dependency_vulnerabilities", []) or []
-    critical_issues, high_issues = _split_danger_by_severity(danger)
-    critical_count = len(critical_issues)
-    high_count = len(high_issues)
-    dead_code_count = _count_dead_code_findings(results)
+    results = results or {}
+    summary = issue_summary(results)
+    by_category = summary["by_category"]
+    critical_count = None
+    high_count = None
+    if by_category["security"] is not None:
+        severities = listed_severity_counts(results, "security")
+        critical_count = severities.get("CRITICAL", 0)
+        high_count = severities.get("HIGH", 0)
 
     icon, status, heading = _summary_status(
         passed, advisory=advisory, incomplete=incomplete
@@ -1413,18 +1499,23 @@ def build_summary_markdown(
         *_build_summary_rows(
             critical_count=critical_count,
             high_count=high_count,
-            security_count=len(danger),
-            reliability_count=len(reliability),
-            ai_defects_count=len(ai_defects),
-            quality_count=len(quality),
-            secrets_count=len(secrets),
-            dependency_count=len(dependencies),
-            dead_code_count=dead_code_count,
+            security_count=by_category["security"],
+            reliability_count=by_category["reliability"],
+            ai_defects_count=by_category["ai_defects"],
+            quality_count=by_category["quality"],
+            secrets_count=by_category["secrets"],
+            dependency_count=by_category["dependencies"],
+            dead_code_count=by_category["dead_code"],
             security_regression_count=len(_security_control_regressions(results)),
+            total_count=summary["total"],
+            custom_rules_count=by_category["custom_rules"] or 0,
         ),
-        "",
-        f"**Result: {icon} {status}**",
     ]
+    count_notes = _summary_count_notes(summary, gate_only_counts(results))
+    if count_notes:
+        lines.append("")
+        lines.extend(count_notes)
+    lines.extend(["", f"**Result: {icon} {status}**"])
     coverage_warnings = sca_coverage_warnings(results)
     if coverage_warnings:
         lines.extend(["", "### Coverage Limitations"])

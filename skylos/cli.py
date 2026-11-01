@@ -2136,6 +2136,7 @@ def render_pretty_results(
     limit=None,
     expand_advice=False,
     all_advice=False,
+    config=None,
 ):
     from skylos.ui.terminal_report import render_pretty_results as render_impl
 
@@ -2146,6 +2147,7 @@ def render_pretty_results(
         limit=limit,
         **({"expand_advice": True} if expand_advice else {}),
         **({"all_advice": True} if all_advice else {}),
+        config=config,
     )
 
 
@@ -2158,6 +2160,8 @@ def _write_rich_report_output(
     limit=None,
     expand_advice=False,
     all_advice=False,
+    config=None,
+    verbose=False,
 ):
     buffer = StringIO()
     file_console = Console(
@@ -2174,6 +2178,8 @@ def _write_rich_report_output(
         copy_badge=False,
         **({"expand_advice": True} if expand_advice else {}),
         **({"all_advice": True} if all_advice else {}),
+        config=config,
+        verbose=verbose,
     )
     if not write_text_no_symlink(output_file, buffer.getvalue(), encoding="utf-8"):
         raise OSError(f"could not safely write output file: {output_file}")
@@ -2483,6 +2489,12 @@ def _run_cloud_command(argv):
     from skylos.commands.cloud_cmd import run_cloud_command
 
     return run_cloud_command(argv, cli_module=sys.modules[__name__])
+
+
+def _run_report_command(argv):
+    from skylos.commands.report_cmd import run_report_command
+
+    return run_report_command(argv, cli_module=sys.modules[__name__])
 
 
 def _run_sync_command(argv):
@@ -5745,7 +5757,9 @@ def main() -> None:
                 _exit_without_llm_extra()
 
             model = agent_args.model
-
+        if not jev_only_verify and remediation_plan_only:
+            provider, api_key, base_url = None, None, None
+        elif not jev_only_verify:
             _provider_override = getattr(agent_args, "provider", None)
             if _provider_override and model == "gpt-4.1":
                 _provider_default_models = {
@@ -5779,6 +5793,11 @@ def main() -> None:
                     console.print(
                         f"[bad]No {env_var} configured. Run `skylos key` or set the environment variable.[/bad]"
                     )
+                    if cmd == "remediate":
+                        console.print(
+                            "[muted]To see the plan without a model or key: "
+                            "skylos agent remediate PATH --dry-run[/muted]"
+                        )
                     sys.exit(1)
 
         agent_project_cfg = load_config(getattr(agent_args, "path", Path.cwd()))
@@ -6202,12 +6221,14 @@ def main() -> None:
                     duration_seconds=summary.get("elapsed_seconds"),
                 )
 
-                sys.exit(
-                    0
-                    if summary.get("fixed", 0) > 0
+                remediation_exit = 1
+                if (
+                    getattr(agent_args, "dry_run", False)
+                    or summary.get("fixed", 0) > 0
                     or summary.get("total_findings", 0) == 0
-                    else 1
-                )
+                ):
+                    remediation_exit = 0
+                sys.exit(remediation_exit)
 
     if len(sys.argv) > 1 and sys.argv[1] == "run":
         _run_removed_run_command(sys.argv[2:])

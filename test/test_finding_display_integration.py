@@ -112,6 +112,7 @@ def test_expansion_and_terminal_width_do_not_change_records_grade_or_gate():
                     copy_badge=False,
                     expand_advice=expand,
                     all_advice=all_advice,
+                    verbose=True,
                 )
                 output = buffer.getvalue()
                 normalized = " ".join(output.split())
@@ -120,9 +121,9 @@ def test_expansion_and_terminal_width_do_not_change_records_grade_or_gate():
                 assert "HIGH" in output and "CRITICAL" in output
                 if all_advice:
                     assert "1 defect · 2 review · 2 advice in 1 group" in normalized
-                    assert "Advice priority" in normalized
+                    assert "Advice priority" not in normalized
                     if expand:
-                        assert output.count("SKY-C304") == 2
+                        assert output.count("SKY-C304") == 3
                         assert re.search(r"\bapp\.py:1\b", output)
                         assert "app.py:90" in output
                         assert "Name: first" in normalized
@@ -161,7 +162,12 @@ def test_cli_json_keeps_every_advice_record(monkeypatch, capsys, tmp_path, expan
     monkeypatch.setattr(sys, "argv", argv)
     cli.main()
     payload = json.loads(capsys.readouterr().out)
-    assert payload["quality"] == result["quality"]
+    guidance = {"fix", "docs_url"}
+    assert [
+        {key: value for key, value in row.items() if key not in guidance}
+        for row in payload["quality"]
+    ] == result["quality"]
+    assert all(row["fix"] and row["docs_url"] for row in payload["quality"])
     assert payload["grade"] == result["grade"]
     assert payload["analysis_summary"]["finding_type_counts"] == {
         "defect": 1,

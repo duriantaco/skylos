@@ -250,10 +250,10 @@ _RULES = (
         "SKY-Q801", "High instability", "quality", "MEDIUM", finding_type="advice"
     ),
     RuleCatalogEntry(
-        "SKY-Q802", "High distance from main sequence", "quality", finding_type="advice"
+        "SKY-Q802", "Unbalanced module design", "quality", finding_type="advice"
     ),
     RuleCatalogEntry(
-        "SKY-Q803", "Architecture zone warning", "quality", finding_type="advice"
+        "SKY-Q803", "Module hard to change or unused", "quality", finding_type="advice"
     ),
     RuleCatalogEntry(
         "SKY-Q804", "Dependency inversion violation", "quality", finding_type="advice"
@@ -275,7 +275,7 @@ _RULES = (
         "SKY-L003", "Dangerous comparison", "quality", finding_type="review"
     ),
     RuleCatalogEntry(
-        "SKY-L004", "Anti-pattern try block", "quality", finding_type="advice"
+        "SKY-L004", "Try block too broad", "quality", finding_type="advice"
     ),
     RuleCatalogEntry(
         "SKY-L005", "Unused exception variable", "quality", finding_type="advice"
@@ -329,7 +329,7 @@ _RULES = (
         "SKY-L027", "Duplicate string literal", "quality", finding_type="advice"
     ),
     RuleCatalogEntry("SKY-L028", "Too many returns", "quality", finding_type="advice"),
-    RuleCatalogEntry("SKY-L029", "Boolean trap", "quality", finding_type="advice"),
+    RuleCatalogEntry("SKY-L029", "Unclear boolean argument", "quality", finding_type="advice"),
     RuleCatalogEntry(
         "SKY-L030",
         "Broad exception with trivial handler",

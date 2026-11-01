@@ -119,6 +119,57 @@ def _repo_root() -> Path:
     return Path(root) if root else Path.cwd()
 
 
+UPLOAD_OFF_NOT_LOGGED_IN = (
+    "Cloud upload: off (not logged in to Skylos Cloud). "
+    "To add it: skylos login, then skylos cicd init --upload"
+)
+
+
+def _cloud_login_found(repo_root: Path) -> bool:
+    """Whether this machine has a Skylos Cloud login or project link.
+
+    The same sources `skylos cloud` treats as connected: SKYLOS_TOKEN, the
+    repository's .skylos/link.json, or a saved login token.
+    """
+    if os.getenv("SKYLOS_TOKEN"):
+        return True
+    if (repo_root / ".skylos" / "link.json").exists():
+        return True
+    try:
+        from skylos.api import get_project_token
+
+        return bool(get_project_token())
+    except Exception:
+        return False
+
+
+def _init_upload_choice(cicd_args, repo_root: Path) -> tuple[bool, str | None]:
+    """Whether `cicd init` adds the Cloud upload jobs, and the note to print.
+
+    --upload and --no-upload decide; without either, uploads are added only
+    for a machine that is logged in to Skylos Cloud.
+    """
+    if cicd_args.upload is not None:
+        return cicd_args.upload, None
+    if _cloud_login_found(repo_root):
+        return True, None
+    return False, UPLOAD_OFF_NOT_LOGGED_IN
+
+
+def _scan_has_dart_files(repo_root: Path, scan_path: str) -> bool:
+    from skylos.cicd.workflow import has_dart_files
+
+    target = repo_root
+    try:
+        candidate = (repo_root / str(scan_path or ".")).resolve()
+        candidate.relative_to(repo_root.resolve())
+    except (OSError, ValueError):
+        candidate = None
+    if candidate is not None and candidate.exists():
+        target = candidate
+    return has_dart_files(target)
+
+
 def _default_workflow_output() -> str:
     return str(_repo_root() / ".github" / "workflows" / "skylos.yml")
 
@@ -222,9 +273,10 @@ def _run_cicd_init(cicd_args, console) -> int:
     platform, platform_name = selected
     if platform.key != "github":
         return _run_platform_init(cicd_args, console, platform, platform_name)
-    use_upload = cicd_args.upload is not False
+    repo_root = _repo_root()
+    use_upload, upload_note = _init_upload_choice(cicd_args, repo_root)
 
-    done_setup = detect_done_setup(_repo_root())
+    done_setup = detect_done_setup(repo_root)
     use_done = done_setup.enabled if cicd_args.done is None else cicd_args.done
     default_branch = cicd_args.default_branch or _detect_default_branch()
     output_path = cicd_args.output or _default_workflow_output()
@@ -247,6 +299,7 @@ def _run_cicd_init(cicd_args, console) -> int:
             default_branch=default_branch,
             use_risk_review=cicd_args.risk_review,
             use_pr_upload=pr_upload,
+            use_dart=_scan_has_dart_files(repo_root, cicd_args.scan_path),
         )
     except ValueError as e:
         console.print(f"[bold red]Invalid workflow option: {e}[/bold red]")
@@ -293,6 +346,7 @@ def _run_cicd_init(cicd_args, console) -> int:
         branch_detected=bool(default_branch),
         risk_review=cicd_args.risk_review and "pull_request" in cicd_args.triggers,
         pr_upload=pr_upload,
+        upload_note=upload_note,
     )
     if (
         use_upload
@@ -406,6 +460,7 @@ def _run_platform_init(cicd_args, console, platform, platform_name) -> int:
         use_baseline=not cicd_args.no_baseline,
         scan_path=cicd_args.scan_path,
         default_branch=cicd_args.default_branch or _detect_default_branch(),
+        dart=_scan_has_dart_files(_repo_root(), cicd_args.scan_path),
     )
     try:
         rendered = render(platform, settings)
@@ -533,7 +588,8 @@ def run_cicd_command(
             "Pipelines or CircleCI; other CIs get the commands to add). On "
             "GitHub it writes .github/workflows/skylos.yml: a pull request gate "
             "(changed-line scan, PR comments, `skylos done` when your tests can "
-            "run) and uploads to Skylos Cloud through GitHub OIDC: full scans of "
+            "run) and, when you are logged in to Skylos Cloud or pass --upload, "
+            "uploads to Skylos Cloud through GitHub OIDC: full scans of "
             "default-branch pushes, and pull requests to the default branch "
             "scanned as untrusted data without credentials. Other CIs get a "
             "changed-line gate; an existing CI file is never edited, Skylos "
@@ -593,7 +649,8 @@ def run_cicd_command(
             "scans of default-branch pushes, and pull requests to the default "
             "branch (scanned without credentials, uploaded by a job that never "
             "checks out their files). Needs the Skylos GitHub App on the "
-            "repository (default: on for GitHub Actions; --no-upload for "
+            "repository (default: on for GitHub Actions when this machine is "
+            "logged in to Skylos Cloud, otherwise off; --no-upload for "
             "local-only CI)"
         ),
     )

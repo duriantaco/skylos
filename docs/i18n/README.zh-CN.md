@@ -65,8 +65,8 @@ git commit -m "Add Skylos CI gate"
 git push
 ```
 
-不加 `--no-upload` 时，工作流还会通过 GitHub OIDC 上传到 Skylos Cloud：默认分支的推送，
-以及指向默认分支的 PR。PR 在没有任何凭据的作业中作为不可信数据扫描，再由一个从不检出其文件的作业上传。
+加 `--upload` 时（本机已用 `skylos login` 登录 Skylos Cloud 时这是默认值；未登录时默认不加上传作业），
+工作流还会通过 GitHub OIDC 上传到 Skylos Cloud：默认分支的推送，以及指向默认分支的 PR。PR 在没有任何凭据的作业中作为不可信数据扫描，再由一个从不检出其文件的作业上传。
 
 使用 GitLab CI、Jenkins、Bitbucket Pipelines、Azure Pipelines 或 CircleCI？同一条
 `skylos cicd init` 会为该 CI 设置 PR 门控，详见 [Skylos on any CI](../ci-platforms.md)。
@@ -79,6 +79,7 @@ git push
 |:---|:---|:---|:---|
 | 第一次死代码扫描 | `skylos .` | 发现未使用的函数、类、导入、文件和框架入口点问题 | [死代码文档](https://docs.skylos.dev/dead-code-detection) |
 | 安全与质量审计 | `skylos . -a` | 增加危险数据流、密钥、依赖和质量检查 | [安全文档](https://docs.skylos.dev/security-analysis) |
+| 可分享的一页报告 | `skylos report .` | 生成 `skylos-report.html`：结论（“Not ready: 1 blocking issue”）、最先要修的五个风险及修复建议和文档链接、按类别的问题数、被抑制的数量和未覆盖的检查；不会上传任何内容 | [CLI Output Modes](../cli-output.md) |
 | AI 复核问题 | `skylos . -a --ai-review` | 各语言的未使用代码问题和 Python 文件中的安全问题都会得到 AI 判断：确认、AI 不同意或不确定。不会隐藏任何问题，门禁结果不变；使用 `skylos cloud --ai-review` 时判断会显示在 Skylos Cloud | [AI review](../ai-review.md) |
 | 可选 Python lint | `pip install "skylos[lint]" && skylos lint .` | 通过 Skylos CLI 运行 Ruff，并保留其原生配置、输出、修复和退出码 | [Python linting](../python-linting.md) |
 | PR 门控 | `skylos cicd init` | 为你的 CI 设置 PR 门控：生成带注释和失败阈值的 GitHub Actions 工作流，或为 GitLab CI、Jenkins、Bitbucket Pipelines、Azure Pipelines 和 CircleCI 生成门控配置 | [CI/CD 指南](https://docs.skylos.dev/ci-cd) |

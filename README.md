@@ -137,6 +137,7 @@ current directory. `suite` and `defend` require a directory; `verify` and
 | What does this change touch, and what should I read first? | `skylos done map --base main` | Each changed Python or TypeScript/JavaScript function since the merge base, with old and new code, calls added and removed, its callers and removed security checks; computed from the code, so the same commit gives the same map |
 | Does this code contain AI-code mistakes? | `skylos verify [PATH]` | AI-defect checks over the selected file or tree, plus a separate Git HEAD behavior comparison for supported Python working changes |
 | Should a model review static dead-code findings? | `skylos agent verify [PATH]` | LLM by default; optional [Jev-only or Jev-plus-LLM review](./docs/dead-code-review.md) |
+| What do I tell my CTO? | `skylos report [PATH]` | Every main source analyzer locally, then one self-contained HTML page (or `--format md`): verdict, top five risks with fixes, issue counts, coverage gaps, scan date, commit and version |
 | What does the combined repo suite report? | `skylos suite [DIRECTORY]` | Static analysis, technical debt, AI app safety, and provenance; local findings are report-only by default |
 | Does an agent implementation have deployment guardrails? | `skylos defend [DIRECTORY]` | Recognized Python and TypeScript/JavaScript LLM integrations; gating requires a threshold flag or policy |
 | Which Python dead code can Skylos remove? | `skylos clean [PATH] --dry-run` | Python import/function cleanup candidates; `--dry-run` never writes |
@@ -327,9 +328,10 @@ gh pr create --fill
 ```
 
 The generated workflow reviews changed lines on pull requests and adds a
-`skylos done` job when it finds your tests. Without `--no-upload`, it also
-uploads to Skylos Cloud with GitHub OIDC: pushes to your default branch, and
-pull requests to it, which Cloud then lists with their check and comment. A
+`skylos done` job when it finds your tests. With `--upload` (the default once
+this machine is logged in with `skylos login`), it also uploads to Skylos
+Cloud with GitHub OIDC: pushes to your default branch, and pull requests to
+it, which Cloud then lists with their check and comment. A
 pull request is scanned as untrusted data in a job with no credentials and
 uploaded by a job that never checks out its files. Uploads fail until the
 Skylos GitHub App is installed on the repository.
@@ -427,13 +429,14 @@ every command. See [what they don't do](./docs/agent-hooks.md#what-it-doesnt-do)
 | Deterministic cleanup preview | `skylos clean . --dry-run --types import,function --confidence 80` | Shows planned Python import/function removals without writing; add `--apply` to edit files | [Dead code docs](https://docs.skylos.dev/dead-code-detection) |
 | Security and quality audit | `skylos . -a` | Adds dangerous flow, secrets, dependency, config, quality, and AI-defect checks | [Security docs](https://docs.skylos.dev/security-analysis) |
 | AI double-check of issues | `skylos . -a --ai-review` | Unused-code issues in every language and security issues in Python files get an AI verdict: confirmed, AI disagrees, or unsure. Uses your model key, plus Jev when `TYPESAFE_API_KEY` is set. Nothing is hidden and blocking never changes; with `skylos cloud --ai-review` the verdicts show on the Cloud PR board and Issues | [AI review](./docs/ai-review.md) |
+| One-page report to share | `skylos report .` | Writes `skylos-report.html`: the verdict ("Not ready: 1 blocking issue"), the five risks to fix first with one-line fixes and docs links, counts by category, suppressed counts and what the scan did not cover; nothing is uploaded | [CLI output modes](./docs/cli-output.md) |
 | Combined repo report | `skylos suite .` | Reports static findings, technical debt, AI app safety, and provenance; SCA can query OSV, and findings alone exit `0` | [CLI Reference](https://docs.skylos.dev/cli-reference) |
 | Optional Python linting | `pip install "skylos[lint]" && skylos lint .` | Runs Ruff with its native configuration, output, fixes, and exit codes through the Skylos CLI | [Python linting](./docs/python-linting.md) |
 | Agent branch done check | `skylos done --base origin/main` | Runs your tests and flags deleted, skipped or weakened tests, loosened test settings and CI test steps, silenced checks, and test-only special cases; writes a receipt | [Done gate](./docs/done-gate.md) |
 | Change map for review | `skylos done map --base origin/main` | Old and new code of each changed Python or TypeScript/JavaScript function, calls added and removed, who calls it and whether those callers were updated, removed auth checks, breaking signatures, and the changes to read first; `--format json` for a review agent | [Change map](./docs/change-map.md) |
 | MCP change map | `change_map` MCP tool | Gives a review agent the change map as JSON before it reads the diff. Requires a free Skylos API key (`SKYLOS_API_KEY`). `skylos done map` needs no key | [Change map](./docs/change-map.md#in-the-agent-loop) |
 | Risks that need a human approval | `skylos cicd risk-review --base origin/main` | Lists deleted or weakened tests, removed auth checks, added or changed dependencies, weakened CI, silenced checks, added secrets, guardrail setting edits, migration changes and very large diffs. As a required GitHub check (`skylos cicd init --risk-review`) it fails until a person with write access approves the head commit; bot approvals do not count | [Risk review](./docs/risk-review.md) |
-| PR gate | `skylos cicd init --no-upload` | Sets up the pull request gate for your CI. On GitHub Actions it writes a workflow that gates pull requests and runs `skylos done` when your tests can run; drop `--no-upload` to also upload default-branch scans to Skylos Cloud with GitHub OIDC, and that job fails until the Skylos GitHub App is installed on the repository. GitLab CI, Jenkins, Bitbucket Pipelines, Azure Pipelines and CircleCI get a gate for that CI | [First gated PR](./docs/first-gated-pr.md), [Skylos on any CI](./docs/ci-platforms.md) |
+| PR gate | `skylos cicd init --no-upload` | Sets up the pull request gate for your CI. On GitHub Actions it writes a workflow that gates pull requests and runs `skylos done` when your tests can run; add `--upload` (the default once you are logged in to Skylos Cloud) to also upload default-branch scans to Skylos Cloud with GitHub OIDC, and that job fails until the Skylos GitHub App is installed on the repository. GitLab CI, Jenkins, Bitbucket Pipelines, Azure Pipelines and CircleCI get a gate for that CI | [First gated PR](./docs/first-gated-pr.md), [Skylos on any CI](./docs/ci-platforms.md) |
 | GitLab merge request report | `skylos . --format gitlab -o gl-code-quality-report.json` | Exports a native Code Quality report for GitLab CI artifacts | [GitLab Code Quality](./docs/gitlab-code-quality.md) |
 | Offline dependency SBOM | `skylos sbom . -o sbom.cdx.json` | Lists supported recorded dependencies as CycloneDX 1.6 JSON without network requests | [Dependency scanning](./docs/dependency-scanning.md#export-an-sbom-offline) |
 | SPDX SBOM + license policy | `skylos sbom . --format spdx-json` / `license_deny = ["GPL-*"]` | SPDX 2.3 JSON with declared licenses; `SKY-SCA-LIC001` flags denied licenses in `-a` scans | [License compliance](./docs/license-compliance.md) |
@@ -1220,14 +1223,15 @@ already exists. Other CIs get the commands to add; see
 ```bash
 skylos cicd init --no-upload                       # without Skylos Cloud
 skylos cicd init --no-upload --scan-path apps/api  # a monorepo subproject
-skylos cicd init                                   # with Skylos Cloud uploads
+skylos cicd init --upload                          # with Skylos Cloud uploads
 skylos cicd init --no-upload --risk-review         # plus the "Skylos risk review" check
 skylos cicd init --ci jenkins                      # a Jenkinsfile pull request stage
 ```
 
 On GitHub Actions, the generated workflow reviews changed lines on pull requests and adds a
-`skylos done` job when it finds your tests. Without `--no-upload` it also
-uploads full scans to Skylos Cloud using GitHub OIDC, from default-branch
+`skylos done` job when it finds your tests. With `--upload` (the default when
+this machine is logged in to Skylos Cloud; without a login it prints how to
+add it) it also uploads full scans to Skylos Cloud using GitHub OIDC, from default-branch
 pushes and from pull requests to the default branch (`pull_request_target`:
 the pull request is scanned as data without credentials, then a job that never
 checks out its files uploads it). Uploads fail until the Skylos GitHub App is

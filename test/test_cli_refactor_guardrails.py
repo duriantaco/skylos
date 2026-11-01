@@ -1634,7 +1634,9 @@ def test_cli_guardrail_static_json_output_passthrough(monkeypatch, tmp_path):
     coverage = payload["analysis_summary"].pop("analysis_coverage")
     assert coverage["status"] == "complete"
     assert coverage["exit_blocking"] is False
-    assert payload == expected
+    from skylos.reporting.top_risks import add_report_guidance
+
+    assert payload == add_report_guidance(expected, config={})
 
 
 def test_cli_guardrail_debt_changed_json_keeps_project_scope(tmp_path, monkeypatch):

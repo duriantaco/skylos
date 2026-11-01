@@ -11,6 +11,7 @@ from skylos.reporting.metadata_paths import (
     EXTERNAL_PATH_PREFIX,
     relativize_contract_traces,
 )
+from skylos.rules.guidance import rule_docs_url
 
 
 _MAX_SARIF_MESSAGE_LENGTH = 4_000
@@ -254,8 +255,7 @@ class SarifExporter:
                 "defaultConfiguration": {"level": level},
                 "properties": {"tags": tags},
                 "helpUri": sanitize_untrusted_text(
-                    finding.get("help_uri")
-                    or f"https://docs.skylos.dev/rules/{rule_id}",
+                    finding.get("help_uri") or rule_docs_url(rule_id),
                     max_length=1_000,
                     markdown=False,
                     neutralize_mentions=False,

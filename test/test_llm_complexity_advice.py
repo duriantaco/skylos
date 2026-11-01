@@ -69,7 +69,7 @@ def test_expanded_report_has_one_heading_both_scores_and_both_original_records(
     report = _generate_llm_report(result, tmp_path, expand_advice=True)
 
     assert report.count("\n## ") == 1
-    assert "## 1. SKY-Q301 + SKY-Q306 | MEDIUM | Quality\n" in report
+    assert "## 1. SKY-Q301 + SKY-Q306 | HIGH | Quality\n" in report
     assert "Name: app.process\n" in report
     assert report.count("Type: Advice") == 1
     assert "SKY-Q301: Cyclomatic complexity: 14 (threshold: 10)" in report

@@ -14,6 +14,16 @@ COMMANDS = [
         "group": "Core Analysis",
     },
     {
+        "name": "skylos report [PATH | REPORT.json]",
+        "desc": "Write a one-page HTML or Markdown report to share: verdict, top risks with fixes, counts and coverage gaps",
+        "details": [
+            "Runs every check (-a) locally and writes skylos-report.html; nothing is uploaded",
+            "--format md for Markdown, -o FILE to choose the file, -o - for standard output",
+            "REPORT.json reuses a saved skylos . -a --format json scan instead of scanning again",
+        ],
+        "group": "Core Analysis",
+    },
+    {
         "name": "skylos suite [directory]",
         "desc": "Build one static, debt, defense, and provenance report",
         "details": [

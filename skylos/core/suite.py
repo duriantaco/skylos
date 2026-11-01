@@ -7,16 +7,6 @@ from typing import Any
 
 from rich.progress import SpinnerColumn, TextColumn
 
-
-_DEAD_CODE_CATEGORIES = (
-    "unused_functions",
-    "unused_imports",
-    "unused_classes",
-    "unused_variables",
-    "unused_parameters",
-    "unused_files",
-)
-
 _PROVENANCE_FINDING_SECTIONS = (
     "danger",
     "reliability",
@@ -84,18 +74,24 @@ def _empty_defense_payload(project_path: str) -> dict[str, Any]:
     }
 
 
-def _static_summary(static_result: dict[str, Any]) -> dict[str, int]:
+def _static_summary(static_result: dict[str, Any]) -> dict[str, Any]:
+    """Listed issue counts, the same total a scan prints; a check that did not
+    run is None ("not checked"), never 0."""
+    from skylos.reporting.issue_summary import issue_summary
+
+    summary = issue_summary(static_result)
+    counts = summary["by_category"]
     return {
-        "dead_code": sum(
-            len(static_result.get(category, []) or [])
-            for category in _DEAD_CODE_CATEGORIES
-        ),
-        "security": len(static_result.get("danger", []) or []),
-        "reliability": len(static_result.get("reliability", []) or []),
-        "ai_defects": len(static_result.get("ai_defects", []) or []),
-        "secrets": len(static_result.get("secrets", []) or []),
-        "quality": len(static_result.get("quality", []) or []),
-        "dependencies": len(static_result.get("dependency_vulnerabilities", []) or []),
+        "total": summary["total"],
+        "dead_code": counts["dead_code"],
+        "security": counts["security"],
+        "reliability": counts["reliability"],
+        "ai_defects": counts["ai_defects"],
+        "secrets": counts["secrets"],
+        "quality": counts["quality"],
+        "dependencies": counts["dependencies"],
+        "not_checked": summary["not_checked"],
+        "hidden_advice": summary["hidden_advice"],
     }
 
 
@@ -133,7 +129,19 @@ def _format_provenance_lines(provenance: dict[str, Any]) -> list[str]:
     ]
 
 
+def _hidden_advice_lines(static_summary: dict[str, Any]) -> list[str]:
+    hidden = static_summary.get("hidden_advice")
+    if not isinstance(hidden, int) or isinstance(hidden, bool) or hidden <= 0:
+        return []
+    noun = "finding"
+    if hidden != 1:
+        noun = "findings"
+    return [f"  Not counted: {hidden} advice {noun} hidden by default (--all-advice)"]
+
+
 def format_suite_table(report: dict[str, Any]) -> str:
+    from skylos.reporting.issue_summary import count_text
+
     summary = report.get("summary") or {}
     static_summary = summary.get("static") or {}
     debt = report.get("debt") or {}
@@ -159,12 +167,15 @@ def format_suite_table(report: dict[str, Any]) -> str:
         ),
         "",
         "Static Analysis",
-        f"  Dead code: {static_summary.get('dead_code', 0)}",
-        f"  Security: {static_summary.get('security', 0)}",
-        f"  Reliability: {static_summary.get('reliability', 0)}",
-        f"  Secrets: {static_summary.get('secrets', 0)}",
-        f"  Quality: {static_summary.get('quality', 0)}",
-        f"  Dependencies: {static_summary.get('dependencies', 0)}",
+        f"  Issues: {static_summary.get('total', 0)}",
+        f"  Security: {count_text(static_summary.get('security'))}",
+        f"  Secrets: {count_text(static_summary.get('secrets'))}",
+        f"  AI defects: {count_text(static_summary.get('ai_defects'))}",
+        f"  Reliability: {count_text(static_summary.get('reliability'))}",
+        f"  Quality: {count_text(static_summary.get('quality'))}",
+        f"  Dependencies: {count_text(static_summary.get('dependencies'))}",
+        f"  Dead code: {count_text(static_summary.get('dead_code'))}",
+        *_hidden_advice_lines(static_summary),
         "",
         "Technical Debt",
         (

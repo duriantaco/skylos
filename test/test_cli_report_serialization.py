@@ -170,6 +170,9 @@ def test_json_bytes_normalization_and_upload_isolation(
     normalized = json.loads(json.dumps(public))
     if filtered:
         normalized = cli._apply_display_filters(normalized, file_filter="elsewhere.py")
+    from skylos.reporting.top_risks import add_report_guidance
+
+    add_report_guidance(normalized, config={})
     if output_format == "json-ci":
         normalized = _build_ci_json_payload(normalized)
     normalized["upload"] = {"status": "uploaded"}

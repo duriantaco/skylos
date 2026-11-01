@@ -80,6 +80,23 @@ def compact_dead_code_evidence(
     return label or fallback
 
 
+def short_dead_code_evidence(item: dict[str, Any]) -> str:
+    """``likely dead — no refs · not exported · no entrypoint``: the reason
+    tags when the record has them, else the compact evidence."""
+    classification = dead_code_classification(item)
+    label = CLASSIFICATION_LABELS.get(classification, classification.replace("_", " "))
+    tags = _fallback_reason(item)
+    has_tags = isinstance(item.get("dead_code_reason_tags"), (list, tuple)) or (
+        isinstance(item.get("dead_code_decision"), dict)
+        and isinstance(item["dead_code_decision"].get("reason_tags"), (list, tuple))
+    )
+    if not has_tags or not tags:
+        return compact_dead_code_evidence(item)
+    if label and label not in tags.split(" · "):
+        return f"{label} — {tags}"
+    return tags
+
+
 def dead_code_evidence_detail_lines(item: dict[str, Any]) -> list[str]:
     lines: list[str] = []
     classification = dead_code_classification(item)
