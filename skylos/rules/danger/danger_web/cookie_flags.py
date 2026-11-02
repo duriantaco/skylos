@@ -19,8 +19,11 @@ A cookie whose value is an on/off flag literal written at the call
 network observer could learn or replay that they could not guess. It is still
 reported, with a ``low_risk_context`` that hides it by default. Any other
 literal can be a shared secret, so it stays listed, as does a name, call,
-f-string or unpacked value. A signed cookie always stays listed: the server's
-signature makes even a flag value a credential that can be replayed.
+f-string or unpacked value. Only a plain ``set_cookie`` write is hidden, one
+whose every argument is a known plain cookie option: a signed write
+(``set_signed_cookie``, Bottle's ``secret=`` or positional secret), an unknown
+option or ``**kwargs`` stays listed, because the server's signature makes even
+a flag value a credential that can be replayed.
 """
 
 from __future__ import annotations
@@ -31,7 +34,23 @@ import sys
 from skylos.rules.danger.calls import _is_test_module
 
 _COOKIE_WRITERS = frozenset({"set_cookie", "set_signed_cookie"})
-_SIGNED_WRITERS = frozenset({"set_signed_cookie"})
+_PLAIN_WRITER = "set_cookie"
+_PLAIN_KEYWORDS = frozenset(
+    {
+        "key",
+        "value",
+        "max_age",
+        "expires",
+        "path",
+        "domain",
+        "secure",
+        "httponly",
+        "samesite",
+        "partitioned",
+    }
+)
+_PLAIN_POSITIONS = 9
+_TIME_POSITIONS = (2, 3)
 _FLAG_POSITIONS = {"set_cookie": {"secure": 6, "httponly": 7}}
 _FLAGS = (("httpOnly", "httponly"), ("secure", "secure"))
 _VALUE_POSITION = 1
@@ -96,8 +115,29 @@ def _is_flag_literal(node: ast.AST | None) -> bool:
     return False
 
 
+def _is_plain_cookie_write(call: ast.Call) -> bool:
+    if call.func.attr != _PLAIN_WRITER:
+        return False
+    if any(kw.arg not in _PLAIN_KEYWORDS for kw in call.keywords):
+        return False
+    if len(call.args) > _PLAIN_POSITIONS:
+        return False
+    for position, arg in enumerate(call.args):
+        if position < _VALUE_POSITION + 1:
+            if isinstance(arg, ast.Starred):
+                return False
+            continue
+        if not isinstance(arg, ast.Constant):
+            return False
+        if position in _TIME_POSITIONS and not (
+            arg.value is None or isinstance(arg.value, (int, float))
+        ):
+            return False
+    return True
+
+
 def _flag_value_context(call: ast.Call) -> dict | None:
-    if call.func.attr in _SIGNED_WRITERS:
+    if not _is_plain_cookie_write(call):
         return None
     if not _is_flag_literal(_cookie_value(call)):
         return None

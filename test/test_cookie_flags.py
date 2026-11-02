@@ -114,8 +114,15 @@ def test_literal_false_cookie_flag_is_reported_with_complete_evidence(
         ('resp.set_cookie(key="banner", value="Off", secure=False)', False),
         ('resp.set_cookie("seen", 1, None, None, "/", None, False)', False),
         ('resp.set_cookie("flag", b"1", httponly=False)', False),
+        ('resp.set_cookie("seen", "1", 60, None, "/", None, False)', False),
         ('resp.set_signed_cookie("staff", "yes", salt="s", secure=False)', True),
         ('resp.set_signed_cookie("flag", b"1", salt="s", httponly=False)', True),
+        ('resp.set_cookie("staff", "yes", secret=KEY, secure=False)', True),
+        ('resp.set_cookie("staff", "yes", KEY, secure=False)', True),
+        ('resp.set_cookie("staff", "yes", "k3y", secure=False)', True),
+        ('resp.set_cookie("staff", "yes", None, KEY, secure=False)', True),
+        ('resp.set_cookie("staff", "yes", httponly=False, digestmod=KEY)', True),
+        ('resp.set_cookie("staff", "yes", httponly=False, **options)', True),
         ('resp.set_cookie("sid", "", max_age=0, secure=False)', False),
         ('resp.set_cookie("staff", "9f1b6e43d842a7c5", secure=False)', True),
         ('resp.set_cookie("admin", "letmein", httponly=False)', True),
@@ -138,13 +145,14 @@ def test_on_off_flag_cookie_value_is_kept_but_hidden(
     source = (
         FLASK
         + 'TOKEN = "abc"\n'
+        + "KEY = TOKEN\n"
         + "def login(token, parts, options):\n"
         + '    resp = make_response("ok")\n'
         + f"    {call}\n"
         + "    return resp\n"
     )
     findings = _cookie_findings(_analyze(tmp_path, monkeypatch, source))
-    assert [f["line"] for f in findings] == [6]
+    assert [f["line"] for f in findings] == [7]
     finding = findings[0]
     assert finding["listing"]["listed"] is listed
     context = finding.get("low_risk_context")
@@ -152,6 +160,35 @@ def test_on_off_flag_cookie_value_is_kept_but_hidden(
         assert context is None
     else:
         assert context["reason"] == "on-off-cookie-value"
+
+
+def test_guarded_signed_flag_cookie_through_alias_and_wrapper_stays_listed(
+    tmp_path, monkeypatch
+):
+    source = (
+        DJANGO
+        + "def emit(response):\n"
+        + '    response.set_signed_cookie("staff", "yes", salt="s", secure=False)\n'
+        + "def issue(request):\n"
+        + "    if not request.user.is_staff:\n"
+        + "        return HttpResponse(status=403)\n"
+        + '    response = HttpResponse("ok")\n'
+        + "    alias = response\n"
+        + "    emit(alias)\n"
+        + "    return response\n"
+        + "def staff_area(request):\n"
+        + '    if request.get_signed_cookie("staff", default="", salt="s") != "yes":\n'
+        + "        return HttpResponse(status=403)\n"
+        + '    return HttpResponse("private")\n'
+    )
+    findings = _cookie_findings(_analyze(tmp_path, monkeypatch, source))
+    assert [f["line"] for f in findings] == [3]
+    finding = findings[0]
+    assert finding["listing"]["listed"] is True
+    assert finding.get("low_risk_context") is None
+    evidence = finding["metadata"]["security_evidence"]
+    assert evidence["options"] == {"httpOnly": "absent", "secure": "false"}
+    assert finding["evidence_contract"]["proof_state"] == "verified"
 
 
 @pytest.mark.parametrize(
