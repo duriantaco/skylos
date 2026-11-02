@@ -515,11 +515,30 @@ def _attach_empty_files(result, empty_files):
     result["analysis_summary"]["unused_files_count"] = len(empty_files)
 
 
+_PYTHON_SUFFIXES = (".py", ".pyi", ".pyw")
+
+
+def _attach_python_security_cwes(findings) -> None:
+    """Python security findings carry their rule's CWE ids for SARIF and
+    compliance consumers. A finding that already names its CWEs keeps them."""
+    from skylos.rules.quality.standards import security_cwe_entries
+
+    for finding in findings:
+        if not isinstance(finding, dict) or finding.get("cwe"):
+            continue
+        if not str(finding.get("file") or "").lower().endswith(_PYTHON_SUFFIXES):
+            continue
+        entries = security_cwe_entries(finding.get("rule_id"))
+        if entries:
+            finding["cwe"] = entries
+
+
 def _enrich_danger(result, enable_danger):
     if not enable_danger or not result.get("danger"):
         return
     from skylos.rules.compliance import enrich_findings_with_compliance
 
+    _attach_python_security_cwes(result["danger"])
     result["danger"] = enrich_findings_with_compliance(result["danger"])
 
 

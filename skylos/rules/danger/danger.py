@@ -39,6 +39,10 @@ from .calls import (
     _qualified_name_from_call as qualified_name_from_call,
     _weak_random_has_security_context,
     _yaml_load_without_safeloader,
+    _ruamel_unsafe_type,
+    track_import_aliases,
+    unpickler_load_name,
+    unrestricted_unpickler_classes,
 )
 
 
@@ -68,6 +72,7 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         self._parents_annotated = False
         self._safe_pickle_loads = set()
         self._module = None
+        self._unpickler_classes = {}
         self._safe_yaml_loaders = None
 
     def _annotate_parents(self, node: ast.AST) -> None:
@@ -121,6 +126,7 @@ class _DangerousCallsChecker(ast.NodeVisitor):
     def visit_Module(self, node):
         self._safe_pickle_loads = safe_pickle_loads(node, self.file_path)
         self._module = node
+        self._unpickler_classes = unrestricted_unpickler_classes(node)
         self._safe_yaml_loaders = None
         if not self._parents_annotated:
             self._annotate_parents(node)
@@ -128,9 +134,7 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Import(self, node):
-        for alias in node.names:
-            local = alias.asname or alias.name.split(".", 1)[0]
-            self.aliases[local] = alias.name
+        track_import_aliases(self.aliases, node)
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node):
@@ -158,6 +162,7 @@ class _DangerousCallsChecker(ast.NodeVisitor):
             node, self.aliases, self.assigned_calls_stack[-1]
         )
         name = yaml_load_call_name(node, self._module) or name
+        name = unpickler_load_name(name, self._unpickler_classes)
         if name:
             for rule_key, tup in DANGEROUS_CALLS.items():
                 rule_id, severity, message = tup[0], tup[1], tup[2]
@@ -176,7 +181,14 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                     "yaml.load",
                     "yaml.load_all",
                 } and not _yaml_load_without_safeloader(
-                    node, self.aliases, self._yaml_loader_classes()
+                    node, self.aliases, self._yaml_loader_classes(), self._module
+                ):
+                    continue
+
+                if (
+                    opts
+                    and opts.get("ruamel_unsafe_type")
+                    and not _ruamel_unsafe_type(node)
                 ):
                     continue
 
@@ -242,7 +254,7 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         )
 
     def _append_shell_command_findings(self, name: str, node: ast.Call) -> None:
-        if name == "os.system":
+        if name in _SHELL_COMMAND_CALLS:
             command_node = node.args[0] if node.args else None
         elif name.startswith("subprocess.") and _call_kw_is_true(node, "shell"):
             command_node = node.args[0] if node.args else None
@@ -318,19 +330,25 @@ _SQL_TOKENS = (
     "read_sql",
     ".raw(",
     "objects.raw",
+    ".fetch",
+    "execute_sql",
 )
 _SQL_RAW_TOKENS = (
-    "sqlalchemy",
-    ".text(",
-    " text(",
-    "read_sql",
     ".raw(",
     "objects.raw",
+    "rawsql",
+    ".extra(",
 )
 _CMD_TOKENS = (
     "os.system",
+    "system(",
     "subprocess",
     "popen",
+    "getoutput",
+    "getstatusoutput",
+    "execl",
+    "execv",
+    "spawn",
     "exec_command",
     "shell=true",
     "shell = true",
@@ -383,7 +401,13 @@ _XSS_TOKENS = (
     "autoescape false",
     "<",
 )
-_REDIRECT_TOKENS = ("redirect", "httpresponseredirect")
+_REDIRECT_TOKENS = (
+    "redirect",
+    "httpfound",
+    "httpseeother",
+    "httpmovedpermanently",
+    "location",
+)
 _CORS_TOKENS = (
     "cors",
     "access-control-allow-origin",
@@ -439,6 +463,7 @@ _AGENT_TOOL_TOKENS = (
     "tools =",
 )
 _ML_MODEL_LOAD_TOKENS = (
+    "trust_remote_code",
     "torch.load",
     "weights_only",
     "joblib.load",
@@ -468,6 +493,16 @@ _HTTP_UPLOAD_CALLS = {
     "requests.put",
 }
 _HTTP_REQUEST_CALLS = {"httpx.request", "requests.request"}
+_SHELL_COMMAND_CALLS = frozenset(
+    {
+        "os.system",
+        "os.popen",
+        "subprocess.getoutput",
+        "subprocess.getstatusoutput",
+        "asyncio.create_subprocess_shell",
+        "asyncio.subprocess.create_subprocess_shell",
+    }
+)
 
 
 def _constant_str(node: ast.AST | None) -> str | None:

@@ -165,6 +165,25 @@ def _qualified_name_from_call(node):
     return None
 
 
+_HTTP_CLIENT_CONNECTIONS = frozenset({"HTTPConnection", "HTTPSConnection"})
+
+
+def _request_url_argument(node: ast.Call, method: str) -> ast.AST | None:
+    """The URL of an HTTP client call.
+
+    ``requests``, ``httpx``, ``aiohttp`` and ``urllib3`` all take the URL as
+    the ``url`` keyword, as the first positional argument of a verb method
+    (``get(url)``) and as the second of ``request(method, url)``."""
+    for keyword in node.keywords:
+        if keyword.arg == "url":
+            return keyword.value
+    if method == "request" and len(node.args) >= 2:
+        return node.args[1]
+    if node.args:
+        return node.args[0]
+    return None
+
+
 def _receiver_name(node: ast.Call) -> str | None:
     if isinstance(node.func, ast.Attribute):
         value = node.func.value
@@ -1491,10 +1510,47 @@ class _SSRFFlowChecker(TaintVisitor):
             return self._self_attribute_is_test_client(receiver)
         return False
 
+    @cached_property
+    def _http_client_connection_targets(self) -> frozenset[str]:
+        targets = set()
+        if self.tree is None:
+            return frozenset()
+        for child in ast.walk(self.tree):
+            if not isinstance(child, (ast.Assign, ast.AnnAssign)) or not isinstance(
+                child.value, ast.Call
+            ):
+                continue
+            constructor = _qualified_name_from_expr(child.value.func) or ""
+            if constructor.rsplit(".", 1)[-1] not in _HTTP_CLIENT_CONNECTIONS:
+                continue
+            if isinstance(child, ast.Assign):
+                assigned = child.targets
+            else:
+                assigned = [child.target]
+            for target in assigned:
+                name = _qualified_name_from_expr(target)
+                if name:
+                    targets.add(name)
+        return frozenset(targets)
+
+    def _is_http_client_connection(self, node: ast.Call) -> bool:
+        """``http.client.HTTPConnection(host).request(method, path)``: the
+        host is fixed by the connection; the second argument is only the
+        request target on that host."""
+        receiver = getattr(node.func, "value", None)
+        if isinstance(receiver, ast.Call):
+            constructor = _qualified_name_from_expr(receiver.func) or ""
+            return constructor.rsplit(".", 1)[-1] in _HTTP_CLIENT_CONNECTIONS
+        if receiver is None:
+            return False
+        name = _qualified_name_from_expr(receiver)
+        return bool(name) and name in self._http_client_connection_targets
+
     def _is_likely_http_receiver(self, node: ast.Call) -> bool:
         name = _receiver_name(node)
         if name is None:
-            return False
+            receiver = getattr(node.func, "value", None)
+            return isinstance(receiver, ast.Call) and self._is_http_reference(receiver)
 
         if self._is_known_http_receiver_name(name):
             return True
@@ -2296,18 +2352,22 @@ class _SSRFFlowChecker(TaintVisitor):
         ):
             self._record_request_url_mutation(node.func.value.id, node.args[0])
 
-        if qn and "." in qn:
-            parts = qn.rsplit(".", 1)
-            func = parts[1]
-            if func in self.HTTP_METHODS and node.args:
+        if isinstance(node.func, ast.Attribute):
+            func = node.func.attr
+            sink = qn or _safe_expr_text(node.func)
+            url_arg = None
+            if func in self.HTTP_METHODS and not (
+                func == "request" and self._is_http_client_connection(node)
+            ):
+                url_arg = _request_url_argument(node, func)
+            if url_arg is not None:
                 if self._is_likely_http_receiver(
                     node
                 ) and not self._is_test_client_receiver(node):
-                    url_arg = node.args[0]
                     if _is_interpolated_string(
                         url_arg
                     ) or _tainted_url_is_ssrf_relevant(self, url_arg):
-                        self._append_finding(node, url_arg, qn)
+                        self._append_finding(node, url_arg, sink)
 
         if qn and (
             qn.endswith(".urlopen")
