@@ -103,7 +103,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.14"]
+        python-version: ["3.11", "3.14", "3.15"]
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -147,6 +147,35 @@ jobs:
             skylos:test \
             . --json --no-provenance > /tmp/skylos-python-syntax.json
           grep -q '"stale_helper"' /tmp/skylos-python-syntax.json
+
+      - name: Scan Python 3.15 syntax
+        if: matrix.python-version == '3.15'
+        run: |
+          mkdir -p /tmp/skylos-python315-syntax
+          cat > /tmp/skylos-python315-syntax/example.py <<'PY'
+          def flatten(chunks):
+              return [*chunk for chunk in chunks]
+
+          def stale_helper():
+              return flatten([[1], [2]])
+
+          print(flatten([[3], [4]]))
+          PY
+          docker run --rm \
+            -v "/tmp/skylos-python315-syntax:/work" \
+            -w /work \
+            skylos:test \
+            . --json --no-provenance > /tmp/skylos-python315-syntax.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path("/tmp/skylos-python315-syntax.json").read_text())
+          assert not report.get("analysis_errors"), report
+          unused = {finding["name"] for finding in report.get("unused_functions", [])}
+          assert "stale_helper" in unused, report
+          assert "flatten" not in unused, report
+          PY
 
   image_action_smoke:
     name: action-image-smoke
