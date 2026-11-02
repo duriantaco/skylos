@@ -14,11 +14,12 @@ cookie write. Like TLS verification and debug mode, the flags describe a
 deployment: test modules are not reported, as tests set plain cookies on
 local test clients.
 
-A cookie whose value is a literal written at the call (``"true"``, ``1``)
-holds the same text for every visitor, so there is nothing for a script or a
-network observer to steal. It is still reported, with a ``low_risk_context``
-that hides it by default; a name, call, f-string or unpacked value stays
-listed.
+A cookie whose value is an on/off flag literal written at the call
+(``"true"``, ``1``, ``"off"``, an empty string) has nothing a script or a
+network observer could learn or replay that they could not guess. It is still
+reported, with a ``low_risk_context`` that hides it by default. Any other
+literal can be a shared secret, so it stays listed, as does a name, call,
+f-string or unpacked value.
 """
 
 from __future__ import annotations
@@ -32,7 +33,8 @@ _COOKIE_WRITERS = frozenset({"set_cookie", "set_signed_cookie"})
 _FLAG_POSITIONS = {"set_cookie": {"secure": 6, "httponly": 7}}
 _FLAGS = (("httpOnly", "httponly"), ("secure", "secure"))
 _VALUE_POSITION = 1
-_CONSTANT_VALUE_REASON = "constant-cookie-value"
+_FLAG_VALUE_REASON = "on-off-cookie-value"
+_FLAG_TEXTS = frozenset({"", "true", "false", "yes", "no", "on", "off", "1", "0"})
 
 
 def _literal_state(node: ast.AST) -> str:
@@ -74,12 +76,30 @@ def _cookie_value(call: ast.Call) -> ast.AST | None:
     return None
 
 
-def _constant_value_context(call: ast.Call) -> dict | None:
-    if not isinstance(_cookie_value(call), ast.Constant):
+def _is_flag_literal(node: ast.AST | None) -> bool:
+    if not isinstance(node, ast.Constant):
+        return False
+    value = node.value
+    if value is None or isinstance(value, bool):
+        return True
+    if isinstance(value, int):
+        return value in (0, 1)
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("ascii")
+        except UnicodeDecodeError:
+            return False
+    if isinstance(value, str):
+        return value.strip().lower() in _FLAG_TEXTS
+    return False
+
+
+def _flag_value_context(call: ast.Call) -> dict | None:
+    if not _is_flag_literal(_cookie_value(call)):
         return None
     return {
-        "reason": _CONSTANT_VALUE_REASON,
-        "detail": "the cookie value is a literal, the same for every visitor",
+        "reason": _FLAG_VALUE_REASON,
+        "detail": "the cookie value is a fixed on/off flag anyone can guess",
     }
 
 
@@ -137,7 +157,7 @@ def _finding(call: ast.Call, states: dict[str, str], file_path, symbol: str) -> 
             }
         },
     }
-    low_risk = _constant_value_context(call)
+    low_risk = _flag_value_context(call)
     if low_risk is not None:
         finding["low_risk_context"] = low_risk
     return finding

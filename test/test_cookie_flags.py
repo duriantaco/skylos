@@ -111,9 +111,15 @@ def test_literal_false_cookie_flag_is_reported_with_complete_evidence(
     "call, listed",
     [
         ('resp.set_cookie("logged_user", "true", httponly=False)', False),
-        ('resp.set_cookie(key="lang", value="en", secure=False)', False),
+        ('resp.set_cookie(key="banner", value="Off", secure=False)', False),
         ('resp.set_cookie("seen", 1, None, None, "/", None, False)', False),
         ('resp.set_signed_cookie("flag", b"1", salt="s", httponly=False)', False),
+        ('resp.set_cookie("sid", "", max_age=0, secure=False)', False),
+        ('resp.set_cookie("staff", "9f1b6e43d842a7c5", secure=False)', True),
+        ('resp.set_cookie("admin", "letmein", httponly=False)', True),
+        ('resp.set_cookie(key="lang", value="en", secure=False)', True),
+        ('resp.set_cookie("pin", 4821, secure=False)', True),
+        ('resp.set_cookie("key", b"\\xff", secure=False)', True),
         ('resp.set_cookie("sid", token, httponly=False)', True),
         ('resp.set_cookie("sid", value=token, secure=False)', True),
         ('resp.set_cookie("sid", f"{token}", secure=False)', True),
@@ -124,7 +130,7 @@ def test_literal_false_cookie_flag_is_reported_with_complete_evidence(
         ('resp.set_cookie("sid", secure=False, **options)', True),
     ],
 )
-def test_fixed_literal_cookie_value_is_kept_but_hidden(
+def test_on_off_flag_cookie_value_is_kept_but_hidden(
     tmp_path, monkeypatch, call, listed
 ):
     source = (
@@ -143,7 +149,7 @@ def test_fixed_literal_cookie_value_is_kept_but_hidden(
     if listed:
         assert context is None
     else:
-        assert context["reason"] == "constant-cookie-value"
+        assert context["reason"] == "on-off-cookie-value"
 
 
 @pytest.mark.parametrize(
