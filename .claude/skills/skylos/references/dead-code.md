@@ -64,8 +64,14 @@ Skylos has framework-aware behavior for patterns such as:
   `DatabaseSeeder` and `laravel-vite-plugin` inputs.
 - PHP type-position and PHPDoc references to imported classes.
 - package entrypoints and plugin hooks.
+- Python library public API (`skylos/deadcode/public_api.py`): attribute
+  docstrings and `#:` comments, Sphinx/MyST directives and roles, mkdocstrings
+  `:::`, `.pyi` stubs and PEP 562/`lazy_loader` export tables. `__all__`
+  always wins; private, test and script code is never rescued, and a
+  documented class does not rescue its undocumented methods.
 
-The full convention table is in `dictionary.md` under "Framework entrypoints".
+The full convention table is in `dictionary.md` under "Framework entrypoints"
+and "Library public API (Python)".
 
 When adding support, include a minimal positive fixture and a negative fixture
 so the analyzer does not simply whitelist too much.
