@@ -1,5 +1,21 @@
 ## Changelog
 
+## [5.4.0](https://github.com/duriantaco/skylos/compare/v5.3.0...v5.4.0) (2026-11-02)
+
+
+### Features
+
+* **output:** show the verdict and top risks first and add skylos report ([#1144](https://github.com/duriantaco/skylos/issues/1144)) ([c90f1e2](https://github.com/duriantaco/skylos/commit/c90f1e2f04cd396343988a84f5fbbbaa9b4d2852))
+* **security:** flag open control and admin routes as SKY-D283 ([#1145](https://github.com/duriantaco/skylos/issues/1145)) ([31ff5c0](https://github.com/duriantaco/skylos/commit/31ff5c0ac51e99f077613fba2f366a199ae0d8a7))
+
+
+### Bug Fixes
+
+* **ci:** add Python 3.15 container images ([#1150](https://github.com/duriantaco/skylos/issues/1150)) ([14932fb](https://github.com/duriantaco/skylos/commit/14932fbe0b336813d7ed56bf0c6f3d1da902d96d))
+* **deadcode:** tighten public API detection ([#1149](https://github.com/duriantaco/skylos/issues/1149)) ([e68feed](https://github.com/duriantaco/skylos/commit/e68feedcbb3860e369312698537d6e35155996cb))
+* **security:** preserve XSS escaping through safe Namespace helpers ([#1151](https://github.com/duriantaco/skylos/issues/1151)) ([5c5a83c](https://github.com/duriantaco/skylos/commit/5c5a83c580b5d4e5d0e621168738613d436944a5))
+* **security:** prevent noise filters from hiding real findings ([#1146](https://github.com/duriantaco/skylos/issues/1146)) ([40732e0](https://github.com/duriantaco/skylos/commit/40732e0b112311b58456ae25726edf37b41b83a0))
+
 ## [5.3.0](https://github.com/duriantaco/skylos/compare/v5.2.0...v5.3.0) (2026-10-31)
 
 
