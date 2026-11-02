@@ -73,7 +73,6 @@ def cookie_option_states(call: ast.Call) -> dict[str, str] | None:
 
 
 def _finding(call: ast.Call, states: dict[str, str], file_path, symbol: str) -> dict:
-    disabled = [label for label, state in states.items() if state == "false"]
     summary = ", ".join(f"{label}={states[label]}" for label, _ in _FLAGS)
     sink = f"`{ast.unparse(call.func)}()` Set-Cookie response header"
     return {
@@ -99,17 +98,16 @@ def _finding(call: ast.Call, states: dict[str, str], file_path, symbol: str) -> 
                     for label, state in states.items()
                     if state == "true"
                 ],
-                "guards_missing": [f"{label}=true" for label in disabled],
+                "guards_missing": ["secure=true"],
                 "options": dict(states),
                 "confidence_reason": (
                     "A literal secure=False at the cookie write lets the "
                     "browser send the cookie over plain HTTP."
                 ),
                 "test_hint": (
-                    "Assert the emitted Set-Cookie header has the Secure and "
-                    "HttpOnly attributes."
+                    "Assert the emitted Set-Cookie header has the Secure attribute."
                 ),
-                "fix_shape": "pass secure=True and httponly=True to the cookie write",
+                "fix_shape": "pass secure=True to the cookie write",
                 "analysis_complete": True,
             }
         },
