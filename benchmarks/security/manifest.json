@@ -1194,7 +1194,7 @@
       },
       "expect": {
         "present": {
-          "danger": ["SKY-D240", "SKY-D241"]
+          "danger": ["SKY-D239", "SKY-D229"]
         },
         "absent": {}
       }

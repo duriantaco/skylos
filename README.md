@@ -946,7 +946,15 @@ same-package files or source files identified by exact imports or fully qualifie
 names under a verified local source root. Helper reads are bounded and reject
 symlinks; no Java code or build scripts are executed. This is not full classpath
 or recursive helper analysis. Unknown helpers are not assumed to be request
-sources or sanitizers.
+sources or sanitizers. Request data also includes Spring `@RequestBody`,
+`@ModelAttribute` and other handler parameters, JAX-RS `@QueryParam`-style and
+entity parameters, and uploaded files. Java checks cover SQL (JDBC, JPA,
+Hibernate, `JdbcTemplate`), command, path, SSRF, open redirect (including Spring
+`"redirect:"` views), XXE (SKY-D236), expression, JNDI and script injection
+(SKY-D237), LDAP (SKY-D239) and XPath (SKY-D229) injection, template injection,
+and unsafe deserializers (`ObjectInputStream`, `XMLDecoder`, XStream, SnakeYAML,
+Jackson default typing, Kryo). Sinks with common method names such as `query`,
+`search` or `lookup` are reported only on a receiver of the matching type.
 
 C++ analysis covers `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hh`, and `.hxx`. The first
 release reports only apparently unused file-local free functions. Without a

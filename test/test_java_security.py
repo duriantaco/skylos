@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from skylos.visitors.languages.java.core import JavaCore
 from skylos.visitors.languages.java.flow import (
     MAX_CONSTANT_STRING_CHARS,
@@ -1953,3 +1955,604 @@ class App {
     )
     assert "ldap_injection" not in _categories(findings)
     assert "SKY-D215" not in _rule_ids(findings)
+
+
+def _findings_on(findings: list[dict], marker_line: int, rule_id: str) -> list[dict]:
+    return [
+        finding
+        for finding in findings
+        if finding["line"] == marker_line and finding["rule_id"] == rule_id
+    ]
+
+
+def _marked_line(code: str, marker: str = "// SINK") -> int:
+    for index, line in enumerate(code.splitlines(), start=1):
+        if marker in line:
+            return index
+    raise AssertionError("marker not found")
+
+
+_SPRING_HEADER = """import java.net.URI;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.reactive.function.client.WebClient;
+import jakarta.persistence.EntityManager;
+
+class UserDto {
+  private String name;
+  public String getName() { return name; }
+}
+
+interface UserService { void update(String name); }
+
+@Controller
+class App {
+  private JdbcTemplate jdbcTemplate;
+  private EntityManager entityManager;
+  private RestTemplate restTemplate;
+  private WebClient webClient;
+  private UserService userService;
+
+"""
+
+
+@pytest.mark.parametrize(
+    ("body", "rule_id", "severity"),
+    [
+        (
+            """  @PostMapping("/a")
+  Object a(@RequestBody UserDto dto) {
+    return jdbcTemplate.queryForList("SELECT * FROM u WHERE n = '" + dto.getName() + "'"); // SINK
+  }""",
+            "SKY-D211",
+            "CRITICAL",
+        ),
+        (
+            """  @GetMapping("/b")
+  Object b(String q) {
+    return entityManager.createQuery("from User u where u.name = '" + q + "'"); // SINK
+  }""",
+            "SKY-D211",
+            "CRITICAL",
+        ),
+        (
+            """  @GetMapping("/p")
+  Object p(@RequestParam String name) {
+    StringBuilder sql = new StringBuilder("SELECT * FROM u");
+    sql.append(" WHERE n = '").append(name).append("'");
+    return jdbcTemplate.queryForList(sql.toString()); // SINK
+  }""",
+            "SKY-D211",
+            "CRITICAL",
+        ),
+        (
+            """  @GetMapping("/c")
+  Object c(@RequestParam long id) {
+    return jdbcTemplate.queryForList("SELECT * FROM u WHERE id = " + id); // SINK
+  }""",
+            "SKY-D211",
+            None,
+        ),
+        (
+            """  @GetMapping("/d")
+  Object d(@RequestParam String name) {
+    return jdbcTemplate.queryForList("SELECT * FROM u WHERE n = ?", name); // SINK
+  }""",
+            "SKY-D211",
+            None,
+        ),
+        (
+            """  @PostMapping("/e")
+  void e(@RequestBody UserDto dto) {
+    userService.update("name=" + dto.getName()); // SINK
+  }""",
+            "SKY-D211",
+            None,
+        ),
+        (
+            """  @GetMapping("/f")
+  String f(@RequestParam String next) {
+    return "redirect:" + next; // SINK
+  }""",
+            "SKY-D230",
+            "HIGH",
+        ),
+        (
+            """  @GetMapping("/g")
+  String g(@RequestParam String next) {
+    return "redirect:/" + next; // SINK
+  }""",
+            "SKY-D230",
+            "HIGH",
+        ),
+        (
+            """  @GetMapping("/h")
+  String h(@PathVariable String ownerId) {
+    return "redirect:/owners/" + ownerId; // SINK
+  }""",
+            "SKY-D230",
+            None,
+        ),
+        (
+            """  @GetMapping("/i")
+  String i(@RequestParam String next) {
+    if (!next.startsWith("/") || next.startsWith("//")) {
+      return "redirect:/";
+    }
+    return "redirect:" + next; // SINK
+  }""",
+            "SKY-D230",
+            None,
+        ),
+        (
+            """  @GetMapping("/j")
+  String j(@RequestParam String next) {
+    String target = clean(next);
+    return "redirect:" + target; // SINK
+  }
+
+  private String clean(String value) { return value.trim(); }""",
+            "SKY-D230",
+            "HIGH",
+        ),
+        (
+            """  @GetMapping("/k")
+  Object k(@RequestParam String next) {
+    return org.springframework.http.ResponseEntity.status(302).location(URI.create(next)).build(); // SINK
+  }""",
+            "SKY-D230",
+            "HIGH",
+        ),
+        (
+            """  @GetMapping("/l")
+  String l(@RequestParam String url) {
+    return webClient.get().uri(url).retrieve().bodyToMono(String.class).block(); // SINK
+  }""",
+            "SKY-D216",
+            "CRITICAL",
+        ),
+        (
+            """  @GetMapping("/m")
+  String m(@RequestParam String id) {
+    return webClient.get().uri("/users/{id}", id).retrieve().bodyToMono(String.class).block(); // SINK
+  }""",
+            "SKY-D216",
+            None,
+        ),
+        (
+            """  @GetMapping("/n")
+  String n(@RequestParam String id) {
+    return restTemplate.getForObject("https://api.example.com/users/" + id, String.class); // SINK
+  }""",
+            "SKY-D216",
+            None,
+        ),
+        (
+            """  @GetMapping("/o")
+  String o(@RequestParam String host) {
+    return restTemplate.getForObject("https://" + host + "/status", String.class); // SINK
+  }""",
+            "SKY-D216",
+            "CRITICAL",
+        ),
+    ],
+)
+def test_spring_sources_and_sinks(tmp_path, body, rule_id, severity):
+    code = _SPRING_HEADER + body + "\n}\n"
+    hits = _findings_on(_scan_java(tmp_path, code), _marked_line(code), rule_id)
+    if severity is None:
+        assert hits == []
+    else:
+        assert [finding["severity"] for finding in hits] == [severity]
+
+
+def test_spring_mapping_outside_a_controller_does_not_bind_plain_params(tmp_path):
+    code = """import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.web.bind.annotation.*;
+
+@RequestMapping("/plain")
+class App {
+  private JdbcTemplate jdbcTemplate;
+
+  @GetMapping("/x")
+  Object x(String q) {
+    return jdbcTemplate.queryForList("SELECT * FROM t WHERE q = '" + q + "'"); // SINK
+  }
+}
+"""
+    findings = _scan_java(tmp_path, code)
+    assert [f for f in findings if f.get("cwe") == "CWE-89"] == []
+
+
+@pytest.mark.parametrize(
+    ("statement", "rule_id", "severity"),
+    [
+        ("Runtime.getRuntime().exec(cmd); // SINK", "SKY-D212", "CRITICAL"),
+        (
+            'Runtime.getRuntime().exec(new String[] {"sh", "-c", "ping " + cmd}); // SINK',
+            "SKY-D212",
+            "CRITICAL",
+        ),
+        (
+            'new ProcessBuilder("sh", "-c", "dig " + cmd).start(); // SINK',
+            "SKY-D212",
+            "CRITICAL",
+        ),
+        (
+            'new ProcessBuilder().command("sh", "-c", cmd).redirectErrorStream(true).start(); // SINK',
+            "SKY-D212",
+            "CRITICAL",
+        ),
+        ("Runtime.getRuntime().exec(local); // SINK", "SKY-D203", "HIGH"),
+        ('Runtime.getRuntime().exec("uptime"); // SINK', "SKY-D203", "LOW"),
+        ('new ProcessBuilder("uptime").start(); // SINK', "SKY-D212", None),
+    ],
+)
+def test_runtime_exec_and_process_builder(tmp_path, statement, rule_id, severity):
+    code = (
+        "import javax.servlet.http.*;\n\nclass App {\n"
+        "  void run(HttpServletRequest request, String local) throws Exception {\n"
+        '    String cmd = request.getParameter("cmd");\n'
+        f"    {statement}\n"
+        "  }\n}\n"
+    )
+    hits = _findings_on(_scan_java(tmp_path, code), _marked_line(code), rule_id)
+    if severity is None:
+        assert hits == []
+    else:
+        assert [finding["severity"] for finding in hits] == [severity]
+    if rule_id == "SKY-D203" and severity == "LOW":
+        assert hits[0]["low_risk_context"]["reason"] == "constant-shell-command"
+
+
+_XML_HEADER = """import java.io.InputStream;
+import javax.servlet.http.HttpServletRequest;
+import javax.xml.XMLConstants;
+import javax.xml.parsers.*;
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.transform.*;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.*;
+
+class App {
+  private static final String DISALLOW = "http://apache.org/xml/features/disallow-doctype-decl";
+
+  Object run(InputStream in, HttpServletRequest request, boolean strict, org.w3c.dom.Document doc) throws Exception {
+"""
+
+
+@pytest.mark.parametrize(
+    ("body", "severity"),
+    [
+        (
+            """    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+    return dbf.newDocumentBuilder().parse(in); // SINK""",
+            "HIGH",
+        ),
+        (
+            """    return DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(request.getInputStream()); // SINK""",
+            "CRITICAL",
+        ),
+        (
+            """    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+    try {
+      dbf.setFeature(DISALLOW, true);
+    } catch (ParserConfigurationException e) {
+      throw new IllegalStateException(e);
+    }
+    return dbf.newDocumentBuilder().parse(in); // SINK""",
+            None,
+        ),
+        (
+            """    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+    dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
+    dbf.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+    return dbf.newDocumentBuilder().parse(in); // SINK""",
+            None,
+        ),
+        (
+            """    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+    DocumentBuilderFactory other = DocumentBuilderFactory.newInstance();
+    other.setFeature(DISALLOW, true);
+    return dbf.newDocumentBuilder().parse(in); // SINK""",
+            "HIGH",
+        ),
+        (
+            """    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+    dbf.setFeature("http://xml.org/sax/features/external-general-entities", true);
+    dbf.setFeature("http://xml.org/sax/features/external-parameter-entities", true);
+    return dbf.newDocumentBuilder().parse(in); // SINK""",
+            "HIGH",
+        ),
+        (
+            """    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+    DocumentBuilder db = dbf.newDocumentBuilder();
+    dbf.setFeature(DISALLOW, true);
+    return db.parse(in); // SINK""",
+            "HIGH",
+        ),
+        (
+            """    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+    if (strict) {
+      dbf.setFeature(DISALLOW, true);
+    }
+    return dbf.newDocumentBuilder().parse(in); // SINK""",
+            "HIGH",
+        ),
+        (
+            """    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+    dbf.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+    return dbf.newDocumentBuilder().parse(in); // SINK""",
+            "HIGH",
+        ),
+        (
+            """    XMLInputFactory xif = XMLInputFactory.newInstance();
+    xif.setProperty(XMLInputFactory.SUPPORT_DTD, false);
+    return xif.createXMLStreamReader(in); // SINK""",
+            None,
+        ),
+        (
+            """    XMLInputFactory xif = XMLInputFactory.newInstance();
+    return xif.createXMLStreamReader(in); // SINK""",
+            "HIGH",
+        ),
+        (
+            """    Transformer t = TransformerFactory.newInstance().newTransformer();
+    t.transform(new DOMSource(doc), new StreamResult(System.out)); // SINK
+    return null;""",
+            None,
+        ),
+        (
+            """    Transformer t = TransformerFactory.newInstance().newTransformer();
+    t.transform(new StreamSource(in), new StreamResult(System.out)); // SINK
+    return null;""",
+            "HIGH",
+        ),
+        (
+            """    DocumentBuilder db = DocumentBuilderFactory.newInstance().newDocumentBuilder();
+    return db.newDocument(); // SINK""",
+            None,
+        ),
+    ],
+)
+def test_xml_parsers_report_xxe_unless_hardened_first(tmp_path, body, severity):
+    code = _XML_HEADER + body + "\n  }\n}\n"
+    hits = _findings_on(_scan_java(tmp_path, code), _marked_line(code), "SKY-D236")
+    if severity is None:
+        assert hits == []
+    else:
+        assert [finding["severity"] for finding in hits] == [severity]
+        assert hits[0]["cwe"] == "CWE-611"
+
+
+@pytest.mark.parametrize(
+    ("imports", "body", "severity"),
+    [
+        (
+            "import java.beans.XMLDecoder;",
+            "return new XMLDecoder(request.getInputStream()).readObject(); // SINK",
+            "CRITICAL",
+        ),
+        (
+            "import org.yaml.snakeyaml.Yaml;",
+            "return new Yaml().load(in); // SINK",
+            "MEDIUM",
+        ),
+        (
+            "import org.yaml.snakeyaml.*;\nimport org.yaml.snakeyaml.constructor.SafeConstructor;",
+            "return new Yaml(new SafeConstructor(new LoaderOptions())).load(in); // SINK",
+            None,
+        ),
+        (
+            "import org.yaml.snakeyaml.Yaml;\nclass SafeConstructor extends org.yaml.snakeyaml.constructor.Constructor {}",
+            "return new Yaml(new SafeConstructor()).load(in); // SINK",
+            "MEDIUM",
+        ),
+        (
+            "import com.thoughtworks.xstream.XStream;",
+            "XStream x = new XStream();\n    return x.fromXML(request.getReader()); // SINK",
+            "HIGH",
+        ),
+        (
+            "import com.thoughtworks.xstream.XStream;\nimport com.thoughtworks.xstream.security.AnyTypePermission;",
+            "XStream x = new XStream();\n    x.addPermission(AnyTypePermission.ANY);\n    return x.fromXML(request.getReader()); // SINK",
+            "CRITICAL",
+        ),
+        (
+            "import com.thoughtworks.xstream.XStream;\nimport com.thoughtworks.xstream.security.NoTypePermission;",
+            "XStream x = new XStream();\n    x.addPermission(NoTypePermission.NONE);\n    return x.fromXML(in); // SINK",
+            None,
+        ),
+        (
+            "import com.fasterxml.jackson.databind.ObjectMapper;",
+            "ObjectMapper m = new ObjectMapper();\n    m.enableDefaultTyping(); // SINK\n    return m;",
+            "HIGH",
+        ),
+        (
+            "import java.io.ObjectInputStream;",
+            "return new ObjectInputStream(socket.getInputStream()).readObject(); // SINK",
+            "CRITICAL",
+        ),
+        (
+            "import java.io.ObjectInputStream;",
+            'ObjectInputStream ois = new ObjectInputStream(in); // SINK\n    ois.setObjectInputFilter(java.io.ObjectInputFilter.Config.createFilter("app.*;!*"));\n    return ois.readObject();',
+            "MEDIUM",
+        ),
+    ],
+)
+def test_unsafe_deserializers(tmp_path, imports, body, severity):
+    code = (
+        f"{imports}\nimport java.io.*;\nimport javax.servlet.http.*;\n\nclass App {{\n"
+        "  Object run(HttpServletRequest request, InputStream in, java.net.Socket socket) throws Exception {\n"
+        f"    {body}\n"
+        "  }\n}\n"
+    )
+    line = _marked_line(code)
+    hits = [
+        finding
+        for finding in _scan_java(tmp_path, code)
+        if finding["line"] == line and finding["rule_id"] in {"SKY-D204", "SKY-D233"}
+    ]
+    if severity is None:
+        assert hits == []
+    else:
+        assert [finding["severity"] for finding in hits] == [severity]
+
+
+@pytest.mark.parametrize(
+    ("statement", "rule_id"),
+    [
+        (
+            "new org.springframework.expression.spel.standard.SpelExpressionParser().parseExpression(value); // SINK",
+            "SKY-D237",
+        ),
+        ("new javax.naming.InitialContext().lookup(value); // SINK", "SKY-D237"),
+        (
+            'new javax.script.ScriptEngineManager().getEngineByName("js").eval(value); // SINK',
+            "SKY-D237",
+        ),
+        ("new groovy.lang.GroovyShell().evaluate(value); // SINK", "SKY-D237"),
+        ('xpath.evaluate("/u[@n=\'" + value + "\']", doc); // SINK', "SKY-D229"),
+        ('ctx.search("ou=people", "(uid=" + value + ")", null); // SINK', "SKY-D239"),
+    ],
+)
+def test_expression_jndi_ldap_and_xpath_sinks(tmp_path, statement, rule_id):
+    code = (
+        "import javax.servlet.http.*;\n\nclass App {\n"
+        "  void run(HttpServletRequest request, javax.xml.xpath.XPath xpath, Object doc, "
+        "javax.naming.directory.DirContext ctx) throws Exception {\n"
+        '    String value = request.getParameter("v");\n'
+        f"    {statement}\n"
+        "  }\n}\n"
+    )
+    hits = _findings_on(_scan_java(tmp_path, code), _marked_line(code), rule_id)
+    assert [finding["severity"] for finding in hits] == ["CRITICAL"]
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "java.util.regex.Pattern.compile(value); // SINK",
+        'searchService.search("products", value); // SINK',
+        "cache.lookup(value); // SINK",
+        'new javax.naming.InitialContext().lookup("java:comp/env/jdbc/app"); // SINK',
+        'new org.springframework.expression.spel.standard.SpelExpressionParser().parseExpression("1 + 1"); // SINK',
+    ],
+)
+def test_same_named_methods_on_other_receivers_are_not_injection_sinks(
+    tmp_path, statement
+):
+    code = (
+        "import javax.servlet.http.*;\n\n"
+        "interface SearchService { Object search(String index, String term); }\n"
+        "class Cache { Object lookup(String key) { return key; } }\n\n"
+        "class App {\n"
+        "  void run(HttpServletRequest request, SearchService searchService, Cache cache) throws Exception {\n"
+        '    String value = request.getParameter("v");\n'
+        f"    {statement}\n"
+        "  }\n}\n"
+    )
+    line = _marked_line(code)
+    assert [
+        finding
+        for finding in _scan_java(tmp_path, code)
+        if finding["line"] == line
+        and finding["rule_id"]
+        in {"SKY-D229", "SKY-D237", "SKY-D239", "SKY-D240", "SKY-D241"}
+    ] == []
+
+
+def test_velocity_template_built_from_request_is_template_injection(tmp_path):
+    code = """import javax.servlet.http.*;
+import java.io.StringWriter;
+import org.apache.velocity.VelocityContext;
+import org.apache.velocity.app.Velocity;
+
+class App {
+  void run(HttpServletRequest request) throws Exception {
+    String template = request.getParameter("t");
+    Velocity.evaluate(new VelocityContext(), new StringWriter(), "x", template); // SINK
+  }
+}
+"""
+    hits = _findings_on(_scan_java(tmp_path, code), _marked_line(code), "SKY-D349")
+    assert [finding["severity"] for finding in hits] == ["CRITICAL"]
+
+
+def test_taint_assigned_inside_catch_block_reaches_sql_sink(tmp_path):
+    code = """import javax.servlet.http.*;
+
+class App {
+  void run(HttpServletRequest request, java.sql.Statement stmt) throws Exception {
+    try {
+      stmt.close();
+    } catch (Exception e) {
+      String q = request.getParameter("q");
+      stmt.executeQuery(q); // SINK
+    }
+  }
+}
+"""
+    hits = _findings_on(_scan_java(tmp_path, code), _marked_line(code), "SKY-D211")
+    assert [finding["severity"] for finding in hits] == ["CRITICAL"]
+
+
+@pytest.mark.parametrize(
+    ("statement", "reported"),
+    [
+        (
+            'ctx.search("ou=people", "(uid=" + LdapEncoder.filterEncode(uid) + ")", controls); // SINK',
+            False,
+        ),
+        (
+            'String safe = Rdn.escapeValue(uid);\n    ctx.search("ou=people", "(uid=" + safe + ")", controls); // SINK',
+            False,
+        ),
+        (
+            'ldapTemplate.search("", new EqualsFilter("uid", uid).encode(), mapper); // SINK',
+            False,
+        ),
+        (
+            'ldapTemplate.search(LdapQueryBuilder.query().where("uid").is(uid), mapper); // SINK',
+            False,
+        ),
+        (
+            'ctx.search("ou=people", "(uid={0})", new Object[] {uid}, controls); // SINK',
+            False,
+        ),
+        (
+            'ldapTemplate.search("", new HardcodedFilter("(uid=" + uid + ")").encode(), mapper); // SINK',
+            True,
+        ),
+        (
+            'String safe = LdapEncoder.filterEncode(uid);\n    ctx.search("ou=people", "(uid=" + uid + ")", controls); // SINK',
+            True,
+        ),
+        (
+            'ldapTemplate.search(LdapQueryBuilder.query().filter("(uid=" + uid + ")"), mapper); // SINK',
+            True,
+        ),
+    ],
+)
+def test_ldap_values_escaped_by_an_encoder_are_not_injection(
+    tmp_path, statement, reported
+):
+    code = (
+        "import javax.servlet.http.*;\n"
+        "import javax.naming.directory.*;\n"
+        "import javax.naming.ldap.Rdn;\n"
+        "import org.springframework.ldap.core.LdapTemplate;\n"
+        "import org.springframework.ldap.filter.*;\n"
+        "import org.springframework.ldap.query.LdapQueryBuilder;\n"
+        "import org.springframework.ldap.support.LdapEncoder;\n\n"
+        "class App {\n"
+        "  private LdapTemplate ldapTemplate;\n"
+        "  void run(HttpServletRequest request, DirContext ctx, SearchControls controls, Object mapper) throws Exception {\n"
+        '    String uid = request.getParameter("uid");\n'
+        f"    {statement}\n"
+        "  }\n}\n"
+    )
+    hits = _findings_on(_scan_java(tmp_path, code), _marked_line(code), "SKY-D239")
+    assert bool(hits) is reported
