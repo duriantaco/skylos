@@ -217,6 +217,11 @@ def python_ast_cache_session() -> Iterator[None]:
             clear_python_ast_cache()
 
 
+def in_python_ast_cache_session() -> bool:
+    """True inside an analyzer run, where project files are treated as fixed."""
+    return _session_depth > 0
+
+
 def releases_python_ast_cache(func):
     """Run ``func`` inside a cache session, preserving its signature."""
 
