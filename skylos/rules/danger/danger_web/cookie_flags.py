@@ -19,7 +19,8 @@ A cookie whose value is an on/off flag literal written at the call
 network observer could learn or replay that they could not guess. It is still
 reported, with a ``low_risk_context`` that hides it by default. Any other
 literal can be a shared secret, so it stays listed, as does a name, call,
-f-string or unpacked value.
+f-string or unpacked value. A signed cookie always stays listed: the server's
+signature makes even a flag value a credential that can be replayed.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ import sys
 from skylos.rules.danger.calls import _is_test_module
 
 _COOKIE_WRITERS = frozenset({"set_cookie", "set_signed_cookie"})
+_SIGNED_WRITERS = frozenset({"set_signed_cookie"})
 _FLAG_POSITIONS = {"set_cookie": {"secure": 6, "httponly": 7}}
 _FLAGS = (("httpOnly", "httponly"), ("secure", "secure"))
 _VALUE_POSITION = 1
@@ -95,6 +97,8 @@ def _is_flag_literal(node: ast.AST | None) -> bool:
 
 
 def _flag_value_context(call: ast.Call) -> dict | None:
+    if call.func.attr in _SIGNED_WRITERS:
+        return None
     if not _is_flag_literal(_cookie_value(call)):
         return None
     return {
