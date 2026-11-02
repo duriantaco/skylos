@@ -194,10 +194,8 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                 ):
                     continue
 
-                if (
-                    opts
-                    and opts.get("production_only")
-                    and _is_test_module(self.file_path)
+                if opts and opts.get("production_only") and _is_test_module(
+                    self.file_path
                 ):
                     continue
 
@@ -595,7 +593,7 @@ def scan_file_with_tree(
         scan_redirect(tree, file_path, findings, project_root=project_root)
         scan_cors(tree, file_path, findings)
         scan_route_auth(tree, file_path, findings, project_root=project_root)
-        scan_cookie_flags(tree, file_path, findings, project_root=project_root)
+        scan_cookie_flags(tree, file_path, findings)
         scan_jwt(tree, file_path, findings)
         scan_access(tree, file_path, findings)
         scan_mcp(tree, file_path, findings)
@@ -628,7 +626,7 @@ def scan_file_with_tree(
     if _has_any(source_lower, _ROUTE_TOKENS):
         scan_route_auth(tree, file_path, findings, project_root=project_root)
     if "_cookie(" in source_lower:
-        scan_cookie_flags(tree, file_path, findings, project_root=project_root)
+        scan_cookie_flags(tree, file_path, findings)
     if "jwt" in source_lower and _has_any(source_lower, _JWT_TOKENS):
         scan_jwt(tree, file_path, findings)
     if "fields" in source_lower and "__all__" in source_lower:
@@ -702,9 +700,7 @@ def _scan_file(file_path: Path, findings, project_root=None):
     _scan_trojan_source_text(src, file_path, findings)
     tree = ast.parse(src)
 
-    scan_file_with_tree(
-        tree, file_path, findings, source=src, project_root=project_root
-    )
+    scan_file_with_tree(tree, file_path, findings, source=src, project_root=project_root)
 
     checker = _DangerousCallsChecker(file_path, findings, project_root)
     checker.visit(tree)

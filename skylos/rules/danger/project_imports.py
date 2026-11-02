@@ -3,7 +3,7 @@
 import ast
 from pathlib import Path
 
-from .project_source import _MAX_FILES, project_source_snapshot
+from .project_source import project_source_snapshot
 
 
 class ProjectImports:
@@ -18,7 +18,6 @@ class ProjectImports:
         self.paths = {}
         self.watch = set()
         self.budget = 8192
-        self.plain_imports = {}
         self.provider_results = {}
         try:
             parsed = snapshot.get(source)
@@ -67,7 +66,7 @@ class ProjectImports:
                 if path in visited:
                     continue
                 visited.add(path)
-                if len(visited) > _MAX_FILES:
+                if len(visited) > 128:
                     self.complete = False
                     return
                 parsed = self.trees[path]
@@ -115,13 +114,6 @@ class ProjectImports:
         return result
 
     def import_metadata_is_plain(self, imported):
-        known = self.plain_imports.get(imported)
-        if known is None:
-            known = self._probe_import_metadata(imported)
-            self.plain_imports[imported] = known
-        return known
-
-    def _probe_import_metadata(self, imported):
         parts = imported.split(".")
         if not all(part.isidentifier() for part in parts):
             return False
