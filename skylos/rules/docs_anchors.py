@@ -57,6 +57,7 @@ RULE_DOCS_ANCHORS = {
     "SKY-D227": "sky-d227--xss-template",
     "SKY-D228": "sky-d228--xss-html-build",
     "SKY-D230": "sky-d230--open-redirect",
+    "SKY-D238": "sky-d238--nosql-injection",
     "SKY-D231": "sky-d231--cors-misconfiguration",
     "SKY-D232": "sky-d232--jwt-vulnerabilities",
     "SKY-D233": "sky-d233--unsafe-deserialization",
