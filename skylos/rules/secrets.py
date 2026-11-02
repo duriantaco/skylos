@@ -156,6 +156,18 @@ SECRET_CONFIG_SUFFIXES = (
     ".conf",
 )
 
+SECRET_ONLY_FILE_SUFFIXES = (
+    ".c",
+    ".h",
+    ".tf",
+    ".tfvars",
+    ".hcl",
+    ".properties",
+    ".xml",
+    ".gradle",
+    ".dockerfile",
+)
+
 ALLOWED_FILE_SUFFIXES = (
     ".py",
     ".pyi",
@@ -181,7 +193,57 @@ ALLOWED_FILE_SUFFIXES = (
     ".cs",
     ".kt",
     ".kts",
+    ".java",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".ksh",
+    ".bats",
+    ".cpp",
+    ".cc",
+    ".cxx",
+    ".hpp",
+    ".hh",
+    ".hxx",
+    *SECRET_ONLY_FILE_SUFFIXES,
 )
+SECRET_FILE_NAMES = frozenset({"dockerfile", "containerfile", ".npmrc", ".pypirc"})
+_SHELL_SHEBANG_RE = re.compile(
+    r"#!\s*(?:/\S*/)?(?:env\s+(?:-\S*\s+)*)?(?:bash|zsh|ksh|dash|ash|sh)(?![\w.-])"
+)
+
+
+def is_secret_scan_name(name: str) -> bool:
+    """Whether a file name alone puts the file in the secrets scan."""
+    lowered = name.lower()
+    return (
+        name.endswith(ALLOWED_FILE_SUFFIXES)
+        or name.startswith(".env.")
+        or lowered in SECRET_FILE_NAMES
+        or lowered.startswith("dockerfile.")
+    )
+
+
+def may_be_shell_script(name: str) -> bool:
+    """An extensionless file is scanned only when it starts with a shell shebang."""
+    return "." not in name and not is_secret_scan_name(name)
+
+
+def is_shell_script_start(first_line: str) -> bool:
+    return bool(_SHELL_SHEBANG_RE.match(first_line))
+
+
+def file_starts_like_shell_script(path) -> bool:
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(256)
+    except OSError:
+        return False
+    if b"\0" in head:
+        return False
+    first_line = head.split(b"\n", 1)[0].decode("utf-8", errors="ignore")
+    return is_shell_script_start(first_line)
+
 
 PROVIDER_PATTERNS = [
     ("github", re.compile(r"(ghp|gho|ghu|ghs|ghr|gpat)_[A-Za-z0-9]{36,}")),
@@ -331,6 +393,22 @@ def _is_obvious_placeholder(token: str) -> bool:
     if token.strip("'\"") in _DOCUMENTED_EXAMPLE_CREDENTIALS:
         return True
     return bool(_PLACEHOLDER_MARKER_RE.search(token))
+
+
+_PARAMETER_EXPANSION_REFERENCE_RE = re.compile(
+    r"\$\{[A-Za-z_][A-Za-z0-9_]*"
+    r"(?::?\?[^}]*|:?[-=+](?:\$\{[A-Za-z_][A-Za-z0-9_]*\})?)?\}"
+    r"|\$\([^()]*\)"
+)
+
+
+def _is_parameter_expansion_reference(token: str) -> bool:
+    """``${NAME}``, ``${NAME:?message}`` or ``$(command)``: no literal value.
+
+    A default such as ``${NAME:-literal}`` is not a reference: the literal is
+    the value used when the variable is unset, so it is still checked.
+    """
+    return bool(_PARAMETER_EXPANSION_REFERENCE_RE.fullmatch(token.strip("'\"")))
 
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -3826,6 +3904,10 @@ _CONFIG_CREDENTIAL_SUFFIXES = (
     ".cfg",
     ".conf",
     ".env",
+    ".properties",
+    ".tfvars",
+    ".npmrc",
+    ".pypirc",
 )
 
 _CONFIG_KEYED_LITERAL_RE = re.compile(
@@ -4187,6 +4269,12 @@ def _extra_private_key_findings(file_lines, line_number, rel_path):
     return found
 
 
+def _is_shell_script_file(rel_name: str, lines) -> bool:
+    if not may_be_shell_script(rel_name) or not lines:
+        return False
+    return is_shell_script_start(lines[0])
+
+
 def scan_ctx(
     ctx,
     *,
@@ -4199,8 +4287,8 @@ def scan_ctx(
 ):
     rel_path = ctx.get("relpath", "")
     rel_name = rel_path.replace("\\", "/").rsplit("/", 1)[-1]
-    if not rel_path.endswith(ALLOWED_FILE_SUFFIXES) and not rel_name.startswith(
-        ".env."
+    if not is_secret_scan_name(rel_name) and not _is_shell_script_file(
+        rel_name, ctx.get("lines")
     ):
         return []
 
@@ -4493,6 +4581,8 @@ def scan_ctx(
                 continue
 
             if _is_obvious_placeholder(clean_token):
+                continue
+            if _is_parameter_expansion_reference(clean_token):
                 continue
             tok_entropy = _entropy(clean_token)
 

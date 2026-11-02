@@ -7,6 +7,8 @@ import os
 import traceback
 from pathlib import Path
 
+from skylos.analysis.finding_filter import partition_inline_ignored_findings
+from skylos.core.inline_directives import inline_ignores
 from skylos.core.linter import LinterVisitor
 from skylos.rules.custom import load_community_rules, load_custom_rules
 from skylos.rules.danger.calls import DangerousCallsRule
@@ -278,7 +280,7 @@ def _build_structural_quality_rules(cfg: dict) -> list:
         ("SKY-Q701", CBORule),
         ("SKY-Q702", LCOMRule),
         ("SKY-Q806", OpaqueIdentifierRule),
-        ("SKY-U001", UnreachableCodeRule),
+        ("SKY-UC001", UnreachableCodeRule),
     ]
     q_rules.extend(factory() for rule_id, factory in specs if _enabled(cfg, rule_id))
     if _enabled(cfg, "SKY-T101") or _enabled(cfg, "SKY-T102"):
@@ -538,6 +540,85 @@ NON_PYTHON_SCANNERS = (
     (SECRET_CONFIG_SUFFIXES, _scan_config_only_file),
 )
 
+_COMMENT_DIRECTIVE_SCANNERS = frozenset(
+    {
+        _scan_go_file,
+        _scan_java_like_file,
+        _scan_php_file,
+        _scan_rust_file,
+        _scan_cpp_file,
+        _scan_dart_file,
+        _scan_csharp_file,
+        _scan_kotlin_file,
+        _scan_shell_file,
+    }
+)
+_ANALYSIS_TUPLE_DEFAULTS = (
+    set,
+    list,
+    dict,
+    dict,
+    set,
+    set,
+    list,
+    dict,
+    dict,
+    list,
+    lambda: None,
+    set,
+    lambda: None,
+    dict,
+    lambda: False,
+)
+_MAX_DIRECTIVE_SOURCE_BYTES = 4_000_000
+
+
+def _read_directive_source(file) -> str | None:
+    try:
+        with open(file, "rb") as handle:
+            data = handle.read(_MAX_DIRECTIVE_SOURCE_BYTES + 1)
+    except OSError:
+        return None
+    if len(data) > _MAX_DIRECTIVE_SOURCE_BYTES:
+        return None
+    return data.decode("utf-8", errors="replace")
+
+
+def _with_comment_directives(file, out):
+    """Apply ``skylos: ignore`` comments to every finding category of a file.
+
+    Quality and security findings on an ignored line move to the suppressed
+    list here. Dead-code definitions and secrets read the same lines from the
+    returned tuple (slots 13 and 26) and the dead-code visitor.
+    """
+    if not isinstance(out, tuple) or len(out) < 13:
+        return out
+    source = _read_directive_source(file)
+    if source is None:
+        return out
+    ignore_lines, ignore_rules_by_line = inline_ignores(file, source)
+    if not ignore_lines and not ignore_rules_by_line:
+        return out
+    quality, suppressed_quality = partition_inline_ignored_findings(
+        list(out[6] or []), "quality", ignore_lines, ignore_rules_by_line
+    )
+    danger, suppressed_danger = partition_inline_ignored_findings(
+        list(out[7] or []), "security", ignore_lines, ignore_rules_by_line
+    )
+    test_visitor = out[4]
+    if test_visitor is not None:
+        test_visitor.ignore_lines = ignore_lines
+        test_visitor.ignore_rules_by_line = ignore_rules_by_line
+    extended = list(out)
+    for factory in _ANALYSIS_TUPLE_DEFAULTS[len(extended) - 13 :]:
+        extended.append(factory())
+    extended[6] = quality
+    extended[7] = danger
+    extended[13] = set(extended[13] or ()) | ignore_lines
+    extended[14] = [*(extended[14] or ()), *suppressed_quality, *suppressed_danger]
+    extended[26] = ignore_rules_by_line
+    return tuple(extended)
+
 
 def scan_non_python_file(
     file,
@@ -555,7 +636,10 @@ def scan_non_python_file(
                 enable_quality_rules=enable_quality_rules,
                 enable_danger_rules=enable_danger_rules,
             )
-            return _normalize_language_scan_output(out)
+            out = _normalize_language_scan_output(out)
+            if scanner in _COMMENT_DIRECTIVE_SCANNERS:
+                return _with_comment_directives(file, out)
+            return out
     return None
 
 

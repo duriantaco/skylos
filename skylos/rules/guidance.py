@@ -41,6 +41,14 @@ _SUFFIX_LANGUAGES = {
     ".rs": "rust",
     ".dart": "dart",
     ".cs": "csharp",
+    ".c": "cpp",
+    ".h": "cpp",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
+    ".hh": "cpp",
+    ".hxx": "cpp",
     ".sol": "solidity",
     ".yml": "yaml",
     ".yaml": "yaml",
@@ -61,6 +69,8 @@ _LANGUAGE_NAMES = {
     "dart": "dart",
     "csharp": "csharp",
     "c#": "csharp",
+    "cpp": "cpp",
+    "c++": "cpp",
     "yaml": "yaml",
 }
 _COMMENT_PREFIX = {
@@ -74,6 +84,7 @@ _COMMENT_PREFIX = {
     "rust": "//",
     "dart": "//",
     "csharp": "//",
+    "cpp": "//",
     "solidity": "//",
 }
 

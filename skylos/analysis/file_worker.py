@@ -335,6 +335,7 @@ def _run_visitors(
     test_visitor.visit(prepared.tree)
     test_visitor.ignore_lines = prepared.ignore_lines
     test_visitor.noqa_codes_by_line = prepared.noqa_codes_by_line
+    test_visitor.ignore_rules_by_line = prepared.ignore_rules_by_line
 
     # The already parsed tree supplies all framework import evidence. Avoid a
     # second path-based read after the worker's bounded no-follow read.

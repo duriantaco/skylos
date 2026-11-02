@@ -4,6 +4,7 @@ import os
 import traceback
 from pathlib import Path
 
+from skylos.analysis.penalties import DEAD_CODE_RULE_BY_TYPE
 from skylos.config import load_config
 from skylos.core.evidence_contract import attach_evidence_contract
 from skylos.core.review_context import review_config_hash_for_category
@@ -119,6 +120,7 @@ def build_analysis_result(
         review_config=project_cfg,
         include_review_proofs=include_review_proofs,
     )
+    unused = _without_config_ignored_dead_code(unused, project_cfg)
     # Definitions in generated files (Django migrations) are already outside
     # the dead-code scope; empty generated files are not reported either.
     empty_files = without_report_only_files(
@@ -521,6 +523,17 @@ def _enrich_danger(result, enable_danger):
     from skylos.rules.compliance import enrich_findings_with_compliance
 
     result["danger"] = enrich_findings_with_compliance(result["danger"])
+
+
+def _without_config_ignored_dead_code(unused, project_cfg):
+    ignored = set((project_cfg or {}).get("ignore") or ())
+    if not ignored:
+        return unused
+    return [
+        item
+        for item in unused
+        if DEAD_CODE_RULE_BY_TYPE.get(item.get("type")) not in ignored
+    ]
 
 
 def _bucket_unused_definitions(result, unused):

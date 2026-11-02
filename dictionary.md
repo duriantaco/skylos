@@ -67,7 +67,7 @@ Rule IDs use a stable public prefix:
 | Diff-aware scan | `--diff <base>` limits reporting to changed work so old debt does not drown out the current PR. |
 | Baseline | A saved set of accepted existing findings so only new or changed findings fail a gate. |
 | Failure origin | `skylos done` reruns each failing test on the base commit, in a temporary Git worktree, and labels it `preexisting` (the same test ran there and failed the same way), `introduced` (it passes there), `new_test` (it does not exist there; counts as introduced) or `undetermined` (the base run could not tell: a setup or import error, a different kind of failure, a timeout, changed dependencies). Shown on the receipt as `failure_origins` and in the Stop-hook message. |
-| Suppression | An inline or config-level exception for an intentional finding, usually using `skylos: ignore[SKY-...]`. Skylos-specific markers (`# skylos: ignore[SKY-D211] reason`, `# skylos: ignore`, `# noqa: skylos`, `# pragma: no skylos`, `ignore-start`/`ignore-end`) suppress any finding on their line. A bare `# noqa` (no codes) is a generic linter marker: it still hides dead-code, quality and LOW/MEDIUM findings, but not a HIGH or CRITICAL security finding (`SKY-D*`, `SKY-S*`), which stays reported with `bare_noqa_ignored: true` and an advice line. `# noqa: <code>` with Ruff/flake8 codes never suppresses a Skylos security, secret or quality finding; F401/F841 only mark the matching unused import/variable. |
+| Suppression | An inline or config-level exception for an intentional finding, usually using `skylos: ignore[SKY-...]`. Skylos-specific markers (`# skylos: ignore[SKY-D211] reason`, `# skylos: ignore`, `# noqa: skylos`, `# pragma: no skylos`, `ignore-start`/`ignore-end`) suppress findings on their line: the bracketed form only the listed rules (dead code by its ID: `SKY-U001` functions and methods, `SKY-U002` imports, `SKY-U003` variables, `SKY-U004` classes, `SKY-U006` parameters), the bare form every rule. `skylos: ignore`, `skylos: ignore[...]` and `ignore-start`/`ignore-end` work in every analysed language for dead code, security, quality and secrets. In Go, Java, Kotlin, C#, PHP, Dart, Rust, C/C++, Shell and TS/JS they are read only from real comments (`#` in Shell and PHP; `//` or a one-line `/* */` in the others; the directive must open the comment): text inside a string literal never counts, and a file whose strings or comments cannot be followed to the end honours no directive. Python matches `# skylos: ignore` on the line. Other tools' markers (`#nosec`, `//nolint`, `NOSONAR`, `@SuppressWarnings`, `#pragma warning disable`) do not hide Skylos findings. `ignore = ["SKY-U001"]` in `[tool.skylos]` turns off exactly that rule project-wide (unused functions; `SKY-UC001` is unreachable code). A bare `# noqa` (no codes) is a generic linter marker: it still hides dead-code, quality and LOW/MEDIUM findings, but not a HIGH or CRITICAL security finding (`SKY-D*`, `SKY-S*`), which stays reported with `bare_noqa_ignored: true` and an advice line. `# noqa: <code>` with Ruff/flake8 codes never suppresses a Skylos security, secret or quality finding; F401/F841 only mark the matching unused import/variable. |
 | Smart tracing | `--trace`; runtime-assisted dead-code verification used to reduce false positives in dynamic Python code. |
 | Technical debt | `skylos debt .`; ranks maintainability hotspots and debt trends. |
 | TUI | `--tui`; screen-only selectable terminal interface with category list, finding list, and detail pane. |
@@ -830,7 +830,7 @@ across different operating-system/CPU platforms.
 
 | ID | Severity | Name | Languages / Scope | CWE |
 |:---|:---|:---|:---|:---|
-| S101 | HIGH-CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Go, config files | CWE-798 |
+| S101 | HIGH-CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Kotlin, Go, PHP, Rust, Dart, C#, C/C++, shell scripts (including extensionless files with a shell `#!` line), Dockerfiles, Terraform (`.tf`, `.tfvars`, `.hcl`), `.properties`, XML, Gradle, `.npmrc`, `.pypirc` and config files | CWE-798 |
 | S102 | HIGH* | Secret material or server-only environment variable exposed to client-accessible code | TS/JS, HTML, client bundles | CWE-200 |
 
 `SKY-S101` is `CRITICAL` for provider tokens and for high-entropy values
@@ -849,8 +849,10 @@ counts it under `max_secrets`. Two other lower-certainty shapes are `HIGH`:
 a password embedded in a connection URL
 (`provider: url_credentials`, e.g. `postgres://app:<pw>@db/app`) and a
 non-placeholder literal under a password/secret/token/api-key field in YAML,
-JSON, TOML, INI or `.env` files (`provider: config_credential`). Env-var and
-template references (`${DB_PASSWORD}`, `{{ .Values.x }}`), placeholders
+JSON, TOML, INI, `.env`, `.properties`, `.tfvars`, `.npmrc` or `.pypirc` files
+(`provider: config_credential`). Env-var and template references
+(`${DB_PASSWORD}`, `{{ .Values.x }}`, shell `${TOKEN:?message}` and
+`$(command)`; a `${TOKEN:-literal}` default is still checked), placeholders
 (`changeme`, `<password>`, `your_password_here`) and secret *names*
 (`existingSecret`, `secretName`, `password_file`) are not reported, and
 previews are always fully masked.
