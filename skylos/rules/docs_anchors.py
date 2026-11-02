@@ -45,6 +45,7 @@ RULE_DOCS_ANCHORS = {
     "SKY-D210": "dangerous-function-calls",
     "SKY-D211": "sky-d211--sql-injection",
     "SKY-D212": "sky-d212--command-injection",
+    "SKY-D213": "sky-d213--hugging-face-remote-code",
     "SKY-D215": "sky-d215--path-traversal",
     "SKY-D216": "sky-d216--ssrf",
     "SKY-D217": "sky-d217--sql-injection-raw",
