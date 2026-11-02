@@ -32,6 +32,7 @@ import ast
 import sys
 
 from skylos.rules.danger.calls import _is_test_module
+from skylos.rules.danger.project_source import project_source_snapshot
 
 _COOKIE_WRITERS = frozenset({"set_cookie", "set_signed_cookie"})
 _PLAIN_WRITER = "set_cookie"
@@ -49,8 +50,6 @@ _PLAIN_KEYWORDS = frozenset(
         "partitioned",
     }
 )
-_PLAIN_POSITIONS = 9
-_TIME_POSITIONS = (2, 3)
 _FLAG_POSITIONS = {"set_cookie": {"secure": 6, "httponly": 7}}
 _FLAGS = (("httpOnly", "httponly"), ("secure", "secure"))
 _VALUE_POSITION = 1
@@ -120,26 +119,64 @@ def _is_plain_cookie_write(call: ast.Call) -> bool:
         return False
     if any(kw.arg not in _PLAIN_KEYWORDS for kw in call.keywords):
         return False
-    if len(call.args) > _PLAIN_POSITIONS:
+    if len(call.args) > _VALUE_POSITION + 1:
         return False
-    for position, arg in enumerate(call.args):
-        if position < _VALUE_POSITION + 1:
-            if isinstance(arg, ast.Starred):
-                return False
-            continue
-        if not isinstance(arg, ast.Constant):
-            return False
-        if position in _TIME_POSITIONS and not (
-            arg.value is None or isinstance(arg.value, (int, float))
+    return not any(isinstance(arg, ast.Starred) for arg in call.args)
+
+
+def _rebinds_cookie_writer(tree: ast.AST) -> bool:
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name in _COOKIE_WRITERS
         ):
-            return False
-    return True
+            return True
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr in _COOKIE_WRITERS
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+        ):
+            return True
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"setattr", "delattr"}
+            and len(node.args) > 1
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value in _COOKIE_WRITERS
+        ):
+            return True
+    return False
 
 
-def _flag_value_context(call: ast.Call) -> dict | None:
+class _WriterOverrides:
+    def __init__(self, tree: ast.AST, project_root):
+        self.tree = tree
+        self.project_root = project_root
+        self.known = None
+
+    def present(self) -> bool:
+        if self.known is None:
+            self.known = self._scan()
+        return self.known
+
+    def _scan(self) -> bool:
+        if self.project_root is None:
+            return True
+        if _rebinds_cookie_writer(self.tree):
+            return True
+        snapshot, complete = project_source_snapshot(self.project_root)
+        if not complete:
+            return True
+        return any(_rebinds_cookie_writer(parsed) for parsed in snapshot.values())
+
+
+def _flag_value_context(call: ast.Call, overrides: _WriterOverrides) -> dict | None:
     if not _is_plain_cookie_write(call):
         return None
     if not _is_flag_literal(_cookie_value(call)):
+        return None
+    if overrides.present():
         return None
     return {
         "reason": _FLAG_VALUE_REASON,
@@ -159,7 +196,13 @@ def cookie_option_states(call: ast.Call) -> dict[str, str] | None:
     return {label: _flag_state(call, func.attr, keyword) for label, keyword in _FLAGS}
 
 
-def _finding(call: ast.Call, states: dict[str, str], file_path, symbol: str) -> dict:
+def _finding(
+    call: ast.Call,
+    states: dict[str, str],
+    file_path,
+    symbol: str,
+    overrides: _WriterOverrides,
+) -> dict:
     disabled = [label for label, state in states.items() if state == "false"]
     summary = ", ".join(f"{label}={states[label]}" for label, _ in _FLAGS)
     sink = f"`{ast.unparse(call.func)}()` Set-Cookie response header"
@@ -201,16 +244,17 @@ def _finding(call: ast.Call, states: dict[str, str], file_path, symbol: str) -> 
             }
         },
     }
-    low_risk = _flag_value_context(call)
+    low_risk = _flag_value_context(call, overrides)
     if low_risk is not None:
         finding["low_risk_context"] = low_risk
     return finding
 
 
 class _CookieWriteChecker(ast.NodeVisitor):
-    def __init__(self, file_path, findings):
+    def __init__(self, file_path, findings, overrides):
         self.file_path = file_path
         self.findings = findings
+        self.overrides = overrides
         self.symbols = ["<module>"]
 
     def _visit_scope(self, node):
@@ -226,7 +270,7 @@ class _CookieWriteChecker(ast.NodeVisitor):
         states = cookie_option_states(node)
         if states is not None and "false" in states.values():
             self.findings.append(
-                _finding(node, states, self.file_path, self.symbols[-1])
+                _finding(node, states, self.file_path, self.symbols[-1], self.overrides)
             )
         self.generic_visit(node)
 
@@ -235,6 +279,7 @@ def scan(tree, file_path, findings, *, project_root=None):
     if not isinstance(tree, ast.Module) or _is_test_module(file_path):
         return
     try:
-        _CookieWriteChecker(file_path, findings).visit(tree)
+        overrides = _WriterOverrides(tree, project_root)
+        _CookieWriteChecker(file_path, findings, overrides).visit(tree)
     except Exception as error:
         print(f"Cookie flag analysis failed for {file_path}: {error}", file=sys.stderr)

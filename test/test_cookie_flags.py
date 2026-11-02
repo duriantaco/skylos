@@ -112,9 +112,11 @@ def test_literal_false_cookie_flag_is_reported_with_complete_evidence(
     [
         ('resp.set_cookie("logged_user", "true", httponly=False)', False),
         ('resp.set_cookie(key="banner", value="Off", secure=False)', False),
-        ('resp.set_cookie("seen", 1, None, None, "/", None, False)', False),
+        ('resp.set_cookie("seen", 1, max_age=None, path="/", secure=False)', False),
+        ('resp.set_cookie("seen", 1, None, None, "/", None, False)', True),
+        ('resp.set_cookie("staff", "yes", 32, secure=False)', True),
         ('resp.set_cookie("flag", b"1", httponly=False)', False),
-        ('resp.set_cookie("seen", "1", 60, None, "/", None, False)', False),
+        ('resp.set_cookie("seen", "1", 60, None, "/", None, False)', True),
         ('resp.set_signed_cookie("staff", "yes", salt="s", secure=False)', True),
         ('resp.set_signed_cookie("flag", b"1", salt="s", httponly=False)', True),
         ('resp.set_cookie("staff", "yes", secret=KEY, secure=False)', True),
@@ -160,6 +162,46 @@ def test_on_off_flag_cookie_value_is_kept_but_hidden(
         assert context is None
     else:
         assert context["reason"] == "on-off-cookie-value"
+
+
+@pytest.mark.parametrize(
+    "name, helper",
+    [
+        (
+            "app.py",
+            "class SignedResponse:\n"
+            "    def set_cookie(self, key, value, **kw):\n"
+            "        return (key, value, kw)\n",
+        ),
+        ("signing.py", "def install(cls, signer):\n    cls.set_cookie = signer\n"),
+        (
+            "signing.py",
+            "def install(cls, signer):\n    setattr(cls, 'set_cookie', signer)\n",
+        ),
+        (
+            "signing.py",
+            "class Signed:\n    async def set_cookie(self, key, value):\n        return value\n",
+        ),
+    ],
+)
+def test_project_that_defines_or_patches_set_cookie_keeps_flag_cookies_listed(
+    tmp_path, monkeypatch, name, helper
+):
+    view = (
+        FLASK
+        + "def login():\n"
+        + '    resp = make_response("ok")\n'
+        + '    resp.set_cookie("staff", "yes", secure=False)\n'
+        + "    return resp\n"
+    )
+    if name == "app.py":
+        view = view + helper
+    else:
+        write_fixture(tmp_path, name, helper)
+    findings = _cookie_findings(_analyze(tmp_path, monkeypatch, view))
+    assert [f["line"] for f in findings] == [5]
+    assert findings[0]["listing"]["listed"] is True
+    assert findings[0].get("low_risk_context") is None
 
 
 def test_guarded_signed_flag_cookie_through_alias_and_wrapper_stays_listed(
