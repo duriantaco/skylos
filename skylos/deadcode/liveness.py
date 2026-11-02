@@ -35,6 +35,7 @@ from skylos.deadcode.python_ast import ParsedPythonFile, parse_python_files
 from skylos.deadcode.provider_method_liveness import find_provider_method_targets
 from skylos.deadcode.logging_config_liveness import find_logging_config_targets
 from skylos.deadcode.property_descriptor_liveness import classify_property_descriptors
+from skylos.deadcode.public_api import find_declared_public_api_targets
 
 
 SENTINEL_CALLER = "<skylos.deadcode.liveness>"
@@ -192,6 +193,10 @@ def apply_dead_code_liveness(
         _mark(target, "registered_by_decorator", report)
     for target in find_patched_instance_methods(definitions, parsed_files):
         _mark(target, "patched_into_external_module", report)
+    for target, reason in find_declared_public_api_targets(
+        definitions, parsed_files, root, module_names
+    ):
+        _mark(target, reason, report)
     _rescue_documented_public_methods(classes, class_methods, docs_text, report)
     _rescue_unique_external_attr_calls(
         definitions, classes, class_methods, parsed_files, report

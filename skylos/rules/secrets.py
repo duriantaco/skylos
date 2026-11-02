@@ -13,6 +13,7 @@ from html import unescape
 from html.parser import HTMLParser
 from math import log2
 from pathlib import PurePosixPath
+from urllib.parse import unquote
 
 from skylos.rules import secret_shapes
 
@@ -3805,6 +3806,13 @@ _CREDENTIAL_REFERENCE_MARKERS = (
     "projects/",
 )
 
+_URL_PASSWORD_PLACEHOLDER_PHRASES = frozenset({"a secret"})
+
+_URL_PLACEHOLDER_HOST_RE = re.compile(
+    r"(?:foo|bar|baz|qux)(?:\.(?:com|net|org|test|invalid))?\Z", re.IGNORECASE
+)
+_URL_PLACEHOLDER_PORT_RE = re.compile(r"[0-9]{1,5}\Z")
+
 _PLACEHOLDER_HOSTS = frozenset(
     {"host", "hostname", "server", "your-host", "yourhost", "your_host", "domain"}
 )
@@ -4024,16 +4032,63 @@ def _mask_credential(value: str) -> str:
     return "*" * 8
 
 
+def _is_placeholder_url_password(password: str, user: str) -> bool:
+    """Decode literal passwords once, recognizing only exact sample values."""
+    decoded = unquote(password)
+    if decoded != password:
+        # Encoded characters are literal credential bytes, not template or
+        # secret-manager references. Substring hints and same-user heuristics
+        # cannot establish that the decoded password is a sample value.
+        lowered = decoded.lower()
+        return (
+            lowered in _CREDENTIAL_PLACEHOLDER_VALUES
+            or lowered in _URL_PASSWORD_PLACEHOLDER_PHRASES
+        )
+    return _is_placeholder_credential(password, user=user)
+
+
+def _is_placeholder_multihost_url(user: str, password: str, host: str) -> bool:
+    """Recognize a complete sample, without assigning host-list semantics.
+
+    Ordinary URI passwords may contain commas and colons. Only a value made
+    entirely from sample hosts, ports and userinfo is a placeholder here.
+    """
+    if not (
+        _URL_PLACEHOLDER_HOST_RE.fullmatch(user)
+        and _URL_PLACEHOLDER_HOST_RE.fullmatch(host)
+    ):
+        return False
+    segments = password.split(",")
+    if len(segments) < 2 or not _URL_PLACEHOLDER_PORT_RE.fullmatch(segments[0]):
+        return False
+    for segment in segments[1:-1]:
+        middle_host, separator, port = segment.partition(":")
+        if not (
+            _URL_PLACEHOLDER_HOST_RE.fullmatch(middle_host)
+            and (not separator or _URL_PLACEHOLDER_PORT_RE.fullmatch(port))
+        ):
+            return False
+    later_user, separator, later_password = segments[-1].partition(":")
+    return bool(
+        separator
+        and later_user.lower() in _CREDENTIAL_PLACEHOLDER_VALUES
+        and later_password.lower() in _CREDENTIAL_PLACEHOLDER_VALUES
+    )
+
+
 def _url_credential_candidates(line_content: str):
     for match in URL_CREDENTIAL_RE.finditer(line_content):
         user = match.group("user")
         password = match.group("pw")
+        start = match.start("pw")
         host = match.group("host").lower()
-        if _is_placeholder_credential(password, user=user):
+        if _is_placeholder_url_password(password, user):
+            continue
+        if _is_placeholder_multihost_url(user, password, host):
             continue
         if host in _PLACEHOLDER_HOSTS or "example" in host:
             continue
-        yield match.group("scheme"), match.start("pw"), match.end("pw"), password
+        yield match.group("scheme"), start, start + len(password), password
 
 
 def _config_credential_candidates(line_content: str):

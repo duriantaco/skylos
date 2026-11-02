@@ -126,11 +126,15 @@ class _Analysis:
         parents=None,
         isolated_code_calls: frozenset[int] = frozenset(),
         isolated_namespace_reads: frozenset[int] = frozenset(),
+        rebound_events: dict[str, list[ast.AST]] | None = None,
+        module_reads: list[tuple[ast.Call, ast.AST]] | None = None,
     ):
         self.tree = tree
         self.module_name = module_name
         self.isolated_code_calls = isolated_code_calls
         self.isolated_namespace_reads = isolated_namespace_reads
+        self.rebound_events = rebound_events
+        self.module_reads = module_reads
         self.parents = (
             parents
             if parents is not None
@@ -351,6 +355,8 @@ class _Analysis:
                 return True
             if isinstance(parent.ctx, (ast.Store, ast.Del)):
                 rebound.add(parent.attr)
+                if self.rebound_events is not None:
+                    self.rebound_events.setdefault(parent.attr, []).append(parent)
                 return False
             grandparent = self.parents.get(id(parent))
             if (
@@ -374,8 +380,12 @@ class _Analysis:
                 attr = parent.args[1] if len(parent.args) > 1 else None
                 if isinstance(attr, ast.Constant) and isinstance(attr.value, str):
                     rebound.add(attr.value)
+                    if self.rebound_events is not None:
+                        self.rebound_events.setdefault(attr.value, []).append(parent)
                     return False
                 return True
+            if callee in _READ_ONLY_CALLS and self.module_reads is not None:
+                self.module_reads.append((parent, node))
             return callee not in _READ_ONLY_CALLS
         return True
 
@@ -444,6 +454,8 @@ class _Analysis:
                     node.value
                 ):
                     rebound.add(node.attr)
+                    if self.rebound_events is not None:
+                        self.rebound_events.setdefault(node.attr, []).append(node)
             if (
                 isinstance(node, (ast.Name, ast.Attribute, ast.Subscript, ast.Call))
                 and isinstance(getattr(node, "ctx", ast.Load()), ast.Load)
@@ -461,6 +473,8 @@ def module_rebinding(
     *,
     isolated_code_calls: frozenset[int] = frozenset(),
     isolated_namespace_reads: frozenset[int] = frozenset(),
+    rebound_events: dict[str, list[ast.AST]] | None = None,
+    module_reads: list[tuple[ast.Call, ast.AST]] | None = None,
 ) -> tuple[bool, frozenset[str]]:
     """``(dynamic, rebound)`` for the module ``tree``.
 
@@ -479,11 +493,22 @@ def module_rebinding(
     module's globals; every other code runner still counts as dynamic.
     ``isolated_namespace_reads`` contains only calls a consumer proved copy a
     native mapping into an isolated receiver without exposing that mapping.
-    Neither optional proof changes the default handling of namespace writes."""
+    Neither optional proof changes the default handling of namespace writes.
+    ``rebound_events`` optionally collects the literal write sites responsible
+    for each rebound name; a dynamic result does not establish complete sites.
+    ``module_reads`` collects ``(call, module expression)`` pairs exempted as
+    read-only by spelling. A stronger consumer can check lexical receiver,
+    callable identity and effects without changing this helper's defaults."""
     if tree is None:
         return False, frozenset()
     return _Analysis(
-        tree, module_name, parents, isolated_code_calls, isolated_namespace_reads
+        tree,
+        module_name,
+        parents,
+        isolated_code_calls,
+        isolated_namespace_reads,
+        rebound_events,
+        module_reads,
     ).run()
 
 
