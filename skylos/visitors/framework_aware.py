@@ -159,6 +159,138 @@ ROUTE_METHODS = {
     "websocket",
 }
 
+REGISTRATION_DECORATOR_ATTRS = ROUTE_METHODS | {
+    "api_route",
+    "websocket_route",
+    "errorhandler",
+    "hookimpl",
+    "hookspec",
+    "on",
+    "on_event",
+}
+
+REGISTRATION_DECORATOR_TOKENS = frozenset(
+    {
+        "command",
+        "commands",
+        "consumer",
+        "delete",
+        "endpoint",
+        "event",
+        "events",
+        "fixture",
+        "get",
+        "handler",
+        "handlers",
+        "hook",
+        "job",
+        "listen",
+        "listener",
+        "listeners",
+        "patch",
+        "post",
+        "producer",
+        "prompt",
+        "prompts",
+        "put",
+        "register",
+        "resource",
+        "resources",
+        "route",
+        "signal",
+        "subscribe",
+        "subscriber",
+        "task",
+        "tasks",
+        "tool",
+        "tools",
+        "worker",
+    }
+)
+
+REGISTRATION_DECORATOR_NAMES = frozenset(
+    {
+        "command",
+        "consumer",
+        "db_periodic_task",
+        "db_task",
+        "delete",
+        "endpoint",
+        "event",
+        "fixture",
+        "function_tool",
+        "get",
+        "handler",
+        "hook",
+        "hookimpl",
+        "hookspec",
+        "job",
+        "listener",
+        "patch",
+        "periodic_task",
+        "post",
+        "producer",
+        "prompt",
+        "put",
+        "resource",
+        "route",
+        "shared_task",
+        "signal",
+        "subscriber",
+        "task",
+        "tool",
+        "worker",
+    }
+)
+
+WRAPPER_DECORATOR_MODULES = frozenset(
+    {
+        "abc",
+        "contextlib",
+        "dataclasses",
+        "functools",
+        "streamlit",
+        "typing",
+        "typing_extensions",
+    }
+)
+
+
+def is_registration_decorator(
+    decorator_name: str | None,
+    resolved_name: str | None,
+    *,
+    project_defined: bool = False,
+) -> bool:
+    """Whether a decorator registers the function with a framework by name.
+
+    ``@app.get``/``@mcp.tool()``/``@client.event``: the attribute names a
+    registration verb. A bare ``@tool``/``@shared_task``/``@hookimpl`` counts
+    only when it is imported from outside the project, because a decorator
+    the project defines is judged by its own body. Wrappers such as
+    ``functools.lru_cache`` or ``st.cache_resource`` never count.
+    """
+    if not decorator_name:
+        return False
+    resolved = resolved_name or decorator_name
+    if resolved.split(".", 1)[0] in WRAPPER_DECORATOR_MODULES:
+        return False
+    if decorator_name.split(".", 1)[0] == "pytest" or resolved.startswith("pytest."):
+        return True
+    parts = decorator_name.split(".")
+    if len(parts) > 1:
+        leaf = parts[-1]
+        if leaf in REGISTRATION_DECORATOR_ATTRS:
+            return True
+        return bool(set(leaf.lower().split("_")) & REGISTRATION_DECORATOR_TOKENS)
+    if project_defined:
+        return False
+    for leaf in {decorator_name, resolved.rsplit(".", 1)[-1]}:
+        if leaf in REGISTRATION_DECORATOR_NAMES or leaf.startswith("register"):
+            return True
+    return False
+
+
 FASTAPI_DEPENDENCY_CALLS = {"Depends", "Security"}
 FASTAPI_APP_FACTORIES = {"FastAPI"}
 FASTAPI_ROUTER_FACTORIES = {"APIRouter"}

@@ -1640,7 +1640,11 @@ def _check_data_model_fields(def_obj, analyzer, framework):
             return _suppress(def_obj, "function reads its locals dynamically")
         return None
 
-    if def_obj.type == "variable" and "." in def_obj.name:
+    if (
+        def_obj.type == "variable"
+        and "." in def_obj.name
+        and def_obj.name not in getattr(analyzer, "_module_variable_names", ())
+    ):
         _, attr = def_obj.name.rsplit(".", 1)
         dotted_variable_counts = getattr(
             analyzer, "_dotted_variable_simple_name_counts", None

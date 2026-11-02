@@ -145,6 +145,8 @@ _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_abstract_override_indexes",
     "_duck_typed_implementers",
     "_dotted_variable_simple_name_counts",
+    "_module_variable_names",
+    "_entrypoint_target_qnames",
     "_global_type_map",
     "_all_used_attr_names",
     "_all_used_attr_context",
@@ -697,13 +699,6 @@ _URLLIB_REQUEST_PROTOCOL_HOOK_RE = re.compile(
     r"^(?:[a-z][a-z0-9+.-]*_(?:open|request|response)|"
     r"http_error(?:_[0-9]{3})?|default_open|unknown_open|redirect_request)$"
 )
-
-
-def _entrypoint_module_name(qname: str) -> str | None:
-    if not isinstance(qname, str) or "." not in qname:
-        return None
-    module_name, _symbol = qname.rsplit(".", 1)
-    return module_name or None
 
 
 def _base_class_leaf_names(class_def) -> set[str]:
@@ -3233,6 +3228,22 @@ class Skylos:
                             _confidence_as_unit_interval(confidence),
                         )
 
+        entrypoint_classes = {
+            name
+            for name in getattr(self, "_entrypoint_target_qnames", ())
+            if getattr(self.defs.get(name), "type", None) == "class"
+        }
+        if entrypoint_classes:
+            for def_obj in self.defs.values():
+                if def_obj.type not in ("method", "variable"):
+                    continue
+                if def_obj.simple_name.startswith("_"):
+                    continue
+                if def_obj.name.rsplit(".", 1)[0] not in entrypoint_classes:
+                    continue
+                def_obj.references += 1
+                _mark_evidence_ref(def_obj, "package_entrypoint", 1.0)
+
         used_attr_names = getattr(self, "_all_used_attr_names", set())
         used_attr_context = getattr(self, "_all_used_attr_context", set())
         same_class_private_attr_uses = set()
@@ -4473,14 +4484,20 @@ class Skylos:
         pyproject_entrypoint_modules = set()
 
         try:
-            from skylos.analysis.pyproject_entrypoints import extract_entrypoints
+            from skylos.analysis.pyproject_entrypoints import (
+                entrypoint_qnames,
+                extract_entrypoint_references,
+            )
 
-            for qname in extract_entrypoints(project_root):
+            entrypoint_references = extract_entrypoint_references(project_root)
+            for qname in entrypoint_qnames(entrypoint_references):
                 pyproject_entrypoint_qnames.add(qname)
                 global_pattern_tracker.known_qualified_refs.add(qname)
-                module_name = _entrypoint_module_name(qname)
-                if module_name:
-                    pyproject_entrypoint_modules.add(module_name)
+            self._entrypoint_target_qnames = set()
+            for module_name, attribute in entrypoint_references:
+                pyproject_entrypoint_modules.add(module_name)
+                if attribute:
+                    self._entrypoint_target_qnames.add(f"{module_name}.{attribute}")
         except Exception:
             logger.debug("Failed to extract pyproject entrypoints", exc_info=True)
 
@@ -5185,6 +5202,20 @@ class Skylos:
             for definition in self.defs.values()
             if definition.type == "variable" and "." in definition.name
         )
+        module_by_file = {
+            str(path): module
+            for path, module in (
+                getattr(self, "_module_names_by_file", None) or {}
+            ).items()
+        }
+        self._module_variable_names = {
+            definition.name
+            for definition in self.defs.values()
+            if definition.type == "variable"
+            and "." in definition.name
+            and module_by_file.get(str(definition.filename))
+            == definition.name.rsplit(".", 1)[0]
+        }
 
         for defs, test_flags, framework_flags, file, mod, cfg in file_contexts:
             _annotate_dead_code_evidence_sources(defs, test_flags, framework_flags)
