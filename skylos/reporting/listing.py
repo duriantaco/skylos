@@ -26,6 +26,7 @@ LOW_RISK_REASONS = {
     "SKY-D209": frozenset({"constant-shell-command", CONSTANT_ARGUMENT_REASON}),
     "SKY-D207": frozenset({"non-sensitive-hash-input"}),
     "SKY-D208": frozenset({"non-sensitive-hash-input"}),
+    "SKY-D252": frozenset({"constant-cookie-value"}),
 }
 _RULE_ID = re.compile(r"SKY-[A-Z0-9]+(?:-[A-Z0-9]+)*\Z")
 

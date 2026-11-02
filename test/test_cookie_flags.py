@@ -21,6 +21,7 @@ def _analyze(tmp_path, monkeypatch, source, name="app.py"):
             enable_sca=False,
             grep_verify=False,
             grep_cache=False,
+            all_advice=False,
         )
     )
     assert not result.get("analysis_errors")
@@ -40,41 +41,41 @@ DJANGO = "from django.http import HttpResponse\n"
     [
         (
             FLASK,
-            'def login():\n    resp = make_response("ok")\n'
-            '    resp.set_cookie("sid", "v", secure=False)\n    return resp\n',
+            'def login(token):\n    resp = make_response("ok")\n'
+            '    resp.set_cookie("sid", token, secure=False)\n    return resp\n',
             {"httpOnly": "absent", "secure": "false"},
         ),
         (
             FLASK,
-            'def login():\n    resp = make_response("ok")\n'
-            '    resp.set_cookie("sid", "v", secure=True, httponly=False)\n    return resp\n',
+            'def login(token):\n    resp = make_response("ok")\n'
+            '    resp.set_cookie("sid", token, secure=True, httponly=False)\n    return resp\n',
             {"httpOnly": "false", "secure": "true"},
         ),
         (
             FLASK,
-            'def login():\n    resp = make_response("ok")\n'
-            '    resp.set_cookie("sid", "v", 60, None, "/", None, False, True)\n'
+            'def login(token):\n    resp = make_response("ok")\n'
+            '    resp.set_cookie("sid", token, 60, None, "/", None, False, True)\n'
             "    return resp\n",
             {"httpOnly": "true", "secure": "false"},
         ),
         (
             DJANGO,
-            'def login(request):\n    response = HttpResponse("ok")\n'
-            '    response.set_cookie(key="sid", value="v", httponly=False, secure=False)\n'
+            'def login(request, token):\n    response = HttpResponse("ok")\n'
+            '    response.set_cookie(key="sid", value=token, httponly=False, secure=False)\n'
             "    return response\n",
             {"httpOnly": "false", "secure": "false"},
         ),
         (
             DJANGO,
-            'def login(request):\n    response = HttpResponse("ok")\n'
-            '    response.set_signed_cookie("sid", "v", salt="s", secure=False, **{})\n'
+            'def login(request, token):\n    response = HttpResponse("ok")\n'
+            '    response.set_signed_cookie("sid", token, salt="s", secure=False, **{})\n'
             "    return response\n",
             {"httpOnly": "unknown", "secure": "false"},
         ),
         (
             FLASK,
-            'def login():\n    resp = make_response("ok")\n    other = resp\n'
-            '    other.set_cookie("sid", "v", secure=False)\n    return resp\n',
+            'def login(token):\n    resp = make_response("ok")\n    other = resp\n'
+            '    other.set_cookie("sid", token, secure=False)\n    return resp\n',
             {"httpOnly": "absent", "secure": "false"},
         ),
         (
@@ -104,6 +105,45 @@ def test_literal_false_cookie_flag_is_reported_with_complete_evidence(
     assert evidence["evidence_kind"] == "cookie_security_options"
     assert evidence["options"] == options
     assert finding["evidence_contract"]["proof_state"] == "verified"
+
+
+@pytest.mark.parametrize(
+    "call, listed",
+    [
+        ('resp.set_cookie("logged_user", "true", httponly=False)', False),
+        ('resp.set_cookie(key="lang", value="en", secure=False)', False),
+        ('resp.set_cookie("seen", 1, None, None, "/", None, False)', False),
+        ('resp.set_signed_cookie("flag", b"1", salt="s", httponly=False)', False),
+        ('resp.set_cookie("sid", token, httponly=False)', True),
+        ('resp.set_cookie("sid", value=token, secure=False)', True),
+        ('resp.set_cookie("sid", f"{token}", secure=False)', True),
+        ('resp.set_cookie("sid", "v" + token, secure=False)', True),
+        ('resp.set_cookie("sid", TOKEN, secure=False)', True),
+        ("resp.set_cookie(*parts, secure=False)", True),
+        ('resp.set_cookie("sid", *parts, secure=False)', True),
+        ('resp.set_cookie("sid", secure=False, **options)', True),
+    ],
+)
+def test_fixed_literal_cookie_value_is_kept_but_hidden(
+    tmp_path, monkeypatch, call, listed
+):
+    source = (
+        FLASK
+        + 'TOKEN = "abc"\n'
+        + "def login(token, parts, options):\n"
+        + '    resp = make_response("ok")\n'
+        + f"    {call}\n"
+        + "    return resp\n"
+    )
+    findings = _cookie_findings(_analyze(tmp_path, monkeypatch, source))
+    assert [f["line"] for f in findings] == [6]
+    finding = findings[0]
+    assert finding["listing"]["listed"] is listed
+    context = finding.get("low_risk_context")
+    if listed:
+        assert context is None
+    else:
+        assert context["reason"] == "constant-cookie-value"
 
 
 @pytest.mark.parametrize(

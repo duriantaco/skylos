@@ -13,6 +13,12 @@ so a call needs a key and a value (two or more arguments) to be a response
 cookie write. Like TLS verification and debug mode, the flags describe a
 deployment: test modules are not reported, as tests set plain cookies on
 local test clients.
+
+A cookie whose value is a literal written at the call (``"true"``, ``1``)
+holds the same text for every visitor, so there is nothing for a script or a
+network observer to steal. It is still reported, with a ``low_risk_context``
+that hides it by default; a name, call, f-string or unpacked value stays
+listed.
 """
 
 from __future__ import annotations
@@ -25,6 +31,8 @@ from skylos.rules.danger.calls import _is_test_module
 _COOKIE_WRITERS = frozenset({"set_cookie", "set_signed_cookie"})
 _FLAG_POSITIONS = {"set_cookie": {"secure": 6, "httponly": 7}}
 _FLAGS = (("httpOnly", "httponly"), ("secure", "secure"))
+_VALUE_POSITION = 1
+_CONSTANT_VALUE_REASON = "constant-cookie-value"
 
 
 def _literal_state(node: ast.AST) -> str:
@@ -55,6 +63,26 @@ def _flag_state(call: ast.Call, method: str, keyword: str) -> str:
     return "absent"
 
 
+def _cookie_value(call: ast.Call) -> ast.AST | None:
+    for kw in call.keywords:
+        if kw.arg == "value":
+            return kw.value
+    if _star_before(call, _VALUE_POSITION):
+        return None
+    if len(call.args) > _VALUE_POSITION:
+        return call.args[_VALUE_POSITION]
+    return None
+
+
+def _constant_value_context(call: ast.Call) -> dict | None:
+    if not isinstance(_cookie_value(call), ast.Constant):
+        return None
+    return {
+        "reason": _CONSTANT_VALUE_REASON,
+        "detail": "the cookie value is a literal, the same for every visitor",
+    }
+
+
 def cookie_option_states(call: ast.Call) -> dict[str, str] | None:
     """``{"httpOnly": state, "secure": state}`` for a response cookie write
     with a key and a value, else None. States are ``absent``, ``false``,
@@ -71,7 +99,7 @@ def _finding(call: ast.Call, states: dict[str, str], file_path, symbol: str) -> 
     disabled = [label for label, state in states.items() if state == "false"]
     summary = ", ".join(f"{label}={states[label]}" for label, _ in _FLAGS)
     sink = f"`{ast.unparse(call.func)}()` Set-Cookie response header"
-    return {
+    finding = {
         "rule_id": "SKY-D252",
         "severity": "MEDIUM",
         "message": (
@@ -109,6 +137,10 @@ def _finding(call: ast.Call, states: dict[str, str], file_path, symbol: str) -> 
             }
         },
     }
+    low_risk = _constant_value_context(call)
+    if low_risk is not None:
+        finding["low_risk_context"] = low_risk
+    return finding
 
 
 class _CookieWriteChecker(ast.NodeVisitor):
