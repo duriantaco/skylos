@@ -32,7 +32,7 @@ def test_publish_workflow_pushes_versioned_python_runtime_tags():
         encoding="utf-8"
     )
 
-    assert 'python-version: ["3.11", "3.12", "3.13", "3.14"]' in workflow
+    assert 'python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]' in workflow
     assert 'DEFAULT_PYTHON_VERSION: "3.14"' in workflow
     assert '--build-arg "PYTHON_VERSION=${PYTHON_VERSION}"' in workflow
     assert '"${IMAGE_NAME}:${VERSION}-${runtime_tag}"' in workflow
@@ -47,7 +47,7 @@ def test_ci_builds_oldest_and_default_python_runtime_images():
         encoding="utf-8"
     )
 
-    assert 'python-version: ["3.11", "3.14"]' in workflow
+    assert 'python-version: ["3.11", "3.14", "3.15"]' in workflow
     assert '--build-arg "PYTHON_VERSION=${{ matrix.python-version }}"' in workflow
     assert "type CacheEntry[T = str] = dict[str, T]" in workflow
     assert "skylos:test doctor --format json" in workflow
