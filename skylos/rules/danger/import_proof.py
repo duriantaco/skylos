@@ -15,6 +15,9 @@ _IMPORT_STATE = (
     "sys.path_importer_cache",
     "sys.modules",
 )
+_IMPORT_MACHINERY_ROOTS = frozenset(
+    {"sys", "builtins", "importlib", "imp", "pkgutil", "runpy", "site", "zipimport"}
+)
 _SETTERS = {
     "__setattr__",
     "__delattr__",
@@ -752,6 +755,40 @@ class _Effects:
             self.stable_results[key] = result
         return result and self.complete
 
+    def literal_import_is_read(self, node, sensitive):
+        """``__import__("ssl").attr`` read in place: an import statement.
+
+        One literal module name, no other arguments, not import machinery or
+        a sensitive provider, and the result only read through attributes or
+        subscripts, never stored, passed, bound or returned."""
+        if node.keywords or len(node.args) != 1:
+            return False
+        argument = node.args[0]
+        if not isinstance(argument, ast.Constant) or not isinstance(
+            argument.value, str
+        ):
+            return False
+        parts = argument.value.split(".")
+        if not all(part.isidentifier() for part in parts):
+            return False
+        if parts[0] in _IMPORT_MACHINERY_ROOTS:
+            return False
+        prefixes = {".".join(parts[:count]) for count in range(1, len(parts) + 1)}
+        if any(sensitive(name) for name in prefixes):
+            return False
+        current = node
+        parent = self.parents.get(id(node))
+        if not isinstance(parent, ast.Attribute) or parent.value is not node:
+            return False
+        while isinstance(parent, (ast.Attribute, ast.Subscript)) and (
+            parent.value is current
+        ):
+            if not isinstance(parent.ctx, ast.Load):
+                return False
+            current = parent
+            parent = self.parents.get(id(parent))
+        return True
+
     def _stable_scan(self, sensitive, *, environment=False, callable_names=()):
         if not self.complete:
             return False
@@ -776,8 +813,13 @@ class _Effects:
                 if isinstance(node.func, ast.Name) and node.func.id in {
                     "exec",
                     "eval",
-                    "__import__",
                 }:
+                    return False
+                if (
+                    isinstance(node.func, ast.Name)
+                    and node.func.id == "__import__"
+                    and not self.literal_import_is_read(node, sensitive)
+                ):
                     return False
                 if environment and any(
                     name == "importlib" or name.startswith("importlib.")
