@@ -1,5 +1,6 @@
-"""SKY-D252: a response cookie written with secure or httponly turned off by a
-literal False, through the production analyzer."""
+"""SKY-D252: a Python response cookie written with secure turned off by a
+literal False, through the production analyzer. An explicit httponly=False
+alone is a deliberate script-readable cookie and is not reported."""
 
 import json
 
@@ -43,12 +44,6 @@ DJANGO = "from django.http import HttpResponse\n"
             'def login():\n    resp = make_response("ok")\n'
             '    resp.set_cookie("sid", "v", secure=False)\n    return resp\n',
             {"httpOnly": "absent", "secure": "false"},
-        ),
-        (
-            FLASK,
-            'def login():\n    resp = make_response("ok")\n'
-            '    resp.set_cookie("sid", "v", secure=True, httponly=False)\n    return resp\n',
-            {"httpOnly": "false", "secure": "true"},
         ),
         (
             FLASK,
@@ -110,6 +105,10 @@ def test_literal_false_cookie_flag_is_reported_with_complete_evidence(
     "body",
     [
         'resp.set_cookie("sid", "v", secure=True, httponly=True)',
+        'resp.set_cookie("sid", "v", secure=True, httponly=False)',
+        'resp.set_cookie("logged_user", "true", httponly=False)',
+        'resp.set_cookie("sid", "v", 60, None, "/", None, True, False)',
+        'resp.set_cookie("sid", "v", 60, None, "/", None, None, False)',
         'resp.set_cookie("sid", "v")',
         'resp.set_cookie("sid", "v", max_age=60, samesite="Lax")',
         'resp.set_cookie("sid", "v", secure=use_https, httponly=False if 0 else True)',

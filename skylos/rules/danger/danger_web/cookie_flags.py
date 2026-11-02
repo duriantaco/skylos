@@ -1,12 +1,17 @@
-"""SKY-D252: a response cookie written with a browser security flag turned
-off by a literal ``False``.
+"""SKY-D252: a response cookie written with the ``secure`` flag turned off by
+a literal ``False``.
 
 Werkzeug/Flask, Django and Starlette responses share one ``set_cookie``
 signature: ``(key, value, max_age, expires, path, domain, secure, httponly,
 samesite)``, so ``secure`` and ``httponly`` are positions 6 and 7 or their
-keywords. A cookie is reported only when one of the two flags is the literal
-``False``; a flag that is absent, ``True`` or computed is not reported, so a
-default the framework or configuration may set is never guessed at.
+keywords. A cookie is reported only when ``secure`` is the literal ``False``:
+the browser then sends it over plain HTTP whatever it holds. A flag that is
+absent, ``True`` or computed is not reported, so a default the framework or
+configuration may set is never guessed at. An explicit ``httponly=False`` on
+its own is not reported: it is the deliberate way to let page scripts read a
+cookie (CSRF double-submit tokens, UI state), and whether that exposes a
+secret depends on the value, which the call does not prove. The httpOnly
+state is still recorded in the evidence.
 
 ``http.cookiejar.CookieJar.set_cookie(cookie)`` takes a single cookie object,
 so a call needs a key and a value (two or more arguments) to be a response
@@ -75,9 +80,9 @@ def _finding(call: ast.Call, states: dict[str, str], file_path, symbol: str) -> 
         "rule_id": "SKY-D252",
         "severity": "MEDIUM",
         "message": (
-            f"Cookie is written with {' and '.join(disabled)} turned off by a "
-            f"literal False ({summary}). Set it to True so the browser keeps "
-            "the cookie off plain HTTP and away from page scripts."
+            f"Cookie is written with secure turned off by a literal False "
+            f"({summary}). Set secure=True so the browser never sends the "
+            "cookie over plain HTTP."
         ),
         "file": str(file_path),
         "line": call.lineno,
@@ -97,8 +102,8 @@ def _finding(call: ast.Call, states: dict[str, str], file_path, symbol: str) -> 
                 "guards_missing": [f"{label}=true" for label in disabled],
                 "options": dict(states),
                 "confidence_reason": (
-                    "A literal False at the cookie write turns the browser "
-                    "security flag off."
+                    "A literal secure=False at the cookie write lets the "
+                    "browser send the cookie over plain HTTP."
                 ),
                 "test_hint": (
                     "Assert the emitted Set-Cookie header has the Secure and "
@@ -128,7 +133,7 @@ class _CookieWriteChecker(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call):
         states = cookie_option_states(node)
-        if states is not None and "false" in states.values():
+        if states is not None and states["secure"] == "false":
             self.findings.append(
                 _finding(node, states, self.file_path, self.symbols[-1])
             )
