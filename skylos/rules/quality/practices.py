@@ -1882,14 +1882,16 @@ class _ModuleRoutes:
         ) and not _route_has_auth_guard(function, self.guarded_routers)
 
 
-def open_unguarded_routes(module: ast.Module, filename=None) -> list[dict]:
+def open_unguarded_routes(
+    module: ast.Module, filename=None, *, project_root=None
+) -> list[dict]:
     """Mutating routes of an app this module creates that fail the F102 test
     and that nothing on the route, in its body or in the module can
     authenticate. Each entry names the privileged actions it performs."""
     if _is_non_production_path(filename):
         return []
     routes = _ModuleRoutes(module)
-    facts = ModuleFacts(module)
+    facts = ModuleFacts(module, filename, project_root)
     if facts.request_auth_possible() or not facts.apps:
         return []
     found = []

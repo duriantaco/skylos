@@ -5,6 +5,7 @@ from skylos.rules.danger.module_namespace import (
     module_name_for,
     module_rebinding,
 )
+from skylos.rules.danger.import_proof import provider_binding_is_stable
 
 # ``bleach.linkify`` only adds links and ``cgi.escape`` leaves quotes alone,
 # so neither is listed.
@@ -167,8 +168,8 @@ class TaintVisitor(ast.NodeVisitor):
         call_name = _resolve_call_name(node)
         if not call_name:
             return False
-        if call_name not in self.sanitizers:
-            if not self.resolve_sanitizer_imports or self.untrusted_sources is None:
+        if self.resolve_sanitizer_imports:
+            if self.untrusted_sources is None:
                 return False
             if not self._import_names_are_stable(call_name):
                 return False
@@ -179,6 +180,15 @@ class TaintVisitor(ast.NodeVisitor):
                 return False
             if not self._sanitizer_is_unpatched(call_name):
                 return False
+            if not provider_binding_is_stable(
+                call_name,
+                self.untrusted_sources.module,
+                self.file_path,
+                getattr(self, "project_root", None),
+            ):
+                return False
+        elif call_name not in self.sanitizers:
+            return False
         disabling = _SANITIZER_DISABLING_ARGS.get(call_name)
         if disabling is None:
             return True

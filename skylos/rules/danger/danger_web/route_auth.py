@@ -40,13 +40,15 @@ def _message(entry) -> str:
     return message
 
 
-def scan(tree, file_path, findings):
+def scan(tree, file_path, findings, *, project_root=None):
     if not isinstance(tree, ast.Module):
         return
     try:
         from skylos.rules.quality.practices import open_unguarded_routes
 
-        for entry in open_unguarded_routes(tree, str(file_path)):
+        for entry in open_unguarded_routes(
+            tree, str(file_path), project_root=project_root
+        ):
             if entry["severity"] is None:
                 continue
             function = entry["function"]

@@ -165,6 +165,8 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         name = unpickler_load_name(name, self._unpickler_classes)
         if name:
             for rule_key, tup in DANGEROUS_CALLS.items():
+                if tup[0] == "SKY-D210":
+                    continue
                 rule_id, severity, message = tup[0], tup[1], tup[2]
                 if len(tup) > 3:
                     opts = tup[3]
@@ -181,7 +183,12 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                     "yaml.load",
                     "yaml.load_all",
                 } and not _yaml_load_without_safeloader(
-                    node, self.aliases, self._yaml_loader_classes(), self._module
+                    node,
+                    self.aliases,
+                    self._yaml_loader_classes(),
+                    self.file_path,
+                    self._project_root,
+                    self._module,
                 ):
                     continue
 
@@ -238,7 +245,9 @@ class _DangerousCallsChecker(ast.NodeVisitor):
     def _append_tls_finding(self, name: str, node: ast.Call) -> None:
         if _is_test_module(self.file_path):
             return
-        message = _tls_verification_disabled(node, name)
+        message = _tls_verification_disabled(
+            node, name, filename=self.file_path, project_root=self._project_root
+        )
         if message is None:
             return
         self.findings.append(
@@ -340,8 +349,7 @@ _SQL_RAW_TOKENS = (
     ".extra(",
 )
 _CMD_TOKENS = (
-    "os.system",
-    "system(",
+    "system",
     "subprocess",
     "popen",
     "getoutput",
@@ -611,14 +619,14 @@ def scan_file_with_tree(
     """Run taint-flow scanners on an already-parsed AST (no re-read/re-parse)."""
     if source is None:
         scan_sql(tree, file_path, findings)
-        scan_cmd(tree, file_path, findings)
+        scan_cmd(tree, file_path, findings, project_root=project_root)
         scan_sql_raw(tree, file_path, findings)
         scan_ssrf(tree, file_path, findings)
-        scan_path(tree, file_path, findings)
+        scan_path(tree, file_path, findings, project_root=project_root)
         scan_xss(tree, file_path, findings, project_root=project_root)
-        scan_redirect(tree, file_path, findings)
+        scan_redirect(tree, file_path, findings, project_root=project_root)
         scan_cors(tree, file_path, findings)
-        scan_route_auth(tree, file_path, findings)
+        scan_route_auth(tree, file_path, findings, project_root=project_root)
         scan_jwt(tree, file_path, findings)
         scan_access(tree, file_path, findings)
         scan_mcp(tree, file_path, findings)
@@ -635,21 +643,21 @@ def scan_file_with_tree(
     if _has_any(source_lower, _SQL_TOKENS):
         scan_sql(tree, file_path, findings)
     if _has_any(source_lower, _CMD_TOKENS):
-        scan_cmd(tree, file_path, findings)
+        scan_cmd(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _SQL_RAW_TOKENS):
         scan_sql_raw(tree, file_path, findings)
     if _has_any(source_lower, _SSRF_TOKENS):
         scan_ssrf(tree, file_path, findings)
     if _has_any(source_lower, _PATH_TOKENS):
-        scan_path(tree, file_path, findings)
+        scan_path(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _XSS_TOKENS):
         scan_xss(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _REDIRECT_TOKENS):
-        scan_redirect(tree, file_path, findings)
+        scan_redirect(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _CORS_TOKENS):
         scan_cors(tree, file_path, findings)
     if _has_any(source_lower, _ROUTE_TOKENS):
-        scan_route_auth(tree, file_path, findings)
+        scan_route_auth(tree, file_path, findings, project_root=project_root)
     if "jwt" in source_lower and _has_any(source_lower, _JWT_TOKENS):
         scan_jwt(tree, file_path, findings)
     if "fields" in source_lower and "__all__" in source_lower:
