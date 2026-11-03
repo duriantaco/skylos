@@ -63,6 +63,10 @@ Skylos has framework-aware behavior for patterns such as:
   and policies), plus Livewire and Blade components, migrations,
   `DatabaseSeeder` and `laravel-vite-plugin` inputs.
 - PHP type-position and PHPDoc references to imported classes.
+- C# constructors: only a private constructor with parameters that nothing
+  calls is an unused-function finding (Roslyn IDE0051); controller and
+  dependency-injection constructors are framework-called, and the class itself
+  is the dead-code unit.
 - package entrypoints and plugin hooks.
 - Python library public API (`skylos/deadcode/public_api.py`): attribute
   docstrings and `#:` comments, Sphinx/MyST directives and roles, mkdocstrings

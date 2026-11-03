@@ -107,6 +107,7 @@ _PATH_TRAVERSAL = {
     "shell": "Strip directories with basename, resolve with realpath, and require the result under the base dir.",
     "go": "Clean the path with filepath.Clean/filepath.Rel against the base and reject results outside it.",
     "java": "Normalize with base.resolve(name).normalize() and require startsWith(base).",
+    "csharp": "Use Path.Combine(baseDir, Path.GetFileName(name)), or check Path.GetFullPath(path) starts with the base directory.",
 }
 _SQL = {
     "default": "Use parameterized queries; never build SQL from string concatenation or formatting.",
@@ -115,12 +116,14 @@ _SQL = {
     "go": "Use db.Query(sql, args...) with placeholders; never fmt.Sprintf values into SQL.",
     "java": "Use PreparedStatement with ? placeholders; never concatenate values into SQL.",
     "php": "Use PDO prepared statements with bound parameters; never interpolate values into SQL.",
+    "csharp": "Use SqlParameter/@name placeholders, EF FromSqlInterpolated or Dapper parameters; never concatenate values into SQL.",
 }
 _SSRF = {
     "default": "Allowlist the destination host and scheme before the request, and block internal addresses.",
     "java": "Build the URL from a fixed scheme and host and append only encoded path or query values; allowlist anything else.",
     "python": "Parse the URL, allowlist scheme and host, and reject private/loopback addresses before requesting.",
     "js": "Parse with new URL(), allowlist protocol and host, and reject private/loopback addresses.",
+    "csharp": "Give the HttpClient a fixed BaseAddress and pass only relative, encoded paths; allowlist any absolute URL's host.",
 }
 _WEAK_HASH = {
     "default": "Use SHA-256 or stronger for integrity; for passwords use a password hash (argon2, bcrypt, scrypt).",
@@ -156,12 +159,14 @@ _TIMING = {
 _OPEN_REDIRECT = {
     "default": "Redirect only to relative paths or an allowlist of hosts; reject absolute user-supplied URLs.",
     "java": "Redirect to a fixed path ('redirect:/orders/' + id) or check the target starts with '/' and not '//' before redirecting.",
+    "csharp": "Use LocalRedirect(url), or redirect only inside if (Url.IsLocalUrl(url)).",
 }
 _DESERIALIZE = {
     "default": "Never deserialize untrusted data with a code-executing format; use JSON or a schema-checked format.",
     "python": "Replace pickle/marshal on untrusted data with json or a schema-validated format.",
     "java": "Avoid ObjectInputStream, XMLDecoder, XStream and default-typed Jackson on untrusted data; use JSON with fixed types or an allowlisting filter.",
     "php": "Replace unserialize on untrusted data with json_decode.",
+    "csharp": "Replace BinaryFormatter-family serializers with System.Text.Json; keep Json.NET TypeNameHandling.None or set an allowlisting ISerializationBinder.",
 }
 _SECRET = {
     "default": "Remove the secret from the code, rotate it, and load it from the environment or a secret manager.",
@@ -292,13 +297,15 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     },
     "SKY-D225": {"default": "Pin a dependency version that exists on the registry."},
     "SKY-D226": {
-        "default": "Escape untrusted content instead of marking it safe; sanitize HTML with an allowlist."
+        "default": "Escape untrusted content instead of marking it safe; sanitize HTML with an allowlist.",
+        "csharp": "Let Razor encode the value, or run it through HtmlEncoder or an HTML sanitizer before HtmlString/Html.Raw/MarkupString.",
     },
     "SKY-D227": {
         "default": "Render through the template engine with auto-escaping; do not build templates from input."
     },
     "SKY-D228": {
-        "default": "Build HTML with auto-escaping templates or textContent, not string concatenation."
+        "default": "Build HTML with auto-escaping templates or textContent, not string concatenation.",
+        "csharp": "Return a Razor view, or HtmlEncoder.Default.Encode each value before writing an HTML response.",
     },
     "SKY-D229": {
         "default": "Use a fixed XPath expression and pass input through XPath variables, or allowlist the value."

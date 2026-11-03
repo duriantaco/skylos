@@ -338,3 +338,35 @@ def test_optional_and_params_methods_accept_call_argument_counts(
     assert "Calls.Optional" not in unused
     assert "Calls.Variadic" not in unused
     assert "Calls.Never" in unused
+
+
+def test_only_unused_private_constructors_with_parameters_are_reported(
+    tmp_path: Path,
+) -> None:
+    _write(
+        tmp_path / "Shop.cs",
+        "namespace Shop;\n"
+        "public class OrdersController : Controller {\n"
+        "    public OrdersController(IOrderService orders) { _orders = orders; }\n"
+        "    private readonly IOrderService _orders;\n"
+        "    public string Show() => _orders.Describe();\n"
+        "    private void NeverCalled() {}\n"
+        "}\n"
+        "internal class Money {\n"
+        "    private Money(decimal amount) {}\n"
+        "    private Money(string raw, int scale) {}\n"
+        "    private Money() {}\n"
+        "    public static Money Create(decimal amount) => new Money(amount);\n"
+        "}\n"
+        "internal class Orphan {\n"
+        "    public Orphan(string name) {}\n"
+        "}\n"
+        "public static class Use { public static object Run() => Money.Create(1m); }\n",
+    )
+
+    result = json.loads(analyze(str(tmp_path), conf=0))
+
+    assert {
+        (item["full_name"], item["line"]) for item in result.get("unused_functions", [])
+    } == {("Shop.OrdersController.NeverCalled", 6), ("Shop.Money.Money", 10)}
+    assert "Shop.Orphan" in _unused(result, "unused_classes")

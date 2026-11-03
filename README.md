@@ -888,7 +888,7 @@ how many in one line of output. Set `include_generated = true` under
 | PHP | Yes | Yes | No | Unsupported | PHP parser coverage, type and docblock references, Laravel and Drupal conventions (including `.module`/`.install`/`.inc`/`.theme` files), plus taint-style security sinks and sources (Drupal request and Form API input into SQL strings, `Markup::create()` and inline Twig templates) |
 | Rust | Experimental⁴ | Partial | Partial | Unsupported | Rust parser coverage; command/path security checks, direct unreachable statements and duplicate branch bodies |
 | Dart | Yes³ | Partial³ | No | Unsupported | Dart parser coverage; security covers command injection, path traversal and SSRF |
-| C# | Partial | Partial | Partial | Unsupported | C# symbols, direct-block unreachable code, selected security sinks, and direct NuGet inventory |
+| C# | Partial | Partial | Partial | Unsupported | C# symbols, direct-block unreachable code, ASP.NET-aware security (request sources, receiver-typed sinks, unsafe deserialization, XSS), and direct NuGet inventory |
 | C++ | Partial | No | No | Unsupported | conservative unused file-local functions in `.cpp`, `.cc`, `.cxx`; C++ headers are parsed for references |
 | Kotlin | Partial² | No² | No | Unsupported | regex-based symbol extraction; reports only private declarations and imports |
 | Shell | No | Partial | No | Unsupported | shell-script security checks for command injection, SSRF, and path traversal |
@@ -940,12 +940,25 @@ with a shell `#!` line), C and C++ sources and headers, Dockerfiles, Terraform
 C# dead-code findings are conservative: in a complete executable or web
 application scan, unreferenced public types and methods are low-confidence
 candidates; library APIs, protected members, and known framework or configured
-entry points remain externally reachable. C# source-file reachability is not
+entry points remain externally reachable. Constructors are not reported as
+unused functions unless they are private, take parameters and nothing calls
+them (Roslyn IDE0051's rule); controller and dependency-injection
+constructors are called by the framework. C# source-file reachability is not
 implemented. Quality scanning detects statements after unconditional
 `return`, `throw`, `break`, or `continue` in a direct block; it is not full
-control-flow analysis. Security coverage includes selected tainted-input
-sinks and generic secret scanning of `.cs` files when `--secrets` or `-a` is
-enabled. Interpolated raw-string expressions are not yet followed by C# taint
+control-flow analysis. Security (`--danger`) treats ASP.NET request data as
+input: controller action, Razor Page handler, minimal API and `[From*]`
+parameters and `Request.*`, not constructor or plain service parameters, and
+follows it into same-file helper methods. It reports SQL injection (ADO.NET,
+EF raw SQL, Dapper), command injection, path traversal, SSRF (`HttpClient`,
+`WebClient`, `WebRequest`, RestSharp), open redirect (not `LocalRedirect` or
+a `Url.IsLocalUrl` guard), unsafe deserialization (`BinaryFormatter` family,
+Json.NET `TypeNameHandling`, `SimpleTypeResolver`) and XSS through
+`HtmlString`/`Html.Raw`/`MarkupString` and HTML responses, each with a CWE.
+Methods that share a sink's name (a repository's `GetAsync`) count only on the
+right receiver type. Generic secret scanning covers `.cs` files when
+`--secrets` or `-a` is enabled. `.cshtml`/`.razor` markup, flow across files
+and interpolated raw-string expressions are not yet followed by C# taint
 analysis. SCA inventories direct NuGet `PackageReference` entries in `.csproj`
 files. Only unconditional exact `Version` pins (`[version]`) without local
 `Update`/`Remove` mutations, not `VersionOverride` or centrally managed

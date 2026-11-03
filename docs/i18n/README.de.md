@@ -231,7 +231,7 @@ Timeout-Pflicht beizubringen.
 | PHP | Ja | Ja | Nein | PHP-Parser-Abdeckung plus taint-artige Security-Sinks und -Sources |
 | Rust | Experimentell⁴ | Teilweise | Teilweise | Rust-Parser; Command Injection, Path Traversal, direkt unerreichbare Anweisungen und doppelte Zweige |
 | Dart | Ja³ | Teilweise³ | Nein | Dart-Parser-Abdeckung; Security prüft Command Injection, Path Traversal und SSRF |
-| C# | Teilweise | Teilweise | Teilweise | C#-Symbole, unerreichbare Anweisungen in direkten Blöcken, ausgewählte Security-Senken und direkte NuGet-Inventarisierung |
+| C# | Teilweise | Teilweise | Teilweise | C#-Symbole, unerreichbare Anweisungen in direkten Blöcken, ASP.NET-bewusste Security-Prüfung (Anfragequellen, typgebundene Senken, unsichere Deserialisierung, XSS) und direkte NuGet-Inventarisierung |
 | C++ | Teilweise | Nein | Nein | nur scheinbar ungenutzte dateilokale Funktionen in `.cpp`, `.cc`, `.cxx`; C++-Header werden für Referenzen gelesen |
 | Kotlin | Teilweise² | Nein² | Nein | regex-basierte Symbolerkennung; meldet nur private Deklarationen und Imports |
 | Shell | Nein | Teilweise | Nein | Shell-Script-Security-Prüfungen für Command Injection, SSRF und Path Traversal |
@@ -275,13 +275,27 @@ C#-Dead-Code-Funde sind konservativ: Bei einer vollständigen Analyse einer
 ausführbaren oder Web-Anwendung gelten unreferenzierte öffentliche Typen und
 Methoden als Kandidaten mit geringer Konfidenz. Bibliotheks-APIs, geschützte
 Member sowie bekannte Framework- und konfigurierte Einstiegspunkte bleiben
-extern erreichbar. Die Erreichbarkeit von C#-Quelldateien wird nicht analysiert.
+extern erreichbar. Konstruktoren gelten nur dann als ungenutzte Funktionen,
+wenn sie privat sind, Parameter haben und nichts sie aufruft (die Regel von
+Roslyn IDE0051); Controller- und Dependency-Injection-Konstruktoren ruft das
+Framework auf. Die Erreichbarkeit von C#-Quelldateien wird nicht analysiert.
 Die Qualitätsprüfung erkennt Anweisungen nach einem unbedingten
 `return`, `throw`, `break` oder `continue` im direkten Block, bietet aber keine
-vollständige Kontrollflussanalyse. Die Sicherheitsprüfungen umfassen ausgewählte
-Senken für nicht vertrauenswürdige Eingaben sowie generische Secret-Prüfungen
-in `.cs`-Dateien mit `--secrets` oder `-a`. Ausdrücke in interpolierten
-Raw-Strings werden von der C#-Taint-Analyse noch nicht verfolgt. SCA
+vollständige Kontrollflussanalyse. Die Sicherheitsprüfung (`--danger`) wertet
+ASP.NET-Anfragedaten als Eingabe: Parameter von Controller-Actions,
+Razor-Page-Handlern, Minimal APIs und `[From*]` sowie `Request.*`, nicht
+Konstruktor- oder gewöhnliche Service-Parameter, und folgt ihnen in
+Hilfsmethoden derselben Datei. Sie meldet SQL-Injection (ADO.NET, EF-Raw-SQL,
+Dapper), Command Injection, Path Traversal, SSRF (`HttpClient`, `WebClient`,
+`WebRequest`, RestSharp), Open Redirects (nicht bei `LocalRedirect` oder einer
+`Url.IsLocalUrl`-Prüfung), unsichere Deserialisierung (`BinaryFormatter`-Familie,
+Json.NET `TypeNameHandling`, `SimpleTypeResolver`) und XSS über
+`HtmlString`/`Html.Raw`/`MarkupString` und HTML-Antworten, jeweils mit CWE.
+Methoden, die nur den Namen einer Senke teilen (das `GetAsync` eines
+Repositorys), zählen nur mit dem passenden Empfängertyp. Generische
+Secret-Prüfungen decken `.cs`-Dateien mit `--secrets` oder `-a` ab.
+`.cshtml`/`.razor`-Markup, dateiübergreifender Datenfluss und Ausdrücke in
+interpolierten Raw-Strings werden von der C#-Taint-Analyse noch nicht verfolgt. SCA
 inventarisiert direkte NuGet-`PackageReference`-Einträge in `.csproj`-Dateien.
 Nur unbedingte, exakt festgelegte `Version`-Werte (`[version]`) ohne lokale
 `Update`-/`Remove`-Änderungen werden gegen Advisories geprüft;
