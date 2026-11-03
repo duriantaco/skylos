@@ -149,7 +149,7 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 | PHP | 是 | 是 | 否 | PHP parser 覆盖，加上污点式安全 sinks 和 sources |
 | Rust | 实验性⁴ | 部分 | 部分 | Rust 解析；命令注入、路径穿越、直接不可达语句及重复分支检查 |
 | Dart | 是³ | 部分³ | 否 | Dart parser 覆盖；安全检查覆盖命令注入、路径穿越和 SSRF |
-| C# | 部分 | 部分 | 部分 | C# 符号、直接代码块中的不可达语句、部分安全汇入点及 NuGet 直接依赖清单 |
+| C# | 部分 | 部分 | 部分 | C# 符号、直接代码块中的不可达语句、部分安全汇入点及 NuGet 依赖清单（`.csproj` 和 `packages.lock.json`） |
 | C++ | 部分 | 否 | 否 | 仅报告 `.cpp`、`.cc`、`.cxx` 中看似未使用的文件内函数；会读取 C++ 头文件中的引用 |
 | Kotlin | 部分² | 否² | 否 | 基于正则的符号提取；只报告 private 声明和导入 |
 | Shell | 否 | 部分 | 否 | shell 脚本安全检查，覆盖命令注入、SSRF 和路径穿越 |
@@ -175,9 +175,28 @@ C# 死代码检查采用保守策略：完整扫描可执行或 Web 应用时，
 `.csproj` 中直接声明的 NuGet `PackageReference`；
 只有无条件的精确 `Version`（`[version]`）且没有本地 `Update`/`Remove` 修改时
 才会查询漏洞；`VersionOverride` 和集中管理的版本不在此范围内。普通版本号只是最低版本约束；没有已解析的
-锁文件时，实际安装版本及漏洞状态仍未知，也不会列出传递依赖。
+锁文件时，实际安装版本及漏洞状态仍未知。有 `packages.lock.json`（`RestorePackagesWithLockFile`）时，
+会按每个目标框架检查所有已解析的包，包括传递依赖。
 
 规则族和扫描范围请看 [Rules Reference](https://docs.skylos.dev/rules-reference)。
+
+## 依赖文件
+
+依赖漏洞扫描（`--sca`，`-a` 已包含）把下列文件当作数据读取，并按其中记录的精确版本查询 OSV：
+
+| 生态 | 锁文件（全部已记录的包） | 清单文件（只用精确版本；版本范围记为未解析） | 会列出但不读取 |
+|:---|:---|:---|:---|
+| PyPI | `uv.lock`、`poetry.lock`、`Pipfile.lock` | `requirements.txt`、`pyproject.toml`、`setup.cfg`、`setup.py` | 没有锁文件的 `Pipfile` |
+| npm | `package-lock.json`、`npm-shrinkwrap.json`、`pnpm-lock.yaml`、`yarn.lock`、`bun.lock` | `package.json` | `bun.lockb` |
+| Go | | `go.mod` | Go 1.17 之前的 `go.sum` |
+| Maven / Gradle | `gradle.lockfile` | `pom.xml`（properties、本地父 POM 和 `<dependencyManagement>`） | 没有 `gradle.lockfile` 的 `build.gradle(.kts)` |
+| crates.io | `Cargo.lock` | `Cargo.toml`（`=x.y.z`） | |
+| Packagist | `composer.lock` | `composer.json` | |
+| RubyGems | `Gemfile.lock` | | 没有锁文件的 `Gemfile` |
+| Pub | `pubspec.lock` | `pubspec.yaml` | |
+| NuGet | `packages.lock.json` | `*.csproj`（`[x.y.z]`） | |
+
+Git、本地路径、SDK、私有仓库和分支（`dev-*`）条目会列为未检查，从不当作公共包查询。详见 [Dependency scanning](../dependency-scanning.md)。
 
 ## 基准测试快照
 

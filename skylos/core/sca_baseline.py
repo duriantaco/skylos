@@ -36,6 +36,10 @@ _EXTENDED_CONTEXT_FIELDS = (
     "lockfile_requires_python",
     "dependency_extra_requirements",
 )
+_CASE_SENSITIVE_ECOSYSTEMS = frozenset(
+    {"npm", "Go", "Maven", "crates.io", "RubyGems", "Pub"}
+)
+_CASE_INSENSITIVE_ECOSYSTEMS = frozenset({"NuGet", "Packagist"})
 _ADVISORY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}\Z")
 _FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -123,7 +127,9 @@ def dependency_fingerprints(finding, project_root=None) -> set[str] | None:
         return None
     if ecosystem == "PyPI":
         name = re.sub(r"[-_.]+", "-", name).lower()
-    elif ecosystem not in {"npm", "Go"}:
+    elif ecosystem in _CASE_INSENSITIVE_ECOSYSTEMS:
+        name = name.casefold()
+    elif ecosystem not in _CASE_SENSITIVE_ECOSYSTEMS:
         return None
     severity = finding.get("severity", "UNKNOWN")
     if not isinstance(severity, str) or severity not in {

@@ -237,11 +237,11 @@ def test_uv_non_registry_sample_survives_earlier_local_example_truncation(
 
 def test_non_registry_source_does_not_waive_inventory_limit(tmp_path, osv, monkeypatch):
     _project(tmp_path, _SOURCES[0])
-    monkeypatch.setattr(sca, "MAX_UNIQUE_DEPENDENCIES", 2)
+    monkeypatch.setattr(sca, "MAX_DEPENDENCY_ENTRIES", 2)
     result = sca.scan_dependencies(tmp_path)
     assert result.receipt["status"] == "incomplete"
     assert result.receipt["complete"] is False
-    assert result.receipt["limit_reasons"] == ["dependency_limit_exceeded"]
+    assert result.receipt["limit_reasons"] == ["dependency_entry_limit_exceeded"]
     assert osv.queries == []
 
 

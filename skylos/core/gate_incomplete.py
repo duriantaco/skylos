@@ -77,8 +77,12 @@ _INVENTORY_LIMIT_REASONS = {
         "manifests and lockfiles exceed {total_mb:,} MB in total"
     ),
     "dependency_limit_exceeded": (
-        "a lockfile or the project exceeds the dependency inventory limit "
-        "({dependencies:,} dependencies or an oversized lockfile)"
+        "the project lists more than {dependencies:,} unique dependencies "
+        "(package, version and ecosystem)"
+    ),
+    "dependency_entry_limit_exceeded": (
+        "the dependency files list more than {dependency_entries:,} entries in "
+        "total, or a lockfile exceeds a parse limit"
     ),
 }
 
@@ -588,6 +592,7 @@ def _scanner_limits():
         "total_mb": getattr(scanner, "MAX_TOTAL_MANIFEST_BYTES", 50_000_000)
         // 1_000_000,
         "dependencies": getattr(scanner, "MAX_UNIQUE_DEPENDENCIES", 5_000),
+        "dependency_entries": getattr(scanner, "MAX_DEPENDENCY_ENTRIES", 50_000),
         "matches": getattr(scanner, "MAX_OSV_MATCHES", 10_000),
     }
 

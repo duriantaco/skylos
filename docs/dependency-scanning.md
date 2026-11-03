@@ -21,7 +21,15 @@ repository SCA does not inspect the built image.
 | `poetry.lock` formats 1.0, 1.1, 2.0, 2.1 | Recorded public PyPI packages, including transitives, multiple versions, groups, extras, and environment markers |
 | `yarn.lock` Classic v1; Berry formats 4, 6, 8 | Recorded npm packages, including transitives, aliases, optional/peer declarations and recorded workspaces |
 | `bun.lock` (Bun's text lockfile) `lockfileVersion` 0–3 | Recorded npm packages, including transitives and nested copies (`parent/child` keys); workspace, `file:` and `link:` entries are the project's own code and are not queried; Git, tarball and other-registry entries are not checked |
+| `Cargo.lock` versions 1–4 | Recorded crates.io packages (git and sparse index), including transitives and multiple versions; see [Cargo](#cargo) |
+| `composer.lock` | Recorded Packagist packages from `packages` and `packages-dev` (development-only); see [Composer](#composer) |
+| `Gemfile.lock` | Recorded RubyGems specs from rubygems.org `GEM` sources, one identity per version across platforms; see [Bundler](#bundler) |
+| `pubspec.lock` | Recorded Pub packages hosted on pub.dev, including transitives; `direct dev` packages are development-only; see [pub](#pub) |
+| `gradle.lockfile` | Recorded Maven modules per Gradle configuration; modules locked only in test configurations are development-only; see [Gradle](#gradle) |
+| `packages.lock.json` versions 1, 2 | Recorded NuGet packages for every target framework, including transitives; `Project` entries are the build's own projects; see [NuGet lockfile](#nuget-lockfile) |
 | `requirements.txt`, `pyproject.toml`, `package.json`, `go.mod` | Supported direct entries with exact versions; manifest ranges are not resolved. `requirements.txt` includes its `-r` files inside the project (constraint `-c` files install nothing and are not scanned) |
+| `pom.xml` | Direct dependencies whose version Maven would resolve from this POM, its `<properties>`, `<dependencyManagement>` and parent POMs inside the scan root; see [Maven](#maven) |
+| `Cargo.toml`, `composer.json`, `pubspec.yaml` | Exact pins only: Cargo `=x.y.z`, a bare Composer version, a bare pub version. Ranges are counted as unresolved; Git, path, SDK and private-registry declarations are left to the lockfile |
 | `setup.cfg`, `setup.py` | Exact `install_requires` pins, like `[project].dependencies`. `setup.cfg` is read as INI (including `file:` requirement lists inside the project); `setup.py` is parsed, never run, and only literal lists (or module-level names bound to them) are read. A file without static `install_requires` is not a dependency manifest |
 
 The scanner discovers these files recursively, excluding dependency/build
@@ -43,10 +51,12 @@ lockfiles, the project's own local code (`link:` and `file:` directories, local
 `file:` tarballs, peers satisfied by a workspace project, and pnpm `runtime:`
 entries such as `node@runtime:26.11.1`) is listed as **not checked** instead of
 making the scan incomplete: it has no public registry identity to look up.
-For `uv.lock`, validated Git, URL, path and private-index sources are also
-listed as **not checked**; see [uv source coverage](#uv-source-coverage).
-In other lockfile formats, explicit private registries, Git dependencies and
-external archives retain their existing unresolved-source behavior. Known local/non-registry
+For `uv.lock`, `Cargo.lock`, `composer.lock`, `Gemfile.lock` and
+`pubspec.lock`, validated Git, URL, path and private-registry sources are also
+listed as **not checked**; see [uv source coverage](#uv-source-coverage), which
+applies to all five. In the npm lockfile formats, explicit private registries,
+Git dependencies and external archives retain their existing unresolved-source
+behavior. Known local/non-registry
 identities also prevent matching direct manifest pins in the lockfile's project
 and recorded workspace directories from being reinterpreted as public packages.
 Unrelated nested projects retain their own manifest inventory.
@@ -207,6 +217,105 @@ dependency descriptor to a lock entry; these are explicit incomplete-graph
 issues even when all package versions are present. No Yarn commands, package
 scripts, or dependency installation are run.
 
+### Maven
+
+`pom.xml` is read as XML, never run. A dependency's version may be a literal,
+a `${property}` from the POM's `<properties>` (or `project.version`,
+`project.groupId`), or come from a `<dependencyManagement>` entry with the
+same groupId, artifactId, type (default `jar`) and classifier, as Maven matches
+them. Properties
+and managed versions are inherited from parent POMs found through
+`<relativePath>` (default `../pom.xml`) inside the scan root, when the parent's
+coordinates match. Skylos never downloads a parent POM or an imported BOM
+(`<scope>import</scope>`), so a version that only they define, a version range
+such as `[1.0,2.0)`, `LATEST`/`RELEASE`, and dependencies inside `<profiles>`
+are counted as unresolved and not queried. `test` scope is development-only.
+Plugin dependencies are build tooling and are not counted. A dependency on a
+module of the same reactor is not a public package and is not counted: its
+groupId, artifactId and version must match a POM that `<modules>` entries
+inside the scan root reach from the declaring POM, a local parent, or a
+`pom.xml` in an enclosing directory. Using `${project.version}` or the
+project's own groupId does not make a dependency internal. A `pom.xml` with a
+DTD (`<!DOCTYPE`/`<!ENTITY`) fails closed.
+
+### Gradle
+
+Gradle build scripts are code, so Skylos reads the single-file
+`gradle.lockfile` written by
+[dependency locking](https://docs.gradle.org/current/userguide/dependency_locking.html)
+(`dependencyLocking { lockAllConfigurations() }` and
+`gradle dependencies --write-locks`). Each `group:artifact:version=configurations`
+line is an exact Maven module. A module locked only in test configurations
+(`test*`, `androidTest*`, `*UnitTest*`, `*AndroidTest*`) is development-only;
+every other configuration, including tool configurations such as `checkstyle`,
+counts as runtime. The lockfile does not record repositories, so modules are
+queried by their Maven coordinates. Legacy per-configuration lockfiles under
+`gradle/dependency-locks/` are not read.
+
+### Cargo
+
+`Cargo.lock` versions 1 to 4 are read. Only packages from the crates.io index
+(`registry+https://github.com/rust-lang/crates.io-index` or
+`sparse+https://index.crates.io/`) are queried. Packages without a `source`
+are workspace members or path dependencies (local, not checked); `git+` sources
+and other registries are not checked. Cargo.lock does not record dev or build
+scope. A member crate's `Cargo.toml` ranges count as covered by the workspace
+root's `Cargo.lock` when the root's `[workspace] members` (minus `exclude`)
+names it.
+
+RustSec also publishes informational notices (`unmaintained`, `notice`,
+`unsound`). They are reported with `metadata.advisory_informational`.
+`unmaintained` and `notice` advisories are not vulnerabilities (cargo-audit
+warns on them), so they get `low_risk_context.reason = "informational-advisory"`
+and are left out of the default listing like development-only dependencies;
+JSON, `--all-advice` and gates still count them. `unsound` advisories stay
+listed.
+
+### Composer
+
+`composer.lock` `packages` are runtime packages and `packages-dev` are
+development-only. A package is queried only when Composer recorded
+packagist.org as its repository (`notification-url`). Path repositories are
+local; VCS, private-repository and branch versions (`dev-main`, `1.x-dev`) are
+not checked, because OSV would match a branch name against every advisory
+range. A leading `v` is dropped (`v4.4.0` is `4.4.0`), and a short exact pin in
+`composer.json` (`"1.2"`) is the same identity as the locked `1.2.0`. Platform
+requirements (`php`, `ext-*`, `lib-*`) are not packages.
+
+### Bundler
+
+`Gemfile.lock` specs under a `GEM` source whose remotes are all rubygems.org are
+queried. `PATH` sources are local; `GIT`, plugin sources and other `GEM`
+remotes, including mirrors, are not checked. Bundler writes platform builds as
+`nokogiri (1.13.3-x86_64-linux)`; the platform is not part of the version, so
+every platform build of a version is one identity with each location kept.
+The lockfile does not record Gemfile groups, so development scope is unknown.
+The `Gemfile` itself is Ruby code and is not evaluated.
+
+### pub
+
+`pubspec.lock` `hosted` packages from `https://pub.dev` (or the former
+`https://pub.dartlang.org`) are queried. `path` packages are local, `sdk`
+packages ship with Dart or Flutter, and `git` packages and other hosted servers,
+including mirrors such as `pub.flutter-io.cn`, are not checked. `direct dev`
+packages are development-only. A workspace member's `pubspec.yaml`
+(`resolution: workspace`) counts as covered by the nearest `pubspec.lock` above
+it. In `pubspec.yaml`, a `dependency_overrides` entry replaces the package's
+`dependencies`/`dev_dependencies` declaration, as pub resolves it: an exact
+hosted override is queried at that version, a range override is unresolved,
+and a `path`, `git` or `sdk` override is not queried.
+
+### NuGet lockfile
+
+`packages.lock.json` versions 1 and 2 (`RestorePackagesWithLockFile`) record
+the resolved version of every package for each target framework, including
+transitive and central-transitive ones. `Project` entries are the build's own
+projects and are not checked. The lockfile does not record the feed, so
+packages are queried by their NuGet identity, as `dotnet list package
+--vulnerable` does. `.csproj` minimum versions next to a lockfile no longer
+leave NuGet coverage incomplete, because the lockfile holds the resolved
+versions.
+
 ### Files Skylos does not read
 
 Every dependency file Skylos finds but does not read is named in
@@ -215,18 +324,13 @@ to 25 examples) and counted in `unsupported_lockfile_count` and
 `unsupported_manifest_count`. The terminal says which ones, for example:
 
 ```
-SCA coverage limited: 41 dependencies queried. Dependency files not read: composer.lock, composer.json (Composer: not supported yet)
+SCA coverage limited: 41 dependencies queried. Dependency files not read: ios/Podfile.lock (CocoaPods: not supported yet)
 ```
 
 | File | Ecosystem | Reason |
 | --- | --- | --- |
-| `composer.json`, `composer.lock` | Composer | not supported yet |
-| `Cargo.toml`, `Cargo.lock` | crates.io | not supported yet |
-| `Gemfile`, `Gemfile.lock` | RubyGems | not supported yet |
-| `pom.xml` | Maven | not supported yet |
-| `build.gradle`, `build.gradle.kts`, `gradle.lockfile` | Gradle | not supported yet |
-| `pubspec.yaml`, `pubspec.lock` | Pub | not supported yet |
-| `packages.lock.json` | NuGet | not supported yet (`.csproj` references are read) |
+| `Gemfile` | RubyGems | Ruby code, not evaluated; `Gemfile.lock` is read |
+| `build.gradle`, `build.gradle.kts` | Gradle | build scripts are not evaluated; enable dependency locking to write `gradle.lockfile` |
 | `Package.resolved`, `Podfile.lock`, `mix.lock` | SwiftPM, CocoaPods, Hex | not supported yet |
 | `bun.lockb` | npm | binary lockfile; run `bun install --save-text-lockfile` to write `bun.lock` |
 | `Pipfile` | PyPI | not read; `Pipfile.lock` is |
@@ -244,10 +348,18 @@ files. A repository with only unread files keeps the status
 Some files are listed under `skipped_inputs` instead, because another file
 already holds their versions: `go.sum` next to a `go.mod` that declares Go
 1.17 or later (that go.mod lists every module in the build), `Pipfile` next to
-`Pipfile.lock`, and `bun.lockb` next to `bun.lock`. Before Go 1.17, go.mod
+`Pipfile.lock`, `Gemfile` next to `Gemfile.lock`, `build.gradle(.kts)` next to
+`gradle.lockfile`, and `bun.lockb` next to `bun.lock`. Before Go 1.17, go.mod
 omits indirect modules, so its `go.sum` is an unread file. Copies under a
-`vendor/` folder are third-party code, not the project's declarations, and
-are not listed.
+`vendor/` folder (Composer, Bundler and `cargo vendor` install third-party
+copies there) are not the project's declarations: they are neither read nor
+listed.
+
+A dependency file Skylos reads but cannot parse (invalid syntax, an unknown
+format version, a DTD in `pom.xml`, or a file over 10 MB) makes the scan
+`incomplete`. It is counted in `parse_error_count` and named in
+`sca_coverage.parse_errors` (file and reason, up to 25), and nothing from it
+is queried.
 
 ## Export an SBOM offline
 
@@ -381,6 +493,15 @@ limitation. `unresolved_dependency_count` counts manifest ranges (for example
 directories that a parsed lockfile records as a project, where the lockfile
 pins the installed versions (its freshness is not verified). For lockfiles,
 `inventory_scope` is `all_recorded_lockfile_environments`.
+
+Inventory limits: OSV is queried once per unique dependency (package, version
+and ecosystem), and a scan may hold at most 5,000 of them; the same package
+repeated across many lockfiles of a monorepo counts once. Separately, the
+dependency files may list at most 50,000 entries in total (ten times the unique
+limit, to bound parsing work). Above either limit nothing is queried, the scan
+is incomplete and `limit_reasons` names `dependency_limit_exceeded` or
+`dependency_entry_limit_exceeded`. The other limits are 10,000 directories,
+1,000 dependency files, 10 MB per file and 50 MB in total.
 
 The nested `query.advisory_details` receipt records distinct IDs, requests,
 successful/failed/skipped lookups, accepted bytes, and limits. Failure to fetch

@@ -111,7 +111,8 @@ partial static analysis labeled. Dependency coverage names unresolved versions
 and the supported inputs needed to check them. Neither view claims runtime
 exploitability or a complete installed environment; JSON keeps the full evidence.
 
-For `uv.lock`, valid Git, URL, path and private-index dependencies are shown as
+For `uv.lock`, `Cargo.lock`, `composer.lock`, `Gemfile.lock` and
+`pubspec.lock`, valid Git, URL, path and private-registry dependencies are shown as
 **not checked**. Skylos still queries supported public packages; the coverage
 gap alone does not cause exit `2`. It cannot establish a clean dependency
 assessment. See [uv source coverage](./docs/dependency-scanning.md#uv-source-coverage).
@@ -888,7 +889,7 @@ how many in one line of output. Set `include_generated = true` under
 | PHP | Yes | Yes | No | Unsupported | PHP parser coverage, type and docblock references, Laravel and Drupal conventions (including `.module`/`.install`/`.inc`/`.theme` files), plus taint-style security sinks and sources (Drupal request and Form API input into SQL strings, `Markup::create()` and inline Twig templates) |
 | Rust | Experimental⁴ | Partial | Partial | Unsupported | Rust parser coverage; command/path security checks, direct unreachable statements and duplicate branch bodies |
 | Dart | Yes³ | Partial³ | No | Unsupported | Dart parser coverage; security covers command injection, path traversal and SSRF |
-| C# | Partial | Partial | Partial | Unsupported | C# symbols, direct-block unreachable code, selected security sinks, and direct NuGet inventory |
+| C# | Partial | Partial | Partial | Unsupported | C# symbols, direct-block unreachable code, selected security sinks, and NuGet inventory (`.csproj` pins and `packages.lock.json`) |
 | C++ | Partial | No | No | Unsupported | conservative unused file-local functions in `.cpp`, `.cc`, `.cxx`; C++ headers are parsed for references |
 | Kotlin | Partial² | No² | No | Unsupported | regex-based symbol extraction; reports only private declarations and imports |
 | Shell | No | Partial | No | Unsupported | shell-script security checks for command injection, SSRF, and path traversal |
@@ -952,7 +953,9 @@ files. Only unconditional exact `Version` pins (`[version]`) without local
 versions, can be checked against
 advisories. Ordinary NuGet version values are minimum bounds, so without a
 resolved lockfile their installed versions and vulnerability status remain
-unknown. Transitive packages are not inventoried.
+unknown. With `packages.lock.json` (`RestorePackagesWithLockFile`), every
+resolved package, including transitive ones, is checked for each target
+framework.
 
 Java security analysis follows directly implemented request-data helpers in
 same-package files or source files identified by exact imports or fully qualified
@@ -1020,6 +1023,27 @@ official GitHub Action builds it automatically.
 
 See [Rules Reference](https://docs.skylos.dev/rules-reference) for rule families
 and scanner scope.
+
+## Dependency Files
+
+Dependency CVE scanning (`--sca`, included in `-a`) reads these files as data
+and queries OSV for the exact versions they record:
+
+| Ecosystem | Lockfiles (all recorded packages) | Manifests (exact pins only; ranges are reported as unresolved) | Named but not read |
+|:---|:---|:---|:---|
+| PyPI | `uv.lock`, `poetry.lock`, `Pipfile.lock` | `requirements.txt`, `pyproject.toml`, `setup.cfg`, `setup.py` | `Pipfile` without its lock |
+| npm | `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock` | `package.json` | `bun.lockb` |
+| Go | | `go.mod` | `go.sum` before Go 1.17 |
+| Maven / Gradle | `gradle.lockfile` | `pom.xml` (properties, local parent POMs and `<dependencyManagement>`) | `build.gradle(.kts)` without `gradle.lockfile` |
+| crates.io | `Cargo.lock` | `Cargo.toml` (`=x.y.z`) | |
+| Packagist | `composer.lock` | `composer.json` | |
+| RubyGems | `Gemfile.lock` | | `Gemfile` without its lock |
+| Pub | `pubspec.lock` | `pubspec.yaml` | |
+| NuGet | `packages.lock.json` | `*.csproj` (`[x.y.z]`) | |
+
+Git, path, SDK, private-registry and branch (`dev-*`) entries are listed as
+not checked and are never queried as public packages. See
+[Dependency scanning](./docs/dependency-scanning.md).
 
 ## Config And Deployment Support
 

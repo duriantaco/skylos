@@ -231,7 +231,7 @@ Timeout-Pflicht beizubringen.
 | PHP | Ja | Ja | Nein | PHP-Parser-Abdeckung plus taint-artige Security-Sinks und -Sources |
 | Rust | Experimentell⁴ | Teilweise | Teilweise | Rust-Parser; Command Injection, Path Traversal, direkt unerreichbare Anweisungen und doppelte Zweige |
 | Dart | Ja³ | Teilweise³ | Nein | Dart-Parser-Abdeckung; Security prüft Command Injection, Path Traversal und SSRF |
-| C# | Teilweise | Teilweise | Teilweise | C#-Symbole, unerreichbare Anweisungen in direkten Blöcken, ausgewählte Security-Senken und direkte NuGet-Inventarisierung |
+| C# | Teilweise | Teilweise | Teilweise | C#-Symbole, unerreichbare Anweisungen in direkten Blöcken, ausgewählte Security-Senken und NuGet-Inventarisierung (`.csproj` und `packages.lock.json`) |
 | C++ | Teilweise | Nein | Nein | nur scheinbar ungenutzte dateilokale Funktionen in `.cpp`, `.cc`, `.cxx`; C++-Header werden für Referenzen gelesen |
 | Kotlin | Teilweise² | Nein² | Nein | regex-basierte Symbolerkennung; meldet nur private Deklarationen und Imports |
 | Shell | Nein | Teilweise | Nein | Shell-Script-Security-Prüfungen für Command Injection, SSRF und Path Traversal |
@@ -287,11 +287,34 @@ Nur unbedingte, exakt festgelegte `Version`-Werte (`[version]`) ohne lokale
 `Update`-/`Remove`-Änderungen werden gegen Advisories geprüft;
 `VersionOverride` und zentral verwaltete Versionen nicht.
 Gewöhnliche NuGet-Versionen sind Untergrenzen. Ohne aufgelöste Lockdatei
-bleiben installierte Version und Schwachstellenstatus unbekannt; transitive
-Pakete werden nicht inventarisiert.
+bleiben installierte Version und Schwachstellenstatus unbekannt. Mit
+`packages.lock.json` (`RestorePackagesWithLockFile`) wird jedes aufgelöste
+Paket je Ziel-Framework geprüft, auch transitive.
 
 Regelfamilien und Scanner-Scope stehen in der
 [Rules Reference](https://docs.skylos.dev/rules-reference).
+
+## Abhängigkeitsdateien
+
+Die Prüfung auf bekannte Schwachstellen in Abhängigkeiten (`--sca`, in `-a`
+enthalten) liest diese Dateien als Daten und fragt OSV nach den darin
+festgehaltenen exakten Versionen:
+
+| Ökosystem | Lockdateien (alle erfassten Pakete) | Manifeste (nur exakte Versionen; Bereiche gelten als nicht aufgelöst) | Genannt, aber nicht gelesen |
+|:---|:---|:---|:---|
+| PyPI | `uv.lock`, `poetry.lock`, `Pipfile.lock` | `requirements.txt`, `pyproject.toml`, `setup.cfg`, `setup.py` | `Pipfile` ohne Lockdatei |
+| npm | `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock` | `package.json` | `bun.lockb` |
+| Go | | `go.mod` | `go.sum` vor Go 1.17 |
+| Maven / Gradle | `gradle.lockfile` | `pom.xml` (Properties, lokale Parent-POMs und `<dependencyManagement>`) | `build.gradle(.kts)` ohne `gradle.lockfile` |
+| crates.io | `Cargo.lock` | `Cargo.toml` (`=x.y.z`) | |
+| Packagist | `composer.lock` | `composer.json` | |
+| RubyGems | `Gemfile.lock` | | `Gemfile` ohne Lockdatei |
+| Pub | `pubspec.lock` | `pubspec.yaml` | |
+| NuGet | `packages.lock.json` | `*.csproj` (`[x.y.z]`) | |
+
+Git-, Pfad-, SDK-, Private-Registry- und Branch-Einträge (`dev-*`) werden als
+nicht geprüft aufgeführt und nie als öffentliche Pakete abgefragt. Details in
+[Dependency scanning](../dependency-scanning.md).
 
 ## Benchmark-Snapshot
 

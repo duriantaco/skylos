@@ -37,7 +37,14 @@ Individual check flags:
 - `--danger` (alias `--security`): security and dangerous flows.
 - `--secrets`: leaked secret patterns.
 - `--quality`: maintainability and AI-code mistakes.
-- `--sca`: dependency CVEs through OSV.dev.
+- `--sca`: dependency CVEs through OSV.dev. Reads PyPI, npm, Go, Maven
+  (`pom.xml`, `gradle.lockfile`), crates.io (`Cargo.lock`/`Cargo.toml`),
+  Packagist (`composer.lock`/`composer.json`), RubyGems (`Gemfile.lock`), Pub
+  (`pubspec.lock`/`pubspec.yaml`) and NuGet (`packages.lock.json`, `*.csproj`)
+  files; `Gemfile` and `build.gradle(.kts)` are not evaluated. Unread files are
+  in `sca_coverage.unsupported_inputs`, unparsable ones in
+  `sca_coverage.parse_errors`, Git/path/private entries in
+  `sca_coverage.lockfile_not_checked`.
 
 ## Output Formats
 
