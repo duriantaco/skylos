@@ -902,6 +902,13 @@ def _yaml_loader_rebinding(
     parameter, a loop target), None when only imports bind it."""
     if not isinstance(module, ast.Module):
         return None
+    namespace = _yaml_loader_namespace(module)
+    if (
+        not namespace.refused
+        and name not in namespace.imports
+        and name not in namespace.other
+    ):
+        return None
     assigned = set()
     verdict = None
     for child in ast.walk(module):
