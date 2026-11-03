@@ -123,19 +123,20 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D200 | varies | Dangerous function call family | Python | wrapper for D201-D210, D233, D235, D250 |
 | D201 | HIGH-CRITICAL | Dynamic code execution: `eval` | Python, TS/JS, Java, audit | CWE-95 / A03 |
 | D202 | HIGH-CRITICAL | Dynamic code execution: `exec`, `new Function`, string timers | Python, TS/JS | CWE-95 / A03 |
-| D203 | CRITICAL | OS command execution: `os.system` / process sinks | Python, Java | CWE-78 / A03 |
-| D204 | CRITICAL | Unsafe deserialization: `pickle.load` and language equivalents | Python, Java, PHP, audit | A08 |
-| D205 | CRITICAL | Unsafe deserialization: `pickle.loads` | Python | A08 |
-| D206 | HIGH | `yaml.load` or `yaml.load_all` without SafeLoader | Python | A08 |
+| D203 | CRITICAL | OS command execution: `os.system`, `os.popen` / process sinks | Python, Java | CWE-78 / A03 |
+| D204 | CRITICAL | Unsafe deserialization: `pickle.load`, `pickle.Unpickler(...).load()` (also through a subclass that does not define `find_class`), `cloudpickle.load`, `pandas.read_pickle` and language equivalents | Python, Java, PHP, audit | CWE-502 / A08 |
+| D205 | CRITICAL | Unsafe deserialization: `pickle.loads`, `cloudpickle.loads` | Python | CWE-502 / A08 |
+| D206 | HIGH | Unsafe YAML load: `yaml.load`/`load_all` without a data-only loader (`SafeLoader`, `CSafeLoader`, `BaseLoader`, `CBaseLoader`), `yaml.unsafe_load(_all)`, `yaml.full_load(_all)`, ruamel `YAML(typ="unsafe")` | Python | CWE-502 / A08 |
 | D207 | MEDIUM | Weak hash: MD5 | Python, TS/JS, Go, Java | CWE-328 |
 | D208 | MEDIUM | Weak hash: SHA1 | Python, TS/JS, Go, Java | CWE-328 |
-| D209 | HIGH | `subprocess` with `shell=True` | Python | CWE-78 / A03 |
+| D209 | HIGH | Shell execution: `subprocess` with `shell=True`, `subprocess.getoutput`/`getstatusoutput`, `asyncio.create_subprocess_shell` | Python | CWE-78 / A03 |
 | D210 | HIGH | TLS verification disabled (`requests` `verify=False`, `ssl._create_unverified_context()`, TS/JS `rejectUnauthorized: false` and `NODE_TLS_REJECT_UNAUTHORIZED=0`, Go `InsecureSkipVerify: true`). Like D346, not reported in test code: Python test modules (`test_*`, `*_test.py`, `conftest.py`, under `tests/` or `test/`), TS/JS test files (`.test.`/`.spec.`, `test`/`tests`/`__tests__` directories), Go `_test.go` files and test-support files (import `testing` and take a `testing.TB`/`*testing.T`) | Python, TS/JS, Go | A02 |
 | D211 | CRITICAL | SQL injection | Python, TS/JS, Go, Java, PHP, audit | CWE-89 / A03 |
 | D212 | CRITICAL | Command injection. In TS/JS, `X.exec(...)` is a command sink only when the file loads a command-execution module: `child_process`, `node:child_process`, `shelljs`, or remote/container exec (`ssh2`, `node-ssh`, `dockerode`; there `conn`/`connection` are not treated as database handles unless a database driver is also loaded). Without one it is `RegExp.prototype.exec` or another library method; a proven RegExp receiver is never a command sink | Python, TS/JS, Go, Java, Rust, Dart, Shell, audit | CWE-78 / A03 |
 | D215 | HIGH | Path traversal and archive extraction traversal | Python, TS/JS, Go, Java, PHP, Rust, Dart, Shell | CWE-22 / A01 |
 | D216 | CRITICAL | Server-side request forgery | Python, TS/JS, Go, Java, Dart, Shell, audit | CWE-918 / A10 |
-| D217 | CRITICAL | Raw SQL / ORM SQL injection | Python | CWE-89 / A03 |
+| D213 | HIGH | Hugging Face `trust_remote_code=True`: loading the model or dataset imports and runs Python files from its repository. MEDIUM when `revision=` pins a commit SHA or the path is a local directory; a non-literal value is the caller's choice and is not reported | Python | CWE-94, CWE-829 / A08 |
+| D217 | CRITICAL | Raw SQL / ORM SQL injection: Django `.objects.raw()`, `QuerySet.extra()` (`select` values, `where`/`tables`/`order_by` entries) and `RawSQL()`, peewee `Model.raw()`. SQLAlchemy `text()` and pandas `read_sql` are reported once, as D211 | Python | CWE-89 / A03 |
 | D218 | MEDIUM | Dynamic urllib URL scheme audit (`SKY-D218`) | Python | Conditional audit |
 | D220 | CRITICAL | SQL injection in added code / diff validation | MCP code-change validator | CWE-89 / A03 |
 | D223 | MEDIUM | Undeclared third-party dependency | Python | supply-chain |
@@ -145,7 +146,7 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D230 | HIGH | Open redirect | Python, TS/JS, Go, Java, audit | CWE-601 / A01 |
 | D231 | HIGH | CORS misconfiguration: wildcard origin with credentials; wildcard origin (`CORSMiddleware`, flask-cors) in a module whose app has state-changing routes without an auth guard (reported on the origin setting; HIGH when one of those routes is a SKY-D283 privileged route, MEDIUM otherwise; open means the SKY-D283 test without the action word); a literal `Access-Control-Allow-Origin: *` key in a response dict (any module); a header (dict, subscript or `set`/`add`/`setdefault`, including an f-string) echoing the request's `Origin` without a membership, equality or `fullmatch` allowlist check that guards the header, an early reject or a reset to a fixed origin, or a same-module helper returning such a check. A substring test against a string, a prefix check, an ignored result, the wrong branch, a `fullmatch` pattern with a `.*`/`.+` run, or an allowlist containing `*` or `null` does not count. A wildcard middleware in a module that only serves reads, or whose routes something may authenticate, is not reported | Python | CWE-942 / A05 |
 | D232 | CRITICAL | JWT verification disabled or unsafe algorithm | Python | A02 |
-| D233 | HIGH-CRITICAL | Unsafe deserialization: marshal, shelve, jsonpickle, dill | Python | A08 |
+| D233 | HIGH-CRITICAL | Unsafe deserialization: `marshal.load(s)`, `shelve.open`, `jsonpickle.decode`, `dill.load(s)`, `dill.Unpickler` | Python | CWE-502 / A08 |
 | D234 | HIGH | Mass assignment | Python | A01 |
 | D235 | HIGH | Remote command execution via `exec_command` | Python | CWE-78 |
 | D238 | HIGH | NoSQL injection: request data as a MongoDB/Mongoose query object or `$where` | TS/JS | CWE-943 / A03 |
@@ -197,10 +198,23 @@ or an exploitable file read. Explicit literal URLs and proven HTTP/HTTPS prefixe
 or dominating scheme guards do not produce this audit. D216 independently checks
 whether untrusted input can choose the request host.
 
-For Python D203, `os.system` with a fixed command string (no dynamic formatting
-or Python/shell variables) is LOW: there is no input to inject. It stays
-CRITICAL when the fixed command itself deletes broadly, exfiltrates data,
-pipes a remote script into a shell, or reads host credentials.
+For Python D203, `os.system` or `os.popen` with a fixed command string (no
+dynamic formatting or Python/shell variables) is LOW: there is no input to
+inject. It stays CRITICAL when the fixed command itself deletes broadly,
+exfiltrates data, pipes a remote script into a shell, or reads host
+credentials. D209 uses the same rule for its shell-string sinks.
+
+Python D212 reports untrusted data reaching a shell command string
+(`os.system`, `os.popen`, `subprocess.getoutput`/`getstatusoutput`,
+`asyncio.create_subprocess_shell`, `subprocess.*` with `shell=True`), the
+program of `os.exec*`, `os.spawn*`, `os.posix_spawn*` and `pty.spawn`, and
+the script after `-c` when the program is a shell (`["bash", "-c", script]`,
+`os.execl("/bin/sh", "sh", "-c", script)`). Import aliases are resolved
+(`import subprocess as sp`, `from os import system`); a local function with
+the same name is not a sink. A `shell=` value that is not a literal `False`,
+`None` or `0` may enable the shell, so a tainted command is reported there
+too. An untrusted argument to a fixed program (`["git", "fetch", ref]`) is not
+command injection and is not reported. `shlex.quote`/`shlex.join` clear taint.
 
 Python D205 suppresses only proven local `pickle.dumps` / `pickle.loads`
 round-trips over built-in data. Unknown objects can define reduction hooks;
@@ -208,10 +222,49 @@ attributes and cross-function state therefore remain review candidates. The
 warning describes pickle's execution capability without asserting that an
 unknown input is definitely attacker-controlled.
 
+Python D206 trusts a loader only when it is a data-only PyYAML loader. A name
+such as `SafeLoader` counts only if the module never rebinds it to something
+else (`SafeLoader = yaml.UnsafeLoader` is still reported); an assignment of
+`yaml.SafeLoader` or `getattr(yaml, "CSafeLoader", yaml.SafeLoader)` is safe.
+
+Python D204 treats a module class that subclasses `pickle.Unpickler` without
+defining `find_class` like `pickle.Unpickler`; a subclass that overrides
+`find_class` follows the documented way to restrict loadable globals and is
+not reported.
+
 Python D230 preserves tainted redirect targets across conditional assignments.
 An unrelated `urlparse` check or a leading slash alone does not prove safety.
 An enforced literal destination allowlist or an unconditional internal route
-assignment remains safe.
+assignment remains safe. Django's `url_has_allowed_host_and_scheme(url, ...)`
+(or `is_safe_url`), imported from `django.utils.http`, clears the checked name
+on the branch where it returned true; a redirect on the failing branch, after
+the result is ignored, of a different value, or through a local function with
+the same name is still reported. `redirect` and
+`HttpResponseRedirect`/`HttpResponsePermanentRedirect` with a positional target
+keep the rule above: any tainted target, including a plain function parameter.
+
+The other sinks need request data proven to reach the target: Starlette/FastAPI
+`RedirectResponse`, aiohttp/Pyramid `HTTPFound`, `HTTPSeeOther`,
+`HTTPMovedPermanently`, `HTTPTemporaryRedirect`, `HTTPPermanentRedirect`, the
+legacy sinks given only a keyword target (`to`/`redirect_to`/`location`/`url`),
+and a `Location` header set on `.headers[...]`, a response built in the same
+function, a `headers={"Location": ...}` argument of a `*Response` call, or
+`.headers.set/add(...)` (a response class setting its own `self.headers`
+defines a sink and is not reported). Request data is a read from the request,
+a route parameter or a Tornado argument. It flows through locals, f-strings,
+`%`, string methods, `str()`, `urljoin` and other `urllib.parse` helpers, and
+functions defined in the same file. A call into another module (a project
+helper such as `get_next_url(request)`) or any other library ends the flow.
+Request data appended after a value (`url += "&q=" + q`) does not choose the
+target, as with CodeQL's string-concatenation sanitizer; after a literal that
+does not fix the origin (`"https://" + host`) it does. The root path's query
+or fragment (`f"/?next={target}"`, `"/#" + target`) and the absolute URL of the
+request being served (Flask/Quart `request.url`/`base_url`/`url_root`/
+`host_url`, the same attributes of a parameter annotated as a
+Starlette/FastAPI `Request`, Starlette `URL(scope=...)`, also after
+`.replace(...)` with values that carry no request data) keep the origin. A
+bare path such as `request.url.path` is still request data (`//evil.example`
+is a path).
 
 Proven Tornado `RequestHandler` argument reads also count as redirect sources,
 including values assigned with `:=`. Local overrides and unrelated methods with
@@ -303,6 +356,41 @@ Python D211, D215, D217, D324 and D325 findings reached by such a source carry
 `metadata.security_evidence` (`source`, `sink`, `path`), which SARIF output
 renders as `codeFlows`.
 
+Python D211 also checks the query argument of asyncpg `fetch`/`fetchrow`/
+`fetchval`, `databases` `fetch_all`/`fetch_one`/`fetch_val` and peewee
+`execute_sql` on a database-like or pool receiver. These need data from a
+parameter or another untrusted source in the query text: SQL built only from
+the module's own values (identifiers it quotes, counts, rows of a constant
+table) is not reported there. Because HTTP and cache clients share these
+names, a string-built query must also read as SQL, and a plain tainted query
+counts only in a module that imports asyncpg, `databases` or peewee. A
+SQLAlchemy `text()` or pandas `read_sql` call is reported once, as D211 (no
+second D217 finding).
+
+On every D211 sink, a quoted identifier may fill the query text where no
+quoted literal is open: psycopg2 `quote_ident`, or a function in the same
+module whose whole body returns its argument wrapped in `"` with every `"`
+doubled. A psycopg `sql.SQL("...")` literal composed with `sql.Identifier`,
+`sql.Literal` or `sql.Placeholder` is also safe. Calling the quoting function
+without using its result, quoting a value placed inside `'...'`, or a lookalike
+helper that does not double `"` is still reported. Numeric values do not carry
+SQL: `int()`, `float()`, `len()`, `round()`, `abs()`, `bool()`,
+`random.randint/randrange/getrandbits` and `math.floor/ceil/trunc/isqrt`.
+
+Python D215 treats `werkzeug.utils.secure_filename(...)` (imported from
+werkzeug, not a local function of that name) as a sanitizer for its return
+value; calling it and then using the raw filename is still reported.
+
+Every Python security finding carries its rule's CWE ids in `cwe`
+(`[{"id": "CWE-89", "name": ...}]`), which SARIF output turns into rule
+relationships, `external/cwe/...` tags and CWE taxa.
+
+Python D216 reads the URL from the `url=` keyword, the first argument of a
+verb method (`get(url)`), or the second argument of `request(method, url)`
+(requests, httpx, aiohttp, urllib3 `PoolManager`), also on a client created in
+the same expression (`urllib3.PoolManager().request(...)`). An untrusted HTTP
+method with a fixed URL is not SSRF, and `http.client` connections, whose host
+is fixed by the constructor, are not checked through `request(method, path)`.
 Python D216 needs a real untrusted source (route, CLI or MCP-tool argument,
 request data, `input()`, stdin) that can choose the request host. Not SSRF:
 calls through in-process test clients (Django `Client`/`RequestFactory`, DRF

@@ -2142,3 +2142,35 @@ def test_orm_session_methods_are_not_ssrf(tmp_path, code):
 def test_http_sessions_stay_ssrf_sinks(tmp_path, code):
     out = _scan_one(tmp_path, "http_route.py", code)
     assert len(_ssrf_findings(out)) == 1
+
+
+_REQUEST_URL_ROUTES = (
+    "import http.client, httpx, requests, urllib3\n"
+    "from flask import Flask, request\n"
+    "app = Flask(__name__)\n"
+    "@app.route('/a')\n"
+    "def a():\n"
+    "    return requests.request('GET', request.args['u'], timeout=5)\n"
+    "@app.route('/b')\n"
+    "def b():\n"
+    "    return requests.get(url=request.args['u'], timeout=5)\n"
+    "@app.route('/c')\n"
+    "def c():\n"
+    "    return urllib3.PoolManager().request('GET', request.args['u'])\n"
+    "@app.route('/d')\n"
+    "def d():\n"
+    "    with httpx.Client() as client:\n"
+    "        return client.request('GET', url=request.args['u'])\n"
+    "@app.route('/e')\n"
+    "def e():\n"
+    "    return requests.request(request.args['m'], 'https://api.example.com/', timeout=5)\n"
+    "@app.route('/f')\n"
+    "def f():\n"
+    "    conn = http.client.HTTPSConnection('api.example.com')\n"
+    "    conn.request('GET', request.args['path'])\n"
+)
+
+
+def test_request_method_url_is_the_second_argument_or_url_keyword(tmp_path):
+    out = _scan_one(tmp_path, "request_url.py", _REQUEST_URL_ROUTES)
+    assert sorted(f["line"] for f in _ssrf_findings(out)) == [6, 9, 12, 16]

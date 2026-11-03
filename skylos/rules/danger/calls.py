@@ -44,8 +44,54 @@ DANGEROUS_CALLS = {
         "CRITICAL",
         "pickle.loads can execute code; only deserialize bytes from trusted sources",
     ),
+    "pickle.Unpickler.load": (
+        "SKY-D204",
+        "CRITICAL",
+        "Untrusted deserialization via pickle.Unpickler without a restricted find_class",
+    ),
+    "cloudpickle.load": (
+        "SKY-D204",
+        "CRITICAL",
+        "Untrusted deserialization via cloudpickle.load (pickle format)",
+    ),
+    "cloudpickle.loads": (
+        "SKY-D205",
+        "CRITICAL",
+        "cloudpickle.loads can execute code; only deserialize bytes from trusted sources",
+    ),
+    "pandas.read_pickle": (
+        "SKY-D204",
+        "CRITICAL",
+        "pandas.read_pickle unpickles the file; only read files from trusted sources",
+    ),
     "yaml.load": ("SKY-D206", "HIGH", "yaml.load without SafeLoader"),
     "yaml.load_all": ("SKY-D206", "HIGH", "yaml.load_all without SafeLoader"),
+    "yaml.unsafe_load": (
+        "SKY-D206",
+        "HIGH",
+        "yaml.unsafe_load can construct arbitrary Python objects",
+    ),
+    "yaml.unsafe_load_all": (
+        "SKY-D206",
+        "HIGH",
+        "yaml.unsafe_load_all can construct arbitrary Python objects",
+    ),
+    "yaml.full_load": (
+        "SKY-D206",
+        "HIGH",
+        "yaml.full_load uses FullLoader, which is not safe for untrusted input",
+    ),
+    "yaml.full_load_all": (
+        "SKY-D206",
+        "HIGH",
+        "yaml.full_load_all uses FullLoader, which is not safe for untrusted input",
+    ),
+    "ruamel.yaml.YAML": (
+        "SKY-D206",
+        "HIGH",
+        "ruamel.yaml YAML(typ='unsafe') can construct arbitrary Python objects",
+        {"ruamel_unsafe_type": True},
+    ),
     "hashlib.md5": (
         "SKY-D207",
         "MEDIUM",
@@ -100,11 +146,41 @@ DANGEROUS_CALLS = {
         "Weak random source; use secrets or os.urandom for security-sensitive values",
         {"weak_random": True},
     ),
+    "os.popen": (
+        "SKY-D203",
+        "CRITICAL",
+        "Use of os.popen()",
+        {"constant_command_severity": "LOW", "command_positional_args": 3},
+    ),
     "subprocess.*": (
         "SKY-D209",
         "HIGH",
         "subprocess call with shell=True",
         {"kw_equals": {"shell": True}, "constant_command_severity": "LOW"},
+    ),
+    "subprocess.getoutput": (
+        "SKY-D209",
+        "HIGH",
+        "subprocess.getoutput runs its command through the shell",
+        {"constant_command_severity": "LOW"},
+    ),
+    "subprocess.getstatusoutput": (
+        "SKY-D209",
+        "HIGH",
+        "subprocess.getstatusoutput runs its command through the shell",
+        {"constant_command_severity": "LOW"},
+    ),
+    "asyncio.create_subprocess_shell": (
+        "SKY-D209",
+        "HIGH",
+        "asyncio.create_subprocess_shell runs its command through the shell",
+        {"constant_command_severity": "LOW"},
+    ),
+    "asyncio.subprocess.create_subprocess_shell": (
+        "SKY-D209",
+        "HIGH",
+        "asyncio.create_subprocess_shell runs its command through the shell",
+        {"constant_command_severity": "LOW"},
     ),
     # TLS verification off is a deployment hazard: like D346 (debug mode),
     # it is not reported in test modules (``production_only``), where it is
@@ -153,6 +229,11 @@ DANGEROUS_CALLS = {
         "CRITICAL",
         "Untrusted deserialization via marshal.loads",
     ),
+    "marshal.load": (
+        "SKY-D233",
+        "CRITICAL",
+        "Untrusted deserialization via marshal.load",
+    ),
     "shelve.open": (
         "SKY-D233",
         "HIGH",
@@ -173,12 +254,28 @@ DANGEROUS_CALLS = {
         "CRITICAL",
         "Untrusted deserialization via dill.load",
     ),
+    "dill.Unpickler.load": (
+        "SKY-D233",
+        "CRITICAL",
+        "Untrusted deserialization via dill.Unpickler without a restricted find_class",
+    ),
     ".exec_command": (
         "SKY-D235",
         "HIGH",
         "Remote command execution via exec_command (e.g., paramiko SSH)",
     ),
 }
+
+
+def track_import_aliases(aliases: dict, node: ast.Import) -> None:
+    """``import a.b`` binds ``a`` to the package ``a``; only ``import a.b as
+    c`` binds a name to the submodule."""
+    for alias in node.names:
+        if alias.asname:
+            aliases[alias.asname] = alias.name
+        else:
+            top = alias.name.split(".", 1)[0]
+            aliases[top] = top
 
 
 def _resolve_expr_name(node: ast.AST, aliases=None, assigned_calls=None):
@@ -283,7 +380,7 @@ def _call_severity(node: ast.Call, severity: str, opts) -> str:
     Formatted, concatenated or variable commands, and fixed commands that
     delete broadly, exfiltrate or run remote scripts, keep the rule severity."""
     lowered = opts.get("constant_command_severity") if opts else None
-    if not lowered or len(node.args) > 1:
+    if not lowered or len(node.args) > opts.get("command_positional_args", 1):
         return severity
     command = node.args[0] if node.args else None
     if command is None:
@@ -515,32 +612,195 @@ def _kw_equals(node: ast.Call, requirements):
     return True
 
 
+_SAFE_YAML_LOADERS = frozenset(
+    {"SafeLoader", "CSafeLoader", "BaseLoader", "CBaseLoader"}
+)
+
+
 def _is_safe_yaml_loader(value: ast.AST, aliases=None) -> bool:
     name = _resolve_expr_name(value, aliases)
     if not name:
         return False
-    return name.split(".")[-1] in {"SafeLoader", "CSafeLoader"}
+    return name.split(".")[-1] in _SAFE_YAML_LOADERS
 
 
-def _is_safe_loader_argument(value: ast.AST, aliases, loader_classes) -> bool:
+def _is_native_safe_yaml_loader(value: ast.AST, aliases) -> bool:
+    """``yaml.SafeLoader``, ``yaml.CSafeLoader`` or the common fallback
+    ``getattr(yaml, "CSafeLoader", yaml.SafeLoader)``."""
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id == "getattr"
+        and len(value.args) in {2, 3}
+        and not value.keywords
+    ):
+        module, attr = value.args[0], value.args[1]
+        if _resolve_expr_name(module, aliases) != "yaml":
+            return False
+        if not (isinstance(attr, ast.Constant) and attr.value in _SAFE_YAML_LOADERS):
+            return False
+        return len(value.args) == 2 or _is_native_safe_yaml_loader(
+            value.args[2], aliases
+        )
+    if not isinstance(value, (ast.Name, ast.Attribute)):
+        return False
+    name = _resolve_expr_name(value, aliases) or ""
+    parts = name.split(".")
+    return parts[0] == "yaml" and parts[-1] in _SAFE_YAML_LOADERS
+
+
+def _yaml_loader_rebinding(module, name: str, aliases) -> bool | None:
+    """How the module binds ``name`` other than by import.
+
+    True when every such binding assigns a native safe loader, False when
+    any other statement binds it (``SafeLoader = yaml.UnsafeLoader``, a
+    parameter, a loop target), None when only imports bind it."""
+    if not isinstance(module, ast.Module):
+        return None
+    assigned = set()
+    verdict = None
+    for child in ast.walk(module):
+        if not isinstance(child, ast.Assign) or len(child.targets) != 1:
+            continue
+        target = child.targets[0]
+        if isinstance(target, ast.Name) and target.id == name:
+            assigned.add(id(target))
+            if not _is_native_safe_yaml_loader(child.value, aliases):
+                return False
+            verdict = True
+    for child in ast.walk(module):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if child.name == name:
+                return False
+        elif isinstance(child, ast.Name) and not isinstance(child.ctx, ast.Load):
+            if child.id == name and id(child) not in assigned:
+                return False
+        elif isinstance(child, ast.arg) and child.arg == name:
+            return False
+        elif isinstance(child, ast.ExceptHandler) and child.name == name:
+            return False
+        elif isinstance(child, (ast.MatchAs, ast.MatchStar)) and child.name == name:
+            return False
+    return verdict
+
+
+def _is_safe_loader_argument(
+    value: ast.AST, aliases, loader_classes, module=None
+) -> bool:
     safe_classes, local_classes = loader_classes
     if isinstance(value, ast.Name) and value.id in local_classes:
         return value.id in safe_classes
+    if isinstance(value, ast.Name):
+        rebinding = _yaml_loader_rebinding(module, value.id, aliases)
+        if rebinding is not None:
+            return rebinding
     return _is_safe_yaml_loader(value, aliases)
 
 
 def _yaml_load_without_safeloader(
-    node: ast.Call, aliases=None, loader_classes=(frozenset(), frozenset())
+    node: ast.Call, aliases=None, loader_classes=(frozenset(), frozenset()), module=None
 ):
     for kw in node.keywords or []:
         if kw.arg == "Loader":
-            if _is_safe_loader_argument(kw.value, aliases, loader_classes):
+            if _is_safe_loader_argument(kw.value, aliases, loader_classes, module):
                 return False
     if len(node.args) >= 2 and _is_safe_loader_argument(
-        node.args[1], aliases, loader_classes
+        node.args[1], aliases, loader_classes, module
     ):
         return False
     return True
+
+
+def _ruamel_unsafe_type(node: ast.Call) -> bool:
+    """``YAML(typ="unsafe")``: ruamel.yaml's legacy loader that builds
+    arbitrary Python objects. The default round-trip and ``safe`` types do
+    not."""
+    for kw in node.keywords:
+        if kw.arg != "typ":
+            continue
+        values = [kw.value]
+        if isinstance(kw.value, (ast.List, ast.Tuple)):
+            values = kw.value.elts
+        return any(
+            isinstance(value, ast.Constant) and value.value == "unsafe"
+            for value in values
+        )
+    return False
+
+
+def _unpickler_import_names(module: ast.Module) -> dict[str, str]:
+    names = {}
+    for child in ast.walk(module):
+        if isinstance(child, ast.Import):
+            for alias in child.names:
+                if alias.asname:
+                    names[alias.asname] = alias.name
+                else:
+                    top = alias.name.split(".", 1)[0]
+                    names[top] = top
+        elif isinstance(child, ast.ImportFrom) and child.module and not child.level:
+            for alias in child.names:
+                if alias.name != "*":
+                    names[alias.asname or alias.name] = f"{child.module}.{alias.name}"
+    return names
+
+
+_UNPICKLER_BASES = {
+    "pickle.Unpickler": "pickle.Unpickler",
+    "_pickle.Unpickler": "pickle.Unpickler",
+    "dill.Unpickler": "dill.Unpickler",
+}
+
+
+def unrestricted_unpickler_classes(module) -> dict[str, str]:
+    """Module classes that inherit an unpickler without overriding
+    ``find_class``, mapped to the library unpickler they behave as.
+
+    A subclass that defines ``find_class`` follows the documented way to
+    restrict which globals a pickle may load and is not reported."""
+    if not isinstance(module, ast.Module):
+        return {}
+    imports = _unpickler_import_names(module)
+    classes = [
+        statement for statement in module.body if isinstance(statement, ast.ClassDef)
+    ]
+    counts = {}
+    for klass in classes:
+        counts[klass.name] = counts.get(klass.name, 0) + 1
+    found: dict[str, str] = {}
+    changed = True
+    while changed:
+        changed = False
+        for klass in classes:
+            if klass.name in found or counts[klass.name] != 1:
+                continue
+            if any(
+                isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and member.name == "find_class"
+                for member in klass.body
+            ):
+                continue
+            for base in klass.bases:
+                dotted = _resolve_expr_name(base, imports)
+                library = _UNPICKLER_BASES.get(dotted or "")
+                if library is None and isinstance(base, ast.Name):
+                    library = found.get(base.id)
+                if library is not None:
+                    found[klass.name] = library
+                    changed = True
+                    break
+    return found
+
+
+def unpickler_load_name(name: str | None, classes: dict[str, str]) -> str | None:
+    """``Sub(f).load()`` on an unrestricted subclass reads like the library
+    unpickler's ``load``."""
+    if not name or not classes:
+        return name
+    head, _, method = name.rpartition(".")
+    if method == "load" and head in classes:
+        return f"{classes[head]}.load"
+    return name
 
 
 _WEAK_RANDOM_SECURITY_KEYWORDS = {
@@ -723,6 +983,7 @@ class DangerousCallsRule(SkylosRule):
         self._safe_pickle_loads = set()
         self._source_owned_code = frozenset()
         self._module = None
+        self._unpickler_classes = {}
         self._safe_yaml_loaders = None
         self._yaml_filename = None
         self._yaml_project_root = None
@@ -759,9 +1020,7 @@ class DangerousCallsRule(SkylosRule):
         return self.assigned_calls_by_scope.setdefault(self._scope_key(node), {})
 
     def _track_import(self, node: ast.Import) -> None:
-        for alias in node.names:
-            local = alias.asname or alias.name.split(".", 1)[0]
-            self.aliases[local] = alias.name
+        track_import_aliases(self.aliases, node)
 
     def _track_import_from(self, node: ast.ImportFrom) -> None:
         if not node.module:
@@ -794,6 +1053,7 @@ class DangerousCallsRule(SkylosRule):
                 node, context.get("filename"), context.get("project_root")
             )
             self._module = node
+            self._unpickler_classes = unrestricted_unpickler_classes(node)
             self._yaml_filename = context.get("filename")
             self._yaml_project_root = context.get("project_root")
             self._safe_yaml_loaders = None
@@ -815,6 +1075,7 @@ class DangerousCallsRule(SkylosRule):
             node, self.aliases, self._assigned_calls_for(node)
         )
         name = yaml_load_call_name(node, self._module) or name
+        name = unpickler_load_name(name, self._unpickler_classes)
         if not name:
             return None
 
@@ -837,8 +1098,12 @@ class DangerousCallsRule(SkylosRule):
 
             if rule_key in {"yaml.load", "yaml.load_all"}:
                 if not _yaml_load_without_safeloader(
-                    node, self.aliases, self._yaml_loader_classes()
+                    node, self.aliases, self._yaml_loader_classes(), self._module
                 ):
+                    continue
+
+            if opts and opts.get("ruamel_unsafe_type"):
+                if not _ruamel_unsafe_type(node):
                     continue
 
             if opts and "kw_equals" in opts:
