@@ -207,6 +207,34 @@ func main() {
     assert "SKY-D250" in _rule_ids(findings)
 
 
+def test_go_xss_findings_use_the_shared_xss_rules(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "fmt"
+    "html/template"
+    "net/http"
+)
+
+var page = template.Must(template.New("p").Parse("{{.}}"))
+
+func bio(w http.ResponseWriter, r *http.Request) {
+    page.Execute(w, template.HTML(r.FormValue("bio")))
+}
+
+func search(w http.ResponseWriter, r *http.Request) {
+    fmt.Fprintf(w, "<h1>%s</h1>", r.FormValue("q"))
+}
+""",
+    )
+    assert sorted((f["rule_id"], f["severity"]) for f in findings) == [
+        ("SKY-D226", "CRITICAL"),
+        ("SKY-D228", "HIGH"),
+    ]
+
+
 def test_exec_command_shell_concat_flags_command_injection(tmp_path):
     findings = _scan_go(
         tmp_path,

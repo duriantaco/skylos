@@ -872,3 +872,39 @@ def test_unpatched_basename_import_still_sanitizes_both_rules(tmp_path):
     code = "import os\n" + _PATCHED_BASENAME_ROUTE
     out = _scan_one(tmp_path, "app.py", code)
     assert not {"SKY-D215", "SKY-D325"} & _rule_ids(out)
+
+
+_UPLOAD_ROUTES = (
+    "import os\n"
+    "from flask import Flask, request\n"
+    "{import_line}\n"
+    "app = Flask(__name__)\n"
+    "@app.route('/a', methods=['POST'])\n"
+    "def a():\n"
+    "    f = request.files['file']\n"
+    "    name = secure_filename(f.filename)\n"
+    "    with open(os.path.join('/srv/up', name), 'wb') as out:\n"
+    "        out.write(f.read())\n"
+    "@app.route('/b', methods=['POST'])\n"
+    "def b():\n"
+    "    f = request.files['file']\n"
+    "    secure_filename(f.filename)\n"
+    "    with open(os.path.join('/srv/up', f.filename), 'wb') as out:\n"
+    "        out.write(f.read())\n"
+)
+
+
+def test_werkzeug_secure_filename_sanitizes_only_its_result(tmp_path):
+    code = _UPLOAD_ROUTES.format(
+        import_line="from werkzeug.utils import secure_filename"
+    )
+    out = _scan_one(tmp_path, "upload.py", code)
+    assert sorted(f["line"] for f in out if f["rule_id"] == "SKY-D215") == [15]
+
+
+def test_local_secure_filename_is_not_a_sanitizer(tmp_path):
+    code = _UPLOAD_ROUTES.format(
+        import_line="def secure_filename(name):\n    return name"
+    )
+    out = _scan_one(tmp_path, "upload_local.py", code)
+    assert sorted(f["line"] for f in out if f["rule_id"] == "SKY-D215") == [10, 16]

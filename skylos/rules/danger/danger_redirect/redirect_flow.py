@@ -3,11 +3,90 @@ import ast
 from collections import Counter
 import sys
 from skylos.rules.danger.taint import TaintVisitor
-from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex, _dotted
 from skylos.rules.danger import import_proof
+from skylos.rules.danger.untrusted_sources import (
+    REQUEST_NAMES,
+    UntrustedSourceIndex,
+    _attribute_source,
+    _dotted,
+)
 
 
-REDIRECT_FUNCS = {"redirect", "HttpResponseRedirect", "HttpResponsePermanentRedirect"}
+LEGACY_REDIRECT_FUNCS = frozenset(
+    {"redirect", "HttpResponseRedirect", "HttpResponsePermanentRedirect"}
+)
+
+REDIRECT_FUNCS = {
+    "redirect",
+    "HttpResponseRedirect",
+    "HttpResponsePermanentRedirect",
+    "RedirectResponse",
+    "HTTPFound",
+    "HTTPMovedPermanently",
+    "HTTPSeeOther",
+    "HTTPTemporaryRedirect",
+    "HTTPPermanentRedirect",
+}
+
+REDIRECT_TARGET_KEYWORDS = ("to", "redirect_to", "location", "url")
+
+SAFE_REDIRECT_GUARDS = frozenset(
+    {
+        "django.utils.http.url_has_allowed_host_and_scheme",
+        "django.utils.http.is_safe_url",
+    }
+)
+
+_RESPONSE_FACTORIES = ("Response", "make_response")
+
+_ABSOLUTE_REQUEST_URL_ATTRS = frozenset({"url", "base_url", "url_root", "host_url"})
+_FRAMEWORK_REQUEST_PROXIES = frozenset({"flask.request", "quart.request"})
+_REQUEST_CLASSES = frozenset(
+    {
+        "starlette.requests.Request",
+        "starlette.requests.HTTPConnection",
+        "fastapi.Request",
+        "fastapi.requests.Request",
+    }
+)
+_URL_CLASSES = frozenset({"starlette.datastructures.URL"})
+
+_STRING_PROPAGATING_METHODS = frozenset(
+    {
+        "format",
+        "replace",
+        "strip",
+        "lstrip",
+        "rstrip",
+        "lower",
+        "upper",
+        "casefold",
+        "removeprefix",
+        "removesuffix",
+        "join",
+        "encode",
+        "decode",
+        "get",
+        "getlist",
+        "getone",
+        "pop",
+    }
+)
+_PROPAGATING_FUNCTIONS = frozenset(
+    {
+        "urllib.parse.urljoin",
+        "urllib.parse.quote",
+        "urllib.parse.quote_plus",
+        "urllib.parse.unquote",
+        "urllib.parse.unquote_plus",
+        "urllib.parse.urlunparse",
+        "urllib.parse.urlunsplit",
+        "urllib.parse.urlencode",
+        "os.path.join",
+        "posixpath.join",
+    }
+)
+_MAX_REQUEST_DATA_DEPTH = 16
 
 REQUEST_ARGS_ATTRS = {"args", "params", "query", "GET"}
 
@@ -62,6 +141,31 @@ def _fixed_local_prefix(node):
         and node.value[1].isascii()
         and node.value[1].isalnum()
     )
+
+
+def _leading_literal(node):
+    """The literal text a string expression starts with, or None when it
+    starts with a value."""
+    while True:
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            node = node.left
+        elif isinstance(node, ast.JoinedStr) and node.values:
+            node = node.values[0]
+        else:
+            break
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _keeps_origin(node) -> bool:
+    """The literal start of the URL fixes its origin: a first path segment
+    (``"/entry/" + slug``), or the query or fragment of the root path
+    (``f"/?next={target}"``)."""
+    if _fixed_local_prefix(node):
+        return True
+    prefix = _leading_literal(node)
+    return bool(prefix) and prefix[:2] in {"/?", "/#"}
 
 
 def _stable_module_classes(tree):
@@ -338,6 +442,69 @@ class _RedirectFlowChecker(TaintVisitor):
         return False
 
     visit_Continue = visit_Break
+
+    def _resolves_to(self, node, names) -> bool:
+        dotted = _dotted(node)
+        if not dotted:
+            return False
+        resolved = self.untrusted_sources.resolved_import(
+            self._current_function(), dotted
+        )
+        return resolved in names
+
+    def _is_framework_request(self, node) -> bool:
+        """The current request: Flask's imported ``request`` proxy, or a
+        parameter annotated as a Starlette/FastAPI ``Request`` that the
+        function never rebinds."""
+        if not isinstance(node, ast.Name):
+            return False
+        if self._resolves_to(node, _FRAMEWORK_REQUEST_PROXIES):
+            return True
+        function = self._current_function()
+        if function is None:
+            return False
+        arguments = function.args
+        parameters = [
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+        ]
+        matches = [
+            parameter
+            for parameter in parameters
+            if parameter.arg == node.id
+            and parameter.annotation is not None
+            and self._resolves_to(parameter.annotation, _REQUEST_CLASSES)
+        ]
+        if not matches:
+            return False
+        return not any(
+            isinstance(child, ast.Name)
+            and child.id == node.id
+            and isinstance(child.ctx, (ast.Store, ast.Del))
+            for statement in function.body
+            for child in ast.walk(statement)
+        )
+
+    def _is_current_absolute_url(self, node) -> bool:
+        """An absolute URL of the request being served (``request.url``,
+        ``request.base_url``, Starlette ``URL(scope=scope)``). Its host is the
+        one the browser already sent the request to, so redirecting to it, or
+        to a copy with an untainted part replaced, stays on the site. A bare
+        path (``request.path``) is not included: ``//evil.example`` is a
+        path."""
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr in _ABSOLUTE_REQUEST_URL_ATTRS
+            and self._is_framework_request(node.value)
+        ):
+            return True
+        return (
+            isinstance(node, ast.Call)
+            and not node.args
+            and [keyword.arg for keyword in node.keywords] == ["scope"]
+            and self._resolves_to(node.func, _URL_CLASSES)
+        )
 
     def is_tainted(self, node):
         if _fixed_local_prefix(node):
@@ -675,14 +842,52 @@ class _RedirectFlowChecker(TaintVisitor):
             merged.append(scope)
         return merged
 
+    def _safe_redirect_guard_target(self, test):
+        """The local name checked by Django's
+        ``url_has_allowed_host_and_scheme(url, ...)``, when the call resolves
+        to Django's function through an import that nothing rebinds."""
+        if not isinstance(test, ast.Call):
+            return None
+        name = _dotted(test.func)
+        if not name:
+            return None
+        resolved = self.untrusted_sources.resolved_import(
+            self._current_function(), name
+        )
+        if resolved not in SAFE_REDIRECT_GUARDS:
+            return None
+        target = None
+        if test.args:
+            target = test.args[0]
+        for keyword in test.keywords:
+            if keyword.arg == "url":
+                target = keyword.value
+        if isinstance(target, ast.Name):
+            return target.id
+        return None
+
     def _narrow_literal_guard(self, test, truth):
-        """Only equality with immutable literal values proves a target bounded.
+        """Only equality with immutable literal values, or a passing Django
+        host-and-scheme check, proves a target bounded.
 
         A netloc check or leading slash alone is not browser redirect safety,
         and a check on one expression does not validate a later request read.
         """
         if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
             return self._narrow_literal_guard(test.operand, not truth)
+        if isinstance(test, ast.BoolOp):
+            if isinstance(test.op, ast.And) and truth:
+                for value in test.values:
+                    self._narrow_literal_guard(value, True)
+            elif isinstance(test.op, ast.Or) and not truth:
+                for value in test.values:
+                    self._narrow_literal_guard(value, False)
+            return
+        guarded = self._safe_redirect_guard_target(test)
+        if guarded is not None:
+            if truth:
+                self._set(guarded, False)
+            return
         if not isinstance(test, ast.Compare) or len(test.ops) != 1:
             return
         left, right, op = test.left, test.comparators[0], test.ops[0]
@@ -796,41 +1001,375 @@ class _RedirectFlowChecker(TaintVisitor):
         elif isinstance(func, ast.Attribute):
             func_name = func.attr
 
-        if func_name in REDIRECT_FUNCS and node.args:
-            url_arg = node.args[0]
-
-            if _is_request_args_get(url_arg):
-                self.findings.append(
-                    {
-                        "rule_id": "SKY-D230",
-                        "severity": "HIGH",
-                        "message": (
-                            "Possible open redirect: request parameter passed to "
-                            "redirect via .get() — default value does not prevent "
-                            "attacker-supplied input."
-                        ),
-                        "file": str(self.file_path),
-                        "line": node.lineno,
-                        "col": node.col_offset,
-                        "symbol": self._current_symbol(),
-                    }
+        if func_name in LEGACY_REDIRECT_FUNCS and node.args:
+            self._check_legacy_redirect(node, node.args[0])
+        elif func_name in REDIRECT_FUNCS:
+            url_arg = _redirect_target(node)
+            if url_arg is not None and self._proven_open_redirect(url_arg):
+                self._report_redirect(
+                    node,
+                    "Possible open redirect: request data chooses the redirect target.",
                 )
-            elif self._starts_with_internal_url(url_arg):
-                pass
-            elif self.is_tainted(url_arg):
-                self.findings.append(
-                    {
-                        "rule_id": "SKY-D230",
-                        "severity": "HIGH",
-                        "message": "Possible open redirect: user-controlled URL passed to redirect.",
-                        "file": str(self.file_path),
-                        "line": node.lineno,
-                        "col": node.col_offset,
-                        "symbol": self._current_symbol(),
-                    }
-                )
+        else:
+            self._check_location_headers(node)
 
         self.generic_visit(node)
+
+    def _check_legacy_redirect(self, node, url_arg):
+        if _is_request_args_get(url_arg):
+            self.findings.append(
+                {
+                    "rule_id": "SKY-D230",
+                    "severity": "HIGH",
+                    "message": (
+                        "Possible open redirect: request parameter passed to "
+                        "redirect via .get() — default value does not prevent "
+                        "attacker-supplied input."
+                    ),
+                    "file": str(self.file_path),
+                    "line": node.lineno,
+                    "col": node.col_offset,
+                    "symbol": self._current_symbol(),
+                }
+            )
+        elif self._starts_with_internal_url(url_arg):
+            pass
+        elif self.is_tainted(url_arg):
+            self._report_redirect(
+                node,
+                "Possible open redirect: user-controlled URL passed to redirect.",
+            )
+
+    def _proven_open_redirect(self, value) -> bool:
+        """Redirect sinks added after ``redirect``/``HttpResponseRedirect``
+        (``RedirectResponse``, the ``HTTPFound`` family, ``Location``
+        headers) need request data proven to reach the target, not just a
+        function parameter."""
+        if self._starts_with_internal_url(value) or _keeps_origin(value):
+            return False
+        if _is_request_args_get(value):
+            return True
+        return self.is_tainted(value) and self._carries_request_data(value, (), 0)
+
+    def _function_parameters(self, function) -> set[str]:
+        arguments = function.args
+        names = {
+            argument.arg
+            for argument in (
+                *arguments.posonlyargs,
+                *arguments.args,
+                *arguments.kwonlyargs,
+            )
+        }
+        for extra in (arguments.vararg, arguments.kwarg):
+            if extra is not None:
+                names.add(extra.arg)
+        return names
+
+    def _local_bindings(self, scope, name):
+        """``(kind, value)`` for each statement in ``scope`` (not nested
+        functions or classes) that binds ``name``. ``suffix`` is the right
+        side of ``name += value``."""
+        bindings = []
+        pending = list(getattr(scope, "body", []))
+        while pending:
+            node = pending.pop()
+            if isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+            ):
+                continue
+            if isinstance(node, ast.Assign):
+                if any(_binds(target, name) for target in node.targets):
+                    bindings.append(("value", node.value))
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                if _binds(node.target, name):
+                    bindings.append(("value", node.value))
+            elif isinstance(node, ast.AugAssign) and _binds(node.target, name):
+                if isinstance(node.op, ast.Add):
+                    bindings.append(("suffix", node.value))
+                else:
+                    bindings.append(("value", node.value))
+            elif isinstance(node, ast.NamedExpr) and _binds(node.target, name):
+                bindings.append(("value", node.value))
+            elif isinstance(node, (ast.For, ast.AsyncFor)) and _binds(
+                node.target, name
+            ):
+                bindings.append(("value", node.iter))
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                for item in node.items:
+                    if item.optional_vars is not None and _binds(
+                        item.optional_vars, name
+                    ):
+                        bindings.append(("value", item.context_expr))
+            pending.extend(ast.iter_child_nodes(node))
+        return bindings
+
+    def _name_carries_request_data(self, name, seen, depth) -> bool:
+        if name in seen:
+            return False
+        seen = (*seen, name)
+        function = self._current_function()
+        scope = function
+        if function is None or (
+            name not in self._function_parameters(function)
+            and not self._local_bindings(function, name)
+        ):
+            scope = self.untrusted_sources.module
+        if scope is None:
+            return False
+        if function is not None and scope is function:
+            if name in self._function_parameters(function):
+                origins = self.untrusted_sources.for_function(function).origins
+                if name in origins:
+                    return True
+        for kind, value in self._local_bindings(scope, name):
+            if kind == "suffix":
+                continue
+            if self._carries_request_data(value, seen, depth + 1):
+                return True
+        return False
+
+    def _defines_in_module(self, name) -> bool:
+        module = self.untrusted_sources.module
+        if module is None:
+            return False
+        return any(
+            isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and statement.name == name
+            for statement in module.body
+        )
+
+    def _call_carries_request_data(self, node, seen, depth) -> bool:
+        """Data flows through string methods, ``str()``, ``urljoin`` and other
+        modelled URL helpers, and through functions defined in this file.
+        A call into another module (``get_next_url(request)`` imported from
+        a project helper) or any other library ends the flow: its result is
+        not proven to carry the request data it was given."""
+        arguments = [*node.args, *(keyword.value for keyword in node.keywords)]
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr in _STRING_PROPAGATING_METHODS:
+            return any(
+                self._carries_request_data(value, seen, depth + 1)
+                for value in (func.value, *arguments)
+            )
+        name = _dotted(func)
+        resolved = None
+        if name:
+            resolved = self.untrusted_sources.resolved_import(
+                self._current_function(), name
+            )
+        if name == "str" or resolved in _PROPAGATING_FUNCTIONS:
+            return any(
+                self._carries_request_data(value, seen, depth + 1)
+                for value in arguments
+            )
+        if isinstance(func, ast.Name) and self._defines_in_module(func.id):
+            return any(
+                self._carries_request_data(value, seen, depth + 1)
+                for value in arguments
+            )
+        return False
+
+    def _concatenation_carries_request_data(self, node, seen, depth) -> bool:
+        """``prefix + value``: request data on the right only chooses the
+        target when the prefix is a literal that does not fix the origin
+        (``"https://" + host``). Appended to a value (``url += "&q=" + q``)
+        it extends a target chosen elsewhere, as CodeQL's string-concatenation
+        sanitizer treats it."""
+        if self._carries_request_data(node.left, seen, depth + 1):
+            return True
+        if not self._carries_request_data(node.right, seen, depth + 1):
+            return False
+        return _leading_literal(node.left) is not None
+
+    def _carries_request_data(self, node, seen, depth) -> bool:
+        """Request data (a read from the request, a route parameter, a
+        Tornado argument) reaches ``node`` through modelled operations."""
+        if depth > _MAX_REQUEST_DATA_DEPTH:
+            return True
+        if node is None or isinstance(node, ast.Constant):
+            return False
+        if self._starts_with_internal_url(node) or _keeps_origin(node):
+            return False
+        if self._is_current_absolute_url(node):
+            return False
+        if _is_request_args_get(node) or self._tornado_argument_read(node):
+            return True
+        if isinstance(node, ast.Name):
+            return self._name_carries_request_data(node.id, seen, depth)
+        if isinstance(node, ast.Attribute):
+            function = self._current_function()
+            bindings = self.untrusted_sources._import_bindings_for(function)
+            request_names = set(REQUEST_NAMES)
+            if function is not None:
+                request_names |= self.untrusted_sources.for_function(
+                    function
+                ).request_names
+            if _attribute_source(node, request_names, bindings):
+                return True
+            return self._carries_request_data(node.value, seen, depth + 1)
+        if isinstance(node, ast.Subscript):
+            return self._carries_request_data(node.value, seen, depth + 1)
+        if isinstance(node, ast.JoinedStr):
+            return any(
+                isinstance(value, ast.FormattedValue)
+                and self._carries_request_data(value.value, seen, depth + 1)
+                for value in node.values
+            )
+        if isinstance(node, ast.BinOp):
+            if isinstance(node.op, ast.Add):
+                return self._concatenation_carries_request_data(node, seen, depth)
+            if isinstance(node.op, ast.Mod):
+                return self._carries_request_data(
+                    node.left, seen, depth + 1
+                ) or self._carries_request_data(node.right, seen, depth + 1)
+            return False
+        if isinstance(node, ast.IfExp):
+            return self._carries_request_data(
+                node.body, seen, depth + 1
+            ) or self._carries_request_data(node.orelse, seen, depth + 1)
+        if isinstance(node, ast.BoolOp):
+            return any(
+                self._carries_request_data(value, seen, depth + 1)
+                for value in node.values
+            )
+        if isinstance(node, (ast.NamedExpr, ast.Await, ast.Starred)):
+            return self._carries_request_data(node.value, seen, depth + 1)
+        if isinstance(node, ast.Tuple):
+            return any(
+                self._carries_request_data(value, seen, depth + 1)
+                for value in node.elts
+            )
+        if isinstance(node, ast.Call):
+            return self._call_carries_request_data(node, seen, depth)
+        return False
+
+    def _report_redirect(self, node, message):
+        self.findings.append(
+            {
+                "rule_id": "SKY-D230",
+                "severity": "HIGH",
+                "message": message,
+                "file": str(self.file_path),
+                "line": node.lineno,
+                "col": node.col_offset,
+                "symbol": self._current_symbol(),
+            }
+        )
+
+    def _location_value_is_open(self, value) -> bool:
+        return self._proven_open_redirect(value)
+
+    def _check_location_headers(self, node):
+        """``Response(..., headers={"Location": url})`` and
+        ``resp.headers.set("Location", url)``."""
+        if _is_response_factory(node.func):
+            for keyword in node.keywords:
+                if keyword.arg == "headers" and isinstance(keyword.value, ast.Dict):
+                    for key, value in zip(keyword.value.keys, keyword.value.values):
+                        if _is_location_key(key) and self._location_value_is_open(
+                            value
+                        ):
+                            self._report_redirect(
+                                node,
+                                "Possible open redirect: user-controlled URL set as the Location header.",
+                            )
+                            return
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"set", "add", "setdefault", "__setitem__"}
+            and _is_headers_object(node.func.value)
+            and len(node.args) >= 2
+            and _is_location_key(node.args[0])
+            and self._location_value_is_open(node.args[1])
+        ):
+            self._report_redirect(
+                node,
+                "Possible open redirect: user-controlled URL set as the Location header.",
+            )
+
+    def visit_Assign(self, node):
+        for target in node.targets:
+            if (
+                isinstance(target, ast.Subscript)
+                and _is_location_key(target.slice)
+                and (
+                    _is_headers_object(target.value)
+                    or self._is_response_object(target.value)
+                )
+                and self._location_value_is_open(node.value)
+            ):
+                self._report_redirect(
+                    node,
+                    "Possible open redirect: user-controlled URL set as the Location header.",
+                )
+                break
+        super().visit_Assign(node)
+
+    def _is_response_object(self, node) -> bool:
+        """``response["Location"] = url`` on a Django response built in the
+        same function (``response = HttpResponse(status=302)``)."""
+        function = self._current_function()
+        if not isinstance(node, ast.Name) or function is None:
+            return False
+        values = [
+            child.value
+            for child in ast.walk(function)
+            if isinstance(child, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == node.id
+                for target in child.targets
+            )
+        ]
+        return bool(values) and all(
+            isinstance(value, ast.Call) and _is_response_factory(value.func)
+            for value in values
+        )
+
+
+def _binds(target, name) -> bool:
+    if isinstance(target, ast.Name):
+        return target.id == name
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return any(_binds(element, name) for element in target.elts)
+    if isinstance(target, ast.Starred):
+        return _binds(target.value, name)
+    return False
+
+
+def _redirect_target(node):
+    """The redirect URL: the first argument, or Django ``to``/``redirect_to``,
+    Flask/aiohttp/Pyramid ``location`` or Starlette/FastAPI ``url``."""
+    if node.args:
+        return node.args[0]
+    for keyword in node.keywords:
+        if keyword.arg in REDIRECT_TARGET_KEYWORDS:
+            return keyword.value
+    return None
+
+
+def _is_response_factory(func) -> bool:
+    name = _dotted(func) or ""
+    return name.rsplit(".", 1)[-1].endswith(_RESPONSE_FACTORIES)
+
+
+def _is_location_key(node) -> bool:
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.lower() == "location"
+    )
+
+
+def _is_headers_object(node) -> bool:
+    """``response.headers``. ``self.headers`` is skipped: a response class
+    that sets its own ``Location`` defines a redirect sink; its callers are
+    checked where they pass the URL."""
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "headers"
+        and not (isinstance(node.value, ast.Name) and node.value.id == "self")
+    )
 
 
 def scan(tree, file_path, findings, *, project_root=None):

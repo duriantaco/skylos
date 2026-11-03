@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
 
 @dataclass(frozen=True)
@@ -12,10 +12,12 @@ class RuleCatalogEntry:
     severity: str | None = None
     source: str = "builtin"
     aliases: tuple[str, ...] = field(default_factory=tuple)
+    cwe: tuple[str, ...] = field(default_factory=tuple, kw_only=True)
 
     def to_dict(self) -> dict:
         data = asdict(self)
         data["aliases"] = list(self.aliases)
+        data.pop("cwe")
         return data
 
 
@@ -541,6 +543,14 @@ _RULES = (
         "SKY-D212", "Command injection", "security", "CRITICAL", finding_type="review"
     ),
     RuleCatalogEntry(
+        "SKY-D213",
+        "Hugging Face trust_remote_code runs repository code",
+        "security",
+        "HIGH",
+        aliases=("trust_remote_code",),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-D215",
         "Path traversal",
         "security",
@@ -619,6 +629,14 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-D229",
+        "XPath injection",
+        "security",
+        "CRITICAL",
+        aliases=("xpath injection",),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-D230",
         "Open redirect",
         "security",
@@ -656,6 +674,38 @@ _RULES = (
         "Remote command execution sink",
         "security",
         "HIGH",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D236",
+        "XML external entity (XXE)",
+        "security",
+        "HIGH",
+        aliases=("xxe", "xml external entity"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D237",
+        "Expression, JNDI or script injection",
+        "security",
+        "CRITICAL",
+        aliases=("spel injection", "jndi injection", "ognl injection", "el injection"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D238",
+        "NoSQL injection",
+        "security",
+        "HIGH",
+        aliases=("nosql", "nosqli", "mongodb injection"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D239",
+        "LDAP injection",
+        "security",
+        "CRITICAL",
+        aliases=("ldap injection",),
         finding_type="review",
     ),
     RuleCatalogEntry(
@@ -1499,6 +1549,87 @@ _RULES = (
     ),
 )
 
+_SECURITY_RULE_CWES = {
+    "SKY-D201": ("CWE-95",),
+    "SKY-D202": ("CWE-95",),
+    "SKY-D203": ("CWE-78",),
+    "SKY-D204": ("CWE-502",),
+    "SKY-D205": ("CWE-502",),
+    "SKY-D206": ("CWE-502",),
+    "SKY-D207": ("CWE-328",),
+    "SKY-D208": ("CWE-328",),
+    "SKY-D209": ("CWE-78",),
+    "SKY-D210": ("CWE-295",),
+    "SKY-D211": ("CWE-89",),
+    "SKY-D212": ("CWE-78",),
+    "SKY-D213": ("CWE-94", "CWE-829"),
+    "SKY-D215": ("CWE-22",),
+    "SKY-D216": ("CWE-918",),
+    "SKY-D217": ("CWE-89",),
+    "SKY-D218": ("CWE-918",),
+    "SKY-D226": ("CWE-79",),
+    "SKY-D227": ("CWE-79",),
+    "SKY-D228": ("CWE-79",),
+    "SKY-D230": ("CWE-601",),
+    "SKY-D231": ("CWE-942",),
+    "SKY-D232": ("CWE-347",),
+    "SKY-D233": ("CWE-502",),
+    "SKY-D234": ("CWE-915",),
+    "SKY-D235": ("CWE-78",),
+    "SKY-D240": ("CWE-1427",),
+    "SKY-D241": ("CWE-306",),
+    "SKY-D242": ("CWE-22",),
+    "SKY-D243": ("CWE-1327",),
+    "SKY-D244": ("CWE-798",),
+    "SKY-D250": ("CWE-330",),
+    "SKY-D251": ("CWE-532",),
+    "SKY-D252": ("CWE-614",),
+    "SKY-D253": ("CWE-208",),
+    "SKY-D260": ("CWE-1427",),
+    "SKY-D261": ("CWE-1427",),
+    "SKY-D262": ("CWE-1426",),
+    "SKY-D263": ("CWE-359",),
+    "SKY-D264": ("CWE-250",),
+    "SKY-D265": ("CWE-502",),
+    "SKY-D266": ("CWE-1427",),
+    "SKY-D267": ("CWE-770",),
+    "SKY-D282": ("CWE-347",),
+    "SKY-D283": ("CWE-306", "CWE-862"),
+    "SKY-D324": ("CWE-59",),
+    "SKY-D325": ("CWE-59",),
+    "SKY-D326": ("CWE-22",),
+    "SKY-D327": ("CWE-200",),
+    "SKY-D328": ("CWE-494",),
+    "SKY-D337": ("CWE-829",),
+    "SKY-D338": ("CWE-200",),
+    "SKY-D339": ("CWE-15",),
+    "SKY-D341": ("CWE-829",),
+    "SKY-D345": ("CWE-494",),
+    "SKY-D346": ("CWE-489",),
+    "SKY-D347": ("CWE-306",),
+    "SKY-D348": ("CWE-377",),
+    "SKY-D349": ("CWE-1336",),
+    "SKY-SC001": ("CWE-862",),
+}
+
+
+def _with_cwes(entries):
+    """CWE ids of the security rules Skylos raises on Python code. Findings
+    from Python files carry them (``finding["cwe"]``) so SARIF and
+    compliance consumers get CWE taxa. Shell-guard rules without a clear
+    weakness class (broad destructive command, unapproved publish) have
+    none."""
+    result = []
+    for entry in entries:
+        cwes = _SECURITY_RULE_CWES.get(entry.id)
+        if cwes:
+            entry = replace(entry, cwe=cwes)
+        result.append(entry)
+    return tuple(result)
+
+
+_RULES = _with_cwes(_RULES)
+
 _BY_ID = {}
 for entry in _RULES:
     if entry.id in _BY_ID:
@@ -1550,6 +1681,13 @@ def get_rule_name(rule_id: str, default: str = "Security issue") -> str:
         return entry.name
     else:
         return default
+
+
+def get_rule_cwes(rule_id) -> tuple[str, ...]:
+    entry = _BY_ID.get(str(rule_id or "").strip().upper())
+    if entry is None:
+        return ()
+    return entry.cwe
 
 
 def get_rule_finding_type(rule_id) -> str:
