@@ -65,6 +65,10 @@ from skylos.visitors.languages.php.drupal import clear_drupal_cache
 
 from skylos.rules.secrets import (
     SECRET_CONFIG_SUFFIXES as _SECRET_CONFIG_SUFFIXES,
+    SECRET_FILE_NAMES as _SECRET_FILE_NAMES,
+    SECRET_ONLY_FILE_SUFFIXES as _SECRET_ONLY_FILE_SUFFIXES,
+    file_starts_like_shell_script as _file_starts_like_shell_script,
+    may_be_shell_script as _may_be_shell_script,
 )
 from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
 
@@ -80,6 +84,7 @@ from skylos.core.file_discovery import (
     should_exclude_path,
 )
 from skylos.core.git_context import GitContext
+from skylos.core.inline_directives import comment_family
 from skylos.core.git_safety import (
     read_only_git_command,
     read_only_git_environment,
@@ -145,6 +150,8 @@ _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_abstract_override_indexes",
     "_duck_typed_implementers",
     "_dotted_variable_simple_name_counts",
+    "_module_variable_names",
+    "_entrypoint_target_qnames",
     "_global_type_map",
     "_all_used_attr_names",
     "_all_used_attr_context",
@@ -699,13 +706,6 @@ _URLLIB_REQUEST_PROTOCOL_HOOK_RE = re.compile(
 )
 
 
-def _entrypoint_module_name(qname: str) -> str | None:
-    if not isinstance(qname, str) or "." not in qname:
-        return None
-    module_name, _symbol = qname.rsplit(".", 1)
-    return module_name or None
-
-
 def _base_class_leaf_names(class_def) -> set[str]:
     leaves: set[str] = set()
     for base in getattr(class_def, "base_classes", []):
@@ -721,7 +721,12 @@ def _is_secret_config_candidate(path: Path) -> bool:
     name = path.name.lower()
     if name == ".env" or name.startswith(".env."):
         return True
-    return path.suffix.lower() in _SECRET_CONFIG_SUFFIXES
+    if name in _SECRET_FILE_NAMES or name.startswith("dockerfile."):
+        return True
+    suffix = path.suffix.lower()
+    if suffix in _SECRET_CONFIG_SUFFIXES or suffix in _SECRET_ONLY_FILE_SUFFIXES:
+        return True
+    return _may_be_shell_script(path.name)
 
 
 def _resolve_secret_config_candidate(path: Path, root: Path) -> Path | None:
@@ -926,6 +931,10 @@ def _scan_secret_config_candidate(
             scanned.add(str(resolved))
             return []
         scanned.add(str(resolved))
+        if _may_be_shell_script(resolved.name) and not _file_starts_like_shell_script(
+            resolved
+        ):
+            return []
         source = read_project_text_no_symlink(
             root,
             resolved,
@@ -3233,6 +3242,22 @@ class Skylos:
                             _confidence_as_unit_interval(confidence),
                         )
 
+        entrypoint_classes = {
+            name
+            for name in getattr(self, "_entrypoint_target_qnames", ())
+            if getattr(self.defs.get(name), "type", None) == "class"
+        }
+        if entrypoint_classes:
+            for def_obj in self.defs.values():
+                if def_obj.type not in ("method", "variable"):
+                    continue
+                if def_obj.simple_name.startswith("_"):
+                    continue
+                if def_obj.name.rsplit(".", 1)[0] not in entrypoint_classes:
+                    continue
+                def_obj.references += 1
+                _mark_evidence_ref(def_obj, "package_entrypoint", 1.0)
+
         used_attr_names = getattr(self, "_all_used_attr_names", set())
         used_attr_context = getattr(self, "_all_used_attr_context", set())
         same_class_private_attr_uses = set()
@@ -4473,14 +4498,20 @@ class Skylos:
         pyproject_entrypoint_modules = set()
 
         try:
-            from skylos.analysis.pyproject_entrypoints import extract_entrypoints
+            from skylos.analysis.pyproject_entrypoints import (
+                entrypoint_qnames,
+                extract_entrypoint_references,
+            )
 
-            for qname in extract_entrypoints(project_root):
+            entrypoint_references = extract_entrypoint_references(project_root)
+            for qname in entrypoint_qnames(entrypoint_references):
                 pyproject_entrypoint_qnames.add(qname)
                 global_pattern_tracker.known_qualified_refs.add(qname)
-                module_name = _entrypoint_module_name(qname)
-                if module_name:
-                    pyproject_entrypoint_modules.add(module_name)
+            self._entrypoint_target_qnames = set()
+            for module_name, attribute in entrypoint_references:
+                pyproject_entrypoint_modules.add(module_name)
+                if attribute:
+                    self._entrypoint_target_qnames.add(f"{module_name}.{attribute}")
         except Exception:
             logger.debug("Failed to extract pyproject entrypoints", exc_info=True)
 
@@ -4842,7 +4873,9 @@ class Skylos:
                                 src_lines = src.splitlines(True)
                             rel = str(Path(file).relative_to(root))
                             ctx = {"relpath": rel, "lines": src_lines, "tree": None}
-                            if str(file).endswith(_TS_JS_SOURCE_EXTS):
+                            if str(file).endswith(_TS_JS_SOURCE_EXTS) or (
+                                comment_family(file) is not None
+                            ):
                                 ctx["honor_inline_ignores"] = False
                             findings = list(_secrets_scan_ctx(ctx))
                             if findings:
@@ -5185,6 +5218,20 @@ class Skylos:
             for definition in self.defs.values()
             if definition.type == "variable" and "." in definition.name
         )
+        module_by_file = {
+            str(path): module
+            for path, module in (
+                getattr(self, "_module_names_by_file", None) or {}
+            ).items()
+        }
+        self._module_variable_names = {
+            definition.name
+            for definition in self.defs.values()
+            if definition.type == "variable"
+            and "." in definition.name
+            and module_by_file.get(str(definition.filename))
+            == definition.name.rsplit(".", 1)[0]
+        }
 
         for defs, test_flags, framework_flags, file, mod, cfg in file_contexts:
             _annotate_dead_code_evidence_sources(defs, test_flags, framework_flags)

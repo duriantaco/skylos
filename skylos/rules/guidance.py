@@ -41,6 +41,14 @@ _SUFFIX_LANGUAGES = {
     ".rs": "rust",
     ".dart": "dart",
     ".cs": "csharp",
+    ".c": "cpp",
+    ".h": "cpp",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
+    ".hh": "cpp",
+    ".hxx": "cpp",
     ".sol": "solidity",
     ".yml": "yaml",
     ".yaml": "yaml",
@@ -61,6 +69,8 @@ _LANGUAGE_NAMES = {
     "dart": "dart",
     "csharp": "csharp",
     "c#": "csharp",
+    "cpp": "cpp",
+    "c++": "cpp",
     "yaml": "yaml",
 }
 _COMMENT_PREFIX = {
@@ -74,6 +84,7 @@ _COMMENT_PREFIX = {
     "rust": "//",
     "dart": "//",
     "csharp": "//",
+    "cpp": "//",
     "solidity": "//",
 }
 
@@ -107,6 +118,7 @@ _SQL = {
 }
 _SSRF = {
     "default": "Allowlist the destination host and scheme before the request, and block internal addresses.",
+    "java": "Build the URL from a fixed scheme and host and append only encoded path or query values; allowlist anything else.",
     "python": "Parse the URL, allowlist scheme and host, and reject private/loopback addresses before requesting.",
     "js": "Parse with new URL(), allowlist protocol and host, and reject private/loopback addresses.",
 }
@@ -143,11 +155,12 @@ _TIMING = {
 }
 _OPEN_REDIRECT = {
     "default": "Redirect only to relative paths or an allowlist of hosts; reject absolute user-supplied URLs.",
+    "java": "Redirect to a fixed path ('redirect:/orders/' + id) or check the target starts with '/' and not '//' before redirecting.",
 }
 _DESERIALIZE = {
     "default": "Never deserialize untrusted data with a code-executing format; use JSON or a schema-checked format.",
     "python": "Replace pickle/marshal on untrusted data with json or a schema-validated format.",
-    "java": "Avoid ObjectInputStream on untrusted data; use JSON with a schema, or an allowlisting filter.",
+    "java": "Avoid ObjectInputStream, XMLDecoder, XStream and default-typed Jackson on untrusted data; use JSON with fixed types or an allowlisting filter.",
     "php": "Replace unserialize on untrusted data with json_decode.",
 }
 _SECRET = {
@@ -287,7 +300,13 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-D228": {
         "default": "Build HTML with auto-escaping templates or textContent, not string concatenation."
     },
+    "SKY-D229": {
+        "default": "Use a fixed XPath expression and pass input through XPath variables, or allowlist the value."
+    },
     "SKY-D230": _OPEN_REDIRECT,
+    "SKY-D238": {
+        "default": "Cast request values to strings (String(x)) or validate them with a schema before using them in a MongoDB filter; never pass req.body or req.query as the filter."
+    },
     "SKY-D231": _CORS,
     "SKY-D283": {
         "default": "Require an authenticated, authorised caller before the route runs its action.",
@@ -297,6 +316,18 @@ RULE_FIXES: dict[str, dict[str, str]] = {
         "default": "Verify JWT signatures with a fixed algorithm list and key; reject 'none'."
     },
     "SKY-D233": _DESERIALIZE,
+    "SKY-D236": {
+        "default": "Disable DTDs on the XML parser before parsing untrusted XML.",
+        "java": 'Call setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) on the factory before creating the parser, or turn off external general and parameter entities.',
+    },
+    "SKY-D237": {
+        "default": "Never evaluate request data as an expression, script or JNDI name; use fixed expressions and pass input as variables.",
+        "java": "Use fixed SpEL/OGNL/MVEL expressions with input as variables (SimpleEvaluationContext for SpEL), and look up only fixed JNDI names.",
+    },
+    "SKY-D239": {
+        "default": "Escape LDAP filter and DN values before building the query, or use a filter builder that encodes them.",
+        "java": "Encode values with LdapEncoder.filterEncode or Rdn.escapeValue, or use Spring LdapQueryBuilder with parameters.",
+    },
     "SKY-D234": {
         "default": "Copy only an explicit allowlist of fields from the request into the model."
     },

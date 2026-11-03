@@ -4,6 +4,7 @@ import os
 import traceback
 from pathlib import Path
 
+from skylos.analysis.penalties import DEAD_CODE_RULE_BY_TYPE
 from skylos.config import load_config
 from skylos.core.evidence_contract import attach_evidence_contract
 from skylos.core.review_context import review_config_hash_for_category
@@ -119,6 +120,7 @@ def build_analysis_result(
         review_config=project_cfg,
         include_review_proofs=include_review_proofs,
     )
+    unused = _without_config_ignored_dead_code(unused, project_cfg)
     # Definitions in generated files (Django migrations) are already outside
     # the dead-code scope; empty generated files are not reported either.
     empty_files = without_report_only_files(
@@ -515,12 +517,42 @@ def _attach_empty_files(result, empty_files):
     result["analysis_summary"]["unused_files_count"] = len(empty_files)
 
 
+_PYTHON_SUFFIXES = (".py", ".pyi", ".pyw")
+
+
+def _attach_python_security_cwes(findings) -> None:
+    """Python security findings carry their rule's CWE ids for SARIF and
+    compliance consumers. A finding that already names its CWEs keeps them."""
+    from skylos.rules.quality.standards import security_cwe_entries
+
+    for finding in findings:
+        if not isinstance(finding, dict) or finding.get("cwe"):
+            continue
+        if not str(finding.get("file") or "").lower().endswith(_PYTHON_SUFFIXES):
+            continue
+        entries = security_cwe_entries(finding.get("rule_id"))
+        if entries:
+            finding["cwe"] = entries
+
+
 def _enrich_danger(result, enable_danger):
     if not enable_danger or not result.get("danger"):
         return
     from skylos.rules.compliance import enrich_findings_with_compliance
 
+    _attach_python_security_cwes(result["danger"])
     result["danger"] = enrich_findings_with_compliance(result["danger"])
+
+
+def _without_config_ignored_dead_code(unused, project_cfg):
+    ignored = set((project_cfg or {}).get("ignore") or ())
+    if not ignored:
+        return unused
+    return [
+        item
+        for item in unused
+        if DEAD_CODE_RULE_BY_TYPE.get(item.get("type")) not in ignored
+    ]
 
 
 def _bucket_unused_definitions(result, unused):

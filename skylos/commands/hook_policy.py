@@ -76,6 +76,7 @@ TAINT_RULES = frozenset(
         "SKY-D230",  # open redirect
         "SKY-D234",  # mass assignment
         "SKY-D235",  # remote command execution sink
+        "SKY-D238",  # NoSQL injection
         "SKY-D245",  # dynamic require
         "SKY-D281",  # server action SQL injection
     }

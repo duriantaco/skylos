@@ -7,6 +7,7 @@ import ast
 import os
 import stat
 from pathlib import Path
+from .builtin_bindings import builtin_references
 from .project_imports import project_import_context
 from skylos.analysis.ast_cache import (
     in_python_ast_cache_session,
@@ -61,6 +62,18 @@ _MODELED_CAPABILITY_CALLS = {
     "builtins.isinstance",
     "builtins.issubclass",
 }
+_YAML_DATA_ONLY_LOADERS = frozenset(
+    {
+        "yaml.SafeLoader",
+        "yaml.CSafeLoader",
+        "yaml.BaseLoader",
+        "yaml.CBaseLoader",
+        "yaml.loader.SafeLoader",
+        "yaml.loader.BaseLoader",
+        "yaml.cyaml.CSafeLoader",
+        "yaml.cyaml.CBaseLoader",
+    }
+)
 
 
 class _Effects:
@@ -78,6 +91,7 @@ class _Effects:
         self.alias_work = 0
         self.ref_work = 0
         self.stable_results = {}
+        self.yaml_builtin_getattrs = None
         self.value_bindings = {}
         self.iteration_bindings = {}
         self.parameter_bindings = set()
@@ -546,7 +560,42 @@ class _Effects:
             return assigned
         return key in self.origin_bindings
 
+    def safe_yaml_loader_getattr(self, node, depth=0):
+        """A builtin read of a native data-only loader does not expose YAML."""
+        if (
+            depth > 32
+            or not isinstance(node, ast.Call)
+            or not isinstance(node.func, ast.Name)
+            or node.func.id != "getattr"
+            or len(node.args) not in {2, 3}
+            or node.keywords
+            or self.refs(node.args[0]) != {"yaml"}
+            or not self.canonical_reference(node.args[0])
+            or not isinstance(node.args[1], ast.Constant)
+            or not isinstance(node.args[1].value, str)
+            or "." in node.args[1].value
+            or "yaml." + node.args[1].value not in _YAML_DATA_ONLY_LOADERS
+        ):
+            return False
+        if self.yaml_builtin_getattrs is None:
+            self.yaml_builtin_getattrs = builtin_references(self.nodes[0], {"getattr"})
+        if id(node.func) not in self.yaml_builtin_getattrs:
+            return False
+        if len(node.args) == 2:
+            return True
+        default = node.args[2]
+        if isinstance(default, ast.Call):
+            return self.safe_yaml_loader_getattr(default, depth + 1)
+        names = self.refs(default)
+        return (
+            bool(names)
+            and names <= _YAML_DATA_ONLY_LOADERS
+            and self.canonical_reference(default)
+        )
+
     def safe_reader_call(self, node):
+        if self.safe_yaml_loader_getattr(node):
+            return True
         if not self.safe_reader(node.func):
             return False
         functions = self.refs(node.func)
@@ -951,6 +1000,10 @@ def provider_effects_are_stable(qualified, tree):
 
 def provider_binding_is_stable(qualified, tree, filename, project_root=None):
     """Project effects plus absence of a source/opaque native provider."""
+    if qualified in _YAML_DATA_ONLY_LOADERS and not provider_binding_is_stable(
+        "builtins.getattr", tree, filename, project_root
+    ):
+        return False
     if not provider_is_unshadowed(qualified, filename, project_root):
         return False
     context = None

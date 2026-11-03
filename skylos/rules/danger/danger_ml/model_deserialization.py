@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 import sys
 
-from skylos.rules.danger.calls import _qualified_name_from_call
+from skylos.rules.danger.calls import _qualified_name_from_call, track_import_aliases
 from skylos.rules.danger.taint import TaintVisitor
 
 
@@ -103,9 +103,7 @@ class _ModelDeserializationChecker(TaintVisitor):
         return any(name in scope for scope in reversed(self.remote_model_stack))
 
     def visit_Import(self, node: ast.Import) -> None:
-        for alias in node.names:
-            local = alias.asname or alias.name.split(".", 1)[0]
-            self.aliases[local] = alias.name
+        track_import_aliases(self.aliases, node)
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
@@ -137,7 +135,37 @@ class _ModelDeserializationChecker(TaintVisitor):
         name = _qualified_name_from_call(node, self.aliases)
         if name:
             self._check_model_load_call(node, name)
+        if _enables_remote_code(node):
+            self._append_remote_code_finding(node, name)
         self.generic_visit(node)
+
+    def _append_remote_code_finding(self, node: ast.Call, name: str | None) -> None:
+        severity = "HIGH"
+        reason = "the repository's current code"
+        if _uses_pinned_revision(node):
+            severity = "MEDIUM"
+            reason = "code pinned to one commit"
+        elif _loads_local_path(node):
+            severity = "MEDIUM"
+            reason = "code from a local directory"
+        loader = name or "model loader"
+        self.findings.append(
+            {
+                "rule_id": "SKY-D213",
+                "severity": severity,
+                "message": (
+                    f"{loader} is called with trust_remote_code=True, which "
+                    f"imports and runs Python files shipped with the model or "
+                    f"dataset ({reason}); prefer a natively supported "
+                    "architecture, or pin revision= to a reviewed commit SHA."
+                ),
+                "file": str(self.file_path),
+                "line": int(getattr(node, "lineno", 1) or 1),
+                "col": int(getattr(node, "col_offset", 0) or 0),
+                "symbol": self._current_symbol(),
+                "metadata": {"trust_remote_code": True},
+            }
+        )
 
     def _check_model_load_call(self, node: ast.Call, name: str) -> None:
         if _is_huggingface_artifact_call(name) and not _is_local_dataset_load(
@@ -266,6 +294,59 @@ class _ModelDeserializationChecker(TaintVisitor):
             and keyword.value.value is True
             for keyword in node.keywords
         )
+
+
+def _is_true(node: ast.AST | None) -> bool:
+    return isinstance(node, ast.Constant) and node.value is True
+
+
+def _enables_remote_code(node: ast.Call) -> bool:
+    """``trust_remote_code=True`` on the call, or in a literal options dict
+    passed to it (``model_kwargs={"trust_remote_code": True}``)."""
+    for keyword in node.keywords:
+        if keyword.arg == "trust_remote_code" and _is_true(keyword.value):
+            return True
+    for value in [*node.args, *(keyword.value for keyword in node.keywords)]:
+        if not isinstance(value, ast.Dict):
+            continue
+        for key, item in zip(value.keys, value.values):
+            if (
+                isinstance(key, ast.Constant)
+                and key.value == "trust_remote_code"
+                and _is_true(item)
+            ):
+                return True
+    return False
+
+
+def _uses_pinned_revision(node: ast.Call) -> bool:
+    revision = _keyword_value(node, "revision")
+    return (
+        isinstance(revision, ast.Constant)
+        and isinstance(revision.value, str)
+        and _is_immutable_commit_revision(revision.value)
+    )
+
+
+_MODEL_REFERENCE_KEYWORDS = (
+    "pretrained_model_name_or_path",
+    "model_name_or_path",
+    "model",
+    "model_name",
+    "path",
+)
+
+
+def _loads_local_path(node: ast.Call) -> bool:
+    reference = None
+    for name in _MODEL_REFERENCE_KEYWORDS:
+        if reference is None:
+            reference = _keyword_value(node, name)
+    if reference is None and node.args:
+        reference = node.args[0]
+    if not (isinstance(reference, ast.Constant) and isinstance(reference.value, str)):
+        return False
+    return reference.value.strip().startswith(("./", "../", "/", "~"))
 
 
 def _is_remote_path(value: str) -> bool:

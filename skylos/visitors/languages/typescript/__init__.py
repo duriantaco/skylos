@@ -4,6 +4,7 @@ import re
 
 from skylos.analysis.errors import analysis_error_payload
 from skylos.analysis.finding_filter import partition_inline_ignored_findings
+from skylos.core.inline_directives import directive_ignores
 
 from .core import TypeScriptCore
 from .danger import scan_danger
@@ -25,6 +26,7 @@ class DummyVisitor:
         self.framework_decorated_lines: set[int] = set()
         self.ignore_lines: set[int] = set()
         self.noqa_codes_by_line: dict[int, set[str]] = {}
+        self.ignore_rules_by_line: dict[int, set[str]] = {}
 
 
 _MINIFIED_LINE_THRESHOLD = 3000
@@ -32,22 +34,6 @@ _UNSUPPORTED_LINE_ENDING_RE = re.compile(
     rb"\r(?!\n)|[\x0b\x0c\x1c-\x1e]|\xc2\x85|\xe2\x80[\xa8\xa9]"
 )
 _SKYLOS_BYTES_RE = re.compile(rb"skylos", re.IGNORECASE)
-_SKYLOS_DIRECTIVE_RE = re.compile(
-    r"^skylos\s*:\s*(?:"
-    r"(?P<block>ignore-(?:start|end))(?=\s|$)|"
-    r"ignore\s*\[(?P<rules>[^\]]*)\](?=\s|$)|"
-    r"(?P<blanket>ignore)(?!\s*\[)(?=\s|$)"
-    r")",
-    re.IGNORECASE | re.ASCII,
-)
-_SKYLOS_RULE_ID_RE = re.compile(
-    r"\bSKY-[A-Z][A-Z0-9-]*\b",
-    re.IGNORECASE | re.ASCII,
-)
-_SKYLOS_IGNORE_END_RE = re.compile(
-    r"\bskylos\s*:\s*ignore-end\b",
-    re.IGNORECASE | re.ASCII,
-)
 
 
 def _iter_nodes(root_node):
@@ -98,41 +84,6 @@ def _typescript_parse_error(file_path: str, root_node) -> dict | None:
     )
 
 
-def _comment_body(comment_text: str) -> str | None:
-    if comment_text.startswith("//"):
-        return comment_text[2:]
-    if not comment_text.startswith("/*") or "\n" in comment_text:
-        return None
-    body = comment_text[2:].rstrip()
-    return body[:-2] if body.endswith("*/") else None
-
-
-def _parse_typescript_directive(body: str) -> tuple[str, set[str], int] | None:
-    stripped = body.lstrip()
-    directive = _SKYLOS_DIRECTIVE_RE.match(stripped)
-    if directive is None:
-        return None
-
-    block = directive.group("block")
-    if block:
-        return block.lower().removeprefix("ignore-"), set(), directive.end()
-
-    rules = directive.group("rules")
-    if rules is not None:
-        rule_ids = [rule_id.strip() for rule_id in rules.split(",")]
-        if not rule_ids or any(
-            not _SKYLOS_RULE_ID_RE.fullmatch(rule_id) for rule_id in rule_ids
-        ):
-            return None
-        return (
-            "rules",
-            {rule_id.upper() for rule_id in rule_ids},
-            directive.end(),
-        )
-
-    return "blanket", set(), directive.end()
-
-
 def _typescript_inline_ignores(
     root_node, source: bytes
 ) -> tuple[set[int], dict[int, set[str]]]:
@@ -145,45 +96,15 @@ def _typescript_inline_ignores(
         return set(), {}
 
     line_count = source.count(b"\n") + 1
-    events_by_line: dict[int, list[tuple[str, set[str]]]] = {}
-    for node in _iter_nodes(root_node):
-        if node.type != "comment":
-            continue
-        comment_text = source[node.start_byte : node.end_byte].decode(
-            "utf-8", errors="replace"
+    comments = (
+        (
+            node.start_point[0] + 1,
+            source[node.start_byte : node.end_byte].decode("utf-8", errors="replace"),
         )
-        body = _comment_body(comment_text)
-        if body is None:
-            continue
-        stripped = body.lstrip()
-        parsed = _parse_typescript_directive(body)
-        if parsed is None:
-            continue
-        kind, rules, directive_end = parsed
-        line = node.start_point[0] + 1
-        if line > line_count:
-            continue
-        events_by_line.setdefault(line, []).append((kind, rules))
-        if kind == "start" and _SKYLOS_IGNORE_END_RE.search(stripped, directive_end):
-            events_by_line[line].append(("end", set()))
-
-    ignore_lines: set[int] = set()
-    ignore_rules_by_line: dict[int, set[str]] = {}
-    in_ignore_block = False
-    for line in range(1, line_count + 1):
-        if in_ignore_block:
-            ignore_lines.add(line)
-        for kind, rules in events_by_line.get(line, ()):
-            if kind == "rules":
-                ignore_rules_by_line.setdefault(line, set()).update(rules)
-            else:
-                ignore_lines.add(line)
-            if kind == "start":
-                in_ignore_block = True
-            elif kind == "end":
-                in_ignore_block = False
-
-    return ignore_lines, ignore_rules_by_line
+        for node in _iter_nodes(root_node)
+        if node.type == "comment"
+    )
+    return directive_ignores(comments, line_count)
 
 
 def _typescript_source_lines(source: bytes) -> list[str]:
@@ -343,6 +264,7 @@ def scan_typescript_file(
     test_visitor = DummyVisitor()
     if _include_analysis_metadata:
         test_visitor.ignore_lines = ignore_lines
+        test_visitor.ignore_rules_by_line = ignore_rules_by_line
 
     base_result = (
         core.defs,

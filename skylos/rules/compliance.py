@@ -19,6 +19,10 @@ COMPLIANCE_MAPPINGS = {
         {"framework": "OWASP_TOP10", "requirement": "A03:2021", "title": "Injection"},
         {"framework": "SOC2", "requirement": "CC6.1", "title": "Security Controls"},
     ],
+    "SKY-D238": [
+        {"framework": "PCI_DSS_4", "requirement": "6.2.4", "title": "Injection Flaws"},
+        {"framework": "OWASP_TOP10", "requirement": "A03:2021", "title": "Injection"},
+    ],
     "SKY-D216": [
         {"framework": "OWASP_TOP10", "requirement": "A10:2021", "title": "SSRF"},
         {"framework": "PCI_DSS_4", "requirement": "6.2.4", "title": "Security Flaws"},
@@ -107,6 +111,26 @@ COMPLIANCE_MAPPINGS = {
             "title": "Insecure Deserialization",
         },
         {"framework": "PCI_DSS_4", "requirement": "6.2.4", "title": "Security Flaws"},
+    ],
+    "SKY-D229": [
+        {"framework": "OWASP_TOP10", "requirement": "A03:2021", "title": "Injection"},
+        {"framework": "PCI_DSS_4", "requirement": "6.2.4", "title": "Injection Flaws"},
+    ],
+    "SKY-D236": [
+        {
+            "framework": "OWASP_TOP10",
+            "requirement": "A05:2021",
+            "title": "Security Misconfiguration",
+        },
+        {"framework": "PCI_DSS_4", "requirement": "6.2.4", "title": "Security Flaws"},
+    ],
+    "SKY-D237": [
+        {"framework": "OWASP_TOP10", "requirement": "A03:2021", "title": "Injection"},
+        {"framework": "PCI_DSS_4", "requirement": "6.2.4", "title": "Injection Flaws"},
+    ],
+    "SKY-D239": [
+        {"framework": "OWASP_TOP10", "requirement": "A03:2021", "title": "Injection"},
+        {"framework": "PCI_DSS_4", "requirement": "6.2.4", "title": "Injection Flaws"},
     ],
     "SKY-D234": [
         {

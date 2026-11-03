@@ -1,5 +1,7 @@
 from __future__ import annotations
 import ast
+import re
+import string
 import sys
 from collections import Counter
 from skylos.rules.danger.builtin_bindings import builtin_references
@@ -68,6 +70,40 @@ DB_CHAIN_METHODS = frozenset(
 )
 DB_RECEIVER_HINTS = ("cursor", "conn", "session", "engine", "db")
 SQL_EXECUTE_METHODS = frozenset({"execute", "executemany", "executescript"})
+SQL_FETCH_METHODS = frozenset(
+    {
+        "fetch",
+        "fetchrow",
+        "fetchval",
+        "fetch_all",
+        "fetch_one",
+        "fetch_val",
+        "execute_sql",
+    }
+)
+_POOL_RECEIVER_HINT = "pool"
+_FETCH_API_MODULES = ("asyncpg", "databases", "peewee")
+_SQL_KEYWORD_RE = re.compile(
+    r"\b(?:select|insert|update|delete|from|where|values|join|order\s+by|group\s+by|"
+    r"create|drop|alter|truncate|returning|limit)\b",
+    re.IGNORECASE,
+)
+
+
+def _constant_text_parts(node: ast.AST) -> list[str]:
+    parts = []
+    for child in ast.walk(node):
+        if isinstance(child, ast.Constant) and isinstance(child.value, str):
+            parts.append(child.value)
+    return parts
+
+
+def _has_sql_keyword(node: ast.AST) -> bool:
+    """The literal text of a string-built query reads as SQL, so a URL or
+    cache key built the same way on a ``session``-named object is not one."""
+    return any(_SQL_KEYWORD_RE.search(part) for part in _constant_text_parts(node))
+
+
 # SQLAlchemy / SQLModel Core constructs compile to bound-parameter SQL.
 SQL_CONSTRUCT_MODULES = ("sqlalchemy", "sqlmodel")
 SQL_CONSTRUCT_NAMES = frozenset(
@@ -183,8 +219,182 @@ def _is_interpolated_string(node):
     return False
 
 
-_NUMERIC_CALLS = frozenset({"int", "float", "len"})
+_NUMERIC_CALLS = frozenset({"int", "float", "len", "round", "abs", "bool"})
 _TRUSTED_BUILTINS = _NUMERIC_CALLS | {"str"}
+_NUMERIC_MODULE_CALLS = frozenset(
+    {
+        "random.randint",
+        "random.randrange",
+        "random.getrandbits",
+        "math.floor",
+        "math.ceil",
+        "math.trunc",
+        "math.isqrt",
+    }
+)
+_TEXT_SAFE = "safe"
+_TEXT_IDENTIFIER = "identifier"
+_TEXT_COMPOSED = "composed"
+_IDENTIFIER_QUOTERS = frozenset(
+    {"psycopg2.extensions.quote_ident", "asyncpg.utils._quote_ident"}
+)
+_PSYCOPG_SQL_MODULES = frozenset({"psycopg.sql", "psycopg2.sql"})
+_PSYCOPG_QUOTED_MEMBERS = frozenset({"Identifier", "Literal", "Placeholder"})
+
+
+def _concatenated_parts(node: ast.AST) -> list[ast.AST]:
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return [*_concatenated_parts(node.left), *_concatenated_parts(node.right)]
+    return [node]
+
+
+def _outside_sql_quotes(text: str) -> bool:
+    """No single-quoted literal, double-quoted identifier or dollar-quoted
+    string is open at the end of ``text``."""
+    return (
+        text.count("'") % 2 == 0
+        and text.count('"') % 2 == 0
+        and text.count("$$") % 2 == 0
+    )
+
+
+def _composite_text_kind(parts) -> str | None:
+    """Text built from literal pieces and values. Safe values may sit
+    anywhere; a quoted identifier only where no quoted literal is open, and
+    the whole text must close its own quotes so it can be embedded again."""
+    text = ""
+    kind = _TEXT_SAFE
+    for part, value in parts:
+        if part == "text":
+            text += value
+        elif value == _TEXT_SAFE:
+            text += "0"
+        elif value == _TEXT_IDENTIFIER and _outside_sql_quotes(text):
+            kind = _TEXT_IDENTIFIER
+            text += "x"
+        else:
+            return None
+    if kind == _TEXT_IDENTIFIER and not _outside_sql_quotes(text):
+        return None
+    return kind
+
+
+def _doubles_double_quotes(node: ast.AST, parameter: str) -> bool:
+    """``parameter.replace('"', '""')`` (also on ``str(parameter)``)."""
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "replace"
+        and not node.keywords
+        and len(node.args) == 2
+        and all(_is_string_literal(arg) for arg in node.args)
+        and [arg.value for arg in node.args] == ['"', '""']
+    ):
+        return False
+    receiver = node.func.value
+    if (
+        isinstance(receiver, ast.Call)
+        and isinstance(receiver.func, ast.Name)
+        and receiver.func.id == "str"
+        and len(receiver.args) == 1
+        and not receiver.keywords
+    ):
+        receiver = receiver.args[0]
+    return isinstance(receiver, ast.Name) and receiver.id == parameter
+
+
+def _wraps_in_double_quotes(node: ast.AST, parameter: str) -> bool:
+    """``'"{}"'.format(escaped)``, ``'"' + escaped + '"'``, ``f'"{escaped}"'``
+    or ``'"%s"' % escaped``."""
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "format"
+        and _is_string_literal(node.func.value)
+        and node.func.value.value == '"{}"'
+        and len(node.args) == 1
+        and not node.keywords
+    ):
+        return _doubles_double_quotes(node.args[0], parameter)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        parts = _concatenated_parts(node)
+        return (
+            len(parts) == 3
+            and _is_string_literal(parts[0])
+            and parts[0].value == '"'
+            and _is_string_literal(parts[2])
+            and parts[2].value == '"'
+            and _doubles_double_quotes(parts[1], parameter)
+        )
+    if isinstance(node, ast.JoinedStr):
+        values = node.values
+        return (
+            len(values) == 3
+            and _is_string_literal(values[0])
+            and values[0].value == '"'
+            and _is_string_literal(values[2])
+            and values[2].value == '"'
+            and isinstance(values[1], ast.FormattedValue)
+            and values[1].conversion == -1
+            and values[1].format_spec is None
+            and _doubles_double_quotes(values[1].value, parameter)
+        )
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+        operand = node.right
+        if isinstance(operand, ast.Tuple) and len(operand.elts) == 1:
+            operand = operand.elts[0]
+        return (
+            _is_string_literal(node.left)
+            and node.left.value == '"%s"'
+            and _doubles_double_quotes(operand, parameter)
+        )
+    return False
+
+
+def _identifier_quote_helpers(tree: ast.AST) -> frozenset[str]:
+    """Module functions bound once whose only behaviour is returning their
+    single argument as a double-quoted identifier with ``"`` doubled."""
+    if not isinstance(tree, ast.Module):
+        return frozenset()
+    counts = Counter()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            counts[node.name] += 1
+        elif isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            counts[node.id] += 1
+        elif isinstance(node, ast.arg):
+            counts[node.arg] += 1
+        elif isinstance(node, ast.alias):
+            counts[node.asname or node.name.split(".", 1)[0]] += 1
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for name in node.names:
+                counts[name] += 1
+    helpers = set()
+    for statement in tree.body:
+        if not isinstance(statement, ast.FunctionDef) or statement.decorator_list:
+            continue
+        if counts[statement.name] != 1:
+            continue
+        arguments = statement.args
+        positional = [*arguments.posonlyargs, *arguments.args]
+        if (
+            len(positional) != 1
+            or arguments.vararg
+            or arguments.kwarg
+            or arguments.kwonlyargs
+        ):
+            continue
+        body = list(statement.body)
+        if body and isinstance(body[0], ast.Expr) and _is_string_literal(body[0].value):
+            body = body[1:]
+        if (
+            len(body) == 1
+            and isinstance(body[0], ast.Return)
+            and body[0].value is not None
+            and _wraps_in_double_quotes(body[0].value, positional[0].arg)
+        ):
+            helpers.add(statement.name)
+    return frozenset(helpers)
 
 
 def _is_literal_string_sequence(node: ast.AST) -> bool:
@@ -302,6 +512,7 @@ class _SQLFlowChecker(TaintVisitor):
         self.sql_text_stack: list[dict[str, bool]] = [{}]
         self.sql_literal_stack: list[dict[str, str | None]] = [{}]
         self.builtin_names = builtin_references(tree, _TRUSTED_BUILTINS)
+        self.identifier_quote_helpers = _identifier_quote_helpers(tree)
         bindings = Counter(
             node.id
             for node in ast.walk(tree)
@@ -419,62 +630,222 @@ class _SQLFlowChecker(TaintVisitor):
 
     def _is_sql_safe_text(self, node: ast.AST) -> bool:
         """Text that cannot carry data into SQL: string literals, numbers
-        (``int()``, ``float()``, ``len()``), and strings built only from those.
-        That covers placeholder runs such as ``",".join("?" * len(ids))`` or
-        ``", ".join(["%s"] * len(rows))``: the values travel as bound
-        parameters and only their count reaches the SQL text."""
+        (``int()``, ``float()``, ``len()``, ``round()``, ``random.randint()``),
+        and strings built only from those. That covers placeholder runs such
+        as ``",".join("?" * len(ids))`` or ``", ".join(["%s"] * len(rows))``:
+        the values travel as bound parameters and only their count reaches
+        the SQL text."""
+        return self._sql_text_kind(node) == _TEXT_SAFE
+
+    def _is_safe_query(self, node: ast.AST) -> bool:
+        """A query whose text cannot carry data: safe text, text whose only
+        values are quoted identifiers outside any quoted literal, or a
+        psycopg ``sql.SQL`` composition."""
+        return self._sql_text_kind(node) is not None
+
+    def _sql_text_kind(self, node: ast.AST) -> str | None:
         if isinstance(node, ast.Constant):
-            return isinstance(node.value, (str, int, float)) or node.value is None
+            if isinstance(node.value, (str, int, float)) or node.value is None:
+                return _TEXT_SAFE
+            return None
         if isinstance(node, ast.Name):
-            return self._is_sql_safe_name(node.id)
+            if self._is_sql_safe_name(node.id):
+                return _TEXT_SAFE
+            fact = self._sql_literal_fact_of(node.id)
+            if fact in (_TEXT_IDENTIFIER, _TEXT_COMPOSED):
+                return fact
+            return None
         if isinstance(node, ast.JoinedStr):
-            return all(
-                isinstance(value, ast.Constant)
-                or (
-                    isinstance(value, ast.FormattedValue)
-                    and self._is_sql_safe_text(value.value)
-                    and (value.format_spec is None or self._is_sql_safe_text(value.format_spec))
-                )
-                for value in node.values
-            )
+            return self._joined_text_kind(node)
         if isinstance(node, ast.BinOp):
             if isinstance(node.op, ast.Add):
-                return self._is_sql_safe_text(node.left) and self._is_sql_safe_text(
-                    node.right
-                )
+                parts = []
+                for part in _concatenated_parts(node):
+                    if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                        parts.append(("text", part.value))
+                    else:
+                        parts.append(("value", self._sql_text_kind(part)))
+                return _composite_text_kind(parts)
             if isinstance(node.op, ast.Mult):
-                return self._repeats_literal(node, _is_string_literal)
+                if self._repeats_literal(node, _is_string_literal):
+                    return _TEXT_SAFE
+                return None
             if isinstance(node.op, ast.Mod):
                 right = node.right
                 parts = [right]
                 if isinstance(right, ast.Tuple):
                     parts = right.elts
-                return self._is_sql_safe_text(node.left) and all(
+                if self._is_sql_safe_text(node.left) and all(
                     self._is_sql_safe_text(part) for part in parts
-                )
-            return False
+                ):
+                    return _TEXT_SAFE
+            return None
         if not isinstance(node, ast.Call):
-            return False
-        builtin = self._builtin_called(node)
-        if builtin in _NUMERIC_CALLS:
-            return True
-        if builtin == "str":
-            return len(node.args) == 1 and not node.keywords and self._is_sql_safe_text(
-                node.args[0]
-            )
+            return None
+        if self._is_psycopg_composition(node):
+            return _TEXT_COMPOSED
+        if self._is_identifier_quote_call(node):
+            return _TEXT_IDENTIFIER
+        if self._is_numeric_call(node):
+            return _TEXT_SAFE
+        if self._builtin_called(node) == "str":
+            if len(node.args) == 1 and not node.keywords:
+                kind = self._sql_text_kind(node.args[0])
+                if kind in (_TEXT_SAFE, _TEXT_IDENTIFIER):
+                    return kind
+            return None
         if not isinstance(node.func, ast.Attribute):
-            return False
+            return None
         if node.func.attr == "format":
-            return (
-                self._is_sql_safe_text(node.func.value)
+            return self._format_text_kind(node)
+        if node.func.attr == "join" and len(node.args) == 1 and not node.keywords:
+            if self._is_sql_safe_text(node.func.value) and self._joins_sql_safe_text(
+                node.args[0]
+            ):
+                return _TEXT_SAFE
+        return None
+
+    def _joined_text_kind(self, node: ast.JoinedStr) -> str | None:
+        parts = []
+        for value in node.values:
+            if isinstance(value, ast.Constant):
+                parts.append(("text", str(value.value)))
+                continue
+            if not isinstance(value, ast.FormattedValue):
+                return None
+            if value.format_spec is not None and not self._is_sql_safe_text(
+                value.format_spec
+            ):
+                return None
+            kind = self._sql_text_kind(value.value)
+            if kind == _TEXT_IDENTIFIER and (
+                value.conversion != -1 or value.format_spec is not None
+            ):
+                return None
+            parts.append(("value", kind))
+        return _composite_text_kind(parts)
+
+    def _format_text_kind(self, node: ast.Call) -> str | None:
+        """``"...".format(...)`` on a literal template: each field is checked
+        where it lands, so a quoted identifier may fill a field outside
+        quotes. Other templates need every argument to be safe text."""
+        template = node.func.value
+        simple_arguments = not any(
+            isinstance(argument, ast.Starred) for argument in node.args
+        ) and all(keyword.arg is not None for keyword in node.keywords)
+        if not (
+            simple_arguments
+            and isinstance(template, ast.Constant)
+            and isinstance(template.value, str)
+        ):
+            if (
+                self._is_sql_safe_text(template)
                 and all(self._is_sql_safe_text(arg) for arg in node.args)
                 and all(self._is_sql_safe_text(kw.value) for kw in node.keywords)
+            ):
+                return _TEXT_SAFE
+            return None
+        try:
+            fields = list(string.Formatter().parse(template.value))
+        except ValueError:
+            return None
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+        parts = []
+        automatic = 0
+        for literal, field, spec, conversion in fields:
+            parts.append(("text", literal))
+            if field is None:
+                continue
+            value = None
+            if field == "":
+                position = automatic
+                automatic += 1
+            elif field.isdigit():
+                position = int(field)
+            elif field.isidentifier():
+                position = None
+                value = keywords.get(field)
+            else:
+                return None
+            if position is not None and position < len(node.args):
+                value = node.args[position]
+            if value is None or (spec and "{" in spec):
+                return None
+            kind = self._sql_text_kind(value)
+            if kind == _TEXT_IDENTIFIER and (spec or conversion):
+                return None
+            parts.append(("value", kind))
+        return _composite_text_kind(parts)
+
+    def _resolved_call_name(self, func: ast.AST) -> str | None:
+        name = _qualified_name_from_expr(func)
+        if not name:
+            return None
+        return self.untrusted_sources.resolved_import(self._current_function(), name)
+
+    def _is_numeric_call(self, node: ast.Call) -> bool:
+        if self._builtin_called(node) in _NUMERIC_CALLS:
+            return True
+        return self._resolved_call_name(node.func) in _NUMERIC_MODULE_CALLS
+
+    def _is_identifier_quote_call(self, node: ast.Call) -> bool:
+        """A call that returns a double-quoted SQL identifier with every
+        embedded ``"`` doubled: psycopg2's ``quote_ident`` or a function in
+        this module whose whole body does exactly that."""
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id in self.identifier_quote_helpers
+            and len(node.args) == 1
+            and not node.keywords
+            and not isinstance(node.args[0], ast.Starred)
+        ):
+            return True
+        return self._resolved_call_name(node.func) in _IDENTIFIER_QUOTERS
+
+    def _psycopg_sql_member(self, func: ast.AST) -> str | None:
+        resolved = self._resolved_call_name(func)
+        if not resolved or "." not in resolved:
+            return None
+        module, member = resolved.rsplit(".", 1)
+        if module in _PSYCOPG_SQL_MODULES:
+            return member
+        return None
+
+    def _is_psycopg_composition(self, node: ast.AST) -> bool:
+        """``sql.SQL("... {} ...").format(sql.Identifier(name), ...)``: psycopg
+        quotes identifiers and literals itself; only a literal template may
+        become ``sql.SQL`` text."""
+        if isinstance(node, ast.Name):
+            return self._sql_literal_fact_of(node.id) == _TEXT_COMPOSED
+        if not isinstance(node, ast.Call):
+            return False
+        member = self._psycopg_sql_member(node.func)
+        if member == "SQL":
+            return (
+                len(node.args) == 1
+                and not node.keywords
+                and _is_string_literal(node.args[0])
+            )
+        if member in _PSYCOPG_QUOTED_MEMBERS:
+            return True
+        if not isinstance(node.func, ast.Attribute):
+            return False
+        receiver = node.func.value
+        if not self._is_psycopg_composition(receiver):
+            return False
+        arguments = [*node.args, *(keyword.value for keyword in node.keywords)]
+        if node.func.attr == "format":
+            return all(keyword.arg is not None for keyword in node.keywords) and all(
+                self._is_psycopg_composition(value) for value in arguments
             )
         if node.func.attr == "join" and len(node.args) == 1 and not node.keywords:
-            return self._is_sql_safe_text(node.func.value) and self._joins_sql_safe_text(
-                node.args[0]
-            )
-        return False
+            items = node.args[0]
+            if isinstance(items, (ast.List, ast.Tuple)):
+                return all(self._is_psycopg_composition(item) for item in items.elts)
+            if isinstance(items, (ast.ListComp, ast.GeneratorExp)):
+                return self._is_psycopg_composition(items.elt)
+            return False
+        return node.func.attr == "as_string"
 
     def _builtin_called(self, node: ast.Call) -> str | None:
         func = node.func
@@ -545,7 +916,11 @@ class _SQLFlowChecker(TaintVisitor):
     def _sql_literal_fact(self, node: ast.AST) -> str | None:
         """``sqlite3.connect()``/``duckdb.connect()`` (imported, unshadowed) or
         ``.cursor()`` of one is a connection; ``text.replace("'", "''")`` on a
-        ``str`` is escaped text."""
+        ``str`` is escaped text. Quoted identifiers and psycopg compositions
+        keep their kind so a later query can check where they land."""
+        kind = self._sql_text_kind(node)
+        if kind in (_TEXT_IDENTIFIER, _TEXT_COMPOSED):
+            return kind
         if not isinstance(node, ast.Call):
             return None
         func = node.func
@@ -966,6 +1341,73 @@ class _SQLFlowChecker(TaintVisitor):
             finding["metadata"] = metadata
         self.findings.append(finding)
 
+    def _is_fetch_receiver(self, node: ast.Call) -> bool:
+        """A database handle for asyncpg/``databases``/peewee query methods:
+        a database-like receiver, a connection pool, or ``execute_sql`` in a
+        module that imports peewee."""
+        if self._is_likely_db_receiver(node) or self._is_chained_db_receiver(node):
+            return True
+        name = (_receiver_name(node) or "").lower()
+        if _POOL_RECEIVER_HINT in name:
+            return True
+        return node.func.attr == "execute_sql" and self._imports_module("peewee")
+
+    def _imports_module(self, module: str) -> bool:
+        tree = self.untrusted_sources.module
+        if tree is None:
+            return False
+        for child in ast.walk(tree):
+            if isinstance(child, ast.Import) and any(
+                alias.name.split(".", 1)[0] == module for alias in child.names
+            ):
+                return True
+            if (
+                isinstance(child, ast.ImportFrom)
+                and (child.module or "").split(".", 1)[0] == module
+            ):
+                return True
+        return False
+
+    def _check_fetch_query(self, node: ast.Call) -> None:
+        """Tainted SQL text passed to a query method.
+
+        Unlike ``execute``, these method names are also used by HTTP and
+        cache clients, and SQL text built only from the module's own values
+        (identifiers it quotes, counts, expressions from a constant table) is
+        what drivers such as asyncpg do internally. A query is reported only
+        when data from a parameter or another untrusted source reaches its
+        text; a string-built query must also read as SQL, and a plain value
+        counts only in a module that imports asyncpg, ``databases`` or
+        peewee."""
+        if not self._is_fetch_receiver(node):
+            return
+        query_expr = get_query_expression(node, names=("query", "sql"))
+        if (
+            query_expr is None
+            or self._is_sql_statement(query_expr)
+            or self._is_safe_query(query_expr)
+            or self._escaped_literal_query(node, query_expr)
+            or not self.is_tainted(query_expr)
+        ):
+            return
+        if _is_interpolated_string(query_expr):
+            if not _has_sql_keyword(query_expr):
+                return
+        elif not any(self._imports_module(module) for module in _FETCH_API_MODULES):
+            return
+        if isinstance(query_expr, ast.Call) and self.sqlalchemy_text.is_text_call(
+            query_expr
+        ):
+            return
+        sink = f"SQL text passed to .{node.func.attr}()"
+        self._sqli_finding(
+            node,
+            self.SEVERITY_CRITICAL,
+            "Possible SQL injection: tainted or string-built query.",
+            query_expr,
+            sink,
+        )
+
     def _check_chained_execute(self, node: ast.Call) -> None:
         """``sqlite3.connect(...).execute(q)`` and friends.
 
@@ -978,7 +1420,7 @@ class _SQLFlowChecker(TaintVisitor):
         if (
             query_expr is None
             or not self.is_tainted(query_expr)
-            or self._is_sql_safe_text(query_expr)
+            or self._is_safe_query(query_expr)
         ):
             return
         if self._is_sql_statement(query_expr):
@@ -1273,13 +1715,18 @@ class _SQLFlowChecker(TaintVisitor):
     def visit_Call(self, node):
         if (
             isinstance(node.func, ast.Attribute)
-            and node.func.attr in SQL_EXECUTE_METHODS
+            and node.func.attr in SQL_EXECUTE_METHODS | SQL_FETCH_METHODS
             and self._proved_non_database_receiver(node)
         ):
             self.generic_visit(node)
             return
 
         qual_name = _qualified_name_from_call(node)
+
+        if isinstance(node.func, ast.Attribute) and node.func.attr in SQL_FETCH_METHODS:
+            self._check_fetch_query(node)
+            self.generic_visit(node)
+            return
 
         if qual_name and qual_name in self.passthrough_functions:
             pass
@@ -1294,7 +1741,7 @@ class _SQLFlowChecker(TaintVisitor):
             if (
                 query_expr is not None
                 and not self._is_sql_statement(query_expr)
-                and not self._is_sql_safe_text(query_expr)
+                and not self._is_safe_query(query_expr)
                 and not self._escaped_literal_query(node, query_expr)
             ):
                 sink = f"SQL text passed to .{node.func.attr}()"
@@ -1328,7 +1775,7 @@ class _SQLFlowChecker(TaintVisitor):
 
             if (
                 query_expr is not None
-                and not self._is_sql_safe_text(query_expr)
+                and not self._is_safe_query(query_expr)
                 and (_is_interpolated_string(query_expr) or self.is_tainted(query_expr))
             ):
                 self._sqli_finding(
@@ -1361,7 +1808,7 @@ class _SQLFlowChecker(TaintVisitor):
             if (
                 statement_expression is not None
                 and not self._is_sql_statement(statement_expression)
-                and not self._is_sql_safe_text(statement_expression)
+                and not self._is_safe_query(statement_expression)
             ):
                 if _is_interpolated_string(statement_expression) or self.is_tainted(
                     statement_expression
@@ -1379,7 +1826,7 @@ class _SQLFlowChecker(TaintVisitor):
 
         if self.sqlalchemy_text.is_text_call(node):
             for argument in node.args:
-                if self._is_sql_safe_text(argument):
+                if self._is_safe_query(argument):
                     continue
                 if _is_interpolated_string(argument) or self.is_tainted(argument):
                     self._sqli_finding(

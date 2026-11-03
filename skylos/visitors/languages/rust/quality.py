@@ -4,11 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from skylos.visitors.languages.typescript import (
-    _SKYLOS_IGNORE_END_RE,
-    _comment_body,
-    _parse_typescript_directive,
-)
+from skylos.core.inline_directives import directive_ignores
 
 
 _COMMENTS = {"line_comment", "block_comment"}
@@ -28,10 +24,10 @@ def scan_quality(root_node, file_path: str, source: bytes) -> list[dict]:
 
 
 def quality_inline_ignores(root_node, source: bytes):
-    """Use the existing directive grammar on parser-owned Rust comments only."""
+    """Use the shared directive grammar on parser-owned Rust comments only."""
     if root_node is None or root_node.has_error:
         return set(), {}
-    events = {}
+    comments = []
     pending = [root_node]
     while pending:
         node = pending.pop()
@@ -40,31 +36,13 @@ def quality_inline_ignores(root_node, source: bytes):
         if node.type not in _COMMENTS:
             pending.extend(reversed(node.named_children))
             continue
-        body = _comment_body(
-            source[node.start_byte : node.end_byte].decode("utf-8", "replace")
+        comments.append(
+            (
+                node.start_point[0] + 1,
+                source[node.start_byte : node.end_byte].decode("utf-8", "replace"),
+            )
         )
-        parsed = _parse_typescript_directive(body) if body is not None else None
-        if parsed is None:
-            continue
-        kind, rules, end = parsed
-        line = node.start_point[0] + 1
-        events.setdefault(line, []).append((kind, rules))
-        if kind == "start" and _SKYLOS_IGNORE_END_RE.search(body.lstrip(), end):
-            events[line].append(("end", set()))
-    ignored = set()
-    by_rule = {}
-    in_block = False
-    for line in range(1, source.count(b"\n") + 2):
-        if in_block:
-            ignored.add(line)
-        for kind, rules in events.get(line, ()):
-            if kind == "rules":
-                by_rule.setdefault(line, set()).update(rules)
-            else:
-                ignored.add(line)
-            if kind in {"start", "end"}:
-                in_block = kind == "start"
-    return ignored, by_rule
+    return directive_ignores(comments, source.count(b"\n") + 1)
 
 
 class _Quality:
