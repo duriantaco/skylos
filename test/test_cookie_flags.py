@@ -7,10 +7,11 @@ import json
 import pytest
 
 from skylos.analyzer import analyze
+from skylos.core.gatekeeper import check_gate
 from test.fixture_paths import write_fixture
 
 
-def _analyze(tmp_path, monkeypatch, source, name="app.py"):
+def _analyze(tmp_path, monkeypatch, source, name="app.py", *, all_advice=True):
     monkeypatch.setenv("SKYLOS_JOBS", "1")
     write_fixture(tmp_path, name, source)
     write_fixture(tmp_path, "pyproject.toml", '[project]\nname="cookies"\n')
@@ -22,6 +23,7 @@ def _analyze(tmp_path, monkeypatch, source, name="app.py"):
             enable_sca=False,
             grep_verify=False,
             grep_cache=False,
+            all_advice=all_advice,
         )
     )
     assert not result.get("analysis_errors")
@@ -99,6 +101,53 @@ def test_literal_false_cookie_flag_is_reported_with_complete_evidence(
     assert evidence["evidence_kind"] == "cookie_security_options"
     assert evidence["options"] == options
     assert finding["evidence_contract"]["proof_state"] == "verified"
+
+
+@pytest.mark.parametrize(
+    "prefix, factory, writer",
+    [
+        (FLASK, 'make_response("ok")', "set_cookie"),
+        (DJANGO, 'HttpResponse("ok")', "set_signed_cookie"),
+    ],
+)
+@pytest.mark.parametrize(
+    "call",
+    [
+        'resp.{writer}("sid", token, {flag})',
+        'resp.{writer} ("sid", token, {flag})',
+        'resp.{writer}\t("sid", token, {flag})',
+        "resp.{writer} " + chr(92) + '\n        ("sid", token, {flag})',
+        '(resp.{writer}\n    )("sid", token, {flag})',
+        '(resp.{writer}  # cookie writer\n    )("sid", token, {flag})',
+    ],
+    ids=["normal", "space", "tab", "continuation", "parenthesized", "comment"],
+)
+@pytest.mark.parametrize(
+    "flag, reported",
+    [("secure=False", True), ("secure=True", False), ("httponly=False", False)],
+)
+def test_cookie_call_formatting_preserves_findings_and_gate(
+    tmp_path, monkeypatch, prefix, factory, writer, call, flag, reported
+):
+    source = (
+        prefix
+        + "def login(token):\n"
+        + f"    resp = {factory}\n"
+        + "    "
+        + call.format(writer=writer, flag=flag)
+        + "\n    return resp\n"
+    )
+    findings = _cookie_findings(
+        _analyze(tmp_path, monkeypatch, source, all_advice=False)
+    )
+    expected = []
+    if reported:
+        expected = [(len(prefix.splitlines()) + 3, "MEDIUM", "login")]
+    assert [(f["line"], f["severity"], f["symbol"]) for f in findings] == expected
+    assert all(f["listing"]["listed"] is True for f in findings)
+    assert check_gate({"danger": findings}, {"gate": {"max_security": 0}})[0] is (
+        not reported
+    )
 
 
 @pytest.mark.parametrize(

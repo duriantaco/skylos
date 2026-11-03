@@ -625,7 +625,7 @@ def scan_file_with_tree(
         scan_cors(tree, file_path, findings)
     if _has_any(source_lower, _ROUTE_TOKENS):
         scan_route_auth(tree, file_path, findings, project_root=project_root)
-    if "_cookie(" in source_lower:
+    if "_cookie" in source_lower:
         scan_cookie_flags(tree, file_path, findings)
     if "jwt" in source_lower and _has_any(source_lower, _JWT_TOKENS):
         scan_jwt(tree, file_path, findings)

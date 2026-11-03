@@ -14,6 +14,7 @@ from dataclasses import dataclass, replace
 import re
 import string
 
+from .import_proof import provider_binding_is_stable
 from .module_namespace import module_name_for, module_rebinding
 from .untrusted_sources import UntrustedSourceIndex
 
@@ -123,8 +124,21 @@ _RESPONSE_DATA_MEMBERS = frozenset(
         "release",
     }
 )
-_KEY_ARGUMENT_DECODERS = {
+_KEY_ARGUMENT_ENCODERS = {
+    "jwt.encode": (1, "key"),
+    "jwt.api_jwt.encode": (1, "key"),
+    "jose.jwt.encode": (1, "key"),
+    "jose.jws.sign": (1, "key"),
+    "authlib.jose.jwt.encode": (2, "key"),
+}
+_KEY_ARGUMENT_TRANSFORMS = {
+    **_KEY_ARGUMENT_ENCODERS,
     "stripe.Webhook.construct_event": (2, "secret"),
+    "jwt.decode": (1, "key"),
+    "jwt.api_jwt.decode": (1, "key"),
+    "jose.jwt.decode": (1, "key"),
+    "jose.jws.verify": (1, "key"),
+    "authlib.jose.jwt.decode": (1, "key"),
     "jwt.decode_complete": (1, "key"),
     "jwt.api_jwt.decode_complete": (1, "key"),
 }
@@ -135,11 +149,6 @@ _CREDENTIAL_FREE_RESULTS = frozenset(
         "stripe.WebhookSignature.verify_header",
         "bcrypt.checkpw",
         "werkzeug.security.check_password_hash",
-        "jwt.decode",
-        "jwt.api_jwt.decode",
-        "jose.jwt.decode",
-        "jose.jws.verify",
-        "authlib.jose.jwt.decode",
     }
 )
 
@@ -537,10 +546,14 @@ class _LoggingFlow:
             return _Value(sources=_combined(passed).sources, http=_HTTP_CLIENT)
         if api in _HTTP_REQUEST_FUNCTIONS:
             return _Value(sources=_combined(passed).sources, http=_HTTP_RESPONSE)
-        if api in _KEY_ARGUMENT_DECODERS and not any(
-            isinstance(arg, ast.Starred) for arg in node.args
-        ):
-            position, keyword = _KEY_ARGUMENT_DECODERS[api]
+        if api in _KEY_ARGUMENT_TRANSFORMS:
+            if any(isinstance(arg, ast.Starred) for arg in node.args):
+                return _combined(passed)
+            if api in _KEY_ARGUMENT_ENCODERS and not provider_binding_is_stable(
+                api, self.tree, self.filename
+            ):
+                return _combined(passed)
+            position, keyword = _KEY_ARGUMENT_TRANSFORMS[api]
             return _combined(
                 [value for index, value in enumerate(args) if index != position]
                 + [value for name, value in keyword_args if name != keyword]
