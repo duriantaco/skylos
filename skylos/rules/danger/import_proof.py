@@ -2498,11 +2498,14 @@ def _directory_stamp(directories):
     return tuple(stamp)
 
 
-def _zip_scan(path, budget):
+def _zip_scan(path, budget, project_root):
     """``(is_zip, bytes_read)`` for a regular file, from its first four
     bytes and the end-record window a ZIP comment can occupy; None on a read
     error or once ``budget`` is spent."""
     try:
+        base = Path(project_root).resolve()
+        path = Path(path).resolve()
+        path.relative_to(base)
         with open(path, "rb") as handle:
             head = handle.read(4)
             if head in _ZIP_SIGNATURES:
@@ -2515,7 +2518,7 @@ def _zip_scan(path, budget):
                 return None
             handle.seek(size - window)
             return _ZIP_END_SIGNATURE in handle.read(window), 4 + window
-    except OSError:
+    except (OSError, RuntimeError, ValueError):
         return None
 
 
@@ -2579,7 +2582,7 @@ def _walk_inventory(key):
                     extra_sources.append(path)
             if archived:
                 continue
-            scanned = _zip_scan(path, budget)
+            scanned = _zip_scan(path, budget, key)
             if scanned is None:
                 return None
             archived, used = scanned
@@ -2635,11 +2638,17 @@ def _ships_provider_module(project_root, root):
     return inventory[3] or root in inventory[2]
 
 
-def _parse_extra(path, budget):
+def _parse_extra(path, budget, project_root):
     """``(tree, bytes)`` for a source outside the snapshot, read only after
     its size fits ``budget`` and the per-file cap. The tree is None when the
     file is not Python this interpreter can compile, so it cannot run. None
     when it cannot be read or parsed within the caps."""
+    try:
+        base = Path(project_root).resolve()
+        path = Path(path).resolve()
+        path.relative_to(base)
+    except (OSError, RuntimeError, ValueError):
+        return None
     cached = _EXTRA_TREES.get(path)
     if cached is not None:
         return cached
@@ -2649,7 +2658,7 @@ def _parse_extra(path, budget):
             return None
         with open(path, "rb") as handle:
             data = handle.read(min(_MAX_EXTRA_FILE_BYTES, budget) + 1)
-    except OSError:
+    except (OSError, RuntimeError, ValueError):
         return None
     if len(data) > _MAX_EXTRA_FILE_BYTES or len(data) > budget:
         return None
@@ -2692,7 +2701,7 @@ def _sources_mention_provider(project_root, sources, root, leaf):
     budget = _MAX_EXTRA_TOTAL_BYTES
     pending = list(sources)
     for path in inventory[4]:
-        parsed = _parse_extra(path, budget)
+        parsed = _parse_extra(path, budget, project_root)
         if parsed is None:
             return True
         budget -= parsed[1]
