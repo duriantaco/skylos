@@ -62,6 +62,7 @@ RULE_DOCS_ANCHORS = {
     "SKY-D233": "sky-d233--unsafe-deserialization",
     "SKY-D234": "sky-d234--mass-assignment",
     "SKY-D235": "sky-d235--remote-command-execution-sink",
+    "SKY-D238": "sky-d238--nosql-injection",
     "SKY-D240": "sky-d240--mcp-tool-description-poisoning",
     "SKY-D241": "sky-d241--unauthenticated-mcp-transport",
     "SKY-D242": "sky-d242--permissive-mcp-resource-uri",

@@ -141,13 +141,14 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D223 | MEDIUM | Undeclared third-party dependency | Python | supply-chain |
 | D226 | CRITICAL | XSS: unsafe DOM or HTML rendering | Python, TS/JS, Java, audit | CWE-79 / A03 |
 | D227 | HIGH | XSS: unsafe template rendering | Python | CWE-79 / A03 |
-| D228 | HIGH | XSS: unescaped HTML output | Python | CWE-79 / A03 |
+| D228 | HIGH | XSS: unescaped HTML output | Python, TS/JS | CWE-79 / A03 |
 | D230 | HIGH | Open redirect | Python, TS/JS, Go, Java, audit | CWE-601 / A01 |
 | D231 | HIGH | CORS misconfiguration: wildcard origin with credentials; wildcard origin (`CORSMiddleware`, flask-cors) in a module whose app has state-changing routes without an auth guard (reported on the origin setting; HIGH when one of those routes is a SKY-D283 privileged route, MEDIUM otherwise; open means the SKY-D283 test without the action word); a literal `Access-Control-Allow-Origin: *` key in a response dict (any module); a header (dict, subscript or `set`/`add`/`setdefault`, including an f-string) echoing the request's `Origin` without a membership, equality or `fullmatch` allowlist check that guards the header, an early reject or a reset to a fixed origin, or a same-module helper returning such a check. A substring test against a string, a prefix check, an ignored result, the wrong branch, a `fullmatch` pattern with a `.*`/`.+` run, or an allowlist containing `*` or `null` does not count. A wildcard middleware in a module that only serves reads, or whose routes something may authenticate, is not reported | Python | CWE-942 / A05 |
 | D232 | CRITICAL | JWT verification disabled or unsafe algorithm | Python | A02 |
 | D233 | HIGH-CRITICAL | Unsafe deserialization: marshal, shelve, jsonpickle, dill | Python | A08 |
 | D234 | HIGH | Mass assignment | Python | A01 |
 | D235 | HIGH | Remote command execution via `exec_command` | Python | CWE-78 |
+| D238 | HIGH | NoSQL injection: request data as a MongoDB/Mongoose query object or `$where` | TS/JS | CWE-943 / A03 |
 | D240 | CRITICAL | MCP tool description poisoning | Python, Java | A03 |
 | D241 | HIGH | MCP unauthenticated transport | Python, Java | A07 |
 | D242 | HIGH | MCP permissive URI / path traversal | Python | A01 |
@@ -176,7 +177,7 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D281 | CRITICAL | Untrusted server action input reaching raw SQL text | TS/JS | CWE-89 |
 | D282 | HIGH | Webhook handler missing signature verification | Python, TS/JS | CWE-347 |
 | D283 | HIGH-CRITICAL | Unauthenticated route that controls a device or the host, deletes data, administers or runs commands (see the SKY-F102 notes) | Python (FastAPI, Flask, Quart, Starlette, Sanic) | CWE-306, CWE-862 / A01 |
-| D510 | HIGH | Prototype pollution via `__proto__` | TS/JS | CWE-1321 |
+| D510 | HIGH | Prototype pollution: request data chooses the key of a nested write or reaches an unguarded recursive merge | TS/JS | CWE-1321 |
 
 For D251, a bare `sessionId` name is not treated as credential evidence by
 itself. Explicit authentication-qualified names (such as `authSessionId`) and
@@ -366,6 +367,120 @@ branch is), or one whose literal `scheme://host/` prefix fixes the host, is not
 reported; a bound call, member, `||`/`??` or `new URL(...)` value is dynamic. A name assigned anywhere in the file, shadowed
 by a parameter, loop or `catch` variable, destructured, imported, hoisted by a
 `var` next to other bindings, or in a file using `eval`/`with` is not resolved.
+
+TS/JS request taint (D211, D212, D215, D216, D228, D230, D238, D510) follows
+request data inside one handler of one file. Handlers: Express, Fastify, Hapi
+and Next.js pages-API functions (`(req, res)`, `(request, reply)`,
+`(request, h)`, or a first parameter typed `Request`, `FastifyRequest`,
+`NextApiRequest`, `NextRequest`; a function whose only parameter is an untyped
+or `any` `req`/`request` is read only through `query`, `body`, `params`,
+`headers`, `cookies` and `get()`/`header()`/`param()`, so a helper's
+`req.path` or `request.url` is not request data), Koa and `getServerSideProps` functions (first
+parameter `ctx`/`context`), NestJS methods with `@Body()`, `@Query()`,
+`@Param()`, `@Headers()`, `@HostParam()`, `@UploadedFile()` or `@Req()`
+parameters (routing-controllers equivalents too), exported `GET`/`POST`/...
+functions in a Next.js App Router `route` file, and exported Remix
+`loader`/`action` functions. Sources: `req.body/query/params/headers/cookies/
+files/url/originalUrl/path/hostname`, `req.get()/header()/param()`, Hapi
+`payload`/`state`, Koa `ctx.request.body`, `ctx.query`, `ctx.params`,
+`ctx.headers`, `ctx.cookies.get()`, Next.js `await request.json()/formData()/
+text()`, `request.nextUrl.searchParams.get()`, `request.headers`, and the route
+`params` argument. A NestJS parameter piped through `ParseIntPipe`,
+`ParseFloatPipe`, `ParseBoolPipe`, `ParseUUIDPipe` or `ParseEnumPipe` is not a
+source; a TypeScript annotation such as `id: number` is not proof. Sinks:
+SQL text in `query`/`execute`/`raw`/`prepare`/`all`/`get`/`run` calls whose
+literal text is SQL, `$queryRawUnsafe`, knex `whereRaw`-style calls and
+TypeORM query-builder `where`/`orderBy` conditions (D211, CRITICAL);
+`child_process.exec` (D212, CRITICAL); `fs`/`fs/promises`/`fs-extra` paths
+and `res.sendFile`/`download` without `root` (D215, HIGH); the URL or
+`host`/`url` option of `fetch`, axios (also `axios.create()` instances and
+NestJS `HttpService`), got, undici, superagent, needle, request and
+`http(s).get/request` (D216, HIGH); Express `res.send(text)` (Express answers
+strings as `text/html`) and HTML literals sent with `res.send/write/end`, and
+Koa `ctx.body` text that can start with request data or `<` (D228, HIGH);
+`res.redirect(url)`, `res.redirect(302, url)`, `ctx.redirect`,
+`reply.redirect`, `h.redirect`, `NextResponse.redirect`, `Response.redirect`,
+`redirect()` from `next/navigation` or Remix, `res.location` and `Location`
+headers (D230, HIGH); MongoDB/Mongoose filters (D238, HIGH); nested writes and
+same-file recursive merges (D510, HIGH). Taint follows local bindings in
+source order (a plain reassignment in the same block replaces the old value;
+one inside a branch adds to it), destructuring, `+`, templates, string
+methods, `||`/`??`, ternaries, `path.join/resolve/normalize`, `new URL`,
+`JSON.parse` (an object), `Object.keys/values/entries/assign`, `qs.parse`,
+same-file helper functions and methods of same-file `const` objects. Calls into
+other modules stop taint, so a validator such as zod `.parse()`,
+`mongo-sanitize` or `escape-html` ends it, and so does any unmodelled library
+call. Sanitizers are proved, never named: `Number`/`parseInt`/`parseFloat`/
+`Boolean` (global, not rebound), `path.basename` with `path` imported from
+`path`, `encodeURIComponent` (XSS, path, command, redirect, SSRF), and a
+same-file helper whose result replaces `<` with `&lt;` globally (a later
+replace that writes `<` back cancels it); a local function named `escapeHtml`,
+`quote` or `basename` that returns its input is followed, not trusted. Guards
+count only when the failing branch returns, throws, breaks or continues before
+the sink (or the sink sits inside the passing branch), and only for the value
+that reaches the sink, unless it is reassigned after the guard: a
+`startsWith(root)` check on a `path.resolve`/`normalize`/`join` result,
+`path.relative(root, p).startsWith('..')`, or rejecting `..` when the value is
+joined under a prefix and not `path.resolve`d (D215); an allowlist of string
+literals (`['a.com'].includes(u.hostname)`, `new Set([...]).has()`, `===`)
+on the hostname, host or origin of the URL, or a `startsWith` with a fixed
+`scheme://host/` (D216, D230); `startsWith('/')` together with a `//` check, or
+a literal allowlist (D230); `typeof x === 'string'` or an ObjectId check
+(D238); an anchored character-class regex such as `/^[a-z_]+$/.test(x)`
+without the `m` flag (any rule). An allowlist read from the environment, a
+mutated array, or a check that only logs is not a guard. A literal
+`scheme://host/` or relative-path prefix (`/users/` + id, not `/` alone) keeps
+D216 and D230 quiet; `new URL('/path', request.url)` stays on the site.
+
+TS/JS D238 (NoSQL injection, CWE-943) needs a file that imports `mongoose`,
+`mongodb`, `@nestjs/mongoose`, `@typegoose/typegoose`, `mongojs` or `monk`.
+It reports a `find`, `findOne`, `findOneAndUpdate/Delete/Replace`,
+`updateOne/Many`, `deleteOne/Many`, `replaceOne`, `countDocuments`, `exists`,
+`where`, `distinct` (its filter) or `aggregate` `$match` filter that is the
+request object itself (`find(req.body)`, `find(filter)` with
+`filter = req.query`) or holds a request value that can be an object (`{
+password: req.body.password }`, a spread of `req.body`), and any `$where` built
+from request data. Objects come from Express `req.body`, `req.query` (the `qs`
+parser) and `req.cookies` (JSON cookies), Fastify/Hapi/Next bodies,
+`request.json()`, `JSON.parse` and `qs.parse`; route params, headers,
+`searchParams.get()`, Koa/Fastify/Next query strings, `String(x)`, templates
+and `.toString()` are text and are not reported. A NestJS `@Body()` typed with a
+DTO class counts as validated text (Skylos assumes the usual global
+`ValidationPipe`, which it cannot see from the controller file); an untyped,
+`any`, inline-object or primitive-typed parameter is not. Option objects with a
+`where`/`select`/`include` key (Sequelize, TypeORM, Prisma) are not Mongo
+filters. `app.use(mongoSanitize())` from `express-mongo-sanitize` or
+`sanitizeFilter: true` in the same file clears the file.
+
+TS/JS D510 reports `obj[a][b] = v` when request data chooses `a` (`a =
+'__proto__'` makes the write change `Object.prototype`), unless a dominating
+guard rejects `'__proto__'`, allowlists `a`, checks `hasOwnProperty`, or the
+base is `Object.create(null)`/a `Map`; and a call that passes request data to a
+same-file function that copies keys recursively (`for (k in src)` with
+`dst[k] = ...` and a recursive call) without a `'__proto__'`/`'constructor'`
+check, `hasOwnProperty` or `Object.create(null)`. Reading `__proto__` is not
+reported, and neither is a single-level `obj[key] = value`. Library merges
+(lodash `merge`/`defaultsDeep`/`set`) are not reported: current releases
+reject `__proto__`.
+
+TS/JS D226 also covers `insertAdjacentHTML`, `document.writeln`,
+`createContextualFragment`, `setHTMLUnsafe`, `innerHTML`/`outerHTML +=`,
+jQuery `.html(x)` and `.append/.prepend/.after/.before/.replaceWith/.wrap*`
+of a template or `+` string that contains markup, on a `$(...)`/`jQuery(...)`
+chain or a `$name` variable. `dangerouslySetInnerHTML={{ __html: x }}`, like
+`innerHTML`, is quiet only for inert literal markup or an import-proven
+DOMPurify/`isomorphic-dompurify`/`sanitize-html` call (directly or through a
+`const`); a sanitizer imported from a local `./dompurify` file, or a sanitized
+copy that is never rendered, does not count. DOM `element.append(text)` inserts
+text and is not reported.
+
+TS/JS D327 reports a POST, PUT or PATCH (`fetch` with a literal `method`,
+`axios.post/put/patch`, `axios({method, url, data})`, `axios.request`) whose
+body carries `process.env` data to a URL that is not local (like Python, which
+checks `data`/`json`). Environment values in headers, such as
+`Authorization: Bearer ${process.env.TOKEN}`, are how an API key reaches its
+own API and are not reported; neither is `process.env` used as the URL, or
+only `NEXT_PUBLIC_` names.
 
 Go D216 and D212 (Go engine) also need untrusted input: an incoming `*http.Request` (URL, form, headers, decoded body; not `r.Context()`), a gin, echo or fiber request context, or network input (`net.Conn`, `Accept()`, `Read`/`Decode`/`Unmarshal` from such a reader), followed through locals, concatenation, `fmt.Sprintf`, calls and same-file helper parameters. Literals, loopback URLs, config structs, flags, `os.Args` and `os.Executable()` are the program's own inputs. D216 also needs the host to be choosable: a leading literal `scheme://host/` fixes it. D212 is CRITICAL for an untrusted program path or shell command string, HIGH for a shell (`sh -c`, `cmd /c`, PowerShell `-Command`) running a non-constant command that is not proven untrusted, and not reported for a constant or own program with argv elements (`exec.Command(os.Args[0], "run")`). Go D215 (file paths in `os.Open`/`ReadFile`/`WriteFile`/`Create`/`Remove`/`MkdirAll`..., `http.ServeFile`) uses the same sources and is not reported after a containment check on the path: `strings.HasPrefix` on a cleaned path (`filepath.Clean`/`Join`/`Abs`/`EvalSymlinks`), `filepath.Rel` with a `..` check, or `filepath.IsLocal`; `filepath.Base` and `securejoin.SecureJoin` sanitise. The Go engine's reliability checks follow their Python equivalent: unclosed resource (SKY-G260) and defer in a loop (SKY-G203) are MEDIUM like SKY-L008, and `unsafe` use (SKY-G206) is LOW like gosec G103; a defer followed by an unconditional `return` (or a `break` in an outermost loop) runs once and is not reported, and a handle that is closed explicitly, returned or stored in a field is not unclosed. Go D230 (open redirect) needs untrusted input that can choose where the redirect goes: data after a literal `?` or `#` cannot, and a same-origin check (`strings.HasPrefix(v, "/")` with a `"//"` check, `url.Parse` with a `.Host`/`IsAbs()` check, or an allowlist lookup) clears it. Go D211 is CRITICAL when request or network input reaches the query text, HIGH when the query is string-built from a non-constant value with no proven source (Python D211 reports that case too), and not reported for placeholders or constants; `QueryContext`/`ExecContext` are checked on their query argument. Go D210 (`InsecureSkipVerify: true`) is not reported in Go test-support code (a file that imports `testing` and takes a `testing.TB`/`*testing.T`/`B`/`F`/`M`), like D346 in Python test modules; `_test.go` files are not scanned by the Go engine. For L012, an external test file (`package pkg_test`) sees the exports of its own directory's internal test files (`package pkg`, the `export_test.go` convention), because `go test` compiles them into the package.
 

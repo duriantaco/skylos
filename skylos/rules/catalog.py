@@ -659,6 +659,14 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-D238",
+        "NoSQL injection",
+        "security",
+        "HIGH",
+        aliases=("nosql", "nosqli", "mongodb injection"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-D240",
         "MCP tool description poisoning",
         "security",
