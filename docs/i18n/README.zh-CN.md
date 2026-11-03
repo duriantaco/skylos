@@ -151,12 +151,12 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 | Dart | 是³ | 部分³ | 否 | Dart parser 覆盖；安全检查覆盖命令注入、路径穿越和 SSRF |
 | C# | 部分 | 部分 | 部分 | C# 符号、直接代码块中的不可达语句、部分安全汇入点及 NuGet 直接依赖清单 |
 | C++ | 部分 | 否 | 否 | 仅报告 `.cpp`、`.cc`、`.cxx` 中看似未使用的文件内函数；会读取 C++ 头文件中的引用 |
-| Kotlin | 部分² | 否² | 否 | 基于正则的符号提取；只报告 private 声明和导入 |
+| Kotlin | 部分² | 部分² | 否 | 词法符号提取；只报告 private 声明和导入；Spring、Ktor、Servlet 和 Android WebView 安全检查 |
 | Shell | 否 | 部分 | 否 | shell 脚本安全检查，覆盖命令注入、SSRF 和路径穿越 |
 
 ¹ Go 的死代码和安全检查需要原生 `skylos-go` 引擎。从 4.50 起，Linux、macOS 和 Windows（x86_64 和 arm64）的 PyPI wheel 以及容器镜像都包含该引擎，官方 GitHub Action 会自动构建。其他平台上 `skylos doctor` 会给出构建命令。没有该引擎时只运行 Go 质量检查，Go 文件会被报告为未分析。
 
-² Kotlin 死代码只报告 `private` 类型和函数以及未使用的导入；所有非 private 声明都视为已使用。Kotlin 没有内置安全规则，但密钥扫描仍覆盖 `.kt` 和 `.kts` 文件。
+² Kotlin 死代码只报告 `private` 类型和函数以及未使用的导入；所有非 private 声明都视为已使用。代码中的任何使用都算引用：类型位置、`::foo`、尾随 lambda 和中缀调用、字符串模板以及 KDoc 链接；运算符约定导入（`getValue`、`plus`、`component1`）从不报告。Kotlin 安全分析是词法级的（没有 Kotlin 解析器），复用 Java 的来源和汇入点：输入来自 Spring 处理方法参数、`HttpServletRequest`、Ktor `call.parameters`、`call.receive<T>()` 和 WebFlux `ServerRequest`；检查覆盖命令注入（SKY-D212、SKY-D203）、包括字符串模板的 SQL 注入（SKY-D211）、路径穿越（SKY-D215）、SSRF（SKY-D216）、开放重定向（SKY-D230）、HTML 响应 XSS（SKY-D226）、`ObjectInputStream`/`XMLDecoder`（SKY-D204、SKY-D233）、XXE（SKY-D236）、SpEL/JNDI（SKY-D237），以及 Android WebView JavaScript 桥（SKY-D257）和 `file://` URL 文件访问（SKY-D258）。数据流只在单个函数或路由 lambda 内跟踪。密钥扫描覆盖 `.kt` 和 `.kts` 文件。
 
 ³ Dart 检查需要可选依赖 `skylos[dart]`（`pip install "skylos[dart]"`，安装时需要 C 编译器）。未安装时，包含 `.dart` 文件的扫描会把它们报告为未分析（`SKY-ANALYSIS-INCOMPLETE`）。
 

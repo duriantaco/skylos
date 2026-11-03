@@ -63,6 +63,13 @@ Skylos has framework-aware behavior for patterns such as:
   and policies), plus Livewire and Blade components, migrations,
   `DatabaseSeeder` and `laravel-vite-plugin` inputs.
 - PHP type-position and PHPDoc references to imported classes.
+- Kotlin (lexical, private declarations and imports only): any identifier in
+  code is a use, including type positions, `::foo`, trailing-lambda and infix
+  calls, string templates, KDoc links to imports and import paths of private
+  enums; named-argument labels and text in comments or string literals are not.
+  `private operator fun`, operator-convention imports (`getValue`, `plus`,
+  `component1`), companion objects, and functions annotated `@JvmStatic`,
+  `@Preview`, `@Composable`, Spring/JUnit lifecycle or Hilt `@Provides` are live.
 - package entrypoints and plugin hooks.
 - Python library public API (`skylos/deadcode/public_api.py`): attribute
   docstrings and `#:` comments, Sphinx/MyST directives and roles, mkdocstrings

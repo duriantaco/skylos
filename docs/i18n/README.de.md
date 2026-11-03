@@ -233,7 +233,7 @@ Timeout-Pflicht beizubringen.
 | Dart | Ja³ | Teilweise³ | Nein | Dart-Parser-Abdeckung; Security prüft Command Injection, Path Traversal und SSRF |
 | C# | Teilweise | Teilweise | Teilweise | C#-Symbole, unerreichbare Anweisungen in direkten Blöcken, ausgewählte Security-Senken und direkte NuGet-Inventarisierung |
 | C++ | Teilweise | Nein | Nein | nur scheinbar ungenutzte dateilokale Funktionen in `.cpp`, `.cc`, `.cxx`; C++-Header werden für Referenzen gelesen |
-| Kotlin | Teilweise² | Nein² | Nein | regex-basierte Symbolerkennung; meldet nur private Deklarationen und Imports |
+| Kotlin | Teilweise² | Teilweise² | Nein | lexikalische Symbolerkennung; meldet nur private Deklarationen und Imports; Security-Prüfungen für Spring, Ktor, Servlets und Android-WebView |
 | Shell | Nein | Teilweise | Nein | Shell-Script-Security-Prüfungen für Command Injection, SSRF und Path Traversal |
 
 ¹ Dead-Code- und Security-Prüfungen für Go brauchen die native
@@ -244,9 +244,20 @@ Befehl zum Bauen. Ohne sie laufen nur die Go-Quality-Prüfungen, und die
 Go-Dateien werden als nicht analysiert gemeldet.
 
 ² Kotlin-Dead-Code meldet nur `private` Typen und Funktionen sowie ungenutzte
-Imports; jede nicht-private Deklaration gilt als verwendet. Es gibt keine
-eingebauten Kotlin-Security-Regeln; die Secret-Prüfung deckt `.kt`- und
-`.kts`-Dateien trotzdem ab.
+Imports; jede nicht-private Deklaration gilt als verwendet. Jede Verwendung im
+Code zählt: Typpositionen, `::foo`, Trailing-Lambda- und Infix-Aufrufe,
+String-Templates und KDoc-Links; Imports von Operator-Konventionen
+(`getValue`, `plus`, `component1`) werden nie gemeldet. Die Kotlin-Security
+arbeitet lexikalisch (ohne Kotlin-Parser) mit den Java-Quellen und -Senken:
+Spring-Handler-Parameter, `HttpServletRequest`, Ktor `call.parameters`,
+`call.receive<T>()` und WebFlux `ServerRequest` als Eingaben; Command
+Injection (SKY-D212, SKY-D203), SQL inklusive String-Templates (SKY-D211),
+Path Traversal (SKY-D215), SSRF (SKY-D216), Open Redirect (SKY-D230), HTML-
+Antworten (SKY-D226), `ObjectInputStream`/`XMLDecoder` (SKY-D204, SKY-D233),
+XXE (SKY-D236), SpEL/JNDI (SKY-D237) sowie Android-WebView-JavaScript-Bridges
+(SKY-D257) und Dateizugriff über `file://`-URLs (SKY-D258). Der Datenfluss wird
+innerhalb einer Funktion oder Route-Lambda verfolgt. Die Secret-Prüfung deckt
+`.kt`- und `.kts`-Dateien ab.
 
 ³ Dart-Prüfungen brauchen das optionale Extra `skylos[dart]`
 (`pip install "skylos[dart]"`, benötigt einen C-Compiler). Ohne es meldet ein

@@ -366,6 +366,12 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-D254": {
         "default": "Re-check authorization on the server instead of trusting values stored in the session."
     },
+    "SKY-D257": {
+        "default": "Remove the addJavascriptInterface bridge, or load only trusted, fixed content in that WebView."
+    },
+    "SKY-D258": {
+        "default": "Keep allowFileAccessFromFileURLs and allowUniversalAccessFromFileURLs false; serve local pages with WebViewAssetLoader."
+    },
     "SKY-D260": {
         "default": "Treat the text as data: keep it out of agent instructions, or mark it as untrusted input."
     },

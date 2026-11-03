@@ -4,7 +4,9 @@ from pathlib import Path
 
 from skylos.core.safe_cache_io import read_text_no_symlink
 
+from ._lex import lex
 from .core import scan_symbols
+from .security import scan_kotlin_security
 
 MAX_KOTLIN_SOURCE_BYTES = 2_000_000
 
@@ -68,7 +70,14 @@ def scan_kotlin_file(
     except Exception:
         return _empty_result(config)
 
-    defs, refs, raw_imports = scan_symbols(str(path), source)
+    lexed = lex(source)
+    defs, refs, raw_imports = scan_symbols(str(path), source, lexed=lexed)
+    danger = []
+    if enable_danger_rules:
+        try:
+            danger = scan_kotlin_security(lexed, str(path))
+        except RecursionError:
+            danger = []
     test_decorated_lines = {
         definition.line
         for definition in defs
@@ -87,7 +96,7 @@ def scan_kotlin_file(
         visitor,
         DummyVisitor(),
         [],
-        [],
+        danger,
         [],
         None,
         None,

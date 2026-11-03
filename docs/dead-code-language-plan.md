@@ -92,8 +92,11 @@ cross-file trait/override graphs are not implemented.
 
 - Fix TS conditional reads, literal bracket-member calls, default-export
   bindings and overwritten declarations in nested scopes.
-- Fix Kotlin callable references, class literals, type annotations, qualified
-  uses and extension properties. Check the actual Sunflower preview providers.
+- Kotlin callable references, class literals, type annotations, qualified
+  uses, trailing lambdas, infix calls, string templates and KDoc links now
+  count as references (lexical scanner). Still open: private properties are not
+  definitions, and a same-named local keeps an import live. Check the actual
+  Sunflower preview providers.
 - Fix Dart function values and type references using the Wonderous callbacks.
 - Fix C# containing-type liveness for `Main`, method groups, event callbacks and
   multiline parameters wrongly collected as fields. Check `seqcli`.
