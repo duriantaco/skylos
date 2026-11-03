@@ -18,6 +18,7 @@ from skylos.analysis.implicit_refs import (
 from skylos.visitors.registration_decorators import (
     collect_local_registration_decorators,
 )
+from skylos.visitors.framework_aware import is_registration_decorator
 from typing import Any, Optional, Union
 
 # SQLAlchemy / SQLModel declarative attribute constructors. The ORM reads
@@ -409,6 +410,26 @@ def _is_stub_declaration(node: ast.AST) -> bool:
 
 
 _NAME_PATTERN_RE = re.compile(r"[A-Za-z0-9_*]+")
+
+
+def _module_wrapper_names(module: ast.Module) -> set[str]:
+    names = set()
+    for stmt in module.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(stmt.name)
+    for stmt in module.body:
+        if not isinstance(stmt, ast.Assign):
+            continue
+        value = stmt.value
+        if not (
+            isinstance(value, ast.Lambda)
+            or (isinstance(value, ast.Name) and value.id in names)
+        ):
+            continue
+        for target in stmt.targets:
+            if isinstance(target, ast.Name):
+                names.add(target.id)
+    return names
 
 
 def _module_binds_name(module: ast.Module, target_name: str) -> bool:
@@ -980,6 +1001,7 @@ class Visitor(ast.NodeVisitor):
         # local names: (function qname, variable) -> class qname.
         self._iterable_return_annotations: dict[str, ast.expr] = {}
         self._receiver_types: dict[tuple[str, str], str] = {}
+        self._module_wrapper_names: set[str] = set()
 
     def add_def(
         self, name: str, t: str, line: int, node: Optional[ast.AST] = None, **extra: Any
@@ -1047,6 +1069,7 @@ class Visitor(ast.NodeVisitor):
         self._type_checking_function_ids = type_checking_function_ids(node)
         self._module_shadows_getattr = _module_binds_name(node, "getattr")
         self._alternative_import_names = _module_alternative_import_names(node)
+        self._module_wrapper_names = _module_wrapper_names(node)
         for stmt in node.body:
             if (
                 isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -1599,6 +1622,23 @@ class Visitor(ast.NodeVisitor):
             return self._get_decorator_name(deco.func)
         return None
 
+    def _registers_decorated_function(self, deco: ast.expr, deco_name: str) -> bool:
+        target = deco
+        if isinstance(deco, ast.Call):
+            target = deco.func
+        project_defined = False
+        if isinstance(target, ast.Name):
+            if target.id in self._module_wrapper_names:
+                project_defined = True
+            elif target.id in self.alias and "." in self.mod:
+                package = self.mod.split(".", 1)[0]
+                project_defined = self.alias[target.id].startswith(package + ".")
+        return is_registration_decorator(
+            deco_name,
+            self._resolve_callee_fqname(target),
+            project_defined=project_defined,
+        )
+
     def _local_binding_shadows_alias(
         self, name: str, current_definition: str | None = None
     ) -> bool:
@@ -1775,36 +1815,6 @@ class Visitor(ast.NodeVisitor):
                     self._credit_module_call_imports(decorator)
         self._note_module_import_binding(node.name, None)
 
-        FRAMEWORK_DECORATORS = {
-            "fixture",
-            "pytest",
-            "task",
-            "celery",
-            "register",
-            "subscriber",
-            "listener",
-            "handler",
-            "command",
-            "route",
-            "get",
-            "post",
-            "put",
-            "delete",
-            "patch",
-            "api",
-            "endpoint",
-            "hook",
-            "signal",
-            "tool",
-            "resource",
-            "prompt",
-            "event",
-            "job",
-            "worker",
-            "consumer",
-            "producer",
-        }
-
         is_abstract_or_overload = False
         for deco in node.decorator_list:
             deco_name = self._get_decorator_name(deco)
@@ -1862,9 +1872,7 @@ class Visitor(ast.NodeVisitor):
                         self.property_chains[class_key][prop_name][chain_type] = (
                             qualified_name
                         )
-                elif any(
-                    keyword in deco_name.lower() for keyword in FRAMEWORK_DECORATORS
-                ):
+                elif self._registers_decorated_function(deco, deco_name):
                     self.add_ref(qualified_name)
                     for definition in reversed(self.defs):
                         if (
@@ -1873,7 +1881,7 @@ class Visitor(ast.NodeVisitor):
                         ):
                             definition._framework_decorator_ref_count += 1
                             break
-                elif isinstance(d, ast.Call) and self._is_numba_overload_decorator(
+                elif isinstance(deco, ast.Call) and self._is_numba_overload_decorator(
                     deco_name, current_definition=qualified_name
                 ):
                     self.add_ref(qualified_name)

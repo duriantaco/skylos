@@ -499,6 +499,190 @@ def test_literal_plugin_registry_targets_are_live(tmp_path):
     assert any(item["reason"] == "literal_plugin_registry" for item in rescues)
 
 
+def _unused_definitions(result):
+    names = set()
+    for section in ("unused_functions", "unused_classes", "unused_variables"):
+        names.update(item["full_name"] for item in result.get(section, []))
+    return names
+
+
+def test_plugin_entry_point_groups_are_live(tmp_path):
+    _write(
+        tmp_path / "pyproject.toml",
+        """
+        [project]
+        name = "demo-plugins"
+        version = "0.1.0"
+
+        [project.entry-points."flake8.extension"]
+        DMO = "demo.checker:DemoChecker"
+
+        [project.entry-points."demo.formatters"]
+        json = "demo.formatters:render_json [fast]"
+        yaml = "demo.formatters:Renderers.yaml"
+
+        [project.entry-points.pytest11]
+        demo = "demo.plugin"
+
+        [tool.poetry.plugins."poetry.application.plugin"]
+        demo = "demo.poetry_plugin:DemoApplicationPlugin"
+        """,
+    )
+    _write(tmp_path / "demo" / "__init__.py", "")
+    _write(
+        tmp_path / "demo" / "checker.py",
+        """
+        class DemoChecker:
+            name = "demo"
+
+            def run(self):
+                return []
+
+            def _unused_private(self):
+                return None
+
+
+        class UnusedChecker:
+            pass
+        """,
+    )
+    _write(
+        tmp_path / "demo" / "formatters.py",
+        """
+        def render_json(data):
+            return data
+
+
+        def render_xml(data):
+            return data
+
+
+        class Renderers:
+            @staticmethod
+            def yaml(data):
+                return data
+
+            @staticmethod
+            def toml(data):
+                return data
+        """,
+    )
+    _write(
+        tmp_path / "demo" / "other.py",
+        """
+        def render_json(data):
+            return data
+        """,
+    )
+    _write(
+        tmp_path / "demo" / "plugin.py",
+        """
+        def pytest_addoption(parser):
+            return parser
+
+
+        def plugin_helper():
+            return None
+        """,
+    )
+    _write(
+        tmp_path / "demo" / "poetry_plugin.py",
+        """
+        class DemoApplicationPlugin:
+            def activate(self, application):
+                return application
+        """,
+    )
+
+    result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+    unused = _unused_definitions(result)
+
+    live = {
+        "demo.checker.DemoChecker",
+        "demo.checker.DemoChecker.name",
+        "demo.checker.DemoChecker.run",
+        "demo.formatters.render_json",
+        "demo.formatters.Renderers",
+        "demo.formatters.Renderers.yaml",
+        "demo.poetry_plugin.DemoApplicationPlugin",
+        "demo.poetry_plugin.DemoApplicationPlugin.activate",
+    }
+    assert not live & unused
+    assert {
+        "demo.checker.DemoChecker._unused_private",
+        "demo.checker.UnusedChecker",
+        "demo.formatters.render_xml",
+        "demo.formatters.Renderers.toml",
+        "demo.other.render_json",
+        "demo.plugin.plugin_helper",
+    } <= unused
+
+
+def test_setup_py_and_setup_cfg_entry_points_are_read_without_running_setup(
+    tmp_path,
+):
+    marker = tmp_path / "setup-was-executed"
+    _write(
+        tmp_path / "setup.py",
+        f"""
+        from setuptools import setup
+
+        open({str(marker)!r}, "w").close()
+
+        LEGACY = {{"console_scripts": ["old = tool.cli:retired_main"]}}
+        CONSOLE = ["tool-a = tool.cli:run_a"]
+
+        setup(
+            name="tool",
+            entry_points={{
+                "console_scripts": CONSOLE,
+                "flake8.extension": "TL = tool.check:Checker",
+                "pygments.lexers": ("demo = tool.lexer:DemoLexer",),
+            }},
+        )
+        """,
+    )
+    _write(
+        tmp_path / "setup.cfg",
+        """
+        [options.entry_points]
+        console_scripts =
+            tool-b = tool.cli:run_b
+        """,
+    )
+    _write(tmp_path / "tool" / "__init__.py", "")
+    _write(
+        tmp_path / "tool" / "cli.py",
+        """
+        def run_a():
+            return 0
+
+
+        def run_b():
+            return 0
+
+
+        def retired_main():
+            return 0
+        """,
+    )
+    _write(tmp_path / "tool" / "check.py", "class Checker:\n    pass\n")
+    _write(tmp_path / "tool" / "lexer.py", "class DemoLexer:\n    pass\n")
+
+    result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+    unused = _unused_definitions(result)
+
+    live = {
+        "tool.cli.run_a",
+        "tool.cli.run_b",
+        "tool.check.Checker",
+        "tool.lexer.DemoLexer",
+    }
+    assert not live & unused
+    assert "tool.cli.retired_main" in unused
+    assert not marker.exists()
+
+
 def test_unused_literal_plugin_registry_does_not_rescue_targets(tmp_path):
     _write(
         tmp_path / "registry.py",
