@@ -922,6 +922,19 @@ Rust quality checks cover statements after a direct `return`, `break` or
 `continue`, and duplicate multi-statement `if`/`else` bodies with a plain boolean
 condition. They do not expand macros or infer complete control flow.
 
+Inline suppression works the same way in every language above: put
+`skylos: ignore[SKY-D211] reason` (only the named rules),
+`skylos: ignore` (every rule) or a `skylos: ignore-start` …
+`skylos: ignore-end` block in a comment on the finding's line (`#` in Python,
+Shell and PHP; `//` or a one-line `/* */` in the others). It covers dead code,
+security, quality and secrets; text inside a string literal never counts, and
+other tools' markers (`#nosec`, `//nolint`, `NOSONAR`, `@SuppressWarnings`) do
+not hide Skylos findings.
+
+`--secrets` also reads shell scripts (including extensionless ones that start
+with a shell `#!` line), C and C++ sources and headers, Dockerfiles, Terraform
+`.tf`/`.tfvars`/`.hcl`, `.properties`, XML, Gradle, `.npmrc` and `.pypirc`.
+
 "No" means Skylos has no built-in rules of that kind for the language.
 
 C# dead-code findings are conservative: in a complete executable or web

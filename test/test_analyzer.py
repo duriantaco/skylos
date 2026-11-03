@@ -3689,6 +3689,44 @@ used()
         assert "unused_ignore" not in unreachable
         assert "used" not in unreachable
 
+    @pytest.mark.parametrize(
+        ("ignored", "hidden"),
+        [("SKY-U001", "unused_function"), ("SKY-UC001", "unreachable")],
+    )
+    def test_config_ignore_turns_off_exactly_the_named_rule(
+        self, tmp_path, ignored, hidden
+    ):
+        (tmp_path / "pyproject.toml").write_text(
+            f'[tool.skylos]\nignore = ["{ignored}"]\n'
+        )
+        (tmp_path / "mod.py").write_text(
+            "import json\n\n\n"
+            "def unused_function():\n    return 1\n\n\n"
+            "class UnusedClass:\n    pass\n\n\n"
+            "def used_function():\n    return 2\n    print('never runs')\n\n\n"
+            "used_function()\n"
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, enable_quality=True))
+
+        reported = {
+            "unused_function": {
+                item["simple_name"] for item in result["unused_functions"]
+            }
+            == {"unused_function"},
+            "unreachable": any(
+                item["rule_id"] == "SKY-UC001" for item in result.get("quality", [])
+            ),
+        }
+        assert reported == {
+            "unused_function": hidden != "unused_function",
+            "unreachable": hidden != "unreachable",
+        }
+        assert {item["simple_name"] for item in result["unused_classes"]} == {
+            "UnusedClass"
+        }
+        assert {item["simple_name"] for item in result["unused_imports"]} == {"json"}
+
     def test_analyze_suppresses_pytest_plugin_hook_methods(self, tmp_path):
         src = tmp_path / "plugin.py"
         src.write_text(

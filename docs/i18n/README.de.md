@@ -254,6 +254,20 @@ Scan `.dart`-Dateien als nicht analysiert (`SKY-ANALYSIS-INCOMPLETE`).
 
 ⁴ Rust-Dead-Code ist experimentell: Trait-Methodenaufrufe, über Crates hinweg
 genutzte `pub`-Elemente, Re-Exports und Makros werden nicht aufgelöst.
+
+Inline-Unterdrückung funktioniert in jeder Sprache oben gleich:
+`skylos: ignore[SKY-D211] Grund` (nur die genannten Regeln), `skylos: ignore`
+(alle Regeln) oder ein Block `skylos: ignore-start` … `skylos: ignore-end` in
+einem Kommentar auf der Zeile des Befunds (`#` in Python, Shell und PHP; `//`
+oder ein einzeiliges `/* */` in den anderen). Das gilt für Dead Code, Security,
+Quality und Secrets; Text in einem String-Literal zählt nie, und Marker anderer
+Tools (`#nosec`, `//nolint`, `NOSONAR`, `@SuppressWarnings`) blenden keine
+Skylos-Befunde aus.
+
+`--secrets` liest außerdem Shell-Skripte (auch solche ohne Endung, die mit einer
+Shell-`#!`-Zeile beginnen), C- und C++-Quellen und -Header, Dockerfiles,
+Terraform `.tf`/`.tfvars`/`.hcl`, `.properties`, XML, Gradle, `.npmrc` und
+`.pypirc`.
 Rust-Kandidaten haben höchstens Konfidenz 40, also unter dem Standard-Schwellenwert
 60; sie erscheinen nur mit `--confidence 40`.
 

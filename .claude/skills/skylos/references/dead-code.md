@@ -85,14 +85,20 @@ evidence. Do not use trace mode as the default answer for untrusted PR review.
 ## Suppression Options
 
 - `# skylos: ignore`: suppress a finding on one line;
-  `# skylos: ignore[SKY-D211] reason` suppresses only that rule.
+  `# skylos: ignore[SKY-D211] reason` suppresses only that rule. Dead code
+  uses its own IDs: `SKY-U001` functions/methods, `SKY-U002` imports,
+  `SKY-U003` variables, `SKY-U004` classes, `SKY-U006` parameters. The same
+  markers work in a `//` (or one-line `/* */`) comment in Go, Java, Kotlin,
+  C#, PHP, Dart, Rust, C/C++ and TS/JS, and in a `#` comment in Shell and PHP;
+  a marker inside a string literal never counts.
 - A bare `# noqa` hides dead-code, quality and LOW/MEDIUM findings, but
   not HIGH/CRITICAL security findings (`SKY-D*`, `SKY-S*`); those stay
   reported with `bare_noqa_ignored: true`. `# noqa: <ruff code>` never
   hides Skylos security/quality findings (F401/F841 only mark the
   matching unused import/variable).
 - `# skylos: ignore-start` / `# skylos: ignore-end`: suppress a block.
-- `ignore = ["SKY-XXX"]` in `[tool.skylos]`: suppress a rule project-wide.
+- `ignore = ["SKY-XXX"]` in `[tool.skylos]`: suppress a rule project-wide
+  (`SKY-U001` hides unused functions only; unreachable code is `SKY-UC001`).
 - `skylos whitelist <pattern>`: manage whitelisted symbols.
   `[tool.skylos.whitelist.temporary]` entries take `expires = "YYYY-MM-DD"`
   (a TOML date works too); once expired, or with an unreadable date, they
