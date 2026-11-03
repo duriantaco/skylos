@@ -10,6 +10,7 @@ from pathlib import Path
 from skylos.analysis.finding_filter import partition_inline_ignored_findings
 from skylos.core.inline_directives import inline_ignores
 from skylos.core.linter import LinterVisitor
+from skylos.core.safe_cache_io import read_project_text_no_symlink, read_text_no_symlink
 from skylos.rules.custom import load_community_rules, load_custom_rules
 from skylos.rules.danger.calls import DangerousCallsRule
 from skylos.rules.quality._readability import OpaqueIdentifierRule
@@ -573,18 +574,19 @@ _ANALYSIS_TUPLE_DEFAULTS = (
 _MAX_DIRECTIVE_SOURCE_BYTES = 4_000_000
 
 
-def _read_directive_source(file) -> str | None:
-    try:
-        with open(file, "rb") as handle:
-            data = handle.read(_MAX_DIRECTIVE_SOURCE_BYTES + 1)
-    except OSError:
-        return None
-    if len(data) > _MAX_DIRECTIVE_SOURCE_BYTES:
-        return None
-    return data.decode("utf-8", errors="replace")
+def _read_directive_source(file, *, project_root=None) -> str | None:
+    read_kwargs = {
+        "max_bytes": _MAX_DIRECTIVE_SOURCE_BYTES,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "newline": "",
+    }
+    if project_root is None:
+        return read_text_no_symlink(file, **read_kwargs)
+    return read_project_text_no_symlink(project_root, file, **read_kwargs)
 
 
-def _with_comment_directives(file, out):
+def _with_comment_directives(file, out, *, project_root=None):
     """Apply ``skylos: ignore`` comments to every finding category of a file.
 
     Quality and security findings on an ignored line move to the suppressed
@@ -593,7 +595,7 @@ def _with_comment_directives(file, out):
     """
     if not isinstance(out, tuple) or len(out) < 13:
         return out
-    source = _read_directive_source(file)
+    source = _read_directive_source(file, project_root=project_root)
     if source is None:
         return out
     ignore_lines, ignore_rules_by_line = inline_ignores(file, source)
@@ -626,6 +628,7 @@ def scan_non_python_file(
     *,
     enable_quality_rules: bool = True,
     enable_danger_rules: bool = True,
+    project_root=None,
 ):
     file_name = str(file)
     for suffixes, scanner in NON_PYTHON_SCANNERS:
@@ -638,7 +641,7 @@ def scan_non_python_file(
             )
             out = _normalize_language_scan_output(out)
             if scanner in _COMMENT_DIRECTIVE_SCANNERS:
-                return _with_comment_directives(file, out)
+                return _with_comment_directives(file, out, project_root=project_root)
             return out
     return None
 

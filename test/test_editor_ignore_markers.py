@@ -443,3 +443,75 @@ def test_rule_scoped_markers_hide_only_the_named_dead_code_rule(scan):
 )
 def test_directives_are_read_only_from_real_comments(relative, text, lines, rules):
     assert inline_ignores(relative, text) == (lines, rules)
+
+
+def test_directive_source_rejects_symlink(tmp_path):
+    from skylos.analysis.file_processing import _read_directive_source
+
+    source = tmp_path / "source.java"
+    source.write_text("run(); // skylos: ignore[SKY-D212]\n", encoding="utf-8")
+    link = tmp_path / "linked.java"
+    try:
+        link.symlink_to(source)
+    except OSError:
+        pytest.skip("symlinks are not supported on this filesystem")
+
+    assert _read_directive_source(link) is None
+
+
+@pytest.mark.parametrize("location", ["contained", "outside", "symlink_parent"])
+def test_directive_source_respects_supplied_project_root(tmp_path, location):
+    from skylos.analysis.file_processing import _read_directive_source
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    source = root / "src" / "source.java"
+    source.parent.mkdir()
+    content = "run(); // skylos: ignore[SKY-D212]\n"
+    source.write_text(content, encoding="utf-8")
+    if location == "outside":
+        source = tmp_path / "outside.java"
+        source.write_text(content, encoding="utf-8")
+    elif location == "symlink_parent":
+        alias = root / "alias"
+        try:
+            alias.symlink_to(source.parent, target_is_directory=True)
+        except OSError:
+            pytest.skip("symlinks are not supported on this filesystem")
+        source = alias / source.name
+
+    result = _read_directive_source(source, project_root=root)
+
+    assert result == (content if location == "contained" else None)
+
+
+@pytest.mark.parametrize("extra_byte", [False, True])
+def test_directive_source_enforces_byte_limit(tmp_path, extra_byte):
+    from skylos.analysis.file_processing import (
+        _MAX_DIRECTIVE_SOURCE_BYTES,
+        _read_directive_source,
+    )
+
+    source = tmp_path / "source.java"
+    payload = "é".encode("utf-8") * (_MAX_DIRECTIVE_SOURCE_BYTES // 2)
+    payload += b"x" * (_MAX_DIRECTIVE_SOURCE_BYTES - len(payload))
+    if extra_byte:
+        payload += b"x"
+    source.write_bytes(payload)
+
+    result = _read_directive_source(source)
+
+    assert result == (None if extra_byte else payload.decode("utf-8"))
+
+
+def test_directive_source_preserves_source_newlines(tmp_path):
+    from skylos.analysis.file_processing import _read_directive_source
+
+    source = tmp_path / "source.java"
+    payload = b"run();\r\n// skylos: ignore[SKY-D212]\rnext();\n"
+    source.write_bytes(payload)
+
+    result = _read_directive_source(source)
+
+    assert result == payload.decode("utf-8")
+    assert inline_ignores(source, result) == (set(), {})

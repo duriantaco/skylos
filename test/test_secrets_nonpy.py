@@ -1,4 +1,8 @@
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -255,6 +259,77 @@ def test_extensionless_file_is_scanned_only_as_a_shell_script(first_line, scanne
     findings = scan_ctx({"relpath": "bin/deploy", "lines": lines, "tree": None})
 
     assert bool(findings) is scanned
+
+
+def test_shell_script_probe_accepts_long_script(tmp_path):
+    from skylos.rules.secrets import file_starts_like_shell_script
+
+    source = tmp_path / "deploy"
+    source.write_text("#!/usr/bin/env bash\n" + "echo ready\n" * 128, encoding="utf-8")
+
+    assert file_starts_like_shell_script(source) is True
+
+
+@pytest.mark.parametrize(
+    "kind", ["symlink", "directory", "missing", "unreadable", "binary"]
+)
+def test_shell_script_probe_rejects_symlink_directory_and_unreadable(
+    tmp_path, monkeypatch, kind
+):
+    from skylos.rules import secrets
+
+    source = tmp_path / "deploy"
+    if kind == "directory":
+        source.mkdir()
+    elif kind != "missing":
+        source.write_bytes(
+            b"#!/bin/sh\n" + (b"\0" if kind == "binary" else b"echo ready\n")
+        )
+    if kind == "symlink":
+        link = tmp_path / "linked"
+        try:
+            link.symlink_to(source)
+        except OSError:
+            pytest.skip("symlinks are not supported on this filesystem")
+        source = link
+    if kind == "unreadable":
+
+        def denied(*args, **kwargs):
+            raise PermissionError("file is not readable")
+
+        with monkeypatch.context() as patch:
+            patch.setattr("builtins.open", denied)
+            patch.setattr(os, "open", denied)
+            assert secrets.file_starts_like_shell_script(source) is False
+    else:
+        assert secrets.file_starts_like_shell_script(source) is False
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes are unavailable")
+def test_shell_script_probe_rejects_fifo_without_blocking(tmp_path):
+    source = tmp_path / "deploy"
+    os.mkfifo(source)
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-P",
+            "-c",
+            "import sys; from skylos.rules.secrets import file_starts_like_shell_script; "
+            "print(file_starts_like_shell_script(sys.argv[1]))",
+            str(source),
+        ],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    )
+
+    assert completed.stdout.strip() == "False"
 
 
 def test_directory_scan_reads_new_secret_files_and_honours_real_comments(tmp_path):

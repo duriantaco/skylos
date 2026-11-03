@@ -4,7 +4,9 @@ import ast
 import base64
 import binascii
 import json
+import os
 import re
+import stat
 from bisect import bisect_right
 from dataclasses import dataclass
 from functools import lru_cache
@@ -12,7 +14,7 @@ from hashlib import blake2s
 from html import unescape
 from html.parser import HTMLParser
 from math import log2
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from urllib.parse import unquote
 
 from skylos.rules import secret_shapes
@@ -234,11 +236,24 @@ def is_shell_script_start(first_line: str) -> bool:
 
 
 def file_starts_like_shell_script(path) -> bool:
+    flags = os.O_RDONLY
+    for name in ("O_NOFOLLOW", "O_NONBLOCK", "O_CLOEXEC"):
+        flags |= getattr(os, name, 0)
+    descriptor = None
     try:
-        with open(path, "rb") as handle:
-            head = handle.read(256)
+        if Path(path).is_symlink():
+            return False
+        descriptor = os.open(  # skylos: ignore[SKY-D215,SKY-D325] caller-selected scan/hook path; no-follow, regular-file, bounded prefix read
+            path, flags
+        )
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return False
+        head = os.read(descriptor, 256)
     except OSError:
         return False
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     if b"\0" in head:
         return False
     first_line = head.split(b"\n", 1)[0].decode("utf-8", errors="ignore")
