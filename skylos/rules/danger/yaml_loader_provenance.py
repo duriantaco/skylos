@@ -117,7 +117,11 @@ def yaml_load_call_name(node, tree):
     """Resolve YAML calls using Python's unaliased dotted-import semantics."""
     if not isinstance(tree, ast.Module):
         return None
-    name = _resolved(node.func, _module_aliases(tree))
+    aliases = getattr(tree, "_skylos_yaml_load_call_aliases", None)
+    if aliases is None:
+        aliases = _module_aliases(tree)
+        tree._skylos_yaml_load_call_aliases = aliases
+    name = _resolved(node.func, aliases)
     if name in _LOAD_CALLS:
         return name
     return None
