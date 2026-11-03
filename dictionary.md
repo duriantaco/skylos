@@ -56,7 +56,7 @@ Rule IDs use a stable public prefix:
 | Attestation digest | Reproducible SHA-256 over scanned file contents, policy hash, plugin set, OWASP selection, filters, integration inventory, scores, and full check evidence; emitted in defend JSON/md/SARIF output. Identical trees, flags, policy, plugin set, and Skylos version reproduce identical digests; timestamps are excluded. |
 | Framework evidence | Defend check results mapped to EU AI Act, NIST AI RMF, and ISO/IEC 42001 controls with strict "evidence toward" semantics — never a compliance determination. |
 | Prompt templates | Trusted files passed with `--prompt-template KIND=PATH` to `skylos agent` commands that extend built-in LLM prompts without replacing safety and JSON-output contracts. Repository config cannot set them; `[tool.skylos.templates]` is not read. |
-| Vibe dictionary | Project-specific keyword extensions under `[tool.skylos.vibe]` for phantom security names, credential names, sensitive files, and timeout-required calls. |
+| Vibe dictionary | Project-specific keyword extensions under `[tool.skylos.vibe]` for phantom security names, credential names, sensitive files, timeout-required calls, and extra `random.*` functions that SKY-L013 treats as insecure for security values (`extra_insecure_random_funcs`). |
 | Quality gate | A threshold-based pass/fail decision used locally or in CI. Critical security issues, secrets, and AI-code issues at `block_ai_defect_severities` (default `["CRITICAL"]`) fail it regardless of counts. Every run ends with a verdict line and its reasons: `PASSED`, `FAILED`, or `INCOMPLETE — could not decide (exit 2)` when required analysis did not finish; `--format json` carries it as the top-level `gate` object. Files that were not analysed (a parse error, a missing language engine) are a coverage warning under a PASSED or FAILED verdict, not exit 2, unless `--strict` or `require_complete = true` asks for complete coverage or most of the code was not analysed. |
 | Risk review | `skylos cicd risk-review --base REF`; the GitHub check "Skylos risk review" (`skylos cicd init --risk-review`). Lists the risk classes a pull request contains. With risks, the check fails until a person with write access approves the head commit; approvals from bot accounts and approvals of older commits do not count. Exit 0 pass, 1 needs a human approval, 2 could not decide. Settings: `[tool.skylos.approval]` at the base. See [docs/risk-review.md](./docs/risk-review.md). |
 | Risk class | One of the nine facts the risk review reports, each needing a human approval: `tests_weakened`, `auth_removed`, `dependency_changed`, `ci_weakened`, `checks_silenced`, `secret_added`, `guardrail_config_changed`, `migration_changed`, `large_diff`. Rule findings map to classes by rule ID; findings `skylos done` reports only as advice are listed and need no approval. The names are shared with Skylos Cloud. |
@@ -620,7 +620,7 @@ D339, and redundant `//`, `/./` and `..` segments do not hide one.
 
 | ID | Severity | Name | File Types | Details |
 |:---|:---|:---|:---|:---|
-| D260 | HIGH-CRITICAL | Prompt injection scanner | `.py`, `.md`, `.rst`, `.txt`, `.yaml`, `.yml`, `.json`, `.toml`, `.env` | Multi-file scanner with text canonicalization. In YAML and TOML, comments document settings and are not scanned. YAML comment boundaries come from PyYAML's scanner (a `#` inside any scalar, quoted, block or flow, is value text); TOML ones from a string-aware lexer checked by `tomllib`. A file that does not parse keeps every line except whole-line comments. Terminology about generated LLM response text is distinguished from credential disclosure. Access tokens, environment credentials and API keys remain covered by the disclosure patterns |
+| D260 | HIGH-CRITICAL | Prompt injection scanner | `.py`, `.md`, `.rst`, `.txt`, `.yaml`, `.yml`, `.json`, `.toml`, `.env` | Multi-file scanner with text canonicalization. Bidirectional control characters in Python source are reported once, as D344; D260 keeps them in other files. In YAML and TOML, comments document settings and are not scanned. YAML comment boundaries come from PyYAML's scanner (a `#` inside any scalar, quoted, block or flow, is value text); TOML ones from a string-aware lexer checked by `tomllib`. A file that does not parse keeps every line except whole-line comments. Terminology about generated LLM response text is distinguished from credential disclosure. Access tokens, environment credentials and API keys remain covered by the disclosure patterns |
 
 Finding types:
 
@@ -714,7 +714,7 @@ Skylos does not execute pytest or load `conftest.py` to resolve these values.
 | D341 | HIGH | Untrusted package-managed tool execution | Shell, Python, TS/JS, GitHub Actions, GitLab CI, Dockerfile |
 | D342 | HIGH | Dockerfile remote ADD without checksum | Dockerfile |
 | D343 | HIGH | Dockerfile literal secret build value | Dockerfile |
-| D344 | HIGH | Trojan Source bidirectional Unicode | Python |
+| D344 | HIGH | Trojan Source bidirectional Unicode (U+202A-U+202E, U+2066-U+2069), one finding per line, test files included | Python |
 | D345 | HIGH | Mutable Hugging Face artifact revision | Python |
 | D346 | HIGH | Flask debug mode enabled | Python |
 | D347 | MEDIUM | Unsafe logging config listener | Python |
@@ -1304,7 +1304,7 @@ uses project ignores, not inline comments, consistently across supported files.
 | L005 | LOW | Unused exception variable | Python |
 | L006 | MEDIUM | Inconsistent return paths | Python |
 | L007 | MEDIUM-HIGH | Empty error handler | Python, TS/JS |
-| L008 | MEDIUM | Missing resource cleanup | Python |
+| L008 | MEDIUM | Missing resource cleanup: an `open`/connection/socket/session not in a `with`, including inside `if`/`for`/`while`/`try`/`except`/`finally`/`match` blocks. Not reported when closed on the next statement or in a `finally` that encloses the open or runs after it (a `finally` before the open closes an earlier handle), entered by the next `with`, returned or yielded (also inside a wrapper such as `return Reader(f)` or `ctx.wrap_socket(s)`; a `Reader` class defined in the same module must store, close or pass on `f` in its `__init__`), stored on an attribute or container, registered with `enter_context`/`callback`/`addCleanup`, or assigned to `self.x` when the same class, a base or a subclass closes `self.x`, or any code closes `x` on another receiver such as `conn.x.close()` (also after taking it off the object, as in Flask's `g.pop("db").close()` teardown); statements inside another `with` block are not checked | Python |
 | L009 | LOW-HIGH | Debug leftover | Python |
 | L010 | MEDIUM | Security TODO/FIXME marker left in code | Python |
 | L011 | MEDIUM-HIGH | Disabled security control | Python |
@@ -1983,6 +1983,35 @@ Rust references include qualified function values passed as callbacks. Exact
 matching `cfg` predicates can preserve imported filesystem providers inside the
 same feature condition; this does not evaluate Cargo features or macros. Rust
 dead-code candidates retain their experimental confidence cap of 40.
+
+A Python module or class variable is kept alive by an attribute read `x.NAME`
+elsewhere only when `x` could be its owner. For a module variable that is the
+module itself (import alias or dotted path), a module that star-imports it,
+Django's `settings` object, or an unknown receiver (parameter, local, call
+result) once the module object can reach one: it is imported as a module,
+named by a dotted string such as `config_from_object("app.celeryconfig")`, or
+the project loads modules dynamically (`import_module` with a computed name,
+`sys.modules`, `runpy.run_path`). For a class variable it is `self`/`cls` of
+the class, a subclass or a base, the class or a subclass by name, or an unknown
+receiver. `self.NAME` in an unrelated class without `__getattr__`,
+`other_module.NAME` and literals are proof of another object, so
+`RETRY_LIMIT = 3` in `settings.py` is reported when the only `RETRY_LIMIT`
+reads are `self.RETRY_LIMIT` on another class and `policy.RETRY_LIMIT` on a
+parameter while `settings` is never imported as a module. Grep verification
+then ignores those attribute-only lines in analysed `.py`/`.pyi` files.
+Classes with a base outside the project, a decorator, a metaclass or an
+enclosing scope keep name-only liveness, because code Skylos cannot see may
+read their attributes.
+
+Java, Kotlin, Rust and Dart definitions with the same name in different files
+(two `Util` classes in different packages, private `helper` functions in two
+crates) are separate definitions. A reference reaches the ones its file can
+see: its own file, then (Java/Kotlin) its package and its imports, then (Rust)
+its crate; with no such evidence it reaches all of them. Package and import
+lines are read with comments and string literals blanked, so a commented-out
+or quoted `import b.Util;` is not an import. Overloads in one file
+share one definition, since name-only references cannot tell `format(int)`
+from `format(String)`.
 
 | ID | Severity | Name | Scope |
 |:---|:---|:---|:---|

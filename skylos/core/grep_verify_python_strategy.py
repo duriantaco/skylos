@@ -158,6 +158,24 @@ def _confirmed_qualified_references(
     return confirmed
 
 
+def _only_attribute_reads(grep_line: str, simple_name: str) -> bool:
+    """Every occurrence on this analysed source line is ``something.NAME``.
+
+    Static analysis already classified those receivers and proved they read
+    other objects; notebooks are not analysed, so their lines still count.
+    """
+    path = _grep_line_path(grep_line)
+    if not path.endswith((".py", ".pyi")):
+        return False
+    content = _grep_line_content(grep_line)
+    found = False
+    for match in re.finditer(rf"\b{re.escape(simple_name)}\b", content):
+        found = True
+        if not content[: match.start()].rstrip().endswith("."):
+            return False
+    return found
+
+
 def _dotted_name(node: ast.AST) -> str | None:
     parts: list[str] = []
     while isinstance(node, ast.Attribute):
@@ -294,6 +312,10 @@ def multi_strategy_search(
                 and _is_python_source_reference(r, simple_name)
             ]
             refs = _filter_other_owner_same_method_calls(refs, finding)
+            if finding.get("attribute_reads_resolved"):
+                refs = [
+                    ref for ref in refs if not _only_attribute_reads(ref, simple_name)
+                ]
             _defs, usages = filter_grep_results(refs, finding)
             if usages:
                 results["references"] = limit_grep_evidence(

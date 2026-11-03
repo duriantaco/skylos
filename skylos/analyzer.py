@@ -93,6 +93,15 @@ from skylos.core.safe_cache_io import read_project_text_no_symlink
 from skylos.core.linter import LinterVisitor
 from skylos.core.review_context import build_analysis_review_context
 from skylos.deadcode.signature_contracts import mark_signature_contract_parameters
+from skylos.deadcode.attribute_receivers import (
+    AttributeReceiverEvidence,
+    ReceiverFacts,
+)
+from skylos.deadcode.same_name_definitions import (
+    NAME_RESOLVED_FAMILIES,
+    SameNameGroups,
+    same_name_definition_key,
+)
 from skylos.deadcode.django_converter_liveness import find_django_converter_classes
 
 from skylos.rules.quality.policy import analyze_repo_policy
@@ -155,6 +164,8 @@ _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_global_type_map",
     "_all_used_attr_names",
     "_all_used_attr_context",
+    "_attribute_receiver_facts",
+    "_attribute_receiver_evidence",
     "_param_method_refs",
     "_call_arg_types",
     "_grep_verify_report",
@@ -1589,6 +1600,7 @@ def _scan_has_top_level_python_module(project_root, file_contexts, module_name) 
 def _collect_grep_verify_candidates(
     definitions: dict,
     candidate_keys: frozenset | None = None,
+    attribute_reads_resolved=None,
 ) -> tuple[list[dict], dict]:
     candidates: list[dict] = []
     entries: dict = {}
@@ -1598,6 +1610,8 @@ def _collect_grep_verify_candidates(
         if defn.references != 0 or defn.is_exported or defn.confidence <= 0:
             continue
         payload = defn.to_dict()
+        if attribute_reads_resolved is not None and attribute_reads_resolved(defn):
+            payload["attribute_reads_resolved"] = True
         candidates.append(payload)
         entries[key] = (defn, payload)
     candidates.sort(key=_grep_verify_rescue_priority)
@@ -2314,12 +2328,14 @@ class Skylos:
             defs_by_name[defn.name].append(key)
 
         def key_for_caller(caller: str, callee_defn) -> str | None:
-            if caller in self.defs:
+            if caller in self.defs and len(defs_by_name.get(caller, ())) <= 1:
                 return caller
             filename = resolved_filename(callee_defn.filename)
             same_file = defs_by_name_file.get((caller, filename), [])
             if len(same_file) == 1:
                 return same_file[0]
+            if caller in self.defs:
+                return caller
             candidates = defs_by_name.get(caller, [])
             if len(candidates) == 1:
                 return candidates[0]
@@ -2665,9 +2681,11 @@ class Skylos:
         ):
             report.pop(key, None)
 
+        receiver_evidence = getattr(self, "_attribute_receiver_evidence", None)
         candidates, candidate_defs = _collect_grep_verify_candidates(
             self.defs,
             getattr(self, "_dead_code_scope_keys", None),
+            getattr(receiver_evidence, "rules_out", None),
         )
         if not candidates:
             return 0
@@ -2842,6 +2860,12 @@ class Skylos:
             return family_candidates[cache_key][1]
 
         non_import_defs = {k: v for k, v in self.defs.items() if v.type != "import"}
+        receiver_evidence = AttributeReceiverEvidence(
+            getattr(self, "_attribute_receiver_facts", None) or ReceiverFacts(),
+            self.defs,
+            getattr(self, "_module_names_by_file", None),
+        )
+        self._attribute_receiver_evidence = receiver_evidence
 
         type_def_lookup = defaultdict(list)
         for k, d in non_import_defs.items():
@@ -2860,6 +2884,8 @@ class Skylos:
         for k, d in self.defs.items():
             if d.type == "import":
                 import_by_simple[d.simple_name].append(k)
+
+        same_name_groups = SameNameGroups(self.defs, _reference_language_family)
 
         def _resolve_import_target(import_def_key: str, import_def_obj) -> str | None:
             target_fqn = import_def_obj.name
@@ -3068,6 +3094,15 @@ class Skylos:
                         binding.references += 1
 
             file_key = f"{ref_file}:{ref}"
+            group_targets = None
+            if same_name_groups and not (
+                file_key in self.defs and self.defs[file_key].type == "import"
+            ):
+                group_targets = same_name_groups.targets(ref, ref_file, ref_family)
+            if group_targets is not None:
+                for definition in group_targets:
+                    definition.references += 1
+                continue
 
             if file_key in self.defs:
                 definition = self.defs[file_key]
@@ -3141,6 +3176,26 @@ class Skylos:
                 candidates[0].references += 1
                 continue
 
+            if len(candidates) > 1 and simple in same_name_groups.simple_names:
+                group_targets = same_name_groups.resolve(
+                    same_file_candidates, ref_file, ref_family
+                )
+                if group_targets is None:
+                    full_candidates = _candidates_in_family(
+                        non_import_by_simple.get(simple, []), ref_family
+                    )
+                    if ref_mod and ref_mod not in ("self", "cls"):
+                        full_candidates = _qualified_candidates(
+                            full_candidates, ref_mod, limit=None
+                        )
+                    group_targets = same_name_groups.resolve(
+                        full_candidates, ref_file, ref_family
+                    )
+                if group_targets is not None:
+                    for definition in group_targets:
+                        definition.references += 1
+                    continue
+
             if len(candidates) > 1:
                 if ref_mod in ("self", "cls"):
                     if same_file_candidates:
@@ -3195,8 +3250,21 @@ class Skylos:
                     if definition.type != "method"
                 ]
 
+            group_targets = None
+            if simple in same_name_groups.simple_names:
+                group_targets = same_name_groups.resolve(
+                    non_import_defs_fallback, ref_file, ref_family
+                )
+            if group_targets is not None:
+                for definition in group_targets:
+                    definition.references += 1
+                continue
+
             if len(non_import_defs_fallback) == 1:
-                non_import_defs_fallback[0].references += 1
+                candidate = non_import_defs_fallback[0]
+                if ref_mod and receiver_evidence.rules_out(candidate):
+                    continue
+                candidate.references += 1
                 continue
 
             if "." in ref:
@@ -3293,6 +3361,8 @@ class Skylos:
                     ) in same_class_private_attr_uses:
                         continue
                 if defn.simple_name in used_attr_names:
+                    if receiver_evidence.rules_out(defn):
+                        continue
                     defn.references += 1
                     defn._attr_name_ref_count += 1
 
@@ -3311,7 +3381,8 @@ class Skylos:
                 if defn.type in ("method", "function"):
                     pass
                 elif defn.type == "variable" and "." in defn.name:
-                    pass
+                    if receiver_evidence.rules_out(defn):
+                        continue
                 else:
                     continue
 
@@ -4577,6 +4648,7 @@ class Skylos:
         all_instance_attr_types = {}
         all_used_attr_names = set()
         all_used_attr_context = set()
+        receiver_facts = ReceiverFacts()
         all_param_method_refs = defaultdict(list)
         all_call_arg_types = defaultdict(list)
         all_top_level_refs = set()
@@ -4697,6 +4769,8 @@ class Skylos:
                 file_analysis_error = out[25] if len(out) > 25 else None
                 file_has_explicit_all = bool(out[27]) if len(out) > 27 else False
                 file_annotation_coverage = out[28] if len(out) > 28 else None
+                if len(out) > 29:
+                    receiver_facts.add(mod, out[29])
                 if isinstance(file_annotation_coverage, dict) and file_annotation_coverage:
                     self._annotation_coverage.append(
                         {"file": str(file), **file_annotation_coverage}
@@ -4807,6 +4881,11 @@ class Skylos:
                         _TS_JS_SOURCE_EXTS + _CPP_SOURCE_EXTS
                     ):
                         key = f"{definition.filename}:{definition.name}"
+                    elif (
+                        _reference_language_family(definition.filename)
+                        in NAME_RESOLVED_FAMILIES
+                    ):
+                        key = same_name_definition_key(definition, self.defs)
                     else:
                         key = definition.name
                     self.defs[key] = definition
@@ -6129,6 +6208,7 @@ class Skylos:
         self._global_type_map.update(all_instance_attr_types)
         self._all_used_attr_names = all_used_attr_names
         self._all_used_attr_context = all_used_attr_context
+        self._attribute_receiver_facts = receiver_facts
         self._param_method_refs = all_param_method_refs
         self._call_arg_types = all_call_arg_types
 

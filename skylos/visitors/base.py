@@ -104,6 +104,28 @@ PYTHON_BUILTINS = {
 }
 
 DYNAMIC_PATTERNS = {"getattr", "globals", "eval", "exec"}
+_MODULE_NAME_STRING = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
+_NAMED_MODULE_LOADERS = frozenset({"import_module", "__import__", "run_module"})
+_PATH_MODULE_LOADERS = frozenset(
+    {
+        "run_path",
+        "spec_from_file_location",
+        "load_source",
+        "SourceFileLoader",
+        "module_from_spec",
+    }
+)
+_LITERAL_RECEIVERS = (
+    ast.Constant,
+    ast.JoinedStr,
+    ast.List,
+    ast.Tuple,
+    ast.Dict,
+    ast.Set,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+)
 _FRAME_INTROSPECTION_CALLS = {
     ("sys", "_getframe"),
     ("inspect", "currentframe"),
@@ -979,6 +1001,12 @@ class Visitor(ast.NodeVisitor):
         self.version_conditional_lines = set()
         self._used_attr_names = set()
         self._used_attr_names_with_context = set()
+        self._attr_receivers = set()
+        self._module_object_refs = set()
+        self._star_import_sources = set()
+        self._module_name_strings = set()
+        self._dynamic_module_access = False
+        self._nested_class_names = set()
         self._conditional_import_targets = set()
         self.local_registration_decorators = set()
         self._type_checking_function_ids: set[int] = set()
@@ -1338,6 +1366,9 @@ class Visitor(ast.NodeVisitor):
     def visit_Import(self, node: ast.Import) -> None:
         for a in node.names:
             full = a.name
+            parts = full.split(".")
+            for index in range(1, len(parts) + 1):
+                self._module_object_refs.add(".".join(parts[:index]))
             if a.asname:
                 alias_name = a.asname
                 target = full
@@ -1398,7 +1429,11 @@ class Visitor(ast.NodeVisitor):
                     module.split(".")[0] if module else ""
                 )
                 self.dyn.add(root)
+                if base:
+                    self._star_import_sources.add(base)
                 continue
+            if base:
+                self._module_object_refs.add(f"{base}.{a.name}")
 
             if a.asname:
                 alias_name = a.asname
@@ -2157,6 +2192,8 @@ class Visitor(ast.NodeVisitor):
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         cname = f"{self.mod}.{node.name}"
+        if self.cls is not None or self.current_function_scope:
+            self._nested_class_names.add(cname)
         self.add_def(
             cname,
             "class",
@@ -3006,6 +3043,7 @@ class Visitor(ast.NodeVisitor):
         if self._current_function_qname and _reads_locals_dynamically(node):
             self.dynamic_local_functions.add(self._current_function_qname)
         callee = self._resolve_callee_fqname(node.func)
+        self._note_module_loading_call(node, callee)
         if callee and not self.current_function_scope and self.cls is None:
             self.top_level_refs.add(callee)
             self._credit_module_call_imports(callee)
@@ -3948,6 +3986,79 @@ class Visitor(ast.NodeVisitor):
         if node.id in DYNAMIC_PATTERNS:
             self.dyn.add(self.mod.split(".")[0])
 
+    def visit_Constant(self, node: ast.Constant) -> None:
+        value = node.value
+        if not isinstance(value, str) or len(value) > 200:
+            return
+        text = value.strip()
+        if text.endswith(".py"):
+            text = text[:-3].replace("/", ".").replace("\\", ".").strip(".")
+        if _MODULE_NAME_STRING.fullmatch(text):
+            self._module_name_strings.add(text)
+
+    def _note_module_loading_call(self, node: ast.Call, callee) -> None:
+        leaf = ""
+        if isinstance(node.func, ast.Name):
+            leaf = node.func.id
+        elif isinstance(node.func, ast.Attribute):
+            leaf = node.func.attr
+        if leaf in _PATH_MODULE_LOADERS:
+            self._dynamic_module_access = True
+            return
+        if leaf not in _NAMED_MODULE_LOADERS:
+            return
+        if leaf == "import_module" and not str(callee or "").endswith(
+            "importlib.import_module"
+        ) and not isinstance(node.func, ast.Name):
+            return
+        name = None
+        if node.args:
+            name = extract_constant_string(node.args[0])
+        if not name or name.startswith("."):
+            self._dynamic_module_access = True
+            return
+        self._module_object_refs.add(name)
+
+    def _is_local_binding(self, name: str) -> bool:
+        if any(param == name for param, _full in self.current_function_params):
+            return True
+        for outer in self._param_stack:
+            if any(param == name for param, _full in outer):
+                return True
+        if not self.current_function_scope:
+            return False
+        if any(name in scope for scope in self.local_var_maps):
+            return True
+        return any(name in scope for scope in self.local_type_maps)
+
+    def _attribute_receiver(self, value: ast.expr) -> tuple[str, str]:
+        """Classify what an attribute load reads from.
+
+        ``self``/``cls`` name their class; a module-level name (import, class,
+        module variable) keeps its resolved path; literals cannot hold project
+        attributes; parameters, locals, calls and subscripts are unknown.
+        """
+        if isinstance(value, _LITERAL_RECEIVERS):
+            return "literal", ""
+        parts = []
+        current = value
+        while isinstance(current, ast.Attribute):
+            parts.append(current.attr)
+            current = current.value
+        if not isinstance(current, ast.Name):
+            return "unknown", ""
+        base = current.id
+        if base in {"self", "cls"} and self.cls:
+            if parts:
+                return "unknown", ""
+            if self.mod:
+                return "self", f"{self.mod}.{self.cls}"
+            return "self", self.cls
+        if self._is_local_binding(base) or self._is_active_type_parameter(base):
+            return "unknown", ""
+        parts.append(self.qual(base))
+        return "name", ".".join(reversed(parts))
+
     def visit_Attribute(self, node: ast.Attribute) -> None:
         self.generic_visit(node)
 
@@ -3958,6 +4069,10 @@ class Visitor(ast.NodeVisitor):
         self._used_attr_names_with_context.add(
             (node.attr, self.mod, self.cls or "", node.lineno)
         )
+        receiver_kind, receiver = self._attribute_receiver(node.value)
+        self._attr_receivers.add((node.attr, receiver_kind, receiver))
+        if node.attr == "modules" and receiver_kind == "name" and receiver == "sys":
+            self._dynamic_module_access = True
 
         if isinstance(node.value, ast.Name):
             base = node.value.id
@@ -4022,7 +4137,10 @@ class Visitor(ast.NodeVisitor):
                 self.add_ref(f"{self.local_type_maps[-1][base]}.{node.attr}")
                 return
 
-            self.add_ref(f"{self.qual(base)}.{node.attr}")
+            if receiver_kind == "name":
+                self.add_ref(f"{receiver}.{node.attr}")
+            else:
+                self.add_ref(f"{self.qual(base)}.{node.attr}")
 
         elif isinstance(node.value, ast.Call):
             qualified_class = self._get_call_type(node.value)
