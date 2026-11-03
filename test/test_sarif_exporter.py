@@ -937,3 +937,49 @@ def test_cwe_tags_use_github_external_convention():
     }
     rule = SarifExporter([finding]).generate()["runs"][0]["tool"]["driver"]["rules"][0]
     assert "external/cwe/cwe-89" in rule["properties"]["tags"]
+
+
+def test_python_security_findings_carry_catalog_cwes_into_sarif():
+    from skylos.reporting.result_builder import _enrich_danger
+
+    result = {
+        "danger": [
+            {
+                "rule_id": "SKY-D211",
+                "severity": "CRITICAL",
+                "message": "sqli",
+                "file": "app/db.py",
+                "line": 3,
+                "category": "SECURITY",
+            },
+            {
+                "rule_id": "SKY-D211",
+                "severity": "CRITICAL",
+                "message": "sqli",
+                "file": "web/db.ts",
+                "line": 4,
+                "category": "SECURITY",
+            },
+            {
+                "rule_id": "SKY-D283",
+                "severity": "HIGH",
+                "message": "open route",
+                "file": "app/api.py",
+                "line": 9,
+                "category": "SECURITY",
+                "cwe": [{"id": "CWE-306", "name": "kept"}],
+            },
+        ]
+    }
+    _enrich_danger(result, True)
+    python_sqli, typescript_sqli, route = result["danger"]
+
+    assert [entry["id"] for entry in python_sqli["cwe"]] == ["CWE-89"]
+    assert "cwe" not in typescript_sqli
+    assert route["cwe"] == [{"id": "CWE-306", "name": "kept"}]
+
+    run = SarifExporter([python_sqli]).generate()["runs"][0]
+    rule = run["tool"]["driver"]["rules"][0]
+    taxa = {taxon["id"] for taxon in run["taxonomies"][0]["taxa"]}
+    assert [item["target"]["id"] for item in rule["relationships"]] == ["CWE-89"]
+    assert "CWE-89" in taxa

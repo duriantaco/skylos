@@ -26,7 +26,8 @@ from skylos.visitors.languages.statement_scan import iter_semicolon_assignments
 from skylos.visitors.languages.typescript.security_flow import build_security_flow
 from skylos.visitors.languages.typescript.express_taint import (
     merge_express_taint_findings,
-    scan_express_taint_sinks,
+    safe_redirect_prefix,
+    scan_request_taint,
 )
 from skylos.visitors.languages.typescript.security_proofs import (
     check_cookie_security,
@@ -119,7 +120,10 @@ _SIMPLE_PATTERN = """
 (call_expression function: (identifier) @timeout_fn (#eq? @timeout_fn "setTimeout") arguments: (arguments (string) @timeout_str))
 (call_expression function: (identifier) @interval_fn (#eq? @interval_fn "setInterval") arguments: (arguments (string) @interval_str))
 (assignment_expression left: (member_expression property: (property_identifier) @outerHTML (#eq? @outerHTML "outerHTML")))
-(member_expression property: (property_identifier) @proto (#eq? @proto "__proto__"))
+(augmented_assignment_expression left: (member_expression property: (property_identifier) @innerHTML_aug (#match? @innerHTML_aug "^(innerHTML|outerHTML)$")))
+(call_expression function: (member_expression object: (identifier) @doc_obj_ln (#eq? @doc_obj_ln "document") property: (property_identifier) @doc_writeln (#eq? @doc_writeln "writeln")))
+(call_expression function: (member_expression property: (property_identifier) @html_method (#match? @html_method "^(insertAdjacentHTML|createContextualFragment|setHTMLUnsafe)$")))
+(call_expression function: (member_expression property: (property_identifier) @jquery_html (#match? @jquery_html "^(html|append|prepend|after|before|replaceWith|wrap|wrapAll|wrapInner)$")))
 (call_expression function: (member_expression object: (identifier) @math_random_obj (#eq? @math_random_obj "Math") property: (property_identifier) @math_random (#eq? @math_random "random")))
 """
 
@@ -158,7 +162,26 @@ _SIMPLE_MAP: dict[str, tuple[str, str, str]] = {
         "HIGH",
         "dangerouslySetInnerHTML bypasses React's XSS protections",
     ),
-    "proto": ("SKY-D510", "HIGH", "Prototype pollution via __proto__ access"),
+    "innerHTML_aug": (
+        "SKY-D226",
+        "HIGH",
+        "Unsafe innerHTML/outerHTML append — XSS vulnerability",
+    ),
+    "doc_writeln": (
+        "SKY-D226",
+        "HIGH",
+        "document.writeln() can lead to XSS vulnerabilities",
+    ),
+    "html_method": (
+        "SKY-D226",
+        "HIGH",
+        "HTML string parsed by insertAdjacentHTML/createContextualFragment/setHTMLUnsafe — XSS vulnerability",
+    ),
+    "jquery_html": (
+        "SKY-D226",
+        "HIGH",
+        "jQuery inserts HTML built from a non-literal value — XSS vulnerability",
+    ),
     "math_random": (
         "SKY-D250",
         "MEDIUM",
@@ -1727,14 +1750,156 @@ def _html_assignment_rhs_requires_finding(
     if _is_safe_html_sanitizer_call(rhs_node, source_bytes, bindings):
         return False
 
+    unwrapped = _unwrap_ts_expression(rhs_node)
+    if unwrapped is not None and unwrapped.type == "identifier":
+        value = _static_url_binding(unwrapped, source_bytes, bindings)
+        if value is not None and _is_safe_html_sanitizer_call(
+            value, source_bytes, bindings
+        ):
+            return False
+
     return True
+
+
+_HTML_SINK_CAPTURES = frozenset(
+    {
+        "innerHTML",
+        "outerHTML",
+        "innerHTML_aug",
+        "doc_write",
+        "doc_writeln",
+        "html_method",
+        "jquery_html",
+        "dangerously",
+    }
+)
+_JQUERY_INSERT_METHODS = frozenset(
+    {"append", "prepend", "after", "before", "replaceWith", "wrap", "wrapAll", "wrapInner"}
+)
+
+
+def _html_method_requires_finding(
+    prop_node, source_bytes: bytes, bindings: _JsBindings
+) -> bool:
+    """``el.insertAdjacentHTML(position, html)``,
+    ``range.createContextualFragment(html)`` and ``el.setHTMLUnsafe(html)``."""
+    member_node = prop_node.parent
+    call_node = None
+    if member_node is not None:
+        call_node = member_node.parent
+    if call_node is None or call_node.type != "call_expression":
+        return False
+    arguments = _html_call_arguments(call_node)
+    index = 0
+    if _get_text(source_bytes, prop_node) == "insertAdjacentHTML":
+        index = 1
+    if len(arguments) <= index:
+        return False
+    return _html_assignment_rhs_requires_finding(
+        arguments[index], source_bytes, bindings
+    )
+
+
+def _is_jquery_receiver(node, source_bytes: bytes) -> bool:
+    node = _unwrap_ts_expression(node)
+    depth = 0
+    while node is not None and depth < 32:
+        depth += 1
+        if node.type == "call_expression":
+            function = _unwrap_ts_expression(node.child_by_field_name("function"))
+            if function is not None and function.type == "identifier":
+                return _get_text(source_bytes, function) in {"$", "jQuery"}
+            node = function
+            continue
+        if node.type == "member_expression":
+            prop = node.child_by_field_name("property")
+            if prop is not None and _get_text(source_bytes, prop).startswith("$"):
+                return True
+            node = _unwrap_ts_expression(node.child_by_field_name("object"))
+            continue
+        if node.type == "identifier":
+            name = _get_text(source_bytes, node)
+            return name.startswith("$") and len(name) > 1
+        return False
+    return False
+
+
+def _jquery_html_requires_finding(
+    prop_node, source_bytes: bytes, bindings: _JsBindings
+) -> bool:
+    """jQuery ``.html(x)`` with a non-literal value, and ``.append``-style
+    inserts of a string built with markup and a dynamic part."""
+    member_node = prop_node.parent
+    call_node = None
+    if member_node is not None:
+        call_node = member_node.parent
+    if call_node is None or call_node.type != "call_expression":
+        return False
+    if not _is_jquery_receiver(member_node.child_by_field_name("object"), source_bytes):
+        return False
+    arguments = _html_call_arguments(call_node)
+    if len(arguments) != 1:
+        return False
+    value = _unwrap_ts_expression(arguments[0])
+    if value is None or value.type in {
+        "arrow_function",
+        "function_expression",
+        "function",
+    }:
+        return False
+    method = _get_text(source_bytes, prop_node)
+    if method in _JQUERY_INSERT_METHODS:
+        if value.type not in {"template_string", "binary_expression"}:
+            return False
+        if not _HTML_MARKUP_RE.search(_get_text(source_bytes, value)):
+            return False
+    return _html_assignment_rhs_requires_finding(value, source_bytes, bindings)
+
+
+_HTML_MARKUP_RE = re.compile(r"<\s*[A-Za-z!/]")
+
+
+def _dangerous_html_requires_finding(
+    prop_node, source_bytes: bytes, bindings: _JsBindings
+) -> bool:
+    """``dangerouslySetInnerHTML={{ __html: value }}`` is quiet only when the
+    value is inert literal markup or an import-proven sanitizer result."""
+    attribute = prop_node.parent
+    if attribute is None or attribute.type != "jsx_attribute":
+        return True
+    container = next(
+        (
+            child
+            for child in attribute.named_children
+            if child.type == "jsx_expression"
+        ),
+        None,
+    )
+    if container is None:
+        return True
+    expression = next(
+        (child for child in container.named_children if child.type != "comment"),
+        None,
+    )
+    expression = _unwrap_ts_expression(expression)
+    if expression is None or expression.type != "object":
+        return True
+    pairs = [child for child in expression.named_children if child.type != "comment"]
+    if len(pairs) != 1 or pairs[0].type != "pair":
+        return True
+    key = pairs[0].child_by_field_name("key")
+    if key is None or _get_text(source_bytes, key).strip("'\"") != "__html":
+        return True
+    return _html_assignment_rhs_requires_finding(
+        pairs[0].child_by_field_name("value"), source_bytes, bindings
+    )
 
 
 def _assignment_rhs_for_property_capture(prop_node):
     member_node = prop_node.parent
     current = member_node.parent if member_node is not None else None
     while current is not None:
-        if current.type == "assignment_expression":
+        if current.type in {"assignment_expression", "augmented_assignment_expression"}:
             return current.child_by_field_name("right")
         if current.type in {
             "expression_statement",
@@ -1758,7 +1923,9 @@ def _document_write_requires_finding(
     prop_node, source_bytes: bytes, bindings: _JsBindings
 ) -> bool:
     member_node = prop_node.parent
-    call_node = member_node.parent if member_node is not None else None
+    call_node = None
+    if member_node is not None:
+        call_node = member_node.parent
     if call_node is None or call_node.type != "call_expression":
         return True
 
@@ -2542,6 +2709,35 @@ def _static_prefix_until_dynamic(
     return "", _has_dynamic_url_part(node)
 
 
+def _redirect_target_is_same_origin(node, source_bytes: bytes) -> bool:
+    """A literal relative path (``/users/`` + id) or fixed ``scheme://host/``
+    prefix, or ``new URL('/path', request.url)``, cannot leave the site."""
+    node = _unwrap_ts_expression(node)
+    if node is None:
+        return False
+    if node.type == "new_expression":
+        constructor = node.child_by_field_name("constructor")
+        arguments = _html_call_arguments(node)
+        if (
+            constructor is None
+            or _get_text(source_bytes, constructor) != "URL"
+            or len(arguments) != 2
+            or arguments[0].type != "string"
+        ):
+            return False
+        if not safe_redirect_prefix(_string_literal_value(arguments[0], source_bytes)):
+            return False
+        base = _unwrap_ts_expression(arguments[1])
+        if base is None:
+            return False
+        if base.type == "string":
+            return safe_redirect_prefix(_string_literal_value(base, source_bytes))
+        base_path = _get_text(source_bytes, base).replace(" ", "")
+        return bool(re.fullmatch(r"(?:req|request)\.(?:url|nextUrl)", base_path))
+    prefix, _ = _static_prefix_until_dynamic(node, source_bytes)
+    return bool(prefix) and safe_redirect_prefix(prefix)
+
+
 def _prefix_has_fixed_http_host(prefix: str) -> bool:
     match = re.match(r"^https?://([^/?#]+)([/?#].*)", prefix, re.IGNORECASE)
     return bool(match and match.group(1))
@@ -2975,13 +3171,25 @@ def scan_danger(
     environment_bindings = None
     for cap_name, (rule_id, severity, message) in _SIMPLE_MAP.items():
         for node in simple_captures.get(cap_name, []):
-            if cap_name in {"innerHTML", "outerHTML", "doc_write"} and html_bindings is None:
+            if cap_name in _HTML_SINK_CAPTURES and html_bindings is None:
                 html_bindings = _JsBindings(root_node, source_bytes)
-            if cap_name in {"innerHTML", "outerHTML"} and not (
+            if cap_name in {"innerHTML", "outerHTML", "innerHTML_aug"} and not (
                 _html_property_capture_requires_finding(node, source_bytes, html_bindings)
             ):
                 continue
-            if cap_name == "doc_write" and not _document_write_requires_finding(
+            if cap_name in {"doc_write", "doc_writeln"} and not (
+                _document_write_requires_finding(node, source_bytes, html_bindings)
+            ):
+                continue
+            if cap_name == "html_method" and not _html_method_requires_finding(
+                node, source_bytes, html_bindings
+            ):
+                continue
+            if cap_name == "jquery_html" and not _jquery_html_requires_finding(
+                node, source_bytes, html_bindings
+            ):
+                continue
+            if cap_name == "dangerously" and not _dangerous_html_requires_finding(
                 node, source_bytes, html_bindings
             ):
                 continue
@@ -3186,7 +3394,11 @@ def scan_danger(
     # --- Open redirect (SKY-D230) ---
     for node in complex_captures.get("redirect_args", []):
         first_arg = _first_real_arg(node)
-        if first_arg and first_arg.type not in (
+        if first_arg is None:
+            continue
+        if _redirect_target_is_same_origin(first_arg, source_bytes):
+            continue
+        if first_arg.type not in (
             "string",
             "template_string",
             "number",
@@ -3423,7 +3635,7 @@ def scan_danger(
         check_nextjs_missing_auth(security_flow, findings)
     # S102 is owned by the secrets scanner. Keep the direct helper below for
     # focused callers, but do not duplicate the same finding in `danger`.
-    _check_typescript_env_exfil(source_bytes, file_path, findings)
+    _check_typescript_env_exfil(root_node, source_bytes, file_path, findings)
     d281_analyzer = _check_nextjs_server_action_sqli(
         source_bytes,
         file_path,
@@ -3435,15 +3647,21 @@ def scan_danger(
     _check_archive_extraction_path_traversal(
         root_node, source_bytes, file_path, findings
     )
-    merge_express_taint_findings(
-        findings,
-        scan_express_taint_sinks(
-            root_node,
-            source_bytes,
-            str(file_path),
-            is_test_file=is_test_file,
-        ),
+    request_taint = scan_request_taint(
+        root_node,
+        source_bytes,
+        str(file_path),
+        is_test_file=is_test_file,
     )
+    merge_express_taint_findings(findings, request_taint.findings)
+    if request_taint.safe_sink_lines:
+        findings = [
+            finding
+            for finding in findings
+            if "security_evidence" in finding
+            or finding.get("line")
+            not in request_taint.safe_sink_lines.get(finding.get("rule_id"), ())
+        ]
 
     # D281 is the framework-specific taint proof for this exact SQL sink. Keep
     # one actionable result without hiding a different generic sink that happens
@@ -3921,23 +4139,131 @@ def _check_nextjs_client_secrets(
         )
 
 
-def _check_typescript_env_exfil(
-    source_bytes: bytes, file_path: str, findings: list[dict]
-) -> None:
-    source_text = source_bytes.decode("utf-8", errors="replace")
-    for match in re.finditer(
-        r"\b(?:fetch|axios\.(?:post|put|patch))\s*\("
-        r"(?P<body>[^;]{0,600}process\.env\.[A-Za-z_][A-Za-z0-9_]*"
-        r"[^;]{0,600})\)",
-        source_text,
-        re.S,
-    ):
-        body = match.group("body")
-        env_match = re.search(r"process\.env\.([A-Za-z_][A-Za-z0-9_]*)", body)
-        if env_match and env_match.group(1).startswith("NEXT_PUBLIC_"):
+_EXFIL_METHODS = frozenset({"POST", "PUT", "PATCH"})
+
+
+def _object_pair_value(node, source_bytes: bytes, key: str):
+    node = _unwrap_ts_expression(node)
+    if node is None or node.type != "object":
+        return None
+    for child in node.named_children:
+        if child.type == "pair":
+            name = child.child_by_field_name("key")
+            if name is not None and _get_text(source_bytes, name).strip("'\"") == key:
+                return child.child_by_field_name("value")
+        elif child.type == "shorthand_property_identifier":
+            if _get_text(source_bytes, child) == key:
+                return child
+    return None
+
+
+def _env_payload_names(node, source_bytes: bytes) -> list[str] | None:
+    """Environment names read inside an HTTP payload: [] for the whole
+    ``process.env`` object, None when the payload reads no environment."""
+    names: list[str] = []
+    found = False
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current is None:
             continue
-        url_match = re.search(r"['\"](?P<url>https?://[^'\"]+)['\"]", body)
-        if url_match and not is_external_url(url_match.group("url")):
+        if current.type in {"member_expression", "subscript_expression"}:
+            obj = current.child_by_field_name("object")
+            if obj is not None and _get_text(source_bytes, obj).replace(" ", "") == (
+                "process.env"
+            ):
+                found = True
+                if current.type == "member_expression":
+                    prop = current.child_by_field_name("property")
+                    if prop is not None:
+                        names.append(_get_text(source_bytes, prop))
+                        continue
+                names.append("*")
+                continue
+            if _get_text(source_bytes, current).replace(" ", "") == "process.env":
+                found = True
+                names.append("*")
+                continue
+        stack.extend(current.named_children)
+    if not found:
+        return None
+    return names
+
+
+def _exfil_request_parts(call_node, source_bytes: bytes):
+    """(url node, payload node) for a POST/PUT/PATCH sent with fetch or axios."""
+    function = _unwrap_ts_expression(call_node.child_by_field_name("function"))
+    arguments = _html_call_arguments(call_node)
+    if function is None or not arguments:
+        return None
+    if function.type == "identifier" and _get_text(source_bytes, function) == "fetch":
+        if len(arguments) < 2:
+            return None
+        method = _static_string_value(
+            _object_pair_value(arguments[1], source_bytes, "method"), source_bytes
+        )
+        if method is None or method.upper() not in _EXFIL_METHODS:
+            return None
+        return arguments[0], _object_pair_value(arguments[1], source_bytes, "body")
+    if function.type != "member_expression":
+        if function.type == "identifier" and _get_text(source_bytes, function) == "axios":
+            config = arguments[0]
+            method = _static_string_value(
+                _object_pair_value(config, source_bytes, "method"), source_bytes
+            )
+            if method is None or method.upper() not in _EXFIL_METHODS:
+                return None
+            return (
+                _object_pair_value(config, source_bytes, "url"),
+                _object_pair_value(config, source_bytes, "data"),
+            )
+        return None
+    owner = function.child_by_field_name("object")
+    prop = function.child_by_field_name("property")
+    if owner is None or prop is None or _get_text(source_bytes, owner) != "axios":
+        return None
+    method = _get_text(source_bytes, prop)
+    if method.upper() in _EXFIL_METHODS and len(arguments) >= 2:
+        return arguments[0], arguments[1]
+    if method == "request":
+        verb = _static_string_value(
+            _object_pair_value(arguments[0], source_bytes, "method"), source_bytes
+        )
+        if verb is None or verb.upper() not in _EXFIL_METHODS:
+            return None
+        return (
+            _object_pair_value(arguments[0], source_bytes, "url"),
+            _object_pair_value(arguments[0], source_bytes, "data"),
+        )
+    return None
+
+
+def _check_typescript_env_exfil(
+    root_node, source_bytes: bytes, file_path: str, findings: list[dict]
+) -> None:
+    """A POST/PUT/PATCH whose body carries ``process.env`` data to a host that
+    is not local. Headers are not payload: an API key in ``Authorization`` is
+    sent to the API it belongs to, so it is not reported (same as Python)."""
+    if b"process.env" not in source_bytes:
+        return
+    for call_node in _iter_nodes(root_node):
+        if call_node.type != "call_expression":
+            continue
+        parts = _exfil_request_parts(call_node, source_bytes)
+        if parts is None:
+            continue
+        url_node, payload = parts
+        if payload is None:
+            continue
+        names = _env_payload_names(payload, source_bytes)
+        if names is None:
+            continue
+        if names and all(name.startswith("NEXT_PUBLIC_") for name in names):
+            continue
+        url = None
+        if url_node:
+            url = _static_string_value(url_node, source_bytes)
+        if url is not None and not is_external_url(url):
             continue
         findings.append(
             {
@@ -3947,7 +4273,7 @@ def _check_typescript_env_exfil(
                     "HTTP request sends process.env data to an external destination."
                 ),
                 "file": str(file_path),
-                "line": source_text[: match.start()].count("\n") + 1,
+                "line": call_node.start_point[0] + 1,
                 "col": 0,
             }
         )

@@ -433,6 +433,16 @@ _NOQA_DEAD_CODE_CODES_BY_TYPE = {
     "variable": {"F841"},
     "constant": {"F841"},
 }
+DEAD_CODE_RULE_BY_TYPE = {
+    "function": "SKY-U001",
+    "method": "SKY-U001",
+    "import": "SKY-U002",
+    "variable": "SKY-U003",
+    "constant": "SKY-U003",
+    "class": "SKY-U004",
+    "type": "SKY-U004",
+    "parameter": "SKY-U006",
+}
 
 
 def _suppress(def_obj, reason=None, code=None, folder_role=None):
@@ -519,6 +529,12 @@ def _check_inline_ignore(def_obj, visitor):
     ignore_lines = _coerce_line_set(getattr(visitor, "ignore_lines", None), -1)
     if suppression_lines & ignore_lines:
         return _suppress(def_obj, "inline ignore comment")
+    rule_id = DEAD_CODE_RULE_BY_TYPE.get(def_obj.type)
+    ignore_rules_by_line = getattr(visitor, "ignore_rules_by_line", None)
+    if rule_id and isinstance(ignore_rules_by_line, dict):
+        for line in suppression_lines:
+            if rule_id in ignore_rules_by_line.get(line, ()):
+                return _suppress(def_obj, "inline ignore comment", code=rule_id)
     noqa_codes_by_line = getattr(visitor, "noqa_codes_by_line", None) or {}
     if not isinstance(noqa_codes_by_line, dict):
         noqa_codes_by_line = {}
@@ -1640,7 +1656,11 @@ def _check_data_model_fields(def_obj, analyzer, framework):
             return _suppress(def_obj, "function reads its locals dynamically")
         return None
 
-    if def_obj.type == "variable" and "." in def_obj.name:
+    if (
+        def_obj.type == "variable"
+        and "." in def_obj.name
+        and def_obj.name not in getattr(analyzer, "_module_variable_names", ())
+    ):
         _, attr = def_obj.name.rsplit(".", 1)
         dotted_variable_counts = getattr(
             analyzer, "_dotted_variable_simple_name_counts", None

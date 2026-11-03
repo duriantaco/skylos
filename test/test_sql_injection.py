@@ -3,6 +3,7 @@ from skylos.rules.danger.danger import scan_ctx
 
 
 SQLALCHEMY_TEXT_RULE_IDS = {"SKY-D211", "SKY-D217"}
+SQLALCHEMY_TEXT_REPORTED = {"SKY-D211"}
 
 
 def _write(tmp_path: Path, name, code):
@@ -27,7 +28,7 @@ def test_sqlalchemy_text_tainted_flags(tmp_path):
         "    sa.text('DELETE FROM logs WHERE ip=' + ip)\n"
     )
     out = _scan_one(tmp_path, "raw_sa.py", code)
-    assert SQLALCHEMY_TEXT_RULE_IDS <= _rule_ids(out)
+    assert SQLALCHEMY_TEXT_RULE_IDS & _rule_ids(out) == SQLALCHEMY_TEXT_REPORTED
 
 
 def test_sqlalchemy_text_import_aliases_remain_sql_sinks(tmp_path):
@@ -46,7 +47,7 @@ def test_sqlalchemy_text_import_aliases_remain_sql_sinks(tmp_path):
     for symbol, code in cases.items():
         out = _scan_one(tmp_path, f"raw_sa_{symbol}.py", code)
         ids = {finding["rule_id"] for finding in out}
-        assert SQLALCHEMY_TEXT_RULE_IDS <= ids
+        assert SQLALCHEMY_TEXT_RULE_IDS & ids == SQLALCHEMY_TEXT_REPORTED
 
 
 def test_sqlalchemy_text_requires_unshadowed_absolute_import(tmp_path):
@@ -103,7 +104,7 @@ def test_sqlalchemy_text_module_import_is_visible_before_ast_visit(tmp_path):
         "import sqlalchemy as sa\n"
     )
     out = _scan_one(tmp_path, "late_module_sa_import.py", code)
-    assert SQLALCHEMY_TEXT_RULE_IDS <= _rule_ids(out)
+    assert SQLALCHEMY_TEXT_RULE_IDS & _rule_ids(out) == SQLALCHEMY_TEXT_REPORTED
 
 
 def test_sqlalchemy_text_local_absolute_import_before_call_flags(tmp_path):
@@ -113,7 +114,7 @@ def test_sqlalchemy_text_local_absolute_import_before_call_flags(tmp_path):
         "    text('DELETE FROM logs WHERE ip=' + ip)\n"
     )
     out = _scan_one(tmp_path, "local_sa_import.py", code)
-    assert SQLALCHEMY_TEXT_RULE_IDS <= _rule_ids(out)
+    assert SQLALCHEMY_TEXT_RULE_IDS & _rule_ids(out) == SQLALCHEMY_TEXT_REPORTED
 
 
 def test_comprehension_target_does_not_shadow_enclosing_sqlalchemy_alias(tmp_path):
@@ -124,7 +125,7 @@ def test_comprehension_target_does_not_shadow_enclosing_sqlalchemy_alias(tmp_pat
         "    sa.text('SELECT ' + ip)\n"
     )
     out = _scan_one(tmp_path, "sa_after_comprehension.py", code)
-    assert SQLALCHEMY_TEXT_RULE_IDS <= _rule_ids(out)
+    assert SQLALCHEMY_TEXT_RULE_IDS & _rule_ids(out) == SQLALCHEMY_TEXT_REPORTED
 
 
 def test_comprehension_target_shadows_sqlalchemy_alias_inside_scope(tmp_path):
@@ -154,7 +155,7 @@ def test_final_unconditional_module_import_provides_sqlalchemy_provenance(tmp_pa
     }
     for name, code in vulnerable_cases.items():
         out = _scan_one(tmp_path, f"sa_final_import_{name}.py", code)
-        assert SQLALCHEMY_TEXT_RULE_IDS <= _rule_ids(out)
+        assert SQLALCHEMY_TEXT_RULE_IDS & _rule_ids(out) == SQLALCHEMY_TEXT_REPORTED
 
 
 def test_final_unrelated_module_binding_removes_sqlalchemy_provenance(tmp_path):
@@ -185,7 +186,7 @@ def test_lambda_with_unshadowed_sqlalchemy_alias_flags(tmp_path):
         "    return lambda plot: sa.text('SELECT ' + ip)\n"
     )
     out = _scan_one(tmp_path, "sa_used_in_lambda.py", code)
-    assert SQLALCHEMY_TEXT_RULE_IDS <= _rule_ids(out)
+    assert SQLALCHEMY_TEXT_RULE_IDS & _rule_ids(out) == SQLALCHEMY_TEXT_REPORTED
 
 
 def test_non_sqlalchemy_text_receiver_is_not_a_sql_sink(tmp_path):
@@ -220,7 +221,7 @@ def test_pandas_read_sql_tainted_flags(tmp_path):
         "    pd.read_sql(f\"SELECT * FROM users WHERE name='{name}'\", conn)\n"
     )
     out = _scan_one(tmp_path, "raw_pd.py", code)
-    assert "SKY-D217" in _rule_ids(out)
+    assert SQLALCHEMY_TEXT_RULE_IDS & _rule_ids(out) == {"SKY-D211"}
 
 
 def test_django_objects_raw_tainted_flags(tmp_path):
@@ -240,7 +241,7 @@ def test_django_objects_raw_tainted_flags(tmp_path):
 def test_raw_constant_ok(tmp_path):
     code = "import pandas as pd\ndef f(conn):\n    pd.read_sql('SELECT 1 AS x', conn)\n"
     out = _scan_one(tmp_path, "raw_ok.py", code)
-    assert "SKY-D217" not in _rule_ids(out)
+    assert not (SQLALCHEMY_TEXT_RULE_IDS & _rule_ids(out))
 
 
 # SQLAlchemy Core / ORM statement builders bind every value as a parameter.
@@ -849,3 +850,114 @@ def test_a_repeated_placeholder_needs_a_proven_count(tmp_path):
         "    cursor.execute(f'SELECT * FROM t WHERE id IN ({listed})')\n"
     )
     assert _d211_lines(tmp_path, "repeat.py", code) == [7, 9]
+
+
+def test_async_driver_query_methods_flag_string_built_sql(tmp_path):
+    code = (
+        "import asyncpg, peewee\n"
+        "from databases import Database\n"
+        "database = Database('postgresql://localhost/app')\n"
+        "db = peewee.SqliteDatabase('app.db')\n"
+        "async def f(conn, pool, name):\n"
+        "    await conn.fetch(f\"SELECT * FROM t WHERE n = '{name}'\")\n"
+        "    await conn.fetchrow('SELECT * FROM t WHERE n = $1', name)\n"
+        "    await pool.fetchval('SELECT count(*) FROM ' + name)\n"
+        "    await database.fetch_all(query=f\"SELECT * FROM t WHERE n = '{name}'\")\n"
+        "    await database.fetch_one(query='SELECT * FROM t WHERE n = :n', values={'n': name})\n"
+        "    db.execute_sql(\"SELECT * FROM t WHERE n = '\" + name + \"'\")\n"
+        "    db.execute_sql('SELECT * FROM t WHERE n = ?', (name,))\n"
+    )
+    assert _d211_lines(tmp_path, "async_drivers.py", code) == [6, 8, 9, 11]
+
+
+def test_fetch_named_http_calls_are_not_sql(tmp_path):
+    code = (
+        "from tornado.httpclient import AsyncHTTPClient\n"
+        "async def f(page, http_session):\n"
+        "    await AsyncHTTPClient().fetch(f'https://example.com/{page}')\n"
+        "    await http_session.fetch(f'https://example.com/{page}')\n"
+    )
+    assert _d211_lines(tmp_path, "fetch_http.py", code) == []
+
+
+def test_orm_raw_fragments_flag_d217(tmp_path):
+    code = (
+        "import peewee\n"
+        "from django.db.models.expressions import RawSQL\n"
+        "class User(peewee.Model):\n"
+        "    pass\n"
+        "def f(request, name):\n"
+        "    User.raw(f\"SELECT * FROM user WHERE name = '{name}'\")\n"
+        "    User.raw('SELECT * FROM user WHERE name = %s', name)\n"
+        "    Entry.objects.filter(a=1).extra(where=[f\"headline = '{name}'\"])\n"
+        "    Entry.objects.extra(where=['headline = %s'], params=[name])\n"
+        "    Entry.objects.extra(select={'recent': f\"pub_date > '{name}'\"})\n"
+        "    RawSQL('SELECT c FROM t WHERE id = ' + request.GET['id'], ())\n"
+        "    RawSQL('SELECT c FROM t WHERE id = %s', (request.GET['id'],))\n"
+    )
+    out = _scan_one(tmp_path, "orm_raw.py", code)
+    assert sorted(f["line"] for f in out if f["rule_id"] == "SKY-D217") == [
+        6,
+        8,
+        10,
+        11,
+    ]
+
+
+def test_extra_and_raw_lookalikes_are_not_d217(tmp_path):
+    code = (
+        "def f(obj, reader, value):\n"
+        "    obj.extra(f'field-{value}')\n"
+        "    reader.raw(f'chunk-{value}')\n"
+    )
+    out = _scan_one(tmp_path, "raw_lookalikes.py", code)
+    assert "SKY-D217" not in _rule_ids(out)
+
+
+def test_quoted_identifiers_outside_literals_are_not_sql_injection(tmp_path):
+    code = (
+        "import asyncpg\n"
+        "from psycopg2 import sql\n"
+        "from psycopg2.extensions import quote_ident\n"
+        "def _quote_ident(ident):\n"
+        "    return '\"{}\"'.format(ident.replace('\"', '\"\"'))\n"
+        "def _fake_quote(ident):\n"
+        "    return ident.strip()\n"
+        "async def f(conn, cur, schema, table, value):\n"
+        "    await conn.fetch(f'SELECT * FROM {_quote_ident(table)} WHERE id = $1', 1)\n"
+        "    name = '{}.{}'.format(_quote_ident(schema), _quote_ident(table))\n"
+        "    await conn.fetch(f'SELECT * FROM {name} WHERE id = $1', 1)\n"
+        "    cur.execute('SELECT * FROM ' + quote_ident(table, conn) + ' WHERE id = %s', (1,))\n"
+        "    cur.execute(sql.SQL('SELECT * FROM {} WHERE id = %s').format(sql.Identifier(table)), (1,))\n"
+        "    _quote_ident(table)\n"
+        "    await conn.fetch(f'SELECT * FROM {table} WHERE id = $1', 1)\n"
+        "    await conn.fetch(f\"SELECT * FROM t WHERE a = $1 AND b = '{value}'\", 1)\n"
+        "    await conn.fetch(f\"SELECT * FROM t WHERE name = '{_quote_ident(table)}'\")\n"
+        "    await conn.fetch(f'SELECT * FROM {_fake_quote(table)}')\n"
+        "    cur.execute(sql.SQL('SELECT * FROM ' + table))\n"
+    )
+    assert _d211_lines(tmp_path, "quoted_identifiers.py", code) == [15, 16, 17, 18, 19]
+
+
+def test_numeric_values_do_not_taint_sql_text(tmp_path):
+    code = (
+        "import random\n"
+        "def f(cursor, limit, ids):\n"
+        "    cursor.execute(f'SELECT * FROM t LIMIT {round(limit)} OFFSET {len(ids)}')\n"
+        "    i = random.randint(0, 20)\n"
+        "    cursor.execute('SELECT {}::int'.format(i))\n"
+        "    cursor.execute('SELECT {}::int'.format(limit))\n"
+    )
+    assert _d211_lines(tmp_path, "numeric_sql.py", code) == [6]
+
+
+def test_query_methods_need_tainted_sql_text(tmp_path):
+    code = (
+        "import asyncpg\n"
+        "def expression():\n"
+        "    return 'tab.v'\n"
+        "async def f(conn, column):\n"
+        "    await conn.fetchval('SELECT ({})::text FROM tab'.format(expression()))\n"
+        "    await conn.fetchval('SELECT {} FROM tab'.format('lower({})'.format(column)))\n"
+    )
+    assert _d211_lines(tmp_path, "fetch_taint.py", code) == [6]

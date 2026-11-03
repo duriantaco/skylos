@@ -306,6 +306,40 @@ def test_class_attributes_sharing_a_name_keep_their_previous_policy(tmp_path):
     assert ("a.py", "flag") not in _unused(tmp_path, "unused_variables")
 
 
+def test_module_variables_sharing_a_name_are_reported_independently(tmp_path):
+    _write(
+        tmp_path,
+        "a.py",
+        """
+        default_timeout = 30
+
+
+        def make_schema():
+            class Payload:
+                queries = []
+
+            return Payload
+
+
+        print(make_schema())
+        """,
+    )
+    _write(
+        tmp_path,
+        "b.py",
+        """
+        default_timeout = 60
+        queries = None
+        """,
+    )
+
+    unused = _unused(tmp_path, "unused_variables")
+    assert ("a.py", "default_timeout") in unused
+    assert ("b.py", "default_timeout") in unused
+    assert ("b.py", "queries") in unused
+    assert ("a.py", "queries") not in unused
+
+
 def test_commented_out_call_does_not_keep_a_function(tmp_path):
     _write(
         tmp_path,
