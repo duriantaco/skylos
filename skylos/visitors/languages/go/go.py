@@ -32,6 +32,8 @@ _GO_RULE_REMAP = {
     "SKY-G210": "SKY-D210",  # TLS verification disabled
     "SKY-G221": "SKY-D252",  # Insecure cookie flags
     "SKY-G220": "SKY-D230",  # Open redirect
+    "SKY-G226": "SKY-D226",  # XSS: untrusted value marked safe for html/template
+    "SKY-G228": "SKY-D228",  # XSS: request input written to an HTML response
 }
 
 _go_module_cache = {}
