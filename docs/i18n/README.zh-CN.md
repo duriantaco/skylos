@@ -162,6 +162,10 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 
 ⁴ Rust 死代码是实验性功能：trait 方法调用、跨 crate 使用的 `pub` 项、重新导出和宏都不会被解析。Rust 候选项的置信度最高为 40，低于默认阈值 60，因此只有加上 `--confidence 40` 才会列出。
 
+上表所有语言的内联抑制用法相同：在问题所在行的注释里写 `skylos: ignore[SKY-D211] 原因`（只抑制列出的规则）、`skylos: ignore`（抑制所有规则），或用 `skylos: ignore-start` … `skylos: ignore-end` 包住一段代码（Python、Shell 和 PHP 用 `#`，其他语言用 `//` 或单行 `/* */`）。它适用于死代码、安全、质量和密钥检查；字符串字面量里的文字不算数，其他工具的标记（`#nosec`、`//nolint`、`NOSONAR`、`@SuppressWarnings`）不会隐藏 Skylos 的问题。
+
+`--secrets` 还会读取 shell 脚本（包括以 shell `#!` 行开头、没有扩展名的脚本）、C 和 C++ 源文件与头文件、Dockerfile、Terraform `.tf`/`.tfvars`/`.hcl`、`.properties`、XML、Gradle、`.npmrc` 和 `.pypirc`。
+
 C# 死代码检查采用保守策略：完整扫描可执行或 Web 应用时，未被引用的 public
 类型和方法会作为低置信度候选项；库的公开 API、protected 成员及已知的框架或
 配置入口仍视为可被外部使用。暂不分析 C# 源文件的可达性；质量检查可识别直接代码块中无条件 `return`、`throw`、

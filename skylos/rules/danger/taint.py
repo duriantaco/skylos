@@ -44,6 +44,8 @@ PATH_SANITIZERS = {
     "safe_join",
     "werkzeug.utils.safe_join",
     "werkzeug.security.safe_join",
+    "werkzeug.utils.secure_filename",
+    "werkzeug.secure_filename",
     "flask.helpers.safe_join",
     "_resolve_analysis_target",
     "_resolve_policy_path",

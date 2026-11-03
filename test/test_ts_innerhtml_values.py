@@ -3,7 +3,7 @@ file and inert, or comes through a sanitizer proven by its import."""
 
 import pytest
 
-from test.test_typescript_expanded import _scan_ts
+from test.test_typescript_expanded import _scan_ts, _scan_ts_file
 
 QUERY = "new URLSearchParams(location.search).get('html')"
 
@@ -94,3 +94,48 @@ def test_inert_or_proven_sanitized_values_are_quiet(tmp_path, code):
 )
 def test_unknown_or_unproven_values_are_reported(tmp_path, code):
     assert _xss_count(tmp_path, code) == 1
+
+
+def _xss_lines(tmp_path, filename, code):
+    _, _, _, danger = _scan_ts_file(tmp_path, filename, code)
+    return sorted(f["line"] for f in danger if f["rule_id"] == "SKY-D226")
+
+
+REACT = """import DOMPurify from 'dompurify';
+import LocalPurify from './dompurify';
+export function A({ html }) { return <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(html) }} />; }
+export function B({ html }) { const clean = DOMPurify.sanitize(html); return <div dangerouslySetInnerHTML={{ __html: clean }} />; }
+export function C() { return <span dangerouslySetInnerHTML={{ __html: '&copy; 2026 Acme' }} />; }
+export function D({ html }) { return <div dangerouslySetInnerHTML={{ __html: html }} />; }
+export function E({ html }) { return <div dangerouslySetInnerHTML={{ __html: LocalPurify.sanitize(html) }} />; }
+export function F({ html }) { const clean = DOMPurify.sanitize(html); console.log(clean); return <div dangerouslySetInnerHTML={{ __html: html }} />; }
+export function G(props) { return <div dangerouslySetInnerHTML={props.markup} />; }
+"""
+
+
+def test_dangerously_set_inner_html_honours_only_proven_sanitizers(tmp_path):
+    assert _xss_lines(tmp_path, "c.tsx", REACT) == [6, 7, 8, 9]
+
+
+DOM = f"""import DOMPurify from 'dompurify';
+import $ from 'jquery';
+const msg = {QUERY};
+el.insertAdjacentHTML('beforeend', msg);
+el.insertAdjacentHTML('beforeend', DOMPurify.sanitize(msg));
+el.insertAdjacentHTML('afterbegin', '<li class="sep"></li>');
+document.writeln(msg);
+log.innerHTML += `<li>${{msg}}</li>`;
+log.innerHTML += '<li>ready</li>';
+$('#title').html(msg);
+$('#title').html('<b>Welcome</b>');
+const current = $('#title').html();
+$('#title').text(msg);
+$('#list').append(`<li>${{msg}}</li>`);
+$('#list').append($('<li>').text(msg));
+el.append(msg);
+range.createContextualFragment(msg);
+"""
+
+
+def test_more_html_sinks_report_unproven_values_only(tmp_path):
+    assert _xss_lines(tmp_path, "dom.js", DOM) == [4, 7, 8, 10, 14, 17]

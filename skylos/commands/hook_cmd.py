@@ -1039,10 +1039,21 @@ def _verify_parse_incomplete(result: dict[str, Any]) -> bool:
 
 
 def _secret_scannable(path: Path) -> bool:
-    from skylos.rules.secrets import ALLOWED_FILE_SUFFIXES
+    from skylos.rules.secrets import (
+        ALLOWED_FILE_SUFFIXES,
+        file_starts_like_shell_script,
+        is_secret_scan_name,
+        may_be_shell_script,
+    )
 
     name = path.name.lower()
-    return name.endswith(ALLOWED_FILE_SUFFIXES) or name.startswith(".env")
+    if (
+        name.endswith(ALLOWED_FILE_SUFFIXES)
+        or name.startswith(".env")
+        or is_secret_scan_name(path.name)
+    ):
+        return True
+    return may_be_shell_script(path.name) and file_starts_like_shell_script(path)
 
 
 def _scan_relpath(path: Path, root: Path) -> str:

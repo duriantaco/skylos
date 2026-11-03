@@ -67,7 +67,7 @@ Rule IDs use a stable public prefix:
 | Diff-aware scan | `--diff <base>` limits reporting to changed work so old debt does not drown out the current PR. |
 | Baseline | A saved set of accepted existing findings so only new or changed findings fail a gate. |
 | Failure origin | `skylos done` reruns each failing test on the base commit, in a temporary Git worktree, and labels it `preexisting` (the same test ran there and failed the same way), `introduced` (it passes there), `new_test` (it does not exist there; counts as introduced) or `undetermined` (the base run could not tell: a setup or import error, a different kind of failure, a timeout, changed dependencies). Shown on the receipt as `failure_origins` and in the Stop-hook message. |
-| Suppression | An inline or config-level exception for an intentional finding, usually using `skylos: ignore[SKY-...]`. Skylos-specific markers (`# skylos: ignore[SKY-D211] reason`, `# skylos: ignore`, `# noqa: skylos`, `# pragma: no skylos`, `ignore-start`/`ignore-end`) suppress any finding on their line. A bare `# noqa` (no codes) is a generic linter marker: it still hides dead-code, quality and LOW/MEDIUM findings, but not a HIGH or CRITICAL security finding (`SKY-D*`, `SKY-S*`), which stays reported with `bare_noqa_ignored: true` and an advice line. `# noqa: <code>` with Ruff/flake8 codes never suppresses a Skylos security, secret or quality finding; F401/F841 only mark the matching unused import/variable. |
+| Suppression | An inline or config-level exception for an intentional finding, usually using `skylos: ignore[SKY-...]`. Skylos-specific markers (`# skylos: ignore[SKY-D211] reason`, `# skylos: ignore`, `# noqa: skylos`, `# pragma: no skylos`, `ignore-start`/`ignore-end`) suppress findings on their line: the bracketed form only the listed rules (dead code by its ID: `SKY-U001` functions and methods, `SKY-U002` imports, `SKY-U003` variables, `SKY-U004` classes, `SKY-U006` parameters), the bare form every rule. `skylos: ignore`, `skylos: ignore[...]` and `ignore-start`/`ignore-end` work in every analysed language for dead code, security, quality and secrets. In Go, Java, Kotlin, C#, PHP, Dart, Rust, C/C++, Shell and TS/JS they are read only from real comments (`#` in Shell and PHP; `//` or a one-line `/* */` in the others; the directive must open the comment): text inside a string literal never counts, and a file whose strings or comments cannot be followed to the end honours no directive. Python matches `# skylos: ignore` on the line. Other tools' markers (`#nosec`, `//nolint`, `NOSONAR`, `@SuppressWarnings`, `#pragma warning disable`) do not hide Skylos findings. `ignore = ["SKY-U001"]` in `[tool.skylos]` turns off exactly that rule project-wide (unused functions; `SKY-UC001` is unreachable code). A bare `# noqa` (no codes) is a generic linter marker: it still hides dead-code, quality and LOW/MEDIUM findings, but not a HIGH or CRITICAL security finding (`SKY-D*`, `SKY-S*`), which stays reported with `bare_noqa_ignored: true` and an advice line. `# noqa: <code>` with Ruff/flake8 codes never suppresses a Skylos security, secret or quality finding; F401/F841 only mark the matching unused import/variable. |
 | Smart tracing | `--trace`; runtime-assisted dead-code verification used to reduce false positives in dynamic Python code. |
 | Technical debt | `skylos debt .`; ranks maintainability hotspots and debt trends. |
 | TUI | `--tui`; screen-only selectable terminal interface with category list, finding list, and detail pane. |
@@ -123,34 +123,36 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D200 | varies | Dangerous function call family | Python | wrapper for D201-D210, D233, D235, D250 |
 | D201 | HIGH-CRITICAL | Dynamic code execution: `eval` | Python, TS/JS, Java, audit | CWE-95 / A03 |
 | D202 | HIGH-CRITICAL | Dynamic code execution: `exec`, `new Function`, string timers | Python, TS/JS | CWE-95 / A03 |
-| D203 | CRITICAL | OS command execution: `os.system` / process sinks; Java `Runtime.getRuntime().exec(...)` (HIGH; LOW and hidden by default for a fixed command string or array) | Python, Java | CWE-78 / A03 |
-| D204 | CRITICAL | Unsafe deserialization: `pickle.load` and language equivalents | Python, Java, PHP, audit | A08 |
-| D205 | CRITICAL | Unsafe deserialization: `pickle.loads` | Python | A08 |
-| D206 | HIGH | `yaml.load` or `yaml.load_all` without SafeLoader | Python | A08 |
+| D203 | CRITICAL | OS command execution: `os.system`, `os.popen` / process sinks; Java `Runtime.getRuntime().exec(...)` (HIGH; LOW and hidden by default for a fixed command string or array) | Python, Java | CWE-78 / A03 |
+| D204 | CRITICAL | Unsafe deserialization: `pickle.load`, `pickle.Unpickler(...).load()` (also through a subclass that does not define `find_class`), `cloudpickle.load`, `pandas.read_pickle` and language equivalents | Python, Java, PHP, audit | CWE-502 / A08 |
+| D205 | CRITICAL | Unsafe deserialization: `pickle.loads`, `cloudpickle.loads` | Python | CWE-502 / A08 |
+| D206 | HIGH | Unsafe YAML load: `yaml.load`/`load_all` without a data-only loader (`SafeLoader`, `CSafeLoader`, `BaseLoader`, `CBaseLoader`), `yaml.unsafe_load(_all)`, `yaml.full_load(_all)`, ruamel `YAML(typ="unsafe")` | Python | CWE-502 / A08 |
 | D207 | MEDIUM | Weak hash: MD5 | Python, TS/JS, Go, Java | CWE-328 |
 | D208 | MEDIUM | Weak hash: SHA1 | Python, TS/JS, Go, Java | CWE-328 |
-| D209 | HIGH | `subprocess` with `shell=True` | Python | CWE-78 / A03 |
+| D209 | HIGH | Shell execution: `subprocess` with `shell=True`, `subprocess.getoutput`/`getstatusoutput`, `asyncio.create_subprocess_shell` | Python | CWE-78 / A03 |
 | D210 | HIGH | TLS verification disabled (`requests` `verify=False`, `ssl._create_unverified_context()`, TS/JS `rejectUnauthorized: false` and `NODE_TLS_REJECT_UNAUTHORIZED=0`, Go `InsecureSkipVerify: true`). Like D346, not reported in test code: Python test modules (`test_*`, `*_test.py`, `conftest.py`, under `tests/` or `test/`), TS/JS test files (`.test.`/`.spec.`, `test`/`tests`/`__tests__` directories), Go `_test.go` files and test-support files (import `testing` and take a `testing.TB`/`*testing.T`) | Python, TS/JS, Go | A02 |
 | D211 | CRITICAL | SQL injection | Python, TS/JS, Go, Java, PHP, audit | CWE-89 / A03 |
 | D212 | CRITICAL | Command injection. In TS/JS, `X.exec(...)` is a command sink only when the file loads a command-execution module: `child_process`, `node:child_process`, `shelljs`, or remote/container exec (`ssh2`, `node-ssh`, `dockerode`; there `conn`/`connection` are not treated as database handles unless a database driver is also loaded). Without one it is `RegExp.prototype.exec` or another library method; a proven RegExp receiver is never a command sink | Python, TS/JS, Go, Java, Rust, Dart, Shell, audit | CWE-78 / A03 |
 | D215 | HIGH | Path traversal and archive extraction traversal | Python, TS/JS, Go, Java, PHP, Rust, Dart, Shell | CWE-22 / A01 |
 | D216 | CRITICAL | Server-side request forgery | Python, TS/JS, Go, Java, Dart, Shell, audit | CWE-918 / A10 |
-| D217 | CRITICAL | Raw SQL / ORM SQL injection | Python | CWE-89 / A03 |
+| D213 | HIGH | Hugging Face `trust_remote_code=True`: loading the model or dataset imports and runs Python files from its repository. MEDIUM when `revision=` pins a commit SHA or the path is a local directory; a non-literal value is the caller's choice and is not reported | Python | CWE-94, CWE-829 / A08 |
+| D217 | CRITICAL | Raw SQL / ORM SQL injection: Django `.objects.raw()`, `QuerySet.extra()` (`select` values, `where`/`tables`/`order_by` entries) and `RawSQL()`, peewee `Model.raw()`. SQLAlchemy `text()` and pandas `read_sql` are reported once, as D211 | Python | CWE-89 / A03 |
 | D218 | MEDIUM | Dynamic urllib URL scheme audit (`SKY-D218`) | Python | Conditional audit |
 | D220 | CRITICAL | SQL injection in added code / diff validation | MCP code-change validator | CWE-89 / A03 |
 | D223 | MEDIUM | Undeclared third-party dependency | Python | supply-chain |
 | D226 | CRITICAL | XSS: unsafe DOM or HTML rendering | Python, TS/JS, Java, audit | CWE-79 / A03 |
 | D227 | HIGH | XSS: unsafe template rendering | Python | CWE-79 / A03 |
-| D228 | HIGH | XSS: unescaped HTML output | Python | CWE-79 / A03 |
+| D228 | HIGH | XSS: unescaped HTML output | Python, TS/JS | CWE-79 / A03 |
 | D229 | CRITICAL | XPath injection: request data in a `javax.xml.xpath.XPath` `compile`/`evaluate` expression or dom4j `DocumentHelper.createXPath` | Java | CWE-643 / A03 |
 | D230 | HIGH | Open redirect | Python, TS/JS, Go, Java, audit | CWE-601 / A01 |
 | D231 | HIGH | CORS misconfiguration: wildcard origin with credentials; wildcard origin (`CORSMiddleware`, flask-cors) in a module whose app has state-changing routes without an auth guard (reported on the origin setting; HIGH when one of those routes is a SKY-D283 privileged route, MEDIUM otherwise; open means the SKY-D283 test without the action word); a literal `Access-Control-Allow-Origin: *` key in a response dict (any module); a header (dict, subscript or `set`/`add`/`setdefault`, including an f-string) echoing the request's `Origin` without a membership, equality or `fullmatch` allowlist check that guards the header, an early reject or a reset to a fixed origin, or a same-module helper returning such a check. A substring test against a string, a prefix check, an ignored result, the wrong branch, a `fullmatch` pattern with a `.*`/`.+` run, or an allowlist containing `*` or `null` does not count. A wildcard middleware in a module that only serves reads, or whose routes something may authenticate, is not reported | Python | CWE-942 / A05 |
 | D232 | CRITICAL | JWT verification disabled or unsafe algorithm | Python | A02 |
-| D233 | MEDIUM-CRITICAL | Unsafe deserialization: marshal, shelve, jsonpickle, dill; Java `XMLDecoder`, XStream `fromXML` with `AnyTypePermission` (HIGH, CRITICAL with request data) or without explicit type permissions (MEDIUM, HIGH with request data: XStream has an allowlist by default from 1.4.18), SnakeYAML `load` without `SafeConstructor` (MEDIUM, HIGH with request data: safe by default from SnakeYAML 2.0), Jackson `enableDefaultTyping` or `activateDefaultTyping` with `LaissezFaireSubTypeValidator`, `@JsonTypeInfo(use = Id.CLASS/MINIMAL_CLASS)` (MEDIUM), Kryo `setRegistrationRequired(false)` | Python, Java | CWE-502 / A08 |
+| D233 | MEDIUM-CRITICAL | Unsafe deserialization: `marshal.load(s)`, `shelve.open`, `jsonpickle.decode`, `dill.load(s)`, `dill.Unpickler`; Java `XMLDecoder`, XStream `fromXML` with `AnyTypePermission` (HIGH, CRITICAL with request data) or without explicit type permissions (MEDIUM, HIGH with request data: XStream has an allowlist by default from 1.4.18), SnakeYAML `load` without `SafeConstructor` (MEDIUM, HIGH with request data: safe by default from SnakeYAML 2.0), Jackson `enableDefaultTyping` or `activateDefaultTyping` with `LaissezFaireSubTypeValidator`, `@JsonTypeInfo(use = Id.CLASS/MINIMAL_CLASS)` (MEDIUM), Kryo `setRegistrationRequired(false)` | Python, Java | CWE-502 / A08 |
 | D234 | HIGH | Mass assignment | Python | A01 |
 | D235 | HIGH | Remote command execution via `exec_command` | Python | CWE-78 |
 | D236 | HIGH-CRITICAL | XML external entity (XXE): an XML parser created and used without disabling DTDs or external entities | Java | CWE-611 / A05 |
 | D237 | CRITICAL | Expression, JNDI or script injection: request data evaluated as SpEL, OGNL, MVEL, EL or JEXL, looked up through JNDI, or run by a script engine or Groovy | Java | CWE-917 / CWE-94 / CWE-74 / A03 |
+| D238 | HIGH | NoSQL injection: request data as a MongoDB/Mongoose query object or `$where` | TS/JS | CWE-943 / A03 |
 | D239 | CRITICAL | LDAP injection: request data in the base DN or filter of a JNDI `DirContext`, Spring `LdapTemplate` or UnboundID `LDAPConnection` search | Java | CWE-90 / A03 |
 | D240 | CRITICAL | MCP tool description poisoning | Python | A03 |
 | D241 | HIGH | MCP unauthenticated transport | Python | A07 |
@@ -180,7 +182,7 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D281 | CRITICAL | Untrusted server action input reaching raw SQL text | TS/JS | CWE-89 |
 | D282 | HIGH | Webhook handler missing signature verification | Python, TS/JS | CWE-347 |
 | D283 | HIGH-CRITICAL | Unauthenticated route that controls a device or the host, deletes data, administers or runs commands (see the SKY-F102 notes) | Python (FastAPI, Flask, Quart, Starlette, Sanic) | CWE-306, CWE-862 / A01 |
-| D510 | HIGH | Prototype pollution via `__proto__` | TS/JS | CWE-1321 |
+| D510 | HIGH | Prototype pollution: request data chooses the key of a nested write or reaches an unguarded recursive merge | TS/JS | CWE-1321 |
 
 For D251, a bare `sessionId` name is not treated as credential evidence by
 itself. Explicit authentication-qualified names (such as `authSessionId`) and
@@ -200,10 +202,23 @@ or an exploitable file read. Explicit literal URLs and proven HTTP/HTTPS prefixe
 or dominating scheme guards do not produce this audit. D216 independently checks
 whether untrusted input can choose the request host.
 
-For Python D203, `os.system` with a fixed command string (no dynamic formatting
-or Python/shell variables) is LOW: there is no input to inject. It stays
-CRITICAL when the fixed command itself deletes broadly, exfiltrates data,
-pipes a remote script into a shell, or reads host credentials.
+For Python D203, `os.system` or `os.popen` with a fixed command string (no
+dynamic formatting or Python/shell variables) is LOW: there is no input to
+inject. It stays CRITICAL when the fixed command itself deletes broadly,
+exfiltrates data, pipes a remote script into a shell, or reads host
+credentials. D209 uses the same rule for its shell-string sinks.
+
+Python D212 reports untrusted data reaching a shell command string
+(`os.system`, `os.popen`, `subprocess.getoutput`/`getstatusoutput`,
+`asyncio.create_subprocess_shell`, `subprocess.*` with `shell=True`), the
+program of `os.exec*`, `os.spawn*`, `os.posix_spawn*` and `pty.spawn`, and
+the script after `-c` when the program is a shell (`["bash", "-c", script]`,
+`os.execl("/bin/sh", "sh", "-c", script)`). Import aliases are resolved
+(`import subprocess as sp`, `from os import system`); a local function with
+the same name is not a sink. A `shell=` value that is not a literal `False`,
+`None` or `0` may enable the shell, so a tainted command is reported there
+too. An untrusted argument to a fixed program (`["git", "fetch", ref]`) is not
+command injection and is not reported. `shlex.quote`/`shlex.join` clear taint.
 
 Python D205 suppresses only proven local `pickle.dumps` / `pickle.loads`
 round-trips over built-in data. Unknown objects can define reduction hooks;
@@ -211,10 +226,49 @@ attributes and cross-function state therefore remain review candidates. The
 warning describes pickle's execution capability without asserting that an
 unknown input is definitely attacker-controlled.
 
+Python D206 trusts a loader only when it is a data-only PyYAML loader. A name
+such as `SafeLoader` counts only if the module never rebinds it to something
+else (`SafeLoader = yaml.UnsafeLoader` is still reported); an assignment of
+`yaml.SafeLoader` or `getattr(yaml, "CSafeLoader", yaml.SafeLoader)` is safe.
+
+Python D204 treats a module class that subclasses `pickle.Unpickler` without
+defining `find_class` like `pickle.Unpickler`; a subclass that overrides
+`find_class` follows the documented way to restrict loadable globals and is
+not reported.
+
 Python D230 preserves tainted redirect targets across conditional assignments.
 An unrelated `urlparse` check or a leading slash alone does not prove safety.
 An enforced literal destination allowlist or an unconditional internal route
-assignment remains safe.
+assignment remains safe. Django's `url_has_allowed_host_and_scheme(url, ...)`
+(or `is_safe_url`), imported from `django.utils.http`, clears the checked name
+on the branch where it returned true; a redirect on the failing branch, after
+the result is ignored, of a different value, or through a local function with
+the same name is still reported. `redirect` and
+`HttpResponseRedirect`/`HttpResponsePermanentRedirect` with a positional target
+keep the rule above: any tainted target, including a plain function parameter.
+
+The other sinks need request data proven to reach the target: Starlette/FastAPI
+`RedirectResponse`, aiohttp/Pyramid `HTTPFound`, `HTTPSeeOther`,
+`HTTPMovedPermanently`, `HTTPTemporaryRedirect`, `HTTPPermanentRedirect`, the
+legacy sinks given only a keyword target (`to`/`redirect_to`/`location`/`url`),
+and a `Location` header set on `.headers[...]`, a response built in the same
+function, a `headers={"Location": ...}` argument of a `*Response` call, or
+`.headers.set/add(...)` (a response class setting its own `self.headers`
+defines a sink and is not reported). Request data is a read from the request,
+a route parameter or a Tornado argument. It flows through locals, f-strings,
+`%`, string methods, `str()`, `urljoin` and other `urllib.parse` helpers, and
+functions defined in the same file. A call into another module (a project
+helper such as `get_next_url(request)`) or any other library ends the flow.
+Request data appended after a value (`url += "&q=" + q`) does not choose the
+target, as with CodeQL's string-concatenation sanitizer; after a literal that
+does not fix the origin (`"https://" + host`) it does. The root path's query
+or fragment (`f"/?next={target}"`, `"/#" + target`) and the absolute URL of the
+request being served (Flask/Quart `request.url`/`base_url`/`url_root`/
+`host_url`, the same attributes of a parameter annotated as a
+Starlette/FastAPI `Request`, Starlette `URL(scope=...)`, also after
+`.replace(...)` with values that carry no request data) keep the origin. A
+bare path such as `request.url.path` is still request data (`//evil.example`
+is a path).
 
 Proven Tornado `RequestHandler` argument reads also count as redirect sources,
 including values assigned with `:=`. Local overrides and unrelated methods with
@@ -306,6 +360,41 @@ Python D211, D215, D217, D324 and D325 findings reached by such a source carry
 `metadata.security_evidence` (`source`, `sink`, `path`), which SARIF output
 renders as `codeFlows`.
 
+Python D211 also checks the query argument of asyncpg `fetch`/`fetchrow`/
+`fetchval`, `databases` `fetch_all`/`fetch_one`/`fetch_val` and peewee
+`execute_sql` on a database-like or pool receiver. These need data from a
+parameter or another untrusted source in the query text: SQL built only from
+the module's own values (identifiers it quotes, counts, rows of a constant
+table) is not reported there. Because HTTP and cache clients share these
+names, a string-built query must also read as SQL, and a plain tainted query
+counts only in a module that imports asyncpg, `databases` or peewee. A
+SQLAlchemy `text()` or pandas `read_sql` call is reported once, as D211 (no
+second D217 finding).
+
+On every D211 sink, a quoted identifier may fill the query text where no
+quoted literal is open: psycopg2 `quote_ident`, or a function in the same
+module whose whole body returns its argument wrapped in `"` with every `"`
+doubled. A psycopg `sql.SQL("...")` literal composed with `sql.Identifier`,
+`sql.Literal` or `sql.Placeholder` is also safe. Calling the quoting function
+without using its result, quoting a value placed inside `'...'`, or a lookalike
+helper that does not double `"` is still reported. Numeric values do not carry
+SQL: `int()`, `float()`, `len()`, `round()`, `abs()`, `bool()`,
+`random.randint/randrange/getrandbits` and `math.floor/ceil/trunc/isqrt`.
+
+Python D215 treats `werkzeug.utils.secure_filename(...)` (imported from
+werkzeug, not a local function of that name) as a sanitizer for its return
+value; calling it and then using the raw filename is still reported.
+
+Every Python security finding carries its rule's CWE ids in `cwe`
+(`[{"id": "CWE-89", "name": ...}]`), which SARIF output turns into rule
+relationships, `external/cwe/...` tags and CWE taxa.
+
+Python D216 reads the URL from the `url=` keyword, the first argument of a
+verb method (`get(url)`), or the second argument of `request(method, url)`
+(requests, httpx, aiohttp, urllib3 `PoolManager`), also on a client created in
+the same expression (`urllib3.PoolManager().request(...)`). An untrusted HTTP
+method with a fixed URL is not SSRF, and `http.client` connections, whose host
+is fixed by the constructor, are not checked through `request(method, path)`.
 Python D216 needs a real untrusted source (route, CLI or MCP-tool argument,
 request data, `input()`, stdin) that can choose the request host. Not SSRF:
 calls through in-process test clients (Django `Client`/`RequestFactory`, DRF
@@ -370,6 +459,120 @@ branch is), or one whose literal `scheme://host/` prefix fixes the host, is not
 reported; a bound call, member, `||`/`??` or `new URL(...)` value is dynamic. A name assigned anywhere in the file, shadowed
 by a parameter, loop or `catch` variable, destructured, imported, hoisted by a
 `var` next to other bindings, or in a file using `eval`/`with` is not resolved.
+
+TS/JS request taint (D211, D212, D215, D216, D228, D230, D238, D510) follows
+request data inside one handler of one file. Handlers: Express, Fastify, Hapi
+and Next.js pages-API functions (`(req, res)`, `(request, reply)`,
+`(request, h)`, or a first parameter typed `Request`, `FastifyRequest`,
+`NextApiRequest`, `NextRequest`; a function whose only parameter is an untyped
+or `any` `req`/`request` is read only through `query`, `body`, `params`,
+`headers`, `cookies` and `get()`/`header()`/`param()`, so a helper's
+`req.path` or `request.url` is not request data), Koa and `getServerSideProps` functions (first
+parameter `ctx`/`context`), NestJS methods with `@Body()`, `@Query()`,
+`@Param()`, `@Headers()`, `@HostParam()`, `@UploadedFile()` or `@Req()`
+parameters (routing-controllers equivalents too), exported `GET`/`POST`/...
+functions in a Next.js App Router `route` file, and exported Remix
+`loader`/`action` functions. Sources: `req.body/query/params/headers/cookies/
+files/url/originalUrl/path/hostname`, `req.get()/header()/param()`, Hapi
+`payload`/`state`, Koa `ctx.request.body`, `ctx.query`, `ctx.params`,
+`ctx.headers`, `ctx.cookies.get()`, Next.js `await request.json()/formData()/
+text()`, `request.nextUrl.searchParams.get()`, `request.headers`, and the route
+`params` argument. A NestJS parameter piped through `ParseIntPipe`,
+`ParseFloatPipe`, `ParseBoolPipe`, `ParseUUIDPipe` or `ParseEnumPipe` is not a
+source; a TypeScript annotation such as `id: number` is not proof. Sinks:
+SQL text in `query`/`execute`/`raw`/`prepare`/`all`/`get`/`run` calls whose
+literal text is SQL, `$queryRawUnsafe`, knex `whereRaw`-style calls and
+TypeORM query-builder `where`/`orderBy` conditions (D211, CRITICAL);
+`child_process.exec` (D212, CRITICAL); `fs`/`fs/promises`/`fs-extra` paths
+and `res.sendFile`/`download` without `root` (D215, HIGH); the URL or
+`host`/`url` option of `fetch`, axios (also `axios.create()` instances and
+NestJS `HttpService`), got, undici, superagent, needle, request and
+`http(s).get/request` (D216, HIGH); Express `res.send(text)` (Express answers
+strings as `text/html`) and HTML literals sent with `res.send/write/end`, and
+Koa `ctx.body` text that can start with request data or `<` (D228, HIGH);
+`res.redirect(url)`, `res.redirect(302, url)`, `ctx.redirect`,
+`reply.redirect`, `h.redirect`, `NextResponse.redirect`, `Response.redirect`,
+`redirect()` from `next/navigation` or Remix, `res.location` and `Location`
+headers (D230, HIGH); MongoDB/Mongoose filters (D238, HIGH); nested writes and
+same-file recursive merges (D510, HIGH). Taint follows local bindings in
+source order (a plain reassignment in the same block replaces the old value;
+one inside a branch adds to it), destructuring, `+`, templates, string
+methods, `||`/`??`, ternaries, `path.join/resolve/normalize`, `new URL`,
+`JSON.parse` (an object), `Object.keys/values/entries/assign`, `qs.parse`,
+same-file helper functions and methods of same-file `const` objects. Calls into
+other modules stop taint, so a validator such as zod `.parse()`,
+`mongo-sanitize` or `escape-html` ends it, and so does any unmodelled library
+call. Sanitizers are proved, never named: `Number`/`parseInt`/`parseFloat`/
+`Boolean` (global, not rebound), `path.basename` with `path` imported from
+`path`, `encodeURIComponent` (XSS, path, command, redirect, SSRF), and a
+same-file helper whose result replaces `<` with `&lt;` globally (a later
+replace that writes `<` back cancels it); a local function named `escapeHtml`,
+`quote` or `basename` that returns its input is followed, not trusted. Guards
+count only when the failing branch returns, throws, breaks or continues before
+the sink (or the sink sits inside the passing branch), and only for the value
+that reaches the sink, unless it is reassigned after the guard: a
+`startsWith(root)` check on a `path.resolve`/`normalize`/`join` result,
+`path.relative(root, p).startsWith('..')`, or rejecting `..` when the value is
+joined under a prefix and not `path.resolve`d (D215); an allowlist of string
+literals (`['a.com'].includes(u.hostname)`, `new Set([...]).has()`, `===`)
+on the hostname, host or origin of the URL, or a `startsWith` with a fixed
+`scheme://host/` (D216, D230); `startsWith('/')` together with a `//` check, or
+a literal allowlist (D230); `typeof x === 'string'` or an ObjectId check
+(D238); an anchored character-class regex such as `/^[a-z_]+$/.test(x)`
+without the `m` flag (any rule). An allowlist read from the environment, a
+mutated array, or a check that only logs is not a guard. A literal
+`scheme://host/` or relative-path prefix (`/users/` + id, not `/` alone) keeps
+D216 and D230 quiet; `new URL('/path', request.url)` stays on the site.
+
+TS/JS D238 (NoSQL injection, CWE-943) needs a file that imports `mongoose`,
+`mongodb`, `@nestjs/mongoose`, `@typegoose/typegoose`, `mongojs` or `monk`.
+It reports a `find`, `findOne`, `findOneAndUpdate/Delete/Replace`,
+`updateOne/Many`, `deleteOne/Many`, `replaceOne`, `countDocuments`, `exists`,
+`where`, `distinct` (its filter) or `aggregate` `$match` filter that is the
+request object itself (`find(req.body)`, `find(filter)` with
+`filter = req.query`) or holds a request value that can be an object (`{
+password: req.body.password }`, a spread of `req.body`), and any `$where` built
+from request data. Objects come from Express `req.body`, `req.query` (the `qs`
+parser) and `req.cookies` (JSON cookies), Fastify/Hapi/Next bodies,
+`request.json()`, `JSON.parse` and `qs.parse`; route params, headers,
+`searchParams.get()`, Koa/Fastify/Next query strings, `String(x)`, templates
+and `.toString()` are text and are not reported. A NestJS `@Body()` typed with a
+DTO class counts as validated text (Skylos assumes the usual global
+`ValidationPipe`, which it cannot see from the controller file); an untyped,
+`any`, inline-object or primitive-typed parameter is not. Option objects with a
+`where`/`select`/`include` key (Sequelize, TypeORM, Prisma) are not Mongo
+filters. `app.use(mongoSanitize())` from `express-mongo-sanitize` or
+`sanitizeFilter: true` in the same file clears the file.
+
+TS/JS D510 reports `obj[a][b] = v` when request data chooses `a` (`a =
+'__proto__'` makes the write change `Object.prototype`), unless a dominating
+guard rejects `'__proto__'`, allowlists `a`, checks `hasOwnProperty`, or the
+base is `Object.create(null)`/a `Map`; and a call that passes request data to a
+same-file function that copies keys recursively (`for (k in src)` with
+`dst[k] = ...` and a recursive call) without a `'__proto__'`/`'constructor'`
+check, `hasOwnProperty` or `Object.create(null)`. Reading `__proto__` is not
+reported, and neither is a single-level `obj[key] = value`. Library merges
+(lodash `merge`/`defaultsDeep`/`set`) are not reported: current releases
+reject `__proto__`.
+
+TS/JS D226 also covers `insertAdjacentHTML`, `document.writeln`,
+`createContextualFragment`, `setHTMLUnsafe`, `innerHTML`/`outerHTML +=`,
+jQuery `.html(x)` and `.append/.prepend/.after/.before/.replaceWith/.wrap*`
+of a template or `+` string that contains markup, on a `$(...)`/`jQuery(...)`
+chain or a `$name` variable. `dangerouslySetInnerHTML={{ __html: x }}`, like
+`innerHTML`, is quiet only for inert literal markup or an import-proven
+DOMPurify/`isomorphic-dompurify`/`sanitize-html` call (directly or through a
+`const`); a sanitizer imported from a local `./dompurify` file, or a sanitized
+copy that is never rendered, does not count. DOM `element.append(text)` inserts
+text and is not reported.
+
+TS/JS D327 reports a POST, PUT or PATCH (`fetch` with a literal `method`,
+`axios.post/put/patch`, `axios({method, url, data})`, `axios.request`) whose
+body carries `process.env` data to a URL that is not local (like Python, which
+checks `data`/`json`). Environment values in headers, such as
+`Authorization: Bearer ${process.env.TOKEN}`, are how an API key reaches its
+own API and are not reported; neither is `process.env` used as the URL, or
+only `NEXT_PUBLIC_` names.
 
 Java security findings (`--danger`) come from an intra-procedural taint engine. Request data is: servlet `HttpServletRequest` getters (parameters, headers, cookies, query string, path info, `getInputStream`/`getReader`/`getPart(s)`); Spring parameters annotated `@RequestParam`, `@PathVariable`, `@RequestHeader`, `@CookieValue`, `@RequestBody`, `@RequestPart`, `@ModelAttribute` or `@MatrixVariable`; JAX-RS `@QueryParam`, `@PathParam`, `@FormParam`, `@HeaderParam`, `@CookieParam`, `@MatrixParam` and `@BeanParam`; `MultipartFile`/`Part` parameters; Spring `WebUtils.getCookie(request, ...)`-style accessors; same-file or imported helpers, including static `Util.read(request)` calls, that return request data; and, as in CodeQL, every other parameter of a `@*Mapping` method in a `@Controller`/`@RestController` class or of a JAX-RS `@GET`/`@POST`/... method, except framework objects (`Model`, `BindingResult`, `Principal`, `HttpSession`, `Pageable`, `Locale`, `@AuthenticationPrincipal`, `@Context`, ...). Primitive, boxed-number, boolean, `UUID` and date parameters never carry injection text. Getters on a request-bound object (a `@RequestBody` DTO) return request data. Sinks with an ambiguous name need the receiver's type (a local, parameter or field declaration, or a known factory call): SQL `execute`/`query`/`update`/`batchUpdate`/`createQuery` need a JDBC `Statement`/`Connection`, `JdbcTemplate`, `NamedParameterJdbcTemplate`, JPA `EntityManager` or Hibernate `Session`; LDAP `search` needs `DirContext` (SKY-D239) and is not reported for values escaped by `LdapEncoder.filterEncode`/`nameEncode`, `Rdn.escapeValue`, UnboundID `Filter.encodeValue`/`createEqualityFilter`, Spring LDAP filter objects other than `HardcodedFilter`, `LdapQueryBuilder.query().where(...).is(...)`, or passed as `{0}` filter arguments, XPath `compile`/`evaluate` needs `XPath` (SKY-D229), so `Pattern.compile(input)` and `service.search(input)` are not reported; D237 `lookup` needs a JNDI `Context`, `JndiTemplate` or `LdapTemplate`; SpEL `parseExpression` is not reported when every evaluation of the result passes a `SimpleEvaluationContext` (CodeQL's barrier). Until this release Java reported LDAP and XPath injection as SKY-D240 and SKY-D241, which are MCP rules. D216 and D230 use CodeQL's fixed-host barrier: input after a constant prefix that already chooses the host (`"https://api.example.com/users/" + id`, `"redirect:/owners/" + id`, anything after `?` or `#`) is not reported, while `"redirect:" + next` and `"redirect:/" + next` are. Spring `return "redirect:" + x`, `new ModelAndView("redirect:" + x)`, `new RedirectView(x)`, `ResponseEntity...location(...)`, `HttpHeaders.setLocation`, a `Location` header and JAX-RS `Response.seeOther`/`temporaryRedirect` are D230 sinks. D216 also covers WebClient/RestClient `uri`/`baseUrl`/`create` (not URI templates or builder lambdas), OkHttp `Request.Builder.url`, Apache HttpClient request constructors and `Jsoup.connect`. D236 (XXE) follows CodeQL's per-parser rules on the same factory variable, in statement order: `DocumentBuilderFactory` is safe with `disallow-doctype-decl` true, both external entity features false, or `ACCESS_EXTERNAL_DTD` and `ACCESS_EXTERNAL_SCHEMA` set to `""`; SAX, `XMLReader`, Commons `Digester`, JDOM `SAXBuilder` and dom4j `SAXReader` need `disallow-doctype-decl` true or both entity features plus `load-external-dtd` false (SAX, `XMLReader` and JDOM also accept the `ACCESS_EXTERNAL_*` pair); StAX needs `SUPPORT_DTD` or `IS_SUPPORTING_EXTERNAL_ENTITIES` false (FindSecBugs); `TransformerFactory` needs `ACCESS_EXTERNAL_DTD` and `ACCESS_EXTERNAL_STYLESHEET` set to `""`; `SchemaFactory` needs `ACCESS_EXTERNAL_DTD` and `ACCESS_EXTERNAL_SCHEMA` set to `""`. `FEATURE_SECURE_PROCESSING` alone does not count, a setting applied after `newDocumentBuilder()` does not protect that builder, and hardening in only one branch does not count. A factory passed to a helper in the same file takes that helper's settings; one passed elsewhere, or given a custom entity resolver, is not judged. DOM serialization (`transform(new DOMSource(...))`), `newDocument()` and parsing a classpath resource or literal path are not reported. D236 is CRITICAL when request data is parsed, HIGH otherwise; dom4j `DocumentHelper.parseText` (a plain `SAXReader` before dom4j 2.1.3, `SAXReader.createDefault()` since) is MEDIUM, HIGH with request data, and `SAXReader.createDefault()` counts as hardened. D204 (`ObjectInputStream`) is CRITICAL for request or socket input, HIGH for an unproven source and MEDIUM with an `ObjectInputFilter` (`setObjectInputFilter`, `ObjectInputFilter.Config.setSerialFilter`) or a `resolveClass` override.
 
@@ -836,7 +1039,7 @@ across different operating-system/CPU platforms.
 
 | ID | Severity | Name | Languages / Scope | CWE |
 |:---|:---|:---|:---|:---|
-| S101 | HIGH-CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Go, config files | CWE-798 |
+| S101 | HIGH-CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Kotlin, Go, PHP, Rust, Dart, C#, C/C++, shell scripts (including extensionless files with a shell `#!` line), Dockerfiles, Terraform (`.tf`, `.tfvars`, `.hcl`), `.properties`, XML, Gradle, `.npmrc`, `.pypirc` and config files | CWE-798 |
 | S102 | HIGH* | Secret material or server-only environment variable exposed to client-accessible code | TS/JS, HTML, client bundles | CWE-200 |
 
 `SKY-S101` is `CRITICAL` for provider tokens and for high-entropy values
@@ -855,8 +1058,10 @@ counts it under `max_secrets`. Two other lower-certainty shapes are `HIGH`:
 a password embedded in a connection URL
 (`provider: url_credentials`, e.g. `postgres://app:<pw>@db/app`) and a
 non-placeholder literal under a password/secret/token/api-key field in YAML,
-JSON, TOML, INI or `.env` files (`provider: config_credential`). Env-var and
-template references (`${DB_PASSWORD}`, `{{ .Values.x }}`), placeholders
+JSON, TOML, INI, `.env`, `.properties`, `.tfvars`, `.npmrc` or `.pypirc` files
+(`provider: config_credential`). Env-var and template references
+(`${DB_PASSWORD}`, `{{ .Values.x }}`, shell `${TOKEN:?message}` and
+`$(command)`; a `${TOKEN:-literal}` default is still checked), placeholders
 (`changeme`, `<password>`, `your_password_here`) and secret *names*
 (`existingSecret`, `secretName`, `password_file`) are not reported, and
 previews are always fully masked.
@@ -1839,6 +2044,8 @@ than by an import. These conventions apply to TS/JS, PHP and Python:
 | Wagtail | modules importing `wagtail` | Page attributes (`content_panels`, `promote_panels`, `settings_panels`, `search_fields`, `api_fields`, `template`, `subpage_types`, `parent_page_types`, `max_count`, `preview_modes`, ...), snippet/`ModelViewSet` options (`list_display`, `list_export`, `sort_order_field`, `menu_label`, ...), `Task.task_state_class`, `AccessibilityItem` `axe_*` options; the parameters of Page, preview, workflow-task and block hook methods (`serve`, `serve_preview`, `get_preview_template`, `get_context`, `user_can_access_editor`, `get_actions`, ...) |
 | Django | modules importing `django` | parameters of class-based-view handlers (`get`, `post`, ..., `dispatch`, `setup`), of system checks registered with `register(...)` (`app_configs`, `**kwargs`), and of documented ModelAdmin/Inline, Widget, Field and Form hooks; model classes in an app's `models` module (fields or a model-like base); UPPERCASE names in `locale/<lang>/formats.py` and `FORMAT_MODULE_PATH` format files |
 | Registration decorators | class decorators named `register*` | the class (`@register_setting`, `@register_snippet`, `@admin.register`) |
+| Python registration decorators | any Python module | functions decorated `@<object>.<attribute>` where the attribute is a route or registration verb (`get`, `post`, `route`, `api_route`, `on`, `on_event`, or has an underscore-separated word such as `tool`, `resource`, `prompt`, `task`, `command`, `event`, `handler`, `listener`, `subscriber`, `hook`, `signal`, `register`, `fixture`, `job`: `@mcp.tool()`, `@server.call_tool()`, `@client.event`, `@sio.on("chat")`, `@celery_app.task`), and a bare `@tool`, `@function_tool`, `@task`, `@shared_task`, `@hookimpl`, `@hookspec`, `@register*` imported from outside the project (also through an import alias). Cache and wrapper decorators (`functools`, `contextlib`, `st.cache_*`) never make a function used; a decorator the project defines (in the module or imported from the project's own package) counts only when its body registers the function |
+| Python package entry points | `pyproject.toml` `[project.scripts]`, `[project.gui-scripts]`, `[project.entry-points.<group>]`, Poetry `scripts` and `plugins`; `setup.cfg` `[options.entry_points]`; the literal `entry_points=` of `setup()` in `setup.py` (parsed, never run) | the named function or class (extras ignored), the class owning a `module:Class.attr` target, and the public methods and class attributes of a class that is itself an entry point (the plugin host calls them). A module-only entry (`pytest11 = "pkg.plugin"`) keeps no symbol by itself |
 
 A project is a Next.js project when a `next.config.*` file or a `package.json`
 that depends on `next` sits in the file's directory or a parent. Only the named

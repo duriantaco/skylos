@@ -41,6 +41,14 @@ _SUFFIX_LANGUAGES = {
     ".rs": "rust",
     ".dart": "dart",
     ".cs": "csharp",
+    ".c": "cpp",
+    ".h": "cpp",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
+    ".hh": "cpp",
+    ".hxx": "cpp",
     ".sol": "solidity",
     ".yml": "yaml",
     ".yaml": "yaml",
@@ -61,6 +69,8 @@ _LANGUAGE_NAMES = {
     "dart": "dart",
     "csharp": "csharp",
     "c#": "csharp",
+    "cpp": "cpp",
+    "c++": "cpp",
     "yaml": "yaml",
 }
 _COMMENT_PREFIX = {
@@ -74,6 +84,7 @@ _COMMENT_PREFIX = {
     "rust": "//",
     "dart": "//",
     "csharp": "//",
+    "cpp": "//",
     "solidity": "//",
 }
 
@@ -293,6 +304,9 @@ RULE_FIXES: dict[str, dict[str, str]] = {
         "default": "Use a fixed XPath expression and pass input through XPath variables, or allowlist the value."
     },
     "SKY-D230": _OPEN_REDIRECT,
+    "SKY-D238": {
+        "default": "Cast request values to strings (String(x)) or validate them with a schema before using them in a MongoDB filter; never pass req.body or req.query as the filter."
+    },
     "SKY-D231": _CORS,
     "SKY-D283": {
         "default": "Require an authenticated, authorised caller before the route runs its action.",

