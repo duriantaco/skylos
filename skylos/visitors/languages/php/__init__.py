@@ -4,7 +4,7 @@ from pathlib import Path
 
 from .blade import blade_template_refs
 from .core import PhpCore
-from .danger import scan_danger
+from .danger import blade_raw_echo_findings, blade_raw_echo_source, scan_danger
 from .drupal import clear_drupal_cache, drupal_entrypoint_lines
 from .laravel import laravel_convention_class_lines
 
@@ -113,10 +113,19 @@ def scan_php_file(
         test_decorated_lines=core.test_decorated_lines,
     )
     framework = _framework_visitor(str(path), core, source)
+    findings = []
     if enable_danger_rules:
         findings = scan_danger(core.root_node, str(path), source)
-    else:
-        findings = []
+        blade_source = None
+        if path.name.lower().endswith(".blade.php"):
+            blade_source = blade_raw_echo_source(source)
+        if blade_source is not None:
+            blade_core = PhpCore(str(path), blade_source)
+            findings.extend(
+                blade_raw_echo_findings(
+                    scan_danger(blade_core.root_node, str(path), blade_source)
+                )
+            )
 
     return (
         core.defs,

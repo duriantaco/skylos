@@ -74,8 +74,10 @@ when you want one command to check a repo or pull request for:
 Skylos supports 11 languages: Python, TypeScript/JavaScript, Java, Go, PHP,
 Rust, Dart, C#, C++, Kotlin and Shell. Python has the deepest coverage.
 TypeScript/JavaScript and Java also get dead-code, security and quality checks;
-PHP and Dart get dead-code and security checks (Dart security covers command
-injection, path traversal and SSRF); Rust gets command-injection and
+PHP and Dart get dead-code and security checks (PHP security follows request
+data within a function or file into command and code execution, file inclusion,
+HTML output, SQL, SSRF, deserialization and file paths; Dart security covers
+command injection, path traversal and SSRF); Rust gets command-injection and
 path-traversal checks and experimental dead code (hidden below the default
 confidence threshold; `--confidence 40` lists it).
 Go dead-code and security checks need the native `skylos-go` engine: from
@@ -886,7 +888,7 @@ how many in one line of output. Set `include_generated = true` under
 | TypeScript / JavaScript | Yes | Yes | Yes | Supported | Tree-sitter parsing, package graph reachability, framework conventions |
 | Java | Yes | Yes | Yes | Supported | Tree-sitter parsing, structured security-flow analysis, conservative static-member proof |
 | Go | Yes¹ | Partial¹ | Partial | Supported | native engine status remains separate from deterministic workspace API proof |
-| PHP | Yes | Yes | No | Unsupported | PHP parser coverage, type and docblock references, Laravel and Drupal conventions (including `.module`/`.install`/`.inc`/`.theme` files), plus taint-style security sinks and sources (Drupal request and Form API input into SQL strings, `Markup::create()` and inline Twig templates) |
+| PHP | Yes | Yes | No | Unsupported | PHP parser coverage, type and docblock references, Laravel and Drupal conventions (including `.module`/`.install`/`.inc`/`.theme` files); security follows request data (superglobals, Laravel/Symfony/PSR-7/CodeIgniter requests, Drupal Form API) within one function or file into `exec`/`system`/backticks, `eval`/`include`, `echo`/`print`/`<?= ?>` and Blade `{!! !!}` XSS by HTML context, SQL (mysqli, PDO, `$wpdb`, Laravel `DB::raw`/`whereRaw`, Doctrine DBAL), SSRF, `unserialize`, file paths, Drupal `Markup::create()` and inline Twig; not across functions or files, and not Twig templates |
 | Rust | Experimental⁴ | Partial | Partial | Unsupported | Rust parser coverage; command/path security checks, direct unreachable statements and duplicate branch bodies |
 | Dart | Yes³ | Partial³ | No | Unsupported | Dart parser coverage; security covers command injection, path traversal and SSRF |
 | C# | Partial | Partial | Partial | Unsupported | C# symbols, direct-block unreachable code, selected security sinks, and NuGet inventory (`.csproj` pins and `packages.lock.json`) |

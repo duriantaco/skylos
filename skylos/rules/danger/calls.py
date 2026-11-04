@@ -975,8 +975,16 @@ def _is_safe_loader_argument(
 ) -> bool:
     if module is None:
         module = _module_of(value)
-    if module is not None and _yaml_loader_namespace(module).refused:
-        return False
+    if module is not None:
+        namespace = _yaml_loader_namespace(module)
+        if namespace.refused:
+            return False
+        if (
+            isinstance(value, ast.Name)
+            and value.id not in namespace.imports
+            and value.id not in namespace.other
+        ):
+            return False
     safe_classes, local_classes = loader_classes
     if isinstance(value, ast.Name) and value.id in local_classes:
         return value.id in safe_classes

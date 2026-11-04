@@ -787,6 +787,14 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-D255",
+        "File inclusion",
+        "security",
+        "CRITICAL",
+        aliases=("file inclusion", "remote file inclusion", "rfi"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-D260",
         "Prompt injection exposure",
         "security",
@@ -1585,6 +1593,7 @@ _SECURITY_RULE_CWES = {
     "SKY-D251": ("CWE-532",),
     "SKY-D252": ("CWE-614",),
     "SKY-D253": ("CWE-208",),
+    "SKY-D255": ("CWE-98",),
     "SKY-D260": ("CWE-1427",),
     "SKY-D261": ("CWE-1427",),
     "SKY-D262": ("CWE-1426",),
