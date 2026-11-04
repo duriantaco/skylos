@@ -149,7 +149,7 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 | PHP | 是 | 是 | 否 | PHP parser 覆盖；安全检查在单个函数或文件内追踪请求数据（超全局变量、Laravel/Symfony/PSR-7/CodeIgniter 请求、Drupal Form API），覆盖命令与代码执行、`include` 文件包含、`echo`/`<?= ?>`/Blade `{!! !!}` XSS、SQL、SSRF、`unserialize` 和文件路径；不跨函数或文件，也不检查 Twig 模板 |
 | Rust | 实验性⁴ | 部分 | 部分 | Rust 解析；命令注入、路径穿越、直接不可达语句及重复分支检查 |
 | Dart | 是³ | 部分³ | 否 | Dart parser 覆盖；安全检查覆盖命令注入、路径穿越和 SSRF |
-| C# | 部分 | 部分 | 部分 | C# 符号、直接代码块中的不可达语句、部分安全汇入点及 NuGet 直接依赖清单 |
+| C# | 部分 | 部分 | 部分 | C# 符号、直接代码块中的不可达语句、感知 ASP.NET 的安全检查（请求来源、按接收者类型识别的汇入点、不安全反序列化、XSS）及 NuGet 直接依赖清单 |
 | C++ | 部分 | 否 | 否 | 仅报告 `.cpp`、`.cc`、`.cxx` 中看似未使用的文件内函数；会读取 C++ 头文件中的引用 |
 | Kotlin | 部分² | 否² | 否 | 基于正则的符号提取；只报告 private 声明和导入 |
 | Shell | 否 | 部分 | 否 | shell 脚本安全检查，覆盖命令注入、SSRF 和路径穿越 |
@@ -168,10 +168,20 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 
 C# 死代码检查采用保守策略：完整扫描可执行或 Web 应用时，未被引用的 public
 类型和方法会作为低置信度候选项；库的公开 API、protected 成员及已知的框架或
-配置入口仍视为可被外部使用。暂不分析 C# 源文件的可达性；质量检查可识别直接代码块中无条件 `return`、`throw`、
-`break` 或 `continue` 后的语句，但并非完整控制流分析。安全检查覆盖部分
-不可信输入汇入点；使用 `--secrets` 或 `-a` 时，也会对 `.cs` 文件运行通用
-密钥扫描。C# 污点分析暂不跟踪插值原始字符串中的表达式。SCA 会收集
+配置入口仍视为可被外部使用。构造函数只有在私有、带参数且没有任何调用时才会
+报告为未使用函数（与 Roslyn IDE0051 规则一致）；控制器和依赖注入的构造函数由
+框架调用。暂不分析 C# 源文件的可达性；质量检查可识别直接代码块中无条件 `return`、`throw`、
+`break` 或 `continue` 后的语句，但并非完整控制流分析。安全检查（`--danger`）把
+ASP.NET 请求数据视为输入：控制器 Action、Razor Page 处理程序、Minimal API 和
+`[From*]` 参数以及 `Request.*`，不包括构造函数参数或普通服务参数，并会跟踪到
+同一文件中的辅助方法。它报告 SQL 注入（ADO.NET、EF 原始 SQL、Dapper）、命令注入、
+路径遍历、SSRF（`HttpClient`、`WebClient`、`WebRequest`、RestSharp）、开放重定向
+（`LocalRedirect` 或 `Url.IsLocalUrl` 检查除外）、不安全反序列化（`BinaryFormatter`
+系列、Json.NET `TypeNameHandling`、`SimpleTypeResolver`）以及通过
+`HtmlString`/`Html.Raw`/`MarkupString` 和 HTML 响应产生的 XSS，每条都带 CWE。
+与汇入点同名的方法（如仓储的 `GetAsync`）只有在接收者类型匹配时才计入。使用
+`--secrets` 或 `-a` 时，也会对 `.cs` 文件运行通用密钥扫描。C# 污点分析暂不跟踪
+`.cshtml`/`.razor` 标记、跨文件数据流以及插值原始字符串中的表达式。SCA 会收集
 `.csproj` 中直接声明的 NuGet `PackageReference`；
 只有无条件的精确 `Version`（`[version]`）且没有本地 `Update`/`Remove` 修改时
 才会查询漏洞；`VersionOverride` 和集中管理的版本不在此范围内。普通版本号只是最低版本约束；没有已解析的

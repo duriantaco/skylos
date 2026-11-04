@@ -706,4 +706,6 @@ def yaml_loader_classes(tree, filename=None, project_root=None):
     local = frozenset(
         node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
     )
+    if not local:
+        return frozenset(), local
     return safe_yaml_loader_classes(tree, filename, project_root), local
