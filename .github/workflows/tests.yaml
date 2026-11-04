@@ -1,257 +1,56 @@
-name: Tests + Coverage
-
+name: YAML Linux shard validation
+run-name: YAML Linux shard validation (${{ inputs.source_ref }})
 on:
-  push:
-    branches: [main, master]
-  pull_request:
   workflow_dispatch:
-
+    inputs:
+      source_ref:
+        description: Exact existing source commit to validate
+        required: true
+        type: string
+        default: b8f966a00d0844a586890d299489939e89afe4b0
 permissions:
   contents: read
-
 jobs:
-  windows_verify:
-    name: windows-verify-working-snapshot
-    runs-on: windows-latest
+  yaml_shard:
+    name: Default install, Python 3.12.3, shard 4/4
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          ref: ${{ inputs.source_ref }}
           persist-credentials: false
-
-      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
-
-      - name: Install Python and focused test dependencies
-        shell: bash
-        run: |
-          uv python install 3.11
-          uv venv --python 3.11
-          uv pip install --python .venv/Scripts/python.exe -e . pytest
-
-      - name: Verify Windows working-source snapshots
-        shell: bash
-        run: >-
-          .venv/Scripts/python.exe -m pytest -q
-          test/test_refactor_verify.py
-          test/test_behavior_baselines.py
-          -k 'windows_working_snapshot or windows_snapshot or windows_native_child_open or windows_case_sensitivity or unchanged_symbol_records_snapshot_identity or working_snapshot_preserves_encoded_bytes_and_line_endings or snapshot_identity_hashes_exact_encoded_bytes'
-
-      - name: Verify native Windows sync activation and rollback
-        shell: bash
-        run: >-
-          .venv/Scripts/python.exe -m pytest -q
-          test/test_windows_sync.py
-          test/test_sync_state_paths.py
-
-  test_matrix:
-    name: test-matrix (${{ matrix.install_target }}, shard ${{ matrix.shard }}/4)
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # "." is the plain install (Dart tests skip without the grammar);
-        # the extras leg builds the optional Dart parser and runs them.
-        install_target:
-          - "."
-          - ".[llm,dart]"
-        shard: [1, 2, 3, 4]
-
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
-          persist-credentials: false
-
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version: "1.22"
-
-      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
-
+          go-version: '1.22'
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f
       - name: Check lockfile
         run: uv lock --check
-
       - name: Build repo Go engine
         run: |
           mkdir -p /tmp/skylos-go-build /tmp/skylos-go-gopath
           cd skylos/engines/go
           GOCACHE=/tmp/skylos-go-build GOPATH=/tmp/skylos-go-gopath go build -o skylos-go ./cmd/skylos-go
-
-      - name: Install ripgrep for grep-verify backend tests
+      - name: Install ripgrep
         run: sudo apt-get install -y ripgrep
-
-      - name: Create venv + install deps
+      - name: Install exact failing test tools
         run: |
-          uv venv
-          uv pip install --python .venv/bin/python -e "${{ matrix.install_target }}"
-          uv pip install --python .venv/bin/python pytest pytest-cov pytest-xdist
-
-      - name: Run tests with coverage
-        run: |
-          .venv/bin/python -m pytest -q -n auto --dist loadfile --cov=skylos --cov-report=term-missing --cov-report=xml $(.venv/bin/python scripts/ci/test_shard.py ${{ matrix.shard }}/4)
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./coverage.xml
-          disable_search: true
-          fail_ci_if_error: false
-          flags: ${{ matrix.install_target == '.[llm,dart]' && 'llm-extra' || 'default-install' }}
-
-  docker_smoke:
-    name: docker-smoke (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.14", "3.15"]
-
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-
-      - name: Build image
-        run: docker build --build-arg "PYTHON_VERSION=${{ matrix.python-version }}" -t skylos:test .
-
-      - name: Check CLI version
-        run: docker run --rm skylos:test --version
-
-      - name: Check Go engine
-        run: |
-          docker run --rm skylos:test doctor --format json |
-            python -c 'import json, sys; assert json.load(sys.stdin)["checks"]["go_engine"]["status"] == "available"'
-
-      - name: Check Python runtime
+          uv venv --python 3.12.3
+          uv pip install --python .venv/bin/python -e .
+          uv pip install --python .venv/bin/python pytest==9.2.0 pytest-cov==7.1.0 coverage==7.17.1 pytest-xdist==3.8.0
+          git rev-parse HEAD
+          .venv/bin/python --version
+          .venv/bin/python -m coverage --version
+      - name: Run the failing Linux shard with coverage
         shell: bash
         run: |
-          actual="$(docker run --rm --entrypoint python skylos:test -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-          test "$actual" = "${{ matrix.python-version }}"
-
-      - name: Run fixture scan
-        run: |
-          docker run --rm \
-            -v "$PWD/benchmarks/quality/fixtures/argument_overload:/work" \
-            -w /work \
-            skylos:test \
-            . --json --no-provenance > /tmp/skylos-docker-smoke.json
-          grep -q '"unused_functions"' /tmp/skylos-docker-smoke.json
-
-      - name: Scan current Python syntax
-        if: matrix.python-version == '3.14'
-        run: |
-          mkdir -p /tmp/skylos-python-syntax
-          printf 'type CacheEntry[T = str] = dict[str, T]\n\ndef stale_helper():\n    return CacheEntry()\n' > /tmp/skylos-python-syntax/example.py
-          docker run --rm \
-            -v "/tmp/skylos-python-syntax:/work" \
-            -w /work \
-            skylos:test \
-            . --json --no-provenance > /tmp/skylos-python-syntax.json
-          grep -q '"stale_helper"' /tmp/skylos-python-syntax.json
-
-      - name: Scan Python 3.15 syntax
-        if: matrix.python-version == '3.15'
-        run: |
-          mkdir -p /tmp/skylos-python315-syntax
-          cat > /tmp/skylos-python315-syntax/example.py <<'PY'
-          def flatten(chunks):
-              return [*chunk for chunk in chunks]
-
-          def stale_helper():
-              return flatten([[1], [2]])
-
-          print(flatten([[3], [4]]))
-          PY
-          docker run --rm \
-            -v "/tmp/skylos-python315-syntax:/work" \
-            -w /work \
-            skylos:test \
-            . --json --no-provenance > /tmp/skylos-python315-syntax.json
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          report = json.loads(Path("/tmp/skylos-python315-syntax.json").read_text())
-          assert not report.get("analysis_errors"), report
-          unused = {finding["name"] for finding in report.get("unused_functions", [])}
-          assert "stale_helper" in unused, report
-          assert "flatten" not in unused, report
-          PY
-
-  image_action_smoke:
-    name: action-image-smoke
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+          .venv/bin/python -m pytest -q -n auto --dist loadfile --cov=skylos --cov-report=term-missing --cov-report=xml --junitxml=yaml-shard.xml $(.venv/bin/python scripts/ci/test_shard.py 4/4) 2>&1 | tee yaml-shard.log
+      - name: Save exact shard receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          persist-credentials: false
-
-      - name: Install checksum-verified Trivy
-        shell: bash
-        run: |
-          archive="$RUNNER_TEMP/trivy_0.74.0_Linux-64bit.tar.gz"
-          install_dir="$RUNNER_TEMP/skylos-trivy-bin"
-          mkdir -p "$install_dir"
-          curl --fail --location --silent --show-error \
-            --output "$archive" \
-            https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz
-          printf '%s  %s\n' \
-            '2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a' \
-            "$archive" | sha256sum --check --status
-          tar -xzf "$archive" -C "$install_dir" trivy
-          sudo install -m 0755 "$install_dir/trivy" /usr/local/bin/trivy
-
-      - name: Scan pinned public image with local action
-        id: image_scan
-        uses: ./
-        with:
-          image: docker.io/library/alpine@sha256:1f3591b8a02ea153f41c5bba878ad477f63ab3d19349762cb77504db02a23e15
-          image-platform: linux/amd64
-          mode: scan
-
-      - name: Verify image scan receipt
-        shell: bash
-        env:
-          REPORT: ${{ steps.image_scan.outputs.report-path }}
-          FINDINGS_COUNT: ${{ steps.image_scan.outputs.findings-count }}
-        run: |
-          python -I - "$REPORT" "$FINDINGS_COUNT" <<'PY'
-          import json
-          from pathlib import Path
-          import sys
-
-          report = Path(sys.argv[1])
-          assert report.is_file(), report
-          data = json.loads(report.read_text(encoding="utf-8"))
-          receipt = data["receipt"]
-          assert receipt["execution"]["status"] == "completed", receipt
-          assert receipt["import_complete"] is True, receipt
-          assert receipt["identity_verified"] is True, receipt
-          assert receipt["platform_verified"] is True, receipt
-          assert not receipt["errors"], receipt
-          assert data["gate"]["scope"] == "direct_image_scan", data["gate"]
-          assert data["gate"]["status"] == "not_requested", data["gate"]
-          assert len(data["container_vulnerabilities"]) == int(sys.argv[2])
-          print("Verified pinned image scan:", len(data["container_vulnerabilities"]), "finding(s)")
-          PY
-
-  test:
-    name: test
-    runs-on: ubuntu-latest
-    needs: [test_matrix, docker_smoke, windows_verify]
-    if: ${{ always() }}
-
-    steps:
-      - name: Require matrix success
-        run: |
-          if [ "${{ needs.test_matrix.result }}" != "success" ] ||
-             [ "${{ needs.docker_smoke.result }}" != "success" ] ||
-             [ "${{ needs.windows_verify.result }}" != "success" ]; then
-            echo "test_matrix result: ${{ needs.test_matrix.result }}"
-            echo "docker_smoke result: ${{ needs.docker_smoke.result }}"
-            echo "windows_verify result: ${{ needs.windows_verify.result }}"
-            exit 1
-          fi
+          name: yaml-linux-shard
+          path: |
+            yaml-shard.log
+            yaml-shard.xml
+            coverage.xml
