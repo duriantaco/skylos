@@ -413,6 +413,12 @@ def _python_string_browser_names(
             tree = ast.parse(source)
         except (SyntaxError, ValueError, RecursionError):
             continue
+        if not any(
+            isinstance(node, ast.JoinedStr)
+            or (isinstance(node, ast.Constant) and isinstance(node.value, str))
+            for node in ast.walk(tree)
+        ):
+            continue
         from skylos.deadcode.python_source_proofs import (
             _PythonReferenceProof,
         )
