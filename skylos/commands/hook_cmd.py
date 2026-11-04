@@ -1320,6 +1320,8 @@ def _install_output(result, policy, client, record):
     ]
     record["packages"] = len(result.get("packages") or [])
     record["findings"] = len(findings)
+    if findings:
+        record["finding_kinds"] = sorted({_finding_kind(f) for f in findings})
     if direct or overrides:
         record["direct"] = len(direct) + len(overrides)
     if unknown:

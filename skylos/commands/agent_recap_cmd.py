@@ -25,6 +25,24 @@ CLIENT_NAMES = {"claude": "Claude Code", "codex": "Codex", "cursor": "Cursor"}
 # (id, group, singular, plural). Groups print in this order.
 CATEGORIES: tuple[tuple[str, str, str, str], ...] = (
     (
+        "install_malware",
+        "blocked",
+        "install of a known malicious package version",
+        "installs of known malicious package versions",
+    ),
+    (
+        "install_too_new",
+        "blocked",
+        "install of a version newer than the release cooldown",
+        "installs of versions newer than the release cooldown",
+    ),
+    (
+        "install_provenance",
+        "blocked",
+        "install of a version that lost its provenance",
+        "installs of versions that lost their provenance",
+    ),
+    (
         "install_hallucinated",
         "blocked",
         "install of a package that looks hallucinated or typosquatted",
@@ -145,6 +163,13 @@ def _count(record: dict[str, Any], key: str) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
+_INSTALL_KIND_CATEGORIES = (
+    ("malware", "install_malware"),
+    ("provenance", "install_provenance"),
+    ("too_new", "install_too_new"),
+)
+
+
 def classify(record: dict[str, Any]) -> str | None:
     """The recap category of one hook run, or None when it stopped nothing."""
     event, outcome = record.get("event"), record.get("outcome")
@@ -158,6 +183,12 @@ def classify(record: dict[str, Any]) -> str | None:
         if _count(record, "secret_sources") > 0:
             return "secret_shell"
         if _count(record, "findings") > 0 and "packages" in record:
+            kinds = record.get("finding_kinds")
+            if not isinstance(kinds, list):
+                kinds = []
+            for kind, category in _INSTALL_KIND_CATEGORIES:
+                if kind in kinds:
+                    return category
             return "install_hallucinated"
         return "install_unverified"
     if event == "pre-read" and outcome == "block":
