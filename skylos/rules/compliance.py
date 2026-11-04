@@ -136,6 +136,22 @@ COMPLIANCE_MAPPINGS = {
         {"framework": "OWASP_TOP10", "requirement": "A03:2021", "title": "Injection"},
         {"framework": "PCI_DSS_4", "requirement": "6.2.4", "title": "Injection Flaws"},
     ],
+    "SKY-D257": [
+        {
+            "framework": "OWASP_TOP10",
+            "requirement": "A05:2021",
+            "title": "Security Misconfiguration",
+        },
+        {"framework": "PCI_DSS_4", "requirement": "6.2.4", "title": "Security Flaws"},
+    ],
+    "SKY-D258": [
+        {
+            "framework": "OWASP_TOP10",
+            "requirement": "A05:2021",
+            "title": "Security Misconfiguration",
+        },
+        {"framework": "PCI_DSS_4", "requirement": "6.2.4", "title": "Security Flaws"},
+    ],
     "SKY-D234": [
         {
             "framework": "OWASP_TOP10",

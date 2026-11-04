@@ -96,8 +96,9 @@ Go dead-code and security checks need the native `skylos-go` engine: from
 it, the container image includes it and the GitHub Action builds it. On other
 platforms `skylos doctor` prints the command that builds it from source, and
 `SKYLOS_GO_BIN` points Skylos at a separately built engine. C# support is
-partial, Kotlin dead code covers only private declarations and imports (there
-are no Kotlin security rules), C++ is limited to unused file-local functions,
+partial, Kotlin dead code covers only private declarations and imports (Kotlin
+security covers Spring, Ktor, servlet and Android WebView basics), C++ is
+limited to unused file-local functions,
 and Shell gets security checks only.
 Skylos also checks CI/CD and deployment config. See
 [Language Support](#language-support).
@@ -904,7 +905,7 @@ how many in one line of output. Set `include_generated = true` under
 | Dart | Yes³ | Partial³ | No | Unsupported | Dart parser coverage; security covers command injection, path traversal and SSRF |
 | C# | Partial | Partial | Partial | Unsupported | C# symbols, direct-block unreachable code, ASP.NET-aware security (request sources, receiver-typed sinks, unsafe deserialization, XSS), and direct NuGet inventory |
 | C++ | Partial | No | No | Unsupported | conservative unused file-local functions in `.cpp`, `.cc`, `.cxx`; C++ headers are parsed for references |
-| Kotlin | Partial² | No² | No | Unsupported | regex-based symbol extraction; reports only private declarations and imports |
+| Kotlin | Partial² | Partial² | No | Unsupported | lexical symbol extraction; reports only private declarations and imports; Spring, Ktor, servlet and Android WebView security checks |
 | Shell | No | Partial | No | Unsupported | shell-script security checks for command injection, SSRF, and path traversal |
 
 ¹ Go dead-code and security checks need the native `skylos-go` engine. From
@@ -915,8 +916,11 @@ Go quality checks run and the Go files are reported as not analysed; see the
 Go engine note below.
 
 ² Kotlin dead code reports only `private` types and functions and unused
-imports; every non-private declaration is treated as used. No built-in Kotlin
-security rules; secret scanning still covers `.kt` and `.kts` files.
+imports; every non-private declaration is treated as used. Any use in code
+counts: type positions, `::foo`, trailing-lambda and infix calls, string
+templates and KDoc links; operator-convention imports (`getValue`, `plus`,
+`component1`) are never reported. Kotlin security is lexical (no Kotlin
+parser): see the Kotlin paragraph below. Secret scanning covers `.kt` and `.kts`.
 
 ³ From 4.47.2, Dart checks need the optional `skylos[dart]` extra
 (`pip install "skylos[dart]"`); earlier releases install the Dart parser by
@@ -995,6 +999,21 @@ Hibernate, `JdbcTemplate`), command, path, SSRF, open redirect (including Spring
 and unsafe deserializers (`ObjectInputStream`, `XMLDecoder`, XStream, SnakeYAML,
 Jackson default typing, Kryo). Sinks with common method names such as `query`,
 `search` or `lookup` are reported only on a receiver of the matching type.
+
+Kotlin security analysis is lexical (Skylos has no Kotlin parser) and reuses the
+Java source and sink tables. Request data comes from Spring handler parameters
+(`@RequestParam`, `@PathVariable`, `@RequestBody`, `@RequestHeader` and
+unannotated non-scalar parameters of `@*Mapping` methods), servlet
+`HttpServletRequest` getters in call or property form, Ktor `call.parameters`,
+`call.request.queryParameters`, `call.receive<T>()` and `call.receiveText()`,
+and WebFlux `ServerRequest` accessors. Checks cover command execution
+(SKY-D212, SKY-D203), SQL including string templates (SKY-D211), path
+traversal (SKY-D215), SSRF through `URL`, OkHttp, Ktor `HttpClient`,
+RestTemplate and WebClient (SKY-D216), open redirect (SKY-D230), servlet and
+Ktor HTML responses (SKY-D226), `ObjectInputStream` and `XMLDecoder`
+(SKY-D204, SKY-D233), XXE (SKY-D236), SpEL/JNDI (SKY-D237), and Android
+WebView JavaScript bridges (SKY-D257) and file URL access (SKY-D258). Flow is
+tracked within one function or route lambda; helper calls are not followed.
 
 C++ analysis covers `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hh`, and `.hxx`. The first
 release reports only apparently unused file-local free functions. Without a
