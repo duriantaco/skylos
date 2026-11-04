@@ -82,6 +82,7 @@ RULE_DOCS_ANCHORS = {
     "SKY-D252": "sky-d252--insecure-cookie",
     "SKY-D253": "typescript-specific-security",
     "SKY-D254": "taint--data-flow",
+    "SKY-D255": "sky-d255--file-inclusion",
     "SKY-D257": "sky-d257--android-webview-javascript-bridge",
     "SKY-D258": "sky-d258--android-webview-file-url-access",
     "SKY-D260": "sky-d260--prompt-injection-scanner",

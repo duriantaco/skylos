@@ -787,6 +787,14 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-D255",
+        "File inclusion",
+        "security",
+        "CRITICAL",
+        aliases=("file inclusion", "remote file inclusion", "rfi"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-D257",
         "Android WebView JavaScript bridge",
         "security",
@@ -1601,6 +1609,7 @@ _SECURITY_RULE_CWES = {
     "SKY-D251": ("CWE-532",),
     "SKY-D252": ("CWE-614",),
     "SKY-D253": ("CWE-208",),
+    "SKY-D255": ("CWE-98",),
     "SKY-D257": ("CWE-749",),
     "SKY-D258": ("CWE-200",),
     "SKY-D260": ("CWE-1427",),
