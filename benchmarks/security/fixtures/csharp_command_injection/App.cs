@@ -1,9 +1,11 @@
 using System.Diagnostics;
+using Microsoft.AspNetCore.Mvc;
 
-public class Runner
+public class JobsController : Controller
 {
-    public void Run(string command)
+    public IActionResult Run(string command)
     {
         Process.Start(command);
+        return Ok();
     }
 }

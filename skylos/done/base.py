@@ -31,6 +31,8 @@ _GIT_TIMEOUT_SECONDS = 60
 _RUNTIME_PREFIXES = (".skylos/receipts/", ".skylos/cache/")
 _RUNTIME_FILES = (".skylos/agent-session.json", ".skylos/agent-session.lock")
 _RUNTIME_FILE_PREFIXES = (".skylos/hook.log",)
+_GRAPH_STATE_PREFIX = ".skylos/graph/"
+SKYLOS_DATA_FILES = (".skylos/graph/notes.json",)
 
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 _SHA_RE = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
@@ -41,6 +43,8 @@ class DoneError(Exception):
 
 
 def is_runtime_path(path: str) -> bool:
+    if path.startswith(_GRAPH_STATE_PREFIX) and path not in SKYLOS_DATA_FILES:
+        return True
     return (
         path.startswith(_RUNTIME_PREFIXES)
         or path in _RUNTIME_FILES

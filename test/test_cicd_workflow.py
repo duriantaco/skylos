@@ -7,6 +7,7 @@ import yaml
 from skylos.cicd.init_setup import DoneSetup, detect_done_setup
 from skylos.cicd.workflow import generate_workflow
 from skylos.cli_core.main_parser import build_main_parser
+from skylos.commands.done_cmd import build_map_parser
 from skylos.commands.done_cmd import build_parser as build_done_parser
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.rules.config.cicd.github_actions import scan_github_actions
@@ -446,6 +447,7 @@ def test_done_job_runs_tests_on_pull_request_head_without_upload_authority():
         "Install Skylos",
         "Install project test dependencies",
         "Check the change is finished",
+        "Show what to review",
     ]
     install = job["steps"][3]["run"]
     assert install.splitlines() == ["python -I -m pip install -e . pytest", "npm ci"]
@@ -461,6 +463,15 @@ def test_done_job_runs_tests_on_pull_request_head_without_upload_authority():
     assert args.base == "${MERGE_GROUP_BASE_SHA:-origin/$GITHUB_BASE_REF}"
     assert not args.no_tests
     assert "SKYLOS_TOKEN" not in content and "github.base_ref" not in content
+    review = job["steps"][5]
+    assert review["continue-on-error"] is True
+    assert review["if"] == "${{ !cancelled() }}"
+    assert review["env"] == done_step["env"]
+    command, redirect = review["run"].split(" >> ")
+    assert redirect == '"$GITHUB_STEP_SUMMARY"'
+    map_args = build_map_parser().parse_args(shlex.split(command)[3:])
+    assert map_args.base == args.base
+    assert map_args.format == "markdown"
 
 
 def test_done_job_can_be_left_out():

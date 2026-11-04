@@ -96,7 +96,7 @@ def _class_node(graph: HeadGraph, class_full: str):
 
 
 def _file_candidates(graph: HeadGraph, classes: set[str]) -> list[tuple[str, ParsedFile, Symbol]]:
-    paths = [path for path in graph.parsed if classes & graph.tokens(path)]
+    paths = [path for path, parsed in graph.parsed.items() if parsed.language == PYTHON and classes & graph.tokens(path)]
     return [
         (path, graph.parsed[path], candidate) for path in paths
         for candidate in graph.parsed[path].symbols.values() if candidate.kind != KIND_CLASS

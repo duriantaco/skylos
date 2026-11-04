@@ -19,17 +19,18 @@ from skylos.changemap.risk import (
 )
 from skylos.changemap.module_values import module_changes
 from skylos.changemap.languages import any_module_name, parse_any
+from skylos.changemap.review import build_review
 from skylos.changemap.symbols import KIND_CLASS, ParsedFile, Symbol
 from skylos.changemap.ts_imports import Resolver, is_ts_path
 
 SCHEMA_VERSION = 1
 CODE_LINE_CAP = 400
-READ_FIRST_LIMIT = 3
 GROUP_MIN = 3
 _NOTES = (
     "Callers are searched in files that mention a changed name, up to the caller depth.",
     "Dynamic calls, callbacks and registries are not modeled.",
-    "Tests are not run or matched yet.",
+    "Tests are not run; tests' expected answers are compared by function name.",
+    "Skip means proven same logic in Python: docstring only or local names only. Moved code is skimmed, never skipped: its import path changed. A docstring read by code in another file is not detected.",
 )
 
 
@@ -221,12 +222,6 @@ def _changed_targets(pairs: list) -> list[tuple[str, str]]:
     return sorted(targets)
 
 
-def _read_first(production: list[dict], groups: list[dict], flagged: list[str]) -> list[str]:
-    grouped = {member for group in groups for member in group["members"]}
-    top = [s["id"] for s in production if s["id"] not in grouped][:READ_FIRST_LIMIT]
-    return top + [entry_id for entry_id in flagged if entry_id not in top]
-
-
 def _flagged(production: list[dict]) -> list[str]:
     return [s["id"] for s in production if is_alarm(s)]
 
@@ -271,15 +266,16 @@ def build_change_map(root: str | Path, base_ref: str) -> dict:
     production = [s for s in symbols if not s["is_test"]]
     flagged = _flagged(production)
     groups = _groups(production, flagged)
-    read_first = _read_first(production, groups, flagged)
+    review = build_review(inputs, symbols, flagged, groups)
     return {
         "schema_version": SCHEMA_VERSION,
         "base_commit": inputs.base_commit,
         "head": "working_tree",
         "symbols": symbols,
-        "read_first": read_first,
+        "read_first": review["buckets"]["read_first"],
         "flagged": flagged,
         "groups": groups,
+        "review": review,
         "module_changes": module_changes(inputs, base_parsed, head_parsed),
         "coverage": _coverage(inputs, unparsed, graph),
     }

@@ -37,6 +37,9 @@ class TestCWEMapping:
         assert "SKY-Q301" in CWE_MAP
         assert "SKY-Q302" in CWE_MAP
 
+    def test_template_injection_keeps_its_code_injection_parent(self):
+        assert [entry["id"] for entry in CWE_MAP["SKY-D349"]] == ["CWE-1336", "CWE-94"]
+
     def test_typescript_type_safety_rules_mapped(self):
         assert CWE_MAP["SKY-T103"][0]["id"] == "CWE-704"
         assert CWE_MAP["SKY-T104"][0]["id"] == "CWE-710"

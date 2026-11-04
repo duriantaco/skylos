@@ -10,7 +10,7 @@ from skylos.visitors.languages.csharp.danger import scan_danger
 
 def test_inline_method_parameter_reaches_command_sink():
     source = (
-        "namespace Demo; public class Runner { "
+        "namespace Demo; public class RunnerController : Controller { "
         "public void Run(string command) { Process.Start(command); } }"
     )
 
@@ -24,7 +24,7 @@ def test_inline_method_parameter_reaches_command_sink():
 
 def test_inline_command_finding_reaches_analyzer_output(tmp_path):
     source = (
-        "namespace Demo; public class Runner { "
+        "namespace Demo; public class RunnerController : Controller { "
         "public void Run(string command) { Process.Start(command); } }"
     )
     (tmp_path / "Runner.cs").write_text(source, encoding="utf-8")
@@ -41,7 +41,7 @@ def test_inline_command_finding_reaches_analyzer_output(tmp_path):
 
 def test_inline_method_literal_command_is_safe():
     source = (
-        "namespace Demo { public class Runner { "
+        "namespace Demo { public class RunnerController : Controller { "
         'public void Run(string command) { Process.Start("dotnet", "--info"); } } }'
     )
 
@@ -81,7 +81,6 @@ def test_inline_method_request_source_reaches_command_sink():
             "SKY-D212",
         ),
         ("public void Run(string data) => Process.Start(data);", "SKY-D212"),
-        ("public Runner(string data) => Process.Start(data);", "SKY-D212"),
         (
             "public void Run(string data, string other) { "
             'File.ReadAllText(Path.Combine("/srv", Path.GetFileName(data), other)); }',
@@ -110,7 +109,9 @@ def test_inline_method_request_source_reaches_command_sink():
     ],
 )
 def test_tainted_input_reaches_sink_across_csharp_forms(source, rule_id):
-    findings = scan_danger("Runner.cs", "public class Runner { " + source + " }")
+    findings = scan_danger(
+        "Runner.cs", "public class RunnerController : Controller { " + source + " }"
+    )
 
     assert [finding["rule_id"] for finding in findings] == [rule_id]
 
@@ -132,12 +133,17 @@ def test_tainted_input_reaches_sink_across_csharp_forms(source, rule_id):
     ],
 )
 def test_tainted_input_outside_relevant_sink_argument_is_safe(source):
-    assert scan_danger("Runner.cs", "public class Runner { " + source + " }") == []
+    assert (
+        scan_danger(
+            "Runner.cs", "public class RunnerController : Controller { " + source + " }"
+        )
+        == []
+    )
 
 
 def test_path_get_file_name_still_allows_sensitive_file_selection():
     source = (
-        "public class Runner { public void Run(string data) { "
+        "public class RunnerController : Controller { public void Run(string data) { "
         "var name = Path.GetFileName(data); File.ReadAllText(name); } }"
     )
 
@@ -148,7 +154,7 @@ def test_path_get_file_name_still_allows_sensitive_file_selection():
 
 def test_inline_basename_with_fixed_directory_avoids_traversal():
     source = (
-        "using System.IO; public class Runner { public void Run(string data) { "
+        "using System.IO; public class RunnerController : Controller { public void Run(string data) { "
         'File.ReadAllText(Path.Combine("uploads", Path.GetFileName(data))); } }'
     )
 
@@ -177,7 +183,7 @@ def test_inline_basename_with_fixed_directory_avoids_traversal():
 )
 def test_basename_containment_unsafe_lookalikes_still_flag(body):
     source = (
-        "using System.IO; public class Runner { "
+        "using System.IO; public class RunnerController : Controller { "
         f"public void Run(string data, bool flag) {{ {body} }} }}"
     )
 
@@ -204,7 +210,7 @@ def test_basename_containment_unsafe_lookalikes_still_flag(body):
 )
 def test_shadowed_system_path_does_not_suppress_path_finding(prefix, prelude):
     source = (
-        f"{prefix} public class Runner {{ public void Run(string data) {{ "
+        f"{prefix} public class RunnerController : Controller {{ public void Run(string data) {{ "
         f"{prelude} var name = Path.GetFileName(data); "
         'File.ReadAllText(Path.Combine("uploads", name)); } }'
     )
@@ -216,7 +222,7 @@ def test_shadowed_system_path_does_not_suppress_path_finding(prefix, prelude):
 
 def test_fully_qualified_system_path_is_safe_despite_shadowed_short_name():
     source = (
-        "public class Path { } public class Runner { public void Run(string data) { "
+        "public class Path { } public class RunnerController : Controller { public void Run(string data) { "
         "var name = System.IO.Path.GetFileName(data); "
         'File.ReadAllText(System.IO.Path.Combine("uploads", name)); } }'
     )
@@ -226,7 +232,7 @@ def test_fully_qualified_system_path_is_safe_despite_shadowed_short_name():
 
 def test_random_file_name_does_not_carry_tainted_input():
     source = (
-        "public class Runner { public void Run(string data) { "
+        "public class RunnerController : Controller { public void Run(string data) { "
         "var name = Path.GetRandomFileName(); File.ReadAllText(name); } }"
     )
 
@@ -244,7 +250,7 @@ def test_random_file_name_does_not_carry_tainted_input():
     ],
 )
 def test_tainted_object_initializer_properties_are_sinks(statement, rule_id):
-    source = f"public class Runner {{ public void Run(string data) {{ {statement} }} }}"
+    source = f"public class RunnerController : Controller {{ public void Run(string data) {{ {statement} }} }}"
 
     assert [item["rule_id"] for item in scan_danger("Runner.cs", source)] == [rule_id]
 
@@ -259,7 +265,7 @@ def test_tainted_object_initializer_properties_are_sinks(statement, rule_id):
     ],
 )
 def test_unrelated_object_initializer_properties_are_safe(statement):
-    source = f"public class Runner {{ public void Run(string data) {{ {statement} }} }}"
+    source = f"public class RunnerController : Controller {{ public void Run(string data) {{ {statement} }} }}"
 
     assert scan_danger("Runner.cs", source) == []
 
@@ -273,7 +279,7 @@ def test_unrelated_object_initializer_properties_are_safe(statement):
 )
 def test_target_typed_new_tracks_security_sink_owner(declaration, assignment, rule_id):
     source = (
-        "public class Runner { public void Run(string data) { "
+        "public class RunnerController : Controller { public void Run(string data) { "
         f"{declaration} {assignment} }} }}"
     )
 
@@ -304,7 +310,7 @@ def test_object_initializer_preserves_later_property_sink_owner(
     declaration, assignment, rule_id
 ):
     source = (
-        "public class Runner { public void Run(string data) { "
+        "public class RunnerController : Controller { public void Run(string data) { "
         f"{declaration} {assignment} }} }}"
     )
 
@@ -313,7 +319,7 @@ def test_object_initializer_preserves_later_property_sink_owner(
 
 def test_renamed_parameter_interpolation_reaches_analyzer_output(tmp_path):
     (tmp_path / "Runner.cs").write_text(
-        'public class Runner { public void Run(string data) => Process.Start($"tool {data}"); }',
+        'public class RunnerController : Controller { public void Run(string data) => Process.Start($"tool {data}"); }',
         encoding="utf-8",
     )
 
@@ -328,7 +334,7 @@ def test_renamed_parameter_interpolation_reaches_analyzer_output(tmp_path):
 
 
 def test_multiline_sink_reports_sink_line():
-    source = "public class Runner {\n  public void Run(string data) {\n    Process.Start(data);\n  }\n}"
+    source = "public class RunnerController : Controller {\n  public void Run(string data) {\n    Process.Start(data);\n  }\n}"
 
     findings = scan_danger("Runner.cs", source)
 

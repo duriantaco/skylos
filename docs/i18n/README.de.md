@@ -55,6 +55,17 @@ skylos cloud        # optional: Ergebnisse pro Branch in Skylos Cloud verfolgen
 skylos cicd init    # jedem Pull Request eine Skylos-Prüfung hinzufügen
 ```
 
+Mit einem Coding-Agenten reichen zwei Befehle:
+
+```bash
+skylos setup   # einmal pro Repository: verbindet Claude Code und Codex, schreibt die PR-Prüfung, kartiert den Code
+skylos open    # jeden Tag: Diagramm des Codes, Änderungen in einfacher Sprache, jeder Prüflauf
+```
+
+Dein Agent führt die Prüfungen selbst aus. Das [Tutorial](../workflow.md) zeigt
+eine echte Sitzung: Der Agent beschreibt den Code, ändert ihn, wird blockiert
+und behebt das Problem anhand der Fix-Anleitung von Skylos.
+
 `skylos cloud` führt alle Prüfungen aus, zeigt die Funde, lädt sie hoch und
 zeigt das Quality Gate dieses Branches mit einem Link:
 
@@ -133,6 +144,7 @@ Mehr Befehle stehen in der [CLI Reference](https://docs.skylos.dev/cli-reference
 | Interaktive Terminaltriage | `skylos . --tui` | Öffnet eine tastaturgesteuerte Ansicht für Kategorien, Findings und Details | [CLI output modes](../cli-output.md) |
 | IDE- und Testscript-Ausgabe | `skylos --format concise src/test.py` | Gibt nur `file:line`-Findings aus und endet mit Non-Zero-Exit, wenn Findings existieren | [CLI Reference](https://docs.skylos.dev/cli-reference) |
 | Change Map fürs Review | `skylos done map --base origin/main` | Zeigt jede geänderte Python- oder TypeScript/JavaScript-Funktion mit altem und neuem Code, hinzugefügten und entfernten Aufrufen, ihren Aufrufern, entfernten Sicherheitsprüfungen und dem, was zuerst zu lesen ist; aus dem Code berechnet, nicht von einem Modell geschrieben | [Change map](../change-map.md) |
+| Codebase-Graph | `skylos graph open` | Zeigt jede Python- und TypeScript/JavaScript-Funktion und -Klasse (Go, Java, Rust und PHP als erster Schritt, Aufrufe nach Namen zugeordnet), gruppiert in Bereiche, wer was aufruft, Tests und ihre erwarteten Ausgaben in einer lokalen Browseransicht; markiert geänderten Code und sagt, ob die Logik gleich geblieben ist (nur wenn bewiesen). Beschreibungen in einfachem Englisch schreibt Ihr Coding-Agent, Ihr eigener Modell-Key oder Skylos gegen Credits; Skylos Cloud kann zu jedem Pull Request einen Kommentar zu Logikänderungen posten. `skylos done map` sortiert jede Änderung in „zuerst lesen“, „lesen“, „überfliegen“ und „überspringen“ (nur bei bewiesen gleicher Logik); die MCP-Tools dafür brauchen keinen Key | [Codebase graph](../graph.md) |
 | Review geänderter Zeilen | `skylos . -a --diff origin/main` | Fokussiert Findings auf aktive Arbeit statt auf Legacy-Schulden | [Quality gate docs](https://docs.skylos.dev/quality-gate) |
 | Laufzeitgestützter Dead-Code-Check | `skylos . --trace` | Nutzt Runtime-Traces, um False Positives bei dynamischem Code zu reduzieren | [Smart tracing](https://docs.skylos.dev/smart-tracing) |
 | Lokales Rule-Pack | `skylos rules init` | Erstellt `.skylos/rules/local.yml`, projektspezifische YAML-Prüfungen, die Scans mit `--quality` und `-a` anwenden | [Custom rules](https://docs.skylos.dev/custom-rules) |
@@ -231,7 +243,7 @@ Timeout-Pflicht beizubringen.
 | PHP | Ja | Ja | Nein | PHP-Parser-Abdeckung; Security verfolgt Request-Daten (Superglobals, Laravel/Symfony/PSR-7/CodeIgniter-Requests, Drupal Form API) innerhalb einer Funktion oder Datei bis zu Command- und Code-Ausführung, `include`, XSS über `echo`/`<?= ?>`/Blade `{!! !!}`, SQL, SSRF, `unserialize` und Dateipfaden; nicht über Funktions- oder Dateigrenzen und nicht in Twig-Templates |
 | Rust | Experimentell⁴ | Teilweise | Teilweise | Rust-Parser; Command Injection, Path Traversal, direkt unerreichbare Anweisungen und doppelte Zweige |
 | Dart | Ja³ | Teilweise³ | Nein | Dart-Parser-Abdeckung; Security prüft Command Injection, Path Traversal und SSRF |
-| C# | Teilweise | Teilweise | Teilweise | C#-Symbole, unerreichbare Anweisungen in direkten Blöcken, ausgewählte Security-Senken und NuGet-Inventarisierung (`.csproj` und `packages.lock.json`) |
+| C# | Teilweise | Teilweise | Teilweise | C#-Symbole, unerreichbare Anweisungen in direkten Blöcken, ASP.NET-bewusste Security-Prüfung (Anfragequellen, typgebundene Senken, unsichere Deserialisierung, XSS) und NuGet-Inventarisierung (`.csproj` und `packages.lock.json`) |
 | C++ | Teilweise | Nein | Nein | nur scheinbar ungenutzte dateilokale Funktionen in `.cpp`, `.cc`, `.cxx`; C++-Header werden für Referenzen gelesen |
 | Kotlin | Teilweise² | Nein² | Nein | regex-basierte Symbolerkennung; meldet nur private Deklarationen und Imports |
 | Shell | Nein | Teilweise | Nein | Shell-Script-Security-Prüfungen für Command Injection, SSRF und Path Traversal |
@@ -275,13 +287,27 @@ C#-Dead-Code-Funde sind konservativ: Bei einer vollständigen Analyse einer
 ausführbaren oder Web-Anwendung gelten unreferenzierte öffentliche Typen und
 Methoden als Kandidaten mit geringer Konfidenz. Bibliotheks-APIs, geschützte
 Member sowie bekannte Framework- und konfigurierte Einstiegspunkte bleiben
-extern erreichbar. Die Erreichbarkeit von C#-Quelldateien wird nicht analysiert.
+extern erreichbar. Konstruktoren gelten nur dann als ungenutzte Funktionen,
+wenn sie privat sind, Parameter haben und nichts sie aufruft (die Regel von
+Roslyn IDE0051); Controller- und Dependency-Injection-Konstruktoren ruft das
+Framework auf. Die Erreichbarkeit von C#-Quelldateien wird nicht analysiert.
 Die Qualitätsprüfung erkennt Anweisungen nach einem unbedingten
 `return`, `throw`, `break` oder `continue` im direkten Block, bietet aber keine
-vollständige Kontrollflussanalyse. Die Sicherheitsprüfungen umfassen ausgewählte
-Senken für nicht vertrauenswürdige Eingaben sowie generische Secret-Prüfungen
-in `.cs`-Dateien mit `--secrets` oder `-a`. Ausdrücke in interpolierten
-Raw-Strings werden von der C#-Taint-Analyse noch nicht verfolgt. SCA
+vollständige Kontrollflussanalyse. Die Sicherheitsprüfung (`--danger`) wertet
+ASP.NET-Anfragedaten als Eingabe: Parameter von Controller-Actions,
+Razor-Page-Handlern, Minimal APIs und `[From*]` sowie `Request.*`, nicht
+Konstruktor- oder gewöhnliche Service-Parameter, und folgt ihnen in
+Hilfsmethoden derselben Datei. Sie meldet SQL-Injection (ADO.NET, EF-Raw-SQL,
+Dapper), Command Injection, Path Traversal, SSRF (`HttpClient`, `WebClient`,
+`WebRequest`, RestSharp), Open Redirects (nicht bei `LocalRedirect` oder einer
+`Url.IsLocalUrl`-Prüfung), unsichere Deserialisierung (`BinaryFormatter`-Familie,
+Json.NET `TypeNameHandling`, `SimpleTypeResolver`) und XSS über
+`HtmlString`/`Html.Raw`/`MarkupString` und HTML-Antworten, jeweils mit CWE.
+Methoden, die nur den Namen einer Senke teilen (das `GetAsync` eines
+Repositorys), zählen nur mit dem passenden Empfängertyp. Generische
+Secret-Prüfungen decken `.cs`-Dateien mit `--secrets` oder `-a` ab.
+`.cshtml`/`.razor`-Markup, dateiübergreifender Datenfluss und Ausdrücke in
+interpolierten Raw-Strings werden von der C#-Taint-Analyse noch nicht verfolgt. SCA
 inventarisiert direkte NuGet-`PackageReference`-Einträge in `.csproj`-Dateien.
 Nur unbedingte, exakt festgelegte `Version`-Werte (`[version]`) ohne lokale
 `Update`-/`Remove`-Änderungen werden gegen Advisories geprüft;
@@ -377,6 +403,8 @@ gehen über `--scan-path`.
 | Agent Scan, Verifikation, Remediation und Modellsetup | [AI Features](https://docs.skylos.dev/ai-features) |
 | AI-app-safety-Prüfungen und LLM-Guardrails | [AI app safety](https://docs.skylos.dev/ai-defense) |
 | Was eine Änderung berührt und was zuerst zu lesen ist (`skylos done map`) | [Change map](../change-map.md) |
+| Tutorial: `skylos setup`, `skylos open`, die Pipeline-Ansicht und die PR-Prüfung, aus einer echten Agenten-Sitzung | [Tutorial](../workflow.md) |
+| Wer was aufruft, in einfachen Worten, und ob geänderte Logik gleich geblieben ist (`skylos graph`) | [Codebase graph](../graph.md) |
 | MCP-Server-Setup | [MCP Server](https://docs.skylos.dev/mcp-server) |
 | Real-world gemergte Cleanup-PRs | [Real-World Results](../../REAL_WORLD_RESULTS.md) |
 | Baselines, Filtering, Suppressions und Whitelists | [Configuration](https://docs.skylos.dev/configuration) |

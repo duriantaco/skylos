@@ -1082,6 +1082,25 @@ def test_runner_without_junit_uses_exit_code(repo: Path):
     assert (ok.status, bad.status, missing.status) == ("pass", "fail", "incomplete")
 
 
+def test_runner_without_results_shows_the_last_line_the_tests_printed(repo: Path):
+    comparison = open_comparison(repo, "main")
+    script = "print('collecting'); print('ImportError: No module named shopdb'); raise SystemExit(4)"
+    noisy = run_tests(
+        comparison,
+        DoneConfig(test_command=(sys.executable, "-c", script), junit_xml="results.xml"),
+        changed_tests=[],
+    )
+    silent = run_tests(
+        comparison,
+        DoneConfig(test_command=(sys.executable, "-c", "raise SystemExit(4)"), junit_xml="results.xml"),
+        changed_tests=[],
+    )
+    assert noisy.status == "incomplete"
+    assert noisy.reason == "the test command wrote no test results: ImportError: No module named shopdb"
+    assert silent.status == "incomplete"
+    assert silent.reason == "the test command wrote no test results"
+
+
 def test_verdict_names_the_failed_tests_plainly(repo: Path):
     _write(repo, "app/calc.py", CALC.replace("return a - b", "return a + b"))
     result = run(repo, base_ref="main")
@@ -2903,3 +2922,12 @@ def test_qa_head_import_initializer_cannot_silently_narrow_imported_cases(repo):
     assert result.verdict == "incomplete"
     check = next(c.result for c in result.checks if c.result.id == "tests_pass")
     assert check.evidence["run"] == 7 and check.evidence["unknown_case_totals"] == 1
+
+
+def test_receipts_name_the_agent_that_ran_skylos_done():
+    from skylos.commands.done_cmd import detect_agent
+
+    assert detect_agent({"CLAUDECODE": "1"}) == "claude-code"
+    assert detect_agent({"CODEX_THREAD_ID": "019a"}) == "codex"
+    assert detect_agent({"CLAUDECODE": "1", "CODEX_SANDBOX": "seatbelt"}) == "codex"
+    assert detect_agent({"CODEX_COMPANION_SESSION_ID": "x", "PATH": "/bin"}) == "unknown"

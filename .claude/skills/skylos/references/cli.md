@@ -222,14 +222,62 @@ control. Local rich scans with findings end with a `Next: skylos cloud` block.
   it also uploads pull requests to the default branch through
   `pull_request_target` jobs that run `skylos cicd pr-policy`, `pr-scan` and
   `pr-publish` (workflow steps, not for local use).
+- `skylos setup [PATH] [--base REF] [--ci CI] [--no-ci] [--no-codex] [--yes]`:
+  once per repository. Writes a Skylos block between `<!-- skylos:start -->`
+  and `<!-- skylos:end -->` in `CLAUDE.md` and `AGENTS.md` (skips `CLAUDE.md`
+  when it only imports `@AGENTS.md`), adds `skylos` to `.mcp.json` (keeps
+  other servers; leaves invalid JSON alone), runs `codex mcp add skylos` when
+  Codex is installed (warns if Codex or PATH points at a different Skylos),
+  writes the PR check through `skylos cicd init` (`--yes` replaces an existing
+  workflow) and builds the graph. Idempotent. Exit 1 when a step needs
+  attention; it still runs the others. Needs a git repository.
+- `skylos open [PATH] [--base REF] [--port N] [--no-browser]`: `skylos graph
+  open` compared with the branch pull requests merge into (`origin/HEAD`, else
+  `origin/main`, `origin/master`, `main`, `master`; HEAD when on that branch).
+  The page has Graph, Overview, Changes and Pipeline tabs and a Check this
+  change button (POST `/api/check`, token, local Host and JSON only) that runs
+  `skylos done --base REF --agent check-button` and rebuilds the graph.
 - `skylos done map [PATH] [--base REF] [--format text|json|markdown]`: the
   change map. Per changed Python or TS/JS function, method or class: old and
   new code, calls added/removed/moved, callers (`in_change`, `is_test`),
   removed security checks, breaking or compatible signatures and the callers
-  they break, and `read_first` / `flagged` ids. Deterministic; no model, no
-  network. `--base` defaults to HEAD (uncommitted changes only). Exit 0
-  shown, 2 could not run. `skylos done --map` prints it after the verdict
-  without changing it. MCP tool: `change_map`. Details: `docs/change-map.md`.
+  they break, `read_first` / `flagged` ids, and `review`: every production
+  symbol in one bucket (`read_first`, `read`, `skim`, `skip`) with
+  `review_why`, changed-line counts per bucket and `test_edits` (expected
+  answers the change edited). `skip` only for proven same logic (Python
+  docstring-only or local-rename-only; moves are `skim`, counted once); never for flagged
+  code, edited test answers, runtime-read docstrings or dynamic local names.
+  Deterministic; no model, no network. `--base` defaults to HEAD (uncommitted
+  changes only). Exit 0 shown, 2 could not run. `skylos done --map` prints it
+  after the verdict without changing it. MCP tool: `change_map` (no key, no
+  limit). The GitHub workflow from `skylos cicd init` writes it to the Skylos
+  Done job summary. Details: `docs/change-map.md`, flow: `docs/workflow.md`.
+- `skylos graph [PATH] [--since REF] [--format text|json]`: builds
+  `.skylos/graph/` (Python, TS/JS; Go/Java/Rust/PHP links matched by name as
+  `name_edges`, never counted as callers): every function/method/class, call,
+  create and inherit links, tests that reach each one, literal expected
+  outputs read from tests, and per changed symbol a verdict: `same_moved`,
+  `same_renamed` (only locals), `same_docs`, `changed`, `changed_binding`,
+  `new`, `removed`. "Same" is only claimed when proven. `--since` defaults
+  to HEAD; `none` skips it. Subcommands: `open` (127.0.0.1 viewer, token +
+  HttpOnly cookie, rebuilds on file change; Pipeline tab = last 30 `skylos done`
+  receipts as stage boxes with a copyable fix brief), `show NAME`, `find QUERY`,
+  `impact NAME [--depth N]` (adds name-matched `possible_callers`),
+  `areas [ID]` (folder-first areas, stable ids), `relevant FILE... [--budget N]`
+  (code the files use or are used by, within a token budget), `changes [--base
+  REF]` (review buckets), `describe` (your model
+  key; `--changes` explains changed code; `--via skylos` (not live in Skylos Cloud yet) uses Skylos's key
+  for credits: 1 per 100 functions or 20 changes, needs `skylos login`),
+  `pending [--changes --base REF]` + `import FILE` (agent writes
+  descriptions), `report --base REF
+  [--output FILE]` (Cloud report: verdicts and reasons, no source).
+  `--upload` sends that report to Skylos Cloud (not live in Skylos Cloud yet; committed changes only; the
+  project must have Logic changes reports turned on, 1 credit per PR).
+  Descriptions live in `.skylos/graph/notes.json` (commit it). MCP tools (no
+  key, no limit): `graph_find`, `graph_show`, `graph_impact`, `graph_areas`,
+  `graph_relevant`,
+  `graph_pending` (`changes=true`, `base`), `graph_describe`; change verdicts
+  come from `change_map`. Details: `docs/graph.md`.
 - `skylos baseline .`: save current findings baseline.
 - `skylos clean`: interactively remove or comment dead code. Edits Python files
   only; other files are listed, never offered. Exit 1 if any edit fails.

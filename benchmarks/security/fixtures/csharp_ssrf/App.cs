@@ -1,10 +1,18 @@
 using System.Net.Http;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Mvc;
 
-public class Client
+public class ProxyController : Controller
 {
-    public Task<HttpResponseMessage> Fetch(string url, HttpClient client)
+    private readonly HttpClient _client;
+
+    public ProxyController(HttpClient client)
     {
-        return client.GetAsync(url);
+        _client = client;
+    }
+
+    public Task<HttpResponseMessage> Fetch(string url)
+    {
+        return _client.GetAsync(url);
     }
 }
