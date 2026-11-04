@@ -130,6 +130,7 @@ class HookDeps:
     install_checker: InstallChecker | None = None
     env: dict[str, str] = field(default_factory=lambda: dict(os.environ))
     standards_policy: AgentStandardsPolicy | None = None
+    supply_chain_sources: Any = None
     # cwd -> the directory git runs hooks from (None: unknown). Tests stub it.
     hooks_dir: Callable[[Path], Path | None] | None = None
 
@@ -1239,9 +1240,13 @@ def _handle_pre_bash(payload, root, client, deps, record):
     checker = deps.install_checker
     if checker is not None:
         return _install_output(checker(command, root), policy, client, record)
-    from skylos.commands.hook_install_parse import install_targets, split_targets
+    from skylos.commands.hook_install_parse import (
+        MANIFEST,
+        install_targets,
+        split_targets,
+    )
 
-    targets = install_targets(command, cwd, root=root)
+    targets = install_targets(command, cwd, root=root, lockfiles=True)
     registry_targets, result = split_targets(targets)
     if registry_targets:
         # Only registry lookups need the (heavier) checker module.
@@ -1257,6 +1262,18 @@ def _handle_pre_bash(payload, root, client, deps, record):
             home=deps.env.get("HOME") or None,
             targets=targets,
         )
+    if result.get("checked") or any(t.kind == MANIFEST for t in targets):
+        from skylos.commands.hook_supply_chain import check_supply_chain
+
+        try:
+            check_supply_chain(
+                result, targets, root=root, sources=deps.supply_chain_sources, record=record
+            )
+        except Exception:  # noqa: BLE001
+            result.setdefault("unverified", []).append(
+                {"tool": "install", "name": "packages", "outcome": "unchecked",
+                 "reason": "the malware and release-age check failed"}
+            )  # fmt: skip
     return _install_output(result, policy, client, record)
 
 
@@ -1321,18 +1338,7 @@ def _install_output(result, policy, client, record):
     if decision == "ask" and client == "codex":
         decision = "deny"  # Codex runs the command on "ask"; never let it through
 
-    sections = []
-    if findings:
-        items = [f"- {f.get('message')}" for f in findings[:MAX_ITEMS]]
-        sections.append(
-            (
-                "1 package looks"
-                if len(findings) == 1
-                else f"{len(findings)} packages look"
-            )
-            + " hallucinated or typosquatted.\n"
-            + "\n".join(items)
-        )
+    sections = _finding_sections(findings)
     if direct or overrides:
         items = [_direct_item(d) for d in direct[:MAX_ITEMS]]
         items += [_override_item(o) for o in overrides[: MAX_ITEMS - len(items)]]
@@ -1347,6 +1353,10 @@ def _install_output(result, policy, client, record):
     if policy.problems:
         body += "\nSkylos hook policy problem, using the default: " + "; ".join(
             policy.problems
+        )
+    if result.get("supply_chain_problems"):
+        body += "\nSkylos supply-chain policy problem, using the default: " + "; ".join(
+            result["supply_chain_problems"]
         )
 
     if decision == "allow":
@@ -1367,13 +1377,7 @@ def _install_output(result, policy, client, record):
         return _ask_output(client, text)
     record["outcome"] = "block"
     if findings:
-        guidance = (
-            "\nCheck the real package name (docs, registry search) and retry. "
-            "If the package is internal, install it with your private index/registry "
-            "flag and ask the user to list that registry in trusted_registries under "
-            "[tool.skylos.hooks]. If this package is correct, add it to [tool.skylos] "
-            "hooks_allow_packages in pyproject.toml."
-        )
+        guidance = _finding_guidance(findings, result.get("release_age_hours"))
         head = "Skylos blocked this install: "
     else:
         steps = []
@@ -1400,6 +1404,71 @@ def _install_output(result, policy, client, record):
             guidance += " (Codex hooks cannot ask the user, so Skylos blocks instead.)"
         head = "Skylos blocked this install because it could not verify it.\n"
     return _deny_output(client, head + body + guidance)
+
+
+_FINDING_HEADS = {
+    "malware": ("1 package version is known malware.",
+                "{n} package versions are known malware."),
+    "hallucinated": ("1 package looks hallucinated or typosquatted.",
+                     "{n} packages look hallucinated or typosquatted."),
+    "too_new": ("1 package version is newer than the release cooldown.",
+                "{n} package versions are newer than the release cooldown."),
+    "provenance": ("1 package version lost the provenance its earlier versions had.",
+                   "{n} package versions lost the provenance their earlier versions had."),
+}  # fmt: skip
+
+
+def _finding_kind(finding: dict[str, Any]) -> str:
+    kind = finding.get("kind")
+    if kind in _FINDING_HEADS:
+        return kind
+    return "hallucinated"
+
+
+def _finding_sections(findings: list[dict[str, Any]]) -> list[str]:
+    sections = []
+    for kind, (one, many) in _FINDING_HEADS.items():
+        group = [f for f in findings if _finding_kind(f) == kind]
+        if not group:
+            continue
+        head = one
+        if len(group) > 1:
+            head = many.format(n=len(group))
+        items = [f"- {f.get('message')}" for f in group[:MAX_ITEMS]]
+        sections.append(head + "\n" + "\n".join(items))
+    return sections
+
+
+def _finding_guidance(findings: list[dict[str, Any]], age_hours: Any) -> str:
+    kinds = {_finding_kind(f) for f in findings}
+    lines = []
+    if "malware" in kinds:
+        lines.append(
+            "Do not install a version reported as malware. If one is already "
+            "installed, remove it and rotate any credentials it could read."
+        )
+    if "hallucinated" in kinds:
+        lines.append(
+            "Check the real package name (docs, registry search) and retry. "
+            "If the package is internal, install it with your private index/registry "
+            "flag and ask the user to list that registry in trusted_registries under "
+            "[tool.skylos.hooks]. If this package is correct, add it to [tool.skylos] "
+            "hooks_allow_packages in pyproject.toml."
+        )
+    if "too_new" in kinds:
+        lines.append(
+            f"Install the older version named above, or wait until the release is "
+            f"{age_hours} hours old. The user can change the wait with "
+            "min_release_age_hours under [tool.skylos.supply_chain] in pyproject.toml "
+            "(0 turns it off)."
+        )
+    if "provenance" in kinds:
+        lines.append(
+            "Install an earlier version, or ask the user to confirm this release with "
+            "the maintainer (check_provenance = false under [tool.skylos.supply_chain] "
+            "turns this check off)."
+        )
+    return "\n" + "\n".join(lines)
 
 
 def _stricter(current: str | None, new: str) -> str:
