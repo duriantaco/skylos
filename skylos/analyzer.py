@@ -1974,38 +1974,7 @@ class Skylos:
             return ([p] if supported else []), p.parent
 
         root = p
-        ext_list = [
-            "py",
-            "pyi",
-            "pyw",
-            "go",
-            "ts",
-            "tsx",
-            "js",
-            "jsx",
-            "mts",
-            "cts",
-            "mjs",
-            "cjs",
-            "java",
-            "php",
-            "rs",
-            "cpp",
-            "cc",
-            "cxx",
-            "hpp",
-            "hh",
-            "hxx",
-            "dart",
-            "cs",
-            "kt",
-            "kts",
-            "sh",
-            "bash",
-            "zsh",
-            "ksh",
-            "bats",
-        ]
+        ext_list = sorted(ext.lstrip(".") for ext in exts)
 
         # use rust file discovery when avail
         if _fast_discover is not None and os.path.isdir(str(p)):

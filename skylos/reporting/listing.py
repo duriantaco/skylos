@@ -14,11 +14,16 @@ PUBLIC_IDENTIFIER_REASON = "likely-public-identifier"
 LOW_RISK_REASON = "low-risk-context"
 SCA_RULE_PREFIX = "SKY-SCA-"
 SCA_LOW_RISK_REASONS = frozenset({"dev-only-dependency"})
+CONSTANT_ARGUMENT_REASON = "constant-argument"
 LOW_RISK_REASONS = {
     "SKY-D292": frozenset({"github-owned-action-tag"}),
     "SKY-D299": frozenset({"non-credential-secret"}),
-    "SKY-D203": frozenset({"constant-shell-command"}),
-    "SKY-D209": frozenset({"constant-shell-command"}),
+    "SKY-D201": frozenset({CONSTANT_ARGUMENT_REASON}),
+    "SKY-D202": frozenset({CONSTANT_ARGUMENT_REASON}),
+    "SKY-D203": frozenset({"constant-shell-command", CONSTANT_ARGUMENT_REASON}),
+    "SKY-D205": frozenset({CONSTANT_ARGUMENT_REASON}),
+    "SKY-D206": frozenset({CONSTANT_ARGUMENT_REASON}),
+    "SKY-D209": frozenset({"constant-shell-command", CONSTANT_ARGUMENT_REASON}),
     "SKY-D207": frozenset({"non-sensitive-hash-input"}),
     "SKY-D208": frozenset({"non-sensitive-hash-input"}),
 }
