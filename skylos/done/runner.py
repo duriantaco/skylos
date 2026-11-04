@@ -860,7 +860,7 @@ def _assess(outcome: _RunOutcome, invocation: _Invocation, shown: str) -> TestRu
 
     if not outcome.junit_found:
         if invocation.pytest or code is None or outcome.junit_expected:
-            result.reason = "the test command wrote no test results"
+            result.reason = "the test command wrote no test results" + _last_line_hint(outcome.output_tail)
             return result
         # A command without JUnit output: only its exit code is evidence.
         result.status = "pass" if code == 0 else "fail"
@@ -978,6 +978,13 @@ def escalate_missing(result: TestRunResult) -> TestRunResult:
             )
         result.reason = " ".join(reasons)
     return result
+
+
+def _last_line_hint(tail: str) -> str:
+    lines = [line.strip() for line in (tail or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    return f": {lines[-1]}"
 
 
 def parse_junit(path: Path, root: Path) -> list[CaseResult] | None:

@@ -2545,6 +2545,24 @@ def _run_done_command(argv):
     return run_done_command(argv)
 
 
+def _run_graph_command(argv):
+    from skylos.commands.graph_cmd import run_graph_command
+
+    return run_graph_command(argv)
+
+
+def _run_setup_command(argv):
+    from skylos.commands.setup_cmd import run_setup_command
+
+    return run_setup_command(argv)
+
+
+def _run_open_command(argv):
+    from skylos.commands.open_cmd import run_open_command
+
+    return run_open_command(argv)
+
+
 def _run_mcp_command(argv):
     from skylos.commands.mcp_cmd import run_mcp_command
 

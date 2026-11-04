@@ -30,6 +30,29 @@ def _link(entry: dict, repo_url: str | None, head_sha: str | None, base_sha: str
     return f"[{label}]({repo_url}/blob/{sha}/{entry['file']}#L{start}-L{end})"
 
 
+def _module_of(entry: dict) -> str:
+    full_name = entry.get("full_name") or ""
+    suffix = "." + (entry.get("name") or "")
+    if suffix != "." and full_name.endswith(suffix):
+        return full_name[: -len(suffix)]
+    return ""
+
+
+def _local_calls(entry: dict, key: str) -> list[str]:
+    module = _module_of(entry)
+    names = list(entry.get(key) or ())
+    if not module:
+        return names
+    prefix = module + "."
+    shown = []
+    for name in names:
+        if name.startswith(prefix) and len(name) > len(prefix):
+            shown.append(name[len(prefix):])
+        else:
+            shown.append(name)
+    return shown
+
+
 def _calls(names: list[str]) -> str:
     shown = ", ".join(f"`{n}`" for n in names[:MAX_CALLS])
     if len(names) > MAX_CALLS:
@@ -89,13 +112,13 @@ def _fact_lines(entry: dict) -> list[str]:
     if entry["signature_changed"]:
         lines.append(f"Signature: `({entry['before']['signature']})` → `({entry['after']['signature']})`")
     if entry["calls_removed"]:
-        lines.append("Stopped calling: " + _calls(entry["calls_removed"]))
+        lines.append("Stopped calling: " + _calls(_local_calls(entry, "calls_removed")))
     if entry["calls_added"]:
-        lines.append("Now calls: " + _calls(entry["calls_added"]))
+        lines.append("Now calls: " + _calls(_local_calls(entry, "calls_added")))
     lines.extend(_value_lines(entry))
     lines.extend(_rejection_lines(entry))
     if entry["calls_moved"]:
-        lines.append(f"Moved into a callee, still called: {_calls(entry['calls_moved'])}")
+        lines.append(f"Moved into a callee, still called: {_calls(_local_calls(entry, 'calls_moved'))}")
     if entry["still_referenced_by"]:
         lines.append("Still called by: " + _calls(entry["still_referenced_by"]))
     elif entry["status"] != "deleted":
@@ -116,15 +139,29 @@ def _code_block(label: str, side: dict | None, path: str) -> list[str]:
     shown = code[:MAX_CODE_LINES]
     if len(code) > MAX_CODE_LINES or side["truncated"]:
         shown.append(f"{comment} ... cut for length")
-    return [f"{label} (lines {side['start']}-{side['end']}):", f"```{language}", *shown, "```"]
+    fence = "`" * max(3, _longest_backticks(shown) + 1)
+    return [f"{label} (lines {side['start']}-{side['end']}):", f"{fence}{language}", *shown, fence]
+
+
+def _longest_backticks(lines: list[str]) -> int:
+    longest = 0
+    for line in lines:
+        run = 0
+        for char in line:
+            if char == "`":
+                run += 1
+                longest = max(longest, run)
+            else:
+                run = 0
+    return longest
 
 
 def _skim_line(entry: dict) -> str:
     bits = [f"{len(entry['callers'])} caller(s)"]
     if entry["calls_removed"]:
-        bits.insert(0, "−" + _calls(entry["calls_removed"][:3]))
+        bits.insert(0, "−" + _calls(_local_calls(entry, "calls_removed")[:3]))
     if entry["calls_added"]:
-        bits.insert(0, "+" + _calls(entry["calls_added"][:3]))
+        bits.insert(0, "+" + _calls(_local_calls(entry, "calls_added")[:3]))
     return " · ".join(bits)
 
 
@@ -151,26 +188,93 @@ def _coverage_line(change_map: dict) -> str:
     return text
 
 
-def _partition(change_map: dict) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+def _partition(change_map: dict) -> dict[str, list[dict]]:
     by_id = {s["id"]: s for s in change_map["symbols"]}
-    read_first = [by_id[i] for i in change_map["read_first"]]
-    grouped = {member for group in change_map["groups"] for member in group["members"]}
-    taken = set(change_map["read_first"]) | grouped
-    production = [s for s in change_map["symbols"] if not s["is_test"] and s["id"] not in taken]
-    tests = [s for s in change_map["symbols"] if s["is_test"]]
-    return read_first, change_map["groups"], production, tests
+    buckets = change_map["review"]["buckets"]
+    parts = {name: [by_id[i] for i in ids] for name, ids in buckets.items()}
+    parts["tests"] = [s for s in change_map["symbols"] if s["is_test"]]
+    return parts
 
 
-def _group_line(group: dict, by_id: dict) -> str:
-    names = ", ".join(f"`{by_id[m]['name']}`" for m in group["members"][:8])
-    if len(group["members"]) > 8:
-        names += f" +{len(group['members']) - 8} more"
-    change = []
-    if group["calls_added"]:
-        change.append("+" + _calls(group["calls_added"]))
-    if group["calls_removed"]:
-        change.append("−" + _calls(group["calls_removed"]))
-    return f"{len(group['members'])} symbols {group['status']} the same way ({' · '.join(change)}): {names}"
+REVIEW_WORDS = (
+    ("read_first", "to read first"),
+    ("read", "to read"),
+    ("skim", "to skim"),
+    ("skip", "to skip (same logic, proven)"),
+)
+
+
+def review_counts_text(counts: dict) -> str:
+    parts = [f"{counts.get(key, 0)} {words}" for key, words in REVIEW_WORDS if counts.get(key, 0)]
+    return ", ".join(parts)
+
+
+def review_line(change_map: dict) -> str:
+    review = change_map["review"]
+    if not review["total"]:
+        return ""
+    lines = review["lines"]
+    read_lines = lines["read_first"] + lines["read"]
+    return (
+        f"Review: {review_counts_text(review['counts'])}. "
+        f"{read_lines} of {review['total_lines']} changed lines need reading."
+    )
+
+
+_MD_SPECIAL = frozenset("\\`*_[]<>!|#~")
+
+
+def md_text(text: str) -> str:
+    out = []
+    for char in text:
+        if char in _MD_SPECIAL:
+            out.append("\\" + char)
+        elif char == "@":
+            out.append("@\u200b")
+        elif char in "\r\n":
+            out.append(" ")
+        else:
+            out.append(char)
+    return "".join(out)
+
+
+def why_line(entry: dict) -> str:
+    return (entry["review_why"] or entry["verdict_text"]).replace("`", "")
+
+
+def why_markdown(entry: dict) -> str:
+    return md_text(entry["review_why"] or entry["verdict_text"])
+
+
+def _extra_why(entry: dict) -> str:
+    from skylos.changemap.review import VERDICT_TEXT
+
+    why = entry["review_why"]
+    if not why or why.startswith("Flagged"):
+        return ""
+    if why == VERDICT_TEXT.get(entry["verdict"]):
+        return ""
+    return why
+
+
+def read_line(entry: dict) -> str:
+    text = _skim_line(entry)
+    why = _extra_why(entry)
+    if why:
+        text += " · " + why.replace("`", "")
+    return text
+
+
+def read_markdown(entry: dict) -> str:
+    text = _skim_line(entry)
+    why = _extra_why(entry)
+    if why:
+        text += " · " + md_text(why)
+    return text
+
+
+def evidence_lines(entry: dict) -> list[str]:
+    return list(entry.get("test_evidence") or [])[:3]
 
 
 def _tests_line(tests: list[dict]) -> str:
@@ -189,11 +293,15 @@ def _flag(entry: dict, flagged: set[str], marker: str) -> str:
 def _markdown_read_first(read_first: list[dict], links: tuple, flagged: set[str]) -> list[str]:
     out = ["#### Read first"]
     if not read_first:
-        out.append("Nothing to read first. Skim the list below.")
+        out.append("Nothing to read first.")
     for number, entry in enumerate(read_first, 1):
         mark = _flag(entry, flagged, " · **flagged**")
         out.append(f"**{number}. `{entry['name']}`** {entry['status']}{mark} · {_link(entry, *links)}")
         out.extend(f"- {line}" for line in _fact_lines(entry))
+        why = _extra_why(entry)
+        if why:
+            out.append(f"- {md_text(why)}")
+        out.extend(f"- {md_text(line)}" for line in evidence_lines(entry))
         out.extend(["<details><summary>before / after</summary>", ""])
         out.extend(_code_block("Before", entry["before"], entry["file"]))
         out.extend(_code_block("After", entry["after"], entry["file"]))
@@ -214,19 +322,15 @@ def _markdown_constants(items: list[dict]) -> list[str]:
     return ["#### Module values changed", *(f"- {_constant_line(i)}" for i in items), ""]
 
 
-def _markdown_groups(groups: list[dict], by_id: dict) -> list[str]:
-    if not groups:
+def _markdown_list(title: str, entries: list[dict], links: tuple, describe) -> list[str]:
+    if not entries:
         return []
-    return ["#### Same change in many places", *(f"- {_group_line(g, by_id)}" for g in groups), ""]
-
-
-def _markdown_skim(rest: list[dict], links: tuple) -> list[str]:
-    if not rest:
-        return []
-    out = ["#### Safe to skim"]
-    out.extend(f"- `{e['name']}` {e['status']} · {_link(e, *links)} · {_skim_line(e)}" for e in rest[:MAX_SKIM])
-    if len(rest) > MAX_SKIM:
-        out.append(f"- +{len(rest) - MAX_SKIM} more in the JSON output")
+    out = [title]
+    for entry in entries[:MAX_SKIM]:
+        out.append(f"- `{entry['name']}` {entry['status']} · {_link(entry, *links)} · {describe(entry)}")
+        out.extend(f"  - {md_text(line)}" for line in evidence_lines(entry))
+    if len(entries) > MAX_SKIM:
+        out.append(f"- +{len(entries) - MAX_SKIM} more in the JSON output")
     out.append("")
     return out
 
@@ -238,15 +342,19 @@ def _markdown_tests(tests: list[dict]) -> list[str]:
 
 
 def render_markdown(change_map: dict, *, repo_url: str | None = None, head_sha: str | None = None) -> str:
-    read_first, groups, rest, tests = _partition(change_map)
-    by_id = {s["id"]: s for s in change_map["symbols"]}
+    parts = _partition(change_map)
     links = (repo_url, head_sha, change_map["base_commit"])
-    out = ["### Skylos change map", "", *_header(change_map), "", _coverage_line(change_map), ""]
-    out.extend(_markdown_read_first(read_first, links, set(change_map["flagged"])))
+    out = ["### Skylos change map", "", *_header(change_map), ""]
+    summary = review_line(change_map)
+    if summary:
+        out.extend([f"**{summary}**", ""])
+    out.extend([_coverage_line(change_map), ""])
+    out.extend(_markdown_read_first(parts["read_first"], links, set(change_map["flagged"])))
     out.extend(_markdown_constants(change_map["module_changes"]))
-    out.extend(_markdown_groups(groups, by_id))
-    out.extend(_markdown_skim(rest, links))
-    out.extend(_markdown_tests(tests))
+    out.extend(_markdown_list("#### Read", parts["read"], links, read_markdown))
+    out.extend(_markdown_list("#### Skim", parts["skim"], links, why_markdown))
+    out.extend(_markdown_list("#### Skip: same logic, proven", parts["skip"], links, why_markdown))
+    out.extend(_markdown_tests(parts["tests"]))
     out.append("_Same commit, same map: computed from the code, not written by a model._")
     text = "\n".join(out) + "\n"
     if len(text) > MARKDOWN_CHAR_LIMIT:
