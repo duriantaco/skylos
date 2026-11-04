@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import json
 import math
 import os
@@ -63,6 +64,13 @@ def read_text_no_symlink(
             return None
         if not prefix and stat_result.st_size > max_bytes:
             return None
+        if prefix:
+            return _decode_text_prefix(
+                os.read(fd, max_bytes),
+                encoding=encoding,
+                errors=errors,
+                newline=newline,
+            )
         with os.fdopen(
             fd,
             "r",
@@ -71,7 +79,7 @@ def read_text_no_symlink(
             newline=newline,
         ) as handle:
             fd = None
-            text = handle.read(max_bytes if prefix else max_bytes + 1)
+            text = handle.read(max_bytes + 1)
     except (OSError, UnicodeError):
         return None
     finally:
@@ -83,8 +91,6 @@ def read_text_no_symlink(
 
     encoded_errors = errors or "strict"
     encoded = text.encode(encoding, encoded_errors)
-    if prefix:
-        return encoded[:max_bytes].decode(encoding, errors="ignore")
     if len(encoded) > max_bytes:
         return None
     return text
@@ -102,8 +108,8 @@ def read_project_text_no_symlink(
 ) -> str | None:
     """Read a scoped regular file, optionally only a bounded text prefix.
 
-    Prefix mode keeps the no-follow checks and returns at most ``max_bytes``
-    encoded bytes without requiring the whole source file to fit that limit.
+    Prefix mode keeps the no-follow checks and decodes at most ``max_bytes``
+    raw bytes without requiring the whole source file to fit that limit.
     """
     if max_bytes < 0:
         return None
@@ -143,6 +149,13 @@ def read_project_text_no_symlink(
             not prefix and file_stat.st_size > max_bytes
         ):
             return None
+        if prefix:
+            return _decode_text_prefix(
+                os.read(file_fd, max_bytes),
+                encoding=encoding,
+                errors=errors,
+                newline=newline,
+            )
         with os.fdopen(
             file_fd,
             "r",
@@ -151,7 +164,7 @@ def read_project_text_no_symlink(
             newline=newline,
         ) as handle:
             file_fd = None
-            text = handle.read(max_bytes if prefix else max_bytes + 1)
+            text = handle.read(max_bytes + 1)
     except (OSError, UnicodeError):
         return None
     finally:
@@ -160,10 +173,23 @@ def read_project_text_no_symlink(
 
     encoded_errors = errors or "strict"
     encoded = text.encode(encoding, encoded_errors)
-    if prefix:
-        return encoded[:max_bytes].decode(encoding, errors="ignore")
     if len(encoded) > max_bytes:
         return None
+    return text
+
+
+def _decode_text_prefix(
+    data: bytes, *, encoding: str, errors: str | None, newline: str | None
+) -> str:
+    # A prefix may end in the middle of a code point. Incremental decoding
+    # leaves that incomplete suffix buffered, but still rejects malformed
+    # interior bytes with strict errors. Never read more bytes to complete it.
+    decoder = codecs.getincrementaldecoder(encoding)(errors=errors or "strict")
+    text = decoder.decode(data, final=False)
+    if newline is None:
+        return text.replace("\r\n", "\n").replace("\r", "\n")
+    if newline not in {"", "\n", "\r", "\r\n"}:
+        raise ValueError(f"illegal newline value: {newline}")
     return text
 
 
