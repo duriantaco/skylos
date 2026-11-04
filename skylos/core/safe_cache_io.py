@@ -35,7 +35,10 @@ def read_text_no_symlink(
     encoding: str = "utf-8",
     errors: str | None = None,
     newline: str | None = None,
+    prefix: bool = False,
 ) -> str | None:
+    if max_bytes < 0:
+        return None
     try:
         if Path(path).is_symlink():
             return None
@@ -58,7 +61,7 @@ def read_text_no_symlink(
         stat_result = os.fstat(fd)
         if not stat.S_ISREG(stat_result.st_mode):
             return None
-        if stat_result.st_size > max_bytes:
+        if not prefix and stat_result.st_size > max_bytes:
             return None
         with os.fdopen(
             fd,
@@ -68,7 +71,7 @@ def read_text_no_symlink(
             newline=newline,
         ) as handle:
             fd = None
-            text = handle.read(max_bytes + 1)
+            text = handle.read(max_bytes if prefix else max_bytes + 1)
     except (OSError, UnicodeError):
         return None
     finally:
@@ -79,7 +82,10 @@ def read_text_no_symlink(
                 pass
 
     encoded_errors = errors or "strict"
-    if len(text.encode(encoding, encoded_errors)) > max_bytes:
+    encoded = text.encode(encoding, encoded_errors)
+    if prefix:
+        return encoded[:max_bytes].decode(encoding, errors="ignore")
+    if len(encoded) > max_bytes:
         return None
     return text
 
@@ -92,7 +98,15 @@ def read_project_text_no_symlink(
     encoding: str = "utf-8",
     errors: str | None = None,
     newline: str | None = None,
+    prefix: bool = False,
 ) -> str | None:
+    """Read a scoped regular file, optionally only a bounded text prefix.
+
+    Prefix mode keeps the no-follow checks and returns at most ``max_bytes``
+    encoded bytes without requiring the whole source file to fit that limit.
+    """
+    if max_bytes < 0:
+        return None
     project_path = _project_relative_path(project_root, path)
     if project_path is None:
         return None
@@ -105,6 +119,7 @@ def read_project_text_no_symlink(
             encoding=encoding,
             errors=errors,
             newline=newline,
+            prefix=prefix,
         )
 
     directory_fd: int | None = None
@@ -124,7 +139,9 @@ def read_project_text_no_symlink(
             flags |= os.O_CLOEXEC
         file_fd = os.open(relative.parts[-1], flags, dir_fd=directory_fd)
         file_stat = os.fstat(file_fd)
-        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size > max_bytes:
+        if not stat.S_ISREG(file_stat.st_mode) or (
+            not prefix and file_stat.st_size > max_bytes
+        ):
             return None
         with os.fdopen(
             file_fd,
@@ -134,7 +151,7 @@ def read_project_text_no_symlink(
             newline=newline,
         ) as handle:
             file_fd = None
-            text = handle.read(max_bytes + 1)
+            text = handle.read(max_bytes if prefix else max_bytes + 1)
     except (OSError, UnicodeError):
         return None
     finally:
@@ -142,7 +159,10 @@ def read_project_text_no_symlink(
         _close_file_descriptor(directory_fd)
 
     encoded_errors = errors or "strict"
-    if len(text.encode(encoding, encoded_errors)) > max_bytes:
+    encoded = text.encode(encoding, encoded_errors)
+    if prefix:
+        return encoded[:max_bytes].decode(encoding, errors="ignore")
+    if len(encoded) > max_bytes:
         return None
     return text
 
@@ -188,6 +208,7 @@ def _read_project_text_fallback(
     encoding: str,
     errors: str | None,
     newline: str | None,
+    prefix: bool = False,
 ) -> str | None:
     current = root
     try:
@@ -205,6 +226,7 @@ def _read_project_text_fallback(
         encoding=encoding,
         errors=errors,
         newline=newline,
+        prefix=prefix,
     )
 
 

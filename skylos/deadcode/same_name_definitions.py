@@ -18,6 +18,7 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
+from skylos.core.safe_cache_io import read_project_text_no_symlink
 from skylos.visitors.languages.kotlin._lex import mask_comments_and_strings
 
 NAME_RESOLVED_FAMILIES = frozenset({"jvm", "rust", "dart"})
@@ -43,8 +44,14 @@ def same_name_definition_key(definition, definitions):
 
 
 class SameNameGroups:
-    def __init__(self, definitions, family_of):
+    def __init__(self, definitions, family_of, *, scan_root=None):
         self.family_of = family_of
+        try:
+            self._scan_root = (
+                Path(scan_root).resolve(strict=True) if scan_root is not None else None
+            )
+        except (OSError, TypeError, ValueError):
+            self._scan_root = None
         by_name = defaultdict(list)
         for key, definition in definitions.items():
             if definition.type == "import":
@@ -128,12 +135,19 @@ class SameNameGroups:
         or quoted ``import b.Util;`` is not an import.
         """
         key = str(filename)
+        if self._scan_root is None:
+            return None, set()
         if key not in self._headers:
-            try:
-                with open(key, encoding="utf-8", errors="ignore") as handle:
-                    text = handle.read(_PACKAGE_READ_LIMIT)
-            except OSError:
-                text = ""
+            text = (
+                read_project_text_no_symlink(
+                    self._scan_root,
+                    key,
+                    max_bytes=_PACKAGE_READ_LIMIT,
+                    errors="ignore",
+                    prefix=True,
+                )
+                or ""
+            )
             text = mask_comments_and_strings(text)
             package = None
             match = _JVM_PACKAGE.search(text)

@@ -2787,7 +2787,7 @@ class Skylos:
             if os.getenv("SKYLOS_DEBUG"):
                 logger.error(traceback.format_exc())
 
-    def _mark_refs(self, progress_callback=None):
+    def _mark_refs(self, progress_callback=None, *, scan_root=None):
         total_refs = len(self.refs)
         if progress_callback:
             progress_callback(0, total_refs or 1, Path("PHASE: mark refs"))
@@ -2854,7 +2854,9 @@ class Skylos:
             if d.type == "import":
                 import_by_simple[d.simple_name].append(k)
 
-        same_name_groups = SameNameGroups(self.defs, _reference_language_family)
+        same_name_groups = SameNameGroups(
+            self.defs, _reference_language_family, scan_root=scan_root
+        )
 
         def _resolve_import_target(import_def_key: str, import_def_obj) -> str | None:
             target_fqn = import_def_obj.name
@@ -6238,7 +6240,7 @@ class Skylos:
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: mark refs"))
-        self._mark_refs(progress_callback=progress_callback)
+        self._mark_refs(progress_callback=progress_callback, scan_root=root)
         self._mark_reflected_module_members(set(modmap.values()))
         self._mark_call_arg_method_refs()
         mark_signature_contract_parameters(self.defs)
