@@ -228,7 +228,7 @@ Timeout-Pflicht beizubringen.
 | TypeScript / JavaScript | Ja | Ja | Ja | Tree-sitter-Parsing, Paketgraph-Reachability, Framework-Konventionen |
 | Java | Ja | Ja | Ja | Tree-sitter-Parsing und strukturierte Security-Flow-Analyse |
 | Go | Ja¹ | Teilweise¹ | Teilweise | Dead-Code- und ausgewählte Security-Benchmark-Abdeckung |
-| PHP | Ja | Ja | Nein | PHP-Parser-Abdeckung plus taint-artige Security-Sinks und -Sources |
+| PHP | Ja | Ja | Nein | PHP-Parser-Abdeckung; Security verfolgt Request-Daten (Superglobals, Laravel/Symfony/PSR-7/CodeIgniter-Requests, Drupal Form API) innerhalb einer Funktion oder Datei bis zu Command- und Code-Ausführung, `include`, XSS über `echo`/`<?= ?>`/Blade `{!! !!}`, SQL, SSRF, `unserialize` und Dateipfaden; nicht über Funktions- oder Dateigrenzen und nicht in Twig-Templates |
 | Rust | Experimentell⁴ | Teilweise | Teilweise | Rust-Parser; Command Injection, Path Traversal, direkt unerreichbare Anweisungen und doppelte Zweige |
 | Dart | Ja³ | Teilweise³ | Nein | Dart-Parser-Abdeckung; Security prüft Command Injection, Path Traversal und SSRF |
 | C# | Teilweise | Teilweise | Teilweise | C#-Symbole, unerreichbare Anweisungen in direkten Blöcken, ausgewählte Security-Senken und direkte NuGet-Inventarisierung |

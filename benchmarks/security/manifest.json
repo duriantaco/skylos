@@ -1334,7 +1334,7 @@
     {
       "id": "php-request-include",
       "path": "fixtures/php_request_include",
-      "description": "PHP include using request-controlled template path should be reported as path traversal.",
+      "description": "PHP include using request-controlled template path should be reported as file inclusion.",
       "languages": ["php"],
       "taxonomy": ["path_traversal", "php"],
       "importance": "critical",
@@ -1348,7 +1348,7 @@
       },
       "expect": {
         "present": {
-          "danger": ["SKY-D215"]
+          "danger": ["SKY-D255"]
         },
         "absent": {}
       }

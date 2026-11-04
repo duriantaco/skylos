@@ -43,7 +43,7 @@ def test_request_controlled_include_flags(tmp_path):
 include $_GET['tpl'];
 """,
     )
-    assert "SKY-D215" in _rule_ids(findings)
+    assert "SKY-D255" in _rule_ids(findings)
 
 
 def test_request_controlled_file_sink_flags(tmp_path):
