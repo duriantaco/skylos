@@ -312,6 +312,8 @@ def classify_property_descriptors(definitions, parsed_files, module_names=None):
                 {},
             )
         )
+    if not any(module.classes for module in modules):
+        return []
     for module in modules:
         assignments = [
             node for node in module.tree.body if isinstance(node, ast.Assign)

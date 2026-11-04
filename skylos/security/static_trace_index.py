@@ -37,6 +37,7 @@ class SourceDocument:
 class ProjectTraceIndex:
     def __init__(self, project_root, files=None, limits=None, priority_files=None):
         self.root = Path(os.path.abspath(project_root))
+        self._relative_paths = {}
         self.limits = limits or TraceLimits()
         self.units = {}
         self.documents = {}
@@ -59,13 +60,21 @@ class ProjectTraceIndex:
 
     def relative_path(self, path):
         candidate = Path(path)
+        # Cache lexical paths, including outside-root misses, for this index.
+        key = (str(self.root), str(candidate))
+        try:
+            return self._relative_paths[key]
+        except KeyError:
+            pass
         if not candidate.is_absolute():
             candidate = self.root / candidate
         candidate = Path(os.path.abspath(candidate))
         try:
-            return candidate.relative_to(self.root).as_posix()
+            relative = candidate.relative_to(self.root).as_posix()
         except ValueError:
-            return None
+            relative = None
+        self._relative_paths[key] = relative
+        return relative
 
     def _paths(self, files):
         paths = set()
