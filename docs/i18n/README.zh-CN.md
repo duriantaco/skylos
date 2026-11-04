@@ -36,6 +36,16 @@ skylos cloud        # 可选：在 Skylos Cloud 上按分支跟踪结果
 skylos cicd init    # 为每个拉取请求添加 Skylos 检查
 ```
 
+使用编码代理时，只需要两个命令：
+
+```bash
+skylos setup   # 每个仓库一次：连接 Claude Code 和 Codex，写入 PR 检查，生成代码地图
+skylos open    # 每天：代码图、用简单语言说明的改动、每一次检查
+```
+
+检查由你的代理自己运行。[教程](../workflow.md)记录了一次真实会话：代理描述代码、
+修改代码、被拦下，然后按照 Skylos 的修复说明修好。
+
 `skylos cloud` 运行全部检查，显示发现的问题并上传，然后打印当前分支的质量门结果和一个链接：
 
 ```text
@@ -86,6 +96,7 @@ git push
 | 更易读的终端报告 | `skylos . --format pretty` | 按文件分组展示发现，包含严重级别标记、代码片段和可复制的 `file:line` 位置 | [CLI Output Modes](../cli-output.md) |
 | 可选择的终端界面 | `skylos . --tui` | 打开键盘驱动的分类列表、发现列表和详情面板 | [CLI Output Modes](../cli-output.md) |
 | 审查用的变更地图 | `skylos done map --base origin/main` | 列出每个改动的 Python 或 TypeScript/JavaScript 函数：新旧代码、新增和删除的调用、调用者、被删除的安全检查，以及应该先读哪些改动；由代码计算得出，不是模型生成 | [Change map](../change-map.md) |
+| 代码库图谱 | `skylos graph open` | 在本地浏览器中展示每个 Python 和 TypeScript/JavaScript 函数和类（Go、Java、Rust 和 PHP 为初步支持，调用按名称匹配），按区域分组，谁调用谁、测试及其期望输出；标出改动的代码，并说明逻辑是否保持不变（只有能证明时才这样说）。通俗英文说明由你的编码代理、你自己的模型密钥或 Skylos（消耗额度）生成；Skylos Cloud 可以在每个拉取请求上发布逻辑变更评论。`skylos done map` 把每处改动分为“先读”“要读”“略读”和“可跳过”（只有能证明逻辑不变时才可跳过）；相应的 MCP 工具不需要密钥 | [Codebase graph](../graph.md) |
 | 只审查变更行 | `skylos . -a --diff origin/main` | 聚焦当前 PR，避免被历史债务淹没 | [质量门控](https://docs.skylos.dev/quality-gate) |
 | 运行时辅助死代码检测 | `skylos . --trace` | 用测试运行轨迹降低动态代码误报 | [Smart Tracing](https://docs.skylos.dev/smart-tracing) |
 | AI 辅助审查 | `skylos agent scan .` | 静态分析加可选 LLM 审查和修复建议 | [AI Features](https://docs.skylos.dev/ai-features) |
@@ -233,6 +244,8 @@ Skylos 辅助的死代码清理 PR 已被
 | Agent 扫描、验证、修复和模型设置 | [AI Features](https://docs.skylos.dev/ai-features) |
 | AI 防御和 LLM guardrails | [AI app safety](https://docs.skylos.dev/ai-defense) |
 | 一次改动影响了什么、先读什么（`skylos done map`） | [Change map](../change-map.md) |
+| 教程：`skylos setup`、`skylos open`、Pipeline 视图和 PR 检查，来自一次真实的代理会话 | [教程](../workflow.md) |
+| 谁调用谁、通俗说明，以及改动后的逻辑是否不变（`skylos graph`） | [Codebase graph](../graph.md) |
 | MCP server 设置 | [MCP Server](https://docs.skylos.dev/mcp-server) |
 | 基线、过滤、抑制和白名单 | [Configuration](https://docs.skylos.dev/configuration) |
 | 智能追踪 | [Smart Tracing](https://docs.skylos.dev/smart-tracing) |

@@ -249,3 +249,20 @@ def test_markdown_fences_typescript_and_jsx_code_in_their_own_language(tmp_path)
     assert "```jsx\nexport function Card() {" in text
     assert "```python" not in text
     assert "Not mapped: 1 file(s) that are not Python or TypeScript/JavaScript." in text
+
+
+def test_python_method_change_with_the_class_name_in_typescript_still_maps(tmp_path):
+    service = "class Service:\n    def attach(self, transport):\n        return transport\n"
+    repo(tmp_path, {
+        "svc.py": service,
+        "use.py": "from svc import Service\n\ndef wire(service: Service, t):\n    return service.attach(t)\n",
+        "web/client.ts": "export interface Service {\n  attach(t: number): number;\n}\n\nexport function wireUp(s: Service) {\n  return s.attach(1);\n}\n",
+    })
+    write(tmp_path, {
+        "svc.py": service.replace("return transport", "return [transport]"),
+        "web/client.ts": "export interface Service {\n  attach(t: number): number[];\n}\n\nexport function wireUp(s: Service) {\n  return s.attach(2);\n}\n",
+    })
+    result = build_change_map(tmp_path, "HEAD")
+    attach = [s for s in result["symbols"] if s["id"] == "svc.py::Service.attach"][0]
+    assert [c["name"] for c in attach["callers"]] == ["use.wire"]
+    assert all(c["file"] != "web/client.ts" for c in attach["callers"] + attach["possible_callers"])

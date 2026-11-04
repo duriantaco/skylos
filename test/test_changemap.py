@@ -347,15 +347,17 @@ def test_markdown_puts_removed_auth_first_with_reason_and_code(tmp_path):
     assert "computed from the code, not written by a model" in text
 
 
-def test_markdown_lists_symbols_after_the_top_three_under_safe_to_skim(tmp_path):
+def test_markdown_lists_new_code_after_the_top_three_under_read_not_skim(tmp_path):
     repo(tmp_path, {"m.py": "def keep():\n    return 0\n"})
     write(tmp_path, {"m.py": "def keep():\n    return 0\n" + "".join(f"\ndef f{i}():\n    return {i}\n" for i in range(5))})
     text = render_markdown(build_change_map(tmp_path, "HEAD"))
     read_first = text.split("#### Read first")[1].split("####")[0]
-    skim = text.split("#### Safe to skim")[1]
+    read = text.split("#### Read\n")[1].split("####")[0]
     assert "**3. `f2`** added" in read_first
-    assert "- `f3` added · m.py:13 · 0 caller(s)" in skim
-    assert "- `f4` added · m.py:16 · 0 caller(s)" in skim
+    assert "- `f3` added · m.py:13 · 0 caller(s)" in read
+    assert "- `f4` added · m.py:16 · 0 caller(s)" in read
+    assert "#### Skim" not in text
+    assert "#### Skip" not in text
 
 
 def test_text_render_has_no_markdown_and_same_order(tmp_path):
@@ -471,7 +473,8 @@ def test_every_flagged_symbol_is_read_first_and_never_safe_to_skim(tmp_path):
     assert sorted(result["flagged"]) == ids
     assert sorted(result["read_first"]) == ids
     text = render_markdown(result)
-    assert "#### Safe to skim" not in text
+    assert "#### Skim" not in text
+    assert "#### Skip" not in text
     assert "**5. `h" in text.split("#### Read first")[1]
 
 
