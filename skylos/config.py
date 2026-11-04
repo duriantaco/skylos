@@ -146,6 +146,7 @@ DEFAULTS = {
         "extra_credential_suffixes": [],
         "extra_secret_names": [],
         "extra_security_var_keywords": [],
+        "extra_insecure_random_funcs": [],
         "extra_well_known_env_vars": [],
         "extra_sensitive_file_keywords": [],
         "extra_placeholder_values": [],

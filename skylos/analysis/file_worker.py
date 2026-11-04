@@ -227,10 +227,15 @@ def _danger_findings(
     danger_linter.visit(prepared.tree)
     findings = danger_linter.findings
 
-    from skylos.rules.danger.danger import dedupe_findings, scan_file_with_tree
+    from skylos.rules.danger.danger import (
+        dedupe_findings,
+        scan_file_with_tree,
+        scan_trojan_source_text,
+    )
 
     taint_findings = []
     analysis_error = None
+    scan_trojan_source_text(prepared.source, Path(file), taint_findings)
     try:
         scan_file_with_tree(
             prepared.tree,
@@ -455,6 +460,14 @@ def _success_result(
         prepared.ignore_rules_by_line,
         bool(getattr(visitor, "has_explicit_all", False)),
         annotation_coverage or {},
+        {
+            "receivers": getattr(visitor, "_attr_receivers", set()),
+            "module_objects": getattr(visitor, "_module_object_refs", set()),
+            "star_sources": getattr(visitor, "_star_import_sources", set()),
+            "module_strings": getattr(visitor, "_module_name_strings", set()),
+            "dynamic": bool(getattr(visitor, "_dynamic_module_access", False)),
+            "nested_classes": getattr(visitor, "_nested_class_names", set()),
+        },
     )
 
 
@@ -500,6 +513,7 @@ def _error_result(file, cfg, error, options: _WorkerOptions) -> tuple:
         ),
         {},
         False,
+        {},
         {},
     )
 

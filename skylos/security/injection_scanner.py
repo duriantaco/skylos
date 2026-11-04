@@ -530,6 +530,8 @@ def scan_file(
     for index, (char_hex, line_no) in enumerate(zero_width_hits):
         if index == 0 and leading_bom:
             continue
+        if ext in _PYTHON_SOURCE_SUFFIXES and char_hex in _TROJAN_SOURCE_CONTROLS:
+            continue
         if (
             not is_agent_instruction
             and not is_reviewer_config
@@ -715,6 +717,8 @@ def scan_file(
 
 
 _ORTHOGRAPHIC_JOINERS = {"U+200C": "\u200c", "U+200D": "\u200d"}
+_PYTHON_SOURCE_SUFFIXES = {".py", ".pyi", ".pyw"}
+_TROJAN_SOURCE_CONTROLS = {"U+202A", "U+202B", "U+202C", "U+202D", "U+202E"}
 _JOINING_SCRIPTS = (
     "ARABIC",
     "SYRIAC",

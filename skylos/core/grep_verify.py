@@ -192,12 +192,15 @@ def _cache_key(cache: Any, group_name: str, finding: dict) -> str | None:
     simple_name = finding.get("simple_name", finding.get("name", ""))
     finding_file = finding.get("file", "")
     content_hash = _fch(finding_file) if finding_file else ""
-    return (
+    key = (
         f"{_GREP_VERIFY_CACHE_VERSION}:group:{group_name}:"
         f"{simple_name}:{finding.get('full_name', '')}:"
         f"{finding.get('type', '')}:{content_hash}:"
         f"repo:{repository_fingerprint}"
     )
+    if finding.get("attribute_reads_resolved"):
+        key += ":attribute-reads-resolved"
+    return key
 
 
 def _load_cached_group_results(

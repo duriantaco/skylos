@@ -340,6 +340,188 @@ def test_module_variables_sharing_a_name_are_reported_independently(tmp_path):
     assert ("a.py", "queries") not in unused
 
 
+def test_variables_whose_same_named_attributes_read_other_objects_are_reported(
+    tmp_path,
+):
+    _write(tmp_path, "app/__init__.py", "")
+    _write(tmp_path, "app/settings.py", "RETRY_LIMIT = 3\nTIMEOUT = 10\n")
+    _write(
+        tmp_path,
+        "app/client.py",
+        """
+        from app.settings import TIMEOUT
+
+
+        class Policy:
+            def __init__(self):
+                self.RETRY_LIMIT = 5
+
+            def limit(self):
+                return self.RETRY_LIMIT
+
+
+        def call(policy):
+            return policy.RETRY_LIMIT + TIMEOUT + policy.limit()
+
+
+        print(call(Policy()))
+        """,
+    )
+    _write(tmp_path, "app/flags.py", "DEBUG_MODE = False\n")
+    _write(tmp_path, "app/env.py", "DEBUG_MODE = True\n")
+    _write(tmp_path, "app/tuning.py", "SPEED = 1\n")
+    _write(
+        tmp_path,
+        "app/use.py",
+        """
+        from app import env
+
+
+        def speed(settings):
+            return settings.SPEED
+
+
+        class Circle:
+            SIDES = 0
+
+
+        class Polygon:
+            def __init__(self):
+                self.SIDES = 3
+
+            def sides(self):
+                return self.SIDES
+
+
+        print(env.DEBUG_MODE, speed(object()), Circle(), Polygon().sides())
+        """,
+    )
+
+    unused = _unused(tmp_path, "unused_variables")
+
+    assert ("settings.py", "RETRY_LIMIT") in unused
+    assert ("flags.py", "DEBUG_MODE") in unused
+    assert ("tuning.py", "SPEED") in unused
+    assert ("use.py", "SIDES") in unused
+    assert ("settings.py", "TIMEOUT") not in unused
+    assert ("env.py", "DEBUG_MODE") not in unused
+
+
+def test_attribute_reads_that_may_reach_the_variable_keep_it(tmp_path):
+    _write(tmp_path, "app/__init__.py", "")
+    _write(tmp_path, "app/conf_passed.py", "MAX_ITEMS = 5\n")
+    _write(tmp_path, "app/base_conf.py", "PAGE_SIZE = 50\n")
+    _write(tmp_path, "app/conf_star.py", "from app.base_conf import *\n")
+    _write(tmp_path, "app/dj_settings.py", "CUSTOM_FLAG = True\n")
+    _write(tmp_path, "app/celeryconfig.py", 'broker_url = "redis://"\n')
+    _write(tmp_path, "app/quota_conf.py", "QUOTA = 7\n")
+    _write(
+        tmp_path,
+        "app/models.py",
+        """
+        from somelib import Shape
+
+
+        class Base:
+            LABEL = "base"
+
+            def unit(self):
+                return self.UNIT
+
+
+        class Square(Base):
+            UNIT = "m2"
+
+
+        class Theme:
+            COLOR = "red"
+
+
+        class Hexagon(Shape):
+            CORNERS = 6
+
+
+        class Article:
+            class Meta:
+                ordering = ["-id"]
+
+
+        class Comment:
+            class Meta:
+                ordering = ["id"]
+        """,
+    )
+    _write(
+        tmp_path,
+        "app/use.py",
+        """
+        from django.conf import settings
+        from app import conf_passed, conf_star, quota_conf as settings_module
+        from app.models import Article, Comment, Hexagon, Square, Theme
+
+
+        class SettingsProxy:
+            def __getattr__(self, name):
+                return getattr(settings_module, name)
+
+            def quota(self):
+                return self.QUOTA
+
+
+        class Grid:
+            def __init__(self):
+                self.CORNERS = 4
+
+            def corners(self):
+                return self.CORNERS
+
+
+        def size(cfg):
+            return cfg.MAX_ITEMS
+
+
+        def color(obj):
+            return obj.COLOR
+
+
+        def broker(worker_app):
+            worker_app.config_from_object("app.celeryconfig")
+            return worker_app.conf.broker_url
+
+
+        print(
+            size(conf_passed),
+            conf_star.PAGE_SIZE,
+            settings.CUSTOM_FLAG,
+            broker(object()),
+            SettingsProxy().quota(),
+            Square().unit(),
+            Square().LABEL,
+            color(Theme()),
+            Hexagon(),
+            Grid().corners(),
+            Article,
+            Comment,
+        )
+        """,
+    )
+
+    unused = {name for _file, name in _unused(tmp_path, "unused_variables")}
+
+    assert not unused & {
+        "MAX_ITEMS",
+        "PAGE_SIZE",
+        "CUSTOM_FLAG",
+        "broker_url",
+        "QUOTA",
+        "LABEL",
+        "UNIT",
+        "COLOR",
+        "CORNERS",
+        "ordering",
+    }
+
+
 def test_commented_out_call_does_not_keep_a_function(tmp_path):
     _write(
         tmp_path,

@@ -591,7 +591,9 @@ def _has_any(source: str, tokens: tuple[str, ...]) -> bool:
     return any(token in source for token in tokens)
 
 
-def _scan_trojan_source_text(src: str, file_path: Path, findings: list[dict]) -> None:
+def scan_trojan_source_text(src: str, file_path: Path, findings: list[dict]) -> None:
+    if not any(char in src for char in _BIDI_CONTROL_CHARS):
+        return
     for line_no, line in enumerate(src.splitlines(), start=1):
         for col, char in enumerate(line):
             if char not in _BIDI_CONTROL_CHARS:
@@ -732,7 +734,7 @@ def dedupe_findings(findings: list[dict]) -> list[dict]:
 
 def _scan_file(file_path: Path, findings, project_root=None):
     src = file_path.read_text(encoding="utf-8", errors="ignore")
-    _scan_trojan_source_text(src, file_path, findings)
+    scan_trojan_source_text(src, file_path, findings)
     tree = ast.parse(src)
 
     scan_file_with_tree(tree, file_path, findings, source=src, project_root=project_root)

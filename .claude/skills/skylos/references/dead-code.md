@@ -36,6 +36,16 @@ Prefer evidence in this order:
 Do not treat absence of a simple text reference as proof of dead code when the
 framework commonly resolves names dynamically.
 
+A same-named attribute read is not always a use. A Python module or class
+variable stays alive through `x.NAME` only when `x` could be its owner (the
+module or class, a related class's `self`, Django `settings`, or an unknown
+receiver the module object can reach). `self.NAME` on an unrelated class and
+`other_module.NAME` do not keep it, so `RETRY_LIMIT = 3` read only as
+`self.RETRY_LIMIT` elsewhere is reported. Java, Kotlin, Rust and Dart symbols
+with the same name in different files are separate findings; a reference
+reaches the ones in its file, package, imports or crate. Overloads in one file
+share liveness.
+
 ## Framework Areas
 
 Skylos has framework-aware behavior for patterns such as:
