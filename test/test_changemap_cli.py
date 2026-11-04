@@ -96,8 +96,40 @@ def test_mcp_change_map_tool_returns_the_map(tmp_path, monkeypatch):
     server._register_tools(mcp)
     tools = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
     assert "change_map" in tools
-    assert "Requires SKYLOS_API_KEY" in tools["change_map"].description
+    assert "Works without SKYLOS_API_KEY and has no daily limit" in tools["change_map"].description
+    assert "graph_changes" not in tools
     result = asyncio.run(mcp.call_tool("change_map", {"path": str(removed_auth_repo(tmp_path)), "base": "HEAD"}))
     content = result[0] if isinstance(result, tuple) else result
     data = json.loads(content[0].text)
     assert data["flagged"] == ["app.py::handler"]
+
+
+def test_local_map_tools_need_no_key_while_scanner_tools_still_do(tmp_path, monkeypatch):
+    import skylos_mcp.auth as auth
+    import skylos_mcp.server as server
+
+    monkeypatch.setattr(auth, "_session", auth.AuthSession(authenticated=False))
+    monkeypatch.setattr(server, "_REQUIRE_MCP_CLIENT_AUTH_CONTEXT", False)
+    for _ in range(auth.UNAUTH_DAILY_LIMIT + 3):
+        assert server._gate("change_map") is None
+        assert server._gate("graph_show") is None
+    assert "requires authentication" in json.loads(server._gate("security_scan"))["error"]
+    assert "requires authentication" in json.loads(server._gate("remediate"))["error"]
+    assert server._gate("analyze") is None
+
+
+def test_done_map_still_prints_when_the_review_cannot_be_saved(tmp_path, capsys, monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def broken(name, *args, **kwargs):
+        if name == "skylos.graph.pipeline":
+            raise ModuleNotFoundError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", broken)
+    root = removed_auth_repo(tmp_path)
+    code = run_done_command(["map", str(root), "--format", "markdown"], console=Console(file=io.StringIO()))
+    assert code == 0
+    assert "### Skylos change map" in capsys.readouterr().out

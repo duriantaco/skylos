@@ -196,7 +196,7 @@ def test_command_overview_distinguishes_source_artifact_and_image_checks():
     assert "100% accuracy" not in output
 
 
-def test_command_overview_leads_with_scan_done_and_ci():
+def test_command_overview_leads_with_setup_open_scan_and_cloud():
     from skylos.ui.help import print_command_overview
 
     console = Console(record=True, width=100, color_system=None)
@@ -207,12 +207,14 @@ def test_command_overview_leads_with_scan_done_and_ci():
     start = output.index("Start here")
     more = output.index("More commands")
     common = [
+        output.index("skylos setup"),
+        output.index("skylos open"),
         output.index("skylos . -a"),
-        output.index("skylos done --base main"),
-        output.index("skylos cicd init"),
+        output.index("skylos cloud"),
     ]
     assert start < min(common) and max(common) < more
-    assert "an AI agent wrote" in output
+    assert more < output.index("skylos done --base main")
+    assert "coding agent" in output
     assert more < output.index("skylos preflight [ARTIFACT]")
     assert more < output.index("skylos image scan IMAGE")
 
@@ -225,8 +227,8 @@ def test_command_map_shows_the_common_path_before_every_command():
     print_flat_commands(console)
 
     output = console.export_text()
-    assert output.index("Start here") < output.index("skylos done --base main")
-    assert output.index("skylos done --base main") < output.index("All commands")
+    assert output.index("Start here") < output.index("skylos setup") < output.index("All commands")
+    assert output.index("All commands") < output.index("skylos done [path]")
     assert "skylos agent audit [path]" in output
     done = next(c for c in COMMANDS if c["name"].startswith("skylos done "))
     assert "AI agent" in done["desc"]

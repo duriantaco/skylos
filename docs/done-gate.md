@@ -1142,6 +1142,26 @@ check advises, never a verdict. Required CI starts without a cache.
 Each run writes `.skylos/receipts/<head>-<base>.json` and
 `.skylos/receipts/latest.json` (the directory ignores itself in Git). In
 GitHub Actions the receipt is also appended to the job summary.
+Every run is also kept in `.skylos/receipts/history/` (the last 50), so a later
+run on the same commit, for example an agent checking its fix before
+committing, never erases an earlier failure. `skylos open` shows the last
+30 runs in its **Pipeline** tab, one row per run, stage by stage.
+
+The receipt names who ran it: `--agent CLIENT` when given, otherwise
+`claude-code` or `codex` when Skylos runs inside one of them, `check-button`
+for the Check this change button in `skylos open`, and `unknown` otherwise.
+
+When the test command writes no results (for example pytest cannot import a
+plugin or a dependency is missing), the Tests check is UNFINISHED and its
+reason ends with the last line the tests printed, so the cause is on the
+receipt.
+
+Files Skylos itself writes under `.skylos/graph/` (the codebase graph and its
+caches) are not part of the change and never count as a settings edit.
+`.skylos/graph/notes.json`, the shared plain-English descriptions, is part of
+the change like any other file (secrets in it are still found), but changing
+it is not a settings edit either, unless you list it by name in
+`protected_paths`.
 
 To store it in Skylos Cloud, attach it to a code-scan upload of the same
 commit:

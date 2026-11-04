@@ -40,7 +40,15 @@ Read only the reference needed for the current task.
 - Prefer `skylos . -a --format json` for agent-readable scans.
 - Use `skylos . --diff origin/main --format json` for PR-focused review.
 - Use `skylos done map --base origin/main --format json` to see what a change
-  touches (callers, removed checks, what to read first) before reading its diff.
+  touches (callers, removed checks) and its `review` buckets before reading
+  its diff: read `read_first` and `read`, skim `skim`, and trust `skip` only as
+  proven same logic.
+- Use `skylos graph impact NAME --format json` before changing a function's
+  signature or behaviour, and `skylos graph changes --format json` after, to
+  see which changed functions kept the same logic.
+- A person's flow is two commands: `skylos setup` once per repository (agent
+  instructions, MCP config, PR check, code map) and `skylos open` every day
+  (diagram, changes, Pipeline, Check this change). Tutorial: `docs/workflow.md`.
 - Parse JSON arrays with `.get(key, [])`; empty arrays may be omitted.
 - Use focused tests before full suites.
 - Keep changes narrow and preserve unrelated user edits.

@@ -295,13 +295,18 @@ def _build_done_job(
         f"          {command}" for command in done_install_commands
     )
     done_run = 'skylos done --base "origin/$GITHUB_BASE_REF"'
+    map_run = 'skylos done map --base "origin/$GITHUB_BASE_REF" --format markdown >> "$GITHUB_STEP_SUMMARY"'
     if merge_queue:
         # On merge_group the base is the queue's base commit, from the event
         # through the environment (GITHUB_BASE_REF is empty there).
-        done_run = (
-            'skylos done --base "${MERGE_GROUP_BASE_SHA:-origin/$GITHUB_BASE_REF}"\n'
-            "        env:\n"
+        queue_env = (
+            "\n        env:\n"
             "          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}"
+        )
+        done_run = 'skylos done --base "${MERGE_GROUP_BASE_SHA:-origin/$GITHUB_BASE_REF}"' + queue_env
+        map_run = (
+            'skylos done map --base "${MERGE_GROUP_BASE_SHA:-origin/$GITHUB_BASE_REF}" '
+            '--format markdown >> "$GITHUB_STEP_SUMMARY"' + queue_env
         )
     return f"""
   done:
@@ -334,6 +339,11 @@ def _build_done_job(
 
       - name: Check the change is finished
         run: {done_run}
+
+      - name: Show what to review
+        if: ${{{{ !cancelled() }}}}
+        continue-on-error: true
+        run: {map_run}
 """
 
 

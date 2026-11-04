@@ -47,9 +47,11 @@ class _CSharpTokenPattern:
 
     def finditer(self, source: str) -> Iterator[_TokenMatch]:
         position = 0
+        raw = _RAW_START_RE.search(source, position)
         while position < len(source):
             plain = _PLAIN_TOKEN_RE.search(source, position)
-            raw = _RAW_START_RE.search(source, position)
+            if raw is not None and raw.start() < position:
+                raw = _RAW_START_RE.search(source, position)
             if raw is not None and (plain is None or raw.start() <= plain.start()):
                 end = _raw_literal_end(source, raw)
                 yield _RawTokenMatch(source, raw.start(), end)

@@ -70,6 +70,10 @@ Skylos has framework-aware behavior for patterns such as:
   `private operator fun`, operator-convention imports (`getValue`, `plus`,
   `component1`), companion objects, and functions annotated `@JvmStatic`,
   `@Preview`, `@Composable`, Spring/JUnit lifecycle or Hilt `@Provides` are live.
+- C# constructors: only a private constructor with parameters that nothing
+  calls is an unused-function finding (Roslyn IDE0051); controller and
+  dependency-injection constructors are framework-called, and the class itself
+  is the dead-code unit.
 - package entrypoints and plugin hooks.
 - Python library public API (`skylos/deadcode/public_api.py`): attribute
   docstrings and `#:` comments, Sphinx/MyST directives and roles, mkdocstrings

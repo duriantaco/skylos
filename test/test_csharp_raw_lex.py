@@ -35,7 +35,7 @@ def test_raw_literals_mask_as_a_whole_and_preserve_offsets(literal):
 
 
 def test_raw_string_code_like_text_does_not_create_quality_or_security_findings():
-    source = '''public class Runner {
+    source = '''public class RunnerController : Controller {
   public void Run(string data) {
     var text = """
 return;
@@ -61,7 +61,7 @@ def test_interpolated_raw_holes_are_conservatively_masked_for_now():
 def test_security_scan_does_not_misparse_raw_interpolation_holes(literal):
     # Known coverage gap: taint in interpolated raw holes is not analyzed yet.
     # The lexer must not treat raw text as an ordinary interpolated string.
-    source = f"public class Runner {{ void Run(string data) {{ Process.Start({literal}); }} }}"
+    source = f"public class RunnerController : Controller {{ public void Run(string data) {{ Process.Start({literal}); }} }}"
 
     assert scan_danger("Runner.cs", source) == []
 
@@ -95,7 +95,7 @@ def test_long_dollar_run_without_raw_delimiter_is_preserved():
 
 
 def test_regular_interpolated_string_holes_still_reach_security_scan():
-    source = 'public class Runner { public void Run(string data) { Process.Start($"tool {data}"); } }'
+    source = 'public class RunnerController : Controller { public void Run(string data) { Process.Start($"tool {data}"); } }'
 
     assert [finding["rule_id"] for finding in scan_danger("Runner.cs", source)] == [
         "SKY-D212"

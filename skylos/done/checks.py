@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
-from skylos.done.base import Comparison, DoneError, _git_text, is_synced_policy_file
+from skylos.done.base import SKYLOS_DATA_FILES, Comparison, DoneError, _git_text, is_synced_policy_file
 from skylos.done.config import DoneConfig
 from skylos.done.inventory import (
     RewrittenTest,
@@ -943,7 +943,7 @@ def check_gate_tampering(ctx: CheckContext) -> CheckResult:
     findings: list[Finding] = []
     for changed in comparison.changed:
         for path in dict.fromkeys(p for p in (changed.base_path, changed.path) if p):
-            pattern = _protected_match(path, ctx.config.protected_paths)
+            pattern = _protected_match(path, _patterns_for(path, ctx.config.protected_paths))
             if pattern:
                 findings.append(
                     Finding(
@@ -1029,6 +1029,12 @@ def _untracked_policy_note(comparison: Comparison, path: str) -> str:
     if is_ci():
         return "; an untracked synced policy file is not trusted in CI"
     return "; it is not what skylos sync pull last wrote"
+
+
+def _patterns_for(path: str, patterns: tuple[str, ...]) -> tuple[str, ...]:
+    if path in SKYLOS_DATA_FILES:
+        return tuple(pattern for pattern in patterns if pattern != ".skylos/")
+    return patterns
 
 
 def _protected_match(path: str, patterns: tuple[str, ...]) -> str | None:

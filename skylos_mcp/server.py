@@ -22,6 +22,7 @@ from skylos.reporting.finding_types import (
 from skylos.reporting.rollups import FINDING_SECTIONS
 from skylos_mcp.auth import (
     UNAUTH_DAILY_LIMIT,
+    LOCAL_TOOLS,
     UNAUTHENTICATED_TOOLS,
     build_mcp_network_auth,
     check_mcp_client_context,
@@ -1026,12 +1027,19 @@ def _health_score_payload(result: dict, *, expand_advice: bool = False) -> dict:
     return payload
 
 
-def _access_error(tool_name: str) -> str | None:
+def _client_error() -> str | None:
     client_allowed, client_err = check_mcp_client_context(
         _REQUIRE_MCP_CLIENT_AUTH_CONTEXT
     )
     if not client_allowed:
         return json.dumps({"error": client_err})
+    return None
+
+
+def _access_error(tool_name: str) -> str | None:
+    client_err = _client_error()
+    if client_err:
+        return client_err
 
     allowed, err = check_tool_access(tool_name)
     if not allowed:
@@ -1064,7 +1072,15 @@ class _ChargeAtModelStart:
             raise _ChargeRefused(credit_err)
 
 
+def _graph_index(path: str):
+    from skylos.graph import fresh_index
+
+    return fresh_index(path)
+
+
 def _gate(tool_name: str) -> str | None:
+    if tool_name in LOCAL_TOOLS:
+        return _client_error()
     access_err = _access_error(tool_name)
     if access_err:
         return access_err
@@ -1082,25 +1098,32 @@ def _llm_extra_error() -> str | None:
 
 GATED_TOOL_AUTH_NOTE = (
     "Requires SKYLOS_API_KEY: this tool returns an authentication error unless "
-    "the MCP server is started with SKYLOS_API_KEY set. Without a key only "
-    f"`analyze` works ({UNAUTH_DAILY_LIMIT} calls/day). The local CLI needs no "
-    "key: `skylos verify <file>` and `skylos agent install-hooks`."
+    "the MCP server is started with SKYLOS_API_KEY set. Without a key, "
+    f"`analyze` works ({UNAUTH_DAILY_LIMIT} calls/day) and the local map tools "
+    "(`change_map` and the `graph_*` tools) work with no limit. The local CLI "
+    "needs no key: `skylos verify <file>` and `skylos agent install-hooks`."
 )
 UNGATED_TOOL_AUTH_NOTE = (
     f"Works without SKYLOS_API_KEY ({UNAUTH_DAILY_LIMIT} calls/day); "
     "higher limits with a key."
+)
+LOCAL_TOOL_AUTH_NOTE = (
+    "Works without SKYLOS_API_KEY and has no daily limit: it reads the "
+    "repository on this machine and sends nothing to Skylos Cloud."
 )
 
 
 def tool_description(fn) -> str:
     """Tool description shown to MCP clients, with an honest auth note."""
     doc = inspect.cleandoc(fn.__doc__ or "")
-    note = (
-        UNGATED_TOOL_AUTH_NOTE
-        if fn.__name__ in UNAUTHENTICATED_TOOLS
-        else GATED_TOOL_AUTH_NOTE
-    )
-    return f"{doc}\n\n{note}" if doc else note
+    note = GATED_TOOL_AUTH_NOTE
+    if fn.__name__ in LOCAL_TOOLS:
+        note = LOCAL_TOOL_AUTH_NOTE
+    elif fn.__name__ in UNAUTHENTICATED_TOOLS:
+        note = UNGATED_TOOL_AUTH_NOTE
+    if not doc:
+        return note
+    return f"{doc}\n\n{note}"
 
 
 # Parameter descriptions published in each tool's input schema. MCP clients
@@ -2102,7 +2125,7 @@ def _register_tools(mcp):
             ),
         ] = "HEAD",
     ) -> str:
-        """Map what a code change touches, to review it: every changed Python or TypeScript/JavaScript function, method or class with its old and new code, calls added and removed, calls that only moved into a helper, its callers (with call lines, and whether each caller was updated), removed security checks and access checks, breaking or compatible signature changes, changed module values and the functions using them, and the top symbols to read first. Flags list what a person must look at.
+        """Map what a code change touches, to review it: every changed Python or TypeScript/JavaScript function, method or class with its old and new code, calls added and removed, calls that only moved into a helper, its callers (with call lines, and whether each caller was updated), removed security checks and access checks, breaking or compatible signature changes, changed module values and the functions using them, and a review plan: read first, read, skim, or skip (skip only when the logic is proven the same: docstring only or local names only; moved code is skim because its import path changed), with changed-line counts and tests whose expected answers changed. Flags list what a person must look at.
 
         Computed from the code, not by a model: the same commit gives the same map. Returns JSON. Read-only and local."""
         gate_err = _gate("change_map")
@@ -2115,6 +2138,157 @@ def _register_tools(mcp):
             result = build_change_map(path, base)
             _store_result(result, "change_map", path)
             return json.dumps(result, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @_tool("Find code in the codebase graph")
+    def graph_find(
+        query: Annotated[str, Field(description="Part of a function, method, class or file name")],
+        path: RepoPathParam = ".",
+        include_tests: Annotated[bool, Field(description="Also search test code")] = False,
+    ) -> str:
+        """Search the codebase graph for functions, methods and classes by name. Each result has its id, file, line and plain-English summary when one exists. Builds the graph first if the repository has none (Python, TypeScript, JavaScript). Returns JSON. Read-only and local."""
+        gate_err = _gate("graph_find")
+        if gate_err:
+            return gate_err
+        try:
+            index = _graph_index(path)
+            return json.dumps({"results": index.find(query, limit=30, include_tests=include_tests)}, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @_tool("Explain one function or class from the codebase graph")
+    def graph_show(
+        name: Annotated[str, Field(description="Graph id, dotted name, short name, or path::Name")],
+        path: RepoPathParam = ".",
+        with_code: Annotated[bool, Field(description="Include the source code")] = False,
+    ) -> str:
+        """One function, method or class from the codebase graph: its plain-English summary, signature, who uses it, what it uses, the tests that reach it within 3 calls, literal input/output pairs its tests expect, and its change verdict when the working tree changed it. Also: description (now, and before when the code changed since the previous one was written), change_note (the saved change explanation, with impact: how the change reaches each caller) and impact_preview (code proven to call it within 3 steps, production first, then tests). Returns JSON. Read-only and local."""
+        gate_err = _gate("graph_show")
+        if gate_err:
+            return gate_err
+        try:
+            index = _graph_index(path)
+            node_id = index.resolve_name(name)
+            if node_id is None:
+                return json.dumps({"error": f"No single match for {name}", "candidates": index.find(name, limit=8, include_tests=True)})
+            return json.dumps(index.card(node_id, with_code=with_code), indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @_tool("What depends on a function")
+    def graph_impact(
+        name: Annotated[str, Field(description="Graph id, dotted name, short name, or path::Name")],
+        path: RepoPathParam = ".",
+        depth: Annotated[int, Field(description="How many calls up to follow, 1-8")] = 3,
+    ) -> str:
+        """Everything in the repository that calls a function or class, directly or through other code, grouped by distance, plus the tests that reach it. Use it before changing a signature or behaviour. Returns JSON. Read-only and local."""
+        gate_err = _gate("graph_impact")
+        if gate_err:
+            return gate_err
+        try:
+            index = _graph_index(path)
+            node_id = index.resolve_name(name)
+            if node_id is None:
+                return json.dumps({"error": f"No single match for {name}", "candidates": index.find(name, limit=8, include_tests=True)})
+            return json.dumps(index.impact(node_id, max(1, min(depth, 8))), indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @_tool("The areas of the codebase")
+    def graph_areas(
+        path: RepoPathParam = ".",
+        area: Annotated[int | None, Field(description="Area id from a previous call, to list its members and linked areas")] = None,
+    ) -> str:
+        """The codebase split into areas: groups of functions and classes that work together, grouped folder by folder and named after the folder and the member the rest of the code depends on most, with its size, folders and links to other areas. Pass an area id to get its members, most important first, and the areas it links to. Use it to get oriented in an unfamiliar repository. Returns JSON. Read-only and local."""
+        gate_err = _gate("graph_areas")
+        if gate_err:
+            return gate_err
+        try:
+            index = _graph_index(path)
+            if area is None:
+                return json.dumps({"overview": index.overview(), "areas": index.areas()}, indent=2)
+            found = index.area(area)
+            if found is None:
+                return json.dumps({"error": f"No area {area}"})
+            return json.dumps(found, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @_tool("Code that matters most to the files you are changing")
+    def graph_relevant(
+        files: Annotated[list[str], Field(description="Files you are about to change, relative to the repository root")],
+        path: RepoPathParam = ".",
+        budget: Annotated[int, Field(description="Token budget for the answer, 100-20000")] = 2000,
+    ) -> str:
+        """The functions and classes elsewhere in the repository that matter most to the given files, most important first, cut to a token budget: each with its signature, file and line, plain-English summary, how it relates to the files (calls them, called by them) and its area. Use it before editing to know what else to read. Returns JSON. Read-only and local."""
+        gate_err = _gate("graph_relevant")
+        if gate_err:
+            return gate_err
+        try:
+            index = _graph_index(path)
+            return json.dumps(index.relevant(files, max(100, min(budget, 20000))), indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @_tool("Code that still needs a plain-English description", read_only=False)
+    def graph_pending(
+        path: RepoPathParam = ".",
+        limit: Annotated[int, Field(description="How many items, 1-50")] = 20,
+        changes: Annotated[bool, Field(description="List changes to explain instead of code to describe")] = False,
+        base: Annotated[
+            str,
+            Field(description="With changes=true: compare with the merge base of this git ref, e.g. origin/main. Default HEAD: only uncommitted changes."),
+        ] = "HEAD",
+    ) -> str:
+        """Functions and classes that have no plain-English description yet (or whose code changed since it was written), with their source, callers and callees. Write the descriptions yourself and save them with graph_describe; nothing is sent to any model by this tool. With changes=true, lists changed code whose logic changed (not code proven to keep the same logic) to explain instead, each with its old and new code, proven facts, the tests that reach it and its callers (code proven to call it within 2 steps, with what each does today), and writes .skylos/graph/changes.json for the viewer; explain each change and, in impact, how it changes each listed caller that behaves differently. Use change_map first to see what to read. Returns JSON. Local."""
+        gate_err = _gate("graph_pending")
+        if gate_err:
+            return gate_err
+        try:
+            from skylos.commands.graph_cmd import AGENT_CHANGE_INSTRUCTIONS, AGENT_INSTRUCTIONS
+            from skylos.graph import describe as describing
+
+            index = _graph_index(path)
+            size = max(1, min(limit, 50))
+            if changes:
+                from skylos.graph.changes import build_changes
+
+                index.changes = build_changes(index.root, base, index)
+                items = describing.change_material(describing.pending_changes(index, limit=size), index)
+                instructions = AGENT_CHANGE_INSTRUCTIONS.replace("skylos graph import <file>", "the graph_describe tool")
+            else:
+                items = describing.material(index, describing.pending(index, limit=size))
+                instructions = AGENT_INSTRUCTIONS.replace("to a JSON file and run: skylos graph import <file>", "with the graph_describe tool")
+            return json.dumps({"instructions": instructions, "items": items}, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @_tool("Save plain-English descriptions to the codebase graph", read_only=False)
+    def graph_describe(
+        items: Annotated[
+            list[dict[str, Any]],
+            Field(description='[{"id": ..., "summary": ...}] for code, or [{"id": ..., "before": ..., "after": ..., "same_behaviour": "yes|no|unclear", "why": ..., "impact": [{"id": "<caller id>", "effect": "<one sentence>"}]}] for changes; ids come from graph_pending, impact ids from that change\'s callers'),
+        ],
+        path: RepoPathParam = ".",
+    ) -> str:
+        """Save descriptions you wrote for items from graph_pending into .skylos/graph/notes.json, where the graph viewer and graph_show read them. A replaced description is kept as the previous one, so readers can see what the code did before. Unknown ids are ignored, and so are impact entries for callers graph_pending did not list with that change. Summaries are capped at 400 characters and impact effects at 300. Writes one local file."""
+        gate_err = _gate("graph_describe")
+        if gate_err:
+            return gate_err
+        try:
+            from skylos.graph import describe as describing
+
+            index = _graph_index(path)
+            raw = json.dumps({"items": items})
+            summaries = describing.parse_summaries(raw, set(index.nodes))
+            keys = set()
+            if index.changes:
+                keys = {entry["change_key"] for entry in index.changes.get("symbols", ())}
+            change_notes = describing.parse_change_notes(raw, keys, describing.offered_callers(index))
+            written = describing.apply_summaries(index.root, index, summaries, "agent")
+            explained = describing.apply_change_notes(index.root, index, change_notes, "agent")
+            return json.dumps({"saved_descriptions": written, "saved_change_explanations": explained, "ignored": len(items) - written - explained})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
