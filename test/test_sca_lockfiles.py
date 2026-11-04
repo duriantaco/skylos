@@ -293,7 +293,7 @@ def test_lockfile_inventory_bound_prevents_network_queries(
     tmp_path, osv, monkeypatch, filename, writer
 ):
     writer(tmp_path / filename)
-    monkeypatch.setattr(sca, "MAX_UNIQUE_DEPENDENCIES", 1)
+    monkeypatch.setattr(sca, "MAX_UNIQUE_DEPENDENCIES", 0)
     result = sca.scan_dependencies(tmp_path)
     assert result.receipt["status"] == "incomplete"
     assert result.receipt["limit_reasons"] == ["dependency_limit_exceeded"]

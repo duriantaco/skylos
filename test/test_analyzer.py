@@ -2998,7 +2998,7 @@ class TestClass:
             project_root=scan_root,
         )
 
-        assert len(result) == 29
+        assert len(result) == 30
         assert result[28] == {}
         assert result[0] == []
         assert result[19] == []
@@ -3015,7 +3015,7 @@ class TestClass:
 
         result = proc_file(str(source), "oversized", project_root=tmp_path)
 
-        assert len(result) == 29
+        assert len(result) == 30
         assert result[28] == {}
         assert result[0] == []
         assert result[19] == []
@@ -3036,7 +3036,7 @@ class TestClass:
 
         result = proc_file(str(source), "bounded", project_root=tmp_path)
 
-        assert len(result) == 29
+        assert len(result) == 30
         assert result[28]["version"] == 1
         assert result[28]["definition_count"] == 0
         assert result[19] == [source_text]

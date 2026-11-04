@@ -450,7 +450,7 @@
     {
       "id": "csharp-command-injection",
       "path": "fixtures/csharp_command_injection",
-      "description": "C# Process.Start with caller-controlled command input should be reported as command injection.",
+      "description": "C# Process.Start with a controller action parameter as the command should be reported as command injection.",
       "languages": ["csharp"],
       "taxonomy": ["command_injection", "csharp"],
       "importance": "critical",
@@ -494,7 +494,7 @@
     {
       "id": "csharp-sql-injection",
       "path": "fixtures/csharp_sql_injection",
-      "description": "C# SqlCommand built from caller-controlled SQL text should be reported.",
+      "description": "C# SqlCommand text concatenated with a controller action parameter should be reported.",
       "languages": ["csharp"],
       "taxonomy": ["sql_injection", "csharp"],
       "importance": "critical",
@@ -538,7 +538,7 @@
     {
       "id": "csharp-ssrf",
       "path": "fixtures/csharp_ssrf",
-      "description": "C# HttpClient request using caller-controlled URL should be reported as SSRF.",
+      "description": "C# HttpClient request using a controller action parameter as the URL should be reported as SSRF.",
       "languages": ["csharp"],
       "taxonomy": ["ssrf", "csharp"],
       "importance": "critical",
@@ -582,7 +582,7 @@
     {
       "id": "csharp-path-traversal",
       "path": "fixtures/csharp_path_traversal",
-      "description": "C# File.ReadAllText with caller-controlled path should be reported as path traversal.",
+      "description": "C# File.ReadAllText with a controller action parameter as the path should be reported as path traversal.",
       "languages": ["csharp"],
       "taxonomy": ["path_traversal", "csharp"],
       "importance": "critical",
@@ -665,6 +665,72 @@
         "absent": {
           "danger": ["SKY-D230"]
         }
+      }
+    },
+    {
+      "id": "csharp-local-redirect-safe",
+      "path": "fixtures/csharp_local_redirect_safe",
+      "description": "C# LocalRedirect and an Url.IsLocalUrl-guarded Redirect of a request parameter should stay quiet.",
+      "languages": ["csharp"],
+      "taxonomy": ["open_redirect", "csharp", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "LocalRedirect throws for non-local URLs; it is the recommended fix."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D230"]
+        }
+      }
+    },
+    {
+      "id": "csharp-repository-getasync-safe",
+      "path": "fixtures/csharp_repository_getasync_safe",
+      "description": "C# repository GetAsync with a route value is a data lookup, not an outbound HTTP request.",
+      "languages": ["csharp"],
+      "taxonomy": ["ssrf", "csharp", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "SSRF sinks need an HttpClient receiver, not a matching method name."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D216"]
+        }
+      }
+    },
+    {
+      "id": "csharp-binaryformatter-deserialization",
+      "path": "fixtures/csharp_binaryformatter_deserialization",
+      "description": "C# BinaryFormatter.Deserialize of a request body should be reported as unsafe deserialization.",
+      "languages": ["csharp"],
+      "taxonomy": ["deserialization", "csharp"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden fixture for CWE-502 (Roslyn CA2300/CA2301)."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D233"]
+        },
+        "absent": {}
       }
     },
     {

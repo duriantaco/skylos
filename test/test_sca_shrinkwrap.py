@@ -470,7 +470,7 @@ def test_selected_shrinkwrap_remains_subject_to_inventory_limits(
         monkeypatch.setattr(sca, "MAX_TOTAL_MANIFEST_BYTES", len(selected.encode()) - 1)
         reason = "manifest_bytes_limit_exceeded"
     else:
-        monkeypatch.setattr(sca, "MAX_UNIQUE_DEPENDENCIES", 1)
+        monkeypatch.setattr(sca, "MAX_UNIQUE_DEPENDENCIES", 0)
         reason = "dependency_limit_exceeded"
     inventory = sca.collect_dependencies(tmp_path)
     assert inventory.receipt["complete"] is False

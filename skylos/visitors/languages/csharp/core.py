@@ -53,10 +53,20 @@ _PROPERTY_RE = re.compile(
 )
 _CONSTRUCTOR_RE = re.compile(
     _DECL_START
+    + r"(?P<attrs>"
     + _ATTRIBUTES
-    + r"(?:(?:public|private|protected|internal|static|extern|unsafe)\s+)*"
-    r"(?P<name>[A-Za-z_]\w*)\s*\((?P<params>[^;{}]*)\)\s*"
-    r"(?:\:[^{;]+)?\{"
+    + r")"
+    + r"(?P<mods>(?:(?:public|private|protected|internal|static|extern|unsafe)\s+)*)"
+    r"(?P<name>[A-Za-z_]\w*)\s*\((?P<params>(?:[^;{}()]|\([^;{}()]*\))*)\)\s*"
+    r"(?:\:[^{;]+)?(?:\{|=>)"
+)
+_CONSTRUCTOR_CALL_RE = re.compile(
+    r"\bnew\s+(?:[A-Za-z_][\w.]*\.)?(?P<name>[A-Za-z_]\w*)\s*(?:<[^;{}()]+>)?\s*\("
+    r"|\bnew\s*\("
+    r"|:\s*this\s*\("
+)
+_SERIALIZATION_CONSTRUCTOR_RE = re.compile(
+    r"^\s*(?:[\w.]+\.)?SerializationInfo\s+\w+\s*,\s*(?:[\w.]+\.)?StreamingContext\s+\w+\s*$"
 )
 _CALL_RE = re.compile(
     r"\b(?P<name>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*(?:<[^;{}()]+>)?\s*\("
@@ -193,6 +203,8 @@ def _method_defs(
         if owner_range and not _is_direct_member(masked, owner_range, match.start()):
             continue
         method_decl_offsets.add(match.start("name"))
+        if owner_range and name == owner_range[2].rsplit(".", 1)[-1]:
+            continue
         line = _line_for_offset(source, match.start("name"))
         owner = owner_range[2] if owner_range else None
         definition = CSharpDefinition(
@@ -215,7 +227,85 @@ def _method_defs(
         if definition.is_exported:
             definition.references = 1
         defs.append(definition)
+    defs.extend(_constructor_defs(file_path, source, masked, type_ranges))
     return defs, method_decl_offsets
+
+
+def _constructor_defs(
+    file_path: str,
+    source: str,
+    masked: str,
+    type_ranges: list[_TypeRange],
+) -> list[Definition]:
+    """Private constructors with parameters, the only ones Roslyn IDE0051 reports.
+
+    Other constructors are the instantiation surface for ``new``, dependency
+    injection, model binding and serializers; the type is the dead-code unit.
+    """
+    defs: list[Definition] = []
+    for match in _CONSTRUCTOR_RE.finditer(masked):
+        owner_range = _containing_type_range(type_ranges, match.start())
+        if owner_range is None:
+            continue
+        simple_owner = owner_range[2].rsplit(".", 1)[-1]
+        params = match.group("params")
+        mods = match.group("mods").split()
+        if (
+            match.group("name") != simple_owner
+            or not _is_direct_member(masked, owner_range, match.start())
+            or owner_range[3]
+            or match.group("attrs").strip()
+            or set(mods) & {"public", "protected", "internal", "static", "extern"}
+            or not params.strip()
+            or _SERIALIZATION_CONSTRUCTOR_RE.match(params)
+            or re.fullmatch(rf"\s*{re.escape(simple_owner)}\s+\w+\s*", params)
+        ):
+            continue
+        definition = CSharpDefinition(
+            f"{owner_range[2]}.{simple_owner}",
+            "method",
+            file_path,
+            _line_for_offset(source, match.start("name")),
+        )
+        definition.csharp_modifiers = frozenset(mods)
+        definition.csharp_signature = _parameter_signature(params)
+        definition.csharp_arity = _parameter_arity(params)
+        (
+            definition.csharp_min_arity,
+            definition.csharp_max_arity,
+        ) = _parameter_arity_range(params)
+        if _private_constructor_called(
+            masked,
+            owner_range,
+            simple_owner,
+            definition.csharp_min_arity,
+            definition.csharp_max_arity,
+        ):
+            definition.references = 1
+        defs.append(definition)
+    return defs
+
+
+def _private_constructor_called(
+    masked: str,
+    owner_range: _TypeRange,
+    name: str,
+    minimum: int,
+    maximum: int | None,
+) -> bool:
+    if re.search(rf"\btypeof\s*\(\s*(?:[\w.]+\.)?{re.escape(name)}\s*\)", masked):
+        return True
+    for call in _CONSTRUCTOR_CALL_RE.finditer(masked, owner_range[0], owner_range[1]):
+        called = call.group("name")
+        if called is not None and called != name:
+            continue
+        close_paren = _matching_paren(masked, call.end() - 1)
+        if close_paren is None:
+            continue
+        arity = _argument_arity(masked[call.end() : close_paren])
+        if minimum <= arity and (maximum is None or arity <= maximum):
+            return True
+    return False
 
 
 def _field_defs(

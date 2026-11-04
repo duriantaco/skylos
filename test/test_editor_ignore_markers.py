@@ -244,6 +244,23 @@ _SECURITY_MARKER_CASES = {
         }
         """,
     ),
+    "Handler.kt": (
+        "SKY-D211",
+        """
+        import java.sql.Connection
+        import javax.servlet.http.HttpServletRequest
+
+        class Handler(private val conn: Connection) {
+            fun run(request: HttpServletRequest) {
+                val id = request.getParameter("id")
+                conn.createStatement().executeQuery("SELECT * FROM a WHERE id = " + id) // skylos: ignore[SKY-D211]
+                conn.createStatement().executeQuery("SELECT * FROM b WHERE id = " + id) // skylos: ignore[SKY-D212]
+                conn.createStatement().executeQuery("SELECT * FROM c WHERE id = " + id + " // skylos: ignore")
+                conn.createStatement().executeQuery("SELECT * FROM d WHERE id = " + id) // skylos: ignore
+            }
+        }
+        """,
+    ),
     "main.go": (
         "SKY-D211",
         """

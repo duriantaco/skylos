@@ -2840,6 +2840,802 @@ def _call_matches_resource(call_node):
     return None
 
 
+_OWNERSHIP_TAKING_METHODS = frozenset({
+    "enter_context", "enter_async_context", "callback", "push",
+    "push_async_callback", "addCleanup", "addAsyncCleanup", "addfinalizer",
+    "closing", "aclosing",
+})
+_OWNERSHIP_TAKING_CALLS = frozenset({"atexit.register", "weakref.finalize"})
+_CLOSING_METHODS = frozenset({"close", "aclose"})
+
+
+def _statement_blocks(stmt):
+    for field in ("body", "orelse", "finalbody"):
+        block = getattr(stmt, field, None)
+        if isinstance(block, list):
+            yield block
+    for handler in getattr(stmt, "handlers", None) or ():
+        yield handler.body
+    for case in getattr(stmt, "cases", None) or ():
+        yield case.body
+
+
+def _nested_statement_blocks(stmt):
+    for block in _statement_blocks(stmt):
+        yield from block
+
+
+def _statement_path(target, block):
+    """``(block, index)`` pairs from the scope body down to ``target``."""
+    for index, stmt in enumerate(block):
+        if stmt is target:
+            return [(block, index)]
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        for inner in _statement_blocks(stmt):
+            found = _statement_path(target, inner)
+            if found:
+                return [(block, index), *found]
+    return None
+
+
+def _finally_closes(try_node, name):
+    """Every exit from the finally must close this lifetime of ``name``."""
+
+    def paths(body, states):
+        exits = set()
+        for stmt in body:
+            if not states:
+                break
+            if isinstance(stmt, ast.If):
+                left, left_exits = paths(stmt.body, states.copy())
+                right, right_exits = paths(stmt.orelse, states.copy())
+                states = left | right
+                exits.update(left_exits | right_exits)
+                continue
+            value = getattr(stmt, "value", None)
+            if isinstance(value, ast.Await):
+                value = value.value
+            if (
+                isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Attribute)
+                and value.func.attr in _CLOSING_METHODS
+                and isinstance(value.func.value, ast.Name)
+                and value.func.value.id == name
+            ):
+                states = {1 if state == 0 else state for state in states}
+            elif isinstance(stmt, (ast.Try, ast.TryStar)) and stmt.finalbody:
+                protected = stmt.body + stmt.orelse
+                for handler in stmt.handlers:
+                    protected += handler.body
+                rebound = _resource_name_bound(_scope_nodes(protected), name) or any(
+                    handler.name == name for handler in stmt.handlers
+                )
+                if not rebound and _finally_closes(stmt, name):
+                    states = {1 if state == 0 else state for state in states}
+                elif any(
+                    isinstance(node, (ast.Return, ast.Raise, ast.Break, ast.Continue))
+                    for node in _scope_nodes([stmt])
+                ):
+                    exits.update(states)
+            if _resource_name_bound(_scope_nodes([stmt]), name):
+                states = {-1 if state == 0 else state for state in states}
+            if isinstance(stmt, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
+                exits.update(states)
+                states = set()
+            elif not isinstance(
+                stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                if any(
+                    isinstance(node, (ast.Return, ast.Raise, ast.Break, ast.Continue))
+                    for node in _scope_nodes(list(_nested_statement_blocks(stmt)))
+                ):
+                    exits.update(states)
+        return states, exits
+
+    continuing, exits = paths(try_node.finalbody, {0})
+    return continuing | exits == {1}
+
+
+def _resource_name_bound(nodes, name):
+    nodes = list(nodes)
+    identity_targets = {
+        id(target)
+        for node in nodes
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        and isinstance(node.value, ast.Name) and node.value.id == name
+        for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+        if isinstance(target, ast.Name) and target.id == name
+    }
+    identity_targets.update(
+        id(node.target) for node in nodes
+        if isinstance(node, ast.AnnAssign) and node.value is None
+    )
+    return any(
+        (
+            isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Store)
+            and node.id == name
+            and id(node) not in identity_targets
+        )
+        or (
+            isinstance(
+                node,
+                (
+                    ast.FunctionDef,
+                    ast.AsyncFunctionDef,
+                    ast.ClassDef,
+                    ast.ExceptHandler,
+                ),
+            )
+            and node.name == name
+        )
+        for node in nodes
+    )
+
+
+def _try_closes_lifetime(try_node, assignment, name):
+    if not _finally_closes(try_node, name):
+        return False
+    blocks = [
+        try_node.body,
+        try_node.orelse,
+        *(handler.body for handler in try_node.handlers),
+    ]
+    for block in blocks:
+        path = _statement_path(assignment, block)
+        if path:
+            after = [stmt for inner, index in path for stmt in inner[index + 1 :]]
+            # Handlers or else may execute after an acquisition in the body.
+            if block is try_node.body:
+                after += try_node.orelse
+                for handler in try_node.handlers:
+                    if handler.name == name:
+                        return False
+                    after += handler.body
+            return not _resource_name_bound(_scope_nodes(after), name)
+    # The acquisition precedes this try; every write inside it replaces the
+    # lifetime that the final close would otherwise clean up.
+    return not _resource_name_bound(
+        _scope_nodes([stmt for block in blocks for stmt in block]), name
+    )
+
+
+def _finally_covers(assignment, name, scope_body):
+    """A ``finally`` that closes ``name`` runs after this open.
+
+    Either the open sits in the ``try`` body, a handler or ``else`` of that
+    ``try``, or the ``try`` comes after the open in the open's block or an
+    enclosing block. An earlier ``finally`` closes an earlier lifetime.
+    """
+    path = _statement_path(assignment, scope_body)
+    if not path:
+        return False
+    for depth, (block, index) in enumerate(path):
+        stmt = block[index]
+        if (
+            depth + 1 < len(path)
+            and isinstance(stmt, (ast.Try, ast.TryStar))
+            and path[depth + 1][0] is not stmt.finalbody
+            and _try_closes_lifetime(stmt, assignment, name)
+        ):
+            return True
+        for node in block[index + 1 :]:
+            if (
+                isinstance(node, (ast.Try, ast.TryStar))
+                and node.finalbody
+                and _try_closes_lifetime(node, assignment, name)
+            ):
+                return True
+            # A later try is not reached after an early exit, a possible
+            # conditional exit, or a replacement of the acquired handle.
+            if any(
+                isinstance(part, (ast.Return, ast.Raise, ast.Break, ast.Continue))
+                or (
+                    isinstance(part, ast.Name)
+                    and isinstance(part.ctx, ast.Store)
+                    and part.id == name
+                )
+                for part in _scope_nodes([node])
+            ):
+                break
+    return False
+
+
+def _scope_nodes(scope_body):
+    pending = list(scope_body)
+    while pending:
+        node = pending.pop()
+        yield node
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        for child in ast.iter_child_nodes(node):
+            if isinstance(
+                child,
+                (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+            ):
+                continue
+            pending.append(child)
+
+
+def _dotted_call_name(func):
+    parts = []
+    while isinstance(func, ast.Attribute):
+        parts.append(func.attr)
+        func = func.value
+    if isinstance(func, ast.Name):
+        parts.append(func.id)
+    return ".".join(reversed(parts))
+
+
+def _is_wrapping_call(node):
+    """A constructor (``Reader(f)``) or wrapper (``ctx.wrap_socket(s)``)."""
+    if not isinstance(node, ast.Call):
+        return False
+    name = _dotted_call_name(node.func).rsplit(".", 1)[-1]
+    return name[:1].isupper() or "wrap" in name.lower()
+
+
+def _call_arguments(call):
+    yield from call.args
+    for keyword in call.keywords:
+        yield keyword.value
+
+
+def _passes_handle(call, name):
+    for argument in _call_arguments(call):
+        if isinstance(argument, ast.Starred):
+            argument = argument.value
+        if isinstance(argument, ast.Name) and argument.id == name:
+            return True
+    return False
+
+
+def _module_classes(module):
+    classes = {}
+    for node in ast.walk(module):
+        if isinstance(node, ast.ClassDef):
+            classes.setdefault(node.name, []).append(node)
+    return classes
+
+
+def _local_initializer(cls, classes):
+    """The ``__init__`` a local class runs, or None when it is not visible.
+
+    Decorated classes, class keywords (metaclasses), ``__new__`` and bases
+    outside this module may build or store arguments in code we cannot see.
+    """
+    pending = [cls]
+    seen = set()
+    while pending:
+        current = pending.pop(0)
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if current.decorator_list or current.keywords:
+            return None
+        methods = {
+            item.name: item
+            for item in current.body
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        if "__new__" in methods:
+            return None
+        if "__init__" in methods:
+            return methods["__init__"]
+        for base in current.bases:
+            if not isinstance(base, ast.Name) or base.id not in classes:
+                return None
+            pending.extend(classes[base.id])
+    return None
+
+
+def _bound_parameters(function, call, name):
+    positional = function.args.posonlyargs + function.args.args
+    parameters = [argument.arg for argument in positional[1:]]
+    bound = set()
+    for index, argument in enumerate(call.args):
+        if isinstance(argument, ast.Starred):
+            return None
+        if isinstance(argument, ast.Name) and argument.id == name:
+            if index < len(parameters):
+                bound.add(parameters[index])
+            else:
+                return None
+    keyword_names = set(parameters)
+    keyword_names.update(argument.arg for argument in function.args.kwonlyargs)
+    for keyword in call.keywords:
+        if isinstance(keyword.value, ast.Name) and keyword.value.id == name:
+            if keyword.arg in keyword_names:
+                bound.add(keyword.arg)
+            else:
+                return None
+    return bound or None
+
+
+def _holds_name(value, names):
+    """``value`` keeps a reference to one of ``names`` (not just reads it)."""
+    if isinstance(value, ast.Name):
+        return value.id in names
+    if isinstance(value, ast.Starred):
+        return _holds_name(value.value, names)
+    if isinstance(value, (ast.Tuple, ast.List, ast.Set)):
+        return any(_holds_name(element, names) for element in value.elts)
+    if isinstance(value, ast.Dict):
+        return any(_holds_name(element, names) for element in value.values)
+    if isinstance(value, ast.BoolOp):
+        return any(_holds_name(element, names) for element in value.values)
+    if isinstance(value, ast.IfExp):
+        return _holds_name(value.body, names) or _holds_name(value.orelse, names)
+    return False
+
+
+def _constructor_constants(function, call):
+    """Literal argument values only; never evaluate project expressions."""
+    positional = function.args.posonlyargs + function.args.args
+    values = (
+        dict(
+            zip(
+                (arg.arg for arg in positional[-len(function.args.defaults) :]),
+                function.args.defaults,
+            )
+        )
+        if function.args.defaults
+        else {}
+    )
+    values.update(
+        {
+            arg.arg: default
+            for arg, default in zip(function.args.kwonlyargs, function.args.kw_defaults)
+            if default is not None
+        }
+    )
+    values.update({arg.arg: value for arg, value in zip(positional[1:], call.args)})
+    values.update({kw.arg: kw.value for kw in call.keywords if kw.arg is not None})
+    return {
+        name: value.value
+        for name, value in values.items()
+        if isinstance(value, ast.Constant)
+    }
+
+
+def _literal_truth(node, constants):
+    if isinstance(node, ast.Constant):
+        return bool(node.value)
+    if isinstance(node, ast.Name) and node.id in constants:
+        return bool(constants[node.id])
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        truth = _literal_truth(node.operand, constants)
+        return None if truth is None else not truth
+    return None
+
+
+def _resource_storage_key(node):
+    """A field/subscript identity shared by Store and Del AST contexts."""
+    if isinstance(node, ast.AST):
+        return type(node).__name__, tuple(
+            (field, _resource_storage_key(value))
+            for field, value in ast.iter_fields(node) if field != "ctx"
+        )
+    if isinstance(node, list):
+        return tuple(_resource_storage_key(value) for value in node)
+    return node
+
+
+def _parameter_kept(function, parameters, call):
+    """Every constructor exit must retain or release the actual parameter.
+
+    Track aliases and stored fields separately: a later overwrite can lose
+    ownership. Nested declarations do not execute their bodies. Unknown
+    compound statements supply no new ownership evidence.
+    """
+
+    def holds(value, names, constants):
+        if isinstance(value, ast.Starred):
+            return holds(value.value, names, constants)
+        if isinstance(value, (ast.Tuple, ast.List, ast.Set)):
+            return any(holds(part, names, constants) for part in value.elts)
+        if isinstance(value, ast.Dict):
+            return any(
+                holds(part, names, constants)
+                for part in value.values
+                if part is not None
+            )
+        if isinstance(value, ast.IfExp):
+            truth = _literal_truth(value.test, constants)
+            if truth is not None:
+                return holds(value.body if truth else value.orelse, names, constants)
+            return holds(value.body, names, constants) and holds(
+                value.orelse, names, constants
+            )
+        if isinstance(value, ast.BoolOp):
+            return all(holds(part, names, constants) for part in value.values)
+        return _holds_name(value, names)
+
+    def releases(value, names):
+        if value is None or isinstance(
+            value,
+            (
+                ast.Lambda,
+                ast.GeneratorExp,
+                ast.ListComp,
+                ast.SetComp,
+                ast.DictComp,
+                ast.IfExp,
+                ast.BoolOp,
+            ),
+        ):
+            return False
+        if isinstance(value, ast.Call):
+            func = value.func
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr in _CLOSING_METHODS
+                and isinstance(func.value, ast.Name)
+                and func.value.id in names
+            ):
+                return True
+            if any(_releases_handle(value, name) for name in names):
+                return True
+        return any(releases(child, names) for child in ast.iter_child_nodes(value))
+
+    budget = [128]
+
+    def paths(body, state):
+        budget[0] -= 1
+        if budget[0] < 0:
+            return [False]
+        names, stored, handed, constants = state
+        names, stored, constants = set(names), set(stored), dict(constants)
+        for index, stmt in enumerate(body):
+            if isinstance(stmt, ast.If):
+                truth = _literal_truth(stmt.test, constants)
+                branches = (
+                    [stmt.body if truth else stmt.orelse]
+                    if truth is not None
+                    else [stmt.body, stmt.orelse]
+                )
+                results = []
+                for branch in branches:
+                    results.extend(
+                        paths(
+                            branch + body[index + 1 :],
+                            (names, stored, handed, constants),
+                        )
+                    )
+                    if False in results:
+                        return [False]
+                return results
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.discard(stmt.name)
+                constants.pop(stmt.name, None)
+                continue
+            value = getattr(stmt, "value", None)
+            handed = handed or releases(value, names)
+            if isinstance(stmt, ast.AnnAssign) and value is None:
+                continue
+            if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+                keeps = value is not None and holds(value, names, constants)
+                targets = getattr(stmt, "targets", None) or [stmt.target]
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        if keeps:
+                            names.add(target.id)
+                        else:
+                            names.discard(target.id)
+                        constants.pop(target.id, None)
+                        if isinstance(value, ast.Constant):
+                            constants[target.id] = value.value
+                    elif isinstance(target, (ast.Attribute, ast.Subscript)):
+                        key = _resource_storage_key(target)
+                        if keeps:
+                            stored.add(key)
+                        else:
+                            stored.discard(key)
+            elif isinstance(stmt, (ast.Return, ast.Raise)):
+                return [handed or bool(stored)]
+            elif isinstance(stmt, (ast.With, ast.AsyncWith)):
+                handed = handed or any(
+                    holds(item.context_expr, names, constants)
+                    or releases(item.context_expr, names)
+                    for item in stmt.items
+                )
+                return paths(
+                    stmt.body + body[index + 1 :], (names, stored, handed, constants)
+                )
+            elif isinstance(stmt, ast.Delete):
+                for target in stmt.targets:
+                    if isinstance(target, ast.Name):
+                        names.discard(target.id)
+                        constants.pop(target.id, None)
+                    else:
+                        stored.discard(_resource_storage_key(target))
+            elif list(_nested_statement_blocks(stmt)):
+                # Loops/try/match may skip their bodies or overwrite an owner.
+                # Keep existing evidence only if none of those paths removes it.
+                for node in _scope_nodes(list(_nested_statement_blocks(stmt))):
+                    if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                        names.discard(node.id)
+                        constants.pop(node.id, None)
+                    elif isinstance(
+                        node, (ast.Attribute, ast.Subscript)
+                    ) and isinstance(node.ctx, ast.Store):
+                        stored.discard(_resource_storage_key(node))
+                    elif isinstance(node, (ast.Return, ast.Raise)) and not (
+                        handed or stored
+                    ):
+                        return [False]
+        return [handed or bool(stored)]
+
+    return all(
+        paths(
+            function.body,
+            (set(parameters), set(), False, _constructor_constants(function, call)),
+        )
+    )
+
+
+def _wraps_handle(call, name, classes):
+    """``Reader(handle)`` gives the handle to an object that can close it.
+
+    Unknown or external constructors and ``*wrap*`` calls are assumed to
+    take it; a class defined in this module must show it in ``__init__``.
+    """
+    if not _is_wrapping_call(call) or not _passes_handle(call, name):
+        return False
+    if not isinstance(call.func, ast.Name):
+        return True
+    candidates = classes.get(call.func.id)
+    if not candidates:
+        return True
+    for cls in candidates:
+        initializer = _local_initializer(cls, classes)
+        if initializer is None:
+            return True
+        parameter = _bound_parameters(initializer, call, name)
+        if parameter is None or _parameter_kept(initializer, parameter, call):
+            return True
+    return False
+
+
+def _hands_over(value, name, classes):
+    if isinstance(value, ast.Name):
+        return value.id == name
+    if isinstance(value, (ast.Tuple, ast.List)):
+        return any(_hands_over(element, name, classes) for element in value.elts)
+    return _wraps_handle(value, name, classes)
+
+
+def _releases_handle(call, name):
+    for argument in _call_arguments(call):
+        if isinstance(argument, ast.Name) and argument.id == name:
+            return True
+        if (
+            isinstance(argument, ast.Attribute)
+            and argument.attr in _CLOSING_METHODS
+            and isinstance(argument.value, ast.Name)
+            and argument.value.id == name
+        ):
+            return True
+    return False
+
+
+def _takes_ownership(call):
+    callee = _dotted_call_name(call.func)
+    leaf = callee.rsplit(".", 1)[-1]
+    return leaf in _OWNERSHIP_TAKING_METHODS or callee in _OWNERSHIP_TAKING_CALLS
+
+
+def _handle_changes_owner(name, scope_body, classes):
+    """The handle leaves this function with an owner that can close it.
+
+    Returned or yielded inside a wrapper object, stored on an attribute or
+    container, or registered with a cleanup API. Passing it to a plain
+    function (``json.load(f)``) is a use, not a hand-over.
+    """
+    nodes = list(_scope_nodes(scope_body))
+    owners = {name}
+    for _round in range(2):
+        for node in nodes:
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and any(_wraps_handle(node.value, owner, classes) for owner in owners)
+            ):
+                owners.add(node.targets[0].id)
+    for node in nodes:
+        if isinstance(node, (ast.Return, ast.Yield)) and node.value is not None:
+            if any(_hands_over(node.value, owner, classes) for owner in owners):
+                return True
+        elif isinstance(node, ast.Assign):
+            stored = any(
+                isinstance(target, (ast.Attribute, ast.Subscript))
+                for target in node.targets
+            )
+            if stored and any(
+                _hands_over(node.value, owner, classes) for owner in owners
+            ):
+                return True
+        elif isinstance(node, ast.Call) and _takes_ownership(node):
+            if any(_releases_handle(node, owner) for owner in owners):
+                return True
+    return False
+
+
+def _detached_attribute_closes(function):
+    """``(attribute, receiver)`` pairs a function takes off an object and closes.
+
+    Flask's teardown idiom: ``db = g.pop("db", None)`` then ``db.close()``.
+    """
+    detached = {}
+    closed = set()
+    for node in _scope_nodes(function.body):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Call)
+        ):
+            found = _detached_attribute_name(node.value)
+            if found:
+                detached[node.targets[0].id] = found
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _CLOSING_METHODS
+            and isinstance(node.func.value, ast.Name)
+        ):
+            closed.add(node.func.value.id)
+    return [found for name, found in detached.items() if name in closed]
+
+
+def _detached_attribute_name(call):
+    func = call.func
+    if isinstance(func, ast.Attribute) and func.attr in {"pop", "get"} and call.args:
+        key = call.args[0]
+        receiver = func.value
+    elif isinstance(func, ast.Name) and func.id == "getattr" and len(call.args) >= 2:
+        key = call.args[1]
+        receiver = call.args[0]
+    else:
+        return None
+    if isinstance(key, ast.Constant) and isinstance(key.value, str):
+        return key.value, receiver
+    return None
+
+
+def _nodes_outside_classes(body):
+    pending = list(body)
+    while pending:
+        node = pending.pop()
+        yield node
+        for child in ast.iter_child_nodes(node):
+            if not isinstance(child, ast.ClassDef):
+                pending.append(child)
+
+
+def _self_receivers(module):
+    """Map each method receiver to its exact class declaration."""
+    receivers = {}
+    for cls in ast.walk(module):
+        if not isinstance(cls, ast.ClassDef):
+            continue
+        for method in cls.body:
+            if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if any(
+                isinstance(decorator, ast.Name) and decorator.id == "staticmethod"
+                for decorator in method.decorator_list
+            ):
+                continue
+            positional = method.args.posonlyargs + method.args.args
+            if not positional:
+                continue
+            receiver = positional[0].arg
+            for node in _nodes_outside_classes(method.body):
+                if isinstance(node, ast.Name) and node.id == receiver:
+                    receivers[id(node)] = id(cls)
+    return receivers
+
+
+def _class_family(module):
+    """Class identity -> identities related by visible local inheritance.
+
+    Two classes are related when one inherits from the other or a class of
+    this module inherits from both; ``self`` in one may then be the other.
+    """
+    declarations = []
+    by_path = {}
+
+    def collect(node, scope=()):
+        if isinstance(node, ast.ClassDef):
+            path = scope + (node.name,)
+            declarations.append((node, scope))
+            by_path.setdefault(path, []).append(node)
+            scope = path
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            scope += (node.name,)
+        for child in ast.iter_child_nodes(node):
+            collect(child, scope)
+
+    collect(module)
+    bases = {id(node): set() for node, _scope in declarations}
+    for node, scope in declarations:
+        for base in node.bases:
+            name = _dotted_call_name(base)
+            if not name:
+                continue
+            parts = tuple(name.split("."))
+            for depth in range(len(scope), -1, -1):
+                candidates = by_path.get(scope[:depth] + parts, ())
+                if candidates:
+                    if len(candidates) == 1:
+                        bases[id(node)].add(id(candidates[0]))
+                    break
+    ancestors = {}
+    for name in bases:
+        seen = {name}
+        pending = [name]
+        while pending:
+            for base in bases.get(pending.pop(), ()):
+                if base not in seen:
+                    seen.add(base)
+                    pending.append(base)
+        ancestors[name] = seen
+    family = {name: set() for name in bases}
+    for lineage in ancestors.values():
+        local = lineage & bases.keys()
+        for name in local:
+            family[name].update(local)
+    return family
+
+
+def _closed_attribute_owners(module, receivers):
+    """Attribute name -> classes whose ``self`` closes it (None: any object).
+
+    ``self.stream = open(path)`` hands the file to the object; a later
+    ``self.stream.close()`` (or ``with self.stream``) is that object's
+    cleanup only when it runs on the same object. A close on another
+    receiver (``conn.stream.close()``) may run on any object.
+    """
+    owners = {}
+
+    def note(attribute, receiver):
+        owners.setdefault(attribute, set()).add(receivers.get(id(receiver)))
+
+    for node in ast.walk(module):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for attribute, receiver in _detached_attribute_closes(node):
+                note(attribute, receiver)
+        if isinstance(node, ast.Call):
+            func = node.func
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr in _CLOSING_METHODS
+                and isinstance(func.value, ast.Attribute)
+            ):
+                note(func.value.attr, func.value.value)
+            if not _takes_ownership(node):
+                continue
+            for argument in _call_arguments(node):
+                if not isinstance(argument, ast.Attribute):
+                    continue
+                if argument.attr in _CLOSING_METHODS and isinstance(
+                    argument.value, ast.Attribute
+                ):
+                    note(argument.value.attr, argument.value.value)
+                else:
+                    note(argument.attr, argument.value)
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if isinstance(item.context_expr, ast.Attribute):
+                    note(item.context_expr.attr, item.context_expr.value)
+    return owners
+
+
 class MissingResourceCleanupRule(SkylosRule):
     rule_id = "SKY-L008"
     name = "Missing Resource Cleanup"
@@ -2851,6 +3647,13 @@ class MissingResourceCleanupRule(SkylosRule):
             context["_closing_resource_context_proof"] = (
                 node, _closing_resource_context_call_ids(node)
             )
+            receivers = _self_receivers(node)
+            context["_self_receivers"] = receivers
+            context["_class_family"] = _class_family(node)
+            context["_closed_resource_attributes"] = _closed_attribute_owners(
+                node, receivers
+            )
+            context["_local_classes"] = _module_classes(node)
 
         filename = context.get("filename", "")
         basename = Path(filename).name
@@ -2869,10 +3672,6 @@ class MissingResourceCleanupRule(SkylosRule):
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             return
 
-        if isinstance(stmt, ast.Try):
-            self._check_try_stmt(stmt, context, findings, scope_body)
-            return
-
         assignment_finding = self._check_resource_assignment(stmt, context, scope_body)
         if assignment_finding:
             findings.append(assignment_finding)
@@ -2882,12 +3681,6 @@ class MissingResourceCleanupRule(SkylosRule):
             findings.append(expression_finding)
 
         self._check_nested_statements(stmt, context, findings, scope_body)
-
-    def _check_try_stmt(self, stmt, context, findings, scope_body):
-        for sub in stmt.body:
-            self._check_stmt(sub, context, findings, scope_body)
-        for sub in stmt.orelse:
-            self._check_stmt(sub, context, findings, scope_body)
 
     def _check_resource_assignment(self, stmt, context, scope_body):
         if not isinstance(stmt, ast.Assign):
@@ -2905,8 +3698,14 @@ class MissingResourceCleanupRule(SkylosRule):
                 return None
             if self._is_returned_or_yielded(var_name, scope_body):
                 return None
-            if self._has_close_in_finally(var_name, scope_body):
+            if _finally_covers(stmt, var_name, scope_body):
                 return None
+            if _handle_changes_owner(
+                var_name, scope_body, context.get("_local_classes", {})
+            ):
+                return None
+        elif self._attribute_target_is_closed(stmt, context):
+            return None
 
         return self._make_finding(stmt, context, resource_name)
 
@@ -2923,17 +3722,25 @@ class MissingResourceCleanupRule(SkylosRule):
         return self._make_finding(stmt, context, resource_name)
 
     def _check_nested_statements(self, stmt, context, findings, scope_body):
-        for child in ast.iter_child_nodes(stmt):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                continue
-            if isinstance(child, (ast.With, ast.AsyncWith)):
-                continue
-            if hasattr(child, "body") and isinstance(child.body, list):
-                for sub in child.body:
-                    self._check_stmt(sub, context, findings, scope_body)
-            if hasattr(child, "orelse") and isinstance(child.orelse, list):
-                for sub in child.orelse:
-                    self._check_stmt(sub, context, findings, scope_body)
+        if isinstance(stmt, (ast.With, ast.AsyncWith)):
+            return
+        for sub in _nested_statement_blocks(stmt):
+            self._check_stmt(sub, context, findings, scope_body)
+
+    def _attribute_target_is_closed(self, assignment, context):
+        if len(assignment.targets) != 1:
+            return False
+        target = assignment.targets[0]
+        if not isinstance(target, ast.Attribute):
+            return False
+        closers = context.get("_closed_resource_attributes", {}).get(target.attr)
+        if not closers:
+            return False
+        owner = context.get("_self_receivers", {}).get(id(target.value))
+        if owner is None or None in closers:
+            return True
+        family = context.get("_class_family", {}).get(owner, {owner})
+        return any(closer in family for closer in closers)
 
     def _is_inside_with(self, stmt, scope_body):
         for top_stmt in scope_body:
@@ -3017,21 +3824,6 @@ class MissingResourceCleanupRule(SkylosRule):
             if isinstance(node, ast.Yield) and node.value:
                 if isinstance(node.value, ast.Name) and node.value.id == var_name:
                     return True
-        return False
-
-    def _has_close_in_finally(self, var_name, scope_body):
-        for stmt in scope_body:
-            if isinstance(stmt, ast.Try) and stmt.finalbody:
-                for final_stmt in stmt.finalbody:
-                    for node in ast.walk(final_stmt):
-                        if (
-                            isinstance(node, ast.Call)
-                            and isinstance(node.func, ast.Attribute)
-                            and node.func.attr == "close"
-                            and isinstance(node.func.value, ast.Name)
-                            and node.func.value.id == var_name
-                        ):
-                            return True
         return False
 
     def _make_finding(self, node, context, resource_name):

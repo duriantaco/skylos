@@ -11,6 +11,7 @@ from mcp.server.fastmcp import FastMCP  # noqa: E402
 
 import skylos_mcp.auth as auth_mod  # noqa: E402
 from skylos_mcp.auth import (  # noqa: E402
+    LOCAL_TOOLS,
     UNAUTH_DAILY_LIMIT,
     UNAUTHENTICATED_TOOLS,
     AuthSession,
@@ -26,8 +27,9 @@ def tools():
 
 
 def test_every_gated_tool_description_says_it_needs_a_key(tools):
-    gated = [name for name in tools if name not in UNAUTHENTICATED_TOOLS]
+    gated = [name for name in tools if name not in UNAUTHENTICATED_TOOLS and name not in LOCAL_TOOLS]
     assert len(gated) >= 10
+    assert {"security_scan", "verify_change", "remediate"} <= set(gated)
     for name in gated:
         description = tools[name].description
         assert "Requires SKYLOS_API_KEY" in description, name
@@ -40,6 +42,14 @@ def test_ungated_tool_description_says_it_works_without_a_key(tools):
         assert "Works without SKYLOS_API_KEY" in description
         assert f"{UNAUTH_DAILY_LIMIT} calls/day" in description
         assert "Requires SKYLOS_API_KEY" not in description
+
+
+def test_local_map_tool_descriptions_say_they_need_no_key(tools):
+    assert LOCAL_TOOLS <= set(tools)
+    for name in LOCAL_TOOLS:
+        description = tools[name].description
+        assert "Works without SKYLOS_API_KEY and has no daily limit" in description, name
+        assert "Requires SKYLOS_API_KEY" not in description, name
 
 
 def test_existing_docstrings_are_kept(tools):

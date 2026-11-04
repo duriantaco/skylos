@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skylos Graph</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <span class="title">Skylos Graph</span>
+    <span id="repo" class="repo"></span>
+  </div>
+  <div class="search">
+    <label class="sr" for="q">Search functions and classes</label>
+    <input id="q" type="search" placeholder="Search functions, classes, files  ( / )" autocomplete="off" spellcheck="false">
+    <ul id="results" class="results" role="listbox" hidden></ul>
+  </div>
+  <nav class="modes" aria-label="View">
+    <button id="mode-graph" class="mode" type="button" aria-pressed="false" hidden>Graph</button>
+    <button id="mode-map" class="mode on" type="button" aria-pressed="true">Overview</button>
+    <button id="mode-areas" class="mode" type="button" aria-pressed="false" hidden>Areas</button>
+    <button id="mode-changes" class="mode" type="button" aria-pressed="false" hidden>Changes</button>
+    <button id="mode-pipeline" class="mode" type="button" aria-pressed="false">Pipeline</button>
+  </nav>
+  <button id="run-check" class="run-check" type="button" title="Run skylos done: your tests and every agent-safety check" hidden>Check this change</button>
+</header>
+<div class="layout">
+  <aside class="tree" aria-label="Files">
+    <div class="tree-head">
+      <label class="sr" for="tree-filter">Filter files</label>
+      <input id="tree-filter" type="search" placeholder="Filter files" autocomplete="off">
+      <label class="check"><input id="show-tests" type="checkbox"> Tests</label>
+      <div id="tree-group" class="seg group" role="group" aria-label="Group the list by" hidden>
+        <button id="group-folders" class="on" type="button" aria-pressed="true">Folders</button>
+        <button id="group-areas" type="button" aria-pressed="false">Areas</button>
+      </div>
+    </div>
+    <div id="tree" class="tree-body"></div>
+  </aside>
+  <main id="main" class="main" tabindex="-1"></main>
+  <aside id="card" class="card" aria-label="Details" hidden></aside>
+</div>
+<div id="toast" class="toast" role="status" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -14,6 +14,7 @@ from rich.text import Text
 
 logger = logging.getLogger(__name__)
 
+CODEX_MARKERS = ("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_SANDBOX")
 EXIT_PASS = 0
 EXIT_BLOCKED = 1
 EXIT_ERROR = 2
@@ -26,6 +27,15 @@ _STATUS_STYLES = {
     "SKIP": "dim",
     "OFF": "dim",
 }
+
+
+
+def detect_agent(env) -> str:
+    if any(env.get(name) for name in CODEX_MARKERS):
+        return "codex"
+    if env.get("CLAUDECODE"):
+        return "claude-code"
+    return "unknown"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -72,9 +82,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--agent",
-        default="unknown",
+        default=None,
         metavar="CLIENT",
-        help="Agent that made the change, e.g. claude-code, codex, cursor (default: unknown)",
+        help="Agent that made the change, e.g. claude-code, codex, cursor (default: detected when Claude Code or Codex runs skylos done, else unknown)",
     )
     parser.add_argument(
         "--map",
@@ -155,7 +165,7 @@ def run_done_command(argv: list[str], *, console: Console | None = None) -> int:
             session_id=args.session,
         )
         receipt = build_receipt(
-            result, agent_client=args.agent, session_id=args.session
+            result, agent_client=args.agent or detect_agent(os.environ), session_id=args.session
         )
         problems = validate_receipt(receipt)
         if problems:  # a bug in Skylos, never the user's change
@@ -212,6 +222,10 @@ def run_done_command(argv: list[str], *, console: Console | None = None) -> int:
             )
         if args.map:
             _print_change_map(out, args.path, args.base, "text")
+        elif not args.session:
+            out.print(Text(f"See what to read and what is proven unchanged: {_map_command(args.path, args.base)}", style="dim"))
+        if not args.session:
+            out.print(Text("See every run stage by stage: skylos open, then the Pipeline tab", style="dim"))
     if args.map and args.format == "markdown":
         _print_change_map(out, args.path, args.base, "markdown")
 
@@ -219,10 +233,22 @@ def run_done_command(argv: list[str], *, console: Console | None = None) -> int:
     return EXIT_PASS if receipt["verdict"] == "pass" else EXIT_BLOCKED
 
 
+def _map_command(path: str, base: str | None) -> str:
+    import shlex
+
+    parts = ["skylos", "done", "map"]
+    if path and path != ".":
+        parts.append(shlex.quote(path))
+    if base:
+        parts.extend(["--base", shlex.quote(base)])
+    return " ".join(parts)
+
+
 def _change_map_text(path: str, base: str | None, fmt: str) -> str:
     from skylos import changemap
 
     change_map = changemap.build_change_map(path, base or "HEAD")
+    _remember_review(path, change_map)
     if fmt == "markdown":
         return changemap.render_markdown(change_map)
     return changemap.render_text(change_map)
@@ -242,6 +268,15 @@ def _print_change_map(out: Console, path: str, base: str | None, fmt: str) -> No
     out.print(Text(text.rstrip("\n")), soft_wrap=True)
 
 
+def _remember_review(path: str, change_map: dict) -> None:
+    try:
+        from skylos.graph.pipeline import save_review
+
+        save_review(path, change_map)
+    except Exception:
+        logger.debug("could not save the review summary", exc_info=True)
+
+
 def _run_map_command(argv: list[str], *, console: Console | None) -> int:
     from skylos import changemap
 
@@ -257,6 +292,7 @@ def _run_map_command(argv: list[str], *, console: Console | None) -> int:
         logger.debug("change map failed", exc_info=True)
         err.print(Text("skylos done map: the change map could not be built", style="red"))
         return EXIT_ERROR
+    _remember_review(args.path, change_map)
     if args.format == "json":
         print(json.dumps(change_map, indent=2))
     elif args.format == "markdown":

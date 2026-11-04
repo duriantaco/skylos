@@ -13,7 +13,7 @@ COMBINED_REASON = "combined"
 PUBLIC_IDENTIFIER_REASON = "likely-public-identifier"
 LOW_RISK_REASON = "low-risk-context"
 SCA_RULE_PREFIX = "SKY-SCA-"
-SCA_LOW_RISK_REASONS = frozenset({"dev-only-dependency"})
+SCA_LOW_RISK_REASONS = frozenset({"dev-only-dependency", "informational-advisory"})
 CONSTANT_ARGUMENT_REASON = "constant-argument"
 LOW_RISK_REASONS = {
     "SKY-D292": frozenset({"github-owned-action-tag"}),

@@ -43,6 +43,10 @@ class ChangeInputs:
 
 
 def _excluded(path: str) -> bool:
+    from skylos.done.base import is_runtime_path
+
+    if is_runtime_path(path):
+        return True
     for part in PurePosixPath(path).parts[:-1]:
         if part in DEFAULT_EXCLUDE_FOLDERS or part.endswith(".egg-info"):
             return True

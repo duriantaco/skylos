@@ -36,6 +36,16 @@ skylos cloud        # 可选：在 Skylos Cloud 上按分支跟踪结果
 skylos cicd init    # 为每个拉取请求添加 Skylos 检查
 ```
 
+使用编码代理时，只需要两个命令：
+
+```bash
+skylos setup   # 每个仓库一次：连接 Claude Code 和 Codex，写入 PR 检查，生成代码地图
+skylos open    # 每天：代码图、用简单语言说明的改动、每一次检查
+```
+
+检查由你的代理自己运行。[教程](../workflow.md)记录了一次真实会话：代理描述代码、
+修改代码、被拦下，然后按照 Skylos 的修复说明修好。
+
 `skylos cloud` 运行全部检查，显示发现的问题并上传，然后打印当前分支的质量门结果和一个链接：
 
 ```text
@@ -86,6 +96,7 @@ git push
 | 更易读的终端报告 | `skylos . --format pretty` | 按文件分组展示发现，包含严重级别标记、代码片段和可复制的 `file:line` 位置 | [CLI Output Modes](../cli-output.md) |
 | 可选择的终端界面 | `skylos . --tui` | 打开键盘驱动的分类列表、发现列表和详情面板 | [CLI Output Modes](../cli-output.md) |
 | 审查用的变更地图 | `skylos done map --base origin/main` | 列出每个改动的 Python 或 TypeScript/JavaScript 函数：新旧代码、新增和删除的调用、调用者、被删除的安全检查，以及应该先读哪些改动；由代码计算得出，不是模型生成 | [Change map](../change-map.md) |
+| 代码库图谱 | `skylos graph open` | 在本地浏览器中展示每个 Python 和 TypeScript/JavaScript 函数和类（Go、Java、Rust 和 PHP 为初步支持，调用按名称匹配），按区域分组，谁调用谁、测试及其期望输出；标出改动的代码，并说明逻辑是否保持不变（只有能证明时才这样说）。通俗英文说明由你的编码代理、你自己的模型密钥或 Skylos（消耗额度）生成；Skylos Cloud 可以在每个拉取请求上发布逻辑变更评论。`skylos done map` 把每处改动分为“先读”“要读”“略读”和“可跳过”（只有能证明逻辑不变时才可跳过）；相应的 MCP 工具不需要密钥 | [Codebase graph](../graph.md) |
 | 只审查变更行 | `skylos . -a --diff origin/main` | 聚焦当前 PR，避免被历史债务淹没 | [质量门控](https://docs.skylos.dev/quality-gate) |
 | 运行时辅助死代码检测 | `skylos . --trace` | 用测试运行轨迹降低动态代码误报 | [Smart Tracing](https://docs.skylos.dev/smart-tracing) |
 | AI 辅助审查 | `skylos agent scan .` | 静态分析加可选 LLM 审查和修复建议 | [AI Features](https://docs.skylos.dev/ai-features) |
@@ -149,14 +160,14 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 | PHP | 是 | 是 | 否 | PHP parser 覆盖；安全检查在单个函数或文件内追踪请求数据（超全局变量、Laravel/Symfony/PSR-7/CodeIgniter 请求、Drupal Form API），覆盖命令与代码执行、`include` 文件包含、`echo`/`<?= ?>`/Blade `{!! !!}` XSS、SQL、SSRF、`unserialize` 和文件路径；不跨函数或文件，也不检查 Twig 模板 |
 | Rust | 实验性⁴ | 部分 | 部分 | Rust 解析；命令注入、路径穿越、直接不可达语句及重复分支检查 |
 | Dart | 是³ | 部分³ | 否 | Dart parser 覆盖；安全检查覆盖命令注入、路径穿越和 SSRF |
-| C# | 部分 | 部分 | 部分 | C# 符号、直接代码块中的不可达语句、部分安全汇入点及 NuGet 直接依赖清单 |
+| C# | 部分 | 部分 | 部分 | C# 符号、直接代码块中的不可达语句、感知 ASP.NET 的安全检查（请求来源、按接收者类型识别的汇入点、不安全反序列化、XSS）及 NuGet 依赖清单（`.csproj` 和 `packages.lock.json`） |
 | C++ | 部分 | 否 | 否 | 仅报告 `.cpp`、`.cc`、`.cxx` 中看似未使用的文件内函数；会读取 C++ 头文件中的引用 |
-| Kotlin | 部分² | 否² | 否 | 基于正则的符号提取；只报告 private 声明和导入 |
+| Kotlin | 部分² | 部分² | 否 | 词法符号提取；只报告 private 声明和导入；Spring、Ktor、Servlet 和 Android WebView 安全检查 |
 | Shell | 否 | 部分 | 否 | shell 脚本安全检查，覆盖命令注入、SSRF 和路径穿越 |
 
 ¹ Go 的死代码和安全检查需要原生 `skylos-go` 引擎。从 4.50 起，Linux、macOS 和 Windows（x86_64 和 arm64）的 PyPI wheel 以及容器镜像都包含该引擎，官方 GitHub Action 会自动构建。其他平台上 `skylos doctor` 会给出构建命令。没有该引擎时只运行 Go 质量检查，Go 文件会被报告为未分析。
 
-² Kotlin 死代码只报告 `private` 类型和函数以及未使用的导入；所有非 private 声明都视为已使用。Kotlin 没有内置安全规则，但密钥扫描仍覆盖 `.kt` 和 `.kts` 文件。
+² Kotlin 死代码只报告 `private` 类型和函数以及未使用的导入；所有非 private 声明都视为已使用。代码中的任何使用都算引用：类型位置、`::foo`、尾随 lambda 和中缀调用、字符串模板以及 KDoc 链接；运算符约定导入（`getValue`、`plus`、`component1`）从不报告。Kotlin 安全分析是词法级的（没有 Kotlin 解析器），复用 Java 的来源和汇入点：输入来自 Spring 处理方法参数、`HttpServletRequest`、Ktor `call.parameters`、`call.receive<T>()` 和 WebFlux `ServerRequest`；检查覆盖命令注入（SKY-D212、SKY-D203）、包括字符串模板的 SQL 注入（SKY-D211）、路径穿越（SKY-D215）、SSRF（SKY-D216）、开放重定向（SKY-D230）、HTML 响应 XSS（SKY-D226）、`ObjectInputStream`/`XMLDecoder`（SKY-D204、SKY-D233）、XXE（SKY-D236）、SpEL/JNDI（SKY-D237），以及 Android WebView JavaScript 桥（SKY-D257）和 `file://` URL 文件访问（SKY-D258）。数据流只在单个函数或路由 lambda 内跟踪。密钥扫描覆盖 `.kt` 和 `.kts` 文件。
 
 ³ Dart 检查需要可选依赖 `skylos[dart]`（`pip install "skylos[dart]"`，安装时需要 C 编译器）。未安装时，包含 `.dart` 文件的扫描会把它们报告为未分析（`SKY-ANALYSIS-INCOMPLETE`）。
 
@@ -168,16 +179,45 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 
 C# 死代码检查采用保守策略：完整扫描可执行或 Web 应用时，未被引用的 public
 类型和方法会作为低置信度候选项；库的公开 API、protected 成员及已知的框架或
-配置入口仍视为可被外部使用。暂不分析 C# 源文件的可达性；质量检查可识别直接代码块中无条件 `return`、`throw`、
-`break` 或 `continue` 后的语句，但并非完整控制流分析。安全检查覆盖部分
-不可信输入汇入点；使用 `--secrets` 或 `-a` 时，也会对 `.cs` 文件运行通用
-密钥扫描。C# 污点分析暂不跟踪插值原始字符串中的表达式。SCA 会收集
+配置入口仍视为可被外部使用。构造函数只有在私有、带参数且没有任何调用时才会
+报告为未使用函数（与 Roslyn IDE0051 规则一致）；控制器和依赖注入的构造函数由
+框架调用。暂不分析 C# 源文件的可达性；质量检查可识别直接代码块中无条件 `return`、`throw`、
+`break` 或 `continue` 后的语句，但并非完整控制流分析。安全检查（`--danger`）把
+ASP.NET 请求数据视为输入：控制器 Action、Razor Page 处理程序、Minimal API 和
+`[From*]` 参数以及 `Request.*`，不包括构造函数参数或普通服务参数，并会跟踪到
+同一文件中的辅助方法。它报告 SQL 注入（ADO.NET、EF 原始 SQL、Dapper）、命令注入、
+路径遍历、SSRF（`HttpClient`、`WebClient`、`WebRequest`、RestSharp）、开放重定向
+（`LocalRedirect` 或 `Url.IsLocalUrl` 检查除外）、不安全反序列化（`BinaryFormatter`
+系列、Json.NET `TypeNameHandling`、`SimpleTypeResolver`）以及通过
+`HtmlString`/`Html.Raw`/`MarkupString` 和 HTML 响应产生的 XSS，每条都带 CWE。
+与汇入点同名的方法（如仓储的 `GetAsync`）只有在接收者类型匹配时才计入。使用
+`--secrets` 或 `-a` 时，也会对 `.cs` 文件运行通用密钥扫描。C# 污点分析暂不跟踪
+`.cshtml`/`.razor` 标记、跨文件数据流以及插值原始字符串中的表达式。SCA 会收集
 `.csproj` 中直接声明的 NuGet `PackageReference`；
 只有无条件的精确 `Version`（`[version]`）且没有本地 `Update`/`Remove` 修改时
 才会查询漏洞；`VersionOverride` 和集中管理的版本不在此范围内。普通版本号只是最低版本约束；没有已解析的
-锁文件时，实际安装版本及漏洞状态仍未知，也不会列出传递依赖。
+锁文件时，实际安装版本及漏洞状态仍未知。有 `packages.lock.json`（`RestorePackagesWithLockFile`）时，
+会按每个目标框架检查所有已解析的包，包括传递依赖。
 
 规则族和扫描范围请看 [Rules Reference](https://docs.skylos.dev/rules-reference)。
+
+## 依赖文件
+
+依赖漏洞扫描（`--sca`，`-a` 已包含）把下列文件当作数据读取，并按其中记录的精确版本查询 OSV：
+
+| 生态 | 锁文件（全部已记录的包） | 清单文件（只用精确版本；版本范围记为未解析） | 会列出但不读取 |
+|:---|:---|:---|:---|
+| PyPI | `uv.lock`、`poetry.lock`、`Pipfile.lock` | `requirements.txt`、`pyproject.toml`、`setup.cfg`、`setup.py` | 没有锁文件的 `Pipfile` |
+| npm | `package-lock.json`、`npm-shrinkwrap.json`、`pnpm-lock.yaml`、`yarn.lock`、`bun.lock` | `package.json` | `bun.lockb` |
+| Go | | `go.mod` | Go 1.17 之前的 `go.sum` |
+| Maven / Gradle | `gradle.lockfile` | `pom.xml`（properties、本地父 POM 和 `<dependencyManagement>`） | 没有 `gradle.lockfile` 的 `build.gradle(.kts)` |
+| crates.io | `Cargo.lock` | `Cargo.toml`（`=x.y.z`） | |
+| Packagist | `composer.lock` | `composer.json` | |
+| RubyGems | `Gemfile.lock` | | 没有锁文件的 `Gemfile` |
+| Pub | `pubspec.lock` | `pubspec.yaml` | |
+| NuGet | `packages.lock.json` | `*.csproj`（`[x.y.z]`） | |
+
+Git、本地路径、SDK、私有仓库和分支（`dev-*`）条目会列为未检查，从不当作公共包查询。详见 [Dependency scanning](../dependency-scanning.md)。
 
 ## 基准测试快照
 
@@ -223,6 +263,8 @@ Skylos 辅助的死代码清理 PR 已被
 | Agent 扫描、验证、修复和模型设置 | [AI Features](https://docs.skylos.dev/ai-features) |
 | AI 防御和 LLM guardrails | [AI app safety](https://docs.skylos.dev/ai-defense) |
 | 一次改动影响了什么、先读什么（`skylos done map`） | [Change map](../change-map.md) |
+| 教程：`skylos setup`、`skylos open`、Pipeline 视图和 PR 检查，来自一次真实的代理会话 | [教程](../workflow.md) |
+| 谁调用谁、通俗说明，以及改动后的逻辑是否不变（`skylos graph`） | [Codebase graph](../graph.md) |
 | MCP server 设置 | [MCP Server](https://docs.skylos.dev/mcp-server) |
 | 基线、过滤、抑制和白名单 | [Configuration](https://docs.skylos.dev/configuration) |
 | 智能追踪 | [Smart Tracing](https://docs.skylos.dev/smart-tracing) |

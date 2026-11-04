@@ -451,6 +451,32 @@ def test_trojan_source_bidi_control_flags(tmp_path):
     assert "SKY-D344" in _rule_ids(out)
 
 
+def test_scan_reports_python_bidi_controls_once_as_trojan_source(tmp_path):
+    import json
+
+    from skylos.analyzer import analyze
+
+    _write(tmp_path, "access.py", 'ACCESS = "admin"  # \u202e } \u2066 if x:\nprint(ACCESS)\n')
+    _write(tmp_path, "isolate.py", 'LABEL = "user\u2067name"\nprint(LABEL)\n')
+    _write(tmp_path, "zero_width.py", 'NOTE = "pass\u200bword"\nprint(NOTE)\n')
+    _write(tmp_path, "escaped.py", 'MARK = "\\u202e"\nprint(MARK)\n')
+    _write(tmp_path, "notes.md", "Read me \u202e carefully.\n")
+
+    result = json.loads(
+        analyze(str(tmp_path), conf=0, enable_danger=True, grep_verify=False)
+    )
+    found = {
+        (Path(f["file"]).name, f["rule_id"], f["line"]) for f in result["danger"]
+    }
+
+    assert ("access.py", "SKY-D344", 1) in found
+    assert ("isolate.py", "SKY-D344", 1) in found
+    assert ("access.py", "SKY-D260", 1) not in found
+    assert ("zero_width.py", "SKY-D260", 1) in found
+    assert ("notes.md", "SKY-D260", 1) in found
+    assert not any(name == "escaped.py" for name, _rule, _line in found)
+
+
 def test_flask_debug_mode_flags(tmp_path):
     out = _scan_one(
         tmp_path,

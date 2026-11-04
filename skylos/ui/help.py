@@ -3,6 +3,29 @@ from rich.markup import escape
 
 COMMANDS = [
     {
+        "name": "skylos setup [path] [--base REF] [--no-ci] [--no-codex]",
+        "desc": "Set up Skylos in a repository once: coding agents, their Skylos tools, the PR check and the code map",
+        "details": [
+            "Adds the Skylos steps to CLAUDE.md and AGENTS.md between skylos:start and skylos:end markers; "
+            "the rest of each file is left as it is",
+            "Connects Claude Code through .mcp.json and Codex through codex mcp add",
+            "Writes the pull request check with skylos cicd init; --ci picks the CI when there are several",
+            "Maps the code; run it again at any time, it only changes what is missing or out of date",
+        ],
+        "group": "Start here",
+    },
+    {
+        "name": "skylos open [path] [--base REF]",
+        "desc": "One local page: the diagram of your code, what changed in plain English and what it affects, and every check run",
+        "details": [
+            "Compares with the branch pull requests merge into (origin/HEAD, else main or master); --base to change it",
+            "Graph tab: areas of the code and how they link; open an area for its classes and functions",
+            "Changes tab: what to read first, read, skim and skip; Pipeline tab: every skylos done run stage by stage",
+            "Check this change runs skylos done and the change map again; only this computer can reach the page",
+        ],
+        "group": "Start here",
+    },
+    {
         "name": "skylos explain REPORT.json [--rule RULE] [--interactive]",
         "desc": "Follow recorded static security evidence across source locations",
         "details": [
@@ -110,8 +133,31 @@ COMMANDS = [
         "group": "Core Analysis",
     },
     {
+        "name": "skylos graph [path] [--since REF]",
+        "desc": "Map every function and class, what calls what, and what each one does in plain English",
+        "details": [
+            "Builds .skylos/graph/ for Python, TypeScript and JavaScript, plus Go, Java, Rust and PHP "
+            "with calls matched by name; rebuilds reuse unchanged files",
+            "open: explore it in your browser (127.0.0.1 only); it rebuilds when files change; "
+            "its Pipeline tab shows every skylos done run stage by stage",
+            "areas [ID]: the codebase split into areas that work together; "
+            "relevant FILE...: what else matters to the files you are changing, within a token budget",
+            "--since REF marks changed code and says whether its logic is still the same; "
+            "'same' is shown only when proven (moved unchanged, only local names renamed, "
+            "or only the docstring changed)",
+            "show / find / impact / changes: answers for you or your coding agent; add --format json; "
+            "changes sorts each change into read first, read, skim and skip",
+            "describe: plain-English descriptions with your own model key; "
+            "pending + import: let your coding agent write them instead; "
+            "describe --via skylos: Skylos writes them for credits (not live in Skylos Cloud yet)",
+            "--upload: send the logic-change report to Skylos Cloud, which keeps it "
+            "and comments on the pull request (1 credit per pull request)",
+        ],
+        "group": "Core Analysis",
+    },
+    {
         "name": "skylos done [path] [--base REF | --session ID]",
-        "desc": "Check a branch or PR, including one an AI agent wrote: runs the tests, then writes a receipt",
+        "desc": "Check a branch or PR, including one an AI agent wrote: runs the tests, writes a receipt, and `done map` shows what to read",
         "details": [
             "Runs the tests itself and reads their JUnit results; the agent's own "
             "test claims are ignored",
@@ -589,7 +635,16 @@ COMMANDS = [
 
 # The common path, shown first by `skylos --help` and `skylos commands`.
 START_HERE = (
-    ("skylos .", "Find dead code in this directory. Your code and findings stay here."),
+    (
+        "skylos setup",
+        "Once per repository: connect Claude Code and Codex to Skylos, add the "
+        "pull request check and map the code.",
+    ),
+    (
+        "skylos open",
+        "Every day: one page with the diagram of your code, what changed in plain "
+        "English and what it affects, and every check run.",
+    ),
     (
         "skylos . -a",
         "Run all checks: dead code, security, secrets, quality and dependencies.",
@@ -599,15 +654,14 @@ START_HERE = (
         "Run all checks, upload the findings (not the repository) and see "
         "this branch's gate on Skylos Cloud.",
     ),
-    (
-        "skylos done --base main",
-        "Check a branch or PR, including one an AI agent wrote: Skylos runs "
-        "the tests and flags deleted tests, loosened CI and test-only shortcuts.",
-    ),
-    ("skylos cicd init", "Set up a check on every PR for your CI: GitHub, GitLab, Jenkins and more."),
 )
 
 MORE_COMMANDS = (
+    (
+        "skylos done --base main",
+        "What your coding agent runs when it finishes: runs the tests and flags "
+        "deleted tests, loosened CI and test-only shortcuts.",
+    ),
     (
         "skylos verify [PATH]",
         "Scan for AI-code mistakes and model Python working changes.",
@@ -688,6 +742,7 @@ def print_flat_commands(console):
     table.add_column("Group", style="yellow")
 
     group_order = (
+        "Start here",
         "Core Analysis",
         "Skylos Cloud",
         "CI/CD",

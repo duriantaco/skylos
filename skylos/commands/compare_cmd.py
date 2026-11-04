@@ -57,7 +57,7 @@ def _build_compare_parser() -> argparse.ArgumentParser:
         "--sca",
         action="store_true",
         help=(
-            "Opt in to bounded exact-pin direct-dependency OSV checks; "
+            "Opt in to OSV checks on dependency lockfiles and exact manifest pins; "
             "package/version metadata may be queried and full SCA category "
             "coverage is not claimed"
         ),

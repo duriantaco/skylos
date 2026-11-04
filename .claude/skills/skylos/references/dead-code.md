@@ -36,6 +36,16 @@ Prefer evidence in this order:
 Do not treat absence of a simple text reference as proof of dead code when the
 framework commonly resolves names dynamically.
 
+A same-named attribute read is not always a use. A Python module or class
+variable stays alive through `x.NAME` only when `x` could be its owner (the
+module or class, a related class's `self`, Django `settings`, or an unknown
+receiver the module object can reach). `self.NAME` on an unrelated class and
+`other_module.NAME` do not keep it, so `RETRY_LIMIT = 3` read only as
+`self.RETRY_LIMIT` elsewhere is reported. Java, Kotlin, Rust and Dart symbols
+with the same name in different files are separate findings; a reference
+reaches the ones in its file, package, imports or crate. Overloads in one file
+share liveness.
+
 ## Framework Areas
 
 Skylos has framework-aware behavior for patterns such as:
@@ -63,6 +73,17 @@ Skylos has framework-aware behavior for patterns such as:
   and policies), plus Livewire and Blade components, migrations,
   `DatabaseSeeder` and `laravel-vite-plugin` inputs.
 - PHP type-position and PHPDoc references to imported classes.
+- Kotlin (lexical, private declarations and imports only): any identifier in
+  code is a use, including type positions, `::foo`, trailing-lambda and infix
+  calls, string templates, KDoc links to imports and import paths of private
+  enums; named-argument labels and text in comments or string literals are not.
+  `private operator fun`, operator-convention imports (`getValue`, `plus`,
+  `component1`), companion objects, and functions annotated `@JvmStatic`,
+  `@Preview`, `@Composable`, Spring/JUnit lifecycle or Hilt `@Provides` are live.
+- C# constructors: only a private constructor with parameters that nothing
+  calls is an unused-function finding (Roslyn IDE0051); controller and
+  dependency-injection constructors are framework-called, and the class itself
+  is the dead-code unit.
 - package entrypoints and plugin hooks.
 - Python library public API (`skylos/deadcode/public_api.py`): attribute
   docstrings and `#:` comments, Sphinx/MyST directives and roles, mkdocstrings

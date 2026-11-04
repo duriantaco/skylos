@@ -149,6 +149,10 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
     ],
     "SKY-Q406": [{"id": "CWE-252", "name": "Unchecked Return Value"}],
     "SKY-Q407": [{"id": "CWE-252", "name": "Unchecked Return Value"}],
+    "SKY-D349": [
+        {"id": "CWE-1336", "name": "Improper Neutralization of Special Elements Used in a Template Engine"},
+        {"id": "CWE-94", "name": "Improper Control of Generation of Code ('Code Injection')"},
+    ],
     "SKY-U005": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     # Unreachable
     "SKY-UC001": [{"id": "CWE-561", "name": "Dead Code"}],

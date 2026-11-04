@@ -334,7 +334,10 @@ def _non_registry_examples(entries) -> list[str]:
         if not isinstance(name, str):
             continue
         name = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", name).strip()
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", name):
+        if not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}(?:/[A-Za-z0-9][A-Za-z0-9._-]{0,79})?",
+            name,
+        ):
             continue
         source_type = entry.get("source_type")
         kind = (
