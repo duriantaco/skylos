@@ -18,11 +18,19 @@ on:
           - 2/4
           - 3/4
           - 4/4
+      install_spec:
+        description: Install option from the failing Linux matrix
+        required: true
+        type: choice
+        default: '.[llm,dart]'
+        options:
+          - '.[llm,dart]'
+          - '.'
 permissions:
   contents: read
 jobs:
   yaml_shard:
-    name: Default install, Python 3.12.3, shard ${{ inputs.test_shard }}
+    name: Install ${{ inputs.install_spec }}, Python 3.12.3, shard ${{ inputs.test_shard }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -44,25 +52,69 @@ jobs:
       - name: Install ripgrep
         run: sudo apt-get install -y ripgrep
       - name: Install exact failing test tools
+        env:
+          INSTALL_SPEC: ${{ inputs.install_spec }}
         run: |
           uv venv --python 3.12.3
-          uv pip install --python .venv/bin/python -e .
+          uv pip install --python .venv/bin/python -e "$INSTALL_SPEC"
           uv pip install --python .venv/bin/python pytest==9.2.0 pytest-cov==7.1.0 coverage==7.17.1 pytest-xdist==3.8.0
-          git rev-parse HEAD
           .venv/bin/python --version
           .venv/bin/python -m coverage --version
+          uv pip list --python .venv/bin/python > installed-packages.txt
+      - name: Record exact source and runner
+        run: |
+          git rev-parse HEAD | tee source-head.txt
+          git hash-object test/test_yaml_safe_loader_fallbacks.py | tee yaml-timing-blob.txt
+          printf 'ImageOS=%s\nImageVersion=%s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}" | tee runner-image.txt
+      - name: Record complete test-call CPU time without changing the test
+        run: |
+          mkdir -p /tmp/skylos-yaml-validation-plugins
+          cat > /tmp/skylos-yaml-validation-plugins/yaml_validation_cpu.py <<'PY'
+          import time
+          import pytest
+
+          @pytest.hookimpl(hookwrapper=True)
+          def pytest_runtest_call(item):
+              if item.name != "test_many_unresolved_loader_names_are_checked_in_bounded_time":
+                  yield
+                  return
+              started = time.process_time()
+              try:
+                  yield
+              finally:
+                  item.user_properties.append(
+                      ("complete_test_call_cpu_seconds", time.process_time() - started)
+                  )
+          PY
       - name: Run the failing Linux shard with coverage
         shell: bash
         env:
           TEST_SHARD: ${{ inputs.test_shard }}
+          PYTHONPATH: /tmp/skylos-yaml-validation-plugins
         run: |
-          .venv/bin/python -m pytest -q -n auto --dist loadfile --cov=skylos --cov-report=term-missing --cov-report=xml --junitxml=yaml-shard.xml $(.venv/bin/python scripts/ci/test_shard.py "$TEST_SHARD") 2>&1 | tee yaml-shard.log
+          set -euo pipefail
+          .venv/bin/python -m pytest -q -n auto --dist loadfile -p yaml_validation_cpu --cov=skylos --cov-report=term-missing --cov-report=xml --junitxml=yaml-shard.xml $(.venv/bin/python scripts/ci/test_shard.py "$TEST_SHARD") 2>&1 | tee yaml-shard.log
+      - name: Repeat the unchanged YAML test file in three fresh pytest processes
+        shell: bash
+        env:
+          PYTHONPATH: /tmp/skylos-yaml-validation-plugins
+        run: |
+          set -euo pipefail
+          status=0
+          for attempt in 1 2 3; do
+            .venv/bin/python -m pytest -q -n auto --dist loadfile -p yaml_validation_cpu --cov=skylos --cov-report=term-missing --cov-report="xml:yaml-repeat-${attempt}-coverage.xml" --junitxml="yaml-repeat-${attempt}.xml" test/test_yaml_safe_loader_fallbacks.py 2>&1 | tee "yaml-repeat-${attempt}.log" || status=1
+          done
+          exit "$status"
       - name: Save exact shard receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: yaml-linux-shard
           path: |
-            yaml-shard.log
-            yaml-shard.xml
+            yaml-*.log
+            yaml-*.xml
             coverage.xml
+            source-head.txt
+            yaml-timing-blob.txt
+            runner-image.txt
+            installed-packages.txt
