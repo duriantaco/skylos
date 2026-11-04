@@ -96,7 +96,7 @@ _UNTRUSTED_COMMAND = {
     "go": 'Call exec.Command with the program and each argument separately, never "sh -c"; allowlist input.',
     "java": "Use ProcessBuilder with a fixed program and a separate argument list; allowlist input.",
     "rust": "Use Command::new with a fixed program and .arg() per value, never a shell; allowlist input.",
-    "php": "Avoid shell_exec/system with input; use escapeshellarg on each argument or a fixed command.",
+    "php": "Run a fixed command and pass each input as its own escapeshellarg() argument (not inside quotes, not as sh -c code), or use proc_open with an argument array; escapeshellcmd() is not enough.",
     "dart": "Use Process.run with a fixed executable and an argument list, runInShell: false; allowlist input.",
     "csharp": "Start a fixed executable with ArgumentList entries, UseShellExecute = false; allowlist input.",
 }
@@ -115,7 +115,7 @@ _SQL = {
     "js": "Use placeholders with a values array (or the ORM's query builder); never template values into SQL.",
     "go": "Use db.Query(sql, args...) with placeholders; never fmt.Sprintf values into SQL.",
     "java": "Use PreparedStatement with ? placeholders; never concatenate values into SQL.",
-    "php": "Use PDO prepared statements with bound parameters; never interpolate values into SQL.",
+    "php": "Use PDO/mysqli prepared statements or Laravel bindings (DB::select($sql, [$value]), whereRaw($sql, [$value])); never interpolate values into SQL.",
     "csharp": "Use SqlParameter/@name placeholders, EF FromSqlInterpolated or Dapper parameters; never concatenate values into SQL.",
 }
 _SSRF = {
@@ -177,6 +177,7 @@ _DYNAMIC_CODE = {
     "default": "Remove dynamic code execution; call the needed function directly or parse data with a safe parser.",
     "python": "Replace exec/eval with direct calls, a dispatch dict, or ast.literal_eval for literals.",
     "js": "Replace eval/new Function/string timers with direct function calls or JSON.parse.",
+    "php": "Remove eval/create_function/preg_replace /e; call the function directly or use preg_replace_callback.",
 }
 _DEAD_CODE = "Delete it if nothing outside this repo uses it; otherwise add {comment} skylos: ignore[{rule}] with a reason."
 
@@ -306,6 +307,7 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-D228": {
         "default": "Build HTML with auto-escaping templates or textContent, not string concatenation.",
         "csharp": "Return a Razor view, or HtmlEncoder.Default.Encode each value before writing an HTML response.",
+        "php": "Escape for the spot it lands in: htmlspecialchars() (or esc_html/esc_attr, e()) for text and quoted attributes, esc_url()/urlencode() for links, and never print request data inside <script> or event handlers.",
     },
     "SKY-D229": {
         "default": "Use a fixed XPath expression and pass input through XPath variables, or allowlist the value."
@@ -372,6 +374,9 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-D253": _TIMING,
     "SKY-D254": {
         "default": "Re-check authorization on the server instead of trusting values stored in the session."
+    },
+    "SKY-D255": {
+        "default": "Include only files from a fixed list: map the input to a known file name instead of building the path from it."
     },
     "SKY-D260": {
         "default": "Treat the text as data: keep it out of agent instructions, or mark it as untrusted input."

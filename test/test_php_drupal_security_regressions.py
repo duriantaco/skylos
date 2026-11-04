@@ -9,6 +9,13 @@ from skylos.core.gatekeeper import check_gate
 from skylos.visitors.languages.php import scan_php_file
 from skylos.visitors.languages.php.core import PhpCore
 
+_SEVERITY = {
+    "SKY-D211": "CRITICAL",
+    "SKY-D215": "HIGH",
+    "SKY-D226": "HIGH",
+    "SKY-D349": "CRITICAL",
+}
+
 
 def _scan(tmp_path, code):
     path = tmp_path / "example.php"
@@ -411,7 +418,7 @@ def test_security_results_survive_listing_and_gate(tmp_path, code, rule):
     assert [finding["rule_id"] for finding in raw] == expected_rules
     assert [finding["rule_id"] for finding in findings] == expected_rules
     if rule:
-        assert findings[0]["severity"] == "HIGH"
+        assert findings[0]["severity"] == _SEVERITY[rule]
         assert findings[0]["listing"]["listed"] is True
     passed, _ = check_gate(result, {"gate": {"max_high": 0, "max_security": 0}})
     assert passed is (rule is None)
@@ -788,7 +795,7 @@ def test_split_inline_template_in_a_route_is_listed_and_blocks_the_gate(
     assert [(finding["rule_id"], finding["line"]) for finding in findings] == [
         ("SKY-D349", 5)
     ]
-    assert findings[0]["severity"] == "HIGH"
+    assert findings[0]["severity"] == "CRITICAL"
     assert findings[0]["listing"]["listed"] is True
     passed, _ = check_gate(result, {"gate": {"max_high": 0, "max_security": 0}})
     assert passed is False
