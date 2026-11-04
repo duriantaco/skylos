@@ -10,17 +10,20 @@ makes it, instead of waiting for CI:
 - **Before a package install or one-shot run** (`pip`, `uv`/`uvx`, `poetry`,
   `pipx`, `npm`/`npx`, `pnpm dlx`, `yarn dlx`, `bun`/`bunx`, `go`, `deno`),
   Skylos blocks packages that do not exist (hallucinated) or are one-letter
-  look-alikes of popular packages (typosquats), and asks you before installs
-  it cannot verify: git and URL sources, registries it does not know, and
-  lookups that fail.
+  look-alikes of popular packages (typosquats), versions reported as malware,
+  versions published less than 24 hours ago, and npm versions that lost the
+  provenance their earlier versions had. `npm ci`, `uv sync`,
+  `pip install -r` and other lockfile installs get the malware check over
+  every locked package. It asks you before installs it cannot verify: git and
+  URL sources, registries it does not know, and lookups that fail.
 - **Before a git command**, Skylos blocks ways around the repository's git
   hooks: `--no-verify`, `HUSKY=0`, `core.hooksPath=/dev/null` and similar.
 - **When the agent says it is done**, Skylos blocks the stop while issues the
   agent added in this session are still open.
 
 Everything runs locally. It needs no account, no Docker and no API key. The
-only network calls are package-registry lookups, and only for install commands
-and new imports.
+only network calls are package-registry and OSV (`api.osv.dev`) lookups, and
+only for install commands and new imports.
 
 ## Install
 
@@ -151,7 +154,7 @@ The installer writes eight hooks. Four of them check and can block:
 |:---|:---|:---|:---|:---|
 | `post-edit` | `PostToolUse` on `Edit\|Write\|MultiEdit` | `PostToolUse` on `apply_patch\|Edit\|Write` | `afterFileEdit` | Verifies the changed lines and reports failures to the agent |
 | `pre-read` | `PreToolUse` on `Read` | not available (Codex reads files through the shell; `pre-bash` covers that) | `beforeReadFile` | Blocks reading a file that contains secrets |
-| `pre-bash` | `PreToolUse` on `Bash\|PowerShell` | `PreToolUse` on `Bash` | `beforeShellExecution` | Blocks commands that would print a secret file or variable, installs of hallucinated or typosquatted packages, and git-hook bypasses; asks before installs it cannot verify |
+| `pre-bash` | `PreToolUse` on `Bash\|PowerShell` | `PreToolUse` on `Bash` | `beforeShellExecution` | Blocks commands that would print a secret file or variable, installs of hallucinated, typosquatted, malicious or too-new package versions, and git-hook bypasses; asks before installs it cannot verify |
 | `stop` | `Stop` | `Stop` | `stop` | Blocks "done" while issues this session added are still open |
 
 The other four only record state and never block:
@@ -319,11 +322,14 @@ Each command gets one of these outcomes:
 | Outcome | Examples | What happens |
 |:---|:---|:---|
 | Package does not exist, pinned version does not exist, or one-edit look-alike of a popular package (SKY-D222/D225) | `pip install fastapi-authz`, `npx -y cowsy`, `npm create foo` when `create-foo` is not published | **Blocked** on every agent |
+| Version reported as malware | `npm install chalk@5.6.1`, `pip install aiocpa==0.1.13`, `npm i c@npm:chalk@5.6.1`, `npx -y xrpl@4.2.1`, `npm install chalk` while `latest` is a malicious release | **Blocked** on every agent (see [Supply-chain checks](#supply-chain-checks)) |
+| Version younger than the release cooldown (default 24 hours) | `npm install typescript@next` six hours after a nightly, `pip install openai` the day of a release | **Blocked**; the message names the newest older version to install instead |
+| npm version published without the provenance its earlier versions had | a release pushed from a stolen token instead of the project's CI | **Blocked** |
 | Direct source: code from outside a registry | `npm install github:user/repo#b181e0`, `npm install user/repo`, `pip install git+https://...`, `uvx --from git+https://...`, a tarball or wheel URL, `deno run https://...`, an archive outside the project, an archive downloaded by the same command (`curl -LO ... && npm i ./x.tgz`) | `direct_source` policy (default: ask) |
 | Untrusted registry or index | `--index-url`/`--extra-index-url`/`-i`/`-f URL`, `--registry`, `--@scope:registry=`, `PIP_INDEX_URL=`, `UV_INDEX_URL=`, `NPM_CONFIG_REGISTRY=`, `GOPROXY=`, `GOSUMDB=off` on the command line | `direct_source` policy (default: ask), unless the registry is in `trusted_registries` |
 | Could not verify | registry unreachable, timeout, HTTP 429/5xx; package named at run time (`pip install $PKG`, `xargs npm i`, `npx $(...)`); a name Skylos cannot read; more than 25 packages in one command; a package missing from the public registry while your configuration points at a private one; an install or git command longer than Skylos reads (16,384 characters, not counting here-document bodies) | `on_unverified` policy (default: ask) |
 | Not fetched from a registry | `npx tsc` when `tsc` is the project's own `bin`, in `node_modules/.bin` (this directory or any parent) or a global npm bin, as npm itself resolves it; `npx --no`; local paths and archives inside the project (`pip install -e .`, `npm i ../lib`, `workspace:`/`file:`/`link:`); `pip install --no-index` | allowed |
-| Manifest install | `npm ci`, `npm install`, `pip install -r requirements.txt`, `uv sync`, `poetry install`, `go mod download` | allowed; manifests are checked by `skylos . -a` and `skylos done` (SKY-D222), not here |
+| Lockfile install | `npm ci`, `npm install` (no package), `pnpm install`, `yarn`, `bun install`, `uv sync`, `uv pip sync`, `poetry install`, `pipenv sync`, `pip install -r requirements.txt` | the malware check runs over every locked package (exact pins only for requirements files, `-r` includes followed); a malicious one is **blocked**. No lockfile: allowed as before, unless an earlier part of the same command could have written it (then "could not verify"). `go mod download` and package.json ranges without a lockfile are not checked here; `skylos . -a` and `skylos done` check manifests |
 
 A git commit hash ref (`github:cline/cline#b181e0`) is called out in the
 message: GitHub serves commits from any fork through the parent repository's
@@ -390,6 +396,58 @@ not exist, version does not exist) are cached in
 `.skylos/cache/dependency_versions.json`; "could not verify" answers are
 retried next time. A PEP 440 local version (`torch==1.11.0+cu113`) is never on
 PyPI, so only the public version (`1.11.0`) is checked.
+
+#### Supply-chain checks
+
+Every package version the command would install, and every package in the
+lockfile a lockfile install reads, is checked before the command runs:
+
+- **Malware.** One OSV `querybatch` with fresh data (no cache). A version is
+  malware when OSV lists a `MAL-*` record or alias for it, a record with
+  `malicious-packages-origins`, or a record with CWE-506 (embedded malicious
+  code); withdrawn records do not count, and ordinary CVEs never block an
+  install (`skylos . -a` reports those). When OSV does not answer, the
+  installed ca9 feed answers instead (`ca9 feed update`); with neither, the
+  package is "could not verify" (`on_unverified`). A malicious version that
+  the registry already removed is reported as malware, not as a missing
+  version.
+- **Release cooldown.** A version published less than
+  `min_release_age_hours` ago (default 24) is blocked. Most hijacked releases
+  (chalk and debug in September 2025, the Shai-Hulud worm) were found and
+  pulled within hours, so a day's wait keeps an agent off them. The message
+  names the newest older version that has no malware report, for example
+  `Install typescript@7.0.2 instead`. An unpinned install is checked at the
+  version the manager would install: npm's `latest` dist-tag or the version a
+  range or tag resolves to, PyPI's newest final release that matches the
+  specifier (yanked releases skipped).
+- **npm provenance.** A version published without a provenance attestation
+  when the releases before it had one is blocked; the message names the
+  newest earlier version with provenance. When the registry does not answer,
+  nothing is blocked.
+
+```toml
+[tool.skylos.supply_chain]
+block_malware = true          # false: known malware asks instead of blocking
+min_release_age_hours = 24    # 0 turns the cooldown off; the hook default is 24
+check_provenance = true       # npm only
+```
+
+A synced Skylos Cloud policy (`supply_chain` in `.skylos/config.yaml`) can
+only tighten these values. `hooks_allow_packages` skips all of these checks
+for the names it lists, and packages from a trusted or private registry are
+never sent to OSV or the public registry. Packages that may come from a
+registry in your own configuration (`.npmrc` `registry=`, `pip.conf`
+`extra-index-url`) get the malware check for pinned versions only. Release
+age and provenance come from the ca9 engine (`ca9.api`, installed with
+Skylos); an older ca9 without it makes those packages "could not verify"
+until you run `pip install -U ca9`.
+
+Limits: the checks share a 12-second budget inside the 30-second hook
+timeout, and at most 5,000 locked packages are checked per lockfile; anything
+not checked in time is "could not verify", never passed. A lockfile changed
+by an earlier part of the same command (`git pull && npm ci`) is read as it
+was before the command ran. `bun.lockb` (binary) is not read; use the text
+`bun.lock`.
 
 **Git hook bypass.** Agents skip a failing pre-commit hook instead of fixing
 it. With `block_hook_bypass = true` (the default), pre-bash blocks:

@@ -152,7 +152,9 @@ def check_install_command(
       ``reason`` and an ``outcome`` (see the ``OUTCOME_*`` constants);
     * ``direct``: code fetched from outside a registry (git, URL, tarball,
       archive outside the project);
-    * ``local`` / ``manifest``: counts of local and manifest installs.
+    * ``local`` / ``manifest``: counts of local and manifest installs;
+    * ``checked``: the packages asked of the public registry, each with its
+      ``state`` and ``flagged`` (a finding was reported for it).
 
     ``targets`` skips parsing when the caller already parsed ``command``.
     """
@@ -204,10 +206,13 @@ def check_install_command(
     cache = _load_version_cache(store) if store is not None else {"statuses": {}}
     cache_changed = False
     statuses = _lookup_statuses(to_check, cache, checker)
+    result["checked"] = []
     for package, (status, fresh) in zip(to_check, statuses):
         if fresh and _record_status(package, cache, status):
             cache_changed = True
         state = normalize_dependency_truth_state(status)
+        checked = {**package, "state": state.value, "flagged": False}
+        result["checked"].append(checked)
         alternates = package.get("alternate") or []
         if (
             state
@@ -233,6 +238,7 @@ def check_install_command(
             continue
         finding = _finding(package, state)
         if finding is not None:
+            checked["flagged"] = True
             result["findings"].append(finding)
         elif state == DependencyTruthState.UNKNOWN:
             result["unverified"].append(
@@ -305,6 +311,7 @@ def _package_from_target(target: InstallTarget) -> dict[str, Any]:
         "private": bool(target.registries),
         "tool": target.tool,
         "runs": target.runs,
+        "requested": target.requested,
     }
     if target.registries:
         package["registries"] = list(target.registries)
@@ -419,13 +426,14 @@ def _check_go_module_exists(name: str) -> str:
 
 
 def _dedupe(packages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen: set[tuple[str, str, str, tuple[str, ...]]] = set()
+    seen: set[tuple[str, str, str, str, tuple[str, ...]]] = set()
     unique = []
     for package in packages:
         key = (
             package["ecosystem"],
             package["name"].lower(),
             package["version"],
+            package.get("requested", ""),
             tuple(package.get("registries") or ()),
         )
         if key in seen:
@@ -532,6 +540,15 @@ _ECOSYSTEM_PREFIXES = {
 }
 
 
+def user_allowed_packages(root: Path | None) -> set[tuple[str, str]]:
+    """The project's ``hooks_allow_packages`` as (ecosystem or "*", name)."""
+    return _user_allowed_packages(root)
+
+
+def package_allowed(package: dict[str, Any], allowed: set[tuple[str, str]]) -> bool:
+    return _allowed(package, allowed)
+
+
 def _user_allowed_packages(root: Path | None) -> set[tuple[str, str]]:
     """``[tool.skylos] hooks_allow_packages`` from the project's pyproject.toml.
 
@@ -595,4 +612,6 @@ __all__ = [
     "check_install_package_status",
     "install_command_packages",
     "looks_like_install_command",
+    "package_allowed",
+    "user_allowed_packages",
 ]
