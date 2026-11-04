@@ -30,9 +30,9 @@ def _names(receipt, key="unsupported_inputs"):
     return sorted(entry["name"] for entry in receipt[key])
 
 
-def test_php_only_repo_names_composer_files(tmp_path):
-    _write(tmp_path, "composer.json", "{}")
-    _write(tmp_path, "composer.lock", "{}")
+def test_repo_with_only_unread_dependency_files_names_them(tmp_path):
+    _write(tmp_path, "Package.resolved", "{}")
+    _write(tmp_path, "Gemfile", 'gem "rack", "2.2.3"\n')
 
     receipt = scanner.collect_dependencies(tmp_path).receipt
 
@@ -40,14 +40,12 @@ def test_php_only_repo_names_composer_files(tmp_path):
     assert receipt["complete"] is False
     assert receipt["unsupported_lockfile_count"] == 1
     assert receipt["unsupported_manifest_count"] == 1
-    assert receipt["unsupported_ecosystems"] == ["Composer"]
-    assert _names(receipt) == ["composer.json", "composer.lock"]
-    assert all(
-        e["reason"] == "not supported yet" for e in receipt["unsupported_inputs"]
-    )
+    assert receipt["unsupported_ecosystems"] == ["RubyGems", "SwiftPM"]
+    assert _names(receipt) == ["Gemfile", "Package.resolved"]
     result = {"analysis_summary": {"sca_coverage": receipt}}
     [warning] = sca_coverage_warnings(result)
-    assert "composer.lock" in warning and "Composer: not supported yet" in warning
+    assert "Package.resolved" in warning and "SwiftPM: not supported yet" in warning
+    assert "Gemfile.lock is read" in warning
     assert "no supported dependency manifests found" not in warning
 
 
@@ -59,7 +57,7 @@ def test_mixed_repo_is_not_complete_but_not_an_operational_failure(
         "package.json",
         json.dumps({"name": "x", "dependencies": {"left-pad": "1.3.0"}}),
     )
-    _write(tmp_path, "php/composer.lock", "{}")
+    _write(tmp_path, "ios/Podfile.lock", "PODS:\n")
     monkeypatch.setattr(
         scanner,
         "_query_osv_batch",
@@ -74,7 +72,7 @@ def test_mixed_repo_is_not_complete_but_not_an_operational_failure(
     assert receipt["complete"] is False
     assert receipt["supported_inputs_complete"] is True
     assert receipt["queried_dependency_count"] == 1
-    assert _names(receipt) == ["composer.lock"]
+    assert _names(receipt) == ["Podfile.lock"]
     result = {"analysis_summary": {"sca_coverage": receipt}}
     # A coverage limit, not a reason for exit 2.
     assert incomplete_analysis_reasons(result) == []
@@ -82,7 +80,7 @@ def test_mixed_repo_is_not_complete_but_not_an_operational_failure(
     assert dependency_scan_complete(result) is True
     [warning] = sca_coverage_warnings(result)
     assert warning.startswith("SCA coverage limited: 1 dependencies queried.")
-    assert "composer.lock (Composer: not supported yet)" in warning
+    assert "Podfile.lock (CocoaPods: not supported yet)" in warning
     lines = dependency_coverage_lines(result["analysis_summary"])
     assert any(line.startswith("Dependency files not read:") for line in lines)
     # Required coverage still fails, with the specific reason only.
@@ -97,11 +95,11 @@ def test_mixed_repo_is_not_complete_but_not_an_operational_failure(
 @pytest.mark.parametrize(
     ("files", "ecosystem"),
     [
-        (("Cargo.toml", "Cargo.lock"), "crates.io"),
-        (("Gemfile", "Gemfile.lock"), "RubyGems"),
-        (("pom.xml",), "Maven"),
-        (("build.gradle.kts", "gradle.lockfile"), "Gradle"),
-        (("pubspec.yaml", "pubspec.lock"), "Pub"),
+        (("Package.resolved",), "SwiftPM"),
+        (("Podfile.lock",), "CocoaPods"),
+        (("mix.lock",), "Hex"),
+        (("Gemfile",), "RubyGems"),
+        (("build.gradle", "build.gradle.kts"), "Gradle"),
     ],
 )
 def test_other_ecosystems_are_named(tmp_path, files, ecosystem):
@@ -164,7 +162,7 @@ def test_vendored_copies_are_not_the_projects_manifests(tmp_path):
 
 def test_examples_are_bounded_counts_are_not(tmp_path):
     for index in range(30):
-        _write(tmp_path, f"crates/c{index}/Cargo.toml")
+        _write(tmp_path, f"modules/m{index}/build.gradle")
 
     receipt = scanner.collect_dependencies(tmp_path).receipt
 

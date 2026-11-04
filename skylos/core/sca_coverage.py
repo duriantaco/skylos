@@ -9,9 +9,15 @@ NON_REGISTRY_COVERAGE_STATUS = "complete_with_non_registry_sources"
 # pom.xml, ...). `complete` is false; `unsupported_inputs` names them. Not an
 # operational failure, so it never makes a scan exit 2 on its own.
 UNSUPPORTED_INPUTS_COVERAGE_STATUS = "complete_with_unsupported_inputs"
+NON_REGISTRY_LOCKFILE_NAMES = frozenset(
+    {"uv.lock", "Cargo.lock", "composer.lock", "Gemfile.lock", "pubspec.lock"}
+)
+_NON_REGISTRY_NAME = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?"
+)
 
 
-def _known_uv_source(entry: object) -> bool:
+def _known_non_registry_source(entry: object) -> bool:
     if not isinstance(entry, Mapping):
         return False
     reason, kind = entry.get("reason"), entry.get("source_type")
@@ -27,9 +33,10 @@ def _known_uv_source(entry: object) -> bool:
     return (
         isinstance(name, str)
         and len(name) <= 256
-        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) is not None
+        and _NON_REGISTRY_NAME.fullmatch(name) is not None
         and isinstance(filename, str)
-        and filename.replace("\\", "/").rsplit("/", 1)[-1] == "uv.lock"
+        and filename.replace("\\", "/").rsplit("/", 1)[-1]
+        in NON_REGISTRY_LOCKFILE_NAMES
         and type(entry.get("line")) is int
         and entry["line"] > 0
     )
@@ -70,7 +77,11 @@ def valid_non_registry_sca_receipt(coverage: object) -> bool:
         if isinstance(entry, Mapping)
         and entry.get("reason") in ("non_registry_source", "non_public_registry")
     ]
-    if not known or len(known) > skipped or not all(map(_known_uv_source, known)):
+    if (
+        not known
+        or len(known) > skipped
+        or not all(map(_known_non_registry_source, known))
+    ):
         return False
     if coverage.get("lockfile_issues"):
         return False

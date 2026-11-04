@@ -13,6 +13,21 @@ import re
 
 _SEVERITY_ORDER = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
 _CVSS_TYPES = {"CVSS_V2", "CVSS_V3", "CVSS_V4"}
+_CASE_INSENSITIVE_ECOSYSTEMS = frozenset({"NuGet", "Packagist"})
+_SEMVER_RELEASE = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+_RELEASE_PATTERNS = {
+    "PyPI": r"[0-9]+(?:\.[0-9]+)*",
+    "NuGet": r"(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){0,3}",
+    "npm": _SEMVER_RELEASE,
+    "Go": _SEMVER_RELEASE,
+    "crates.io": _SEMVER_RELEASE,
+    "Pub": _SEMVER_RELEASE,
+    "Maven": r"[0-9]+(?:\.[0-9]+){0,3}",
+    "RubyGems": r"[0-9]+(?:\.[0-9]+){0,4}",
+    "Packagist": r"[0-9]+(?:\.[0-9]+){0,3}",
+}
+_TRAILING_ZERO_ECOSYSTEMS = frozenset({"PyPI", "Maven", "RubyGems", "Packagist"})
+_RANGE_TYPES = {"npm": "SEMVER", "Go": "SEMVER", "crates.io": "SEMVER"}
 
 
 def _objects(value):
@@ -38,7 +53,7 @@ def _matching_affected(vuln: dict, dep: dict) -> list[dict]:
         return []
     if ecosystem == "PyPI":
         name = re.sub(r"[-_.]+", "-", name).lower()
-    elif ecosystem == "NuGet":
+    elif ecosystem in _CASE_INSENSITIVE_ECOSYSTEMS:
         name = name.casefold()
     matching = []
     for affected in _objects(vuln.get("affected")):
@@ -48,7 +63,7 @@ def _matching_affected(vuln: dict, dep: dict) -> list[dict]:
         candidate = package.get("name")
         if ecosystem == "PyPI" and isinstance(candidate, str):
             candidate = re.sub(r"[-_.]+", "-", candidate).lower()
-        elif ecosystem == "NuGet" and isinstance(candidate, str):
+        elif ecosystem in _CASE_INSENSITIVE_ECOSYSTEMS and isinstance(candidate, str):
             candidate = candidate.casefold()
         if candidate == name:
             matching.append(affected)
@@ -142,20 +157,12 @@ def _release_version(value, ecosystem: str) -> tuple[int, ...] | None:
         return None
     if ecosystem == "Go" and value.startswith("v"):
         value = value[1:]
-    pattern = (
-        r"[0-9]+(?:\.[0-9]+)*"
-        if ecosystem == "PyPI"
-        else r"(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){0,3}"
-        if ecosystem == "NuGet"
-        else r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
-    )
-    if ecosystem not in {"PyPI", "npm", "Go", "NuGet"} or not re.fullmatch(
-        pattern, value
-    ):
+    pattern = _RELEASE_PATTERNS.get(ecosystem)
+    if pattern is None or not re.fullmatch(pattern, value):
         return None
     parts = tuple(int(part) for part in value.split("."))
     # PEP 440 pads stable release segments with zero during comparison.
-    if ecosystem == "PyPI":
+    if ecosystem in _TRAILING_ZERO_ECOSYSTEMS:
         while len(parts) > 1 and parts[-1] == 0:
             parts = parts[:-1]
     elif ecosystem == "NuGet":
@@ -190,7 +197,7 @@ def _fix_metadata(matching: list[dict], dep: dict) -> dict:
     fixes, display, intervals, explicit_versions = [], [], [], []
     understood = bool(matching)
     ecosystem = dep.get("ecosystem", "")
-    expected_type = "ECOSYSTEM" if ecosystem in {"PyPI", "NuGet"} else "SEMVER"
+    expected_type = _RANGE_TYPES.get(ecosystem, "ECOSYSTEM")
     for affected in matching:
         versions = affected.get("versions", [])
         if not isinstance(versions, list) or any(
@@ -275,9 +282,26 @@ def _fix_metadata(matching: list[dict], dep: dict) -> dict:
     }
 
 
+def _informational(matching: list[dict]) -> str | None:
+    """RustSec's ``informational`` kind when every matching entry has one."""
+    kinds = set()
+    for affected in matching:
+        database = affected.get("database_specific")
+        kind = None
+        if isinstance(database, dict):
+            kind = database.get("informational")
+        if not isinstance(kind, str) or not kind:
+            return None
+        kinds.add(kind)
+    if len(kinds) == 1:
+        return kinds.pop()
+    return None
+
+
 def extract_advisory_metadata(vuln: dict, dep: dict) -> dict:
     """Extract report data without implying that omitted details are known."""
     matching = _matching_affected(vuln, dep)
+    informational = _informational(matching)
     aliases = _strings(vuln.get("aliases"))
     vuln_id = vuln.get("id") if isinstance(vuln.get("id"), str) else "UNKNOWN"
     summary = next(
@@ -297,7 +321,7 @@ def extract_advisory_metadata(vuln: dict, dep: dict) -> dict:
             and entry["url"].startswith(("https://", "http://"))
         )
     )[:5]
-    return {
+    metadata = {
         "vuln_id": vuln_id,
         "summary": summary[:300],
         "aliases": aliases,
@@ -308,3 +332,6 @@ def extract_advisory_metadata(vuln: dict, dep: dict) -> dict:
         **_severity_metadata(vuln, matching),
         **_fix_metadata(matching, dep),
     }
+    if informational is not None:
+        metadata["informational"] = informational
+    return metadata
