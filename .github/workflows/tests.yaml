@@ -8,11 +8,21 @@ on:
         required: true
         type: string
         default: b8f966a00d0844a586890d299489939e89afe4b0
+      test_shard:
+        description: Linux shard containing the unchanged YAML timing test
+        required: true
+        type: choice
+        default: 4/4
+        options:
+          - 1/4
+          - 2/4
+          - 3/4
+          - 4/4
 permissions:
   contents: read
 jobs:
   yaml_shard:
-    name: Default install, Python 3.12.3, shard 4/4
+    name: Default install, Python 3.12.3, shard ${{ inputs.test_shard }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -43,8 +53,10 @@ jobs:
           .venv/bin/python -m coverage --version
       - name: Run the failing Linux shard with coverage
         shell: bash
+        env:
+          TEST_SHARD: ${{ inputs.test_shard }}
         run: |
-          .venv/bin/python -m pytest -q -n auto --dist loadfile --cov=skylos --cov-report=term-missing --cov-report=xml --junitxml=yaml-shard.xml $(.venv/bin/python scripts/ci/test_shard.py 4/4) 2>&1 | tee yaml-shard.log
+          .venv/bin/python -m pytest -q -n auto --dist loadfile --cov=skylos --cov-report=term-missing --cov-report=xml --junitxml=yaml-shard.xml $(.venv/bin/python scripts/ci/test_shard.py "$TEST_SHARD") 2>&1 | tee yaml-shard.log
       - name: Save exact shard receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
