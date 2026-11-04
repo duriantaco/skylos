@@ -95,6 +95,7 @@ server uses `SKYLOS_CLOUD_URL`).
 | Host | When | Sends | Turn it off |
 |:---|:---|:---|:---|
 | OSV (`api.osv.dev`) | dependency checks: `--sca`, `-a`, `--select SKY-SCA-*`, `--scan-publisher-changes`, config `sca_enabled` or required `sca` coverage, `skylos suite`, `skylos baseline --sca`, `skylos compare --sca` | package names and versions from your lockfiles and manifests | don't enable dependency checks |
+| OSV (`api.osv.dev`), npm registry, PyPI, through Skylos and the `ca9` engine | the agent hook on package-install and lockfile-install commands (malware, release age, npm provenance); never for packages from a trusted or private registry or in `hooks_allow_packages` | the names and versions the command would install, or the public packages in the lockfile it reads | `SKYLOS_HOOKS_DISABLE=pre-bash`, or remove the hook |
 | GitHub API (`api.github.com`), through the `ca9` reachability library | during dependency checks, when a Python vulnerability names a GitHub fix commit | the commit URL, and your `GITHUB_TOKEN` if that variable is set. Responses are cached in `~/.cache/ca9` | don't enable dependency checks, or unset `GITHUB_TOKEN` for the scan |
 | npm registry | `--scan-publisher-changes`, `--select SKY-SCA-NPM-PUB001` | package names | don't use those options |
 | deps.dev | `skylos sbom --license-lookup` | package names and versions | leave out `--license-lookup` |
