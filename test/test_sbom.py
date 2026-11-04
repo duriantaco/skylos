@@ -232,12 +232,37 @@ def test_invalid_root_is_rejected(tmp_path, capsys, target):
     assert "directory" in captured.err
 
 
+@pytest.mark.parametrize("output_format", ["cyclonedx-json", "spdx-json"])
 @pytest.mark.parametrize(
-    "name", ["package.json", "PACKAGE.JSON", "Poetry.Lock", "Pipfile.lock"]
+    "name",
+    [
+        "package.json",
+        "PACKAGE.JSON",
+        "Poetry.Lock",
+        "Pipfile.lock",
+        "bun.lock",
+        "Cargo.lock",
+        "Cargo.toml",
+        "composer.lock",
+        "composer.json",
+        "Gemfile.lock",
+        "pubspec.lock",
+        "pubspec.yaml",
+        "gradle.lockfile",
+        "packages.lock.json",
+        "pom.xml",
+        "setup.py",
+        "setup.cfg",
+    ],
 )
-def test_output_cannot_replace_dependency_input(tmp_path, capsys, name):
+def test_output_cannot_replace_dependency_input(tmp_path, capsys, name, output_format):
     _write(tmp_path, name, "preserve input")
-    assert run_sbom_command([str(tmp_path), "--output", str(tmp_path / name)]) == 2
+    assert (
+        run_sbom_command(
+            [str(tmp_path), "--format", output_format, "--output", str(tmp_path / name)]
+        )
+        == 2
+    )
     assert (
         read_project_text_no_symlink(tmp_path, tmp_path / name, max_bytes=1024)
         == "preserve input"
