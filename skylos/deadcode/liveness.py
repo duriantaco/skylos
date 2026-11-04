@@ -22,6 +22,7 @@ from skylos.deadcode.string_references import (
 )
 from skylos.deadcode.framework_liveness import find_framework_entrypoint_targets
 from skylos.deadcode.external_protocols import find_external_protocol_callbacks
+from skylos.deadcode.robot_framework_liveness import find_robot_framework_targets
 from skylos.deadcode.unittest_liveness import find_unittest_entrypoint_targets
 from skylos.deadcode.django_signal_liveness import find_django_signal_targets
 from skylos.deadcode.django_autoreload_liveness import find_django_autoreload_targets
@@ -158,6 +159,10 @@ def apply_dead_code_liveness(
     _rescue_protocol_overrides(classes, class_methods, report)
     _rescue_registration_methods(classes, class_methods, report)
     for target, reason in find_framework_entrypoint_targets(
+        definitions, parsed_files, root, exclude_folders=exclude_folders
+    ):
+        _mark(target, reason, report)
+    for target, reason in find_robot_framework_targets(
         definitions, parsed_files, root, exclude_folders=exclude_folders
     ):
         _mark(target, reason, report)
@@ -362,7 +367,7 @@ def _mark(defn: Any, reason: str, report: LivenessReport) -> None:
     if refs is not None:
         refs[f"dead_code_liveness:{reason}"] = 1.0
         if reason.startswith(
-            ("flask_web_", "django_web_", "ros_launch_", "celery_")
+            ("flask_web_", "django_web_", "ros_launch_", "celery_", "robot_")
         ):
             refs["framework_root"] = 1.0
         if reason == "unittest_discovery":
