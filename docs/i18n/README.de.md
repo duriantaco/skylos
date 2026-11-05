@@ -368,6 +368,14 @@ Install-Skripte deaktiviert, Mindestalter für Releases, gepinnte Actions, kein
 `pull_request_target`-Checkout). Details in
 [Supply-chain checks](../dependency-scanning.md#supply-chain-checks).
 
+Die Agent-Hooks (`skylos agent install-hooks`) blockieren vor einer
+Installation zusätzlich Versionen, die als Malware gemeldet sind, Releases,
+die jünger als 24 Stunden sind (mit der älteren Version, die stattdessen
+installiert werden soll), und npm-Releases ohne die Provenance ihrer
+Vorgänger; Lockfile-Installationen wie `npm ci` oder `uv sync` bekommen die
+Malware-Prüfung für jedes Paket. Die Wartezeit stellst du mit
+`[tool.skylos.supply_chain] min_release_age_hours` ein (0 schaltet sie ab).
+
 ## Benchmark-Snapshot
 
 Skylos enthält eingecheckte Regression-Suites für Dead Code, Security,
