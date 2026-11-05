@@ -40,6 +40,50 @@ The adversarial manifest is public but not part of the default required gate.
 It includes cases that deliberately stress framework/package entrypoints and
 dynamic dispatch patterns where one or more scanners may currently fail.
 
+It also contains 14 neutral coverage cases distilled from a fresh repository
+audit. The fixture code uses independent implementations and application names;
+the expected behavior belongs to a language pattern, not to a repository name.
+
+| Pattern | Variations and controls | Cases | Labels |
+|---|---|---:|---:|
+| Typed callback registries | Selected and wrong receiver/type, replaced registration method, copied registry, closure-owned implementation, inherited type lookup and private module registry | 7 | 75 |
+| Callable protocol attributes | Native and aliased `unittest.TestCase`, local lookalike without a reader, source-owned metadata reader, and unused sibling attributes | 4 | 15 |
+| Conditional asset references | Ordinary script load, valid legacy IE conditional comments in HTML/Jinja, ordinary and malformed comments, orphan files and same-name files at another path | 3 | 18 |
+
+The registry cases describe closed programs with fixed calls and private,
+unexposed callback storage. Their unselected callbacks have no external
+registration contract. The existing default cases that declare public
+registration entrypoints retain their original expectations. Protocol attribute
+use includes a constructor reading callable metadata; it does not require the
+callable itself to execute. Conditional HTML comments apply to the legacy
+browser versions they name, not to modern browsers.
+
+Run the complete challenge suite, including its original two cases:
+
+```bash
+python scripts/dead_code_benchmark.py \
+  --manifest benchmarks/dead_code/adversarial_manifest.json --strict-labels
+```
+
+Or inspect one pattern:
+
+```bash
+python scripts/dead_code_benchmark.py \
+  --manifest benchmarks/dead_code/adversarial_manifest.json \
+  --case corpus-type-registry-private --strict-labels
+```
+
+These cases include known false positives and false negatives in the current
+scanner. A nonzero exit reports the remaining coverage gaps. Keep their semantic
+labels fixed when improving the analyzer, including controls the scanner
+currently misses. The 27 default cases and their 141 labels are unchanged.
+Some misses reflect conservative retention or uncertainty policies; investigate
+their evidence before treating a benchmark miss as a detector bug. The original
+two adversarial cases also retain their existing unlabeled findings, which
+`--strict-labels` reports separately. The 14 added cases have closed labels.
+The new cases are development coverage, not an unseen holdout or evidence that
+the analyzer handles every implementation of these patterns.
+
 The default manifest includes paired cases for programmatic Robot library
 decorators, method calls in Robot variable expressions, imports read through a
 wildcard export, finite `globals()` dispatch and inherited method registries.

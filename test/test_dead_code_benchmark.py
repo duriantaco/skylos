@@ -52,6 +52,20 @@ def test_checked_in_dead_code_adversarial_manifest_validates():
     assert {case["id"] for case in cases} == {
         "extreme-grounding-framework-dead-code",
         "static-blind-plugin-dispatch-dead-code",
+        "corpus-type-registry-owner",
+        "corpus-type-registry-mismatch",
+        "corpus-type-registry-rebound",
+        "corpus-type-registry-snapshot",
+        "corpus-type-registry-closure",
+        "corpus-type-registry-hierarchy",
+        "corpus-type-registry-private",
+        "corpus-protocol-fields-native",
+        "corpus-protocol-fields-alias",
+        "corpus-protocol-fields-local",
+        "corpus-protocol-fields-source",
+        "corpus-conditional-assets-direct",
+        "corpus-conditional-assets-plain",
+        "corpus-conditional-assets-jinja",
     }
     labels = {label for case in cases for label in case["taxonomy"]}
     assert labels <= set(DEAD_CODE_TAXONOMY)
