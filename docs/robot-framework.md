@@ -28,12 +28,36 @@ not expose every public helper. A `dir(self)` comprehension with a literal
 decorated with `@library(listener="self")` also activates its known Robot
 listener callbacks.
 
+The same native decorator also works when applied as ordinary Python code,
+such as `Library = library(auto_keywords=True)(Library)`. Skylos keeps the
+original class and the decorator's keyword policy. A local replacement for
+`library`, a replaced decorator factory, or a later changed class binding does
+not provide that evidence.
+
 YAML and JSON variable files do not activate similarly named Python providers.
 For Python variable files, Skylos retains public module attributes, or public data
 attributes on the selected class. A literal `__all__` limits those exports.
 When `get_variables` or `getVariables` is present, that getter supplies variables
 instead; unrelated module constants remain candidates for unused-variable
 findings.
+
+Skylos also follows direct method expressions in Robot test and task bodies,
+such as `${OBJ.render()}` and `&{OBJECT FROM FILE.get_values()}`. The variable
+must come from a named Python variable file, including one imported through a
+resource, and its value must be a known source-owned constructor instance.
+Only the exact method and its ordinary Python helpers become reachable.
+Other methods, unrelated classes with the same method name, comments, and
+escaped variable text receive no exemption.
+Literal false `IF`/`WHILE` bodies and statically empty `FOR` bodies also supply
+no method references. Known variable-file and table overrides affect these
+guards; unknown conditions remain possible branches.
+
+This object proof declines ambiguous variable providers, dynamic getters,
+Robot variable reassignments, visible method replacement, custom construction
+or attribute dispatch, and unknown receiver changes. Nested member chains,
+general Python expressions, and calls inside user keyword bodies are outside
+this bounded expression model. These limits do not change ordinary Python
+reference or uncertainty handling.
 
 Provider resolution supports explicit file paths, dotted module and class names,
 the importing file's directory, and project roots `src`, `lib`, and `python`.

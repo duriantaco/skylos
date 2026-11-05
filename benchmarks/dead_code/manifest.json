@@ -652,6 +652,261 @@
           {"kind": "function", "file": "src/service.ts", "symbol": "formatJob"}
         ]
       }
+    },
+    {
+      "id": "robot-programmatic-library",
+      "path": "fixtures/robot_programmatic_library",
+      "description": "A native Robot library decorator applied as a function retains its keyword and leaves an unregistered helper unused.",
+      "taxonomy": [
+        "framework_precision",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "keywords.py",
+            "symbol": "_reserve"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "keywords.py",
+            "symbol": "measure"
+          }
+        ]
+      }
+    },
+    {
+      "id": "robot-variable-object-methods",
+      "path": "fixtures/robot_variable_methods",
+      "description": "Robot variable expressions call the exact exported object method while unused helpers and another object remain reported.",
+      "taxonomy": [
+        "framework_precision",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "values.py",
+            "symbol": "reserve"
+          },
+          {
+            "kind": "function",
+            "file": "other.py",
+            "symbol": "render"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "values.py",
+            "symbol": "render"
+          }
+        ]
+      }
+    },
+    {
+      "id": "robot-variable-literal-control",
+      "path": "fixtures/robot_variable_literal",
+      "description": "Escaped Robot variable text, comments and a constant-false branch do not call an exported object method.",
+      "taxonomy": [
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "values.py",
+            "symbol": "render"
+          }
+        ],
+        "used": []
+      }
+    },
+    {
+      "id": "wildcard-provider-binding",
+      "path": "fixtures/wildcard_provider_binding",
+      "description": "A package consumer reads the exact wildcard-exported import binding without retaining an unrelated import of the same module.",
+      "taxonomy": [
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "unrelated.py",
+            "symbol": "settings"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "storage/_implementation.py",
+            "symbol": "settings"
+          }
+        ]
+      }
+    },
+    {
+      "id": "finite-globals-dispatch",
+      "path": "fixtures/finite_globals_dispatch",
+      "description": "A reachable caller selects a literal callback name through globals without retaining an unselected callback.",
+      "taxonomy": [
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "scale_b"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "scale_a"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "transform"
+          }
+        ]
+      }
+    },
+    {
+      "id": "finite-inherited-method-registry",
+      "path": "fixtures/finite_method_registry",
+      "description": "An inherited receiver dispatches through a finite tuple-valued method registry and leaves unrelated or unselected methods unused.",
+      "taxonomy": [
+        "dynamic_dispatch",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "render_c"
+          },
+          {
+            "kind": "function",
+            "file": "peers.py",
+            "symbol": "render_a"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "render_a"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "render_b"
+          },
+          {
+            "kind": "class",
+            "file": "app.py",
+            "symbol": "Formatter"
+          },
+          {
+            "kind": "class",
+            "file": "peers.py",
+            "symbol": "Peer"
+          }
+        ]
+      }
     }
   ]
 }
