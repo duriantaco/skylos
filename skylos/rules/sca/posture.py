@@ -80,6 +80,38 @@ CI_FILE_NAMES = (
 _SKIP_DIRS = frozenset(
     {".git", "node_modules", ".venv", "venv", "__pycache__", ".tox", "dist", "build"}
 )
+_NON_INSTALL_DIRS = frozenset(
+    {
+        "test",
+        "tests",
+        "__tests__",
+        "testdata",
+        "test_fixtures",
+        "test-fixtures",
+        "fixture",
+        "fixtures",
+        "__fixtures__",
+        "example",
+        "examples",
+        "sample",
+        "samples",
+        "benchmark",
+        "benchmarks",
+    }
+)
+
+
+def _non_install_path(path: Path, root: Path) -> bool:
+    """A manifest under a test, fixture, example or benchmark folder.
+
+    The posture describes how the project itself installs; those folders
+    hold inputs for tests and demos, not installs the project runs.
+    """
+    try:
+        parts = path.relative_to(root).parts[:-1]
+    except ValueError:
+        return False
+    return any(part.lower() in _NON_INSTALL_DIRS for part in parts)
 _SEGMENT_SPLIT_RE = re.compile(r"&&|\|\||;|\||\n")
 _PYTHON_PIP_RE = re.compile(r"^(?:python[0-9.]*|py)\s+-m\s+pip\s+")
 _NPMRC_TRUE_RE = re.compile(
@@ -233,7 +265,7 @@ class _Repository:
     def __init__(self, root: Path, inventory):
         self.root = root
         self.inventory = inventory
-        files = _walk_files(root)
+        files = [path for path in _walk_files(root) if not _non_install_path(path, root)]
         self.tracked = _git_tracked(root, files)
         self.untracked_lockfiles = []
         if self.tracked is not None:

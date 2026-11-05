@@ -593,3 +593,26 @@ def test_real_ca9_engine_reports_only_mutable_sources(
         ("SKY-SCA-SRC003", "payload@1.0"),
         ("SKY-SCA-SRC003", "utilx"),
     ]
+
+
+def test_fixture_manifests_do_not_decide_the_lockfile_posture(tmp_path):
+    for folder in ("test/fixtures/app", "benchmarks/case", "examples/demo"):
+        _write(
+            tmp_path / folder / "package.json",
+            json.dumps({"dependencies": {"left-pad": "1.3.0"}}),
+        )
+    _write(tmp_path / ".github" / "workflows" / "ci.yml", PINNED_WORKFLOW)
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "add", "-A")
+    only_fixtures = supply_chain_posture(tmp_path, sca.collect_dependencies(tmp_path))
+    assert _statuses(only_fixtures)["lockfile_committed"] == "not_applicable"
+
+    _write(
+        tmp_path / "apps" / "test-runner" / "package.json",
+        json.dumps({"dependencies": {"left-pad": "1.3.0"}}),
+    )
+    _git(tmp_path, "add", "-A")
+    posture = supply_chain_posture(tmp_path, sca.collect_dependencies(tmp_path))
+    check = next(item for item in posture["checks"] if item["id"] == "lockfile_committed")
+    assert check["status"] == "fail"
+    assert check["paths"] == ["apps/test-runner/package.json"]
