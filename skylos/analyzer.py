@@ -2066,10 +2066,16 @@ class Skylos:
             source_key = _source_file_key(getattr(definition, "filename", None))
             source_keys[id(definition)] = source_key
             has_explicit_all = source_key in explicit_exports_by_file
+            local_variable = (
+                definition.type == "variable"
+                and getattr(definition, "python_local_owner", None) is not None
+                and not getattr(definition, "package_namespace_uncertain", False)
+            )
             if (
                 definition.in_init
                 and not has_explicit_all
                 and not definition.simple_name.startswith("_")
+                and not local_variable
             ):
                 definition.is_exported = True
             if not str(definition.filename).endswith(_TS_JS_SOURCE_EXTS):
