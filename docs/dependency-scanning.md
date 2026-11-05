@@ -599,12 +599,15 @@ min_release_age_hours = 24
 ```
 
 `--index-url` alone is an exclusive index and is not confusion. Source URLs in
-findings drop user info and query values other than Git refs. When ca9 is
+findings drop user info and query values other than Git refs; archive URLs keep
+only their host and file name. The built-in `--gate` reports `SKY-SCA-SRC003`
+without counting it toward `max_dependency_vulnerabilities`, so a tag-pinned Git
+dependency does not fail an existing gate; a synced Skylos Cloud gate counts it. When ca9 is
 missing, older than API version 1 or fails, the scan continues with OSV
 findings only and `sca_coverage.supply_chain.notes` says
 `ca9_supply_chain_api_unavailable` or `ca9_supply_chain_api_failed`. These
-findings sit in `dependency_vulnerabilities` and count toward the dependency
-gate like advisories.
+findings sit in `dependency_vulnerabilities`; all but `SKY-SCA-SRC003` count
+toward the dependency gate like advisories.
 
 ### Supply-chain posture and package inventory
 
