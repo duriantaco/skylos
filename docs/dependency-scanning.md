@@ -549,6 +549,91 @@ Batch matches also have size/count bounds. If OSV returns another page of
 matches, the current client retains the known matches and reports incomplete
 coverage rather than silently treating the first page as the complete result.
 
+### Malicious packages
+
+An OSV record is treated as malware when its ID or an alias starts with
+`MAL-` (the OpenSSF malicious-packages database), when it carries a
+`malicious-packages-origins` import record, or when it lists CWE-506
+(Embedded Malicious Code), as GitHub advisories for hijacked releases do
+(`xrpl` 4.2.1, `debug` 4.4.2). The finding keeps its `SKY-SCA-<id>` rule ID,
+is `CRITICAL`, sets `metadata.malicious: true` with `malicious_evidence`
+(the original label stays in `advisory_severity`), and says to remove the
+package, reinstall from a clean lockfile and rotate every credential an
+install could read. The terminal package table shows "remove (malicious
+package)" instead of an upgrade.
+
+Malware is never demoted: the dev-only listing demotion does not apply
+(installs on developer machines run its install scripts), reachability is not
+attached, and the default gate (`max_dependency_vulnerabilities = 0`, critical
+issues) fails.
+
+When the OSV query is incomplete (for example offline), Skylos checks the
+installed ca9 malware feed (`ca9 feed update`) instead of reporting nothing:
+matches are `CRITICAL` with `metadata.malware_source: "ca9_feed"`, and
+`sca_coverage.supply_chain.malware_sources` lists `ca9_feed`. Without a feed
+the receipt notes `ca9_malware_feed_unavailable`. The scan stays incomplete
+(exit code 2) either way, because advisories other than malware were not
+checked.
+
+### Supply-chain checks
+
+`--sca` (and `-a`) also passes the inventory it read to the ca9 engine
+(`ca9.api`, API version 1). Each ca9 result must agree with the record Skylos
+read before it is reported:
+
+| ID | Severity | Reported when |
+|:---|:---|:---|
+| `SKY-SCA-SRC001` | CRITICAL direct, HIGH transitive | A package matching `internal_packages` resolves from a public or merged index (`--extra-index-url`, a lockfile entry from `registry.npmjs.org` or `pypi.org`): dependency confusion. Never without configured internal patterns or registry evidence |
+| `SKY-SCA-SRC003` | MEDIUM | A Git dependency not pinned to a full 40-character commit, or a URL dependency without a hash (`requirements.txt`, `pyproject.toml`, `package.json` without a lockfile, or a lockfile Git/URL entry). Local paths are not reported |
+| `SKY-SCA-INT001` | MEDIUM | A registry entry in `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock` or `poetry.lock` without an integrity hash (an empty value counts as missing). Never for `requirements.txt`, and not for npm `inBundle` entries, which ship inside their parent's verified tarball |
+| `SKY-SCA-AGE001` | HIGH | The locked version is younger than `min_release_age_hours`. Scans check this only when the policy sets it |
+
+Configure them in `pyproject.toml`; a synced Skylos Cloud policy can only
+tighten these values:
+
+```toml
+[tool.skylos.supply_chain]
+internal_packages = ["acme-*", "@acme/*"]
+private_registries = ["https://pypi.acme.dev/simple"]
+min_release_age_hours = 24
+```
+
+`--index-url` alone is an exclusive index and is not confusion. Source URLs in
+findings drop user info and query values other than Git refs. When ca9 is
+missing, older than API version 1 or fails, the scan continues with OSV
+findings only and `sca_coverage.supply_chain.notes` says
+`ca9_supply_chain_api_unavailable` or `ca9_supply_chain_api_failed`. These
+findings sit in `dependency_vulnerabilities` and count toward the dependency
+gate like advisories.
+
+### Supply-chain posture and package inventory
+
+Every `--sca` scan adds two blocks to `analysis_summary`, and uploads carry
+them next to `sca_coverage`:
+
+- `dependency_inventory` (`skylos.dependency_inventory.v1`): up to 10,000
+  packages (`ecosystem`, `name`, `version`, `direct`, `dev`, `file`), sorted
+  and de-duplicated, with `total` and `truncated`. Skylos Cloud matches new
+  malware advisories against it after the scan.
+- `supply_chain_posture` (`skylos.supply_chain_posture.v1`): six checks, each
+  `pass`, `fail`, `not_applicable` or `unknown` with a `detail` and `paths`.
+  `pass` needs evidence in the repository; `unknown` means the files cannot
+  tell. In a Git checkout only committed manifests and config files count
+  (a nested checkout or a local `.npmrc` does not configure CI), and only
+  workflows directly in `.github/workflows` are read, as GitHub runs only
+  those.
+
+| Check | Passes when |
+|:---|:---|
+| `lockfile_committed` | Every npm and Python manifest has a lockfile (or fully pinned requirements) and Git tracks it. Outside a Git checkout: `unknown` |
+| `frozen_install_ci` | Every recognised CI install uses the lockfile as is: `npm ci`, `--frozen-lockfile`/`--immutable`, pnpm in CI, `uv sync --locked`/`--frozen`, `pip --require-hashes` or hashed requirements, `poetry install`, `pipenv sync`/`--deploy` |
+| `install_scripts_disabled` | npm projects block dependency install scripts: `ignore-scripts=true` in `.npmrc`, `--ignore-scripts` on every CI install, pnpm 10+ (from `packageManager`), Yarn `enableScripts: false`, or Bun |
+| `release_age_cooldown` | A minimum release age is set: `.npmrc` `min-release-age`, pnpm `minimumReleaseAge`, `.yarnrc.yml` `npmMinimalAgeGate`, `bunfig.toml` `minimumReleaseAge`, uv `exclude-newer`, or Skylos `min_release_age_hours` |
+| `actions_pinned` | No `SKY-D292` finding: every third-party action and reusable workflow is pinned to a commit SHA (GitHub-owned actions at release tags are noted) |
+| `no_pr_target_checkout` | No `SKY-D290` finding for a `pull_request_target` or comment-triggered job that runs pull request code with privileges |
+
+The rich report prints one line when checks fail; JSON has the details.
+
 ## CI
 
 For a CLI job:

@@ -219,6 +219,8 @@ ASP.NET 请求数据视为输入：控制器 Action、Razor Page 处理程序、
 
 Git、本地路径、SDK、私有仓库和分支（`dev-*`）条目会列为未检查，从不当作公共包查询。详见 [Dependency scanning](../dependency-scanning.md)。
 
+恶意软件公告（`MAL-*`、CWE-506，例如被劫持的 `chalk`、`debug` 和 `xrpl` 版本）报告为 `CRITICAL` 并带有 `metadata.malicious`，不会因为只是开发依赖而降级，并提示你删除该包、轮换安装过程可能读取到的所有凭据。同一次扫描还会通过 ca9 引擎做供应链检查：针对你配置的 `internal_packages` 的依赖混淆（`SKY-SCA-SRC001`）、未固定到提交的 Git 依赖和没有哈希的 URL 依赖（`SKY-SCA-SRC003`）、没有完整性哈希的锁文件条目（`SKY-SCA-INT001`），以及设置了 `min_release_age_hours` 时比该时间窗口更新的版本（`SKY-SCA-AGE001`）。JSON 还会包含包清单和供应链状况（锁文件已提交、CI 冻结安装、禁用安装脚本、发布冷却期、Action 已固定、没有 `pull_request_target` 检出）。详见 [Supply-chain checks](../dependency-scanning.md#supply-chain-checks)。
+
 ## 基准测试快照
 
 Skylos 有已提交的死代码、安全、质量、Agent 审查和 AI 代码错误回归套件。
