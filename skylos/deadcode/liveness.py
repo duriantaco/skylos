@@ -37,6 +37,7 @@ from skylos.deadcode.provider_method_liveness import find_provider_method_target
 from skylos.deadcode.logging_config_liveness import find_logging_config_targets
 from skylos.deadcode.property_descriptor_liveness import classify_property_descriptors
 from skylos.deadcode.public_api import find_declared_public_api_targets
+from skylos.deadcode.finite_dispatch import record_finite_dispatch_references
 
 
 SENTINEL_CALLER = "<skylos.deadcode.liveness>"
@@ -206,6 +207,7 @@ def apply_dead_code_liveness(
     _rescue_unique_external_attr_calls(
         definitions, classes, class_methods, parsed_files, report
     )
+    record_finite_dispatch_references(definitions, parsed_files)
     return report
 
 

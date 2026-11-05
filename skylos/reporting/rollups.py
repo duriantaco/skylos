@@ -39,6 +39,7 @@ _SEVERITY_ORDER = {
     "LOW": 4,
     "INFO": 5,
 }
+_UNRESOLVED_ROOT = object()
 
 
 def build_directory_rollups(
@@ -46,16 +47,37 @@ def build_directory_rollups(
     root_path: str | Path | None,
 ) -> list[dict[str, Any]]:
     buckets: dict[str, dict[str, Any]] = {}
+    # Findings often share a file. Keep filesystem normalization local to this
+    # build so subsequent reports still observe changed paths and symlinks.
+    locations: dict[str, tuple[str, str]] = {}
+    resolved_root = _UNRESOLVED_ROOT
 
     for section, category in FINDING_SECTIONS:
         for finding in result.get(section, []) or []:
             if not isinstance(finding, dict):
                 continue
-            directory = _finding_directory(finding, root_path)
+            raw_key = _finding_path_text(finding)
+            location = locations.get(raw_key)
+            if location is None:
+                if (
+                    resolved_root is _UNRESOLVED_ROOT
+                    and root_path is not None
+                    and Path(raw_key).is_absolute()
+                ):
+                    try:
+                        resolved_root = Path(root_path).resolve()
+                    except (OSError, ValueError):
+                        resolved_root = None
+                file_key = _finding_file_key(
+                    finding, root_path, resolved_root=resolved_root
+                )
+                directory = _file_directory(file_key)
+                location = locations[raw_key] = (file_key, directory)
+            file_key, directory = location
             bucket = buckets.setdefault(directory, _new_bucket(directory))
             bucket["total"] += 1
             bucket[category] += 1
-            bucket["_files"].add(_finding_file_key(finding, root_path))
+            bucket["_files"].add(file_key)
 
             rule_id = _rule_id(finding, section)
             bucket["rules"][rule_id] = bucket["rules"].get(rule_id, 0) + 1
@@ -112,7 +134,10 @@ def _new_bucket(path: str) -> dict[str, Any]:
 
 
 def _finding_directory(finding: dict[str, Any], root_path: str | Path | None) -> str:
-    file_key = _finding_file_key(finding, root_path)
+    return _file_directory(_finding_file_key(finding, root_path))
+
+
+def _file_directory(file_key: str) -> str:
     if file_key in {"", "unknown", "?"}:
         return "."
     parent = Path(file_key).parent
@@ -120,18 +145,27 @@ def _finding_directory(finding: dict[str, Any], root_path: str | Path | None) ->
     return "." if text in {"", "."} else text
 
 
-def _finding_file_key(finding: dict[str, Any], root_path: str | Path | None) -> str:
+def _finding_path_text(finding: dict[str, Any]) -> str:
     raw_path = finding.get("file") or finding.get("file_path") or "unknown"
     text = str(raw_path).replace("\\", "/")
-    if not text or text == "unknown":
-        return "unknown"
+    return text or "unknown"
+
+
+def _finding_file_key(
+    finding: dict[str, Any],
+    root_path: str | Path | None,
+    *,
+    resolved_root=_UNRESOLVED_ROOT,
+) -> str:
+    text = _finding_path_text(finding)
 
     path = Path(text)
     if path.is_absolute() and root_path is not None:
         try:
-            return str(path.resolve().relative_to(Path(root_path).resolve())).replace(
-                "\\", "/"
-            )
+            if resolved_root is _UNRESOLVED_ROOT:
+                resolved_root = Path(root_path).resolve()
+            if resolved_root is not None:
+                return str(path.resolve().relative_to(resolved_root)).replace("\\", "/")
         except (OSError, ValueError):
             pass
     return text

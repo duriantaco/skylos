@@ -40,6 +40,13 @@ The adversarial manifest is public but not part of the default required gate.
 It includes cases that deliberately stress framework/package entrypoints and
 dynamic dispatch patterns where one or more scanners may currently fail.
 
+The default manifest includes paired cases for programmatic Robot library
+decorators, method calls in Robot variable expressions, imports read through a
+wildcard export, finite `globals()` dispatch and inherited method registries.
+Each has unused controls. A separate Robot case checks that escaped expressions,
+comments and a constant-false branch do not keep a method alive. These fixtures use source inspection;
+Robot Framework and the fixture programs do not need to run.
+
 Optional competitor baseline:
 
 ```bash
@@ -74,8 +81,8 @@ First inspect the request plan. This does not use the network or require a key:
 python3 scripts/jev_dead_code_benchmark.py
 ```
 
-The default checked-in manifest contains 124 ground-truth symbols: 47 unused
-and 77 used. It is useful for request validation and regression testing, but
+The default checked-in manifest contains 141 ground-truth symbols: 55 unused
+and 86 used. It is useful for request validation and regression testing, but
 Skylos already scores every labeled symbol correctly there. A Jev tie on this
 suite does not demonstrate incremental value. The runner always asks the
 `original` question, and adds a second arm only when safe:

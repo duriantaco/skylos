@@ -560,6 +560,9 @@ def analyze_python_reachability(
     parsed = parse_python_files(selected)
     if len(parsed) != len(selected):
         _incomplete(report, "Python reachability has unreadable or unparsed sources")
+    from skylos.deadcode.finite_dispatch import record_finite_dispatch_references
+
+    dispatch_edges = record_finite_dispatch_references(definitions, parsed)
     locations = _definition_locations(definitions, root)
     canonical = _canonical_modules(module_names, root)
     if not _load_modules(report, parsed, locations, canonical):
@@ -574,6 +577,12 @@ def analyze_python_reachability(
         )
     for module in report.index.modules.values():
         SourceVisitor(report.index, report.graph, module).visit(module.tree)
+    identities = {id(definition): key for key, definition in definitions.items()}
+    for target, caller in dispatch_edges:
+        target_key, caller_key = identities[id(target)], identities[id(caller)]
+        if target_key in report.index.candidates and caller_key in report.index.candidates:
+            report.graph.edges[caller_key].add(target_key)
+            report.graph.observed[target_key] += 1
     return report.refresh()
 
 

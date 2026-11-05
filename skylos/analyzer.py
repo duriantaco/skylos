@@ -6339,6 +6339,15 @@ class Skylos:
             progress_callback(0, 1, Path("PHASE: transitive dead code"))
         self._propagate_transitive_dead()
         self._prepare_python_reachability(files, analysis_errors, module_names=modmap)
+        from skylos.deadcode.wildcard_provider_imports import (
+            wildcard_provider_import_reads,
+        )
+
+        for key in wildcard_provider_import_reads(
+            self.defs, getattr(self, "_python_reachability_report", None)
+        ):
+            self.defs[key].references = max(1, self.defs[key].references)
+            self.defs[key].heuristic_refs["wildcard_binding_read"] = 1.0
         # Resolve library callbacks from surviving callers, so speculative
         # callback cycles cannot become roots or consume ordinary references.
         self._apply_external_protocol_liveness(files)
