@@ -359,6 +359,27 @@ def _append_threshold_reason(
     return True
 
 
+REPORT_ONLY_DEPENDENCY_RULES = frozenset({"SKY-SCA-SRC003"})
+
+
+def _built_in_gate_dependencies(dependencies):
+    """Dependency findings the built-in gate counts.
+
+    ``SKY-SCA-SRC003`` (a Git or URL dependency that is not pinned to a
+    commit or hash) is reported but not counted here, so a tag-pinned Git
+    dependency does not start failing an existing gate. A synced Skylos
+    Cloud gate counts it like Cloud does.
+    """
+    return [
+        finding
+        for finding in dependencies or ()
+        if not (
+            isinstance(finding, dict)
+            and str(finding.get("rule_id") or "") in REPORT_ONLY_DEPENDENCY_RULES
+        )
+    ]
+
+
 def _gate_issue_groups(
     *, danger, reliability, ai_defects, quality, secrets, dead_code, dependencies=()
 ):
@@ -371,7 +392,7 @@ def _gate_issue_groups(
         "max_quality": quality,
         "max_ai_defects": ai_defects,
         "max_secrets": secrets,
-        "max_dependency_vulnerabilities": dependencies,
+        "max_dependency_vulnerabilities": _built_in_gate_dependencies(dependencies),
         "max_dead_code": dead_code,
     }
 

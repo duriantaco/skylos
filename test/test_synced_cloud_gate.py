@@ -1042,3 +1042,31 @@ def test_unreachable_dependencies_count_unless_cloud_sends_true(tmp_path, value)
     )
 
     assert passed is False
+
+
+@pytest.mark.parametrize(
+    "rule_id, passes",
+    [
+        ("SKY-SCA-SRC003", True),
+        ("SKY-SCA-INT001", False),
+        ("SKY-SCA-SRC001", False),
+        ("SKY-SCA-MAL-2025-46969", False),
+    ],
+)
+def test_built_in_gate_reports_mutable_sources_without_counting_them(tmp_path, rule_id, passes):
+    config = load_config(tmp_path)
+    finding = _finding(rule_id, "MEDIUM", "requirements.txt")
+
+    passed, _reasons = gk.check_gate({"dependency_vulnerabilities": [finding]}, config)
+
+    assert passed is passes
+
+
+def test_synced_cloud_gate_still_counts_mutable_sources(tmp_path):
+    config = _synced(tmp_path, ZERO_NEW)
+    finding = _finding("SKY-SCA-SRC003", "MEDIUM", "requirements.txt")
+
+    passed, reasons = gk.check_gate({"dependency_vulnerabilities": [finding]}, config)
+
+    assert passed is False
+    assert reasons == ["1 dependency vulnerability (max: 0)"]
