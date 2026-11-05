@@ -85,6 +85,19 @@ def run_sbom_command(argv: list[str]) -> int:
             "yarn.lock",
             "pipfile.lock",
             "npm-shrinkwrap.json",
+            "bun.lock",
+            "cargo.lock",
+            "cargo.toml",
+            "composer.lock",
+            "composer.json",
+            "gemfile.lock",
+            "pubspec.lock",
+            "pubspec.yaml",
+            "gradle.lockfile",
+            "packages.lock.json",
+            "pom.xml",
+            "setup.py",
+            "setup.cfg",
         }
         or Path(args.output).suffix.casefold() == ".csproj"
     ):
