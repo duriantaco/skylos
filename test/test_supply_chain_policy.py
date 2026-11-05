@@ -114,3 +114,60 @@ def test_invalid_release_age_is_reported_and_ignored(tmp_path, value):
     policy = load_supply_chain_policy(root)
     assert policy.min_release_age_hours is None
     assert policy.problems
+
+
+def _commit(root, message):
+    import subprocess
+
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", message],
+        cwd=root,
+        check=True,
+    )
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def test_pull_request_cannot_relax_the_base_branch_policy(tmp_path, monkeypatch):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.skylos.supply_chain]\ninternal_packages = ["acme-*"]\nmin_release_age_hours = 48\n'
+    )
+    base = _commit(tmp_path, "base")
+    (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n")
+    _commit(tmp_path, "head relaxes policy")
+    monkeypatch.setenv("SKYLOS_POLICY_BASE", base)
+
+    policy = load_supply_chain_policy(tmp_path)
+
+    assert policy.internal_packages == ("acme-*",)
+    assert policy.min_release_age_hours == 48
+
+
+def test_unreadable_operator_policy_file_stops_instead_of_dropping_cloud_policy(
+    tmp_path, monkeypatch
+):
+    from skylos.config import ConfigError
+
+    monkeypatch.setenv("SKYLOS_SYNCED_POLICY_FILE", str(tmp_path / "missing" / "config.yaml"))
+    with pytest.raises(ConfigError):
+        load_supply_chain_policy(_repo(tmp_path))
+
+
+def test_cloud_registry_lists_are_marked_even_when_empty(tmp_path):
+    synced_empty = load_supply_chain_policy(
+        _repo(tmp_path, synced="supply_chain:\n  trusted_registries: []\n")
+    )
+    assert synced_empty.registries_from_cloud is True
+    assert synced_empty.trusted_registries == ()
+
+
+def test_repo_registry_lists_are_not_cloud_lists(tmp_path):
+    policy = load_supply_chain_policy(
+        _repo(tmp_path, pyproject='[tool.skylos.supply_chain]\ntrusted_registries = ["https://m.example"]\n')
+    )
+    assert policy.registries_from_cloud is False

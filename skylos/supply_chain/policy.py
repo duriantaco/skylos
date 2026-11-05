@@ -17,6 +17,14 @@ with OR, the release age takes the larger value, internal package patterns
 are combined, and registry lists set in Cloud replace the repository's lists
 because a repository-added registry would widen what is trusted.
 
+``registries_from_cloud`` says Cloud set a registry list; the install hook
+then uses Cloud's lists instead of ``[tool.skylos.hooks] trusted_registries``.
+
+Under ``SKYLOS_POLICY_BASE`` (pull-request CI) both layers come from the base
+commit, like the rest of the configuration, so a pull request cannot relax
+its own supply-chain policy. A ``SKYLOS_SYNCED_POLICY_FILE`` that cannot be
+read raises ``ConfigError`` instead of being dropped.
+
 ``min_release_age_hours`` is ``None`` when nobody set it. Callers choose the
 default: the install hook holds new versions for
 ``DEFAULT_HOOK_RELEASE_AGE_HOURS``, scans skip the age check.
@@ -24,6 +32,7 @@ default: the install hook holds new versions for
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -47,6 +56,7 @@ class SupplyChainPolicy:
     private_registries: tuple[str, ...] = ()
     trusted_registries: tuple[str, ...] = ()
     check_provenance: bool = True
+    registries_from_cloud: bool = False
     sources: tuple[str, ...] = ()
     problems: tuple[str, ...] = ()
 
@@ -68,8 +78,12 @@ class _Layer:
 
 
 def load_supply_chain_policy(root: str | Path | None) -> SupplyChainPolicy:
-    local_table = _pyproject_table(root)
-    synced_table = _synced_table(root)
+    base = _policy_base_tables(root)
+    if base is None:
+        local_table = _pyproject_table(root)
+        synced_table = _synced_table(root)
+    else:
+        local_table, synced_table = base
     local = _parse_layer(local_table, "pyproject")
     synced = _parse_layer(synced_table, "Skylos Cloud")
     sources: list[str] = []
@@ -105,6 +119,7 @@ def _combine(local: _Layer, synced: _Layer, sources: tuple[str, ...]) -> SupplyC
         private_registries=tuple(private),
         trusted_registries=tuple(trusted),
         check_provenance=check_provenance,
+        registries_from_cloud="private_registries" in sv or "trusted_registries" in sv,
         sources=sources,
         problems=local.problems + synced.problems,
     )
@@ -195,13 +210,32 @@ def _pyproject_table(root: str | Path | None) -> dict[str, Any]:
     return _table(data, ("tool", "skylos", "supply_chain"))
 
 
+def _policy_base_tables(
+    root: str | Path | None,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    from skylos import config as skylos_config
+
+    commit = str(os.environ.get(skylos_config.POLICY_BASE_ENV_VAR) or "").strip()
+    if not commit or root is None:
+        return None
+    from skylos.cicd.policy import load_base_policy
+
+    layers, synced = load_base_policy(Path(root), commit)
+    local: dict[str, Any] = {}
+    for layer in layers:
+        table = _table(layer, ("supply_chain",))
+        if table:
+            local = table
+    operator = skylos_config.load_operator_synced_policy()
+    if operator is not None:
+        synced = operator
+    return local, _table(synced, ("supply_chain",))
+
+
 def _synced_table(root: str | Path | None) -> dict[str, Any]:
     from skylos import config as skylos_config
 
-    try:
-        synced = skylos_config.load_operator_synced_policy()
-    except skylos_config.ConfigError:
-        return {}
+    synced = skylos_config.load_operator_synced_policy()
     if synced is None:
         if root is None:
             return {}
