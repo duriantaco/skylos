@@ -43,6 +43,7 @@ from skylos.rules.config.cicd.ai_agent_versions import (
     CLAUDE_CODE_ACTION_RELEASES,
     RUN_GEMINI_CLI_RELEASES,
 )
+from skylos.rules.config.cicd.workflow_references import local_workflow_reference
 from skylos.rules.config.cicd.github_actions import (
     SECRETS_OUTSIDE_ENV_RE,
     WORKFLOW_SUFFIXES,
@@ -1376,7 +1377,10 @@ def local_workflow_callers(
             uses = job.get("uses")
             if not isinstance(uses, str):
                 continue
-            if uses.strip().split("@", 1)[0].removeprefix("./") == target:
+            normalized = local_workflow_reference(uses)
+            if normalized is None:
+                normalized = uses.strip().split("@", 1)[0].removeprefix("./")
+            if normalized == target:
                 callers.append((sibling, sibling_data, job_id, job))
     return callers
 
@@ -1399,7 +1403,9 @@ def _caller_contexts(
             uses = job.get("uses")
             if not isinstance(uses, str):
                 continue
-            normalized = uses.strip().split("@", 1)[0].removeprefix("./")
+            normalized = local_workflow_reference(uses)
+            if normalized is None:
+                normalized = uses.strip().split("@", 1)[0].removeprefix("./")
             if normalized != target:
                 continue
             caller = _Caller(sibling, sibling_data, job_id, job, reach)
