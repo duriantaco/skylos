@@ -389,7 +389,9 @@ def extract_advisory_metadata(vuln: dict, dep: dict) -> dict:
     }
     if informational is not None:
         metadata["informational"] = informational
-    malicious = malicious_evidence(vuln, matching)
+    malicious = []
+    if metadata["withdrawn"] is None:
+        malicious = malicious_evidence(vuln, matching)
     if malicious:
         metadata["malicious_evidence"] = malicious
     return metadata

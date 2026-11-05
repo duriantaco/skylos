@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from skylos.commands.hook_install_parse import MANIFEST, NPM, PYPI, InstallTarget
+from skylos.rules.sca.advisory_metadata import MALICIOUS_ID_PREFIX, malicious_evidence
 
 SUPPLY_CHAIN_SECONDS = 12.0
 REQUEST_TIMEOUT_SECONDS = 5.0
@@ -56,7 +57,6 @@ PYPI_ORIGIN = "https://pypi.org/pypi"
 NPM_ABBREVIATED = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8"
 USER_AGENT = "skylos-hook/1.0"
 CA9_UPGRADE = "pip install -U ca9"
-MALICIOUS_CWE = "CWE-506"
 
 KIND_MALWARE = "malware"
 KIND_TOO_NEW = "too_new"
@@ -418,22 +418,16 @@ def advisory_is_malicious(record: dict[str, Any]) -> bool:
 def _classify(advisory: str, record: dict[str, Any] | None) -> str:
     if record is not None and record.get("withdrawn"):
         return "benign"
-    if advisory.startswith("MAL-"):
+    if advisory.upper().startswith(MALICIOUS_ID_PREFIX):
         return "malicious"
     if record is None:
         return "unknown"
-    aliases = record.get("aliases")
-    if isinstance(aliases, list) and any(
-        isinstance(alias, str) and alias.startswith("MAL-") for alias in aliases
-    ):
+    affected = record.get("affected")
+    if not isinstance(affected, list):
+        affected = []
+    entries = [entry for entry in affected if isinstance(entry, dict)]
+    if malicious_evidence(record, entries):
         return "malicious"
-    specific = record.get("database_specific")
-    if isinstance(specific, dict):
-        if specific.get("malicious-packages-origins"):
-            return "malicious"
-        cwes = specific.get("cwe_ids")
-        if isinstance(cwes, list) and MALICIOUS_CWE in cwes:
-            return "malicious"
     return "benign"
 
 

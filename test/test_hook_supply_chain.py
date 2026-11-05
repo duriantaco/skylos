@@ -455,3 +455,23 @@ def test_a_crash_in_the_supply_chain_stage_is_not_an_allow(project, monkeypatch)
     monkeypatch.setattr(hook_supply_chain, "check_supply_chain", explode)
     decision, reason = hook(project, "npm install chalk@5.3.0", FakeSources())
     assert decision == "ask" and "check failed" in reason
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"id": "mal-2025-1"},
+        {"id": "GHSA-x", "aliases": ["mal-2025-1"]},
+        {"id": "GHSA-x", "database_specific": {"cwe_ids": ["CWE-506"]}},
+        {"id": "GHSA-x", "database_specific": {"cwes": [{"cweId": "CWE-506"}]}},
+        {"id": "GHSA-x", "affected": [{"database_specific": {"cwe_ids": ["CWE-506"]}}]},
+    ],
+)
+def test_hook_and_scan_agree_on_what_is_malware(record):
+    assert hook_supply_chain.advisory_is_malicious(record) is True
+
+
+def test_ordinary_advisory_is_not_malware():
+    assert hook_supply_chain.advisory_is_malicious(
+        {"id": "GHSA-x", "database_specific": {"cwe_ids": ["CWE-79"]}}
+    ) is False
