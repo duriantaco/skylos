@@ -7,6 +7,7 @@ from typing import Sequence
 from rich.markup import escape
 
 from skylos.core.cli_shared import quiet_analyzer_logs
+from skylos.core.diff_scope import DiffBaseUnavailable
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.constants import RIPGREP_INSTALL_URL
 from skylos.ui.dead_code_evidence import dead_code_uncertainty_summary
@@ -587,6 +588,8 @@ def run_scan_command(
             return _run_scan_command(
                 argv, cli_module=cli_module, parser=parser, args=args
             )
+    except DiffBaseUnavailable as exc:
+        cli_module._exit_diff_unavailable(args, str(exc))
     except cli_module.ConfigError as exc:
         cli_module._exit_config_error(parser, args, str(exc))
     finally:
@@ -1809,6 +1812,8 @@ def _run_scan_command(
                 raise SystemExit(exit_code)
             return
 
+    except DiffBaseUnavailable as exc:
+        cli_module._exit_diff_unavailable(args, str(exc))
     except cli_module.ConfigError as exc:
         cli_module._exit_config_error(parser, args, str(exc))
     except Exception as e:

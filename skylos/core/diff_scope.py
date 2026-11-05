@@ -17,6 +17,10 @@ from skylos.core.git_safety import (
 from skylos.security.regression_diff import _lexical_repository_path
 
 
+class DiffBaseUnavailable(ConfigError):
+    """The requested comparison base could not be resolved."""
+
+
 def _git_inventory(context: GitContext, *args):
     """Preserve filename bytes while retaining GitContext's execution guards."""
     safe_args = with_diff_guards(args)
@@ -44,7 +48,7 @@ def _git_changed_files(project_root: Path, diff_base: str | None) -> list[Path]:
     context = GitContext.from_path(project_root)
     merge_base = context.run("merge-base", diff_base, "HEAD")
     if merge_base.returncode or not merge_base.stdout.strip():
-        raise ConfigError("Could not resolve the changed-file comparison base")
+        raise DiffBaseUnavailable("Could not resolve the changed-file comparison base")
     changed = _git_inventory(
         context,
         "diff",
