@@ -64,6 +64,7 @@ from skylos.rules.sca.vulnerability_scanner import (
 PACKAGE_ONLY_VERSION = "<package-only>"
 MAX_COMMAND_CHARS = 20_000
 MAX_PACKAGES_PER_COMMAND = 25
+LOOKUP_SECONDS = 20.0
 JSR_ORIGIN = "https://jsr.io"
 
 # Outcomes of entries in ``unverified``. The hook allows "allowlisted" and
@@ -136,6 +137,7 @@ def check_install_command(
     context: RegistryContext | None = None,
     home: str | Path | None = None,
     targets: list[InstallTarget] | None = None,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
     """Check what ``command`` installs and sort it into explicit outcomes.
 
@@ -157,6 +159,8 @@ def check_install_command(
       ``state`` and ``flagged`` (a finding was reported for it).
 
     ``targets`` skips parsing when the caller already parsed ``command``.
+    ``deadline`` (``time.monotonic()``) bounds the registry lookups; one
+    still running then is "could not verify".
     """
     root = _existing_dir(repo_root)
     base = Path(cwd) if cwd is not None else (root or Path.cwd())
@@ -193,6 +197,7 @@ def check_install_command(
         )
     to_check: list[dict[str, Any]] = []
     for package in packages:
+        _default_npm_tag(package, context)
         entry = _route(package, allowed, trusted, context)
         if entry is None:
             to_check.append(package)
@@ -205,7 +210,7 @@ def check_install_command(
     store = _existing_dir(cache_root) if cache_root is not None else root
     cache = _load_version_cache(store) if store is not None else {"statuses": {}}
     cache_changed = False
-    statuses = _lookup_statuses(to_check, cache, checker)
+    statuses = _lookup_statuses(to_check, cache, checker, deadline)
     result["checked"] = []
     for package, (status, fresh) in zip(to_check, statuses):
         if fresh and _record_status(package, cache, status):
@@ -291,10 +296,19 @@ def _route(
         outcome = OUTCOME_PRIVATE if is_trusted(scoped, trusted) else OUTCOME_NOT_PUBLIC
         return {**package, "registry": scoped, "outcome": outcome,
                 "reason": f"scope registry {scoped}"}  # fmt: skip
-    alternates = context.alternate(ecosystem, name)
+    alternates = context.alternate(ecosystem, name, package.get("tool", ""))
     if alternates:
         package["alternate"] = alternates
+        package["alternate_declared"] = all(is_trusted(r, trusted) for r in alternates)
     return None
+
+
+def _default_npm_tag(package: dict[str, Any], context: RegistryContext) -> None:
+    """``tag=`` in .npmrc or ``npm_config_tag`` picks what ``npm install x`` installs."""
+    if package["ecosystem"] != ECOSYSTEM_NPM or package["version"] or package.get("requested"):
+        return
+    if context.npm_tag and str(package.get("tool", "")).startswith("npm "):
+        package["requested"] = context.npm_tag
 
 
 def _registry_label(registry: str) -> str:
@@ -312,6 +326,9 @@ def _package_from_target(target: InstallTarget) -> dict[str, Any]:
         "tool": target.tool,
         "runs": target.runs,
         "requested": target.requested,
+        "pre": target.pre,
+        "constraints": list(target.constraints),
+        "writes": target.writes,
     }
     if target.registries:
         package["registries"] = list(target.registries)
@@ -322,17 +339,26 @@ def _lookup_statuses(
     packages: list[dict[str, Any]],
     cache: dict[str, Any],
     checker: StatusChecker,
+    deadline: float | None = None,
 ) -> list[tuple[str, bool]]:
-    """Cached status or a registry lookup per package; lookups run in parallel."""
+    """Cached status or a registry lookup per package; lookups run in parallel
+    and stop at ``deadline``."""
+    import time
+
+    from skylos.commands.hook_parallel import run_parallel
+
     results: list[tuple[str, bool] | None] = []
     pending: list[int] = []
     for idx, package in enumerate(packages):
         cached = _cached_status(package, cache)
-        results.append((cached, False) if cached is not None else None)
         if cached is None:
+            results.append(None)
             pending.append(idx)
+        else:
+            results.append((cached, False))
     if pending:
-        from concurrent.futures import ThreadPoolExecutor
+        if deadline is None:
+            deadline = time.monotonic() + LOOKUP_SECONDS
 
         def _check(idx: int) -> str:
             package = packages[idx]
@@ -340,13 +366,19 @@ def _lookup_statuses(
                 return checker(
                     package["ecosystem"], package["name"], package["version"], cache
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 return STATUS_UNKNOWN
 
-        with ThreadPoolExecutor(max_workers=min(8, len(pending))) as pool:
-            for idx, status in zip(pending, pool.map(_check, pending)):
+        answers = run_parallel([lambda i=i: _check(i) for i in pending], deadline, workers=8)
+        for idx, status in zip(pending, answers):
+            if isinstance(status, str):
                 results[idx] = (status, True)
-    return [item if item is not None else (STATUS_UNKNOWN, False) for item in results]
+    statuses = []
+    for item in results:
+        if item is None:
+            item = (STATUS_UNKNOWN, False)
+        statuses.append(item)
+    return statuses
 
 
 def check_install_package_status(
@@ -554,7 +586,8 @@ def _user_allowed_packages(root: Path | None) -> set[tuple[str, str]]:
 
     Entries are package names (any ecosystem) or ``npm:name`` / ``pypi:name``
     / ``go:module``. Allowed packages skip every registry check (use it for
-    internal packages and deliberate look-alikes).
+    internal packages and deliberate look-alikes). PyPI names match after
+    PEP 503 normalisation; npm, Go and JSR names match exactly, ignoring case.
     """
     if root is None:
         return set()
@@ -577,17 +610,28 @@ def _user_allowed_packages(root: Path | None) -> set[tuple[str, str]]:
         if not isinstance(entry, str) or not entry.strip():
             continue
         prefix, sep, rest = entry.strip().partition(":")
-        ecosystem = _ECOSYSTEM_PREFIXES.get(prefix.lower()) if sep else None
+        ecosystem = None
+        if sep:
+            ecosystem = _ECOSYSTEM_PREFIXES.get(prefix.lower())
         if ecosystem is not None:
-            allowed.add((ecosystem, _normalized(rest)))
+            allowed.add((ecosystem, rest.strip().lower()))
         else:
-            allowed.add(("*", _normalized(entry)))
+            allowed.add(("*", entry.strip().lower()))
     return allowed
 
 
 def _allowed(package: dict[str, Any], allowed: set[tuple[str, str]]) -> bool:
-    name = _normalized(package["name"])
-    return (package["ecosystem"], name) in allowed or ("*", name) in allowed
+    ecosystem = package["ecosystem"]
+    name = str(package["name"]).strip().lower()
+    for entry_ecosystem, entry in allowed:
+        if entry_ecosystem not in (ecosystem, "*"):
+            continue
+        if ecosystem == ECOSYSTEM_PYPI:
+            if _normalized(entry) == _normalized(name):
+                return True
+        elif entry == name:
+            return True
+    return False
 
 
 def _existing_dir(value: str | Path | None) -> Path | None:

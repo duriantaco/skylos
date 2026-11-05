@@ -44,6 +44,7 @@ class Command:
     inputs: list[str] = field(default_factory=list)  # targets of "<"
     herestrings: list[str] = field(default_factory=list)  # words after "<<<"
     hidden: bool = False  # stdout goes to a file or /dev/null
+    outputs: list[str] = field(default_factory=list)
 
 
 def prepare(text: str) -> tuple[str, list[str]]:
@@ -275,6 +276,13 @@ def _skip_quoted(text: str, index: int, quote: str) -> tuple[str, int]:
     return ("'" if not quote else quote), index + 1
 
 
+def _record_output(command: Command, target: str) -> None:
+    """Files a redirect writes, for checks that read a file the same command
+    line may rewrite first."""
+    if target and target not in _TERMINALS and target != "/dev/null":
+        command.outputs.append(target)
+
+
 def _is_operator(token: str) -> bool:
     return bool(token) and all(char in PUNCTUATION for char in token)
 
@@ -297,7 +305,10 @@ def _redirect(command: Command, operator: str, target: str) -> None:
         return  # here-document or descriptor duplication
     if operator in {"&>", "&>>"}:
         command.hidden = True
+        _record_output(command, target)
         return
+    if not (operator == ">&" and (target.lstrip("&").isdigit() or target == "-")):
+        _record_output(command, target)
     if fd not in {None, "1"}:
         return  # stderr and other descriptors
     if operator == ">&" and target in {"1", "2", "&1", "&2"}:

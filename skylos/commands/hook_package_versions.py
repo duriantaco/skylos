@@ -115,8 +115,13 @@ def pick_npm_version(document: dict[str, Any], requested: str) -> str | None:
     return max(pool)[1]
 
 
-def pick_pypi_version(document: dict[str, Any], requested: str) -> str | None:
-    """The version pip installs for ``name<requested>`` from PyPI's JSON."""
+def pick_pypi_version(
+    document: dict[str, Any], requested: str, *, pre: bool = False, constraint: str = ""
+) -> str | None:
+    """The version pip installs for ``name<requested>`` from PyPI's JSON.
+
+    ``pre`` is ``--pre`` (prereleases compete with finals); ``constraint`` is
+    the specifier a constraints file adds."""
     from packaging.specifiers import InvalidSpecifier, SpecifierSet
     from packaging.version import InvalidVersion
     from packaging.version import Version as Pep440
@@ -127,7 +132,8 @@ def pick_pypi_version(document: dict[str, Any], requested: str) -> str | None:
         return None
     if not isinstance(releases, dict):
         info = document.get("info")
-        if spec_text == "" and isinstance(info, dict) and isinstance(info.get("version"), str):
+        if spec_text == "" and not constraint and not pre and isinstance(info, dict) \
+                and isinstance(info.get("version"), str):
             return info["version"]
         return None
     candidates: dict[Any, str] = {}
@@ -140,9 +146,14 @@ def pick_pypi_version(document: dict[str, Any], requested: str) -> str | None:
             continue
     try:
         specifier = SpecifierSet(spec_text)
+        if constraint:
+            specifier = specifier & SpecifierSet(constraint)
     except InvalidSpecifier:
         return None
-    allowed = list(specifier.filter(candidates))
+    prereleases = None
+    if pre:
+        prereleases = True
+    allowed = list(specifier.filter(candidates, prereleases=prereleases))
     if not allowed:
         return None
     return candidates[max(allowed)]

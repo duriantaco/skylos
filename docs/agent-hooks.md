@@ -329,7 +329,7 @@ Each command gets one of these outcomes:
 | Untrusted registry or index | `--index-url`/`--extra-index-url`/`-i`/`-f URL`, `--registry`, `--@scope:registry=`, `PIP_INDEX_URL=`, `UV_INDEX_URL=`, `NPM_CONFIG_REGISTRY=`, `GOPROXY=`, `GOSUMDB=off` on the command line | `direct_source` policy (default: ask), unless the registry is in `trusted_registries` |
 | Could not verify | registry unreachable, timeout, HTTP 429/5xx; package named at run time (`pip install $PKG`, `xargs npm i`, `npx $(...)`); a name Skylos cannot read; more than 25 packages in one command; a package missing from the public registry while your configuration points at a private one; an install or git command longer than Skylos reads (16,384 characters, not counting here-document bodies) | `on_unverified` policy (default: ask) |
 | Not fetched from a registry | `npx tsc` when `tsc` is the project's own `bin`, in `node_modules/.bin` (this directory or any parent) or a global npm bin, as npm itself resolves it; `npx --no`; local paths and archives inside the project (`pip install -e .`, `npm i ../lib`, `workspace:`/`file:`/`link:`); `pip install --no-index` | allowed |
-| Lockfile install | `npm ci`, `npm install` (no package), `pnpm install`, `yarn`, `bun install`, `uv sync`, `uv pip sync`, `poetry install`, `pipenv sync`, `pip install -r requirements.txt` | the malware check runs over every locked package (exact pins only for requirements files, `-r` includes followed); a malicious one is **blocked**. No lockfile: allowed as before, unless an earlier part of the same command could have written it (then "could not verify"). `go mod download` and package.json ranges without a lockfile are not checked here; `skylos . -a` and `skylos done` check manifests |
+| Lockfile install | `npm ci`, `npm install` (with or without packages), `pnpm install`/`add`, `yarn`, `yarn add`, `bun install`/`add`, `uv sync`, `uv run`, `uv add`/`remove`, `uv pip sync`, `poetry install`/`add`, `pipenv sync`/`install`, `pip install -r requirements.txt` | the malware check runs over every locked package, whatever source the lockfile records (see [Supply-chain checks](#supply-chain-checks)); a malicious one is **blocked**, and a tarball, git or URL source from an unknown host is "could not verify" (`direct_source`). Global installs (`npm i -g`) and `uv run --no-sync` do not read the project lockfile. No lockfile: allowed as before, unless an earlier part of the same command could have written it. `go mod download` and package.json ranges without a lockfile are not checked here; `skylos . -a` and `skylos done` check manifests |
 
 A git commit hash ref (`github:cline/cline#b181e0`) is called out in the
 message: GitHub serves commits from any fork through the parent repository's
@@ -367,11 +367,15 @@ configuration) skip the public check.
 **Your own registry configuration.** "Not on npmjs.org" is not evidence of a
 hallucination when your configuration fetches from somewhere else. Skylos
 reads `registry=` and `@scope:registry=` from `.npmrc` (from the working
-directory up to the project root, and `~/.npmrc`), `npm_config_registry`,
-`PIP_INDEX_URL`/`PIP_EXTRA_INDEX_URL`/`UV_*INDEX*` from the environment,
-`pip.conf`/`pip.ini`, `uv.toml`, `[[tool.uv.index]]`, `[[tool.poetry.source]]`
-and `[[tool.pdm.source]]`, and `GOPROXY`/`GOPRIVATE`/`GONOPROXY` (environment
-or `go env -w`). With such a registry configured:
+directory up to the project root, and `~/.npmrc`) and `npm_config_registry`
+for the npm tools, and for Python only the configuration the installing tool
+itself reads: `PIP_INDEX_URL`/`PIP_EXTRA_INDEX_URL` and `pip.conf`/`pip.ini`
+for pip (and pipx, pipenv); `UV_*INDEX*`, `uv.toml` and `[tool.uv]` for uv;
+`[[tool.poetry.source]]` for poetry; `[[tool.pdm.source]]` for pdm. Go reads
+`GOPROXY`/`GOPRIVATE`/`GONOPROXY` (environment or `go env -w`). Public
+mirrors (`registry.yarnpkg.com`, `registry.npmmirror.com`, the common PyPI
+mirrors) count as the public registry and get every check. With another
+registry configured:
 
 - a scoped npm package whose scope has its own registry is never sent to
   npmjs.org; it is allowed if that registry is trusted, otherwise it is
@@ -379,7 +383,12 @@ or `go env -w`). With such a registry configured:
 - a `GOPRIVATE` module is never sent to the Go proxy and is allowed;
 - any other package missing from the public registry becomes "could not
   verify" (ask) instead of a block. Look-alikes of popular packages are still
-  blocked.
+  blocked;
+- a package that exists publicly gets every check when the registry is
+  declared (`trusted_registries`), unless its name matches
+  `internal_packages`. When the registry is not declared, a pinned version
+  still gets the malware check, and Skylos adds a one-line note that the
+  release age was not checked.
 
 To allow your own names (internal packages, deliberate look-alikes) without
 any check, list them in `pyproject.toml`:
@@ -388,6 +397,10 @@ any check, list them in `pyproject.toml`:
 [tool.skylos]
 hooks_allow_packages = ["internal-pkg", "npm:my-reactt"]   # optional npm:/pypi:/go:/jsr: prefix
 ```
+
+PyPI names match after PEP 503 normalisation (`Foo_Bar` = `foo-bar`); npm,
+Go and JSR names match exactly, ignoring case, so allowing `acme-utils` does
+not allow the different npm package `acme.utils`.
 
 Well-known packages that sit one edit from a popular name (`preact`, `pyaml`,
 `react-dom`, ...) are never flagged, and neither is any package in the
@@ -417,9 +430,13 @@ lockfile a lockfile install reads, is checked before the command runs:
   pulled within hours, so a day's wait keeps an agent off them. The message
   names the newest older version that has no malware report, for example
   `Install typescript@7.0.2 instead`. An unpinned install is checked at the
-  version the manager would install: npm's `latest` dist-tag or the version a
-  range or tag resolves to, PyPI's newest final release that matches the
-  specifier (yanked releases skipped).
+  version the manager would install: npm's `latest` dist-tag (or the tag from
+  `--tag`, `NPM_CONFIG_TAG` or `.npmrc` `tag=`) or the version a range
+  resolves to; PyPI's newest final release that matches the specifier
+  (yanked releases skipped), a prerelease with `--pre`/`PIP_PRE`/
+  `--prerelease allow`, and the pin from a constraints file (`-c`,
+  `PIP_CONSTRAINT`, `UV_CONSTRAINT`). A constraints file Skylos cannot read is
+  "could not verify".
 - **npm provenance.** A version published without a provenance attestation
   when the releases before it had one is blocked; the message names the
   newest earlier version with provenance. When the registry does not answer,
@@ -430,24 +447,54 @@ lockfile a lockfile install reads, is checked before the command runs:
 block_malware = true          # false: known malware asks instead of blocking
 min_release_age_hours = 24    # 0 turns the cooldown off; the hook default is 24
 check_provenance = true       # npm only
+internal_packages = ["acme-*", "@acme/*"]   # kept private when served by a declared registry
 ```
 
-A synced Skylos Cloud policy (`supply_chain` in `.skylos/config.yaml`) can
-only tighten these values. `hooks_allow_packages` skips all of these checks
-for the names it lists, and packages from a trusted or private registry are
-never sent to OSV or the public registry. Packages that may come from a
-registry in your own configuration (`.npmrc` `registry=`, `pip.conf`
-`extra-index-url`) get the malware check for pinned versions only. Release
-age and provenance come from the ca9 engine (`ca9.api`, installed with
-Skylos); an older ca9 without it makes those packages "could not verify"
-until you run `pip install -U ca9`.
+`pip download`, `pip wheel` and `npm pack <spec>` fetch the package too, so
+they get the same checks as an install (`pip download evil==1.0 && pip
+install ./evil.whl` is blocked at the download). `corepack pnpm add x` is
+read as `pnpm add x`.
 
-Limits: the checks share a 12-second budget inside the 30-second hook
-timeout, and at most 5,000 locked packages are checked per lockfile; anything
-not checked in time is "could not verify", never passed. A lockfile changed
-by an earlier part of the same command (`git pull && npm ci`) is read as it
-was before the command ran. `bun.lockb` (binary) is not read; use the text
-`bun.lock`.
+**Lockfiles and requirements files.** Every locked entry with a name and
+version is checked for malware, wherever the lockfile says it came from
+(`registry.npmjs.org`, a mirror, an Artifactory URL, a private uv index),
+except entries from a declared registry whose name matches
+`internal_packages`. A tarball, git or URL source from a host that is neither
+public nor declared is also "could not verify" (`direct_source`), because its
+contents need not match the version it claims. Requirements files follow
+pip: index options never switch the check off (`--index-url
+https://pypi.org/simple`, `--extra-index-url https://download.pytorch.org/...`
+are checked as usual); only an exclusive private `--index-url` keeps
+`internal_packages` names away from OSV. `name @ url`, `git+...` and URL
+lines are direct sources, like `pip install <url>`. A constraint pin (`-c`)
+is the version of an unpinned requirement.
+
+When an earlier part of the same command line may write the lockfile, its
+manifest, the requirements file or anything it includes (`curl -o`, `cp`,
+`mv`, `tee`, `>`, `sed -i`, `git checkout`, `git pull`, `patch`, `unzip`,
+`tar`, or any command that names the file), Skylos does not read it: the
+install is "could not verify". A script that writes the file without naming
+it is not detected.
+
+A synced Skylos Cloud policy (`supply_chain` in `.skylos/config.yaml`) can
+only tighten these values. When it sets `trusted_registries` or
+`private_registries`, those lists replace `[tool.skylos.hooks]
+trusted_registries`, so a repository cannot trust a registry Cloud does not.
+When Cloud sets `block_malware`, `hooks_allow_packages` no longer skips the
+malware check (it still skips the existence, release-age and provenance
+checks); without Cloud, it skips them all. Packages from a trusted registry
+on the command line are never sent to OSV or the public registry; a pinned
+version from an untrusted `--registry`/`--index-url` gets the malware check
+as well as the `direct_source` question. Release age and provenance come from
+the ca9 engine (`ca9.api`, installed with Skylos); an older ca9 without it
+makes those packages "could not verify" until you run `pip install -U ca9`.
+
+Limits: the whole install check (registry lookups included) shares a
+20-second budget inside the 30-second hook timeout, and at most 5,000 locked
+packages are checked per lockfile; anything not checked in time is "could
+not verify", never passed. `bun.lockb` (binary) is not read; use the text
+`bun.lock`. Shell aliases and functions that wrap an install command are not
+followed.
 
 **Git hook bypass.** Agents skip a failing pre-commit hook instead of fixing
 it. With `block_hook_bypass = true` (the default), pre-bash blocks:

@@ -28,9 +28,7 @@ and the hook never needs more than :data:`SUPPLY_CHAIN_SECONDS` of wall time.
 
 from __future__ import annotations
 
-import queue
 import re
-import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -38,14 +36,23 @@ from pathlib import Path
 from typing import Any
 
 from skylos.commands.hook_install_parse import MANIFEST, NPM, PYPI, InstallTarget
+from skylos.commands.hook_locked_packages import (
+    MAX_LOCKED_PACKAGES,
+    LockContext,
+    Locked,
+    constraint_specs,
+    exact_version,
+    is_internal,
+    read_locked,
+)
+from skylos.commands.hook_parallel import run_parallel
 from skylos.rules.sca.advisory_metadata import MALICIOUS_ID_PREFIX, malicious_evidence
 
 SUPPLY_CHAIN_SECONDS = 12.0
+INSTALL_CHECK_SECONDS = 20.0
 REQUEST_TIMEOUT_SECONDS = 5.0
 MAX_OSV_QUERIES_PER_BATCH = 1000
-MAX_LOCKED_PACKAGES = 5000
 MAX_ADVISORY_FETCHES = 400
-MAX_PARALLEL = 16
 MAX_PACKUMENT_BYTES = 64_000_000
 MAX_PYPI_DOCUMENT_BYTES = 32_000_000
 MAX_OSV_BATCH_BYTES = 8_000_000
@@ -66,21 +73,6 @@ OUTCOME_UNCHECKED = "unchecked"
 OUTCOME_MALWARE_ALLOWED = "malware_allowed"
 
 _CA9_ECOSYSTEMS = {NPM: "npm", PYPI: "pypi"}
-_PENDING = object()
-_LOCKFILES = {
-    "npm": ("npm-shrinkwrap.json", "package-lock.json"),
-    "pnpm": ("pnpm-lock.yaml",),
-    "yarn": ("yarn.lock",),
-    "bun": ("bun.lock",),
-    "uv": ("uv.lock",),
-    "poetry": ("poetry.lock",),
-    "pipenv": ("Pipfile.lock",),
-}
-_EXACT_PIN_RE = re.compile(
-    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*===?\s*"
-    r"(?P<version>[0-9][A-Za-z0-9._+!-]*)\s*(?:;.*)?$"
-)
-
 Key = tuple[str, str, str]
 
 
@@ -211,15 +203,7 @@ class _Explicit:
     gated: bool = False
     reasons: list[str] | None = None
     network: bool = False
-
-
-@dataclass
-class _Locked:
-    target: InstallTarget
-    label: str
-    keys: list[Key]
-    entries: dict[Key, tuple[str, int, str]]
-    skipped: int = 0
+    constraint: str = ""
 
 
 def check_supply_chain(
@@ -230,29 +214,44 @@ def check_supply_chain(
     sources: Sources | None = None,
     record: dict[str, Any] | None = None,
     seconds: float = SUPPLY_CHAIN_SECONDS,
+    deadline: float | None = None,
+    policy: Any = None,
+    trusted: tuple[str, ...] = (),
 ) -> None:
-    """Add malware, release-age and provenance outcomes to ``result``."""
+    """Add malware, release-age and provenance outcomes to ``result``.
+
+    ``deadline`` (``time.monotonic()``) is shared with the rest of the
+    install check; ``trusted`` lists the declared registries; ``policy`` is
+    the loaded :class:`~skylos.supply_chain.policy.SupplyChainPolicy`."""
     from skylos.rules.ai_defect.install_command import (
         package_allowed,
         user_allowed_packages,
     )
-    from skylos.supply_chain.policy import load_supply_chain_policy
+    from skylos.supply_chain.policy import SOURCE_CLOUD, load_supply_chain_policy
 
     sources = sources or Sources()
     if record is None:
         record = {}
-    deadline = time.monotonic() + seconds
-    policy = load_supply_chain_policy(root)
+    if deadline is None:
+        deadline = time.monotonic() + seconds
+    if policy is None:
+        policy = load_supply_chain_policy(root)
     age_hours = policy.hook_release_age_hours()
+    cloud_malware = policy.block_malware and SOURCE_CLOUD in policy.sources
     allowed = user_allowed_packages(root)
+    if cloud_malware:
+        allowed = set()
     if policy.problems:
         result["supply_chain_problems"] = list(policy.problems)
-    explicit = _explicit_items(result.get("checked") or [])
+    explicit = _explicit_items(result, policy, cloud_malware)
+    _apply_constraints(explicit, root)
+    ctx = LockContext(root, tuple(trusted), tuple(policy.internal_packages), allowed,
+                      package_allowed)  # fmt: skip
     locked = []
     for target in targets:
         if target.kind != MANIFEST or not target.lockfile:
             continue
-        item = _read_locked(target, root, allowed, package_allowed, result)
+        item = read_locked(target, ctx, result)
         if item is not None:
             locked.append(item)
     if not explicit and not locked:
@@ -266,7 +265,7 @@ def check_supply_chain(
     first_keys = _unique(pinned + locked_keys)
     tasks: list[Callable[[], Any]] = [lambda: _malware_lookup(sources, first_keys, deadline)]
     tasks += [lambda item=item: _resolve(sources, item, deadline) for item in resolving]
-    first = _run_parallel(tasks, deadline)
+    first = run_parallel(tasks, deadline)
     if isinstance(first[0], dict):
         verdicts.update(first[0])
     for item, version in zip(resolving, first[1:]):
@@ -287,7 +286,7 @@ def check_supply_chain(
     if policy.check_provenance:
         second += [lambda i=i: sources.provenance(NPM, i.package["name"], i.version)
                    for i in npm_gated]  # fmt: skip
-    answers = _run_parallel(second, deadline)
+    answers = run_parallel(second, deadline)
     if isinstance(answers[0], dict):
         verdicts.update(answers[0])
     ages: dict[int, Any] = {}
@@ -310,7 +309,7 @@ def check_supply_chain(
     }
     if suggestions:
         third_keys = sorted(suggestions)
-        third = _run_parallel([lambda: _malware_lookup(sources, third_keys, deadline)], deadline)
+        third = run_parallel([lambda: _malware_lookup(sources, third_keys, deadline)], deadline)
         if isinstance(third[0], dict):
             verdicts.update(third[0])
     _feed_fallback(sources, verdicts, pinned + resolved + locked_keys)
@@ -331,25 +330,82 @@ def check_supply_chain(
         record["locked_packages"] = sum(len(item.keys) for item in locked)
 
 
-def _explicit_items(checked: list[dict[str, Any]]) -> list[_Explicit]:
+def _explicit_items(result: dict[str, Any], policy: Any, cloud_malware: bool) -> list[_Explicit]:
     items = []
-    for package in checked:
-        if package.get("ecosystem") not in _CA9_ECOSYSTEMS:
+    notes = result.setdefault("notes", [])
+    for package in result.get("checked") or []:
+        ecosystem = package.get("ecosystem")
+        if ecosystem not in _CA9_ECOSYSTEMS:
             continue
         state = package.get("state")
-        public = not package.get("alternate")
-        if not public and state != "present":
-            continue
+        if package.get("alternate"):
+            if package.get("alternate_declared"):
+                if is_internal(ecosystem, package["name"], tuple(policy.internal_packages)):
+                    continue
+            elif state != "present":
+                continue
+            elif package.get("version"):
+                items.append(_Explicit(package=package, version=package["version"], reasons=[]))
+                notes.append(_undeclared_note(package, "release age not checked"))
+                continue
+            else:
+                notes.append(_undeclared_note(package, "not checked for malware or release age"))
+                continue
         item = _Explicit(package=package, reasons=[])
         if package.get("version"):
             item.version = package["version"]
-        elif state == "present" and public:
+        elif state == "present":
             item.resolve = True
         else:
             continue
-        item.gated = state == "present" and public and not package.get("flagged")
+        item.gated = state == "present" and not package.get("flagged")
         items.append(item)
+    for entry in result.get("unverified") or []:
+        if entry.get("ecosystem") not in _CA9_ECOSYSTEMS:
+            continue
+        outcome = entry.get("outcome")
+        if outcome == "registry_override" and entry.get("version"):
+            items.append(_Explicit(package=entry, version=entry["version"], reasons=[]))
+        elif outcome == "allowlisted" and cloud_malware:
+            item = _Explicit(package=entry, reasons=[])
+            if entry.get("version"):
+                item.version = entry["version"]
+            else:
+                item.resolve = True
+            items.append(item)
     return items
+
+
+def _undeclared_note(package: dict[str, Any], what: str) -> str:
+    from skylos.commands.hook_install_parse import registry_host
+
+    registry = registry_host(str((package.get("alternate") or [""])[0])) or "a configured registry"
+    return (f"{package.get('tool', 'install')} {package['name']}: {what}; {registry} is "
+            "not a declared registry (trusted_registries)")  # fmt: skip
+
+
+def _apply_constraints(items: list[_Explicit], root: Path | None) -> None:
+    for item in items:
+        package = item.package
+        paths = tuple(package.get("constraints") or ())
+        if package["ecosystem"] != PYPI or not paths:
+            continue
+        specs, unreadable, files = constraint_specs(paths, root)
+        writes = package.get("writes")
+        if writes is not None and any(writes.covers(path) for path in files):
+            _note(item, "an earlier part of this command may rewrite its constraints file")
+            continue
+        for label in unreadable:
+            _note(item, f"{label} could not be read")
+        spec = specs.get(_key(PYPI, package["name"], "")[1], "")
+        if not spec or item.version:
+            continue
+        pinned = exact_version(spec)
+        if pinned:
+            item.version = pinned
+            item.resolve = False
+        else:
+            item.constraint = spec
 
 
 def _resolve(sources: Sources, item: _Explicit, deadline: float) -> str | None:
@@ -368,7 +424,8 @@ def _resolve(sources: Sources, item: _Explicit, deadline: float) -> str | None:
     document = sources.pypi_project(package["name"], deadline)
     if not isinstance(document, dict):
         return None
-    return pick_pypi_version(document, requested)
+    return pick_pypi_version(document, requested, pre=bool(package.get("pre")),
+                             constraint=item.constraint)  # fmt: skip
 
 
 def _malware_lookup(sources: Sources, keys: list[Key], deadline: float) -> dict[Key, _Verdict]:
@@ -377,7 +434,7 @@ def _malware_lookup(sources: Sources, keys: list[Key], deadline: float) -> dict[
         return verdicts
     batches = [keys[n : n + MAX_OSV_QUERIES_PER_BATCH]
                for n in range(0, len(keys), MAX_OSV_QUERIES_PER_BATCH)]  # fmt: skip
-    answers = _run_parallel([lambda b=b: sources.osv_batch(b, deadline) for b in batches], deadline)
+    answers = run_parallel([lambda b=b: sources.osv_batch(b, deadline) for b in batches], deadline)
     found: dict[Key, list[str]] = {}
     for batch, answer in zip(batches, answers):
         if not isinstance(answer, list) or len(answer) != len(batch):
@@ -388,7 +445,7 @@ def _malware_lookup(sources: Sources, keys: list[Key], deadline: float) -> dict[
     wanted = sorted({advisory for ids in found.values() for advisory in ids},
                     key=lambda advisory: (not advisory.startswith("MAL-"), advisory))  # fmt: skip
     wanted = wanted[:MAX_ADVISORY_FETCHES]
-    fetched = _run_parallel([lambda a=a: sources.osv_record(a, deadline) for a in wanted], deadline)
+    fetched = run_parallel([lambda a=a: sources.osv_record(a, deadline) for a in wanted], deadline)
     records = {a: r for a, r in zip(wanted, fetched) if isinstance(r, dict)}
     for key, ids in found.items():
         malicious = []
@@ -505,7 +562,7 @@ def _explicit_outcome(item, verdicts, age, provenance, age_hours, block, finding
         )  # fmt: skip
 
 
-def _locked_outcome(item: _Locked, verdicts, block, findings, unverified, counts) -> None:
+def _locked_outcome(item: Locked, verdicts, block, findings, unverified, counts) -> None:
     unknown = 0
     for key in item.keys:
         verdict = verdicts.get(key, _Verdict())
@@ -582,159 +639,6 @@ def _provenance(package, version, answer) -> dict[str, Any]:
     if previous:
         message += f" The newest earlier version with provenance is {name}@{previous[0]}."
     return {**package, "version": version, "kind": KIND_PROVENANCE, "message": message}
-
-
-def _read_locked(target, root, allowed, package_allowed, result) -> _Locked | None:
-    if target.lockfile == "requirements":
-        return _read_requirements(target, root, allowed, package_allowed, result)
-    base = Path(target.cwd or target.spec)
-    names = _LOCKFILES.get(target.lockfile, ())
-    path = _find_lockfile(base, names, root)
-    if path is None:
-        binary = None
-        if target.lockfile == "bun":
-            binary = _find_lockfile(base, ("bun.lockb",), root)
-        if binary is not None:
-            _unverified(result, target, binary.name, "bun.lockb is binary; Skylos reads "
-                        "only the text bun.lock (bun install --save-text-lockfile)")  # fmt: skip
-        elif target.preceded:
-            _unverified(result, target, names[-1], f"no {names[-1]} yet; an earlier part "
-                        "of this command may write it, and Skylos reads lockfiles before "
-                        "the command runs")  # fmt: skip
-        return None
-    label = _label(path, root)
-    try:
-        inventory = _parse_lockfile(target.lockfile, path)
-    except Exception as exc:  # noqa: BLE001
-        reason = str(exc) or type(exc).__name__
-        _unverified(result, target, label, f"could not read it ({reason[:120]})")
-        return None
-    deps = [(d.get("ecosystem"), d.get("name"), d.get("version"), d.get("line"), label)
-            for d in inventory.dependencies]  # fmt: skip
-    return _locked_item(target, label, deps, allowed, package_allowed)
-
-
-def _read_requirements(target, root, allowed, package_allowed, result) -> _Locked | None:
-    from skylos.core.python_requirements import read_requirements_tree
-
-    path = Path(target.spec).expanduser()
-    if not path.is_absolute():
-        path = Path(target.cwd or ".") / path
-    label = _label(path, root)
-    if not path.is_file():
-        if target.preceded:
-            _unverified(result, target, label, "the file does not exist yet; an earlier "
-                        "part of this command may write it, and Skylos reads it before "
-                        "the command runs")  # fmt: skip
-        return None
-    bound = path.parent
-    if root is not None and _inside(path, root):
-        bound = root
-    tree = read_requirements_tree(path, root=bound)
-    if not tree.files:
-        _unverified(result, target, label, "could not read it")
-        return None
-    for include in tree.unresolved_includes[:3]:
-        _unverified(result, target, label, f"includes {include}, which Skylos could not read")
-    if tree.limit_reached:
-        _unverified(result, target, label, "includes more files than Skylos follows")
-    if any(parsed.private_index for parsed in tree.files):
-        return None
-    deps = []
-    for line in tree.requirements(include_constraints=False):
-        match = _EXACT_PIN_RE.match(line.spec)
-        if match and not line.url:
-            deps.append((PYPI, line.name, match.group("version"), line.line,
-                         _label(Path(line.path), root)))  # fmt: skip
-    return _locked_item(target, label, deps, allowed, package_allowed)
-
-
-def _locked_item(target, label, deps, allowed, package_allowed) -> _Locked:
-    entries: dict[Key, tuple[str, int, str]] = {}
-    for ecosystem, name, version, line, file_label in deps:
-        if ecosystem not in _CA9_ECOSYSTEMS or not isinstance(name, str) or not name:
-            continue
-        if not isinstance(version, str) or not version:
-            continue
-        if package_allowed({"ecosystem": ecosystem, "name": name}, allowed):
-            continue
-        if not isinstance(line, int):
-            line = 0
-        entries.setdefault(_key(ecosystem, name, version), (name, line, file_label))
-    keys = sorted(entries)
-    skipped = max(0, len(keys) - MAX_LOCKED_PACKAGES)
-    return _Locked(target, label, keys[:MAX_LOCKED_PACKAGES], entries, skipped)
-
-
-def _parse_lockfile(manager: str, path: Path):
-    if manager == "npm":
-        from skylos.rules.sca.npm_lockfile import parse_package_lock as parse
-    elif manager == "pnpm":
-        from skylos.rules.sca.pnpm_lockfile import parse_pnpm_lock as parse
-    elif manager == "yarn":
-        from skylos.rules.sca.yarn_lockfile import parse_yarn_lock as parse
-    elif manager == "bun":
-        from skylos.rules.sca.bun_lockfile import parse_bun_lock as parse
-    elif manager == "uv":
-        from skylos.rules.sca.uv_lockfile import parse_uv_lock as parse
-    elif manager == "poetry":
-        from skylos.rules.sca.poetry_lockfile import parse_poetry_lock as parse
-    else:
-        from skylos.rules.sca.pipfile_lockfile import parse_pipfile_lock as parse
-    return parse(path, max_packages=MAX_LOCKED_PACKAGES * 4)
-
-
-def _find_lockfile(base: Path, names: tuple[str, ...], root: Path | None) -> Path | None:
-    current = base
-    while True:
-        for name in names:
-            candidate = current / name
-            if candidate.is_file():
-                return candidate
-        if root is None or not _inside(current, root) or _same(current, root):
-            return None
-        if current.parent == current:
-            return None
-        current = current.parent
-
-
-def _run_parallel(tasks: list[Callable[[], Any]], deadline: float) -> list[Any]:
-    """Run ``tasks`` on daemon threads until done or ``deadline``; a task
-    still running then reads as ``_PENDING``, and its thread cannot keep the
-    hook process alive."""
-    results: list[Any] = [_PENDING] * len(tasks)
-    if not tasks:
-        return results
-    jobs: queue.Queue = queue.Queue()
-    for index, task in enumerate(tasks):
-        jobs.put((index, task))
-    lock = threading.Lock()
-    finished = threading.Event()
-    left = [len(tasks)]
-
-    def work() -> None:
-        while True:
-            try:
-                index, task = jobs.get_nowait()
-            except queue.Empty:
-                return
-            value = _PENDING
-            if time.monotonic() < deadline:
-                try:
-                    value = task()
-                except Exception:  # noqa: BLE001
-                    value = None
-            with lock:
-                results[index] = value
-                left[0] -= 1
-                if left[0] == 0:
-                    finished.set()
-
-    for _ in range(min(MAX_PARALLEL, len(tasks))):
-        threading.Thread(target=work, daemon=True).start()
-    finished.wait(max(0.0, deadline - time.monotonic()))
-    with lock:
-        return list(results)
 
 
 def _get_json(url: str, deadline: float, max_bytes: int, *, accept: str = "application/json"):
@@ -836,11 +740,6 @@ def _drop_findings(findings: list[dict[str, Any]], package: dict[str, Any]) -> N
     ]  # fmt: skip
 
 
-def _unverified(result: dict[str, Any], target: InstallTarget, name: str, reason: str) -> None:
-    result.setdefault("unverified", []).append(
-        {"ecosystem": target.ecosystem, "name": name, "tool": target.tool,
-         "reason": reason, "outcome": OUTCOME_UNCHECKED}
-    )  # fmt: skip
 
 
 def _entry(package: dict[str, Any]) -> dict[str, Any]:
@@ -875,28 +774,10 @@ def _plural(count: int, word: str) -> str:
     return f"{count} {word}s"
 
 
-def _label(path: Path, root: Path | None) -> str:
-    if root is not None:
-        try:
-            return path.resolve().relative_to(root.resolve()).as_posix()
-        except (OSError, ValueError):
-            pass
-    return str(path)
 
 
-def _inside(path: Path, root: Path) -> bool:
-    try:
-        path.resolve().relative_to(root.resolve())
-    except (OSError, ValueError):
-        return False
-    return True
 
 
-def _same(left: Path, right: Path) -> bool:
-    try:
-        return left.resolve() == right.resolve()
-    except OSError:
-        return False
 
 
 __all__ = [
