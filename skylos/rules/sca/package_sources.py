@@ -7,7 +7,8 @@ a hash). Nothing here fetches, resolves or executes anything.
 
 Source URLs are reported back to the user and may be uploaded, so credentials
 (user info) and query values other than Git refs are removed before a URL is
-kept.
+kept. Archive URLs keep only their scheme, host and file name, so a private
+registry's paths do not leave the machine.
 """
 
 from __future__ import annotations
@@ -152,6 +153,21 @@ def url_hash(url: str | None) -> str | None:
     return match.group(0).lstrip("#&").replace("=", ":", 1)
 
 
+def _archive_display_url(clean: str | None) -> str | None:
+    if clean is None:
+        return None
+    try:
+        parts = urlsplit(clean)
+    except ValueError:
+        return None
+    if not parts.scheme or not parts.netloc:
+        return clean
+    segments = [segment for segment in parts.path.split("/") if segment]
+    if not segments:
+        return f"{parts.scheme}://{parts.netloc}/"
+    return f"{parts.scheme}://{parts.netloc}/.../{segments[-1]}"
+
+
 def source_is_mutable(record: dict) -> bool:
     """A Git source not pinned to a full commit, or a URL without a hash."""
     kind = record.get("source_kind")
@@ -185,6 +201,8 @@ def source_record(
         ref = git_ref_from_url(url)
     if integrity is None and kind == SOURCE_URL:
         integrity = url_hash(url)
+    if kind == SOURCE_URL:
+        clean = _archive_display_url(clean)
     if not isinstance(line, int) or line < 1:
         line = 1
     return {
