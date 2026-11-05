@@ -1598,9 +1598,11 @@ def _run_scan_command(
                 sarif_data["runs"][0].setdefault("properties", {})["grade"] = grade_data
             summary = output_result.get("analysis_summary")
             if isinstance(summary, dict):
+                from skylos.rules.sca.posture import UPLOAD_SUMMARY_KEYS
+
                 coverage = {
                     key: summary[key]
-                    for key in ("sca_coverage", "custom_rules_coverage")
+                    for key in UPLOAD_SUMMARY_KEYS
                     if isinstance(summary.get(key), dict)
                 }
                 if coverage:
@@ -1801,6 +1803,11 @@ def _run_scan_command(
     if not args.gate:
         for warning in sca_coverage_warnings(result):
             console.print(f"[warn]{escape(warning)}[/warn]", soft_wrap=True)
+        from skylos.rules.sca.posture import POSTURE_KEY, posture_line
+
+        posture = posture_line((result.get("analysis_summary") or {}).get(POSTURE_KEY))
+        if posture:
+            console.print(f"[muted]{escape(posture)}[/muted]", soft_wrap=True)
 
     if args.gate:
         incomplete_exit_code = _strict_scan_exit_code(result, args)

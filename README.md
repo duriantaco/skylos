@@ -1091,6 +1091,20 @@ Git, path, SDK, private-registry and branch (`dev-*`) entries are listed as
 not checked and are never queried as public packages. See
 [Dependency scanning](./docs/dependency-scanning.md).
 
+Malware advisories (`MAL-*`, CWE-506, such as the hijacked `chalk`, `debug`
+and `xrpl` releases) are `CRITICAL` with `metadata.malicious`, are never
+demoted as dev-only, and tell you to remove the package and rotate the
+credentials installs could read. The same scan runs supply-chain checks
+through the ca9 engine: dependency confusion for your `internal_packages`
+(`SKY-SCA-SRC001`), Git dependencies not pinned to a commit and URL
+dependencies without a hash (`SKY-SCA-SRC003`), lockfile entries without an
+integrity hash (`SKY-SCA-INT001`), and, when you set `min_release_age_hours`,
+versions newer than that window (`SKY-SCA-AGE001`). JSON adds a package
+inventory and a supply-chain posture (lockfile committed, frozen CI installs,
+install scripts disabled, release-age cooldown, pinned actions, no
+`pull_request_target` checkout). See
+[Supply-chain checks](./docs/dependency-scanning.md#supply-chain-checks).
+
 ## Config And Deployment Support
 
 | Surface | Files | Security Scope |

@@ -29,6 +29,11 @@ class LockfileInventory:
     may also appear here with ``non_registry_source`` or ``non_public_registry``
     reasons: processing succeeded, but their advisory coverage is incomplete.
     Malformed or unsupported source metadata stays in ``unresolved``.
+
+    ``source_records`` describe Git and URL entries (see
+    ``skylos.rules.sca.package_sources.source_record``) for the mutable-source
+    check; they never become advisory queries. Their URLs are already
+    stripped of credentials and are left out of the repr.
     """
 
     format_version: int
@@ -40,3 +45,4 @@ class LockfileInventory:
     unresolved: list[dict] = field(default_factory=list)
     limitations: list[dict] = field(default_factory=list)
     not_checked: list[dict] = field(default_factory=list)
+    source_records: list[dict] = field(default_factory=list, repr=False)

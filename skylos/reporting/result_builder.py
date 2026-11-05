@@ -367,6 +367,9 @@ def _attach_analysis_reports(analyzer, result):
     sca_coverage = getattr(analyzer, "_sca_coverage", None)
     if isinstance(sca_coverage, dict):
         result["analysis_summary"]["sca_coverage"] = dict(sca_coverage)
+    supply_chain_summary = getattr(analyzer, "_supply_chain_summary", None)
+    if isinstance(supply_chain_summary, dict):
+        result["analysis_summary"].update(supply_chain_summary)
 
     dependency_import_notes = getattr(analyzer, "_dependency_import_notes", None)
     if isinstance(dependency_import_notes, dict):

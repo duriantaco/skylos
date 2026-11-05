@@ -100,6 +100,10 @@ Rule IDs use a stable public prefix:
 | npm publisher review | Opt-in `--scan-publisher-changes` checks direct npm dependencies in a lockfile for a newly observed publisher after a long release gap. `publisher_change_findings` are WARN review signals, not evidence of compromise or known vulnerabilities; they do not affect the vulnerability count or gate. |
 | SBOM | `skylos sbom .`; offline dependency inventory as CycloneDX 1.6 (default) or SPDX 2.3 (`--format spdx-json`) JSON, including declared licenses. |
 | License policy | `[tool.skylos] license_deny` / `license_allow` / `license_exceptions` / `license_severity`; flags dependencies whose declared SPDX license violates policy as `SKY-SCA-LIC001`. Unknown licenses are `NOASSERTION` and never fire. |
+| Malicious package (SCA) | An OSV advisory with an `MAL-*` ID or alias, a `malicious-packages-origins` record, or CWE-506. Reported `CRITICAL` under its `SKY-SCA-<id>` rule with `metadata.malicious: true`; never demoted as dev-only and never given a reachability verdict. When OSV is unreachable, the installed ca9 malware feed is checked (`metadata.malware_source: "ca9_feed"`). |
+| Supply-chain policy | `[tool.skylos.supply_chain]` (`internal_packages`, `private_registries`, `trusted_registries`, `min_release_age_hours`, `block_malware`, `check_provenance`), merged with the synced Skylos Cloud `supply_chain` block, which can only tighten it. Read by `--sca` scans (SKY-SCA-SRC001/AGE001) and the install hook. |
+| Dependency inventory | `analysis_summary.dependency_inventory` (`skylos.dependency_inventory.v1`): up to 10,000 sorted, de-duplicated packages (`ecosystem`, `name`, `version`, `direct`, `dev`, `file`) with `total`, `truncated` and `complete`; uploaded so Skylos Cloud can match new malware advisories after the scan. |
+| Supply-chain posture | `analysis_summary.supply_chain_posture` (`skylos.supply_chain_posture.v1`): checks `lockfile_committed`, `frozen_install_ci`, `install_scripts_disabled`, `release_age_cooldown`, `actions_pinned` (from SKY-D292) and `no_pr_target_checkout` (from SKY-D290), each `pass`, `fail`, `not_applicable` or `unknown`; `pass` needs evidence in the repository. |
 | Symlink safety | Checks for file operations that follow repository-controlled symbolic links across the intended scan or output boundary. |
 
 ## CLI Output Modes
@@ -2185,9 +2189,18 @@ suppression, integrations, and public references.
 | SCA-* | varies | Software composition analysis vulnerability | Dependency manifests / installed packages |
 | SKY-SCA-LIC001 | HIGH (configurable via `license_severity`) | Dependency license policy violation | Declared dependency license (offline lockfile / installed metadata) cannot be satisfied without a license in `license_deny`, or outside `license_allow`; `NOASSERTION` never fires |
 | SKY-SCA-NPM-PUB001 | WARN (review only) | npm publisher change after release dormancy | Direct npm dependency pinned in a package lockfile; verify the publisher and release provenance before upgrading or deploying |
+| SKY-SCA-SRC001 | CRITICAL (direct) / HIGH (transitive) | Possible dependency confusion | A package matching `[tool.skylos.supply_chain] internal_packages` resolves from a public or merged index (`--extra-index-url`, a public lockfile registry); decided by the ca9 engine, reported only with configured patterns and registry evidence |
+| SKY-SCA-SRC003 | MEDIUM | Mutable dependency source | A Git dependency not pinned to a full commit, or a URL dependency without a hash, in a requirements file, `pyproject.toml`, `package.json` without a lockfile, or a lockfile Git/URL entry; local paths are not reported |
+| SKY-SCA-INT001 | MEDIUM | Lockfile entry without integrity hash | A registry entry in `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock` or `poetry.lock` with no (or an empty) integrity hash; never `requirements.txt` or npm `inBundle` entries |
+| SKY-SCA-AGE001 | HIGH | Dependency version younger than the release-age window | The locked version was published less than `min_release_age_hours` ago; scans check this only when the policy sets it |
+| SKY-SCA-MAL000 | CRITICAL | Malware feed match without an advisory ID | Offline fallback: the installed ca9 malware feed matched a package but named no advisory ID (matches with an ID use `SKY-SCA-<id>`) |
 
 `SKY-SCA-LIC*` IDs are reserved for license policy and are not OSV advisory IDs.
 `SKY-SCA-NPM-PUB001` is a publisher history review signal, not an OSV advisory ID.
+`SKY-SCA-SRC*`, `SKY-SCA-INT*` and `SKY-SCA-AGE*` are supply-chain checks from
+the ca9 engine (`ca9.api`), not OSV advisory IDs. OSV advisories for malware
+(`MAL-*` IDs or aliases, `malicious-packages-origins`, CWE-506) keep their
+`SKY-SCA-<id>` rule ID and are reported `CRITICAL` with `metadata.malicious`.
 Declared licenses are normalized to SPDX; ambiguous values (for example `BSD`,
 `GPLv3`) are `NOASSERTION`, never guessed.
 

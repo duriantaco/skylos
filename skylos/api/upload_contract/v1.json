@@ -134,6 +134,19 @@
         "unverified: up to 5000 {file: repository-relative path, line} changed lines no test checks"
       ],
       "rule": "Cloud applies the workspace's agent-check settings (agent guardrails policy agent_checks) to the result again: a check the workspace blocks on raises the reported mode unless local loosening is allowed, and a required check that is missing or skipped counts as unfinished regardless of its reported mode. A readable receipt must identify the same full head commit as the upload and dirty must be false; an unavailable full upload commit, abbreviated or mismatched receipt head, or dirty head counts as incomplete. A fail or incomplete outcome fails the quality gate until a person overrides it; a pass never lifts a gate that failed for another reason. An absent or malformed result preserves compatibility: a malformed result is stored as unreadable and changes nothing. Signed summaries preserve receipt base/head/config/version and Cloud's binding; the checks are labeled client_claim, and verified CI upload identity does not attest that tests actually ran. Cloud keeps the first 20 findings per check and the first 20 unverified lines."
+    },
+    "supply_chain": {
+      "version": 1,
+      "location": "runs[0].properties.summary of native Skylos SARIF (legacy and v2 core payloads) and summary of the compatibility payload; dependency_inventory is left out of the small report-init summary",
+      "dependency_inventory": {
+        "schema": "skylos.dependency_inventory.v1",
+        "fields": ["complete: boolean; true only when every supported dependency file was read, every version was exact and nothing was cut", "truncated: boolean; true when more than 10000 packages were found", "total: nonnegative integer; packages found before the cut", "packages: up to 10000 {ecosystem: npm, pypi, go, maven, nuget, crates.io, packagist, rubygems or pub, name (PyPI names PEP 503 normalized), version, direct: boolean, dev: boolean, file: repository-relative path}, sorted by ecosystem, name, version, file and de-duplicated on that tuple"]
+      },
+      "supply_chain_posture": {
+        "schema": "skylos.supply_chain_posture.v1",
+        "fields": ["ecosystems: subset of npm, pypi", "checks: {id, status, detail up to 300 characters, paths: up to 10 repository-relative paths} for ids lockfile_committed, frozen_install_ci, install_scripts_disabled, release_age_cooldown, actions_pinned, no_pr_target_checkout", "status: pass, fail, not_applicable or unknown; pass only with evidence in the repository"]
+      },
+      "rule": "Both blocks are optional scanner claims. Old CLIs omit them; Cloud must accept uploads without them, must not infer a pass from a missing check, and must not let them remove findings or relax a gate."
     }
   },
   "transport": {

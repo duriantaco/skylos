@@ -353,6 +353,21 @@ Git-, Pfad-, SDK-, Private-Registry- und Branch-Einträge (`dev-*`) werden als
 nicht geprüft aufgeführt und nie als öffentliche Pakete abgefragt. Details in
 [Dependency scanning](../dependency-scanning.md).
 
+Malware-Advisories (`MAL-*`, CWE-506, etwa die gekaperten Releases von
+`chalk`, `debug` und `xrpl`) sind `CRITICAL` mit `metadata.malicious`, werden
+nie als reine Dev-Abhängigkeit herabgestuft und sagen dir, das Paket zu
+entfernen und alle Zugangsdaten zu rotieren, die eine Installation lesen
+konnte. Derselbe Scan prüft über die ca9-Engine die Lieferkette: Dependency
+Confusion für deine `internal_packages` (`SKY-SCA-SRC001`), Git-Abhängigkeiten
+ohne festen Commit und URL-Abhängigkeiten ohne Hash (`SKY-SCA-SRC003`),
+Lockfile-Einträge ohne Integritäts-Hash (`SKY-SCA-INT001`) und, wenn du
+`min_release_age_hours` setzt, Versionen jünger als dieses Fenster
+(`SKY-SCA-AGE001`). Das JSON enthält zusätzlich ein Paketinventar und eine
+Lieferketten-Bewertung (Lockfile committet, eingefrorene CI-Installationen,
+Install-Skripte deaktiviert, Mindestalter für Releases, gepinnte Actions, kein
+`pull_request_target`-Checkout). Details in
+[Supply-chain checks](../dependency-scanning.md#supply-chain-checks).
+
 ## Benchmark-Snapshot
 
 Skylos enthält eingecheckte Regression-Suites für Dead Code, Security,

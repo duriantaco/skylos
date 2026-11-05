@@ -188,6 +188,34 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-SCA-SRC001",
+        "Possible dependency confusion",
+        "dependency",
+        "CRITICAL",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-SCA-SRC003",
+        "Mutable dependency source",
+        "dependency",
+        "MEDIUM",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-SCA-INT001",
+        "Lockfile entry without integrity hash",
+        "dependency",
+        "MEDIUM",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-SCA-AGE001",
+        "Dependency version younger than the release-age window",
+        "dependency",
+        "HIGH",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-C401", "Duplicated code clone", "quality", finding_type="advice"
     ),
     RuleCatalogEntry(

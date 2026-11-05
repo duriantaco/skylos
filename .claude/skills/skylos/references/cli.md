@@ -44,7 +44,15 @@ Individual check flags:
   files; `Gemfile` and `build.gradle(.kts)` are not evaluated. Unread files are
   in `sca_coverage.unsupported_inputs`, unparsable ones in
   `sca_coverage.parse_errors`, Git/path/private entries in
-  `sca_coverage.lockfile_not_checked`.
+  `sca_coverage.lockfile_not_checked`. Malware advisories (`MAL-*`, CWE-506)
+  are `CRITICAL` with `metadata.malicious` and are never dev-only demoted.
+  Supply-chain checks via `ca9.api`: `SKY-SCA-SRC001` dependency confusion
+  (needs `[tool.skylos.supply_chain] internal_packages`), `SKY-SCA-SRC003`
+  unpinned Git / unhashed URL, `SKY-SCA-INT001` lockfile entry without
+  integrity, `SKY-SCA-AGE001` (only with `min_release_age_hours`). Missing ca9
+  is a note in `sca_coverage.supply_chain.notes`, not an error.
+  `analysis_summary.dependency_inventory` and `supply_chain_posture` are
+  uploaded next to `sca_coverage`.
 
 ## Output Formats
 
