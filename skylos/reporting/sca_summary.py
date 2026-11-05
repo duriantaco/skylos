@@ -96,7 +96,16 @@ class PackageAdvisories:
             return None
         return max(self.fixed_versions, key=_version_key)
 
+    @property
+    def malicious(self) -> bool:
+        return any(
+            (finding.get("metadata") or {}).get("malicious") is True
+            for finding in self.findings
+        )
+
     def fix_text(self) -> str:
+        if self.malicious:
+            return "remove (malicious package)"
         fix = self.fix_version
         if fix is None:
             return "no fix released"
