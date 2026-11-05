@@ -3744,7 +3744,8 @@ def _run_pre_analysis_steps(args, project_root, console):
                 # A worktree diff runs the repository's clean filters: route it
                 # through the filter-neutralizing builder, or refuse.
                 diff_cmd = worktree_safe_git_command(
-                    ["diff", "--name-only", merge_base], diff_root
+                    ["diff", "--name-only", "--no-relative", "-z", merge_base],
+                    diff_root,
                 )
                 if diff_cmd is None:
                     _exit_diff_unavailable(
@@ -3756,7 +3757,6 @@ def _run_pre_analysis_steps(args, project_root, console):
                     diff_cmd,
                     cwd=diff_root,
                     capture_output=True,
-                    text=True,
                     env=read_only_git_environment(),
                 )
             else:
@@ -3765,10 +3765,11 @@ def _run_pre_analysis_steps(args, project_root, console):
                 from skylos.cicd.review import get_untracked_files
 
                 changed_files = set()
-                for line in diff_result.stdout.strip().splitlines():
-                    changed_files.add(str((diff_root / line).resolve()))
+                for line in os.fsdecode(diff_result.stdout).split("\0"):
+                    if line:
+                        changed_files.add(str(diff_root / line))
                 for line in get_untracked_files(diff_root):
-                    changed_files.add(str((diff_root / line).resolve()))
+                    changed_files.add(str(diff_root / line))
                 if not quiet_output:
                     console.print(
                         f"[brand]--diff-base:[/brand] {len(changed_files)} changed files "

@@ -82,6 +82,13 @@ def _cicd_load_results(args, *, console_factory, load_config_func, gate=False):
 
         previous_diff_base = os.environ.get("SKYLOS_DIFF_BASE")
         diff_base = getattr(args, "diff_base", None)
+        if diff_base or previous_diff_base:
+            analyze_kwargs["changed_file_exclude_folders"] = sorted(
+                parse_exclude_folders(
+                    config_exclude_folders=project_config.get("exclude"),
+                    use_defaults=False,
+                )
+            )
         try:
             if diff_base:
                 os.environ["SKYLOS_DIFF_BASE"] = diff_base

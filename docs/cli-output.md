@@ -1001,6 +1001,11 @@ status 2 instead of returning the full scan as a PR result. Both scoped reports
 do not reuse a full-project assessment for the narrower findings scope.
 The JSON `definitions` and `dead_code_evidence` fields retain full-project
 analysis context; the finding lists and their summary counts are scoped.
+Changed source files are analyzed even under automatically excluded folders
+such as `vendor/`, `dist/`, or `node_modules/`, including nested folders.
+Automatic generated/vendored classification does not hide those changed files.
+Explicit exclusions from configuration or `--exclude-folder` still apply;
+unchanged files in automatically excluded folders stay outside the scan.
 `--diff` with no value uses the pull request target branch from GitHub
 Actions, GitLab CI, Jenkins, Bitbucket Pipelines, Azure Pipelines, Buildkite,
 Travis CI, Drone or Woodpecker (see [Skylos on any CI](./ci-platforms.md)),
