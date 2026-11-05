@@ -976,6 +976,8 @@ def _scan_secret_config_candidates(
     exclude_folders: list[str] | None,
     already_scanned: set[str] | None = None,
     analysis_errors: list[dict] | None = None,
+    included_files=(),
+    included_file_exclude_folders=(),
 ) -> list[dict]:
     if _secrets_scan_ctx is None:
         return []
@@ -985,16 +987,24 @@ def _scan_secret_config_candidates(
         return []
     scanned = already_scanned if already_scanned is not None else set()
     excluded = set(exclude_folders or [])
+    included = {Path(candidate) for candidate in included_files}
+    included_excluded = set(included_file_exclude_folders or [])
     findings: list[dict] = []
-    for candidate in _iter_secret_config_candidates(root, scan_target, changed_files):
+    from itertools import chain
+
+    for candidate in chain(
+        _iter_secret_config_candidates(root, scan_target, changed_files), included
+    ):
         findings.extend(
             _scan_secret_config_candidate(
                 candidate,
                 root=root,
-                excluded=excluded,
+                excluded=included_excluded if candidate in included else excluded,
                 scanned=scanned,
                 scan_target=scan_target,
-                selected_by_changed_files=changed_files is not None,
+                selected_by_changed_files=(
+                    changed_files is not None or candidate in included
+                ),
                 analysis_errors=analysis_errors,
             )
         )
@@ -4002,6 +4012,7 @@ class Skylos:
         skip_generated=False,
         generated_keep_paths=None,
         all_advice=True,
+        changed_file_exclude_folders=None,
     ) -> str:
         if not isinstance(path, (str, list, tuple)):
             raise TypeError(
@@ -4076,11 +4087,50 @@ class Skylos:
         }
         self._project_root = project_root
 
+        # CLI/CI callers distinguish explicit policy from automatic defaults.
+        # Re-include only requested changed files, without walking dependency
+        # trees or overriding an operator's explicit exclusions.
+        diff_scope_enabled = changed_file_exclude_folders is not None and (
+            changed_files is not None or bool(os.environ.get("SKYLOS_DIFF_BASE"))
+        )
+        changed_source_paths = []
+        if diff_scope_enabled and not first_is_symlink:
+            from skylos.core.diff_scope import changed_source_files
+
+            changed_source_paths = changed_source_files(
+                path,
+                project_root,
+                changed_files=changed_files,
+                explicit_exclude_folders=changed_file_exclude_folders,
+                diff_base=os.environ.get("SKYLOS_DIFF_BASE"),
+            )
         files, root = self._discover_files(path, exclude_folders)
+        changed_secret_configs = [
+            candidate
+            for candidate in changed_source_paths
+            if _is_secret_config_candidate(candidate)
+        ]
+        if changed_source_paths:
+            files = list(
+                dict.fromkeys(
+                    [
+                        *files,
+                        *(
+                            candidate
+                            for candidate in changed_source_paths
+                            if candidate.suffix.lower() in ANALYZED_SOURCE_SUFFIXES
+                        ),
+                    ]
+                )
+            )
         self._generated_file_scope = None
         if skip_generated and files:
             files, self._generated_file_scope = _skip_generated_files(
-                path, files, root, generated_keep_paths
+                path,
+                files,
+                root,
+                generated_keep_paths,
+                changed_files=changed_source_paths,
             )
         verification_surface_root = _verification_surface_root(
             path,
@@ -4419,6 +4469,8 @@ class Skylos:
                     changed_files=changed_files,
                     exclude_folders=exclude_folders,
                     analysis_errors=result["analysis_errors"],
+                    included_files=changed_secret_configs,
+                    included_file_exclude_folders=changed_file_exclude_folders,
                 )
                 if secret_findings:
                     result["secrets"] = secret_findings
@@ -4962,25 +5014,18 @@ class Skylos:
 
             if enable_secrets and _secrets_scan_ctx is not None:
                 scanned = set(secret_scanned_files)
-                cfg_candidates = _iter_secret_config_candidates(
-                    root,
-                    secret_scan_target,
-                    secret_changed_files,
-                )
-
-                excluded = set(exclude_folders or [])
-                for cfg_file in cfg_candidates:
-                    all_secrets.extend(
-                        _scan_secret_config_candidate(
-                            Path(cfg_file),
-                            root=root,
-                            excluded=excluded,
-                            scanned=scanned,
-                            scan_target=secret_scan_target,
-                            selected_by_changed_files=secret_changed_files is not None,
-                            analysis_errors=analysis_errors,
-                        )
+                all_secrets.extend(
+                    _scan_secret_config_candidates(
+                        root=root,
+                        scan_target=secret_scan_target,
+                        changed_files=secret_changed_files,
+                        exclude_folders=exclude_folders,
+                        already_scanned=scanned,
+                        analysis_errors=analysis_errors,
+                        included_files=changed_secret_configs,
+                        included_file_exclude_folders=changed_file_exclude_folders,
                     )
+                )
 
         finally:
             if injected:
@@ -5083,7 +5128,9 @@ class Skylos:
         # CLI callers already resolved config/default excludes and --include.
         # Direct API callers without an effective list still need config excludes.
         regression_excludes = (
-            exclude_folders
+            changed_file_exclude_folders
+            if diff_scope_enabled
+            else exclude_folders
             if exclude_folders is not None
             else (project_cfg.get("exclude") or [])
         )
@@ -6453,15 +6500,16 @@ class Skylos:
         return json.dumps(result, indent=2)
 
 
-def _skip_generated_files(path, files, root, keep_paths):
+def _skip_generated_files(path, files, root, keep_paths, *, changed_files=()):
     """Apply the default generated/vendored scope (``skylos.core.generated_files``).
 
-    Files named on the command line are never skipped.
+    Files named on the command line or selected for diff review are never skipped.
     """
     from skylos.core.generated_files import partition_generated_files
 
     targets = path if isinstance(path, (list, tuple)) else [path]
     explicit_files = [Path(target) for target in targets if Path(target).is_file()]
+    explicit_files.extend(changed_files)
     return partition_generated_files(
         files,
         Path(root),
@@ -6608,6 +6656,7 @@ def analyze(
     skip_generated=False,
     generated_keep_paths=None,
     all_advice=True,
+    changed_file_exclude_folders=None,
 ) -> str:
     return Skylos().analyze(
         path,
@@ -6635,6 +6684,7 @@ def analyze(
         skip_generated=skip_generated,
         generated_keep_paths=generated_keep_paths,
         all_advice=all_advice,
+        changed_file_exclude_folders=changed_file_exclude_folders,
     )
 
 

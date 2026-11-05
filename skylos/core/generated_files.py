@@ -14,6 +14,8 @@ two kinds of files nobody on the team wrote by hand:
 The CLI skips them by default and says so in one line; ``--include-generated``,
 ``--no-default-excludes``, ``[tool.skylos] include_generated = true``,
 ``--include-folder PATH`` or naming a file on the command line scans them.
+PR/diff scans also retain changed source files regardless of automatic
+generated/vendored classification; explicit policy exclusions still apply.
 
 A third kind is code a tool writes and marks as generated in its header
 (``// Code generated ... DO NOT EDIT.``, ``@generated``, ``This file was
