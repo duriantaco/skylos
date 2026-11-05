@@ -1245,24 +1245,17 @@ def _handle_pre_bash(payload, root, client, deps, record):
         install_targets,
         split_targets,
     )
+    from skylos.commands.hook_supply_chain import INSTALL_CHECK_SECONDS
 
+    deadline = time.monotonic() + INSTALL_CHECK_SECONDS
     targets = install_targets(command, cwd, root=root, lockfiles=True)
     registry_targets, result = split_targets(targets)
+    chain, chain_problem = _supply_chain_policy(root)
+    trusted = _declared_registries(policy, chain)
     if registry_targets:
         # Only registry lookups need the (heavier) checker module.
         from skylos.rules.ai_defect.install_command import check_install_command
-        from skylos.supply_chain.policy import load_supply_chain_policy
 
-        chain = load_supply_chain_policy(root)
-        trusted = tuple(
-            dict.fromkeys(
-                (
-                    *policy.trusted_registries,
-                    *chain.trusted_registries,
-                    *chain.private_registries,
-                )
-            )
-        )
         result = check_install_command(
             command,
             root,
@@ -1272,20 +1265,50 @@ def _handle_pre_bash(payload, root, client, deps, record):
             trusted_registries=trusted,
             home=deps.env.get("HOME") or None,
             targets=targets,
+            deadline=deadline,
         )
-    if result.get("checked") or any(t.kind == MANIFEST for t in targets):
+    routed = {u.get("outcome") for u in result.get("unverified") or []}
+    if (
+        result.get("checked")
+        or routed & {"allowlisted", "registry_override"}
+        or any(t.kind == MANIFEST for t in targets)
+    ):
         from skylos.commands.hook_supply_chain import check_supply_chain
 
         try:
-            check_supply_chain(
-                result, targets, root=root, sources=deps.supply_chain_sources, record=record
-            )
+            check_supply_chain(result, targets, root=root, sources=deps.supply_chain_sources,
+                               record=record, deadline=deadline, policy=chain,
+                               trusted=trusted)  # fmt: skip
         except Exception:  # noqa: BLE001
             result.setdefault("unverified", []).append(
                 {"tool": "install", "name": "packages", "outcome": "unchecked",
                  "reason": "the malware and release-age check failed"}
             )  # fmt: skip
+    if chain_problem and (registry_targets or any(t.kind == MANIFEST for t in targets)):
+        result.setdefault("unverified", []).append(
+            {"tool": "install", "name": "policy", "outcome": "unchecked", "reason": chain_problem}
+        )
     return _install_output(result, policy, client, record)
+
+
+def _supply_chain_policy(root):
+    """The supply-chain policy, and a problem when Cloud's could not be read."""
+    from skylos.config import ConfigError
+    from skylos.supply_chain.policy import SupplyChainPolicy, load_supply_chain_policy
+
+    try:
+        return load_supply_chain_policy(root), ""
+    except ConfigError:
+        return SupplyChainPolicy(), "the synced Skylos Cloud policy could not be read"
+
+
+def _declared_registries(policy, chain) -> tuple[str, ...]:
+    """Registries the hook trusts. Cloud's lists, when Cloud sets them,
+    replace the repository's ``trusted_registries``."""
+    cloud = (*chain.trusted_registries, *chain.private_registries)
+    if chain.registries_from_cloud:
+        return tuple(dict.fromkeys(cloud))
+    return tuple(dict.fromkeys((*policy.trusted_registries, *cloud)))
 
 
 def _hook_bypass_reason(command, cwd, deps, record) -> str | None:
@@ -1338,6 +1361,9 @@ def _install_output(result, policy, client, record):
     if unknown:
         record["unverified"] = len(unknown)
 
+    notes = [str(n) for n in result.get("notes") or [] if n]
+    if notes:
+        record["notes"] = len(notes)
     decision = None
     if direct or overrides:
         decision = policy.direct_source
@@ -1346,6 +1372,14 @@ def _install_output(result, policy, client, record):
     if findings:
         decision = "deny"
     if decision is None:
+        if notes:
+            record["outcome"] = "note"
+            text = "Skylos checked this install, with gaps:\n" + "\n".join(
+                f"- {_clean_message(n, MAX_MESSAGE_CHARS)}" for n in notes[:MAX_ITEMS]
+            )
+            if client == "cursor":
+                record["_stderr_notes"] = [text]
+            return _with_notice("pre-bash", client, _allow_output("pre-bash", client), text)
         record["outcome"] = "pass"
         return _allow_output("pre-bash", client)
     if decision == "ask" and client == "codex":
@@ -1362,6 +1396,9 @@ def _install_output(result, policy, client, record):
     if unknown:
         items = [_unverified_item(u) for u in unknown[:MAX_ITEMS]]
         sections.append("Packages Skylos could not verify:\n" + "\n".join(items))
+    if notes:
+        items = [f"- {_clean_message(n, MAX_MESSAGE_CHARS)}" for n in notes[:MAX_ITEMS]]
+        sections.append("Not fully checked:\n" + "\n".join(items))
     body = "\n".join(sections)
     if policy.problems:
         body += "\nSkylos hook policy problem, using the default: " + "; ".join(

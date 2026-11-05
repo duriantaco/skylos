@@ -62,6 +62,7 @@ def summary(command: str, root: Path, cwd: Path | None = None) -> list[str]:
 REGISTRY_CASES = [
     # pip and friends
     ("pip install requests", ["PyPI:requests"]),
+    ("pip download requests", ["PyPI:requests"]),
     ("pip3 install requests flask", ["PyPI:requests", "PyPI:flask"]),
     ("pip3.12 install httpx", ["PyPI:httpx"]),
     ("pip install requests==2.31.0", ["PyPI:requests==2.31.0"]),
@@ -456,7 +457,6 @@ NO_FETCH_CASES = [
     ("pip show requests", []),
     ("pip freeze > requirements.txt", []),
     ("pip uninstall -y requests", []),
-    ("pip download requests", []),
     ("python -m pytest -q", []),
     ("python setup.py install", []),
     ("python manage.py install foo", []),

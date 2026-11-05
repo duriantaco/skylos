@@ -11,10 +11,10 @@ Sources read (all cheap, no subprocesses):
 * npm: ``npm_config_registry`` and similar in the hook's environment,
   ``.npmrc`` from the working directory up to the project root, and the
   user's ``~/.npmrc`` (``registry=`` and ``@scope:registry=``);
-* Python: ``PIP_INDEX_URL``/``PIP_EXTRA_INDEX_URL``/``UV_*INDEX*`` in the
-  environment, ``pip.conf``/``pip.ini`` in the user and virtualenv locations,
-  ``uv.toml``, and ``[tool.uv]``/``[[tool.uv.index]]``/``[[tool.poetry.source]]``
-  /``[[tool.pdm.source]]`` in the project's ``pyproject.toml``;
+* Python, per manager, only what that manager reads: pip (and pipx, pipenv)
+  ``PIP_INDEX_URL``/``PIP_EXTRA_INDEX_URL`` and ``pip.conf``/``pip.ini``; uv
+  ``UV_*INDEX*``, ``uv.toml`` and ``[tool.uv]``/``[[tool.uv.index]]``; poetry
+  ``[[tool.poetry.source]]``; pdm ``[[tool.pdm.source]]``;
 * Go: ``GOPROXY``/``GOPRIVATE``/``GONOPROXY`` from the environment or the
   ``go env -w`` file.
 """
@@ -48,9 +48,11 @@ class RegistryContext:
     pypi_indexes: list[str] = field(default_factory=list)
     go_proxies: list[str] = field(default_factory=list)
     go_private: list[str] = field(default_factory=list)  # GOPRIVATE patterns
+    pypi_by_manager: dict[str, list[str]] = field(default_factory=dict)
+    npm_tag: str = ""
 
-    def alternate(self, ecosystem: str, name: str) -> list[str]:
-        """Non-public registries ``name`` may come from."""
+    def alternate(self, ecosystem: str, name: str, tool: str = "") -> list[str]:
+        """Non-public registries ``name`` may come from when ``tool`` installs it."""
         if ecosystem == NPM:
             if name.startswith("@"):
                 scope = name.split("/", 1)[0].lower()
@@ -58,7 +60,9 @@ class RegistryContext:
                     return [self.npm_scopes[scope]]
             return list(self.npm_default)
         if ecosystem == PYPI:
-            return list(self.pypi_indexes)
+            if not tool:
+                return list(self.pypi_indexes)
+            return list(self.pypi_by_manager.get(python_manager(tool), []))
         if ecosystem == GO:
             return list(self.go_proxies)
         return []
@@ -150,6 +154,8 @@ def _npm_context(context, root, cwd, env, home) -> None:
             if not match:
                 continue
             key, value = match.group("key").strip(), _unquote(match.group("value"))
+            if key == "tag" and value:
+                context.npm_tag = value
             if key == "registry":
                 context.npm_default = [value] if not _public(value, NPM) else []
             elif key.startswith("@") and key.endswith(":registry"):
@@ -161,16 +167,29 @@ def _npm_context(context, root, cwd, env, home) -> None:
     for name, value in env.items():
         if name.lower() == "npm_config_registry" and value:
             context.npm_default = [value] if not _public(value, NPM) else []
+        if name.lower() == "npm_config_tag" and value:
+            context.npm_tag = value
 
 
 # -- Python ---------------------------------------------------------------
 
 
+def python_manager(tool: str) -> str:
+    """Which Python manager's configuration applies to an install ``tool``."""
+    first = tool.split(" ", 1)[0].lower()
+    if first in {"uv", "uvx"}:
+        return "uv"
+    if first in {"poetry", "pdm"}:
+        return first
+    if tool.lower().startswith("python -m uv"):
+        return "uv"
+    return "pip"
+
+
 def _python_context(context, root, env, home) -> None:
-    indexes: list[str] = []
-    for name in ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "UV_INDEX_URL",
-                 "UV_EXTRA_INDEX_URL", "UV_DEFAULT_INDEX", "UV_INDEX"):  # fmt: skip
-        indexes.extend(env.get(name, "").split())
+    pip: list[str] = []
+    for name in ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL"):
+        pip.extend(env.get(name, "").split())
     for path in _pip_config_files(env, home):
         text = _read(path)
         if text is None:
@@ -184,23 +203,42 @@ def _python_context(context, root, env, home) -> None:
             if not parser.has_section(section):
                 continue
             for key in ("index-url", "extra-index-url", "index_url", "extra_index_url"):
-                indexes.extend(parser.get(section, key, fallback="").split())
-    tomls: list[tuple[Path, tuple[str, ...]]] = []
+                pip.extend(parser.get(section, key, fallback="").split())
+    uv: list[str] = []
+    for name in ("UV_INDEX_URL", "UV_EXTRA_INDEX_URL", "UV_DEFAULT_INDEX", "UV_INDEX"):
+        uv.extend(env.get(name, "").split())
+    poetry: list[str] = []
+    pdm: list[str] = []
     if root is not None:
-        tomls.append((Path(root) / "pyproject.toml", ("tool",)))
-        tomls.append((Path(root) / "uv.toml", ()))
-    config_home = env.get("XDG_CONFIG_HOME") or (str(home / ".config") if home else "")
+        uv.extend(_toml_indexes(Path(root) / "uv.toml", ()))
+        uv.extend(_toml_indexes(Path(root) / "pyproject.toml", ("tool",)))
+        poetry.extend(_tool_sources(Path(root) / "pyproject.toml", "poetry"))
+        pdm.extend(_tool_sources(Path(root) / "pyproject.toml", "pdm"))
+    config_home = env.get("XDG_CONFIG_HOME") or ""
+    if not config_home and home is not None:
+        config_home = str(home / ".config")
     if config_home:
-        tomls.append((Path(config_home) / "uv" / "uv.toml", ()))
-    for path, prefix in tomls:
-        indexes.extend(_toml_indexes(path, prefix))
+        uv.extend(_toml_indexes(Path(config_home) / "uv" / "uv.toml", ()))
+    context.pypi_by_manager = {
+        "pip": _non_public_indexes(pip),
+        "uv": _non_public_indexes(uv),
+        "poetry": _non_public_indexes(poetry),
+        "pdm": _non_public_indexes(pdm),
+    }
     context.pypi_indexes = _dedupe(
-        index.split("=", 1)[1]
-        if "=" in index and "://" in index.split("=", 1)[1]
-        else index
-        for index in indexes
-        if index and not _public(index.split("=", 1)[-1], PYPI)
+        index for indexes in context.pypi_by_manager.values() for index in indexes
     )
+
+
+def _non_public_indexes(indexes: list[str]) -> list[str]:
+    found = []
+    for index in indexes:
+        value = index
+        if "=" in index and "://" in index.split("=", 1)[1]:
+            value = index.split("=", 1)[1]
+        if value and not _public(value, PYPI):
+            found.append(value)
+    return _dedupe(found)
 
 
 def _pip_config_files(env, home) -> list[Path]:
@@ -256,14 +294,31 @@ def _toml_indexes(path: Path, prefix: tuple[str, ...]) -> list[str]:
         for entry in entries if isinstance(entries, list) else []:
             if isinstance(entry, dict) and isinstance(entry.get("url"), str):
                 found.append(entry["url"])
-    if prefix:
-        for tool in ("poetry", "pdm"):
-            table = data.get(tool, {})
-            sources = table.get("source", []) if isinstance(table, dict) else []
-            for entry in sources if isinstance(sources, list) else []:
-                if isinstance(entry, dict) and isinstance(entry.get("url"), str):
-                    found.append(entry["url"])
     return found
+
+
+def _tool_sources(path: Path, tool: str) -> list[str]:
+    text = _read(path)
+    if text is None:
+        return []
+    try:
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            import tomli as tomllib  # type: ignore[no-redef]
+        data = tomllib.loads(text)
+    except (ValueError, ImportError):
+        return []
+    table = data.get("tool", {})
+    if isinstance(table, dict):
+        table = table.get(tool, {})
+    if not isinstance(table, dict):
+        return []
+    sources = table.get("source", [])
+    if not isinstance(sources, list):
+        return []
+    return [entry["url"] for entry in sources
+            if isinstance(entry, dict) and isinstance(entry.get("url"), str)]  # fmt: skip
 
 
 # -- Go -------------------------------------------------------------------
@@ -351,4 +406,4 @@ def _dedupe(values) -> list[str]:
     return list(dict.fromkeys(v for v in values if v))
 
 
-__all__ = ["RegistryContext", "is_trusted", "registry_context"]
+__all__ = ["RegistryContext", "is_trusted", "python_manager", "registry_context"]

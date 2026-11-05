@@ -82,6 +82,7 @@ class SimpleCommand:
     dynamic: frozenset[int] = frozenset()
     # xargs: more arguments come from stdin.
     more_args: bool = False
+    outputs: tuple[str, ...] = ()
 
     def is_dynamic(self, index: int) -> bool:
         return index in self.dynamic
@@ -111,6 +112,7 @@ class _Walker:
         self.subshells: list[tuple[Path, dict[str, str]]] = []
         self.bodies: list[str] = []
         self.parsed_bodies: set[int] = set()
+        self._outputs: tuple[str, ...] = ()
 
     def parse(self, command: str) -> None:
         text, self.bodies = prepare(command)
@@ -118,6 +120,7 @@ class _Walker:
             for simple in pipeline:
                 if len(self.commands) >= MAX_COMMANDS:
                     return
+                self._outputs = tuple(simple.outputs)
                 self._command(list(simple.words))
 
     # -- one simple command ---------------------------------------------
@@ -207,6 +210,7 @@ class _Walker:
                 cwd=cwd,
                 dynamic=dynamic,
                 more_args=more_args,
+                outputs=self._outputs,
             )
         )
 
