@@ -828,8 +828,20 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-SC001": {
         "default": "Fix the contract issue the message names before deploying."
     },
+    "SKY-SCA-AGE001": {
+        "default": "Pin the newest version older than the release-age window, or wait."
+    },
+    "SKY-SCA-INT001": {
+        "default": "Regenerate the lockfile with your package manager so every entry has a hash."
+    },
     "SKY-SCA-LIC001": {
         "default": "Replace the dependency, or record a license exception your policy allows."
+    },
+    "SKY-SCA-SRC001": {
+        "default": "Install internal packages only from your private registry (exclusive index or scoped registry)."
+    },
+    "SKY-SCA-SRC003": {
+        "default": "Pin the Git dependency to a full commit SHA, or add a hash to the URL dependency."
     },
     "SKY-T101": {"default": "Add type annotations to the parameters."},
     "SKY-T102": {"default": "Add a return type annotation."},
