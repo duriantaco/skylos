@@ -618,10 +618,14 @@ class _Effects:
             )
         return True
 
-    def implicit_use_is_safe(self, node, sensitive):
+    def implicit_use_is_safe(self, node, sensitive, immutable_values=None):
+        immutable_values = (
+            _IMMUTABLE_VALUES if immutable_values is None else immutable_values
+        )
+
         def capability(value):
             return any(
-                sensitive(name) and name not in _IMMUTABLE_VALUES
+                sensitive(name) and name not in immutable_values
                 for name in self.refs(value)
             )
 
@@ -806,7 +810,10 @@ class _Effects:
         key=None,
         callable_names=(),
         opaque_ok=False,
+        immutable_values=(),
     ):
+        if immutable_values and key is not None:
+            key = (key, "immutable-values", tuple(sorted(immutable_values)))
         if not self.complete:
             return False
         if key is not None and key in self.stable_results:
@@ -816,18 +823,26 @@ class _Effects:
             environment=environment,
             callable_names=callable_names,
             opaque_ok=opaque_ok,
+            immutable_values=immutable_values,
         )
         if key is not None:
             self.stable_results[key] = result
         return result and self.complete
 
     def _stable_scan(
-        self, sensitive, *, environment=False, callable_names=(), opaque_ok=False
+        self,
+        sensitive,
+        *,
+        environment=False,
+        callable_names=(),
+        opaque_ok=False,
+        immutable_values=(),
     ):
         if not self.complete:
             return False
+        immutable_values = _IMMUTABLE_VALUES | frozenset(immutable_values)
         for node in self.nodes:
-            if not self.implicit_use_is_safe(node, sensitive):
+            if not self.implicit_use_is_safe(node, sensitive, immutable_values):
                 return False
             if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(
                 node.ctx, (ast.Store, ast.Del)
@@ -837,7 +852,7 @@ class _Effects:
             if isinstance(node, ast.Call):
                 functions = self.refs(node.func)
                 if any(
-                    sensitive(name) and name not in _IMMUTABLE_VALUES
+                    sensitive(name) and name not in immutable_values
                     for name in functions
                 ):
                     if not self.canonical_reference(node.func) or not functions <= set(
@@ -886,7 +901,7 @@ class _Effects:
                         return False
                 arguments = [*node.args, *[kw.value for kw in node.keywords]]
                 escaped = any(
-                    sensitive(name) and name not in _IMMUTABLE_VALUES
+                    sensitive(name) and name not in immutable_values
                     for argument in arguments
                     for name in self.refs(argument)
                 )
@@ -900,7 +915,7 @@ class _Effects:
                     return False
             elif isinstance(node, (ast.Return, ast.Yield, ast.YieldFrom, ast.Lambda)):
                 if any(
-                    sensitive(name) and name not in _IMMUTABLE_VALUES
+                    sensitive(name) and name not in immutable_values
                     for name in self.refs(
                         node.body if isinstance(node, ast.Lambda) else node.value
                     )
@@ -911,7 +926,7 @@ class _Effects:
                     node.targets if isinstance(node, ast.Assign) else [node.target]
                 )
                 if not all(isinstance(target, ast.Name) for target in targets) and any(
-                    sensitive(name) and name not in _IMMUTABLE_VALUES
+                    sensitive(name) and name not in immutable_values
                     for name in self.refs(node.value)
                 ):
                     return False
@@ -955,7 +970,9 @@ def import_environment_is_stable(tree, opaque_ok=False):
     )
 
 
-def _provider_effects(qualified_names, tree, local_symbols=(), opaque_ok=False):
+def _provider_effects(
+    qualified_names, tree, local_symbols=(), opaque_ok=False, immutable_values=()
+):
     if not import_environment_is_stable(tree, opaque_ok):
         return False
     effects = _effects(tree)
@@ -990,6 +1007,7 @@ def _provider_effects(qualified_names, tree, local_symbols=(), opaque_ok=False):
         key=("provider", tuple(sorted(names)), opaque_ok),
         callable_names=names | safe_methods,
         opaque_ok=opaque_ok,
+        immutable_values=immutable_values,
     )
 
 

@@ -2252,7 +2252,7 @@ def _rebinding_cutoff(statement: ast.AST, name: str, index: _ModuleCalls):
 
 
 def _name_reaches_security_use(
-    target: ast.AST, statement: ast.AST, hops: int, seen: set
+    target: ast.AST, statement: ast.AST, hops: int, seen: set, follow=None, spend=None
 ) -> bool:
     """Later reads of a local name bound to a weak random value."""
     if hops <= 0 or not isinstance(target, ast.Name):
@@ -2269,14 +2269,14 @@ def _name_reaches_security_use(
     start = (statement.end_lineno, statement.end_col_offset)
     cutoff = _rebinding_cutoff(statement, target.id, index)
     for load in _scope_name_loads(scope).get(target.id, ()):
-        if not index.spend():
+        if not (spend or index.spend)():
             return False
         position = (load.lineno, load.col_offset)
         if position < start:
             continue
         if cutoff is not None and position >= cutoff:
             continue
-        if _weak_random_value_reaches_security_use(load, hops - 1, seen):
+        if (follow or _weak_random_value_reaches_security_use)(load, hops - 1, seen):
             return True
     return False
 
@@ -2455,6 +2455,238 @@ def _weak_random_has_security_context(
         return True
 
     return _weak_random_value_reaches_security_use(node, _WEAK_RANDOM_FLOW_HOPS, set())
+
+
+def _client_nonce_material_reaches_return(node: ast.Call, context) -> bool:
+    """Additional, conservative proof for the standard client-nonce spelling.
+
+    Only returned material counts. Unknown transforms and functions containing
+    a cryptographic generator defer this additional recall; existing weak-random
+    findings are never suppressed by this proof.
+    """
+    function = _enclosing_function(node)
+    if function is None or function.name.strip("_") != "cnonce":
+        return False
+    module, _, imports = _yaml_import_context(node)
+    if module is None or imports is None or function not in module.body:
+        return False
+    from .native_function_snapshot import (
+        native_function_snapshot_is_stable,
+        nonce_builtin_references,
+        nonce_imported_provider_is_stable,
+    )
+
+    source_name = _dotted_name(node.func)
+    source_provider = (
+        imports.resolved_import(function, source_name) if source_name else None
+    )
+    if not source_provider or not (
+        nonce_imported_provider_is_stable(
+            source_provider,
+            module,
+            context.get("filename"),
+            context.get("project_root"),
+        )
+    ):
+        return False
+
+    strong_generators = {
+        "secrets.token_bytes",
+        "secrets.token_hex",
+        "secrets.token_urlsafe",
+        "os.urandom",
+        "random.SystemRandom",
+    }
+    for part in ast.walk(function):
+        if isinstance(part, ast.Call):
+            dotted = _dotted_name(part.func)
+            if (
+                dotted
+                and imports.resolved_import(function, dotted) in strong_generators
+            ):
+                return False
+
+    transparent_providers = {
+        "hashlib.md5",
+        "hashlib.sha1",
+        "hashlib.sha224",
+        "hashlib.sha256",
+        "hashlib.sha384",
+        "hashlib.sha512",
+        "base64.b64encode",
+        "base64.urlsafe_b64encode",
+        "binascii.hexlify",
+    }
+    transparent_methods = {"encode", "decode", "hex", "hexdigest", "digest", "to_bytes"}
+    primitive_builtins = nonce_builtin_references(
+        module,
+        function,
+        context.get("filename"),
+        context.get("project_root"),
+        {"str", "bytes", "hex", "range"},
+    )
+    builtin_calls = primitive_builtins
+    # Defer this additional recall when other, opaque entropy could contribute.
+    # This deliberately covers only parameterless primitive nonce builders.
+    args = function.args
+    if (
+        function.decorator_list
+        or args.posonlyargs
+        or args.args
+        or args.kwonlyargs
+        or args.vararg
+        or args.kwarg
+    ):
+        return False
+    parts = list(ast.walk(function))
+    if len(parts) > 2048 or any(
+        isinstance(
+            part, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        )
+        and part is not function
+        for part in parts
+    ):
+        return False
+    bound = {
+        part.id
+        for part in parts
+        if isinstance(part, ast.Name) and isinstance(part.ctx, ast.Store)
+    }
+    calls = [part for part in parts if isinstance(part, ast.Call)]
+    callee_parts = set()
+    for call in calls:
+        head = call.func
+        while isinstance(head, ast.Attribute):
+            callee_parts.add(id(head))
+            head = head.value
+        dotted = _dotted_name(call.func)
+        if isinstance(head, ast.Name) and (
+            id(head) in primitive_builtins
+            or dotted
+            and imports.resolved_import(function, dotted)
+        ):
+            callee_parts.add(id(head))
+    if any(
+        isinstance(part, ast.Name)
+        and isinstance(part.ctx, ast.Load)
+        and part.id not in bound
+        and id(part) not in callee_parts
+        or isinstance(part, ast.Attribute)
+        and id(part) not in callee_parts
+        for part in parts
+    ):
+        return False
+    weak_providers = {"random." + name for name in _WEAK_RANDOM_FUNCTIONS}
+    for call in calls:
+        dotted = _dotted_name(call.func)
+        provider = imports.resolved_import(function, dotted) if dotted else None
+        method = call.func if isinstance(call.func, ast.Attribute) else None
+        if provider == "time.ctime":
+            if not native_function_snapshot_is_stable(
+                provider, module, context.get("filename"), context.get("project_root")
+            ) and not nonce_imported_provider_is_stable(
+                provider, module, context.get("filename"), context.get("project_root")
+            ):
+                return False
+        elif (
+            provider in weak_providers
+            or provider in transparent_providers
+            or id(call.func) in primitive_builtins
+        ):
+            continue
+        elif method is None or not (
+            method.attr in transparent_methods
+            and provider is None
+            or method.attr == "join"
+            and isinstance(method.value, ast.Constant)
+            and isinstance(method.value.value, (str, bytes))
+        ):
+            return False
+    budget = [512]
+
+    def spend():
+        budget[0] -= 1
+        return budget[0] >= 0
+
+    def follow(current, hops, seen):
+        while (parent := getattr(current, "parent", None)) is not None:
+            if not spend():
+                return False
+            if isinstance(parent, ast.Return):
+                return _enclosing_function(parent) is function
+            if isinstance(parent, (ast.Assign, ast.AnnAssign)):
+                if current is not parent.value:
+                    return False
+                targets = (
+                    parent.targets
+                    if isinstance(parent, ast.Assign)
+                    else [parent.target]
+                )
+                return any(
+                    _name_reaches_security_use(t, parent, hops, seen, follow, spend)
+                    for t in targets
+                )
+            if isinstance(parent, ast.Call):
+                dotted = _dotted_name(parent.func)
+                provider = imports.resolved_import(function, dotted) if dotted else None
+                method = parent.func if isinstance(parent.func, ast.Attribute) else None
+                transparent = (
+                    id(parent.func) in builtin_calls
+                    or provider in transparent_providers
+                    and (
+                        nonce_imported_provider_is_stable(
+                            provider,
+                            module,
+                            context.get("filename", "<tree-only>"),
+                            context.get("project_root"),
+                        )
+                        or native_function_snapshot_is_stable(
+                            provider,
+                            module,
+                            context.get("filename", "<tree-only>"),
+                            context.get("project_root"),
+                        )
+                    )
+                    or method is not None
+                    and (
+                        method.attr in transparent_methods
+                        and current is parent.func
+                        or method.attr == "join"
+                        and isinstance(method.value, ast.Constant)
+                        and isinstance(method.value.value, (str, bytes))
+                    )
+                )
+                if not transparent:
+                    return False
+            elif isinstance(parent, ast.Attribute):
+                if parent.attr not in transparent_methods or not isinstance(
+                    getattr(parent, "parent", None), ast.Call
+                ):
+                    return False
+            elif isinstance(parent, ast.Subscript):
+                if current is not parent.value and not (
+                    current is parent.slice
+                    and isinstance(parent.value, ast.Constant)
+                    and isinstance(parent.value.value, (str, bytes))
+                ):
+                    return False
+            elif isinstance(parent, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+                if current is not parent.elt:
+                    return False
+            elif isinstance(parent, (ast.Tuple, ast.List)):
+                if current not in parent.elts:
+                    return False
+            elif isinstance(parent, ast.IfExp):
+                if current is parent.test:
+                    return False
+            elif not isinstance(
+                parent, (ast.BinOp, ast.FormattedValue, ast.JoinedStr, ast.UnaryOp)
+            ):
+                return False
+            current = parent
+        return False
+
+    return follow(node, _WEAK_RANDOM_FLOW_HOPS, set())
 
 
 # App factories / constructors whose ``.run(debug=True)`` starts the Werkzeug
@@ -2673,7 +2905,9 @@ class DangerousCallsRule(SkylosRule):
                 continue
 
             if opts and opts.get("weak_random"):
-                if not _weak_random_has_security_context(node):
+                if not _weak_random_has_security_context(
+                    node
+                ) and not _client_nonce_material_reaches_return(node, context):
                     continue
 
             if opts and opts.get("security_optout"):
