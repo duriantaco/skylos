@@ -342,6 +342,7 @@ _SQL_TOKENS = (
     "objects.raw",
     ".fetch",
     "execute_sql",
+    "query_items",
 )
 _SQL_RAW_TOKENS = (
     ".raw(",
