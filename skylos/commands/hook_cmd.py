@@ -1251,14 +1251,25 @@ def _handle_pre_bash(payload, root, client, deps, record):
     if registry_targets:
         # Only registry lookups need the (heavier) checker module.
         from skylos.rules.ai_defect.install_command import check_install_command
+        from skylos.supply_chain.policy import load_supply_chain_policy
 
+        chain = load_supply_chain_policy(root)
+        trusted = tuple(
+            dict.fromkeys(
+                (
+                    *policy.trusted_registries,
+                    *chain.trusted_registries,
+                    *chain.private_registries,
+                )
+            )
+        )
         result = check_install_command(
             command,
             root,
             cache_root=_state_root(root),
             cwd=cwd,
             env=deps.env,
-            trusted_registries=policy.trusted_registries,
+            trusted_registries=trusted,
             home=deps.env.get("HOME") or None,
             targets=targets,
         )

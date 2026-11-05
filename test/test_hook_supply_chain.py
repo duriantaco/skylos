@@ -298,6 +298,29 @@ def test_private_registry_package_is_not_sent_to_public_sources(project):
     assert sources.queried == []
 
 
+@pytest.mark.parametrize(
+    "pyproject, synced",
+    [
+        ('[tool.skylos.supply_chain]\nprivate_registries = ["https://npm.corp.example"]\n', None),
+        (None, "supply_chain:\n  trusted_registries: ['https://npm.corp.example']\n"),
+    ],
+)
+def test_supply_chain_registries_keep_internal_packages_off_public_sources(project, pyproject, synced):
+    if synced is not None:
+        (project / ".skylos").mkdir(exist_ok=True)
+        (project / ".skylos" / "config.yaml").write_text(synced)  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
+    sources = FakeSources()
+    command = "npm install --registry https://npm.corp.example internal@1.0.0"
+    assert hook(project, command, sources, pyproject=pyproject) == ("allow", "")
+    assert sources.queried == []
+
+
+def test_public_install_is_still_checked_when_a_private_registry_is_configured(project):
+    pyproject = '[tool.skylos.supply_chain]\nprivate_registries = ["https://npm.corp.example"]\n'
+    decision, reason = hook(project, "npm install chalk@5.6.1", FakeSources(), pyproject=pyproject)
+    assert decision == "deny" and "known malware" in reason
+
+
 # --------------------------------------------------------------------------
 # lockfile installs
 # --------------------------------------------------------------------------
