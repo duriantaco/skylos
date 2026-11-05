@@ -690,7 +690,49 @@ def external_override_owner(def_obj, analyzer) -> Optional[str]:
     overrides, or None when no resolvable external ancestor defines it."""
     if getattr(def_obj, "type", None) not in ("method", "variable"):
         return None
-    owner = project_class_graph(analyzer).owner_class(def_obj)
-    if owner is None:
+    graph = project_class_graph(analyzer)
+    owner = graph.owner_class(def_obj)
+    if owner is not None:
+        return external_member_owner(owner, def_obj.simple_name, analyzer)
+    if def_obj.type != "variable" or def_obj.simple_name != "_fields_":
         return None
-    return external_member_owner(owner, def_obj.simple_name, analyzer)
+    declaration = getattr(def_obj, "python_class_owner", None)
+    if declaration is None:
+        return None
+    owner_name, owner_line = declaration
+    owner = graph.defs.get(owner_name)
+    if (
+        owner is None
+        or owner.type != "class"
+        or str(owner.filename) != str(def_obj.filename)
+        or not isinstance(owner.node, ast.ClassDef)
+        or owner.node.lineno != owner_line
+    ):
+        return None
+    statements = tuple(_iter_flat(owner.node.body))
+    if any(
+        isinstance(statement, (ast.Global, ast.Nonlocal))
+        and "_fields_" in statement.names
+        for statement in statements
+    ):
+        return None
+    if not any(
+        statement.lineno == def_obj.line
+        and (
+            isinstance(statement, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "_fields_"
+                for target in statement.targets
+            )
+            or isinstance(statement, ast.AnnAssign)
+            and statement.value is not None
+            and isinstance(statement.target, ast.Name)
+            and statement.target.id == "_fields_"
+        )
+        for statement in statements
+    ):
+        return None
+    native_owner = external_member_owner(owner, "_fields_", analyzer)
+    if native_owner in {"_ctypes.Structure", "_ctypes.Union"}:
+        return native_owner
+    return None

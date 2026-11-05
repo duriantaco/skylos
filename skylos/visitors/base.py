@@ -808,6 +808,9 @@ class Definition:
         "module_shadows_getattr",
         "confidence_factors",
         "unread_type_checking_import",
+        "python_local_owner",
+        "python_class_owner",
+        "package_namespace_uncertain",
     )
 
     def __init__(
@@ -830,6 +833,9 @@ class Definition:
         self.binding_name = self.simple_name
 
         self.node = node
+        self.python_local_owner = None
+        self.python_class_owner = None
+        self.package_namespace_uncertain = False
         self.calls = set()
         self.called_by = set()
         self.closes_over = set()
@@ -922,12 +928,16 @@ class Visitor(ast.NodeVisitor):
         self.mod = mod
         self.file = file
         self._is_type_stub = Path(file).suffix.lower() == ".pyi"
+        self._is_package_initializer = Path(file).name == "__init__.py"
         self._stub_binding_lines: dict[str, int] = {}
         self.defs = []
         self.refs = []
         self.cls = None
         self.alias = {}
         self._alias_binding_lines: dict[str, int] = {}
+        self._binding_scope_owner = None
+        self._binding_class_owner = None
+        self._package_namespace_provider = False
         self.dyn = set()
         self.exports = set()
         self.has_explicit_all = False
@@ -1034,6 +1044,22 @@ class Visitor(ast.NodeVisitor):
     def add_def(
         self, name: str, t: str, line: int, node: Optional[ast.AST] = None, **extra: Any
     ) -> None:
+        local_owner = None
+        class_owner = None
+        if (
+            t == "variable"
+            and self._binding_class_owner is not None
+            and name.startswith(self._binding_class_owner[0] + ".")
+            and name.rsplit(".", 1)[-1] not in self._nonlocal_names
+        ):
+            class_owner = self._binding_class_owner
+        if (
+            self._is_package_initializer
+            and t == "variable"
+            and self._binding_scope_owner
+            and name == f"{self._binding_scope_owner}.{name.rsplit('.', 1)[-1]}"
+        ):
+            local_owner = self._binding_scope_owner
         # Omit declaration candidates rather than adding synthetic references:
         # .py and .pyi siblings share qualified names in the merged symbol map.
         if (
@@ -1049,6 +1075,10 @@ class Visitor(ast.NodeVisitor):
         for d in self.defs:
             if d.name == name:
                 found = True
+                if d.python_local_owner != local_owner:
+                    d.python_local_owner = None
+                if d.python_class_owner != class_owner:
+                    d.python_class_owner = None
                 if (
                     t == "import"
                     and d.type == "import"
@@ -1069,6 +1099,8 @@ class Visitor(ast.NodeVisitor):
                 break
         if not found:
             defn = Definition(name, t, self.file, line, node=node)
+            defn.python_local_owner = local_owner
+            defn.python_class_owner = class_owner
             for k, v in extra.items():
                 if hasattr(defn, k):
                     setattr(defn, k, v)
@@ -1091,6 +1123,18 @@ class Visitor(ast.NodeVisitor):
     def visit_Module(self, node: ast.Module) -> None:
         from skylos.rules.quality._protocols import type_checking_function_ids
 
+        namespace_modules = {"inspect", "sys", "builtins"}
+        self._package_namespace_provider = self._is_package_initializer and any(
+            isinstance(child, ast.Import)
+            and any(
+                alias.name.split(".", 1)[0] in namespace_modules
+                for alias in child.names
+            )
+            or isinstance(child, ast.ImportFrom)
+            and not child.level
+            and (child.module or "").split(".", 1)[0] in namespace_modules
+            for child in ast.walk(node)
+        )
         self.local_registration_decorators.update(
             collect_local_registration_decorators(node)
         )
@@ -1107,6 +1151,13 @@ class Visitor(ast.NodeVisitor):
                 self._iterable_return_annotations[qname] = stmt.returns
         for stmt in node.body:
             self.visit(stmt)
+        # Namespace providers can inspect or forward a local frame. Keep the
+        # previous implicit-export protection where that source capability exists.
+        for definition in self.defs:
+            definition.package_namespace_uncertain = (
+                definition.python_local_owner is not None
+                and self._package_namespace_provider
+            )
         self._finalize_dunder_all_exports(node.body)
         self._resolve_deferred_global_loads()
         self._resolve_module_import_loads(self._module_import_bindings)
@@ -2018,8 +2069,14 @@ class Visitor(ast.NodeVisitor):
                         d.return_type = return_type
                         break
 
+        previous_binding_owner = self._binding_scope_owner
+        previous_class_owner = self._binding_class_owner
+        self._binding_scope_owner = qualified_name
+        self._binding_class_owner = None
         for stmt in node.body:
             self.visit(stmt)
+        self._binding_scope_owner = previous_binding_owner
+        self._binding_class_owner = previous_class_owner
 
         complexity = self._complexity_stack.pop()
         for d in self.defs:
@@ -2406,8 +2463,14 @@ class Visitor(ast.NodeVisitor):
                     if isinstance(target, ast.Name) and target.id == "__slots__":
                         self.slotted_classes.add(cname)
 
+        previous_binding_owner = self._binding_scope_owner
+        previous_class_owner = self._binding_class_owner
+        self._binding_scope_owner = None
+        self._binding_class_owner = (cname, node.lineno)
         for b in node.body:
             self.visit(b)
+        self._binding_scope_owner = previous_binding_owner
+        self._binding_class_owner = previous_class_owner
 
         self.cls = prev
         self._dataclass_stack.pop()
