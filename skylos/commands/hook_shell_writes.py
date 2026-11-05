@@ -9,8 +9,10 @@ them rewrites the working tree wholesale (``git checkout``, ``git pull``,
 ``patch``). The checker then treats any watched file in that set as "could
 not verify" instead of reading it.
 
-Naming a file is enough: ``cat package-lock.json && npm ci`` also counts.
-A program that writes a file it does not name (a script) is not detected.
+Naming a file is enough for any program that might write it; read-only
+programs (``cat``, ``grep``, ``git diff`` ...) count only through their
+redirects. A program that writes a file it does not name (a script) is not
+detected.
 """
 
 from __future__ import annotations
@@ -28,6 +30,15 @@ _GIT_REWRITES = frozenset(
 _TREE_WRITERS = frozenset({"patch", "unzip", "tar", "bsdtar", "gtar", "7z", "7za", "ditto"})
 _COPIERS = frozenset({"cp", "mv", "install", "ln", "rsync", "scp", "rclone", "gcp", "gmv"})
 _DOWNLOADERS = frozenset({"curl", "wget", "aria2c", "http", "https", "xh", "fetch"})
+_READ_ONLY = frozenset(
+    {"cat", "head", "tail", "less", "more", "bat", "nl", "wc", "ls", "stat", "file",
+     "grep", "egrep", "fgrep", "rg", "ag", "diff", "cmp", "md5", "md5sum", "sha1sum",
+     "sha256sum", "sha512sum", "shasum", "jq", "du", "realpath", "readlink", "test", "["}
+)  # fmt: skip
+_GIT_READS = frozenset(
+    {"diff", "log", "show", "status", "blame", "ls-files", "cat-file", "rev-parse",
+     "grep", "shortlog", "describe"}
+)  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -73,6 +84,12 @@ def _add(collector: _Collector, simple: SimpleCommand) -> None:
             continue
         collector.files.append(_resolve(cwd, target))
     program = simple.program.lower()
+    if program in _READ_ONLY:
+        return
+    if program == "git":
+        operands = [arg for arg in simple.args if not arg.startswith("-")]
+        if operands and operands[0].lower() in _GIT_READS:
+            return
     words = []
     for index, arg in enumerate(simple.args):
         if simple.is_dynamic(index):

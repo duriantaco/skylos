@@ -638,6 +638,28 @@ def test_lockfile_after_an_unrelated_command_is_still_read(project):
     assert hook(project, "npm run build && npm ci", FakeSources())[0] == "deny"
 
 
+@pytest.mark.parametrize(
+    "command",
+    ["cat package-lock.json && npm ci",
+     "git diff package-lock.json && npm ci",
+     "grep chalk package-lock.json && npm ci"],
+)  # fmt: skip
+def test_reading_the_lockfile_first_still_checks_it(project, command):
+    npm_lock(project, ("chalk", "5.6.1", "https://registry.npmjs.org/chalk/-/chalk-5.6.1.tgz"))
+    assert hook(project, command, FakeSources())[0] == "deny"
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["cat other.json > package-lock.json && npm ci",
+     "sed -i s/5.3.0/5.6.1/ package-lock.json && npm ci",
+     "jq . other.json | tee package-lock.json && npm ci"],
+)  # fmt: skip
+def test_read_only_tools_that_still_write_the_lockfile_ask(project, command):
+    npm_lock(project, ("left-pad", "1.3.0", "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"))
+    assert hook(project, command, FakeSources())[0] == "ask"
+
+
 def test_requirements_or_constraints_rewritten_earlier_ask(project):
     (project / "requirements.txt").write_text("requests==2.31.0\n")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
     (project / "c.txt").write_text("evil-pkg==9.9\n")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path

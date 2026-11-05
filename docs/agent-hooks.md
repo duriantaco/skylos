@@ -472,9 +472,10 @@ is the version of an unpinned requirement.
 When an earlier part of the same command line may write the lockfile, its
 manifest, the requirements file or anything it includes (`curl -o`, `cp`,
 `mv`, `tee`, `>`, `sed -i`, `git checkout`, `git pull`, `patch`, `unzip`,
-`tar`, or any command that names the file), Skylos does not read it: the
-install is "could not verify". A script that writes the file without naming
-it is not detected.
+`tar`, or any other command that names the file), Skylos does not read it:
+the install is "could not verify". Read-only commands such as `cat`, `grep`
+or `git diff` count only through a redirect. A script that writes the file
+without naming it is not detected.
 
 A synced Skylos Cloud policy (`supply_chain` in `.skylos/config.yaml`) can
 only tighten these values. When it sets `trusted_registries` or
