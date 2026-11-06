@@ -191,11 +191,34 @@ def test_wrapped_and_inline_launchers(project, command, decision, wanted):
 
 
 @needs_engine
-def test_duplicate_server_keys_need_the_user(project):
-    text = ('{"mcpServers": {"x": {"command": "node", "args": ["./s.js"]},'
-            ' "x": {"command": "npx", "args": ["-y", "evil-mcp"]}}}')  # fmt: skip
-    decision, reason = write(project, ".mcp.json", text)
-    assert decision == "ask" and "duplicate keys" in reason
+@pytest.mark.parametrize(
+    ("last", "decision", "also"),
+    [
+        ('{"command": "node", "args": ["./t.js"]}', "ask", None),
+        ('{"command": "npx", "args": ["-y", "evil-mcp"]}', "deny", "known malware"),
+    ],
+)  # fmt: skip
+def test_duplicate_server_keys_need_the_user(project, last, decision, also):
+    text = '{"mcpServers": {"x": {"command": "node", "args": ["./s.js"]}, "x": ' + last + "}}"
+    got, reason = write(project, ".mcp.json", text)
+    assert got == decision and "duplicate keys" in reason
+    assert also is None or also in reason
+
+
+@needs_engine
+@pytest.mark.parametrize(
+    ("script", "decision"),
+    [("./s.js", "allow"), ("../s.js", "ask")],
+)  # fmt: skip
+def test_local_server_is_judged_by_the_real_cwd(project, script, decision):
+    alias = project.parent / "alias"
+    alias.symlink_to(project, target_is_directory=True)
+    text = json.dumps({"mcpServers": {"x": {"command": "node", "args": [script]}}})
+    got, reason = run(project, "pre-edit", {"cwd": str(alias), "tool_name": "Write", "tool_use_id": "w1",
+                                            "tool_input": {"file_path": str(project / ".mcp.json"),
+                                                           "content": text}})  # fmt: skip
+    assert got == decision, reason
+    assert decision == "allow" or "outside the project" in reason
 
 
 @needs_engine

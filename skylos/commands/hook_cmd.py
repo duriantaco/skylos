@@ -2751,7 +2751,10 @@ def _clean_message(value: Any, limit: int) -> str:
 def _cwd(payload: dict[str, Any], root: Path) -> Path:
     cwd = payload.get("cwd")
     if isinstance(cwd, str) and cwd and Path(cwd).is_dir():
-        return Path(cwd)
+        try:
+            return Path(cwd).resolve()
+        except (OSError, RuntimeError):
+            return Path(cwd)
     return root
 
 
