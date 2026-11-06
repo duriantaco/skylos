@@ -116,8 +116,9 @@ _BYPASS_HINT_RE = re.compile(
 )
 # "git commit -n" / "-anm": two linear searches, never one backtracking one.
 _AGENT_CONFIG_HINT_RE = re.compile(
-    r"(?i)mcp|install-hooks|settings(?:\.local)?\.json|tasks\.json|hooks\.json|config\.toml"
-    r"|\.claude\.json"
+    r"(?i)mcp|install-hooks|plugin|extensions|settings(?:\.local)?\.json|tasks\.json|hooks\.json"
+    r"|config\.toml|\.claude|\.cursor|\.vscode|\.gemini|\.codex|agents/|\btar\b|unzip|\b7za?\b"
+    r"|\bpatch\b|\bgit\b"
 )
 _GIT_WORD_RE = re.compile(r"\bgit\b")
 _SHORT_N_RE = re.compile(r"(?i)\s-[a-z]*n")
@@ -1266,23 +1267,37 @@ def _handle_pre_bash(payload, root, client, deps, record):
         record["outcome"] = "block"
         return _deny_output(client, reason)
 
-    agent_note = None
+    verdict = None
     if _AGENT_CONFIG_HINT_RE.search(command):
         from skylos.commands.hook_agent_guard import check_agent_bash
 
         verdict = check_agent_bash(command, cwd, root, deps, payload, record)
-        if verdict is not None and verdict[0] in ("deny", "ask"):
-            return _agent_config_output("pre-bash", client, verdict, record)
-        if verdict is not None:
-            agent_note = verdict[1]
     output = _pre_bash_checks(command, cwd, root, client, deps, record)
-    if agent_note is None:
+    if verdict is None:
         return output
-    if record.get("outcome") in ("skip", "pass"):
-        record["outcome"] = "note"
+    decision, text = verdict
+    if decision == "note":
+        if record.get("outcome") in ("skip", "pass"):
+            record["outcome"] = "note"
+        if client == "cursor":
+            record["_stderr_notes"] = [*record.get("_stderr_notes", []), text]
+        return _with_notice("pre-bash", client, output, text)
+    other, reason = _output_decision(output, client)
+    if _DECISION_RANK.get(other, 0) > _DECISION_RANK[decision]:
+        decision = other
+    combined = "\n".join(part for part in (reason, text) if part)
+    return _agent_config_output("pre-bash", client, (decision, combined), record)
+
+
+def _output_decision(output, client) -> tuple[str, str]:
+    """The decision and reason an already built pre-bash output carries."""
+    if not isinstance(output, dict):
+        return "allow", ""
     if client == "cursor":
-        record["_stderr_notes"] = [*record.get("_stderr_notes", []), agent_note]
-    return _with_notice("pre-bash", client, output, agent_note)
+        return str(output.get("permission") or "allow"), str(output.get("user_message") or "")
+    specific = output.get("hookSpecificOutput") or {}
+    return (str(specific.get("permissionDecision") or "allow"),
+            str(specific.get("permissionDecisionReason") or ""))  # fmt: skip
 
 
 def _pre_bash_checks(command, cwd, root, client, deps, record):

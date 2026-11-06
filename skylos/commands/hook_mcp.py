@@ -1,25 +1,32 @@
 """MCP servers an agent adds, and what each one would run.
 
 ``vet_servers`` takes servers in the shape ca9's agent-config inventory uses
-(``name``, ``argv``, ``url``, ``transport``) and decides each one:
+(``name``, ``argv``, ``url``, ``transport``, plus the server's ``env``) and
+decides each one:
 
+* the launch is unwrapped first (``timeout``, ``sudo``, ``nohup``, ``env``,
+  ``nice``, ``time``, ``stdbuf``, ``sh -c`` ...). A wrapper that starts more
+  than one program, inline code (``node -e``, ``python -c``), ``uv run
+  --with`` and a local program outside the project are "could not verify";
 * a package server (``npx``, ``uvx``, ``bunx``, ``pnpm dlx`` ...; read by
-  ``ca9.api.parse_mcp_server``) is checked like ``npx -y <pkg>`` would be by
-  the install hook: existence, malware and release age on the exact version
-  that would run, resolving an unpinned spec to the version the launcher
-  fetches today. A clean server must name that exact version; an unpinned one
-  is denied with the pinned command (``parse_mcp_server(..., version=)``);
+  ``ca9.api.parse_mcp_server``) is checked like the install hook checks the
+  same command line, registry flags and registry ``env`` included:
+  existence, malware and release age on the exact version that would run,
+  resolving an unpinned spec to the version the launcher fetches today. A
+  clean server must name that exact version; an unpinned one is denied with
+  the pinned command (``parse_mcp_server(..., version=)``);
 * a server ca9 marks as a hidden-path script or a vendor impersonation, a git
-  or URL source, an image without a digest, or anything Skylos could not read
-  needs the user (``ask``; Codex denies);
-* a local script or an installed ``python -m`` module runs nothing new and
-  passes; a remote server passes with a note, which says "could not verify"
-  for plain ``http`` to a non-local host.
+  or URL source, an untrusted registry, an image without a digest, or
+  anything Skylos could not read needs the user (``ask``; Codex denies);
+* a script inside the project or an installed ``python -m`` module passes; a
+  remote server passes with a note, which says "could not verify" for plain
+  ``http`` to a non-local host.
 
 ``mcp_additions`` reads ``claude mcp add`` / ``add-json`` /
-``add-from-claude-desktop``, ``codex mcp add`` and ``gemini mcp add`` out of a
-shell command; ``config_writes`` finds shell commands that write an agent
-config file directly (redirects, ``tee``, ``cp``/``mv``, ``sed -i``).
+``add-from-claude-desktop``, ``codex mcp add`` and ``gemini mcp add`` (global
+options before ``mcp`` and ``npx @anthropic-ai/claude-code`` included) out of
+a shell command; ``plugin_installs`` finds ``claude plugin install`` and
+``gemini extensions install``.
 """
 
 from __future__ import annotations
@@ -42,16 +49,34 @@ DENY = "deny"
 RANK = {ALLOW: 0, NOTE: 1, ASK: 2, DENY: 3}
 MCP_SECONDS = 12.0
 AGENT_CLIS = frozenset({"claude", "codex", "gemini"})
+CLI_PACKAGES = {"@anthropic-ai/claude-code": "claude", "@openai/codex": "codex",
+                "@google/gemini-cli": "gemini"}  # fmt: skip
+PACKAGE_RUNNERS = frozenset({"npx", "bunx", "pnpx"})
 _CLAUDE_VALUE_OPTIONS = frozenset({"-s", "--scope", "-t", "--transport", "--client-id",
                                    "--callback-port", "--timeout"})  # fmt: skip
 _CLAUDE_LIST_OPTIONS = frozenset({"-e", "--env", "-H", "--header"})
 _CODEX_VALUE_OPTIONS = frozenset({"--env", "--url", "--bearer-token-env-var"})
-_GEMINI_VALUE_OPTIONS = frozenset({"-s", "--scope", "-t", "--transport", "-e", "--env", "-H",
-                                   "--header", "--timeout", "--description", "--include-tools",
+_GEMINI_VALUE_OPTIONS = frozenset({"-s", "--scope", "-t", "--transport", "-H", "--header",
+                                   "--timeout", "--description", "--include-tools",
                                    "--exclude-tools"})  # fmt: skip
-_WRITERS = frozenset({"cp", "mv", "install", "ln", "rsync", "tee", "dd"})
-_IN_PLACE = frozenset({"sed", "gsed", "perl", "ruby"})
+_GEMINI_LIST_OPTIONS = frozenset({"-e", "--env"})
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"})
+_INLINE_FLAGS = {
+    "node": ("-e", "--eval", "-p", "--print"),
+    "nodejs": ("-e", "--eval", "-p", "--print"),
+    "bun": ("-e", "--eval", "-p", "--print"),
+    "ruby": ("-e",),
+    "perl": ("-e", "-E"),
+    "php": ("-r",),
+    "pwsh": ("-c", "-command", "-encodedcommand"),
+    "powershell": ("-c", "-command", "-encodedcommand"),
+    "osascript": ("-e",),
+}
+_REGISTRY_FLAGS = ("--registry", "--index-url", "--extra-index-url", "--default-index", "--index",
+                   "-i", "--find-links", "-f")  # fmt: skip
+_REGISTRY_ENV = re.compile(r"(?i)^(?:npm_config_.*registry|yarn_.*registry.*|bun_config_registry"
+                           r"|pip_(?:extra_)?index_url|pip_find_links|uv_(?:extra_|default_)?index(?:_url)?)$")  # fmt: skip
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass
@@ -74,6 +99,7 @@ class Outcome:
     text: str
     pinned: list[str] | None = None
     kind: str = ""
+    wrapped: bool = False
 
 
 @dataclass
@@ -81,34 +107,73 @@ class _Pending:
     index: int
     entry: dict[str, Any]
     parsed: dict[str, Any]
+    inner: list[str]
+    env: dict[str, str]
+    prefix: list[str] | None
     targets: list[Any] = field(default_factory=list)
 
 
-def mcp_additions(commands: list[Any]) -> list[Addition]:
+def mcp_additions(commands: list[Any], unknown: list[list[str]] | None = None) -> list[Addition]:
     additions = []
+    for words in unknown or []:
+        at = _subcommand(words[1:], "mcp")
+        if at is not None and _at(words[1:], at + 1).startswith("add"):
+            additions.append(Addition("?", "?", None,
+                                      problem="the program is only known when it runs"))  # fmt: skip
     for simple in commands:
-        program = _program(simple.program)
+        found = _agent_cli(simple)
+        if found is None:
+            continue
+        client, offset = found
         args = list(simple.args)
-        if program not in AGENT_CLIS or len(args) < 2 or args[0] != "mcp":
+        at = _subcommand(args[offset:], "mcp")
+        if at is None or offset + at + 1 >= len(args):
             continue
-        verb = args[1]
+        start = offset + at
+        verb = args[start + 1]
+        if not verb.startswith("add"):
+            continue
+        head = [_program(simple.program), *args[: start + 2]]
+        rest = args[start + 2 :]
         dynamic = [i for i in range(len(args)) if simple.is_dynamic(i) and not _literal_json(args[i])]
-        if dynamic and verb.startswith("add"):
-            additions.append(Addition(program, "?", None,
+        if dynamic:
+            additions.append(Addition(client, "?", None,
                                       problem="its arguments are only known when it runs"))  # fmt: skip
-            continue
-        if program == "claude" and verb == "add-json":
-            additions.append(_claude_add_json(args[2:]))
-        elif program == "claude" and verb == "add-from-claude-desktop":
-            additions.append(Addition(program, "?", None,
-                                      problem="it imports servers Skylos cannot see"))  # fmt: skip
-        elif verb == "add" and program == "claude":
-            additions.append(_cli_add(program, args, _CLAUDE_VALUE_OPTIONS, _CLAUDE_LIST_OPTIONS))
-        elif verb == "add" and program == "codex":
-            additions.append(_codex_add(args))
-        elif verb == "add" and program == "gemini":
-            additions.append(_cli_add(program, args, _GEMINI_VALUE_OPTIONS, frozenset()))
+        elif client == "claude" and verb == "add-json":
+            additions.append(_claude_add_json(head, rest))
+        elif verb != "add":
+            additions.append(Addition(client, "?", None,
+                                      problem=f"`{client} mcp {verb}` adds servers Skylos cannot see"))  # fmt: skip
+        elif client == "codex":
+            additions.append(_codex_add(head, rest))
+        elif client == "claude":
+            additions.append(_cli_add(client, head, rest, _CLAUDE_VALUE_OPTIONS, _CLAUDE_LIST_OPTIONS))
+        else:
+            additions.append(_cli_add(client, head, rest, _GEMINI_VALUE_OPTIONS, _GEMINI_LIST_OPTIONS))
     return additions
+
+
+def plugin_installs(commands: list[Any], unknown: list[list[str]] | None = None) -> list[str]:
+    """``claude plugin install`` / ``plugin marketplace add``, ``gemini
+    extensions install|link``: each loads code that runs in the agent."""
+    found = []
+    for simple in commands:
+        hit = _agent_cli(simple)
+        if hit is None:
+            continue
+        client, offset = hit
+        args = list(simple.args)[offset:]
+        for word, verbs in (("plugin", ("install", "i", "marketplace")),
+                            ("plugins", ("install", "i", "marketplace")),
+                            ("extensions", ("install", "link")),
+                            ("extension", ("install", "link"))):  # fmt: skip
+            at = _subcommand(args, word)
+            if at is not None and at + 1 < len(args) and args[at + 1] in verbs:
+                found.append(f"`{client} {word} {args[at + 1]}` loads code the agent runs")
+    for words in unknown or []:
+        if _subcommand(words[1:], "plugin") is not None or _subcommand(words[1:], "extensions") is not None:
+            found.append("a plugin install whose program is only known when it runs")
+    return list(dict.fromkeys(found))
 
 
 def uninstalls_skylos_hooks(commands: list[Any]) -> bool:
@@ -124,34 +189,14 @@ def uninstalls_skylos_hooks(commands: list[Any]) -> bool:
     return False
 
 
-def config_writes(commands: list[Any], guarded: Callable[[Path], bool]) -> list[str]:
-    """Agent config files a shell command writes without the edit tools."""
-    found = []
-    for simple in commands:
-        cwd = Path(simple.cwd)
-        words = [str(target) for target in simple.outputs]
-        program = _program(simple.program)
-        args = list(simple.args)
-        if program in _WRITERS:
-            words += [_after_of(a) for a in args if not a.startswith("-")]
-        elif program in _IN_PLACE and any(a.startswith(("-i", "--in-place")) for a in args):
-            words += [a for a in args if not a.startswith("-")]
-        for word in words:
-            path = Path(word).expanduser()
-            if not path.is_absolute():
-                path = cwd / path
-            if guarded(path):
-                found.append(word)
-    return list(dict.fromkeys(found))
-
-
 def vet_servers(servers: list[dict[str, Any]], *, label: str, findings: list[dict[str, Any]],
                 root: Path, cwd: Path, env: dict[str, str], state_root: Path, sources: Any = None,
                 deadline: float | None = None, record: dict[str, Any] | None = None,
-                notes: bool = True) -> list[Outcome]:  # fmt: skip
+                notes: bool = True, offline: bool = False) -> list[Outcome]:  # fmt: skip
     """One :class:`Outcome` per server, in order. ``findings`` are ca9's
     agent-config findings for the same file; ``notes=False`` drops remote
-    server notes (session start repeats nothing that needs no action)."""
+    server notes (session start repeats nothing that needs no action);
+    ``offline`` skips registry lookups (pinned packages pass unchecked)."""
     from skylos.commands.hook_agent_configs import ca9_function
 
     if deadline is None:
@@ -164,11 +209,13 @@ def vet_servers(servers: list[dict[str, Any]], *, label: str, findings: list[dic
     for index, entry in enumerate(servers):
         name = str(entry.get("name") or "?")
         where = str(entry.get("_label") or label)
-        outcome, parsed = _first_look(entry, name, where, parse, policy, notes)
+        outcome, item = _first_look(index, entry, name, where, parse, policy, notes, root, cwd)
         if outcome is not None:
             outcomes[index] = outcome
+        elif offline:
+            outcomes[index] = _offline(item, name, where)
         else:
-            pending.append(_Pending(index, entry, parsed))
+            pending.append(item)
     _registry_vet(pending, outcomes, label=label, root=root, cwd=cwd, env=env,
                   state_root=state_root, sources=sources, deadline=deadline, record=record,
                   policy=policy, parse=parse)  # fmt: skip
@@ -178,7 +225,7 @@ def vet_servers(servers: list[dict[str, Any]], *, label: str, findings: list[dic
             continue
         name = str(entry.get("name") or "?")
         reason = flagged.get(str(entry.get("_label") or label), {}).get(name)
-        if reason and RANK[outcome.decision] < RANK[ASK]:
+        if reason and outcome.decision != DENY:
             outcome = Outcome(outcome.label, name, ASK, f"'{name}': {reason}", kind="flagged")
         final.append(outcome)
     return final
@@ -200,43 +247,123 @@ def is_remote(server: dict[str, Any]) -> bool:
     return bool(server.get("url")) and not server.get("command")
 
 
-def _first_look(entry, name, label, parse, policy, notes):
+def _first_look(index, entry, name, label, parse, policy, notes, root, cwd):
     url = str(entry.get("url") or "")
     argv = entry.get("argv")
     if url and not argv:
-        return _remote(entry, name, label, url, notes), None
+        return _remote(name, label, url, notes), None
     if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
         return _unverified(label, name, policy, "Skylos could not read its command"), None
     if parse is None:
         return _unverified(label, name, policy, _engine_missing()), None
+    server_env = entry.get("env") if isinstance(entry.get("env"), dict) else {}
+    unwrapped = _unwrap(argv, cwd)
+    if isinstance(unwrapped, str):
+        return _unverified(label, name, policy, unwrapped), None
+    inner, wrapper_env, prefix = unwrapped
+    wrapped = inner != argv
+    inline = _inline_code(inner)
+    if inline:
+        return Outcome(label, name, policy.on_unverified,
+                       f"'{name}': runs inline code ({inline}); could not verify it.",
+                       kind="local", wrapped=wrapped), None  # fmt: skip
+    if _program(inner[0]) == "uv" and any(a.startswith(("--with", "--from")) for a in inner[1:]):
+        return _unverified(label, name, policy, "`uv run --with` installs packages Skylos cannot see"), None
     try:
-        parsed = parse(argv[0], argv[1:])
+        parsed = parse(inner[0], inner[1:])
     except Exception:  # noqa: BLE001
         parsed = None
     if not isinstance(parsed, dict):
-        return _unverified(label, name, policy, f"Skylos could not tell what {argv[0]} runs"), None
+        return _unverified(label, name, policy, f"Skylos could not tell what {inner[0]} runs"), None
     ecosystem = str(parsed.get("ecosystem") or "")
     source = str(parsed.get("source") or "registry")
     package = str(parsed.get("package") or "?")
     if parsed.get("fetches") is False or ecosystem == "local":
-        return Outcome(label, name, ALLOW, ""), None
+        if parsed.get("launcher") == "python -m" or _inside(package, cwd, root):
+            return Outcome(label, name, ALLOW, "", wrapped=wrapped), None
+        return Outcome(label, name, policy.on_unverified,
+                       f"'{name}': runs {package} from outside the project; could not verify it.",
+                       kind="local", wrapped=wrapped), None  # fmt: skip
     if ecosystem == "docker":
         if parsed.get("pinned"):
             return Outcome(label, name, NOTE if notes else ALLOW,
                            f"'{name}': image {package} is pinned by digest; Skylos does not "
-                           "check images."), None  # fmt: skip
+                           "check images.", wrapped=wrapped), None  # fmt: skip
         return Outcome(label, name, policy.on_unverified,
                        f"'{name}': could not verify image {package}; pin it by digest "
-                       f"({package}@sha256:...).", kind="unpinned"), None  # fmt: skip
+                       f"({package}@sha256:...).", kind="unpinned", wrapped=wrapped), None  # fmt: skip
     if source in ("git", "url"):
         return Outcome(label, name, policy.direct_source,
-                       f"'{name}': runs {package} from a {source} source Skylos cannot check."), None  # fmt: skip
+                       f"'{name}': runs {package} from a {source} source Skylos cannot check.",
+                       wrapped=wrapped), None  # fmt: skip
     if ecosystem not in ("npm", "pypi"):
         return _unverified(label, name, policy, f"{package} is a {ecosystem or 'unknown'} package"), None
-    return None, parsed
+    env = {str(k): str(v) for k, v in {**server_env, **wrapper_env}.items()}
+    return None, _Pending(index, entry, parsed, inner, env, prefix)
 
 
-def _remote(entry, name, label, url, notes) -> Outcome:
+def _unwrap(argv: list[str], cwd: Path):
+    """``(program argv, wrapper env, wrapper prefix or None)``, or why the
+    launch cannot be read."""
+    from skylos.commands.hook_shell_commands import walk
+
+    commands, unknown = walk(shlex.join(argv), cwd)
+    if unknown:
+        return "part of its command is only known when it runs"
+    if len(commands) != 1:
+        return f"it starts {len(commands) or 'no'} programs"
+    simple = commands[0]
+    if simple.dynamic:
+        return "part of its command is only known when it runs"
+    inner = [simple.program_word or simple.program, *simple.args]
+    prefix = None
+    if argv[len(argv) - len(inner) :] == inner:
+        prefix = argv[: len(argv) - len(inner)]
+    return inner, dict(simple.env), prefix
+
+
+def _inline_code(argv: list[str]) -> str:
+    program = _program(argv[0])
+    if re.fullmatch(r"python[0-9.]*|pypy[0-9.]*|py", program):
+        flags = ("-c",)
+    elif program == "deno":
+        return "deno eval" if "eval" in argv[1:2] else ""
+    else:
+        flags = _INLINE_FLAGS.get(program, ())
+    for arg in argv[1:]:
+        if not arg.startswith("-"):
+            return ""
+        option = arg.split("=", 1)[0].lower()
+        if option in flags or (flags == ("-c",) and not arg.startswith("--") and "c" in arg[1:]):
+            return f"{program} {option}"
+    return ""
+
+
+def _inside(location: str, cwd: Path, root: Path) -> bool:
+    path = Path(location).expanduser()
+    if not path.is_absolute():
+        if os.sep not in location and "/" not in location and not (root / location).exists():
+            return False
+        path = cwd / path
+    written = Path(os.path.abspath(path))
+    real = Path(os.path.realpath(path))
+    bases = {Path(os.path.abspath(root)), Path(os.path.realpath(root))}
+    return any(written.is_relative_to(b) for b in bases) and any(real.is_relative_to(b) for b in bases)
+
+
+def _offline(item: _Pending, name: str, label: str) -> Outcome:
+    package = str(item.parsed.get("package") or "?")
+    wrapped = item.inner != item.entry.get("argv")
+    if _registry_hint(item.inner, item.env):
+        return Outcome(label, name, ASK, f"'{name}': sets a package registry; not checked offline.",
+                       kind="unverified", wrapped=wrapped)
+    if item.parsed.get("pinned"):
+        return Outcome(label, name, ALLOW, "", kind="unchecked", wrapped=wrapped)
+    return Outcome(label, name, DENY, f"'{name}' runs {package} with no fixed version.",
+                   kind="unpinned", wrapped=wrapped)
+
+
+def _remote(name, label, url, notes) -> Outcome:
     parts = urlsplit(url)
     host = (parts.hostname or "").lower()
     if host in _LOCAL_HOSTS or not notes:
@@ -266,13 +393,20 @@ def _registry_vet(pending, outcomes, *, label, root, cwd, env, state_root, sourc
         name = str(item.entry.get("name") or "?")
         where = str(item.entry.get("_label") or label)
         spec = str(item.parsed.get("spec") or item.parsed.get("package") or "")
-        argv = ["npx", "--yes", spec]
-        if item.parsed.get("ecosystem") == "pypi":
-            argv = ["uvx", "--from", spec, "mcp-server"]
-        targets = install_targets(shlex.join(argv), cwd, root=root)
+        assignments = [f"{k}={v}" for k, v in item.env.items() if _ENV_NAME.match(k)]
+        targets = install_targets(shlex.join(assignments + item.inner), cwd, root=root)
+        if [t.kind for t in targets] != [REGISTRY]:
+            if _registry_hint(item.inner, item.env):
+                outcomes[item.index] = _unverified(where, name, policy,
+                                                   "it sets a package registry Skylos cannot read")  # fmt: skip
+                continue
+            canonical = ["npx", "--yes", spec]
+            if item.parsed.get("ecosystem") == "pypi":
+                canonical = ["uvx", "--from", spec, "mcp-server"]
+            targets = install_targets(shlex.join(canonical), cwd, root=root)
         kinds = {t.kind for t in targets}
         if LOCAL in kinds and REGISTRY not in kinds:
-            outcomes[item.index] = Outcome(where, name, ALLOW, "")
+            outcomes[item.index] = Outcome(where, name, ALLOW, "", wrapped=item.inner != item.entry.get("argv"))
         elif DIRECT in kinds:
             outcomes[item.index] = Outcome(where, name, policy.direct_source,
                                            f"'{name}': runs {spec} from a source Skylos cannot check.")  # fmt: skip
@@ -287,6 +421,14 @@ def _registry_vet(pending, outcomes, *, label, root, cwd, env, state_root, sourc
         for item in batch:
             outcomes[item.index] = _registry_outcome(item, results, str(item.entry.get("_label") or label),
                                                      policy, parse)  # fmt: skip
+
+
+def _registry_hint(argv: list[str], env: dict[str, str]) -> bool:
+    for arg in argv[1:]:
+        option = arg.split("=", 1)[0]
+        if option in _REGISTRY_FLAGS or (option.startswith("--@") and option.endswith(":registry")):
+            return True
+    return any(_REGISTRY_ENV.match(name) for name in env)
 
 
 def _rounds(items: list[_Pending]) -> list[list[_Pending]]:
@@ -347,14 +489,14 @@ def _registry_outcome(item: _Pending, result: dict[str, Any], label, policy, par
     trusted = [u for u in unverified if u.get("outcome") in (OUTCOME_ALLOWLISTED, OUTCOME_PRIVATE)]
     others = [u for u in unverified if u not in trusted]
     if others:
-        reason = "; ".join(dict.fromkeys(str(u.get("reason") or "not checked") for u in others))
+        reason = "; ".join(dict.fromkeys(_reason(u) for u in others))
         decision = policy.on_unverified
         if any(u.get("outcome") == "registry_override" for u in others):
             decision = policy.direct_source
         return Outcome(label, name, decision, f"'{name}' ({package}): could not verify: {reason}.",
                        kind="unverified")
     if pinned:
-        return Outcome(label, name, ALLOW, "")
+        return Outcome(label, name, ALLOW, "", wrapped=item.inner != item.entry.get("argv"))
     checked = [c for c in result.get("checked") or []
                if _package_key(c.get("ecosystem"), c.get("name")) == key]  # fmt: skip
     version = ""
@@ -406,19 +548,30 @@ def _unpinned(item, name, package, version, label, parse) -> Outcome:
 
 
 def _pinned_argv(item: _Pending, version: str, parse) -> list[str] | None:
-    argv = item.entry.get("argv")
-    if parse is None or not isinstance(argv, list) or not argv:
+    if parse is None:
         return None
     try:
-        answer = parse(argv[0], argv[1:], version=version)
+        answer = parse(item.inner[0], item.inner[1:], version=version)
     except Exception:  # noqa: BLE001
         return None
     if not isinstance(answer, dict):
         return None
     pinned = answer.get("pinned_command")
-    if isinstance(pinned, list) and pinned and all(isinstance(p, str) for p in pinned):
-        return pinned
-    return None
+    if not isinstance(pinned, list) or not pinned or not all(isinstance(p, str) for p in pinned):
+        return None
+    if item.prefix:
+        return [*item.prefix, *pinned]
+    return pinned
+
+
+def _reason(entry: dict[str, Any]) -> str:
+    from skylos.commands.hook_cmd import _redact_url
+
+    reason = str(entry.get("reason") or "not checked")
+    registry = str(entry.get("registry") or "")
+    if registry and registry not in reason:
+        reason += f" {_redact_url(registry)}"
+    return reason
 
 
 def _flagged(findings: list[dict[str, Any]], label: str) -> dict[str, dict[str, str]]:
@@ -463,11 +616,40 @@ def _program(word: str) -> str:
     return base
 
 
-def _cli_add(program, args, value_options, list_options) -> Addition:
-    rest = args[2:]
+def _agent_cli(simple: Any) -> tuple[str, int] | None:
+    """``(claude|codex|gemini, index of its first own argument)``."""
+    program = _program(simple.program)
+    if program in AGENT_CLIS:
+        return program, 0
+    if program not in PACKAGE_RUNNERS:
+        return None
+    for index, arg in enumerate(simple.args):
+        if arg.startswith("-"):
+            continue
+        name = arg
+        if arg.rfind("@") > 0:
+            name = arg[: arg.rfind("@")]
+        client = CLI_PACKAGES.get(name)
+        if client is None:
+            return None
+        return client, index + 1
+    return None
+
+
+def _subcommand(args: list[str], word: str) -> int | None:
+    for index, arg in enumerate(args):
+        if arg == word:
+            return index
+        if arg == "--" or not (arg.startswith("-") or (index and args[index - 1].startswith("-"))):
+            return None
+    return None
+
+
+def _cli_add(client, head, rest, value_options, list_options) -> Addition:
     positional: list[int] = []
     transport = ""
     tail: list[str] | None = None
+    env: dict[str, str] = {}
     split = -1
     index = 0
     while index < len(rest):
@@ -483,9 +665,12 @@ def _cli_add(program, args, value_options, list_options) -> Addition:
         option, _eq, inline = word.partition("=")
         if option in ("-t", "--transport"):
             transport = inline or _at(rest, index + 1)
-        if option in list_options and not inline:
+        if option in list_options:
+            if inline:
+                _pair(inline, env)
             index += 1
-            while index < len(rest) and _looks_like_pair(rest[index]):
+            while not inline and index < len(rest) and _looks_like_pair(rest[index]):
+                _pair(rest[index], env)
                 index += 1
             continue
         if option in value_options and not inline:
@@ -493,7 +678,7 @@ def _cli_add(program, args, value_options, list_options) -> Addition:
             continue
         index += 1
     if not positional:
-        return Addition(program, "?", None, problem="Skylos could not read the server it adds")
+        return Addition(client, "?", None, problem="Skylos could not read the server it adds")
     name = rest[positional[0]]
     if tail is None:
         argv = [rest[i] for i in positional[1:]]
@@ -501,29 +686,25 @@ def _cli_add(program, args, value_options, list_options) -> Addition:
     else:
         argv = tail
     if not argv:
-        return Addition(program, name, None, problem="Skylos could not read the server it adds")
+        return Addition(client, name, None, problem="Skylos could not read the server it adds")
     if transport in ("http", "sse") or re.match(r"(?i)^https?://", argv[0]):
-        return Addition(program, name, {"type": transport or "http", "url": argv[0]})
-    prefix = [program, "mcp", "add", *rest[:split]]
+        return Addition(client, name, {"type": transport or "http", "url": argv[0]})
+    prefix = [*head, *rest[:split]]
 
     def render(pinned: list[str]) -> str:
         return shlex.join(prefix + pinned)
 
-    return Addition(program, name, {"command": argv[0], "args": argv[1:]}, render)
+    server: dict[str, Any] = {"command": argv[0], "args": argv[1:]}
+    if env:
+        server["env"] = env
+    return Addition(client, name, server, render)
 
 
-def _at(words: list[str], index: int) -> str:
-    if 0 <= index < len(words):
-        return words[index]
-    return ""
-
-
-def _codex_add(args: list[str]) -> Addition:
-    rest = args[2:]
+def _codex_add(head: list[str], rest: list[str]) -> Addition:
     name = ""
     url = ""
+    env: dict[str, str] = {}
     index = 0
-    head = ["codex", "mcp", "add"]
     while index < len(rest):
         word = rest[index]
         if word == "--":
@@ -535,10 +716,16 @@ def _codex_add(args: list[str]) -> Addition:
             def render(pinned: list[str], prefix=prefix) -> str:
                 return shlex.join(prefix + pinned)
 
-            return Addition("codex", name, {"command": argv[0], "args": argv[1:]}, render)
+            server: dict[str, Any] = {"command": argv[0], "args": argv[1:]}
+            if env:
+                server["env"] = env
+            return Addition("codex", name, server, render)
         option, _eq, inline = word.partition("=")
+        value = inline or _at(rest, index + 1)
         if option == "--url":
-            url = inline or _at(rest, index + 1)
+            url = value
+        if option == "--env":
+            _pair(value, env)
         if option in _CODEX_VALUE_OPTIONS and not inline:
             index += 2
             continue
@@ -550,7 +737,9 @@ def _codex_add(args: list[str]) -> Addition:
     return Addition("codex", name or "?", None, problem="Skylos could not read the server it adds")
 
 
-def _claude_add_json(rest: list[str]) -> Addition:
+def _claude_add_json(head: list[str], rest: list[str]) -> Addition:
+    from skylos.commands.hook_agent_configs import parse_json
+
     positional = []
     index = 0
     options = []
@@ -569,18 +758,30 @@ def _claude_add_json(rest: list[str]) -> Addition:
     if len(positional) < 2:
         return Addition("claude", "?", None, problem="Skylos could not read the server it adds")
     name, raw = positional[0], positional[1]
-    try:
-        data = json.loads(raw)
-    except ValueError:
+    parsed = parse_json(raw)
+    if parsed is None or not isinstance(parsed[0], dict):
         return Addition("claude", name, None, problem="its JSON could not be read")
-    if not isinstance(data, dict):
-        return Addition("claude", name, None, problem="its JSON is not an object")
+    data, dupes = parsed
+    if dupes:
+        return Addition("claude", name, None, problem="its JSON has duplicate keys")
 
     def render(pinned: list[str]) -> str:
         fixed = {**data, "command": pinned[0], "args": pinned[1:]}
-        return shlex.join(["claude", "mcp", "add-json", *options, name, json.dumps(fixed)])
+        return shlex.join([*head, *options, name, json.dumps(fixed)])
 
     return Addition("claude", name, data, render)
+
+
+def _pair(word: str, env: dict[str, str]) -> None:
+    name, eq, value = word.partition("=")
+    if eq and _ENV_NAME.match(name):
+        env[name] = value
+
+
+def _at(words: list[str], index: int) -> str:
+    if 0 <= index < len(words):
+        return words[index]
+    return ""
 
 
 def _literal_json(word: str) -> bool:
@@ -590,12 +791,6 @@ def _literal_json(word: str) -> bool:
         return isinstance(json.loads(word), dict)
     except ValueError:
         return False
-
-
-def _after_of(word: str) -> str:
-    if word.startswith("of="):
-        return word[3:]
-    return word
 
 
 def _looks_like_pair(word: str) -> bool:
@@ -609,9 +804,9 @@ __all__ = [
     "NOTE",
     "Addition",
     "Outcome",
-    "config_writes",
     "is_remote",
     "mcp_additions",
+    "plugin_installs",
     "server_from_addition",
     "uninstalls_skylos_hooks",
     "vet_servers",

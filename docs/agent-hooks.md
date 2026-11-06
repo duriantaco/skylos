@@ -558,43 +558,85 @@ editor opens the project. Skylos checks both when the agent changes them.
 
 **Which changes are checked.** In `pre-bash`: `claude mcp add` in all its
 forms (`-s/--scope`, `--transport`, `-e KEY=V`, `--` before the command,
-`add-json`; `add-from-claude-desktop` always asks, because Skylos cannot see
-what it imports), `codex mcp add` and `gemini mcp add`, including with an
-environment prefix or inside `bash -c`. In `pre-edit`: edits to
+`add-json`, global options such as `--debug` before `mcp`;
+`add-from-claude-desktop` always asks, because Skylos cannot see what it
+imports), `codex mcp add` (also after `-c k=v`) and `gemini mcp add`,
+including with an environment prefix, inside `bash -c`, or run through
+`npx @anthropic-ai/claude-code`. A command whose program is only known at run
+time (`c=claude; $c mcp add ...`) asks. `claude plugin install`, `claude
+plugin marketplace add` and `gemini extensions install|link` ask, because
+plugins and extensions load code into the agent. In `pre-edit`: edits to
 `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.vscode/tasks.json`,
 `.gemini/settings.json`, `.claude/settings.json`,
-`.claude/settings.local.json`, `.cursor/hooks.json`, `.codex/hooks.json`,
-`.codex/config.toml`, and the same files in your home directory plus
-`~/.claude.json`. Skylos applies the edit to the current text and has ca9
-read the file before and after, so JSON with comments and trailing commas is
-read the way the agents read it. A shell command that writes one of these
-files itself (`> .mcp.json`, `tee`, `cp`, `mv`, `sed -i`) asks, because the
-hook cannot see what it writes.
+`.claude/settings.local.json`, `.claude/agents/*.md`, `.cursor/hooks.json`,
+`.codex/hooks.json`, `.codex/config.toml`, the same files in your home
+directory, and `~/.claude.json` (user scope and every project's scope).
+Skylos applies the edit to the current text and has ca9 read the file before
+and after, so JSON with comments and trailing commas is read the way the
+agents read it. A file with duplicate keys asks: agents keep the last value,
+so Skylos cannot be sure which server or hook runs. Cursor has no pre-edit
+hook, so a Cursor edit to these files is reported at the next prompt.
 
-**What each MCP server gets.** ca9 reads the launch command
-(`npx`, `npm exec`, `pnpm dlx`, `yarn dlx`, `bunx`, `uvx`, `uv tool run`,
-`pipx run`, `docker run`, wrappers such as `cmd /c` and `sh -c`):
+A shell command that writes one of these files itself asks, because the hook
+cannot see what it writes: a redirect, `tee`, `sponge` or any program naming
+the file (globs such as `.claude/setting*.json` included), `cp`/`mv`/`rsync`
+into an agent config folder or of a config-named file into the folder that
+holds it, `curl -o`/`-O` and `wget` saving under a config name, inline code
+naming one (`python3 -c "open('.mcp.json','w')..."`), `sed -i`/`perl -i`,
+`git checkout|restore ... -- .claude`, `git apply`/`am`/`patch` of a patch
+that touches an agent config (or one Skylos cannot read), and archive
+extraction (`tar x`, `unzip`). Read-only commands (`cat`, `jq`, `git diff`,
+`git add`) and plain branch switches pass; a branch switch or pull that
+changes these files is reported at the next prompt.
+
+**What each MCP server gets.** Skylos first unwraps the launch (`timeout`,
+`sudo`, `nohup`, `env`, `nice`, `time`, `stdbuf`, `sh -c` ...); ca9 then
+reads the launcher (`npx`, `npm exec`, `pnpm dlx`, `yarn dlx`, `bunx`, `uvx`,
+`uv tool run`, `pipx run`, `docker run`, `cmd /c`). Registry flags
+(`--registry`, `--index-url`) and registry variables in the server's `env` or
+`-e` (`npm_config_registry`, `PIP_INDEX_URL`, `UV_INDEX_URL`) are kept: a
+registry you have not declared in `trusted_registries` asks instead of being
+checked against the public registry.
 
 | Server | Result |
 |:---|:---|
 | Package with an exact version (`pkg@1.4.2`, `pkg==2.1.0`) | Same checks as an install of that version: existence, malware, release age, npm provenance. Clean passes; otherwise **blocked** |
 | Package without an exact version (`npx -y pkg`, `@latest`, `@^1`, `uvx --from pkg tool`) | Checked at the version the launcher fetches today, then **blocked** with the pinned command, for example `claude mcp add x -- npx -y some-mcp@1.4.2`. When that version is too new, the pin is the newest older version without a malware report |
-| Git or URL source, image without a digest, a launcher Skylos cannot read | Asks (`direct_source` / `on_unverified`) |
+| Git or URL source, untrusted registry, image without a digest, a launcher Skylos cannot read | Asks (`direct_source` / `on_unverified`) |
+| A wrapper that starts more than one program (`sh -c "curl ... \| sh"`), inline code (`node -e`, `python -c`), `uv run --with`, a program outside the project (`node /opt/x/server.js`, a binary on PATH) | Asks |
 | ca9 flags it: a script in a hidden home folder, a package name imitating a vendor | Asks (malware still blocks) |
-| Local script (`node ./server.js`), installed module (`python -m pkg`) | Passes; it fetches nothing |
+| Script inside the project (`node ./server.js`), installed module (`python -m pkg`) | Passes; it fetches nothing |
 | Remote server (`--transport http`, `"url"`) | Passes with a note; the note says "could not verify" for plain `http://` to a host that is not local |
 
-**Commands that run on their own.** Adding or changing a hook command in an
-agent's settings (any event, plus `statusLine` and `apiKeyHelper` in Claude
-Code), a `folderOpen` task in `.vscode/tasks.json`, or an
-`ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL` override asks you. So do removing
-Skylos's own hooks (in an edit, or `skylos agent install-hooks --uninstall`
-run by the agent) and `disableAllHooks: true`. Removing other entries is
-allowed. A hook counts as Skylos's own only when its command is exactly what
-`skylos agent install-hooks` writes and it runs the same Skylos executable
-that is checking it, so `curl ... | sh; skylos hook pre-bash ...` or a
-`skylos` binary somewhere else is asked about like any other command.
-Codex cannot ask; Skylos blocks there instead.
+**Commands and settings that run code.** Adding or changing any of these
+asks you:
+
+- a hook command in an agent's settings (any event, plus `statusLine`,
+  `apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport` and
+  `otelHeadersHelper` in Claude Code), hooks or MCP servers in
+  `.claude/agents/*.md` frontmatter, Codex `notify`, and a `folderOpen` task
+  in `.vscode/tasks.json`;
+- settings `env` that changes what runs or where traffic goes: `PATH`,
+  `BASH_ENV`, `PYTHONPATH`, `NODE_OPTIONS`, `HTTPS_PROXY`/`HTTP_PROXY`,
+  `npm_config_registry` and other registry variables,
+  `CLAUDE_CODE_SHELL_PREFIX`, `LD_*`/`DYLD_*`, `ANTHROPIC_BASE_URL`,
+  `OPENAI_BASE_URL`;
+- `enabledPlugins`, `extraKnownMarketplaces`, `enabledMcpjsonServers` and
+  `enableAllProjectMcpServers: true`;
+- removing Skylos's own hooks or weakening them (another event, matcher or a
+  shorter timeout), in an edit or through `skylos agent install-hooks
+  --uninstall` run by the agent, and `disableAllHooks: true`.
+
+Removing other entries is allowed. A hook counts as Skylos's own only when its
+command is, character for character, what `skylos agent install-hooks` writes
+on this machine (the running Skylos console script, or `skylos` on PATH),
+outside the project and outside temp folders, in a settings file whose `env`
+sets no `PATH` or loader variable. `python -m skylos.entry` never counts
+(`-m` imports from the project folder), and neither does a symlink the
+project commits. `curl ... | sh; skylos hook pre-bash ...` or a `skylos`
+binary somewhere else is asked about like any other command. The scanner
+(`SKY-D365`) uses the same rule, without the "this machine" part. Codex
+cannot ask; Skylos blocks there instead.
 
 Without a ca9 that reads agent configs (`ca9.api.agent_config` and
 `parse_mcp_server`), every MCP addition and every edit to these files is
@@ -606,11 +648,13 @@ Without a ca9 that reads agent configs (`ca9.api.agent_config` and
 `.skylos/cache/agent-configs.json`: names and hashes only, never commands,
 URLs or environment values. At each prompt it reports, one line each, what
 changed since the snapshot without a checked agent edit or command:
-servers added, changed or removed, new hook commands, removed Skylos hooks.
-That covers changes made by another program, such as a malicious package
-writing a server into `~/.cursor/mcp.json`, and edits the agent made through
-the shell. Edits Skylos checked are folded into the snapshot after they land
-and are not reported again. The first run only records the snapshot.
+servers added, changed or removed, new hook commands and code-loading
+settings, removed or changed Skylos hooks, duplicate keys. That covers changes
+made by another program, such as a malicious package writing a server into
+`~/.cursor/mcp.json`, Cursor's edits, branch switches, and edits the agent
+made through the shell. Only the exact change Skylos checked is folded into
+the snapshot after it lands; anything else written at the same time is still
+reported. The first run only records the snapshot.
 
 Once per session (or hourly, or when a server changes), every configured MCP
 server is checked again at the version it would run now: known malware, a
@@ -649,6 +693,8 @@ This is policy and audit, not protection, and Skylos enforces none of it.
 Claude Code's `Read` rules cover its own file tools and the file commands it
 recognizes, not a Python or Node script the agent runs; its sandbox covers
 shell commands, not hooks, MCP servers, the status line or `apiKeyHelper`.
+Servers started through a wrapper (`timeout`, `sudo`, `sh -c`), with inline
+code, or from outside the project are left out of `allowedMcpServers`.
 `allowedMcpServers` only binds when an admin sets it in managed settings with
 `allowManagedMcpServersOnly`; in project settings anyone who edits a settings
 file can widen it, and it also blocks servers you added in other scopes. It

@@ -155,11 +155,10 @@ def pinned_servers(root: Path, env: dict[str, str], *, offline: bool,
     findings = [{**f, "_label": label} for label, scan in scans.items() for f in scan.findings]
     if not servers:
         return [], ["No MCP servers configured in this project."]
-    outcomes = [None] * len(servers)
-    if not offline:
-        outcomes = vet_servers(servers, label="", findings=findings, root=root, cwd=root, env=env,
-                               state_root=_state_root(root), sources=sources,
-                               deadline=time.monotonic() + LOOKUP_SECONDS, notes=False)  # fmt: skip
+    outcomes = vet_servers(servers, label="", findings=findings, root=root, cwd=root, env=env,
+                           state_root=_state_root(root), sources=sources,
+                           deadline=time.monotonic() + LOOKUP_SECONDS, notes=False,
+                           offline=offline)  # fmt: skip
     entries: list[dict[str, Any]] = []
     notes = []
     for server, outcome in zip(servers, outcomes):
@@ -168,18 +167,12 @@ def pinned_servers(root: Path, env: dict[str, str], *, offline: bool,
         if server.get("url") and not argv:
             entries.append({"serverUrl": server["url"]})
             notes.append(f"{where}: allowed by URL {server['url']}")
-            continue
-        if not isinstance(argv, list) or not argv:
+        elif not isinstance(argv, list) or not argv:
             notes.append(f"{where}: left out (its command could not be read)")
-            continue
-        if outcome is None:
-            if server.get("pinned") or server.get("fetches") is False:
-                entries.append({"serverCommand": argv})
-                notes.append(f"{where}: allowed as {' '.join(argv)}")
-            else:
-                notes.append(f"{where}: left out (not pinned; run without --offline to pin it)")
-            continue
-        if outcome.decision in (ALLOW, NOTE):
+        elif outcome.wrapped:
+            notes.append(f"{where}: left out (started through a wrapper such as timeout, sudo or "
+                         "sh -c; Skylos allowlists only the launcher itself)")  # fmt: skip
+        elif outcome.decision in (ALLOW, NOTE):
             entries.append({"serverCommand": argv})
             notes.append(f"{where}: allowed as {' '.join(argv)}")
         elif outcome.pinned:
@@ -187,6 +180,8 @@ def pinned_servers(root: Path, env: dict[str, str], *, offline: bool,
             notes.append(f"{where}: pinned to {' '.join(outcome.pinned)} (checked for malware and "
                          "release age); change the config to the same command, the allowlist "
                          "matches it exactly")  # fmt: skip
+        elif offline and outcome.kind == "unpinned":
+            notes.append(f"{where}: left out (not pinned; run without --offline to pin it)")
         else:
             notes.append(f"{where}: left out: {outcome.text}")
     unique = list({json.dumps(e, sort_keys=True): e for e in entries}.values())
