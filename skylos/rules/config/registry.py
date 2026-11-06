@@ -16,6 +16,7 @@ from skylos.rules.config.deployment.exposure import scan_deployment_exposure
 from skylos.rules.config.edge.docker_compose import scan_docker_compose
 from skylos.rules.config.edge.systemd import scan_systemd
 from skylos.rules.config.gpu.compatibility import scan_gpu_compatibility
+from skylos.rules.config.terraform.scanner import scan_terraform
 
 
 def _repository_ci_findings(
@@ -82,12 +83,16 @@ def _repository_ci_findings(
 
     findings: list[dict[str, Any]] = []
     for path, scanner in candidates:
-        if path.is_relative_to(scope) or (selected is not None and path not in selected):
+        if path.is_relative_to(scope) or (
+            selected is not None and path not in selected
+        ):
             continue
         if scanner is scan_github_actions_file:
             findings.extend(
                 scanner(
-                    path, root=repository, ignore=ignore,
+                    path,
+                    root=repository,
+                    ignore=ignore,
                     analysis_errors=analysis_errors,
                 )
             )
@@ -104,19 +109,38 @@ def scan_config_files(
     analysis_errors: list[dict[str, Any]] | None = None,
     required_rules: str | list[str] | tuple[str, ...] | set[str] | None = None,
     scan_paths: list[str] | tuple[str, ...] | None = None,
+    configuration_coverage: dict[str, Any] | None = None,
+    exclude_folders: list[str] | tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     findings.extend(
+        scan_terraform(
+            root,
+            changed_files=changed_files,
+            ignore=ignore,
+            analysis_errors=analysis_errors,
+            required_rules=required_rules,
+            scan_paths=scan_paths,
+            configuration_coverage=configuration_coverage,
+            exclude_folders=exclude_folders,
+        )
+    )
+    findings.extend(
         scan_github_actions(
-            root, changed_files=changed_files, ignore=ignore,
+            root,
+            changed_files=changed_files,
+            ignore=ignore,
             analysis_errors=analysis_errors,
         )
     )
     findings.extend(scan_gitlab_ci(root, changed_files=changed_files, ignore=ignore))
     findings.extend(
         _repository_ci_findings(
-            root, changed_files=changed_files, ignore=ignore,
-            analysis_errors=analysis_errors, scan_paths=scan_paths,
+            root,
+            changed_files=changed_files,
+            ignore=ignore,
+            analysis_errors=analysis_errors,
+            scan_paths=scan_paths,
         )
     )
     findings.extend(scan_dockerfiles(root, changed_files=changed_files, ignore=ignore))

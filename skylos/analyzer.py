@@ -632,6 +632,7 @@ _TS_JS_SOURCE_EXTS = (
 )
 _PHP_SOURCE_EXTS = PHP_SOURCE_EXTS
 _RUST_SOURCE_EXTS = (".rs",)
+_RUBY_SOURCE_EXTS = (".rb",)
 _CPP_SOURCE_EXTS = CPP_SOURCE_EXTS + CPP_HEADER_EXTS
 _DART_SOURCE_EXTS = (".dart",)
 _CSHARP_SOURCE_EXTS = (".cs",)
@@ -646,6 +647,7 @@ ANALYZED_SOURCE_SUFFIXES = frozenset(
         ".java",
         *_PHP_SOURCE_EXTS,
         *_RUST_SOURCE_EXTS,
+        *_RUBY_SOURCE_EXTS,
         *_CPP_SOURCE_EXTS,
         *_DART_SOURCE_EXTS,
         *_CSHARP_SOURCE_EXTS,
@@ -660,6 +662,7 @@ _REFERENCE_LANGUAGE_FAMILIES = {
     **dict.fromkeys(_CPP_SOURCE_EXTS, "cpp"),
     **dict.fromkeys(_PHP_SOURCE_EXTS, "php"),
     **dict.fromkeys(_RUST_SOURCE_EXTS, "rust"),
+    **dict.fromkeys(_RUBY_SOURCE_EXTS, "ruby"),
     **dict.fromkeys(_DART_SOURCE_EXTS, "dart"),
     **dict.fromkeys(_CSHARP_SOURCE_EXTS, "csharp"),
     **dict.fromkeys(_KOTLIN_SOURCE_EXTS, "jvm"),
@@ -1063,8 +1066,7 @@ def _grep_verify_error_payload(
                 f"Install guide: {RIPGREP_INSTALL_URL}."
             )
         message = (
-            f"Grep verification exceeded its {budget:g}-second budget. "
-            f"{outcome} {hint}"
+            f"Grep verification exceeded its {budget:g}-second budget. {outcome} {hint}"
         )
         kind = "grep_budget_exhausted"
     else:
@@ -1789,11 +1791,9 @@ def _annotate_dead_code_evidence_sources(defs, test_flags, framework_flags) -> N
     is_test_file = bool(getattr(test_flags, "is_test_file", False))
 
     for defn in defs:
-        is_fastapi_parameter = (
-            getattr(defn, "type", None) == "parameter"
-            and getattr(defn, "line", None)
-            in getattr(framework_flags, "fastapi_candidate_lines", ())
-        )
+        is_fastapi_parameter = getattr(defn, "type", None) == "parameter" and getattr(
+            defn, "line", None
+        ) in getattr(framework_flags, "fastapi_candidate_lines", ())
         if getattr(defn, "line", None) in framework_lines and not is_fastapi_parameter:
             _mark_evidence_ref(defn, "framework_root")
             signals = getattr(defn, "framework_signals", None)
@@ -1944,6 +1944,7 @@ class Skylos:
         ".java": "Java",
         **dict.fromkeys(PHP_SOURCE_EXTS, "PHP"),
         ".rs": "Rust",
+        ".rb": "Ruby",
         ".cpp": "C++",
         ".cc": "C++",
         ".cxx": "C++",
@@ -2165,7 +2166,10 @@ class Skylos:
             if def_obj.type not in ("function", "method"):
                 continue
             if str(def_obj.filename).endswith(
-                (".java",) + _CSHARP_SOURCE_EXTS + _KOTLIN_SOURCE_EXTS
+                (".java",)
+                + _CSHARP_SOURCE_EXTS
+                + _KOTLIN_SOURCE_EXTS
+                + _RUBY_SOURCE_EXTS
             ):
                 continue
             if "." not in def_obj.name:
@@ -4211,7 +4215,12 @@ class Skylos:
         refresh_review_context(changed_files)
 
         if not files:
-            logger.warning(f"No supported source files found in {path}")
+            if enable_danger:
+                logger.info(
+                    f"No application source files in {path}; running configuration checks"
+                )
+            else:
+                logger.warning(f"No supported source files found in {path}")
             no_source_scan_target, no_source_manifest_root = _no_source_danger_targets(
                 _first,
                 Path(root),
@@ -4351,6 +4360,10 @@ class Skylos:
                             scan_paths=path
                             if isinstance(path, (list, tuple))
                             else None,
+                            configuration_coverage=result[
+                                "analysis_summary"
+                            ].setdefault("configuration_coverage", {}),
+                            exclude_folders=exclude_folders,
                         )
                         result["analysis_summary"]["analysis_error_count"] = len(
                             result["analysis_errors"]
@@ -4561,8 +4574,11 @@ class Skylos:
             from skylos.reporting.listing import explicit_rule_ids, normalize_rule_ids
 
             result = apply_advice_policy(
-                result, project_root=str(project_root), all_advice=all_advice,
-                explicit_rules=explicit_rule_ids(project_cfg) | normalize_rule_ids(required_config_rules),
+                result,
+                project_root=str(project_root),
+                all_advice=all_advice,
+                explicit_rules=explicit_rule_ids(project_cfg)
+                | normalize_rule_ids(required_config_rules),
             )
             return json.dumps(result)
 
@@ -4682,6 +4698,8 @@ class Skylos:
         all_call_arg_types = defaultdict(list)
         all_top_level_refs = set()
         effective_file_configs = {} if include_review_context else None
+        configuration_coverage = {}
+        ruby_security_coverage = []
 
         injected = False
         if custom_rules_data and not os.getenv("SKYLOS_CUSTOM_RULES"):
@@ -4800,7 +4818,10 @@ class Skylos:
                 file_annotation_coverage = out[28] if len(out) > 28 else None
                 if len(out) > 29:
                     receiver_facts.add(mod, out[29])
-                if isinstance(file_annotation_coverage, dict) and file_annotation_coverage:
+                if (
+                    isinstance(file_annotation_coverage, dict)
+                    and file_annotation_coverage
+                ):
                     self._annotation_coverage.append(
                         {"file": str(file), **file_annotation_coverage}
                     )
@@ -4826,6 +4847,10 @@ class Skylos:
                     empty_file_finding,
                     cfg,
                 ) = out[:12]
+                if enable_danger and str(file).endswith(_RUBY_SOURCE_EXTS):
+                    coverage = getattr(framework_flags, "security_coverage", None)
+                    if isinstance(coverage, dict):
+                        ruby_security_coverage.append({"file": str(file), **coverage})
                 if effective_file_configs is not None:
                     effective_file_configs[str(Path(file).resolve())] = cfg
                     for worker_findings in (q_finds, d_finds, pro_finds):
@@ -5063,8 +5088,7 @@ class Skylos:
                 top = g.fragments[0]
 
                 members_preview = [
-                    clone_member_label(frag, project_root)
-                    for frag in g.fragments[:4]
+                    clone_member_label(frag, project_root) for frag in g.fragments[:4]
                 ]
 
                 if (
@@ -5365,6 +5389,8 @@ class Skylos:
                     required_rules=required_config_rules,
                     analysis_errors=analysis_errors,
                     scan_paths=path if isinstance(path, (list, tuple)) else None,
+                    configuration_coverage=configuration_coverage,
+                    exclude_folders=exclude_folders,
                 )
                 if config_findings:
                     all_dangers.extend(config_findings)
@@ -6444,9 +6470,7 @@ class Skylos:
             )
             from skylos.security.static_trace import attach_security_traces
 
-            attach_security_traces(
-                all_dangers, project_root=project_root, files=files
-            )
+            attach_security_traces(all_dangers, project_root=project_root, files=files)
         if enable_danger:
             from skylos.reporting.metadata_paths import relativize_receiver_paths
 
@@ -6484,6 +6508,14 @@ class Skylos:
             include_review_proofs=include_review_proofs,
             review_config=project_cfg,
         )
+        if configuration_coverage:
+            result["analysis_summary"]["configuration_coverage"] = (
+                configuration_coverage
+            )
+        if ruby_security_coverage:
+            result["analysis_summary"]["ruby_security_coverage"] = (
+                ruby_security_coverage
+            )
         if outside_diff_warnings:
             result["analysis_warnings"] = outside_diff_warnings
             result["analysis_summary"]["analysis_warning_count"] = len(
@@ -6508,8 +6540,11 @@ class Skylos:
         from skylos.reporting.listing import explicit_rule_ids, normalize_rule_ids
 
         result = apply_advice_policy(
-            result, project_root=str(project_root), all_advice=all_advice,
-            explicit_rules=explicit_rule_ids(project_cfg) | normalize_rule_ids(required_config_rules),
+            result,
+            project_root=str(project_root),
+            all_advice=all_advice,
+            explicit_rules=explicit_rule_ids(project_cfg)
+            | normalize_rule_ids(required_config_rules),
         )
 
         return json.dumps(result, indent=2)

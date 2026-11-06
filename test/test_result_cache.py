@@ -1,3 +1,5 @@
+import pytest
+
 from skylos.core.result_cache import (
     TRACE_CACHE_DIR,
     build_trace_cache_key,
@@ -136,3 +138,12 @@ def test_trace_cache_does_not_save_failed_trace_runs(tmp_path):
 
     assert path is None
     assert not (tmp_path / TRACE_CACHE_DIR / "abc.json").exists()
+
+
+@pytest.mark.parametrize("filename", ["app.rb", "main.tf", "main.tf.json"])
+def test_trace_cache_key_changes_for_new_language_inputs(tmp_path, filename):
+    source = tmp_path / filename
+    source.write_text("before\n", encoding="utf-8")
+    original = build_trace_cache_key(tmp_path, [tmp_path])
+    source.write_text("after\n", encoding="utf-8")
+    assert build_trace_cache_key(tmp_path, [tmp_path]) != original

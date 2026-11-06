@@ -40,6 +40,7 @@ _JAVA_EXTS = {".java"}
 _CPP_EXTS = {".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx"}
 _PHP_EXTS = {".php", ".module", ".install", ".inc", ".theme", ".profile", ".engine"}
 _RUST_EXTS = {".rs"}
+_RUBY_EXTS = {".rb"}
 _DART_EXTS = {".dart"}
 _KOTLIN_EXTS = {".kt", ".kts"}
 
@@ -91,6 +92,7 @@ _LANG_GLOBS: dict[str, list[str]] = {
     "cpp": ["*.cpp", "*.cc", "*.cxx", "*.hpp", "*.hh", "*.hxx", "*.h"],
     "php": ["*.php"],
     "rust": ["*.rs"],
+    "ruby": ["*.rb"],
     "dart": ["*.dart"],
     "kotlin": ["*.kt", "*.kts"],
 }
@@ -316,6 +318,8 @@ def detect_language(file_path: str) -> str:
         return "php"
     if ext in _RUST_EXTS:
         return "rust"
+    if ext in _RUBY_EXTS:
+        return "ruby"
     if ext in _DART_EXTS:
         return "dart"
     if ext in _KOTLIN_EXTS:
@@ -2373,13 +2377,17 @@ def _read_python_grep_bytes(
         total = 0
         while True:
             if _deadline_expired(deadline):
-                raise _GrepDeadlineExceeded("deadline exceeded while reading grep files")
+                raise _GrepDeadlineExceeded(
+                    "deadline exceeded while reading grep files"
+                )
             chunk = os.read(file_fd, min(1024 * 1024, max_bytes - total + 1))
             if not chunk:
                 break
             total += len(chunk)
             if total > max_bytes:
-                raise _PythonCorpusTooLarge("in-process grep corpus exceeds its byte cap")
+                raise _PythonCorpusTooLarge(
+                    "in-process grep corpus exceeds its byte cap"
+                )
             chunks.append(chunk)
         return b"".join(chunks)
     finally:
@@ -2551,8 +2559,10 @@ def _python_grep_needs_exact_search(
             return True
         if check_case and not line.isascii():
             return True
-        if check_word and not line.isascii() and _rust_and_python_word_classes_can_differ(
-            line, deadline=deadline
+        if (
+            check_word
+            and not line.isascii()
+            and _rust_and_python_word_classes_can_differ(line, deadline=deadline)
         ):
             return True
     return False
@@ -2589,11 +2599,10 @@ def _run_python_grep_batch(
             candidates = _python_grep_candidate_lines(
                 corpus, _required_literal(request), deadline
             )
-            if _python_grep_needs_exact_search(
-                request, corpus, candidates, deadline
-            ):
+            if _python_grep_needs_exact_search(request, corpus, candidates, deadline):
                 direct.append(request)
                 continue
+
             def matches() -> Iterator[_GrepMatch]:
                 for line_index in candidates:
                     yield _GrepMatch(
@@ -2601,6 +2610,7 @@ def _run_python_grep_batch(
                         line_number=corpus.line_numbers[line_index],
                         content=_python_grep_line(corpus, line_index),
                     )
+
             classified = _classify_grep_request(
                 request, matches(), None, deadline=deadline
             )
