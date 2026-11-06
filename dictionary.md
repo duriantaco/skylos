@@ -813,7 +813,7 @@ Simple literal matrices are exempt only when every possible runner value can be
 proved to be a known GitHub-hosted label. Runner groups, unknown expressions and
 matrix combinations that cannot be resolved conservatively still produce a warning.
 
-### Agent, Editor And Publish-Job Configuration (D365-D375)
+### Agent, Editor And Publish-Job Configuration (D365-D377)
 
 Decided by the ca9 engine (`ca9.api.agent_config`, `audit_workflows`,
 `ci_inventory`); Skylos keeps only rows naming a regular file inside the
