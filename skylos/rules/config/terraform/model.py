@@ -253,6 +253,14 @@ def _discover(root, project, changed_files, scan_paths, exclude_folders):
         )
         return []
     root = root.resolve()
+    if not root.is_file() and not root.is_dir():
+        _error(
+            project,
+            root,
+            "terraform_source_read_error",
+            "Terraform source root is not a regular file or directory",
+        )
+        return []
     base = root.parent if root.is_file() else root
     file_target = root.is_file()
     if file_target and not _is_tf(root):
@@ -279,12 +287,16 @@ def _discover(root, project, changed_files, scan_paths, exclude_folders):
     visited = 0
 
     def walk_error(error):
-        _error(
-            project,
-            getattr(error, "filename", base),
-            "terraform_source_read_error",
-            "Could not enumerate Terraform configuration",
-            error_type=type(error).__name__,
+        path = Path(getattr(error, "filename", None) or base)
+        project._incomplete_modules.add(path)
+        project.coverage["discovery_errors"].append(
+            {
+                "kind": "terraform_discovery_error",
+                "file": str(path),
+                "line": 1,
+                "error_type": type(error).__name__,
+                "message": "Could not enumerate potential Terraform configuration",
+            }
         )
 
     for directory, dirs, names in os.walk(base, followlinks=False, onerror=walk_error):
@@ -559,6 +571,7 @@ def load_project(root, *, changed_files=None, scan_paths=None, exclude_folders=N
             "unresolved_resolution_attempts": 0,
             "scope": "terraform_modules",
             "module_calls": [],
+            "discovery_errors": [],
         }
     )
     root = Path(os.path.abspath(root))
@@ -782,7 +795,7 @@ def load_project(root, *, changed_files=None, scan_paths=None, exclude_folders=N
     project.coverage["resources"] = len(project.resources)
     project.coverage["status"] = (
         "incomplete"
-        if project.analysis_errors
+        if project.analysis_errors or project.coverage["discovery_errors"]
         else "complete"
         if paths
         else "not_applicable"

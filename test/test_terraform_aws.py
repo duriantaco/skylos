@@ -541,3 +541,39 @@ def test_tf_json_ignores_policy_words_in_plain_strings(tmp_path):
     findings, coverage, errors = _scan(tmp_path)
     assert findings == errors == []
     assert coverage["checks"][0]["status"] == "safe"
+
+
+@pytest.mark.parametrize("required", [None, "SKY-D400", "SKY-D401", "SKY-DEP001"])
+@pytest.mark.parametrize("has_terraform", [False, True])
+def test_uncertain_optional_discovery_is_partial_and_required_policy_fails_closed(
+    tmp_path, monkeypatch, required, has_terraform
+):
+    import skylos.rules.config.terraform.model as model
+
+    names = ["app.py"]
+    (tmp_path / "app.py").write_text("VALUE=1\n")
+    if has_terraform:
+        _write(tmp_path, 'resource "aws_db_instance" "db" {storage_encrypted=false}\n')
+        names.append("main.tf")
+    hidden = tmp_path / "hidden"
+
+    def incomplete_walk(root, *, onerror, **kwargs):
+        yield str(tmp_path), ["hidden"], names
+        onerror(PermissionError(13, "fixture denied", str(hidden)))
+
+    monkeypatch.setattr(model.os, "walk", incomplete_walk)
+    findings, coverage, errors = _scan(tmp_path, required_rules=required)
+    assert coverage["status"] == "incomplete"
+    assert coverage["evaluation_status"] == "partial"
+    assert coverage["discovery_errors"][0]["file"] == str(hidden)
+    assert [finding["rule_id"] for finding in findings] == (
+        ["SKY-D401"] if has_terraform else []
+    )
+    if required in {"SKY-D400", "SKY-D401"}:
+        assert [error["required_rule"] for error in errors] == [required]
+        assert errors[0]["error_type"] == "TerraformPolicyUnresolved"
+        assert errors[0]["file"] == str(hidden)
+    else:
+        assert errors == []
+    if not has_terraform:
+        assert coverage["evaluation_counts"]["safe"] == 0

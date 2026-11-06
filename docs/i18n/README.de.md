@@ -27,7 +27,7 @@
 ## Was ist Skylos?
 
 Skylos ist eine Open-Source-CLI für statische Analyse in Python-, TypeScript-,
-JavaScript-, Java-, Go-, PHP-, Rust-, Dart-, C#-, C++-, Kotlin- und
+JavaScript-, Java-, Go-, PHP-, Rust-, Ruby-, Dart-, C#-, C++-, Kotlin- und
 Shell-Repositories. Python, TypeScript/JavaScript und Java haben die tiefste
 Abdeckung; die Tabelle unter Sprachunterstützung zeigt die übrigen Sprachen.
 Skylos läuft standardmäßig lokal und kann auch als CI/CD-PR-Gate verwendet
@@ -242,6 +242,7 @@ Timeout-Pflicht beizubringen.
 | Go | Ja¹ | Teilweise¹ | Teilweise | Dead-Code- und ausgewählte Security-Benchmark-Abdeckung |
 | PHP | Ja | Ja | Nein | PHP-Parser-Abdeckung; Security verfolgt Request-Daten (Superglobals, Laravel/Symfony/PSR-7/CodeIgniter-Requests, Drupal Form API) innerhalb einer Funktion oder Datei bis zu Command- und Code-Ausführung, `include`, XSS über `echo`/`<?= ?>`/Blade `{!! !!}`, SQL, SSRF, `unserialize` und Dateipfaden; nicht über Funktions- oder Dateigrenzen und nicht in Twig-Templates |
 | Rust | Experimentell⁴ | Teilweise | Teilweise | Rust-Parser; Command Injection, Path Traversal, direkt unerreichbare Anweisungen und doppelte Zweige |
+| Ruby | Teilweise | Teilweise | Nein | Tree-sitter-Parsing; private Hilfsmethoden, eindeutig zugeordnete Aufrufe und Rails-Controller-Callbacks mit festen Namen; begrenzte Command-Injection-Prüfung für explizite `Kernel`-Aufrufe und Backticks |
 | Dart | Ja³ | Teilweise³ | Nein | Dart-Parser-Abdeckung; Security prüft Command Injection, Path Traversal und SSRF |
 | C# | Teilweise | Teilweise | Teilweise | C#-Symbole, unerreichbare Anweisungen in direkten Blöcken, ASP.NET-bewusste Security-Prüfung (Anfragequellen, typgebundene Senken, unsichere Deserialisierung, XSS) und NuGet-Inventarisierung (`.csproj` und `packages.lock.json`) |
 | C++ | Teilweise | Nein | Nein | nur scheinbar ungenutzte dateilokale Funktionen in `.cpp`, `.cc`, `.cxx`; C++-Header werden für Referenzen gelesen |
@@ -281,7 +282,7 @@ genutzte `pub`-Elemente, Re-Exports und Makros werden nicht aufgelöst.
 Inline-Unterdrückung funktioniert in jeder Sprache oben gleich:
 `skylos: ignore[SKY-D211] Grund` (nur die genannten Regeln), `skylos: ignore`
 (alle Regeln) oder ein Block `skylos: ignore-start` … `skylos: ignore-end` in
-einem Kommentar auf der Zeile des Befunds (`#` in Python, Shell und PHP; `//`
+einem Kommentar auf der Zeile des Befunds (`#` in Python, Shell, PHP und Ruby; `//`
 oder ein einzeiliges `/* */` in den anderen). Das gilt für Dead Code, Security,
 Quality und Secrets; Text in einem String-Literal zählt nie, und Marker anderer
 Tools (`#nosec`, `//nolint`, `NOSONAR`, `@SuppressWarnings`) blenden keine

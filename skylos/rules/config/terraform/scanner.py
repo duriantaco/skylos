@@ -33,6 +33,7 @@ def scan_terraform(
     checks, findings = evaluate_project(project, ignore=ignore)
     errors = list(project.analysis_errors)
     module_calls = project.coverage.get("module_calls", [])
+    discovery_errors = project.coverage.get("discovery_errors", [])
     requested = [required_rules] if isinstance(required_rules, str) else required_rules
     required = set(requested or ()) & SUPPORTED_RULES
     for rule in sorted(required):
@@ -41,9 +42,15 @@ def scan_terraform(
             for check in checks
             if check["rule_id"] == rule and check["status"] == "unknown"
         ]
-        if rule in set(ignore or ()) or unknown or module_calls:
+        if rule in set(ignore or ()) or unknown or module_calls or discovery_errors:
             location = (
-                unknown[0] if unknown else module_calls[0] if module_calls else {}
+                unknown[0]
+                if unknown
+                else module_calls[0]
+                if module_calls
+                else discovery_errors[0]
+                if discovery_errors
+                else {}
             )
             errors.append(
                 {
@@ -72,10 +79,18 @@ def scan_terraform(
     ]
     evaluation_status = (
         "partial"
-        if errors or counts["unknown"] or unsupported or module_calls
+        if errors
+        or counts["unknown"]
+        or unsupported
+        or module_calls
+        or discovery_errors
         else "complete"
     )
-    if not project.coverage.get("files_discovered") and not errors:
+    if (
+        not project.coverage.get("files_discovered")
+        and not errors
+        and not discovery_errors
+    ):
         evaluation_status = "not_applicable"
     coverage = {
         **project.coverage,

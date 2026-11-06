@@ -571,3 +571,25 @@ def test_bounded_reader_preserves_bom_and_rejects_invalid_utf8(tmp_path):
     assert any(
         e["kind"] == "terraform_source_read_error" for e in project.analysis_errors
     )
+
+
+def test_optional_directory_discovery_is_partial_coverage_not_global_error(
+    tmp_path, monkeypatch
+):
+    import skylos.rules.config.terraform.model as model
+
+    _write(tmp_path, "app.py", "VALUE=1\n")
+    hidden = tmp_path / "hidden"
+
+    def incomplete_walk(root, *, onerror, **kwargs):
+        yield str(tmp_path), ["hidden"], ["app.py"]
+        onerror(PermissionError(13, "fixture denied", str(hidden)))
+
+    monkeypatch.setattr(model.os, "walk", incomplete_walk)
+    project = model.load_project(tmp_path)
+    assert project.resources == []
+    assert project.analysis_errors == []
+    assert project.coverage["status"] == "incomplete"
+    assert project.coverage["files_parsed"] == 0
+    assert project.coverage["discovery_errors"][0]["file"] == str(hidden)
+    assert project.coverage["discovery_errors"][0]["error_type"] == "PermissionError"
