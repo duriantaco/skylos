@@ -115,6 +115,10 @@ _BYPASS_HINT_RE = re.compile(
     r"|git_config|alias\.|hooks|\bpre-commit\b|commit-msg|pre-push"
 )
 # "git commit -n" / "-anm": two linear searches, never one backtracking one.
+_AGENT_CONFIG_HINT_RE = re.compile(
+    r"(?i)mcp|install-hooks|settings(?:\.local)?\.json|tasks\.json|hooks\.json|config\.toml"
+    r"|\.claude\.json"
+)
 _GIT_WORD_RE = re.compile(r"\bgit\b")
 _SHORT_N_RE = re.compile(r"(?i)\s-[a-z]*n")
 _WS_RE = re.compile(r"\s+")
@@ -645,7 +649,69 @@ def _fail_open_message(event: str, reason: str) -> str:
 
 def _handle_session_start(payload, root, client, deps, record):
     record["outcome"] = "captured" if record.get("done_configured") else "skip"
-    return _allow_output("session-start", client)
+    output = _allow_output("session-start", client)
+    from skylos.commands.hook_agent_guard import session_agent_check
+
+    try:
+        text = session_agent_check(payload, root, deps, record)
+    except Exception as exc:  # noqa: BLE001
+        record["agent_config_error"] = type(exc).__name__
+        text = "Skylos could not check agent configs and MCP servers this time."
+    if not text:
+        return output
+    record["agent_config_report"] = True
+    if client == "cursor":
+        record["_stderr_notes"] = [text]
+        return output
+    merged = dict(output or {})
+    merged["systemMessage"] = text
+    if client == "claude":
+        merged["hookSpecificOutput"] = {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": text,
+        }
+    return merged
+
+
+def _handle_pre_edit(payload, root, client, deps, record):
+    from skylos.commands.hook_agent_guard import check_agent_edit
+
+    verdict = check_agent_edit(payload, root, deps, record)
+    if verdict is None:
+        record["outcome"] = "skip"
+        return _allow_output("pre-edit", client)
+    return _agent_config_output("pre-edit", client, verdict, record)
+
+
+def _handle_post_bash(payload, root, client, deps, record):
+    _accept_agent_action(payload, root, deps, record, edit=False)
+    return _allow_output("post-bash", client)
+
+
+def _accept_agent_action(payload, root, deps, record, *, edit: bool) -> None:
+    from skylos.commands.hook_agent_guard import accept_agent_action
+
+    try:
+        accept_agent_action(payload, root, deps, edit=edit)
+    except Exception as exc:  # noqa: BLE001
+        record["agent_config_error"] = type(exc).__name__
+
+
+def _agent_config_output(event, client, verdict, record):
+    decision, text = verdict
+    if decision == "ask" and client == "codex":
+        decision = "deny"
+        text += " (Codex hooks cannot ask the user, so Skylos blocks instead.)"
+    if decision == "deny":
+        record["outcome"] = "block"
+        return _deny_output(client, text)
+    if decision == "ask":
+        record["outcome"] = "ask"
+        return _ask_output(client, text)
+    record["outcome"] = "note"
+    if client == "cursor":
+        record["_stderr_notes"] = [text]
+    return _with_notice(event, client, _allow_output(event, client), text)
 
 
 # --------------------------------------------------------------------------
@@ -654,6 +720,7 @@ def _handle_session_start(payload, root, client, deps, record):
 
 
 def _handle_post_edit(payload, root, client, deps, record):
+    _accept_agent_action(payload, root, deps, record, edit=True)
     edited = _edited_files(payload, root, client)
     record["files"] = len(edited)
     if not edited:
@@ -1199,6 +1266,26 @@ def _handle_pre_bash(payload, root, client, deps, record):
         record["outcome"] = "block"
         return _deny_output(client, reason)
 
+    agent_note = None
+    if _AGENT_CONFIG_HINT_RE.search(command):
+        from skylos.commands.hook_agent_guard import check_agent_bash
+
+        verdict = check_agent_bash(command, cwd, root, deps, payload, record)
+        if verdict is not None and verdict[0] in ("deny", "ask"):
+            return _agent_config_output("pre-bash", client, verdict, record)
+        if verdict is not None:
+            agent_note = verdict[1]
+    output = _pre_bash_checks(command, cwd, root, client, deps, record)
+    if agent_note is None:
+        return output
+    if record.get("outcome") in ("skip", "pass"):
+        record["outcome"] = "note"
+    if client == "cursor":
+        record["_stderr_notes"] = [*record.get("_stderr_notes", []), agent_note]
+    return _with_notice("pre-bash", client, output, agent_note)
+
+
+def _pre_bash_checks(command, cwd, root, client, deps, record):
     install_hint = bool(_INSTALL_HINT_RE.search(command))
     bypass_hint = bool(_BYPASS_HINT_RE.search(command)) or bool(
         _GIT_WORD_RE.search(command) and _SHORT_N_RE.search(command)
@@ -2776,15 +2863,11 @@ def _log(root: Path | None, record: dict[str, Any]) -> None:
 
 _HANDLERS = {
     "session-start": _handle_session_start,
-    "pre-edit": lambda payload, root, client, deps, record: _allow_output(
-        "pre-edit", client
-    ),
+    "pre-edit": _handle_pre_edit,
     "post-edit": _handle_post_edit,
     "pre-read": _handle_pre_read,
     "pre-bash": _handle_pre_bash,
-    "post-bash": lambda payload, root, client, deps, record: _allow_output(
-        "post-bash", client
-    ),
+    "post-bash": _handle_post_bash,
     "post-failure": lambda payload, root, client, deps, record: _allow_output(
         "post-failure", client
     ),

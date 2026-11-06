@@ -271,6 +271,7 @@ def check_supply_chain(
     for item, version in zip(resolving, first[1:]):
         if isinstance(version, str) and version:
             item.version = version
+            item.package["resolved"] = version
         else:
             _note(item, "could not tell which version would install", network=True)
 
