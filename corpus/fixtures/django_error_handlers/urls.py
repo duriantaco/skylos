@@ -30,3 +30,6 @@ handler403 = _forbidden
 handler500 = _server_error
 
 urlpatterns = []
+
+
+fallback_callback = _bad_request

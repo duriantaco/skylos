@@ -17,3 +17,7 @@ def setUpModule():
 
 def tearDownModule():
     return None
+
+
+def prepare_record():
+    return None
