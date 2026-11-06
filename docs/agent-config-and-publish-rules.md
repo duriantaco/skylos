@@ -23,7 +23,7 @@ manager.
 | `SKY-D370` | HIGH | Committed agent settings override the API base URL (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`), which sends the API key to that host (the CVE-2026-21852 shape) |
 | `SKY-D371` | HIGH | A tool is installed without a pinned version or hash (`curl \| sh`, `pip install x`, a `setup-*` action without a version) in a job that holds publish credentials or `id-token: write` |
 | `SKY-D372` | HIGH | A download without a checksum or signature check reaches the publish step |
-| `SKY-D373` | HIGH | A job that can mint OIDC tokens (`id-token: write`) publishes without a deployment `environment:` |
+| `SKY-D373` | HIGH | A job that can mint OIDC tokens (GitHub `id-token: write`, GitLab `id_tokens`) publishes without a deployment `environment:` |
 | `SKY-D374` | HIGH | A publishing workflow can be started by `workflow_dispatch` or a push to any branch |
 | `SKY-D375` | MEDIUM | `--diff` only: the change adds or modifies a CI job that publishes packages (steps, triggers, permissions, secrets; moved lines alone do not count) |
 | `SKY-D376` | MEDIUM | A job passes secrets (`secrets: inherit` or named secrets) to a reusable workflow from another repository |
@@ -77,8 +77,8 @@ it, records an analysis error ("… ca9 is not installed or too old. Upgrade ca9
 (pip install -U ca9) and rerun."): the gate stops as incomplete (exit 2)
 instead of passing unchecked. So does a baseline scan whose baseline covered
 rules this run's ca9 cannot decide. A whole-repository scan without a usable
-ca9 notes it in `analysis_summary.supply_chain_checks` and reports nothing for
-these rules.
+ca9 reports nothing for these rules; with `--sca` it also notes the gap in
+`analysis_summary.supply_chain_checks`.
 
 When a changed workflow calls a reusable workflow or includes a file from
 another repository, ca9's audit is incomplete for it. The verdict shows
