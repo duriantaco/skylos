@@ -749,40 +749,33 @@ def _upgrade_repo(tmp_path):
     )
 
 
-def test_upgrade_review_pairs_versions_and_maps_block_and_warn(tmp_path):
-    _upgrade_repo(tmp_path)
+def _reviewed(name, old, new, block=(), warn=()):
     result = {
-        "results": [
-            {
-                "ecosystem": "npm",
-                "name": "lodash",
-                "old": "4.17.20",
-                "new": "4.17.21",
-                "status": "reviewed",
-                "block": [
-                    {
-                        "kind": "new_install_hook",
-                        "path": "package/package.json",
-                        "line": 12,
-                        "snippet": '"postinstall": "node x.js"',
-                        "detail": "new postinstall",
-                    }
-                ],
-                "warn": [
-                    {
-                        "kind": "new_import_time_network",
-                        "path": "../../etc/x.js",
-                        "line": None,
-                        "snippet": "fetch()",
-                        "detail": "",
-                    }
-                ],
-            }
-        ],
-        "receipt": {},
+        "ecosystem": "npm",
+        "name": name,
+        "old": old,
+        "new": new,
+        "status": "reviewed",
+        "basis": "upgrade",
+        "block": list(block),
+        "warn": list(warn),
     }
-    fake = _review_api(FakeDiffApi(), result)
+    if old is None:
+        result["basis"] = "new_package"
+    return result
 
+
+HOOK_DELTA = {
+    "kind": "new_install_hook",
+    "path": "package/package.json",
+    "line": 12,
+    "snippet": '"postinstall": "node x.js"',
+    "detail": "new postinstall",
+}
+
+
+def _review(tmp_path, result):
+    fake = _review_api(FakeDiffApi(), result)
     findings, receipt, errors = diff.supply_chain_diff_findings(
         tmp_path,
         "HEAD~1",
@@ -791,6 +784,29 @@ def test_upgrade_review_pairs_versions_and_maps_block_and_warn(tmp_path):
         security=False,
         review_upgrades=True,
     )
+    return fake, findings, receipt["checks"]["upgrades"], errors
+
+
+def test_upgrade_review_pairs_upgrades_and_new_packages_and_maps_by_list(tmp_path):
+    _upgrade_repo(tmp_path)
+    escaping = {
+        "kind": "new_import_time_network",
+        "path": "../../etc/x.js",
+        "line": None,
+        "snippet": "fetch()",
+        "detail": "",
+    }
+    result = {
+        "results": [
+            _reviewed(
+                "lodash", "4.17.20", "4.17.21", block=[HOOK_DELTA], warn=[escaping]
+            ),
+            _reviewed("chalk", None, "5.3.0", warn=[HOOK_DELTA]),
+        ],
+        "receipt": {"schema": "ca9.upgrade_review.v1", "complete": True, "skipped": []},
+    }
+
+    fake, findings, upgrades, errors = _review(tmp_path, result)
 
     assert fake.pairs == [
         {
@@ -798,55 +814,78 @@ def test_upgrade_review_pairs_versions_and_maps_block_and_warn(tmp_path):
             "name": "lodash",
             "old": "4.17.20",
             "new": "4.17.21",
-            "registry": "registry.npmjs.org",
-        }
+            "registry": "https://registry.npmjs.org",
+        },
+        {
+            "ecosystem": "npm",
+            "name": "chalk",
+            "old": None,
+            "new": "5.3.0",
+            "registry": "https://registry.npmjs.org",
+        },
     ]
-    assert [(item["rule_id"], item["severity"]) for item in findings] == [
-        ("SKY-SCA-UPG001", "CRITICAL")
+    assert sorted(
+        (item["rule_id"], item["severity"], item["metadata"]["basis"])
+        for item in findings
+    ) == [
+        ("SKY-SCA-UPG001", "CRITICAL", "upgrade"),
+        ("SKY-SCA-UPG002", "MEDIUM", "new_package"),
     ]
-    upgrade = findings[0]
+    upgrade = next(item for item in findings if item["rule_id"] == "SKY-SCA-UPG001")
     assert Path(upgrade["file"]).name == "package-lock.json" and upgrade["line"] > 1
     assert upgrade["snippet"] == '"postinstall": "node x.js"'
     assert "package/package.json:12" in upgrade["message"]
     assert upgrade["metadata"]["warn_deltas"][0]["path"] == "x.js"
-    assert errors == [] and receipt["checks"]["upgrades"]["status"] == "complete"
+    assert (
+        errors == []
+        and upgrades["status"] == "complete"
+        and upgrades["new_packages"] == 1
+    )
 
 
-def test_warn_only_upgrade_is_upg002(tmp_path):
+def test_internal_packages_are_never_looked_up_publicly(tmp_path):
     _upgrade_repo(tmp_path)
+    _write(
+        tmp_path / "pyproject.toml",
+        '[tool.skylos.supply_chain]\ninternal_packages = ["chalk"]\n',
+    )
+    seen = {}
     result = {
         "results": [
+            _reviewed("lodash", "4.17.20", "4.17.21"),
             {
                 "ecosystem": "npm",
-                "name": "lodash",
-                "old": "4.17.20",
-                "new": "4.17.21",
-                "status": "reviewed",
-                "block": [],
-                "warn": [
-                    {
-                        "kind": "publisher_change",
-                        "path": "",
-                        "line": None,
-                        "snippet": "",
-                        "detail": "new maintainer",
-                    }
-                ],
-            }
-        ]
+                "name": "chalk",
+                "old": None,
+                "new": "5.3.0",
+                "status": "skipped",
+                "reason": "internal_package",
+            },
+        ],
+        "receipt": {"complete": False},
     }
+    fake = FakeDiffApi()
 
-    findings, _, _ = diff.supply_chain_diff_findings(
+    def review_upgrades(pairs, *, options=None):
+        seen["options"] = options
+        return copy.deepcopy(result)
+
+    fake.review_upgrades = review_upgrades
+    _findings, receipt, errors = diff.supply_chain_diff_findings(
         tmp_path,
         "HEAD~1",
-        api=_review_api(FakeDiffApi(), result),
+        api=fake,
         dependencies=True,
         security=False,
         review_upgrades=True,
     )
 
-    assert [(item["rule_id"], item["severity"]) for item in findings] == [
-        ("SKY-SCA-UPG002", "MEDIUM")
+    assert seen["options"]["internal_packages"] == ["chalk"]
+    assert errors == []
+    assert gk.sca_coverage_warnings(
+        {"analysis_summary": {"supply_chain_diff": receipt}}
+    ) == [
+        "Upgrade review limited: 1 of 2 dependency upgrades reviewed (internal_package: 1)"
     ]
 
 
@@ -872,37 +911,46 @@ def test_unreviewable_upgrades_stop_the_diff_gate(tmp_path, problem):
     assert gk.gate_analysis_coverage(results).blocking
 
 
-def test_skipped_upgrades_are_a_coverage_warning(tmp_path):
+@pytest.mark.parametrize(
+    ("results", "engine_complete", "text"),
+    [
+        (
+            [
+                {
+                    "ecosystem": "npm",
+                    "name": "lodash",
+                    "old": "4.17.20",
+                    "new": "4.17.21",
+                    "status": "skipped",
+                    "reason": "timeout",
+                }
+            ],
+            False,
+            "timeout: 1, no result: 1",
+        ),
+        (
+            [
+                _reviewed("lodash", "4.17.20", "4.17.21"),
+                _reviewed("chalk", None, "5.3.0"),
+            ],
+            False,
+            None,
+        ),
+    ],
+)
+def test_unreviewed_pairs_or_an_incomplete_receipt_never_read_as_a_pass(
+    tmp_path, results, engine_complete, text
+):
     _upgrade_repo(tmp_path)
-    result = {
-        "results": [
-            {
-                "ecosystem": "npm",
-                "name": "lodash",
-                "old": "4.17.20",
-                "new": "4.17.21",
-                "status": "skipped",
-                "reason": "fetch_failed",
-            }
-        ]
-    }
+    result = {"results": results, "receipt": {"complete": engine_complete}}
 
-    _findings, receipt, _ = diff.supply_chain_diff_findings(
-        tmp_path,
-        "HEAD~1",
-        api=_review_api(FakeDiffApi(), result),
-        dependencies=True,
-        security=False,
-        review_upgrades=True,
-    )
-    warnings = gk.sca_coverage_warnings(
-        {"analysis_summary": {"supply_chain_diff": receipt}}
-    )
+    _fake, _findings, upgrades, errors = _review(tmp_path, result)
+    gate = {"analysis_errors": errors, "analysis_summary": {"diff_scoped": True}}
 
-    assert receipt["checks"]["upgrades"]["status"] == "partial"
-    assert warnings == [
-        "Upgrade review limited: 0 of 1 dependency upgrades reviewed (fetch_failed: 1)"
-    ]
+    assert upgrades["status"] == "partial"
+    assert gk.gate_analysis_coverage(gate).blocking
+    if text:
+        assert text in errors[0]["message"]
 
 
 def test_without_review_upgrades_no_review_happens(tmp_path):
@@ -1301,10 +1349,10 @@ def test_real_hardening_regressions_report_a_removed_cooldown(tmp_path):
 @pytest.mark.skipif(
     _real("review_upgrades") is None, reason="ca9.api.review_upgrades is not installed"
 )
-def test_real_review_upgrades_answers_every_pair(tmp_path):
+def test_real_review_upgrades_answers_every_pair_or_stops_the_gate(tmp_path):
     _upgrade_repo(tmp_path)
 
-    _findings, receipt, errors = diff.supply_chain_diff_findings(
+    findings, receipt, errors = diff.supply_chain_diff_findings(
         tmp_path,
         "HEAD~1",
         api=_real("review_upgrades"),
@@ -1313,12 +1361,14 @@ def test_real_review_upgrades_answers_every_pair(tmp_path):
         review_upgrades=True,
     )
 
-    assert errors == []
     upgrades = receipt["checks"]["upgrades"]
-    assert upgrades["pairs"] == 1
-    assert (
-        upgrades["reviewed"] + sum(item["count"] for item in upgrades["skipped"]) == 1
-    )
+    answered = upgrades["reviewed"] + sum(item["count"] for item in upgrades["skipped"])
+    assert upgrades["pairs"] == 2 and answered == 2
+    assert bool(errors) is (upgrades["reviewed"] < 2)
+    assert {item["rule_id"] for item in findings} <= {
+        "SKY-SCA-UPG001",
+        "SKY-SCA-UPG002",
+    }
 
 
 @pytest.mark.skipif(

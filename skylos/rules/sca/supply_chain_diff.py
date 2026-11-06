@@ -11,8 +11,9 @@ and handed to ca9 (``ca9.api``), which never sees the checkout itself:
   ``[tool.skylos.supply_chain.hardening_exceptions]`` with a reason are
   skipped; a pull request cannot add its own exception.
 - ``SKY-SCA-UPG001`` / ``SKY-SCA-UPG002``: with ``--review-upgrades``, npm and
-  PyPI lockfile version changes are paired base to head and passed to
-  ``review_upgrades``; block deltas are UPG001, warn-only deltas UPG002.
+  PyPI lockfile version changes are paired base to head (new packages with
+  ``old: None``) and passed to ``review_upgrades``; a ``block`` list is UPG001,
+  a ``warn``-only list UPG002, whatever the delta kinds.
 - ``SKY-D375``: a CI job that publishes packages was added or changed
   (``ci_inventory`` of both sides, line numbers ignored).
 
@@ -52,6 +53,7 @@ MAX_FILE_BYTES = 2_000_000
 MAX_TOTAL_BYTES = 40_000_000
 MAX_SIDE_FILES = 400
 MAX_UPGRADE_PAIRS = 100
+INTERNAL_SKIP = "internal_package"
 MAX_DELTAS = 10
 MAX_TEXT = 300
 HARDENING_ROOT_FILES = frozenset(
@@ -544,29 +546,46 @@ def _normalized(ecosystem: str, name: str) -> str:
     return name
 
 
+def _registry_host(ecosystem: str, row: dict) -> str | None:
+    registry = str(row.get("registry") or "")
+    host = re.sub(r"^[a-z]+://", "", registry).split("/", 1)[0].lower()
+    if host in _PUBLIC_REGISTRIES[ecosystem]:
+        return host
+    return None
+
+
 def upgrade_pairs(sides: GitSides) -> tuple[list[dict], int]:
-    """(pairs, dropped) for lockfile versions that changed base to head."""
+    """(pairs, dropped) for lockfile entries that changed base to head.
+
+    A version that is new for a package the base already locked pairs with
+    the newest base version; a package the base did not lock (or a lockfile
+    the base did not have) pairs with ``old: None`` and is reviewed as newly
+    added. Upgrades come first when the cap cuts the list.
+    """
     base, head = sides.files(upgrade_path)
     pairs: dict[tuple, dict] = {}
     for path, head_text in sorted(head.items()):
         base_text = base.get(path)
-        if base_text is None or base_text == head_text:
+        if base_text == head_text:
             continue
-        base_rows = _parse_lockfile(path, path, base_text)
-        head_rows = _parse_lockfile(path, path, head_text)
+        base_rows = []
+        if base_text is not None:
+            base_rows = _parse_lockfile(path, path, base_text)
         old: dict[tuple, set] = {}
         for row in base_rows:
             key = (row["_ecosystem"], _normalized(row["_ecosystem"], row["name"]))
             old.setdefault(key, set()).add(str(row["version"]))
         new: dict[tuple, dict] = {}
-        for row in head_rows:
+        for row in _parse_lockfile(path, path, head_text):
             key = (row["_ecosystem"], _normalized(row["_ecosystem"], row["name"]))
             version = str(row["version"])
-            if key not in old or version in old[key]:
+            if version in old.get(key, ()):
                 continue
             new.setdefault((*key, version), row)
         for (ecosystem, name, version), row in sorted(new.items()):
-            previous = max(old[(ecosystem, name)], key=_version_key)
+            previous = None
+            if (ecosystem, name) in old:
+                previous = max(old[(ecosystem, name)], key=_version_key)
             pair = {
                 "ecosystem": ecosystem,
                 "name": name,
@@ -575,12 +594,11 @@ def upgrade_pairs(sides: GitSides) -> tuple[list[dict], int]:
                 "file": path,
                 "line": row.get("line") or 1,
             }
-            registry = str(row.get("registry") or "")
-            host = re.sub(r"^[a-z]+://", "", registry).split("/", 1)[0].lower()
-            if host in _PUBLIC_REGISTRIES[ecosystem]:
-                pair["registry"] = host
+            host = _registry_host(ecosystem, row)
+            if host:
+                pair["registry"] = f"https://{host}"
             pairs.setdefault((ecosystem, name, previous, version), pair)
-    ordered = list(pairs.values())
+    ordered = sorted(pairs.values(), key=lambda pair: pair["old"] is None)
     return ordered[:MAX_UPGRADE_PAIRS], max(0, len(ordered) - MAX_UPGRADE_PAIRS)
 
 
@@ -610,12 +628,37 @@ def _deltas(value) -> list[dict]:
     return deltas
 
 
+def _review_options(root: Path) -> dict:
+    """Never look internal packages up on a public registry."""
+    from skylos.supply_chain.policy import load_supply_chain_policy
+
+    options: dict[str, Any] = {"max_pairs": MAX_UPGRADE_PAIRS}
+    try:
+        policy = load_supply_chain_policy(root)
+    except Exception:  # noqa: BLE001 - without a readable policy ca9 uses its defaults
+        return options
+    for key in ("internal_packages", "private_registries", "trusted_registries"):
+        values = list(getattr(policy, key))
+        if values:
+            options[key] = values
+    return options
+
+
 def upgrade_findings(sides: GitSides, api, receipt: dict, errors: list) -> list[dict]:
+    """UPG001 for every ``block`` delta list and UPG002 for ``warn`` lists.
+
+    Mapping is by list, never by kind: ca9 puts an install hook of a newly
+    added package in ``warn``. Pairs ca9 skipped (other than internal
+    packages it must not look up), pairs with no result, pairs over the cap
+    and an incomplete receipt are an analysis error: those changes were not
+    reviewed, so a diff gate stops as incomplete.
+    """
     pairs, dropped = upgrade_pairs(sides)
     receipt["pairs"] = len(pairs)
+    receipt["new_packages"] = sum(1 for pair in pairs if pair["old"] is None)
     if dropped:
         receipt["not_reviewed_over_limit"] = dropped
-    if not pairs:
+    if not pairs and not dropped:
         receipt["status"] = "nothing_to_review"
         return []
     review = _api_function(api, "review_upgrades")
@@ -625,7 +668,7 @@ def upgrade_findings(sides: GitSides, api, receipt: dict, errors: list) -> list[
             receipt,
             errors,
             "review_upgrades",
-            f"{len(pairs)} dependency upgrade(s) were not reviewed: "
+            f"{len(pairs) + dropped} dependency change(s) were not reviewed: "
             "ca9.api.review_upgrades is unavailable",
         )
         return []
@@ -638,7 +681,7 @@ def upgrade_findings(sides: GitSides, api, receipt: dict, errors: list) -> list[
         for pair in pairs
     ]
     try:
-        result = review(request, options=None)
+        result = review(request, options=_review_options(sides.root))
     except Exception as exc:  # noqa: BLE001 - engine failures stop the gate as incomplete
         receipt["status"] = "failed"
         errors.append(
@@ -649,7 +692,7 @@ def upgrade_findings(sides: GitSides, api, receipt: dict, errors: list) -> list[
         )
         return []
     located = {
-        (pair["ecosystem"], pair["name"], pair["old"], pair["new"]): pair
+        (pair["ecosystem"], pair["name"], pair["old"] or "", pair["new"]): pair
         for pair in pairs
     }
     findings = []
@@ -665,7 +708,7 @@ def upgrade_findings(sides: GitSides, api, receipt: dict, errors: list) -> list[
             str(item.get("old") or ""),
             str(item.get("new") or ""),
         )
-        pair = located.get(key)
+        pair = located.pop(key, None)
         if pair is None:
             continue
         if item.get("status") != "reviewed":
@@ -681,13 +724,37 @@ def upgrade_findings(sides: GitSides, api, receipt: dict, errors: list) -> list[
     receipt["skipped"] = [
         {"reason": reason, "count": count} for reason, count in sorted(skipped.items())
     ]
-    missing = len(pairs) - reviewed - sum(skipped.values())
-    if missing > 0:
-        receipt["no_result"] = missing
+    if located:
+        receipt["no_result"] = len(located)
+    engine = _get(result, "receipt")
+    engine_complete = isinstance(engine, dict) and engine.get("complete") is True
+    receipt["engine_complete"] = engine_complete
+    unreviewed = (
+        sum(count for reason, count in skipped.items() if reason != INTERNAL_SKIP)
+        + len(located)
+        + dropped
+    )
     receipt["status"] = "complete"
-    if skipped or missing > 0 or dropped:
+    if skipped or located or dropped or not engine_complete:
         receipt["status"] = "partial"
+    if unreviewed or (not engine_complete and not skipped):
+        errors.append(
+            _error(
+                "review_upgrades",
+                f"{max(unreviewed, 1)} of {len(pairs) + dropped} dependency change(s) "
+                "were not reviewed (" + _skip_text(skipped, located, dropped) + ")",
+            )
+        )
     return findings
+
+
+def _skip_text(skipped: dict, located: dict, dropped: int) -> str:
+    parts = [f"{reason}: {count}" for reason, count in sorted(skipped.items())]
+    if located:
+        parts.append(f"no result: {len(located)}")
+    if dropped:
+        parts.append(f"over the limit: {dropped}")
+    return ", ".join(parts) or "engine receipt incomplete"
 
 
 def _upgrade_finding(sides, pair, block, warn) -> dict:
@@ -702,6 +769,8 @@ def _upgrade_finding(sides, pair, block, warn) -> dict:
     if lead["line"]:
         where = f"{where}:{lead['line']}"
     label = f"{pair['name']} {pair['old']} -> {pair['new']}"
+    if pair["old"] is None:
+        label = f"newly added {pair['name']} {pair['new']}"
     if block:
         message = (
             f"{label} adds {lead['kind']} in {where}: code that runs on install, "
@@ -719,11 +788,14 @@ def _upgrade_finding(sides, pair, block, warn) -> dict:
         "package_name": pair["name"],
         "old_version": pair["old"],
         "package_version": pair["new"],
+        "basis": "upgrade",
         "block_deltas": block,
         "warn_deltas": warn,
         "engine": "ca9",
         "base_commit": sides.commit,
     }
+    if pair["old"] is None:
+        metadata["basis"] = "new_package"
     return _finding(
         rule_id,
         severity,
