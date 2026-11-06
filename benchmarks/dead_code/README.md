@@ -107,7 +107,7 @@ frameworks or dynamic dispatch patterns are covered.
 
 Eight cases add shared coverage for C#, Kotlin, Rust and Dart: each language has
 a direct call chain and an owner/member control, with both used and unused
-symbols. The default suite now has 37 cases and 191 labels. The original 29 cases
+symbols. That language-parity stage had 37 cases and 191 labels. The original 29 cases
 and 148 labels retain their expectations. Rust cases explicitly use confidence
 40, matching its experimental analyzer policy; other new cases use 60.
 
@@ -530,3 +530,19 @@ python scripts/framework_corpus.py --checkout-root /private/tmp/skylos-biglib-sc
 That runner is a manual/nightly drift signal, not the blocking CI suite. Promote
 confirmed real-repo false positives and false negatives into small fixtures here
 so the normal benchmark keeps exact TP/FP/FN/TN coverage.
+
+### C++ and Ruby control pairs
+
+The current default suite has 42 cases and 216 labels: 73 unused and 143 used.
+All 37 earlier case objects and their labels remain unchanged.
+
+The default corpus also includes C++ direct-call and address-taken callback
+pairs, plus Ruby private call chains, same-named methods on different owners,
+and Rails callback versus ordinary-class lookalikes. Every case preserves used
+and unused labels. Ruby classes and public methods remain possible external
+API; dynamic dispatch is conservative. Generic grep name matches do not prove a
+Ruby receiver and cannot hide a native Ruby finding.
+
+These original synthetic cases add regression coverage. Independent pinned
+holdouts for the newer languages are still needed; passing the default corpus
+does not establish deployment accuracy. See [the remaining gap list](../GAPS.md).

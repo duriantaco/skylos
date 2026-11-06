@@ -1485,6 +1485,287 @@
         ]
       },
       "symbol_identity": "qualified"
+    },
+    {
+      "id": "cpp-direct-call-chain",
+      "path": "fixtures/cpp_direct_call_chain",
+      "description": "Main calls render, which calls normalize; file-local summarize has no caller, address reference, macro or exported contract.",
+      "languages": [
+        "cpp"
+      ],
+      "taxonomy": [
+        "cpp",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only C++ free-function corpus control; no compiler or target program is executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "render"
+          },
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "summarize"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cpp-address-taken-callback",
+      "path": "fixtures/cpp_address_taken_callback",
+      "description": "The address of parse_record flows into the called function pointer; serialize_record has no reference. This is file-local free-function coverage, not C++ linking/template/class analysis.",
+      "languages": [
+        "cpp"
+      ],
+      "taxonomy": [
+        "cpp",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only C++ free-function corpus control; no compiler or target program is executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "parse_record"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "serialize_record"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ruby-private-chain",
+      "languages": ["ruby"],
+      "symbol_identity": "qualified",
+      "path": "fixtures/ruby_private_chain",
+      "description": "Ruby private chain; bounded native Ruby source contract.",
+      "taxonomy": [
+        "ruby",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic Ruby source contract, never executed. Expected source/labels frozen before implementation."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "main.rb",
+            "symbol": "Formatter"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Formatter#publish"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Formatter#render"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Formatter#normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Formatter#snapshot"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ruby-member-owners",
+      "languages": ["ruby"],
+      "symbol_identity": "qualified",
+      "path": "fixtures/ruby_member_owners",
+      "description": "Ruby member owners; bounded native Ruby source contract.",
+      "taxonomy": [
+        "ruby",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic Ruby source contract, never executed. Expected source/labels frozen before implementation."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "main.rb",
+            "symbol": "TextCodec"
+          },
+          {
+            "kind": "class",
+            "file": "main.rb",
+            "symbol": "BinaryCodec"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "TextCodec#publish"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "TextCodec#process"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "BinaryCodec#process"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ruby-callback-owner",
+      "languages": ["ruby"],
+      "symbol_identity": "qualified",
+      "path": "fixtures/ruby_callback_owner",
+      "description": "Ruby callback owner; bounded native Ruby source contract.",
+      "taxonomy": [
+        "ruby",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic Ruby source contract, never executed. Expected source/labels frozen before implementation."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "main.rb",
+            "symbol": "PageController"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PageController#show"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PageController#authorize"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PageController#render_text"
+          },
+          {
+            "kind": "class",
+            "file": "main.rb",
+            "symbol": "PlainHandler"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PlainHandler.before_action"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PageController#preview"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PlainHandler#prepare"
+          }
+        ]
+      }
     }
   ]
 }

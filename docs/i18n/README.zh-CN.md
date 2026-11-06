@@ -23,7 +23,7 @@
 
 ## Skylos 是什么？
 
-Skylos 是一款面向 Python、TypeScript、JavaScript、Java、Go、PHP、Rust、Dart、C#、C++、Kotlin 和 Shell 仓库的开源静态分析 CLI。它默认在本地运行，也可以作为 CI/CD PR 门控使用。Python、TypeScript/JavaScript 和 Java 的覆盖最深，其他语言的支持范围见“语言支持”表。
+Skylos 是一款面向 Python、TypeScript、JavaScript、Java、Go、PHP、Rust、Ruby、Dart、C#、C++、Kotlin 和 Shell 仓库的开源静态分析 CLI。它默认在本地运行，也可以作为 CI/CD PR 门控使用。Python、TypeScript/JavaScript 和 Java 的覆盖最深，其他语言的支持范围见“语言支持”表。
 
 如果你使用 Vulture 检测死代码、Bandit 做安全检查，或使用 Semgrep、CodeQL、GitHub Advanced Security 做 CI 门控，Skylos 可以作为补充：它更关注框架感知的死代码检测、差异感知的回归检查，以及适合 PR 审查的反馈。
 
@@ -159,6 +159,7 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 | Go | 是¹ | 部分¹ | 部分 | 死代码和部分安全基准覆盖 |
 | PHP | 是 | 是 | 否 | PHP parser 覆盖；安全检查在单个函数或文件内追踪请求数据（超全局变量、Laravel/Symfony/PSR-7/CodeIgniter 请求、Drupal Form API），覆盖命令与代码执行、`include` 文件包含、`echo`/`<?= ?>`/Blade `{!! !!}` XSS、SQL、SSRF、`unserialize` 和文件路径；不跨函数或文件，也不检查 Twig 模板 |
 | Rust | 实验性⁴ | 部分 | 部分 | Rust 解析；命令注入、路径穿越、直接不可达语句及重复分支检查 |
+| Ruby | 部分 | 部分 | 否 | Tree-sitter 解析；私有辅助方法、明确所属类的方法调用和名称为字面量的 Rails 控制器回调；有限的显式 `Kernel` 调用和反引号命令注入检查 |
 | Dart | 是³ | 部分³ | 否 | Dart parser 覆盖；安全检查覆盖命令注入、路径穿越和 SSRF |
 | C# | 部分 | 部分 | 部分 | C# 符号、直接代码块中的不可达语句、感知 ASP.NET 的安全检查（请求来源、按接收者类型识别的汇入点、不安全反序列化、XSS）及 NuGet 依赖清单（`.csproj` 和 `packages.lock.json`） |
 | C++ | 部分 | 否 | 否 | 仅报告 `.cpp`、`.cc`、`.cxx` 中看似未使用的文件内函数；会读取 C++ 头文件中的引用 |
@@ -173,7 +174,7 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 
 ⁴ Rust 死代码是实验性功能：trait 方法调用、跨 crate 使用的 `pub` 项、重新导出和宏都不会被解析。Rust 候选项的置信度最高为 40，低于默认阈值 60，因此只有加上 `--confidence 40` 才会列出。
 
-上表所有语言的内联抑制用法相同：在问题所在行的注释里写 `skylos: ignore[SKY-D211] 原因`（只抑制列出的规则）、`skylos: ignore`（抑制所有规则），或用 `skylos: ignore-start` … `skylos: ignore-end` 包住一段代码（Python、Shell 和 PHP 用 `#`，其他语言用 `//` 或单行 `/* */`）。它适用于死代码、安全、质量和密钥检查；字符串字面量里的文字不算数，其他工具的标记（`#nosec`、`//nolint`、`NOSONAR`、`@SuppressWarnings`）不会隐藏 Skylos 的问题。
+上表所有语言的内联抑制用法相同：在问题所在行的注释里写 `skylos: ignore[SKY-D211] 原因`（只抑制列出的规则）、`skylos: ignore`（抑制所有规则），或用 `skylos: ignore-start` … `skylos: ignore-end` 包住一段代码（Python、Shell、PHP 和 Ruby 用 `#`，其他语言用 `//` 或单行 `/* */`）。它适用于死代码、安全、质量和密钥检查；字符串字面量里的文字不算数，其他工具的标记（`#nosec`、`//nolint`、`NOSONAR`、`@SuppressWarnings`）不会隐藏 Skylos 的问题。
 
 `--secrets` 还会读取 shell 脚本（包括以 shell `#!` 行开头、没有扩展名的脚本）、C 和 C++ 源文件与头文件、Dockerfile、Terraform `.tf`/`.tfvars`/`.hcl`、`.properties`、XML、Gradle、`.npmrc` 和 `.pypirc`。
 

@@ -82,8 +82,8 @@ when you want one command to check a repo or pull request for:
   invented package APIs, and impossible dependency versions
 - LLM app risks such as unsafe tool use and missing output validation
 
-Skylos supports 11 languages: Python, TypeScript/JavaScript, Java, Go, PHP,
-Rust, Dart, C#, C++, Kotlin and Shell. Python has the deepest coverage.
+Skylos supports 12 languages: Python, TypeScript/JavaScript, Java, Go, PHP,
+Rust, Ruby, Dart, C#, C++, Kotlin and Shell. Python has the deepest coverage.
 TypeScript/JavaScript and Java also get dead-code, security and quality checks;
 PHP and Dart get dead-code and security checks (PHP security follows request
 data within a function or file into command and code execution, file inclusion,
@@ -99,8 +99,10 @@ platforms `skylos doctor` prints the command that builds it from source, and
 partial, Kotlin dead code covers only private declarations and imports (Kotlin
 security covers Spring, Ktor, servlet and Android WebView basics), C++ is
 limited to unused file-local functions,
-and Shell gets security checks only.
-Skylos also checks CI/CD and deployment config. See
+and Shell gets security checks only. Ruby adds bounded private-method liveness,
+literal Rails controller callbacks and explicit Kernel command checks.
+Skylos also checks CI/CD, deployment config and two Terraform/AWS declaration
+policies. See
 [Language Support](#language-support).
 
 ## Read The Results
@@ -903,6 +905,7 @@ how many in one line of output. Set `include_generated = true` under
 | Go | Yes¹ | Partial¹ | Partial | Supported | native engine status remains separate from deterministic workspace API proof |
 | PHP | Yes | Yes | No | Unsupported | PHP parser coverage, type and docblock references, Laravel and Drupal conventions (including `.module`/`.install`/`.inc`/`.theme` files); security follows request data (superglobals, Laravel/Symfony/PSR-7/CodeIgniter requests, Drupal Form API) within one function or file into `exec`/`system`/backticks, `eval`/`include`, `echo`/`print`/`<?= ?>` and Blade `{!! !!}` XSS by HTML context, SQL (mysqli, PDO, `$wpdb`, Laravel `DB::raw`/`whereRaw`, Doctrine DBAL), SSRF, `unserialize`, file paths, Drupal `Markup::create()` and inline Twig; not across functions or files, and not Twig templates |
 | Rust | Experimental⁴ | Partial | Partial | Unsupported | Rust parser coverage; command/path security checks, direct unreachable statements and duplicate branch bodies |
+| Ruby | Partial | Partial | No | Unsupported | Tree-sitter parsing; private helpers, exact owner calls and literal Rails controller callbacks; explicit `Kernel.system`/`exec`/`spawn` command checks; see limits below |
 | Dart | Yes³ | Partial³ | No | Unsupported | Dart parser coverage; security covers command injection, path traversal and SSRF |
 | C# | Partial | Partial | Partial | Unsupported | C# symbols, direct-block unreachable code, ASP.NET-aware security (request sources, receiver-typed sinks, unsafe deserialization, XSS), and NuGet inventory (`.csproj` pins and `packages.lock.json`) |
 | C++ | Partial | No | No | Unsupported | conservative unused file-local functions in `.cpp`, `.cc`, `.cxx`; C++ headers are parsed for references |
@@ -945,7 +948,7 @@ Inline suppression works the same way in every language above: put
 `skylos: ignore[SKY-D211] reason` (only the named rules),
 `skylos: ignore` (every rule) or a `skylos: ignore-start` …
 `skylos: ignore-end` block in a comment on the finding's line (`#` in Python,
-Shell and PHP; `//` or a one-line `/* */` in the others). It covers dead code,
+Shell, PHP and Ruby; `//` or a one-line `/* */` in the others). It covers dead code,
 security, quality and secrets; text inside a string literal never counts, and
 other tools' markers (`#nosec`, `//nolint`, `NOSONAR`, `@SuppressWarnings`) do
 not hide Skylos findings.
@@ -1023,6 +1026,27 @@ release reports only apparently unused file-local free functions. Without a
 build configuration, it cannot fully resolve templates, overloads, macros, or
 external usage; these findings are a conservative heuristic, not a proof of
 C++ deadness. Ambiguous `.h` files and C files are not analyzed as C++.
+
+Ruby `.rb` analysis follows private helper calls with exact method owners and
+literal callbacks on direct Rails controller subclasses. Classes and public
+methods remain possible external API; dynamic dispatch keeps affected code
+uncertain. Generic text matches cannot prove Ruby method ownership. The first
+security rule covers explicit `Kernel.system`, `Kernel.exec`, `Kernel.spawn`
+and backtick interpolation with `ARGV`/`STDIN` data in a command string or shell
+payload. Literal commands and fixed `printf` with literal `%s` and separate data
+arguments have paired controls. Other executable argument semantics, visible overrides and
+unsupported selectors remain unresolved in
+`analysis_summary.ruby_security_coverage`. Rails SQL/request provenance, broader
+Ruby security rules, quality and local API verification are not supported yet.
+
+Terraform `.tf` and `.tf.json` checks cover worldwide administrative ingress and
+explicitly disabled encryption on a new AWS RDS database. They read modules and
+literal locals without running Terraform. Unknown variables, external modules,
+providers and inherited encryption remain visible in
+`analysis_summary.configuration_coverage.terraform`. These checks describe
+source declarations, not deployed resources. See the
+[cloud corpus](benchmarks/cloud/README.md) and
+[remaining evidence and capability gaps](benchmarks/GAPS.md).
 
 Java weak-hash checks also follow local algorithm variables and values loaded
 through `java.util.Properties` from literal classloader resources. Resource

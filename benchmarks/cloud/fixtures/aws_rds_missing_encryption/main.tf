@@ -1,0 +1,5 @@
+resource "aws_db_instance" "database" {
+  engine = "postgres"
+  instance_class = "db.t3.micro"
+  allocated_storage = 20
+}

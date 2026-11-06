@@ -20,6 +20,7 @@ from skylos.benchmarks._analysis_validation import analysis_issues as _analysis_
 DEAD_CODE_TAXONOMY: dict[str, str] = {
     "basic_detection": "Core unused import, function, class, variable, and parameter detection.",
     "framework_precision": "Framework-owned symbols that should not be reported as dead code.",
+    "cpp": "Conservative C++ file-local free-function liveness patterns.",
     "csharp": "C# dead-code and entrypoint liveness patterns.",
     "dart": "Dart dead-code and entrypoint liveness patterns.",
     "go": "Go dead-code and entrypoint liveness patterns.",
@@ -28,6 +29,7 @@ DEAD_CODE_TAXONOMY: dict[str, str] = {
     "kotlin": "Kotlin dead-code and entrypoint liveness patterns.",
     "php": "PHP dead-code and entrypoint liveness patterns.",
     "rust": "Rust dead-code and entrypoint liveness patterns.",
+    "ruby": "Bounded Ruby private-method and literal callback liveness.",
     "typescript": "TypeScript dead-code and module liveness patterns.",
     "fastapi": "FastAPI route and dependency injection liveness patterns.",
     "flask": "Flask route and registration liveness patterns.",
@@ -73,11 +75,13 @@ DEFAULT_SCAN = {
 SUPPORTED_SCANNERS = {"skylos", "vulture", "ruff"}
 SUPPORTED_LANGUAGES = {
     "python",
+    "cpp",
     "go",
     "java",
     "javascript",
     "typescript",
     "rust",
+    "ruby",
     "dart",
     "csharp",
     "kotlin",

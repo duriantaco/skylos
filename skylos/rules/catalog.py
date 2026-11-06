@@ -1438,6 +1438,20 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-D400",
+        "Terraform AWS worldwide administrative ingress",
+        "security",
+        "HIGH",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D401",
+        "Terraform AWS new database storage encryption disabled",
+        "security",
+        "HIGH",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-DEP001",
         "Externally deployed route is missing a required auth guard",
         "security",

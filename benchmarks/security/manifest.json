@@ -1889,6 +1889,299 @@
           ]
         }
       }
+    },
+    {
+      "id": "rust-shell-literal-command",
+      "path": "fixtures/rust_shell_literal_command",
+      "description": "The shell program and complete command text are fixed literals; the existing tainted shell case is its unsafe counterpart.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "command_injection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only CLI/function-local source-to-sink corpus control; no target program or framework is executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D212"
+          ]
+        }
+      }
+    },
+    {
+      "id": "rust-path-argument",
+      "path": "fixtures/rust_path_argument",
+      "description": "A command-line argument controls the complete filesystem path, without a base directory or containment check.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "path_traversal"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only CLI/function-local source-to-sink corpus control; no target program or framework is executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D215"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "dart-process-command-argument",
+      "path": "fixtures/dart_process_command_argument",
+      "description": "A caller-supplied executable controls which program starts; disabling the shell does not restrict executable selection.",
+      "languages": [
+        "dart"
+      ],
+      "taxonomy": [
+        "dart",
+        "command_injection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only CLI/function-local source-to-sink corpus control; no target program or framework is executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D212"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "dart-process-literal-command",
+      "path": "fixtures/dart_process_literal_command",
+      "description": "The executable and all arguments are fixed literals and shell execution is disabled.",
+      "languages": [
+        "dart"
+      ],
+      "taxonomy": [
+        "dart",
+        "command_injection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only CLI/function-local source-to-sink corpus control; no target program or framework is executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D212"
+          ]
+        }
+      }
+    },
+    {
+      "id": "dart-file-path-argument",
+      "path": "fixtures/dart_file_path_argument",
+      "description": "A caller-supplied path flows through an assignment directly to File/readAsString without a containment or basename guard.",
+      "languages": [
+        "dart"
+      ],
+      "taxonomy": [
+        "dart",
+        "path_traversal"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only CLI/function-local source-to-sink corpus control; no target program or framework is executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D215"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "dart-file-basename-guard",
+      "path": "fixtures/dart_file_basename_guard",
+      "description": "The imported path.basename library operation removes directory components before the fixed-base read; this guards path traversal, not separate symlink/file-authorization policy.",
+      "languages": [
+        "dart"
+      ],
+      "taxonomy": [
+        "dart",
+        "path_traversal",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only CLI/function-local source-to-sink corpus control; no target program or framework is executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D215"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ruby-command-shell",
+      "path": "fixtures/ruby_command_shell",
+      "description": "Ruby command shell; bounded native Ruby source contract.",
+      "taxonomy": [
+        "ruby",
+        "command_injection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic Ruby source contract, never executed. Expected source/labels frozen before implementation."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "languages": [
+        "ruby"
+      ],
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D212"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "ruby-command-string",
+      "path": "fixtures/ruby_command_string",
+      "description": "Ruby command string; bounded native Ruby source contract.",
+      "taxonomy": [
+        "ruby",
+        "command_injection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic Ruby source contract, never executed. Expected source/labels frozen before implementation."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "languages": [
+        "ruby"
+      ],
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D212"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "ruby-command-argv",
+      "path": "fixtures/ruby_command_argv",
+      "description": "Ruby command argv; bounded native Ruby source contract.",
+      "taxonomy": [
+        "ruby",
+        "command_injection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic Ruby source contract, never executed. Expected source/labels frozen before implementation."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "languages": [
+        "ruby"
+      ],
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D212"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ruby-command-literal",
+      "path": "fixtures/ruby_command_literal",
+      "description": "Ruby command literal; bounded native Ruby source contract.",
+      "taxonomy": [
+        "ruby",
+        "command_injection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic Ruby source contract, never executed. Expected source/labels frozen before implementation."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "languages": [
+        "ruby"
+      ],
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D212"
+          ]
+        }
+      }
     }
   ]
 }

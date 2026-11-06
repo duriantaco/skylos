@@ -57,7 +57,7 @@ and does not request a Git comparison against a history the fixture does not hav
 Twelve default Kotlin cases cover SQL interpolation/binding, shell commands,
 fixed and request-controlled destinations, and path guards. They include seven
 required findings and five safe controls, with lookalikes that must still report.
-The default security suite now has 84 cases; all 72 earlier cases retain their
+That Kotlin stage had 84 cases; all 72 earlier cases retain their
 expectations. These are local request-source/API flow contracts, not deployed
 applications or remote exploit proofs. Fixture programs are never executed.
 
@@ -92,3 +92,21 @@ misconfiguration. The cross-language cases currently cover Go Zip Slip
 path traversal, Java servlet path traversal, TypeScript unsafe eval, C# command
 execution/SQL/SSRF/path/open-redirect flows, and PHP unsafe
 deserialization/path traversal with matched safe guards.
+
+### Additional paired controls
+
+The current default suite has 94 cases and 101 expectations: 54 required
+findings and 47 absence controls. All 84 earlier case objects remain unchanged.
+
+Rust now pairs its command finding with a fixed-command control and includes a
+path-argument finding. Dart adds command unsafe/safe and path unsafe/basename
+pairs. Ruby adds explicit Kernel command-string and shell-payload findings with
+literal-command and fixed `printf`/literal `%s`/separate-data argument controls.
+Other executable argument semantics remain unresolved.
+
+Ruby provider overrides and dynamic selectors have separate unknown contracts
+in `test/test_ruby.py`; they are deliberately excluded from ordinary safe
+labels. This first Ruby engine does not claim Rails SQL, request provenance,
+path, SSRF, or quality coverage. Cloud policy contracts have their own
+[file/resource-based runner](../cloud/README.md), since application source-file
+counts cannot validate Terraform-only inputs.

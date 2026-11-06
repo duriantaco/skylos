@@ -72,6 +72,8 @@ SOURCE_EXTENSIONS = {
     ".profile",
     ".engine",
     ".rs",
+    ".rb",
+    ".tf",
     ".dart",
     ".kt",
     ".kts",
@@ -112,6 +114,7 @@ RELEVANT_FILENAMES = {
 }
 
 RELEVANT_GLOBS = (
+    "*.tf.json",
     "requirements*.txt",
     "constraints*.txt",
 )
