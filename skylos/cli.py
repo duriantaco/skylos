@@ -2738,6 +2738,8 @@ def _build_main_scan_context(args):
         args.quality = True
         args.ai_defects = True
         args.sca = True
+    if getattr(args, "review_upgrades", False):
+        args.sca = True
 
     _apply_selected_rule_analysis_flags(args)
     _validate_display_category(args)

@@ -281,8 +281,9 @@ def _python_verification_surface_root(surface_root):
 
 
 def _supply_chain_summary(root, sca_findings) -> dict:
-    """``dependency_inventory`` and ``supply_chain_posture`` for a finished
-    dependency scan; empty when either cannot be built."""
+    """``dependency_inventory``, ``supply_chain_posture``, ``ci_inventory`` and
+    ``agent_hooks`` for a finished dependency scan; empty when they cannot be
+    built."""
     try:
         from skylos.rules.sca.posture import build_supply_chain_summary
 

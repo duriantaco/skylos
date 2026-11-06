@@ -1018,7 +1018,7 @@ def _prepare_report_upload(
     if isinstance(analysis_summary, dict):
         # Preserve completion and scope alongside the findings in every
         # supported upload transport, including native SARIF ingestion.
-        from skylos.rules.sca.posture import INVENTORY_KEY, UPLOAD_SUMMARY_KEYS
+        from skylos.rules.sca.posture import INVENTORY_KEYS, UPLOAD_SUMMARY_KEYS
 
         coverage = {
             key: json.loads(json.dumps(analysis_summary[key]))
@@ -1027,15 +1027,20 @@ def _prepare_report_upload(
         }
         if coverage:
             scan_summary.update(
-                {key: value for key, value in coverage.items() if key != INVENTORY_KEY}
+                {
+                    key: value
+                    for key, value in coverage.items()
+                    if key not in INVENTORY_KEYS
+                }
             )
             core_payload["runs"][0].setdefault("properties", {}).setdefault(
                 "summary", {}
             ).update(coverage)
             legacy_payload["summary"] = dict(scan_summary)
             compatibility_payload["summary"] = dict(scan_summary)
-            if INVENTORY_KEY in coverage:
-                compatibility_payload["summary"][INVENTORY_KEY] = coverage[INVENTORY_KEY]
+            for key in INVENTORY_KEYS:
+                if key in coverage:
+                    compatibility_payload["summary"][key] = coverage[key]
 
     return PreparedReportUpload(
         legacy_payload=legacy_payload,

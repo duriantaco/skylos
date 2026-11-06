@@ -359,30 +359,92 @@ def _append_threshold_reason(
     return True
 
 
-REPORT_ONLY_DEPENDENCY_RULES = frozenset({"SKY-SCA-SRC003"})
+REPORT_ONLY_DEPENDENCY_RULES = frozenset({"SKY-SCA-SRC003", "SKY-SCA-UPG002"})
+FULL_SCAN_REPORT_ONLY_RULES = frozenset(f"SKY-D{number}" for number in range(365, 375))
+CHANGE_BLOCKING_RULES = frozenset(
+    {
+        "SKY-D365",
+        "SKY-D366",
+        "SKY-D368",
+        "SKY-D370",
+        "SKY-SCA-UPG001",
+        "SKY-SCA-HRD001",
+    }
+)
+
+
+def _rule_id(finding):
+    if not isinstance(finding, dict):
+        return ""
+    return str(finding.get("rule_id") or "").upper()
 
 
 def _built_in_gate_dependencies(dependencies):
     """Dependency findings the built-in gate counts.
 
     ``SKY-SCA-SRC003`` (a Git or URL dependency that is not pinned to a
-    commit or hash) is reported but not counted here, so a tag-pinned Git
+    commit or hash) and ``SKY-SCA-UPG002`` (an upgrade adds code worth a
+    look, not a block) are reported but not counted here, so a tag-pinned Git
     dependency does not start failing an existing gate. A synced Skylos
-    Cloud gate counts it like Cloud does.
+    Cloud gate counts them like Cloud does.
     """
     return [
         finding
         for finding in dependencies or ()
-        if not (
-            isinstance(finding, dict)
-            and str(finding.get("rule_id") or "") in REPORT_ONLY_DEPENDENCY_RULES
-        )
+        if _rule_id(finding) not in REPORT_ONLY_DEPENDENCY_RULES
     ]
 
 
+def _built_in_gate_danger(danger, *, changes_only):
+    """Security findings the built-in gate counts.
+
+    In a scan of the whole repository the agent/editor configuration and
+    publish-job rules (SKY-D365-D374) list what exists without counting it,
+    so repositories that already commit agent hooks, unpinned MCP servers or
+    a manually started release workflow keep their gate on upgrade; a
+    CRITICAL one (a hook that downloads or decodes and runs code) still
+    counts. In a diff or baseline scan they are new and count.
+    """
+    if changes_only:
+        return list(danger or ())
+    return [
+        finding
+        for finding in danger or ()
+        if _rule_id(finding) not in FULL_SCAN_REPORT_ONLY_RULES
+        or str(finding.get("severity") or "").upper() == "CRITICAL"
+    ]
+
+
+def supply_chain_change_blocks(results):
+    """Supply-chain changes that fail a diff or baseline gate on their own.
+
+    A new or changed agent hook or folder-open task, an MCP server launched
+    from a hidden path, an agent API base-URL override, an upgrade that adds
+    install-time or import-time code (SKY-SCA-UPG001) and weakened install
+    hardening (SKY-SCA-HRD001). Full-repository scans only list them.
+    """
+    if not _new_issues_only(results or {}):
+        return []
+    blocks = []
+    for section in ("danger", "dependency_vulnerabilities"):
+        for finding in (results or {}).get(section) or ():
+            if _rule_id(finding) in CHANGE_BLOCKING_RULES:
+                blocks.append(finding)
+    return blocks
+
+
 def _gate_issue_groups(
-    *, danger, reliability, ai_defects, quality, secrets, dead_code, dependencies=()
+    *,
+    danger,
+    reliability,
+    ai_defects,
+    quality,
+    secrets,
+    dead_code,
+    dependencies=(),
+    changes_only=True,
 ):
+    danger = _built_in_gate_danger(danger, changes_only=changes_only)
     critical_issues, high_issues = _split_danger_by_severity(danger)
     return {
         "max_critical": critical_issues,
@@ -922,7 +984,7 @@ def blocking_gate_issues(results, config=None):
     blocking = []
     cloud_gate = active_cloud_gate(config)
     if cloud_gate is None:
-        groups = _gate_issue_groups(**found)
+        groups = _gate_issue_groups(**found, changes_only=_new_issues_only(results))
         if gate_config.get("fail_on_critical", True):
             blocking.extend(groups["max_critical"])
         for key, _noun, _plural, _label in GATE_LIMITS:
@@ -943,6 +1005,7 @@ def blocking_gate_issues(results, config=None):
             if _issue_severity(issue) in severities
         )
     blocking.extend(_security_control_regressions(results))
+    blocking.extend(supply_chain_change_blocks(results))
     unique = {}
     for issue in blocking:
         if isinstance(issue, dict):
@@ -1002,6 +1065,41 @@ def _coverage_gap_reasons(results, *, strict=False, config=None):
 
 def sca_coverage_warnings(results):
     """Describe requested dependency checks without implying full coverage."""
+    return _sca_receipt_warnings(results) + _upgrade_review_warnings(results)
+
+
+def _upgrade_review_warnings(results):
+    upgrades = results
+    for key in ("analysis_summary", "supply_chain_diff", "checks", "upgrades"):
+        if not isinstance(upgrades, dict):
+            return []
+        upgrades = upgrades.get(key)
+    if not isinstance(upgrades, dict):
+        return []
+    reasons = []
+    for item in upgrades.get("skipped") or ():
+        if isinstance(item, dict) and _coverage_count(item.get("count")):
+            reasons.append(
+                f"{item.get('reason')}: {_coverage_count(item.get('count'))}"
+            )
+    for key, label in (
+        ("no_result", "no result"),
+        ("not_reviewed_over_limit", "over the limit"),
+    ):
+        count = _coverage_count(upgrades.get(key))
+        if count:
+            reasons.append(f"{label}: {count}")
+    if not reasons:
+        return []
+    pairs = _coverage_count(upgrades.get("pairs")) or 0
+    reviewed = _coverage_count(upgrades.get("reviewed")) or 0
+    summary = ", ".join(reasons)
+    return [
+        f"Upgrade review limited: {reviewed} of {pairs} dependency upgrades reviewed ({summary})"
+    ]
+
+
+def _sca_receipt_warnings(results):
     summary = results.get("analysis_summary") if isinstance(results, dict) else None
     receipt = summary.get("sca_coverage") if isinstance(summary, dict) else None
     if not isinstance(receipt, dict):
@@ -1220,7 +1318,9 @@ def check_gate(results, config, strict=False, provenance=None):
     cloud_gate = active_cloud_gate(config)
     if cloud_gate is None:
         passed = _apply_gate_thresholds(
-            reasons, gate_config, _gate_issue_groups(**found)
+            reasons,
+            gate_config,
+            _gate_issue_groups(**found, changes_only=_new_issues_only(results)),
         )
     else:
         passed = _apply_cloud_gate(reasons, gate_config, cloud_gate, found, results)
@@ -1233,6 +1333,16 @@ def check_gate(results, config, strict=False, provenance=None):
                 _count_noun(len(regressions), "security control regression")
                 + " (security controls must be preserved)",
                 regressions,
+            )
+        )
+        passed = False
+    supply_chain_blocks = supply_chain_change_blocks(results)
+    if supply_chain_blocks:
+        reasons.append(
+            GateReason(
+                _count_noun(len(supply_chain_blocks), "supply-chain change")
+                + " to review (agent hooks, MCP servers, upgrade code or install hardening)",
+                supply_chain_blocks,
             )
         )
         passed = False
@@ -1353,7 +1463,9 @@ def _passed_gate_summary(results, config, *, strict):
             cloud_gate_scope_note(results, config),
         )
     gate_config = _effective_gate_config(config)
-    groups = _gate_issue_groups(**_gate_findings(results, config))
+    groups = _gate_issue_groups(
+        **_gate_findings(results, config), changes_only=_new_issues_only(results)
+    )
     security_scanned = _security_scanned(results)
 
     parts = []

@@ -7,6 +7,15 @@ repository installs dependencies. Every check is ``pass`` only with evidence
 in the repository, ``unknown`` when the files cannot tell, and
 ``not_applicable`` when the ecosystem or CI system is absent. GitHub Actions
 checks are derived from the existing SKY-D292 and SKY-D290 findings.
+
+When ca9 provides ``hardening_settings``, its committed values (cooldowns in
+their own units, npm 12 ``allowScripts``, pnpm 11 ``allowBuilds`` and
+``strictDepBuilds``) are read first; Skylos's own readers fill the gaps. pnpm
+11 and Yarn 4.15 hold new versions for a day by default, pnpm 10+ and npm 12
+block dependency install scripts by default, Bun's ``minimumReleaseAge`` is in
+seconds, and pip ``--uploaded-prior-to`` counts as a Python cooldown.
+``ci_inventory`` and ``agent_hooks`` (see ``ci_agent_inventory``) are added
+next to the dependency inventory.
 """
 
 from __future__ import annotations
@@ -24,7 +33,11 @@ INVENTORY_SCHEMA = "skylos.dependency_inventory.v1"
 POSTURE_SCHEMA = "skylos.supply_chain_posture.v1"
 INVENTORY_KEY = "dependency_inventory"
 POSTURE_KEY = "supply_chain_posture"
-SUMMARY_KEYS = (INVENTORY_KEY, POSTURE_KEY)
+CI_INVENTORY_KEY = "ci_inventory"
+AGENT_HOOKS_KEY = "agent_hooks"
+CHECKS_KEY = "supply_chain_checks"
+SUMMARY_KEYS = (INVENTORY_KEY, POSTURE_KEY, CI_INVENTORY_KEY, AGENT_HOOKS_KEY)
+INVENTORY_KEYS = (INVENTORY_KEY, CI_INVENTORY_KEY, AGENT_HOOKS_KEY)
 UPLOAD_SUMMARY_KEYS = ("sca_coverage", "custom_rules_coverage", *SUMMARY_KEYS)
 MAX_INVENTORY_PACKAGES = 10_000
 MAX_POSTURE_PATHS = 10
@@ -781,7 +794,154 @@ def _config_files(repo: _Repository, name: str) -> list[Path]:
     return found
 
 
-def _install_scripts_disabled(repo: _Repository) -> dict:
+class _Facts:
+    """Install-hardening settings from ``ca9.api.hardening_settings``.
+
+    A value counts only when the file it came from is committed (or the
+    folder is not a Git checkout), like the files the fallback reads.
+    """
+
+    def __init__(self, repo: _Repository, settings):
+        self.repo = repo
+        self.settings = {}
+        if isinstance(settings, dict):
+            self.settings = settings
+
+    def _source_ok(self, key: str) -> bool:
+        sources = self.settings.get("sources")
+        if not isinstance(sources, dict):
+            return False
+        source = sources.get(key)
+        if not isinstance(source, str) or not source:
+            return False
+        path = self.repo.root / source
+        if self.repo.tracked is None:
+            return path.is_file()
+        return path in self.repo.tracked
+
+    def value(self, section: str, key: str):
+        table = self.settings.get(section)
+        if not isinstance(table, dict) or table.get(key) is None:
+            return None
+        if not self._source_ok(key):
+            return None
+        return table[key]
+
+    def source(self, key: str) -> str:
+        sources = self.settings.get("sources") or {}
+        return str(sources.get(key) or "")
+
+
+def _hardening_settings(root: Path, api) -> tuple[dict | None, dict]:
+    if api is None or not callable(getattr(api, "hardening_settings", None)):
+        return None, {
+            "status": "unavailable",
+            "note": "ca9.api.hardening_settings is unavailable; posture used Skylos's own readers",
+        }
+    try:
+        settings = api.hardening_settings(str(root))
+    except Exception as exc:  # noqa: BLE001 - posture falls back to its own readers
+        return None, {"status": "failed", "error_type": type(exc).__name__}
+    if not isinstance(settings, dict):
+        return None, {"status": "failed"}
+    return settings, {"status": str(settings.get("status") or "complete")[:20]}
+
+
+def _number(value) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*", value)
+        if match is not None:
+            return float(match.group(1))
+    return None
+
+
+def _manager_version(repo: _Repository, name: str) -> tuple[int, int] | None:
+    pattern = re.compile(rf"^{name}@(\d+)(?:\.(\d+))?")
+    for path in repo.package_jsons:
+        text = _read(path)
+        if text is None:
+            continue
+        try:
+            data = json.loads(text)
+        except ValueError:
+            continue
+        if not isinstance(data, dict) or not isinstance(
+            data.get("packageManager"), str
+        ):
+            continue
+        match = pattern.match(data["packageManager"])
+        if match is not None:
+            return int(match.group(1)), int(match.group(2) or 0)
+    return None
+
+
+def _allow_list(facts: _Facts, key: str) -> list[str]:
+    value = facts.value("scripts", key)
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, str)]
+
+
+def _pnpm_scripts(repo: _Repository, facts: _Facts) -> tuple[str, str]:
+    workspace = _config_files(repo, "pnpm-workspace.yaml")
+    allow_all = facts.value("scripts", "pnpm_dangerously_allow_all_builds")
+    if allow_all is None:
+        found = _config_value(
+            workspace, _YAML_KEY_RE.format(key="dangerouslyAllowAllBuilds")
+        )
+        if found and found[1].lower() == "true":
+            allow_all = True
+    if allow_all is True:
+        return FAIL, "pnpm: dangerouslyAllowAllBuilds runs every dependency build script"
+    version = _manager_version(repo, "pnpm")
+    npmrc = [
+        path
+        for path in _config_files(repo, ".npmrc")
+        if _NPMRC_TRUE_RE.search(_read(path) or "")
+    ]
+    if version is None and npmrc:
+        return PASS, f"pnpm: ignore-scripts=true in {repo.rel(npmrc[0])}"
+    if version is None:
+        return UNKNOWN, "pnpm version unknown (pnpm 10+ blocks dependency scripts by default)"
+    major = version[0]
+    if major < 10:
+        if npmrc:
+            return PASS, f"pnpm {major}: ignore-scripts=true in {repo.rel(npmrc[0])}"
+        return FAIL, f"pnpm {major} runs dependency install scripts"
+    allowed = _allow_list(facts, "pnpm_allow_builds") or _allow_list(
+        facts, "pnpm_only_built_dependencies"
+    )
+    detail = f"pnpm {major}: dependency build scripts blocked by default"
+    if allowed:
+        detail += f"; {len(allowed)} allowed (allowBuilds)"
+    strict = facts.value("scripts", "pnpm_strict_dep_builds")
+    if strict is None:
+        found = _config_value(workspace, _YAML_KEY_RE.format(key="strictDepBuilds"))
+        if found:
+            strict = found[1].lower() != "false"
+    if major >= 11 and strict is False:
+        detail += "; strictDepBuilds false skips unapproved builds instead of failing"
+    return PASS, detail
+
+
+def _npm_scripts(repo: _Repository, facts: _Facts) -> tuple[str, str] | None:
+    if facts.value("scripts", "npm_ignore_scripts") is True:
+        return PASS, f"npm: ignore-scripts=true in {facts.source('npm_ignore_scripts')}"
+    version = _manager_version(repo, "npm")
+    if version is not None and version[0] >= 12:
+        detail = f"npm {version[0]}: dependency install scripts off by default"
+        allowed = _allow_list(facts, "npm12_allow_scripts")
+        if allowed:
+            detail += f"; {len(allowed)} allowed (allowScripts)"
+        return PASS, detail
+    return None
+
+
+def _install_scripts_disabled(repo: _Repository, facts: _Facts) -> dict:
     check_id = "install_scripts_disabled"
     if not repo.has_npm:
         return _check(
@@ -803,7 +963,16 @@ def _install_scripts_disabled(repo: _Repository) -> dict:
         if ci_ignores:
             evidence.append(f"{manager}: CI installs pass --ignore-scripts")
             continue
-        if manager in {"npm", "pnpm", "yarn"} and npmrc:
+        if manager == "pnpm":
+            status, detail = _pnpm_scripts(repo, facts)
+            {PASS: evidence, FAIL: failing, UNKNOWN: unknown}[status].append(detail)
+            continue
+        if manager == "npm":
+            found = _npm_scripts(repo, facts)
+            if found is not None:
+                evidence.append(found[1])
+                continue
+        if manager in {"npm", "yarn"} and npmrc:
             evidence.append(f"{manager}: ignore-scripts=true in {repo.rel(npmrc[0])}")
             continue
         if manager == "bun":
@@ -831,25 +1000,6 @@ def _install_scripts_disabled(repo: _Repository) -> dict:
                         f"yarn: ignore-scripts true in {repo.rel(yarnrc[0])}"
                     )
                     continue
-        if manager == "pnpm":
-            major = _package_manager_major(repo.package_jsons, _PNPM_VERSION_RE)
-            allow_all = _config_value(
-                _config_files(repo, "pnpm-workspace.yaml"),
-                _YAML_KEY_RE.format(key="dangerouslyAllowAllBuilds"),
-            )
-            if allow_all and allow_all[1].lower() == "true":
-                failing.append(
-                    f"pnpm: dangerouslyAllowAllBuilds in {repo.rel(allow_all[0])}"
-                )
-                continue
-            if major is None:
-                unknown.append(
-                    "pnpm version unknown (pnpm 10+ blocks dependency scripts by default)"
-                )
-                continue
-            if major >= 10:
-                evidence.append(f"pnpm {major}: dependency scripts blocked by default")
-                continue
         failing.append(f"{manager} runs dependency install scripts")
     paths = [repo.rel(path) for path in _config_files(repo, ".npmrc")] or [".npmrc"]
     if failing:
@@ -872,7 +1022,138 @@ def _positive(value: str) -> bool:
     return bool(value.strip())
 
 
-def _release_age_cooldown(repo: _Repository, policy) -> dict:
+BUN_MIN_SECONDS = 3600
+
+
+def _npm_cooldown(repo: _Repository, facts: _Facts, manager: str):
+    """(passed, evidence or hint, path) for one npm-family manager."""
+    if manager == "npm":
+        days = _number(facts.value("cooldown", "npm_days"))
+        if days is not None:
+            if days <= 0:
+                return False, "npm: min-release-age is 0 (off)", ".npmrc"
+            return True, f"npm: min-release-age {days:g} days in .npmrc", ".npmrc"
+        found = _config_value(_config_files(repo, ".npmrc"), _NPMRC_AGE_RE.pattern)
+        if found and _positive(found[1]):
+            return True, f"npm: {repo.rel(found[0])}", ".npmrc"
+        return False, "no min-release-age in .npmrc", ".npmrc"
+    if manager == "pnpm":
+        minutes = _number(facts.value("cooldown", "pnpm_minutes"))
+        if minutes is None:
+            found = _config_value(
+                _config_files(repo, "pnpm-workspace.yaml"),
+                _YAML_KEY_RE.format(key="minimumReleaseAge"),
+            )
+            if found:
+                minutes = _number(found[1])
+        if minutes is not None and minutes <= 0:
+            return False, "pnpm: minimumReleaseAge is 0 (off)", "pnpm-workspace.yaml"
+        if minutes is not None:
+            return (
+                True,
+                f"pnpm: minimumReleaseAge {minutes:g} minutes",
+                "pnpm-workspace.yaml",
+            )
+        version = _manager_version(repo, "pnpm")
+        if version is not None and version[0] >= 11:
+            return (
+                True,
+                f"pnpm {version[0]}: 1-day minimumReleaseAge by default",
+                "package.json",
+            )
+        return False, "no minimumReleaseAge in pnpm-workspace.yaml", "pnpm-workspace.yaml"
+    if manager == "yarn":
+        gate = facts.value("cooldown", "yarn")
+        if gate is None:
+            found = _config_value(
+                _config_files(repo, ".yarnrc.yml"),
+                _YAML_KEY_RE.format(key="npmMinimalAgeGate"),
+            )
+            if found:
+                gate = found[1]
+        if gate is not None:
+            return _positive(str(gate)), f"yarn: npmMinimalAgeGate {gate}", ".yarnrc.yml"
+        version = _manager_version(repo, "yarn")
+        if version is not None and version >= (4, 15):
+            return (
+                True,
+                f"yarn {version[0]}.{version[1]}: 1-day npmMinimalAgeGate by default",
+                "package.json",
+            )
+        return False, "no npmMinimalAgeGate in .yarnrc.yml", ".yarnrc.yml"
+    seconds = _number(facts.value("cooldown", "bun_seconds"))
+    if seconds is None:
+        found = _config_value(
+            _config_files(repo, "bunfig.toml"),
+            _TOML_KEY_RE.format(key="minimumReleaseAge"),
+        )
+        if found:
+            seconds = _number(found[1])
+    if seconds is None:
+        return False, "no minimumReleaseAge in bunfig.toml", "bunfig.toml"
+    if seconds < BUN_MIN_SECONDS:
+        return (
+            False,
+            f"bunfig.toml minimumReleaseAge is in seconds; {seconds:g} s is under an hour",
+            "bunfig.toml",
+        )
+    return (
+        True,
+        f"bun: minimumReleaseAge {seconds:g} s ({seconds / 86400:.1f} days)",
+        "bunfig.toml",
+    )
+
+
+_PIP_PRIOR_RE = re.compile(
+    r"--uploaded-prior-to\b|\bPIP_UPLOADED_PRIOR_TO\s*[:=]|^\s*uploaded[-_]prior[-_]to\s*=",
+    re.MULTILINE,
+)
+
+
+def _pypi_cooldown(repo: _Repository, facts: _Facts) -> str | None:
+    uv = facts.value("cooldown", "uv")
+    if uv is not None:
+        return f"uv: exclude-newer in {facts.source('uv')}"
+    candidates = [
+        path
+        for path in (repo.root / "pyproject.toml", repo.root / "uv.toml")
+        if repo.tracked is None or path in repo.tracked
+    ]
+    found = _config_value(candidates, _TOML_KEY_RE.format(key="exclude-newer"))
+    if found:
+        return f"uv: exclude-newer in {repo.rel(found[0])}"
+    if facts.value("cooldown", "pip") is not None:
+        return f"pip: uploaded-prior-to in {facts.source('pip')}"
+    for path in [*repo.requirements, *_config_files(repo, "pip.conf")]:
+        if _PIP_PRIOR_RE.search(_read(path) or ""):
+            return f"pip: --uploaded-prior-to in {repo.rel(path)}"
+    for path, text in repo.ci_text().items():
+        if _PIP_PRIOR_RE.search(text):
+            return f"pip: --uploaded-prior-to in {repo.rel(path)}"
+    return None
+
+
+def _dependabot_note(repo: _Repository, facts: _Facts) -> str:
+    days = _number(facts.value("cooldown", "dependabot_days"))
+    if days is None:
+        found = [
+            repo.root / ".github" / name
+            for name in ("dependabot.yml", "dependabot.yaml")
+            if (repo.root / ".github" / name).is_file()
+        ]
+        if not found:
+            return ""
+        return (
+            "; Dependabot's cooldown (3 days by default) delays only its own "
+            "pull requests, not installs"
+        )
+    return (
+        f"; Dependabot waits {days:g} days before proposing updates, which "
+        "delays only its own pull requests, not installs"
+    )
+
+
+def _release_age_cooldown(repo: _Repository, policy, facts: _Facts) -> dict:
     check_id = "release_age_cooldown"
     if not (repo.has_npm or repo.has_pypi):
         return _check(check_id, NOT_APPLICABLE, "no npm or Python dependencies")
@@ -891,52 +1172,25 @@ def _release_age_cooldown(repo: _Repository, policy) -> dict:
     paths = []
     if repo.has_npm:
         for manager in sorted(repo.npm_managers()):
-            found = None
-            if manager == "npm":
-                found = _config_value(
-                    _config_files(repo, ".npmrc"), _NPMRC_AGE_RE.pattern
-                )
-                hint = "no min-release-age in .npmrc"
-                paths.append(".npmrc")
-            elif manager == "pnpm":
-                found = _config_value(
-                    _config_files(repo, "pnpm-workspace.yaml"),
-                    _YAML_KEY_RE.format(key="minimumReleaseAge"),
-                )
-                hint = "no minimumReleaseAge in pnpm-workspace.yaml"
-                paths.append("pnpm-workspace.yaml")
-            elif manager == "yarn":
-                found = _config_value(
-                    _config_files(repo, ".yarnrc.yml"),
-                    _YAML_KEY_RE.format(key="npmMinimalAgeGate"),
-                )
-                hint = "no npmMinimalAgeGate in .yarnrc.yml"
-                paths.append(".yarnrc.yml")
+            passed, text, path = _npm_cooldown(repo, facts, manager)
+            paths.append(path)
+            if passed:
+                evidence.append(text)
             else:
-                found = _config_value(
-                    _config_files(repo, "bunfig.toml"),
-                    _TOML_KEY_RE.format(key="minimumReleaseAge"),
-                )
-                hint = "no minimumReleaseAge in bunfig.toml"
-                paths.append("bunfig.toml")
-            if found and _positive(found[1]):
-                evidence.append(f"{manager}: {repo.rel(found[0])}")
-            else:
-                missing.append(hint)
+                missing.append(text)
     if repo.has_pypi:
-        candidates = [
-            path
-            for path in (repo.root / "pyproject.toml", repo.root / "uv.toml")
-            if repo.tracked is None or path in repo.tracked
-        ]
-        found = _config_value(candidates, _TOML_KEY_RE.format(key="exclude-newer"))
         paths.append("pyproject.toml")
+        found = _pypi_cooldown(repo, facts)
         if found:
-            evidence.append(f"uv: exclude-newer in {repo.rel(found[0])}")
+            evidence.append(found)
         else:
-            missing.append("no uv exclude-newer for Python dependencies")
+            missing.append(
+                "no uv exclude-newer or pip --uploaded-prior-to for Python dependencies"
+            )
     if missing:
-        return _check(check_id, FAIL, "; ".join(missing), paths)
+        return _check(
+            check_id, FAIL, "; ".join(missing) + _dependabot_note(repo, facts), paths
+        )
     return _check(check_id, PASS, "; ".join(evidence), paths)
 
 
@@ -1030,17 +1284,27 @@ def _pr_code_trigger(message: str) -> bool:
 
 
 def supply_chain_posture(
-    root: str | Path, inventory=None, policy=None, *, workflow_findings=None
+    root: str | Path,
+    inventory=None,
+    policy=None,
+    *,
+    workflow_findings=None,
+    hardening=None,
 ) -> dict:
-    """The ``analysis_summary.supply_chain_posture`` upload contract."""
+    """The ``analysis_summary.supply_chain_posture`` upload contract.
+
+    ``hardening`` is a ``ca9.api.hardening_settings`` snapshot; its committed
+    values are used first and Skylos's own readers fill the gaps.
+    """
     root_path = Path(root).resolve()
     repo = _Repository(root_path, inventory)
+    facts = _Facts(repo, hardening)
     pinned, target = _actions_checks(root_path, workflow_findings)
     checks = [
         _lockfile_committed(repo),
         _frozen_install_ci(repo),
-        _install_scripts_disabled(repo),
-        _release_age_cooldown(repo, policy),
+        _install_scripts_disabled(repo, facts),
+        _release_age_cooldown(repo, policy, facts),
         pinned,
         target,
     ]
@@ -1066,22 +1330,36 @@ def posture_line(posture: Any) -> str | None:
 
 
 def build_supply_chain_summary(root: str | Path, scan_result) -> dict:
-    """Both upload blocks for a finished dependency scan, or {} when the scan
-    produced no inventory."""
+    """The upload blocks for a finished dependency scan, or {} when the scan
+    produced no inventory: ``dependency_inventory``, ``supply_chain_posture``
+    and, when ca9 provides them, ``ci_inventory`` and ``agent_hooks``.
+    ``supply_chain_checks`` records what ca9 could not provide; it stays local."""
     inventory = getattr(scan_result, "inventory", None)
     if inventory is None:
         return {}
+    from skylos.rules.sca import supply_chain
+    from skylos.rules.sca.ci_agent_inventory import (
+        agent_hooks_block,
+        ci_inventory_block,
+    )
     from skylos.supply_chain.policy import load_supply_chain_policy
 
     try:
         policy = load_supply_chain_policy(root)
     except Exception:  # noqa: BLE001 - an unreadable policy leaves the posture without it
         policy = None
-    summary = {"dependency_inventory": dependency_inventory_summary(inventory, root)}
+    api = supply_chain.load_ca9_api()
+    checks: dict[str, Any] = {}
+    summary: dict[str, Any] = {
+        INVENTORY_KEY: dependency_inventory_summary(inventory, root)
+    }
+    hardening, checks["hardening_settings"] = _hardening_settings(Path(root), api)
     try:
-        summary["supply_chain_posture"] = supply_chain_posture(root, inventory, policy)
+        summary[POSTURE_KEY] = supply_chain_posture(
+            root, inventory, policy, hardening=hardening
+        )
     except Exception:  # noqa: BLE001 - posture is reporting; it never fails a scan
-        summary["supply_chain_posture"] = {
+        summary[POSTURE_KEY] = {
             "schema": POSTURE_SCHEMA,
             "ecosystems": [],
             "checks": [
@@ -1089,12 +1367,24 @@ def build_supply_chain_summary(root: str | Path, scan_result) -> dict:
                 for check_id in CHECK_IDS
             ],
         }
+    for key, build in ((CI_INVENTORY_KEY, ci_inventory_block), (AGENT_HOOKS_KEY, agent_hooks_block)):
+        try:
+            block, checks[key] = build(root, api)
+        except Exception as exc:  # noqa: BLE001 - inventories never fail a scan
+            block, checks[key] = None, {"status": "failed", "error_type": type(exc).__name__}
+        if block is not None:
+            summary[key] = block
+    summary[CHECKS_KEY] = checks
     return summary
 
 
 __all__ = [
+    "AGENT_HOOKS_KEY",
+    "CHECKS_KEY",
     "CHECK_IDS",
+    "CI_INVENTORY_KEY",
     "INVENTORY_KEY",
+    "INVENTORY_KEYS",
     "INVENTORY_SCHEMA",
     "MAX_INVENTORY_PACKAGES",
     "POSTURE_KEY",

@@ -571,6 +571,58 @@ def run_scan_command(
             os.environ["SKYLOS_DIFF_BASE"] = previous_diff
 
 
+def _add_supply_chain_diff_findings(result, project_root, base_ref, args, config):
+    """SKY-SCA-HRD001/UPG001/UPG002 and SKY-D375 for a diff-scoped scan.
+
+    They compare the merge base with the working tree, so they are diff
+    scoped by construction and are kept outside changed lines. A check that
+    could not run is an analysis error, which a diff-scoped gate treats as
+    incomplete.
+    """
+    from skylos.core.file_discovery import find_git_root
+    from skylos.rules.sca.supply_chain_diff import supply_chain_diff_findings
+
+    ignore = set()
+    if isinstance(config, dict):
+        ignore = {str(rule).upper() for rule in config.get("ignore") or []}
+    try:
+        findings, receipt, errors = supply_chain_diff_findings(
+            find_git_root(project_root) or project_root,
+            base_ref,
+            dependencies=bool(getattr(args, "sca", False)),
+            security=bool(getattr(args, "danger", False)),
+            review_upgrades=bool(getattr(args, "review_upgrades", False)),
+            ignore=ignore,
+        )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "supply-chain diff checks failed", exc_info=True
+        )
+        findings, receipt = [], {"status": "failed", "error_type": type(exc).__name__}
+        errors = [
+            {
+                "kind": "supply_chain_check_unavailable",
+                "component": "supply_chain",
+                "message": f"Supply-chain diff checks failed ({type(exc).__name__})",
+                "severity": "HIGH",
+            }
+        ]
+    summary = result.setdefault("analysis_summary", {})
+    summary["supply_chain_diff"] = receipt
+    for finding in findings:
+        section = "dependency_vulnerabilities"
+        if finding.get("category") == "SECURITY":
+            section = "danger"
+        result.setdefault(section, []).append(finding)
+    if findings:
+        summary["sca_count"] = len(result.get("dependency_vulnerabilities") or [])
+    if errors:
+        result.setdefault("analysis_errors", []).extend(errors)
+        summary["analysis_error_count"] = len(result["analysis_errors"])
+
+
 def _run_scan_command(
     argv: Sequence[str], *, cli_module: ModuleType, parser, args
 ) -> None:
@@ -886,6 +938,20 @@ def _run_scan_command(
                 }
                 logger.debug("npm publisher scan failed", exc_info=True)
 
+        supply_chain_base = getattr(args, "diff", None) or getattr(
+            args, "diff_base", None
+        )
+        if supply_chain_base == "auto":
+            from skylos.core.ci_env import auto_diff_base_ref
+
+            supply_chain_base = auto_diff_base_ref()
+        if supply_chain_base and (
+            getattr(args, "sca", False) or getattr(args, "danger", False)
+        ):
+            _add_supply_chain_diff_findings(
+                result, project_root, supply_chain_base, args, config
+            )
+
         if getattr(args, "diff", None):
             from skylos.cicd.review import (
                 get_changed_line_ranges,
@@ -1059,6 +1125,7 @@ def _run_scan_command(
                             item.get("rule_id") in {"SKY-A122", "SKY-A125"}
                             and item.get("kind") == "guardrail_tamper"
                         )
+                        or item.get("kind") == "supply_chain_diff"
                         or str(item.get("rule_id", "")).upper()
                         in selected_prerequisite_ids
                     ]
