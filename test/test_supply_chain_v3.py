@@ -233,7 +233,7 @@ def test_unparseable_settings_never_make_a_hook_ours(tmp_path):
     [
         (SimpleNamespace(API_VERSION=1), "unavailable", True),
         (FakeAgentApi(), "checked", False),
-        (None, "engine_unavailable", False),
+        (None, "engine_unavailable", True),
     ],
 )
 def test_changed_agent_file_without_agent_config_stops_the_diff_gate(
@@ -574,6 +574,9 @@ class FakeDiffApi:
 
     def hardening_regressions(self, base, head):
         return copy.deepcopy(self.regressions)
+
+    def evaluate_packages(self, packages, *, options):
+        return {"findings": [], "receipt": {"complete": True}}
 
 
 def _review_api(fake, result):

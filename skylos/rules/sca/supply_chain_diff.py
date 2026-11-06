@@ -22,7 +22,10 @@ not installed or too old included), or a hardening comparison that reports
 ``check_failed``, becomes an analysis error with no file and an "upgrade ca9"
 message, so a diff-scoped gate stops as incomplete instead of passing without
 the check. This covers the agent and workflow rules of the danger scan and the
-dependency checks of ``--sca`` on changed lockfiles and manifests. An
+dependency checks of ``--sca`` on changed lockfiles. Changed hardening
+settings alone with no usable ca9 at all are a receipt note (workflow and
+lockfile changes still stop the gate); an engine that lacks or fails the
+hardening functions is an error. An
 incomplete workflow audit (a reusable workflow from another repository) is
 noted in the receipt and shown, not failed.
 """
@@ -370,6 +373,10 @@ def hardening_findings(sides: GitSides, api, receipt: dict, errors: list) -> lis
     if base == head:
         receipt["status"] = "unchanged"
         return []
+    if api is None:
+        receipt["status"] = "engine_unavailable"
+        receipt["note"] = f"ca9 is not installed or too old. {UPGRADE_CA9}"
+        return []
     if settings is None or regressions is None:
         _unavailable(
             api,
@@ -550,24 +557,19 @@ def _workflow_audit_receipt(sides: GitSides, api, receipt: dict) -> None:
     }
 
 
-DEPENDENCY_MANIFESTS = frozenset(
-    {"package.json", "pyproject.toml", "setup.cfg", "Pipfile"}
-)
-
-
 def dependency_file_path(path: str) -> bool:
+    """Lockfiles (and pip requirements files, pip's lock): the files whose
+    entries ``--sca`` checks for sources, integrity and age."""
     pure = PurePosixPath(path)
     if any(part in _SKIP_PARTS for part in pure.parts[:-1]):
         return False
-    return (
-        pure.name in _UPGRADE_PARSERS
-        or pure.name in DEPENDENCY_MANIFESTS
-        or fnmatch.fnmatch(pure.name, "requirements*.txt")
+    return pure.name in _UPGRADE_PARSERS or fnmatch.fnmatch(
+        pure.name, "requirements*.txt"
     )
 
 
 def dependency_coverage(sides: GitSides, api, receipt: dict, errors: list) -> list[dict]:
-    """``--sca`` checks changed lockfiles and manifests through
+    """``--sca`` checks changed lockfiles and requirements files through
     ``ca9.api.evaluate_packages`` (SKY-SCA-SRC001/SRC003/INT001/AGE001); in a
     diff, a missing engine must not read as clean dependency changes."""
     base, head = sides.files(dependency_file_path)
