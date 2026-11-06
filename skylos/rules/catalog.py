@@ -1290,7 +1290,7 @@ _RULES = (
     ),
     RuleCatalogEntry(
         "SKY-D373",
-        "OIDC publish job without a deployment environment",
+        "OIDC publish job without an environment",
         "security",
         "HIGH",
         aliases=("id-token publish without environment",),
