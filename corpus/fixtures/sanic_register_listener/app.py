@@ -8,3 +8,7 @@ async def before_start(app, loop):
 
 
 app.register_listener(before_start, "before_server_start")
+
+
+async def after_boot(application, loop):
+    return (application, loop)

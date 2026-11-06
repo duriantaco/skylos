@@ -907,6 +907,105 @@
           }
         ]
       }
+    },
+    {
+      "id": "php-direct-calls",
+      "path": "fixtures/php_direct_calls",
+      "description": "Native PHP source-owned calls and unreferenced siblings.",
+      "languages": [
+        "php"
+      ],
+      "taxonomy": [
+        "php",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only PHP corpus fixture."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "format_value"
+          },
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "normalize_value"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "parse_value"
+          }
+        ]
+      }
+    },
+    {
+      "id": "php-member-calls",
+      "path": "fixtures/php_member_calls",
+      "description": "Native PHP source-owned calls and unreferenced siblings.",
+      "languages": [
+        "php"
+      ],
+      "taxonomy": [
+        "php",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only PHP corpus fixture."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "app.php",
+            "symbol": "Formatter"
+          },
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "format"
+          },
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "summarize"
+          }
+        ]
+      }
     }
   ]
 }

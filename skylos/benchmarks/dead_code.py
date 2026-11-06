@@ -7,12 +7,14 @@ import shutil
 import subprocess
 import tempfile
 import time
+from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from skylos.analyzer import analyze
+from skylos.benchmarks._analysis_validation import analysis_issues as _analysis_issues
 
 
 DEAD_CODE_TAXONOMY: dict[str, str] = {
@@ -21,6 +23,7 @@ DEAD_CODE_TAXONOMY: dict[str, str] = {
     "go": "Go dead-code and entrypoint liveness patterns.",
     "java": "Java dead-code and entrypoint liveness patterns.",
     "javascript": "JavaScript dead-code and module liveness patterns.",
+    "php": "PHP dead-code and entrypoint liveness patterns.",
     "rust": "Rust dead-code and entrypoint liveness patterns.",
     "typescript": "TypeScript dead-code and module liveness patterns.",
     "fastapi": "FastAPI route and dependency injection liveness patterns.",
@@ -75,6 +78,7 @@ SUPPORTED_LANGUAGES = {
     "dart",
     "csharp",
     "kotlin",
+    "php",
 }
 SCANNER_LANGUAGE_SUPPORT = {
     "skylos": SUPPORTED_LANGUAGES,
@@ -571,11 +575,34 @@ def _scan_ruff_case(case_path: Path, case: dict[str, Any]) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"ruff benchmark scan emitted invalid JSON: {exc}") from exc
 
+    if not isinstance(findings, list) or any(
+        not isinstance(finding, Mapping) for finding in findings
+    ):
+        result["analysis_errors"] = [
+            {
+                "kind": "invalid_scanner_report",
+                "message": "Ruff JSON must be a list of finding objects",
+            }
+        ]
+        return result
+
     for finding in findings:
         if not isinstance(finding, dict):
             continue
         code = finding.get("code")
         message = finding.get("message", "")
+        if isinstance(code, str) and code in {"invalid-syntax", "E999"}:
+            location = finding.get("location")
+            location = location if isinstance(location, Mapping) else {}
+            result.setdefault("analysis_errors", []).append(
+                {
+                    "kind": "syntax_error",
+                    "file": finding.get("filename", ""),
+                    "line": location.get("row"),
+                    "message": message,
+                }
+            )
+            continue
         if not isinstance(code, str) or not isinstance(message, str):
             continue
         match = _RUFF_SYMBOL_RE.search(message)
@@ -687,6 +714,20 @@ def _score_counts(
     }
 
 
+def _unavailable_scores() -> dict[str, float]:
+    return dict.fromkeys(
+        (
+            "precision",
+            "recall",
+            "f1",
+            "absence_guard",
+            "latency_score",
+            "overall_score",
+        ),
+        0.0,
+    )
+
+
 def run_case(
     case: dict[str, Any],
     manifest_path: str | Path,
@@ -708,8 +749,44 @@ def run_case(
     start = time.perf_counter()
     with _analysis_path(case_path, manifest_root) as analysis_path:
         result = _scan_case_with_scanner(analysis_path, case, scanner=scanner)
-        findings = _collect_dead_code_findings(result, project_root=analysis_path)
+        analysis_issues = _analysis_issues(result, scanner=scanner)
+        findings = (
+            set()
+            if analysis_issues
+            else _collect_dead_code_findings(result, project_root=analysis_path)
+        )
     elapsed_seconds = time.perf_counter() - start
+
+    if analysis_issues:
+        return {
+            "id": case["id"],
+            "path": str(case_path),
+            "description": case.get("description", ""),
+            "languages": _case_languages(case),
+            "taxonomy": list(case.get("taxonomy", [])),
+            "importance": case.get("importance", "high"),
+            "elapsed_seconds": round(elapsed_seconds, 4),
+            "analysis_status": "incomplete",
+            "analysis_issues": analysis_issues,
+            "scored": False,
+            "findings_by_kind": {},
+            "unlabeled_finding_count": 0,
+            "unlabeled_findings": [],
+            "true_positives": 0,
+            "false_positives": 0,
+            "false_negatives": 0,
+            "true_negatives": 0,
+            "scores": _unavailable_scores(),
+            "failures": [
+                DeadCodeBenchmarkFailure(
+                    case_id=case["id"],
+                    failure_type="analysis",
+                    mode="completeness",
+                    expected="complete analysis before semantic scoring",
+                    found=analysis_issues,
+                ).to_dict()
+            ],
+        }
 
     failures: list[DeadCodeBenchmarkFailure] = []
     true_positives = false_positives = false_negatives = true_negatives = 0
@@ -796,6 +873,9 @@ def run_case(
         "taxonomy": list(case.get("taxonomy", [])),
         "importance": case.get("importance", "high"),
         "elapsed_seconds": round(elapsed_seconds, 4),
+        "analysis_status": "complete",
+        "analysis_issues": [],
+        "scored": True,
         "findings_by_kind": findings_by_kind,
         "unlabeled_finding_count": len(unlabeled_findings),
         "unlabeled_findings": unlabeled_findings[:50],
@@ -824,17 +904,22 @@ def _aggregate_scores(
         "false_negatives": 0,
         "true_negatives": 0,
     }
-    for result in case_results:
+    scored_results = [result for result in case_results if result.get("scored", True)]
+    for result in scored_results:
         for key in totals:
             totals[key] += int(result.get(key, 0))
 
-    scores = _score_counts(
-        true_positives=totals["true_positives"],
-        false_positives=totals["false_positives"],
-        false_negatives=totals["false_negatives"],
-        true_negatives=totals["true_negatives"],
-        elapsed_seconds=0.0,
-        max_seconds=None,
+    scores = (
+        _score_counts(
+            true_positives=totals["true_positives"],
+            false_positives=totals["false_positives"],
+            false_negatives=totals["false_negatives"],
+            true_negatives=totals["true_negatives"],
+            elapsed_seconds=0.0,
+            max_seconds=None,
+        )
+        if scored_results
+        else _unavailable_scores()
     )
     return scores, totals
 
@@ -848,6 +933,8 @@ def _taxonomy_summary(case_results: list[dict[str, Any]]) -> dict[str, dict[str,
                 label,
                 {
                     "case_count": 0.0,
+                    "scored_case_count": 0.0,
+                    "unscored_case_count": 0.0,
                     "weight": 0.0,
                     "overall_score": 0.0,
                     "failures": 0.0,
@@ -858,8 +945,12 @@ def _taxonomy_summary(case_results: list[dict[str, Any]]) -> dict[str, dict[str,
                 },
             )
             bucket["case_count"] += 1
-            bucket["weight"] += weight
-            bucket["overall_score"] += result["scores"]["overall_score"] * weight
+            if result.get("scored", True):
+                bucket["scored_case_count"] += 1
+                bucket["weight"] += weight
+                bucket["overall_score"] += result["scores"]["overall_score"] * weight
+            else:
+                bucket["unscored_case_count"] += 1
             bucket["failures"] += len(result["failures"])
             for count_key in (
                 "true_positives",
@@ -875,6 +966,8 @@ def _taxonomy_summary(case_results: list[dict[str, Any]]) -> dict[str, dict[str,
         summary[label] = {
             "description": DEAD_CODE_TAXONOMY[label],
             "case_count": int(bucket["case_count"]),
+            "scored_case_count": int(bucket["scored_case_count"]),
+            "unscored_case_count": int(bucket["unscored_case_count"]),
             "weighted_score": round(bucket["overall_score"] / weight, 2),
             "failure_count": int(bucket["failures"]),
             "true_positives": int(bucket["true_positives"]),
@@ -897,11 +990,22 @@ def _summary(
     failure_count = sum(len(case["failures"]) for case in case_results)
     pass_count = sum(1 for case in case_results if not case["failures"])
     total_elapsed = sum(float(case["elapsed_seconds"]) for case in case_results)
+    scored_count = sum(bool(case.get("scored", True)) for case in case_results)
+    unscored_count = len(case_results) - scored_count
     return {
         "manifest": str(Path(manifest_path).resolve()),
         "scanner": scanner,
         "strict_labels": strict_labels,
         "case_count": len(case_results),
+        "scored_case_count": scored_count,
+        "unscored_case_count": unscored_count,
+        "analysis_status": "incomplete"
+        if unscored_count
+        else "complete"
+        if scored_count
+        else "not_run",
+        "metrics_scoped_to_scored_cases": True,
+        **({"score_unavailable_reason": "no_valid_cases"} if not scored_count else {}),
         "skipped_case_count": len(skipped_cases or []),
         "skipped_cases": list(skipped_cases or []),
         "pass_count": pass_count,
@@ -924,6 +1028,11 @@ def run_manifest(
     manifest = load_manifest(manifest_path)
     cases = validate_manifest(manifest, manifest_path)
     selected = set(selected_cases or set())
+    unknown = selected - {case["id"] for case in cases}
+    if unknown:
+        raise ValueError(
+            "unknown dead-code benchmark case id(s): " + ", ".join(sorted(unknown))
+        )
 
     case_results = []
     skipped_cases = []
@@ -1025,6 +1134,13 @@ def format_summary(summary: dict[str, Any]) -> str:
         f"Dead-code benchmark scanner: {summary.get('scanner', 'skylos')}",
         f"Dead-code benchmark strict labels: {summary.get('strict_labels', False)}",
         f"Dead-code benchmark cases: {summary['case_count']}",
+        f"Dead-code benchmark analysis: {summary.get('analysis_status', 'complete')}",
+        (
+            "Dead-code benchmark scored cases: "
+            f"{summary.get('scored_case_count', summary['case_count'])}; "
+            f"unscored cases: {summary.get('unscored_case_count', 0)}; "
+            "metrics cover scored cases only"
+        ),
         f"Dead-code benchmark skipped cases: {summary.get('skipped_case_count', 0)}",
         f"Dead-code benchmark failures: {summary['failure_count']}",
         (
@@ -1057,7 +1173,13 @@ def format_summary(summary: dict[str, Any]) -> str:
             )
 
     for case in summary["cases"]:
-        status = "PASS" if not case["failures"] else "FAIL"
+        status = (
+            "UNSCORED"
+            if case.get("scored") is False
+            else "PASS"
+            if not case["failures"]
+            else "FAIL"
+        )
         lines.append(
             f"{status} {case['id']} [{case['importance']}] "
             f"score={case['scores']['overall_score']} "

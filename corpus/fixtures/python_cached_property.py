@@ -5,3 +5,11 @@ class Settings:
     @cached_property
     def timeout(self):
         return 30
+
+
+class SettingsReader:
+    def interval(self):
+        return 30
+
+
+SettingsReader()

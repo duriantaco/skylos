@@ -13,3 +13,24 @@ class FourDigitYearConverter:
 
 register_converter(FourDigitYearConverter, "yyyy")
 urlpatterns = []
+
+
+class DateCodec:
+    date_pattern = "[0-9]{2}"
+
+    def decode_date(self, value):
+        return int(value)
+
+    def encode_date(self, value):
+        return "%02d" % value
+
+
+class DateParser:
+    def decode_date(self, value):
+        return int(value)
+
+    def encode_date(self, value):
+        return "%02d" % value
+
+
+DateParser()

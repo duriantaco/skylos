@@ -20,6 +20,13 @@ default run reports unlabeled findings separately. `--strict-labels` counts any
 finding outside the explicit `unused` and `used` labels as a false positive, and
 the comparison runner uses that strict mode by default.
 
+Skylos cases with parse errors, incomplete analysis, or no analyzed source files
+are reported as `UNSCORED`. They add no TP, FP, FN or TN and make the run fail.
+Summary metrics cover only scored cases; an incomplete run remains failed even
+when its valid cases score 100. If no cases can be scored, scores are zero and
+`score_unavailable_reason` is `no_valid_cases`. An intentionally selected scan
+scope can still be scored when its files were analyzed successfully.
+
 ## Run
 
 ```bash
@@ -40,12 +47,63 @@ The adversarial manifest is public but not part of the default required gate.
 It includes cases that deliberately stress framework/package entrypoints and
 dynamic dispatch patterns where one or more scanners may currently fail.
 
+It also contains 14 neutral coverage cases distilled from a fresh repository
+audit. The fixture code uses independent implementations and application names;
+the expected behavior belongs to a language pattern, not to a repository name.
+
+| Pattern | Variations and controls | Cases | Labels |
+|---|---|---:|---:|
+| Typed callback registries | Selected and wrong receiver/type, replaced registration method, copied registry, closure-owned implementation, inherited type lookup and private module registry | 7 | 75 |
+| Callable protocol attributes | Native and aliased `unittest.TestCase`, local lookalike without a reader, source-owned metadata reader, and unused sibling attributes | 4 | 15 |
+| Conditional asset references | Ordinary script load, valid legacy IE conditional comments in HTML/Jinja, ordinary and malformed comments, orphan files and same-name files at another path | 3 | 18 |
+
+The registry cases describe closed programs with fixed calls and private,
+unexposed callback storage. Their unselected callbacks have no external
+registration contract. The existing default cases that declare public
+registration entrypoints retain their original expectations. Protocol attribute
+use includes a constructor reading callable metadata; it does not require the
+callable itself to execute. Conditional HTML comments apply to the legacy
+browser versions they name, not to modern browsers.
+
+Run the complete challenge suite, including its original two cases:
+
+```bash
+python scripts/dead_code_benchmark.py \
+  --manifest benchmarks/dead_code/adversarial_manifest.json --strict-labels
+```
+
+Or inspect one pattern:
+
+```bash
+python scripts/dead_code_benchmark.py \
+  --manifest benchmarks/dead_code/adversarial_manifest.json \
+  --case corpus-type-registry-private --strict-labels
+```
+
+These cases include known false positives and false negatives in the current
+scanner. A nonzero exit reports the remaining coverage gaps. Keep their semantic
+labels fixed when improving the analyzer, including controls the scanner
+currently misses. The original 27 default cases and their 141 labels retain
+their expectations; two PHP cases add seven labels to the default suite.
+Some misses reflect conservative retention or uncertainty policies; investigate
+their evidence before treating a benchmark miss as a detector bug. The original
+two adversarial cases also retain their existing unlabeled findings, which
+`--strict-labels` reports separately. The 14 added cases have closed labels.
+The new cases are development coverage, not an unseen holdout or evidence that
+the analyzer handles every implementation of these patterns.
+
 The default manifest includes paired cases for programmatic Robot library
 decorators, method calls in Robot variable expressions, imports read through a
 wildcard export, finite `globals()` dispatch and inherited method registries.
 Each has unused controls. A separate Robot case checks that escaped expressions,
 comments and a constant-false branch do not keep a method alive. These fixtures use source inspection;
 Robot Framework and the fixture programs do not need to run.
+
+The PHP cases cover direct and chained function calls, class construction,
+public and private method calls, and unreferenced siblings. They add two unused
+and five used controls. Skylos reads their source; PHP and the fixture programs
+do not need to run. These are basic coverage cases, not evidence that all PHP
+frameworks or dynamic dispatch patterns are covered.
 
 Optional competitor baseline:
 
@@ -81,8 +139,8 @@ First inspect the request plan. This does not use the network or require a key:
 python3 scripts/jev_dead_code_benchmark.py
 ```
 
-The default checked-in manifest contains 141 ground-truth symbols: 55 unused
-and 86 used. It is useful for request validation and regression testing, but
+The default checked-in manifest contains 148 ground-truth symbols: 57 unused
+and 91 used. It is useful for request validation and regression testing, but
 Skylos already scores every labeled symbol correctly there. A Jev tie on this
 suite does not demonstrate incremental value. The runner always asks the
 `original` question, and adds a second arm only when safe:
@@ -438,7 +496,8 @@ multi-file service/repository layers, Django management commands, Celery tasks,
 pytest fixtures, Pydantic validators, Alembic revisions, importlib plugins, and
 package console-script entrypoints. The cross-language cases currently cover Go
 HTTP handler reachability, Java application entrypoints and stale methods, and
-mixed TypeScript/JavaScript package reachability.
+mixed TypeScript/JavaScript package reachability, plus PHP function and member
+calls with unused controls.
 
 For larger accuracy discovery against pinned upstream framework repositories,
 use `benchmarks/framework_corpus`:

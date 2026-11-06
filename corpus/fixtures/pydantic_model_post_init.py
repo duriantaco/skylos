@@ -6,3 +6,14 @@ class User(BaseModel):
 
     def model_post_init(self, __context):
         return None
+
+
+class ProfileDraft:
+    pass
+
+
+def prepare_profile():
+    return None
+
+
+User(name="Ada")

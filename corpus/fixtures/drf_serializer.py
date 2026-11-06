@@ -6,3 +6,18 @@ class UserSerializer(serializers.Serializer):
 
     def validate_email(self, value):
         return value
+
+
+class ContactRecord:
+    address = "office"
+
+    def normalize_address(self, value):
+        return value
+
+
+class ContactFormatter:
+    def normalize_address(self, value):
+        return value
+
+
+ContactFormatter()
