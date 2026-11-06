@@ -31,11 +31,11 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from skylos.core.safe_cache_io import read_project_text_no_symlink
+from skylos.core.skylos_hooks import is_skylos_hook_command
 from skylos.rules.config.findings import config_finding
 
 AGENT_RULES = {
@@ -85,104 +85,6 @@ SEVERITIES = frozenset({"CRITICAL", "HIGH", "MEDIUM", "LOW"})
 MAX_FINDINGS = 500
 MAX_TEXT = 300
 MAX_SETTINGS_BYTES = 2_000_000
-_HOOK_EVENTS = (
-    "session-start",
-    "pre-edit",
-    "post-edit",
-    "pre-read",
-    "pre-bash",
-    "post-bash",
-    "post-failure",
-    "stop",
-)
-_FALLBACKS = (
-    "exit 0",
-    "echo '{}'",
-    """echo '{"permission":"allow"}'""",
-    """echo '{"continue":true}'""",
-)
-_SAFE_PATH = r"/(?:[A-Za-z0-9_.+@~-]+/)*"
-_SKYLOS_HOOK_RE = re.compile(
-    r"(?P<program>skylos|" + _SAFE_PATH + r"skylos)"
-    r" hook (?:" + "|".join(_HOOK_EVENTS) + r")"
-    r" --client (?:claude|codex|cursor)"
-    r"(?: \|\| (?:" + "|".join(re.escape(item) for item in _FALLBACKS) + r"))?"
-)
-_LOADER_VARIABLES = frozenset(
-    {
-        "PATH",
-        "PYTHONPATH",
-        "PYTHONHOME",
-        "PYTHONSTARTUP",
-        "PYTHONUSERBASE",
-        "PYTHONSAFEPATH",
-        "VIRTUAL_ENV",
-        "BASH_ENV",
-        "ENV",
-        "NODE_OPTIONS",
-        "SHELL",
-    }
-)
-_LOADER_PREFIXES = ("LD_", "DYLD_")
-_WORLD_WRITABLE = ("/tmp/", "/private/tmp/", "/var/tmp/", "/dev/shm/")
-
-
-def _settings_env(text: str | None) -> dict | None:
-    if text is None:
-        return None
-    try:
-        data = json.loads(text)
-    except ValueError:
-        return None
-    if not isinstance(data, dict):
-        return None
-    env = data.get("env", {})
-    if not isinstance(env, dict):
-        return None
-    return env
-
-
-def is_skylos_hook_command(
-    command: object, *, root: Path, settings_text: str | None
-) -> bool:
-    """A hook ``skylos agent install-hooks`` wrote, checked by its whole text.
-
-    The command must be exactly ``<program> hook <event> --client <agent>``,
-    optionally followed by one of the fixed ``||`` fallbacks Skylos writes,
-    with no other shell syntax. ``<program>`` is ``skylos`` found on the
-    user's own PATH, or an absolute path ending in ``/skylos`` that is outside
-    the repository and outside world-writable temp folders, so the repository
-    cannot supply the program. The settings file holding the hook must be JSON
-    whose ``env`` does not set PATH or loader variables. ``python -m
-    skylos.entry`` is not accepted: ``-m`` imports from the working folder,
-    which the repository controls. A name check alone would accept any
-    program called skylos.
-    """
-    if not isinstance(command, str):
-        return False
-    match = _SKYLOS_HOOK_RE.fullmatch(command.strip())
-    if match is None:
-        return False
-    program = match.group("program")
-    if program.startswith("/"):
-        parts = PurePosixPath(program).parts
-        if ".." in parts or "." in parts or "//" in program:
-            return False
-        if program.startswith(_WORLD_WRITABLE):
-            return False
-        try:
-            if Path(program).resolve().is_relative_to(root.resolve()):
-                return False
-        except (OSError, RuntimeError, ValueError):
-            return False
-    env = _settings_env(settings_text)
-    if env is None:
-        return False
-    for name in env:
-        key = str(name).upper()
-        if key in _LOADER_VARIABLES or key.startswith(_LOADER_PREFIXES):
-            return False
-    return True
 
 
 def is_own_hook(command: object, *, root: Path, settings_text: str | None) -> bool:

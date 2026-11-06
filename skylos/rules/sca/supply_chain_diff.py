@@ -539,7 +539,10 @@ def _workflow_audit_receipt(sides: GitSides, api, receipt: dict) -> None:
         with tempfile.TemporaryDirectory(prefix="skylos-audit-") as temp:
             result = api.audit_workflows(str(_write_tree(Path(temp) / "head", head)))
     except Exception as exc:  # noqa: BLE001 - the danger scan already reported what it could
-        receipt["workflow_audit"] = {"complete": False, "error_type": type(exc).__name__}
+        receipt["workflow_audit"] = {
+            "complete": False,
+            "error_type": type(exc).__name__,
+        }
         return
     audit = _get(result, "receipt")
     if not isinstance(audit, dict) or audit.get("complete") is not False:
@@ -568,12 +571,16 @@ def dependency_file_path(path: str) -> bool:
     )
 
 
-def dependency_coverage(sides: GitSides, api, receipt: dict, errors: list) -> list[dict]:
+def dependency_coverage(
+    sides: GitSides, api, receipt: dict, errors: list
+) -> list[dict]:
     """``--sca`` checks changed lockfiles and requirements files through
     ``ca9.api.evaluate_packages`` (SKY-SCA-SRC001/SRC003/INT001/AGE001); in a
     diff, a missing engine must not read as clean dependency changes."""
     base, head = sides.files(dependency_file_path)
-    changed = sorted(name for name in set(base) | set(head) if base.get(name) != head.get(name))
+    changed = sorted(
+        name for name in set(base) | set(head) if base.get(name) != head.get(name)
+    )
     receipt["changed"] = len(changed)
     receipt["status"] = "unchanged"
     if not changed:
