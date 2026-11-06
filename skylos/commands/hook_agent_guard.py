@@ -36,6 +36,7 @@ from skylos.commands.hook_agent_configs import (
     entries,
     guarded_file,
     home_dir,
+    installs_cleanly,
     load_snapshot,
     needs_approval,
     read_config,
@@ -51,8 +52,8 @@ from skylos.commands.hook_mcp import (
     NOTE,
     RANK,
     Outcome,
-    config_writes,
     mcp_additions,
+    plugin_installs,
     server_from_addition,
     uninstalls_skylos_hooks,
     vet_servers,
@@ -65,7 +66,7 @@ MAX_LINES = 10
 UNCHECKED = "Skylos could not check the MCP servers or agent hooks"
 EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit"})
 CLI_WRITES = {
-    "claude": ("~/.claude.json", "~/.claude.json (this project)", ".mcp.json"),
+    "claude": (".mcp.json", "~/.claude.json", "~/.claude.json (this project)"),
     "codex": ("~/.codex/config.toml",),
     "gemini": (".gemini/settings.json", "~/.gemini/settings.json"),
 }
@@ -80,22 +81,25 @@ class Planned:
 
 def check_agent_bash(command: str, cwd: Path, root: Path, deps: Any, payload: dict[str, Any],
                      record: dict[str, Any]) -> tuple[str, str] | None:  # fmt: skip
-    from skylos.commands.hook_shell_commands import simple_commands
+    from skylos.commands.hook_config_writes import config_writes
+    from skylos.commands.hook_shell_commands import walk
 
-    commands = simple_commands(command, cwd)
+    commands, unknown = walk(command, cwd)
     home = home_dir(deps.env)
-    additions = mcp_additions(commands)
-    writes = config_writes(commands, lambda path: bool(guarded_file(path, root, home)))
+    additions = mcp_additions(commands, unknown)
+    plugins = plugin_installs(commands, unknown)
+    writes = config_writes(commands, root, home)
     uninstall = uninstalls_skylos_hooks(commands)
-    if not additions and not writes and not uninstall:
+    if not additions and not writes and not uninstall and not plugins:
         return None
     try:
-        return _bash_verdict(additions, writes, uninstall, cwd, root, home, deps, payload, record)
+        return _bash_verdict(additions, plugins, writes, uninstall, cwd, root, home, deps, payload,
+                             record)  # fmt: skip
     except Exception:  # noqa: BLE001
         return ASK, f"{UNCHECKED} this command changes; could not verify it."
 
 
-def _bash_verdict(additions, writes, uninstall, cwd, root, home, deps, payload, record):
+def _bash_verdict(additions, plugins, writes, uninstall, cwd, root, home, deps, payload, record):
     from skylos.commands.hook_cmd import _state_root
 
     policy = _install_policy(root)
@@ -104,8 +108,9 @@ def _bash_verdict(additions, writes, uninstall, cwd, root, home, deps, payload, 
         outcomes.append(Outcome("command", "", ASK, "It removes Skylos's own agent hooks."))
     if writes:
         outcomes.append(Outcome("command", "", ASK,
-                                f"It writes {', '.join(writes[:3])} directly, so Skylos cannot check "
-                                "what it adds; use the edit tool instead."))  # fmt: skip
+                                f"It writes {', '.join(writes[:3])} directly, so Skylos cannot "
+                                "check what it adds; use the edit tool instead."))  # fmt: skip
+    outcomes += [Outcome("command", "", ASK, f"{text[0].upper()}{text[1:]}.") for text in plugins]
     for addition in additions:
         if addition.server is None:
             who = f"{addition.client} mcp"
@@ -114,28 +119,26 @@ def _bash_verdict(additions, writes, uninstall, cwd, root, home, deps, payload, 
             outcomes.append(Outcome("command", addition.name, policy.on_unverified,
                                     f"{who}: could not verify: {addition.problem}."))  # fmt: skip
     servers = [a for a in additions if a.server is not None]
-    renders = {}
+    expected: dict[str, dict[str, str | None]] = {}
     if servers:
         if not engine_ready():
             outcomes += [Outcome("command", a.name, policy.on_unverified,
                                  f"'{a.name}': could not verify ({ENGINE_MISSING}).") for a in servers]  # fmt: skip
         else:
-            entries_, findings = _mirror_servers([server_from_addition(a) for a in servers], root)
-            for entry, addition in zip(entries_, servers):
-                renders[id(entry)] = addition.render
-            found = vet_servers(entries_, label="command", findings=findings, root=root, cwd=cwd,
+            mirrored, findings = _mirror_servers([server_from_addition(a) for a in servers], root)
+            found = vet_servers(mirrored, label="command", findings=findings, root=root, cwd=cwd,
                                 env=deps.env, state_root=_state_root(root),
                                 sources=deps.supply_chain_sources, record=record)  # fmt: skip
-            for entry, outcome in zip(entries_, found):
-                render = renders.get(id(entry))
-                if outcome.pinned and render is not None:
-                    outcome.text += f"\n  Use: {render(outcome.pinned)}"
+            for addition, entry, outcome in zip(servers, mirrored, found):
+                if outcome.pinned and addition.render is not None:
+                    outcome.text += f"\n  Use: {addition.render(outcome.pinned)}"
+                for label in CLI_WRITES.get(addition.client, ()):
+                    expected.setdefault(label, {})[f"server {addition.name}"] = entry["_digest"]
             outcomes += found
     record["agent_config"] = len(outcomes)
     decision = worst(outcomes)
-    if decision in (ALLOW, NOTE) and servers and not writes:
-        labels = {label for a in servers for label in CLI_WRITES.get(a.client, ())}
-        _remember(root, home, payload, labels)
+    if decision in (ALLOW, NOTE) and expected and not writes:
+        remember_pending(_state_root(root), _token(payload), expected)
     return _verdict(decision, outcomes, "this command")
 
 
@@ -166,7 +169,7 @@ def _edit_verdict(guarded, labels, payload, root, deps, record):
         outcome = Outcome(labels, "", policy.on_unverified, f"Could not verify it ({ENGINE_MISSING}).")
         return _verdict(outcome.decision, [outcome], f"this edit to {labels}")
     outcomes: list[Outcome] = []
-    before_all: dict[str, dict[str, str]] = {}
+    expected: dict[str, dict[str, str | None]] = {}
     for plan, files in guarded:
         if not plan.known:
             outcomes.append(Outcome(files[0].label, "", policy.on_unverified,
@@ -176,59 +179,72 @@ def _edit_verdict(guarded, labels, payload, root, deps, record):
         old_text = read_config(plan.path) or ""
         before = scan_texts([(cf, old_text) for cf in files], root) or {}
         after = scan_texts([(cf, plan.text) for cf in files], root) or {}
-        for cf in files:
-            old_values, _shown = entries(before.get(cf.label) or _empty())
-            scan = after.get(cf.label) or _empty()
+        for label in sorted(set(before) | set(after)):
+            old_values, _shown = entries(before.get(label) or _empty())
+            scan = after.get(label) or _empty()
             new_values, shown = entries(scan)
-            before_all[cf.label] = old_values
             if scan.error and plan.text.strip():
-                outcomes.append(Outcome(cf.label, "", policy.on_unverified,
-                                        f"Skylos could not read {cf.label} after this edit "
+                outcomes.append(Outcome(label, "", policy.on_unverified,
+                                        f"Skylos could not read {label} after this edit "
                                         f"({scan.error}); could not verify it."))  # fmt: skip
             found = changes(old_values, new_values, shown)
+            if scan.dupes:
+                found = [c for c in found if c.kind != "dupes"]
+                outcomes.append(Outcome(label, "", ASK, f"{label}: {needs_approval_dupes()}."))
+            if installs_cleanly(scan, root):
+                found = [c for c in found if c.kind != "skylos"]
             for change in found:
                 reason = needs_approval(change)
                 if reason:
-                    outcomes.append(Outcome(cf.label, change.name, ASK, f"{cf.label}: {reason}."))
+                    outcomes.append(Outcome(label, change.name, ASK, f"{label}: {reason}."))
+            expected[label] = {c.key: new_values.get(c.key) for c in found if c.kind != "skylos"}
+            expected[label].update({k: v for k, v in new_values.items() if k.startswith("skylos ")
+                                    and old_values.get(k) != v})  # fmt: skip
+            expected[label].update({k: None for k in old_values if k.startswith("skylos ")
+                                    and k not in new_values})  # fmt: skip
             names = {c.name for c in found if c.kind == "server" and not c.removed}
             servers = [s for s in scan.servers if str(s.get("name")) in names]
-            vetted = vet_servers(servers, label=cf.label, findings=scan.findings, root=root,
+            vetted = vet_servers(servers, label=label, findings=scan.findings, root=root,
                                  cwd=_cwd(payload, root), env=deps.env,
                                  state_root=_state_root(root), sources=deps.supply_chain_sources,
                                  record=record)  # fmt: skip
             for outcome in vetted:
                 if outcome.pinned:
-                    outcome.text += f"\n  Use: {_render_entry(cf.label, outcome.pinned)}"
+                    outcome.text += f"\n  Use: {_render_entry(label, outcome.pinned)}"
             outcomes += vetted
     decision = worst(outcomes)
-    if decision != DENY and before_all:
-        remember_pending(_state_root(root), _token(payload), before_all)
+    if decision != DENY and expected:
+        remember_pending(_state_root(root), _token(payload), expected)
     return _verdict(decision, outcomes, f"this edit to {labels}")
 
 
+def needs_approval_dupes() -> str:
+    from skylos.commands.hook_agent_configs import Change
+
+    return str(needs_approval(Change("dupes", "dupes", "", True, False)))
+
+
 def accept_agent_action(payload: dict[str, Any], root: Path, deps: Any, *, edit: bool) -> None:
-    """After a checked edit or command: keep its own changes out of the next
-    session-start report."""
-    from skylos.commands.hook_cmd import _cwd, _state_root
+    """After a checked edit or command: fold exactly the checked change into
+    the snapshot, so it is not reported at the next prompt."""
+    from skylos.commands.hook_cmd import _state_root
 
     state_root = _state_root(root)
     token = _token(payload)
     pending = (load_snapshot(state_root).get("pending") or {}).get(token)
     if not isinstance(pending, dict):
         return
-    home = home_dir(deps.env)
     labels = set((pending.get("files") or {}).keys())
-    if edit:
-        paths = [plan.path for plan in planned_writes(payload, _cwd(payload, root), replay=False)]
-        labels &= {cf.label for path in paths for cf in guarded_file(path, root, home)}
-    files = [cf for cf in config_files(root, home) if cf.label in labels]
+    home = home_dir(deps.env)
+    files = [cf for cf in config_files(root, home)
+             if any(label == cf.label or label.startswith(cf.label + " (") for label in labels)]  # fmt: skip
     if not files:
         return
     scans = scan_files(files, root)
     if scans is None:
         return
     current = {label: entries(scan)[0] for label, scan in scans.items()}
-    accept_pending(state_root, token, labels, current)
+    accept_pending(state_root, token, current)
 
 
 def session_agent_check(payload: dict[str, Any], root: Path, deps: Any,
@@ -245,23 +261,22 @@ def session_agent_check(payload: dict[str, Any], root: Path, deps: Any,
         return f"Skylos did not check agent configs or MCP servers: {ENGINE_MISSING}."
     deadline = time.monotonic() + SESSION_SECONDS
     home = home_dir(deps.env)
-    files = config_files(root, home)
-    scans = scan_files(files, root)
+    scans = scan_files(config_files(root, home), root)
     if scans is None:
         return None
     current = {label: entries(scan) for label, scan in scans.items()}
     known = snapshot.get("files") or {}
     lines: list[str] = []
     changed: dict[str, set[str]] = {}
-    if known:
-        for cf in files:
-            values, shown = current[cf.label]
-            for change in changes(known.get(cf.label) or {}, values, shown):
-                line = change_line(cf.label, change)
+    if snapshot:
+        for label in sorted(set(current) | set(known)):
+            values, shown = current.get(label) or ({}, {})
+            for change in changes(known.get(label) or {}, values, shown):
+                line = change_line(label, change)
                 if line:
                     lines.append(line)
                 if change.kind == "server" and not change.removed:
-                    changed.setdefault(cf.label, set()).add(change.name)
+                    changed.setdefault(label, set()).add(change.name)
     digest = _servers_digest(scans)
     recheck = snapshot.get("recheck") or {}
     due = (recheck.get("session") != session or recheck.get("digest") != digest
@@ -448,11 +463,14 @@ def _find(lines: list[str], block: list[str], start: int) -> int | None:
 
 
 def _mirror_servers(servers: list[dict[str, Any]], root: Path):
+    """Servers a CLI command adds, read by ca9 like a config file would be;
+    each carries ``_digest``, the snapshot value it has once written."""
     mirror = ConfigFile("command", Path("-"), "c/.mcp.json")
     names = {f"s{index}": server for index, server in enumerate(servers)}
     body = {key: {k: v for k, v in server.items() if k != "name"} for key, server in names.items()}
     scans = scan_texts([(mirror, json.dumps({"mcpServers": body}))], root) or {}
     scan = scans.get("command") or _empty()
+    values, _shown = entries(scan)
     by_key = {str(s.get("name")): s for s in scan.servers}
     found = []
     for key, server in names.items():
@@ -463,6 +481,7 @@ def _mirror_servers(servers: list[dict[str, Any]], root: Path):
                 entry["argv"] = [command, *(server.get("args") or [])]
             entry["url"] = server.get("url")
         entry["name"] = server.get("name")
+        entry["_digest"] = values.get(f"server {key}")
         found.append(entry)
     findings = []
     for finding in scan.findings:
@@ -470,17 +489,6 @@ def _mirror_servers(servers: list[dict[str, Any]], root: Path):
         if server is not None:
             findings.append({**finding, "name": server.get("name")})
     return found, findings
-
-
-def _remember(root: Path, home: Path | None, payload: dict[str, Any], labels: set[str]) -> None:
-    from skylos.commands.hook_cmd import _state_root
-
-    files = [cf for cf in config_files(root, home) if cf.label in labels]
-    scans = scan_files(files, root)
-    if scans is None:
-        return
-    remember_pending(_state_root(root), _token(payload),
-                     {label: entries(scan)[0] for label, scan in scans.items()})  # fmt: skip
 
 
 def _verdict(decision: str, outcomes: list[Outcome], what: str) -> tuple[str, str] | None:
