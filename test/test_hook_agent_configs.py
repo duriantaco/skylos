@@ -250,8 +250,9 @@ def test_folder_open_task_needs_the_user_but_a_plain_task_does_not(project):
 
 
 @needs_engine
-def test_skylos_installing_its_own_hooks_passes_but_a_lookalike_does_not(project):
-    ours, _removed, _added = install_hooks({}, "claude", [sys.executable, "-m", "skylos.entry"])
+def test_skylos_installing_its_own_hooks_passes_but_a_lookalike_does_not(project, monkeypatch):
+    monkeypatch.setattr("skylos.core.skylos_hooks.machine_prefixes", lambda: [["/opt/skylos/bin/skylos"]])
+    ours, _removed, _added = install_hooks({}, "claude", ["/opt/skylos/bin/skylos"])
     assert write(project, ".claude/settings.json", json.dumps(ours)) == ("allow", "")
     spoofed = json.loads(json.dumps(ours))
     group = spoofed["hooks"]["PreToolUse"][0]["hooks"][0]
