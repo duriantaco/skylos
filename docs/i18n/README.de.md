@@ -382,7 +382,7 @@ zur Prüfung gelistet (`SKY-SCA-UPG002`). `--danger` meldet committete Agent-
 und Editor-Hooks (`SKY-D365`, `SKY-D366`: `SessionStart` in
 `.claude/settings.json`, `folderOpen` in `.vscode/tasks.json`), ungepinnte,
 versteckte oder imitierende MCP-Server (`SKY-D367`-`SKY-D369`), überschriebene
-Agent-Basis-URLs (`SKY-D370`) und riskante Publish-Jobs (`SKY-D371`-`SKY-D375`).
+Agent-Basis-URLs (`SKY-D370`), Konfigurationen, deren doppelte Schlüssel verbergen, was ausgeführt wird (`SKY-D377`), und riskante Publish-Jobs (`SKY-D371`-`SKY-D376`).
 Ein Scan des ganzen Repositorys listet sie; ein Pull Request, der einen Hook
 hinzufügt oder ändert, scheitert. Details in
 [Agent configuration and publish-job rules](../agent-config-and-publish-rules.md).

@@ -834,12 +834,19 @@ does not ignore). See
 | D373 | HIGH | OIDC publish job without a deployment `environment:` | GitHub Actions |
 | D374 | HIGH | Publishing workflow startable by `workflow_dispatch` or a push to any branch | GitHub Actions |
 | D375 | MEDIUM | `--diff` only: the change adds or modifies a CI job that publishes packages (base `ci_inventory` against head, line numbers ignored) | GitHub Actions, GitLab CI |
+| D376 | MEDIUM | Secrets (`secrets: inherit` or named) passed to a reusable workflow from another repository | GitHub Actions |
+| D377 | MEDIUM | Agent or editor config with duplicated keys, so what you read is not what runs | agent and editor settings, MCP configs |
 
-Built-in gate: in a whole-repository scan D365-D374 are listed and not
-counted, except a CRITICAL D365/D366. In a diff or baseline scan D365, D366,
-D368 and D370 fail the gate on their own; D367, D369 and D371-D375 count
-under the normal limits. A missing or failing ca9 function records each agent
-or workflow file as not analysed (`security_scan_error`), never as clean.
+Built-in gate: in a whole-repository scan D365-D374, D376 and D377 are listed
+and not counted, except a CRITICAL D365/D366. In a diff scan D365, D366, D368
+and D370 fail the gate on their own; D367, D369 and D371-D377 count under the
+normal limits. A baseline scan does the same only for the rules its baseline
+covered (`rule_coverage`, recorded by `skylos baseline` from the installed
+ca9); with an older baseline these findings are listed, not new. They match
+the baseline by rule, file and command or job, not by line. A diff that changes
+agent/editor configs, workflows or lockfiles without a usable ca9 (missing, too
+old, or lacking the function) is an analysis error ("upgrade ca9"), never a
+pass. Commands in findings and uploads are redacted.
 
 ### AI Agents In GitHub Actions (D350-D354)
 

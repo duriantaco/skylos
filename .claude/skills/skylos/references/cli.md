@@ -68,9 +68,13 @@ Individual check flags:
   `SKY-D365` agent hook, `SKY-D366` folderOpen task, `SKY-D367` unpinned MCP
   server, `SKY-D368` hidden-path MCP server, `SKY-D369` impersonating MCP
   package, `SKY-D370` base-URL override, `SKY-D371`-`SKY-D374` publish-job
-  rules, `SKY-D375` (diff only) publish job added/changed. Full scans list
-  D365-D374 without counting them (a CRITICAL hook still fails); diff or
-  baseline scans fail on a new D365/D366/D368/D370. Hooks written by
+  rules, `SKY-D375` (diff only) publish job added/changed, `SKY-D376` secrets
+  to a remote reusable workflow, `SKY-D377` duplicated keys in agent config.
+  Full scans list D365-D374/D376/D377 without counting them (a CRITICAL hook
+  still fails); diff scans fail on a new D365/D366/D368/D370; baseline scans
+  only for rules the baseline's `rule_coverage` lists (older baselines: listed).
+  A diff touching agent configs, workflows or lockfiles without a usable ca9 is
+  exit 2 ("upgrade ca9"). Commands in findings/uploads are redacted. Hooks written by
   `skylos agent install-hooks` are recognised by exact command grammar and
   not reported. A changed agent/workflow file with a ca9 that lacks the
   function is an analysis error (exit 2), never a pass. See

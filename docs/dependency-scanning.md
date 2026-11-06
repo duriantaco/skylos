@@ -636,9 +636,22 @@ name the file inside the package, the line and a redacted snippet;
 and the verdict shows `Upgrade review limited: N of M dependency upgrades
 reviewed (internal_package: K)`. Every other change that was not reviewed (a
 timeout, an unreachable registry, an artifact over the size cap, more than 100
-changes, a pair with no result, or a ca9 receipt with `complete: false`) is an
-analysis error, so a diff gate stops as incomplete (exit 2) instead of
-passing those packages unread.
+changes, a pair with no result, a result or receipt with `complete: false`, or
+`incomplete_results` in the receipt) is an analysis error, so a diff gate stops
+as incomplete (exit 2) instead of passing those packages unread; what an
+incomplete result did find is still reported. Each pair carries the lockfile's
+`integrity` hash and, for npm lockfiles, its `resolved` URL, so ca9 reports a
+lockfile that points a version at a different artifact
+(`lockfile_artifact_mismatch`, UPG001).
+
+A diff that changes a lockfile (or a requirements file) under `--sca` while ca9
+is not installed, older than API version 1, or lacks `evaluate_packages` is an
+analysis error ("… Upgrade ca9 (pip install -U ca9) and rerun."), as is one that
+changes agent configs or workflows under `--danger` without `agent_config` /
+`audit_workflows`. Changed hardening settings alone with no ca9 installed are
+a receipt note. Hardening exceptions always come from the merge base; `ignore`
+and `[tool.skylos.supply_chain]` come from the base only under `--gate` (see
+[where settings come from](./agent-config-and-publish-rules.md#where-settings-come-from)).
 
 Exceptions for a package (pnpm 11's cooldown otherwise breaks bot pull
 requests on fresh transitive dependencies) are read from the base commit only,

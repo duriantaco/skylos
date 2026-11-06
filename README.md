@@ -1128,9 +1128,11 @@ upgrade is downloaded old and new and compared as data: a new install hook,
 review (`SKY-SCA-UPG002`). `--danger` reports committed agent and editor hooks
 (`SKY-D365`, `SKY-D366`: `.claude/settings.json` `SessionStart`, `.vscode/tasks.json`
 `folderOpen`), unpinned, hidden-path or impersonating MCP servers
-(`SKY-D367`-`SKY-D369`), agent base-URL overrides (`SKY-D370`) and risky
-publish jobs (`SKY-D371`-`SKY-D375`). A whole-repository scan lists them; a
-pull request that adds or changes a hook fails. See
+(`SKY-D367`-`SKY-D369`), agent base-URL overrides (`SKY-D370`), configs whose
+duplicated keys hide what runs (`SKY-D377`) and risky publish jobs
+(`SKY-D371`-`SKY-D376`). A whole-repository scan, or a baseline saved before
+these rules existed, lists them; a pull request that adds or changes a hook
+fails, and so does one that changes such files when ca9 is missing. See
 [Agent configuration and publish-job rules](./docs/agent-config-and-publish-rules.md).
 
 ## Config And Deployment Support

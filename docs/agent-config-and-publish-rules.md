@@ -26,6 +26,8 @@ manager.
 | `SKY-D373` | HIGH | A job that can mint OIDC tokens (`id-token: write`) publishes without a deployment `environment:` |
 | `SKY-D374` | HIGH | A publishing workflow can be started by `workflow_dispatch` or a push to any branch |
 | `SKY-D375` | MEDIUM | `--diff` only: the change adds or modifies a CI job that publishes packages (steps, triggers, permissions, secrets; moved lines alone do not count) |
+| `SKY-D376` | MEDIUM | A job passes secrets (`secrets: inherit` or named secrets) to a reusable workflow from another repository |
+| `SKY-D377` | MEDIUM | An agent or editor config repeats a key (for example two `hooks` blocks): JSON parsers keep different copies, so what you read is not what runs |
 
 The message quotes the exact command or job; JSON keeps ca9's evidence in
 `metadata.evidence` (bounded). Every row must name a regular file inside the
@@ -38,8 +40,9 @@ full scan reads files Git tracks or does not ignore; a diff scan (`--diff`,
 
 | Scan | Built-in `--gate` |
 |:---|:---|
-| Whole repository | `SKY-D365`-`SKY-D374` are listed and not counted, so repositories that already commit agent hooks, unpinned MCP servers or a manually started release workflow keep passing after an upgrade. A CRITICAL `SKY-D365` or `SKY-D366` (a hook that downloads or decodes and runs code) still fails, like any critical issue |
-| Diff or baseline (`--diff`, `--diff-base`, `--baseline`) | A new or changed `SKY-D365`, `SKY-D366`, `SKY-D368` or `SKY-D370` fails the gate on its own ("supply-chain change to review"). `SKY-D367`, `SKY-D369` and `SKY-D371`-`SKY-D375` count under the normal limits |
+| Whole repository | `SKY-D365`-`SKY-D374`, `SKY-D376` and `SKY-D377` are listed and not counted, so repositories that already commit agent hooks, unpinned MCP servers or a manually started release workflow keep passing after an upgrade. A CRITICAL `SKY-D365` or `SKY-D366` (a hook that downloads or decodes and runs code) still fails, like any critical issue |
+| Diff (`--diff`, `--diff-base`) | A new or changed `SKY-D365`, `SKY-D366`, `SKY-D368` or `SKY-D370` fails the gate on its own ("supply-chain change to review"). `SKY-D367`, `SKY-D369` and `SKY-D371`-`SKY-D377` count under the normal limits |
+| Baseline (`--baseline`) | As a diff, but only for the rules the baseline covered. `skylos baseline` records them (`rule_coverage` in `.skylos/baseline.json`: the rules the installed ca9 could decide). A baseline saved by an older Skylos, or without those ca9 checks, never saw the hooks and workflows they report, so their findings are listed like a whole-repository scan instead of failing as new. Agent-config and publish-job findings match the baseline by rule, file and the command or job they name, not by line, so editing other settings does not make an old hook new, and changing a hook's command in place does |
 
 A synced Skylos Cloud gate counts every finding the way Cloud does, and the
 diff blocks above still apply.
@@ -67,11 +70,43 @@ In the uploaded `agent_hooks` inventory these hooks carry `skylos_hook: true`.
 
 ## When ca9 cannot check
 
-If the installed ca9 lacks `agent_config` or `audit_workflows`, or the call
-fails, each agent or workflow file is recorded as not analysed
-(`security_scan_error`, component `supply_chain`). A whole-repository gate
-shows it as a coverage gap; a diff-scoped gate stops as incomplete (exit 2)
-when one of those files changed. Nothing is reported as clean.
+A diff scan (`--diff`, `--diff-base`, and `skylos cicd pr-scan`) that changes an
+agent or editor config, a workflow or (with `--sca`) a lockfile, while ca9 is
+not installed, is older than API version 1, or lacks the function that checks
+it, records an analysis error ("… ca9 is not installed or too old. Upgrade ca9
+(pip install -U ca9) and rerun."): the gate stops as incomplete (exit 2)
+instead of passing unchecked. So does a baseline scan whose baseline covered
+rules this run's ca9 cannot decide. A whole-repository scan without a usable
+ca9 notes it in `analysis_summary.supply_chain_checks` and reports nothing for
+these rules.
+
+When a changed workflow calls a reusable workflow or includes a file from
+another repository, ca9's audit is incomplete for it. The verdict shows
+`Workflow audit incomplete for the changed workflows: …` and
+`analysis_summary.supply_chain_diff.checks.agent_and_workflow_files.workflow_audit`
+lists the reasons; this alone does not fail the gate, since such a call may
+predate the change.
+
+## Credentials in commands
+
+Finding messages, values and evidence, and the uploaded `agent_hooks`
+inventory, pass hook and MCP commands through a redactor: URLs keep only
+`scheme://host`; `Authorization`/`Bearer`/`Basic` values, `user:password`
+pairs (`-u admin:…`, `admin:…@host`), values of `--password`, `--token`,
+`--secret`, `--api-key`, `--auth` and similar options, values of
+`NAME=value` where NAME contains PASS, SECRET, TOKEN, KEY, AUTH or CREDENTIAL
+(`$VAR` references are kept), `-p` passwords of MySQL clients, `sshpass` and
+`… login` commands, and known token prefixes (`ghp_`, `gho_`, `github_pat_`,
+`npm_`, `sk-`, `sk-ant-`, `AKIA…`, `xox…`) become `[redacted]`.
+
+## Where settings come from
+
+Hardening exceptions (`[tool.skylos.supply_chain.hardening_exceptions]`) are
+always read from the diff's merge base. `ignore` and the rest of
+`[tool.skylos.supply_chain]` (`internal_packages`, registries) come from the
+base commit only under `--gate` with a diff base (or `SKYLOS_POLICY_BASE`, as
+`skylos cicd init` workflows set); a plain `--diff` run without `--gate`
+reads them from the working tree, so a change can still edit them there.
 
 ## Upload
 
