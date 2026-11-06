@@ -609,9 +609,57 @@ findings only and `sca_coverage.supply_chain.notes` says
 findings sit in `dependency_vulnerabilities`; all but `SKY-SCA-SRC003` count
 toward the dependency gate like advisories.
 
+### Pull request checks: upgrades and weakened hardening
+
+With `--diff BASE` or `--diff-base BASE`, `--sca` also compares the merge base
+of `BASE` and `HEAD` with the files Git tracks in your working tree (untracked
+files never count). Both sides are copied into temporary folders for ca9; the
+checkout itself is never handed to it, installed or run.
+
+| ID | Severity | Reported when |
+|:---|:---|:---|
+| `SKY-SCA-HRD001` | HIGH | The change weakens install hardening (`ca9.api.hardening_regressions`): a cooldown removed or lowered (npm `min-release-age`, pnpm `minimumReleaseAge`, Yarn `npmMinimalAgeGate`, Bun `minimumReleaseAge` in seconds, uv `exclude-newer`, pip `--uploaded-prior-to`, Dependabot `cooldown`, Renovate `minimumReleaseAge`; compared in minutes, and a removal that falls back to an equal or longer default such as pnpm 11's one day is not reported), a package newly allowed to skip the cooldown, `ignore-scripts` turned off, packages added to pnpm `allowBuilds`, npm `allowScripts` or Bun `trustedDependencies`, `strictDepBuilds` turned off, or an action pinned to a SHA moved to a tag or branch |
+| `SKY-SCA-UPG001` | CRITICAL | With `--review-upgrades`: a lockfile upgrade (npm or PyPI, base version to new version) adds install-time or start-up code: a `.pth` file or `sitecustomize` with code, a new install or prepare hook, decode-and-exec, a new Git or URL dependency, or agent/editor hook files shipped in the package |
+| `SKY-SCA-UPG002` | MEDIUM | With `--review-upgrades`: the upgrade adds import-time network or exec calls, a much larger obfuscated file, a native binary, or comes from a new publisher. A review signal, not proof |
+
+`--review-upgrades` implies `--sca`. It downloads both versions of each
+upgraded package through ca9's hash-verified fetcher (trusted indexes only,
+size-capped) and reads them as data; new packages are not paired. Workflows
+written by `skylos cicd init` turn it on for pull requests when dependency
+checks are selected; plain CLI runs need the flag. The finding sits on the
+lockfile line of the new version; `metadata.block_deltas` / `warn_deltas`
+name the file inside the package, the line and a redacted snippet. Up to 100
+upgrades are reviewed per run; more, or an upgrade ca9 skipped (for example
+a registry it cannot reach), prints `Upgrade review limited: N of M
+dependency upgrades reviewed (...)` under the verdict.
+
+Exceptions for a package (pnpm 11's cooldown otherwise breaks bot pull
+requests on fresh transitive dependencies) are read from the base commit only,
+so a pull request cannot add its own:
+
+```toml
+[tool.skylos.supply_chain.hardening_exceptions]
+esbuild = "downloads its platform binary in postinstall"
+```
+
+An exception needs a non-empty reason and applies to regressions that name
+that package (`allow_builds_added`, `cooldown_exclusion_added`, ...).
+`analysis_summary.supply_chain_diff.checks.hardening.exceptions_applied`
+lists the ones used.
+
+In the built-in gate `SKY-SCA-UPG001` and `SKY-SCA-HRD001` fail a diff or
+baseline scan on their own, whatever `max_dependency_vulnerabilities` allows;
+`SKY-SCA-UPG002` is listed and not counted. When ca9 lacks
+`hardening_settings`/`hardening_regressions` or `review_upgrades`, fails, or
+reports `check_failed`, and there was something to compare, the scan records
+an analysis error with no file (`supply_chain_check_unavailable`), so a
+diff-scoped gate stops as incomplete (exit 2) instead of passing without the
+check. Agent hooks, MCP servers and publish jobs are security checks; see
+[Agent configuration and publish-job rules](./agent-config-and-publish-rules.md).
+
 ### Supply-chain posture and package inventory
 
-Every `--sca` scan adds two blocks to `analysis_summary`, and uploads carry
+Every `--sca` scan adds these blocks to `analysis_summary`, and uploads carry
 them next to `sca_coverage`:
 
 - `dependency_inventory` (`skylos.dependency_inventory.v1`): up to 10,000
@@ -625,17 +673,35 @@ them next to `sca_coverage`:
   (a nested checkout or a local `.npmrc` does not configure CI), and only
   workflows directly in `.github/workflows` are read, as GitHub runs only
   those.
+- `ci_inventory` (`ca9.ci_inventory.v1`, when ca9 provides it): per CI job
+  (GitHub Actions and GitLab CI) the triggers, runner, environment, token
+  write scopes and `id-token`, secret names, installs, actions, tools,
+  downloads (hosts only) and publish steps. Skylos Cloud uses it to tell which
+  jobs could have installed a malicious version and what they could reach.
+- `agent_hooks` (`ca9.agent_hooks.v1`, when ca9 provides it): committed agent
+  and editor hooks, MCP servers and base-URL overrides, with redacted commands
+  and `skylos_hook: true` for hooks `skylos agent install-hooks` wrote.
+
+Both are bounded (200 workflows, 500 jobs, 50 items per list, 200 hooks and
+servers, 200-character strings), keep names instead of values (secret names
+that are identifiers, `scheme://host` instead of URLs, token-like text
+replaced by `[redacted]`) and list only files Git tracks or does not ignore.
+`analysis_summary.supply_chain_checks` says when ca9 could not build one; it
+stays local and is not uploaded.
 
 | Check | Passes when |
 |:---|:---|
 | `lockfile_committed` | Every npm and Python manifest has a lockfile (or fully pinned requirements) and Git tracks it. Outside a Git checkout: `unknown` |
 | `frozen_install_ci` | Every recognised CI install uses the lockfile as is: `npm ci`, `--frozen-lockfile`/`--immutable`, pnpm in CI, `uv sync --locked`/`--frozen`, `pip --require-hashes` or hashed requirements, `poetry install`, `pipenv sync`/`--deploy` |
-| `install_scripts_disabled` | npm projects block dependency install scripts: `ignore-scripts=true` in `.npmrc`, `--ignore-scripts` on every CI install, pnpm 10+ (from `packageManager`), Yarn `enableScripts: false`, or Bun |
-| `release_age_cooldown` | A minimum release age is set: `.npmrc` `min-release-age`, pnpm `minimumReleaseAge`, `.yarnrc.yml` `npmMinimalAgeGate`, `bunfig.toml` `minimumReleaseAge`, uv `exclude-newer`, or Skylos `min_release_age_hours` |
+| `install_scripts_disabled` | npm projects block dependency install scripts: `ignore-scripts=true` in `.npmrc`, `--ignore-scripts` on every CI install, npm 12+ or pnpm 10+ (from `packageManager`; packages in npm `allowScripts` or pnpm `allowBuilds` are counted in the detail, and pnpm 11 `strictDepBuilds: false` still blocks unapproved builds), Yarn `enableScripts: false`, or Bun. pnpm `dangerouslyAllowAllBuilds: true` fails it even with `ignore-scripts=true` in `.npmrc`, which pnpm 11 no longer reads |
+| `release_age_cooldown` | A minimum release age is set: `.npmrc` `min-release-age`, pnpm `minimumReleaseAge` (or pnpm 11+, one day by default), `.yarnrc.yml` `npmMinimalAgeGate` (or Yarn 4.15+, one day by default), `bunfig.toml` `minimumReleaseAge` (seconds; under 3600 fails as a likely unit mistake), uv `exclude-newer`, pip `--uploaded-prior-to` (CI command, requirements file, `pip.conf` or `PIP_UPLOADED_PRIOR_TO`), or Skylos `min_release_age_hours`. An explicit 0 fails. Dependabot's cooldown is named in the detail but does not pass the check: it delays only Dependabot's own pull requests |
 | `actions_pinned` | No `SKY-D292` finding: every third-party action and reusable workflow is pinned to a commit SHA (GitHub-owned actions at release tags are noted) |
 | `no_pr_target_checkout` | No `SKY-D290` finding for a `pull_request_target` or comment-triggered job that runs pull request code with privileges |
 
-The rich report prints one line when checks fail; JSON has the details.
+When ca9 provides `hardening_settings`, the committed values it reads are used
+first and Skylos's own readers fill the gaps; a value from a file Git does not
+track is ignored. The rich report prints one line when checks fail; JSON has
+the details.
 
 ## CI
 

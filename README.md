@@ -420,12 +420,18 @@ skylos agent install-hooks --cursor   # Cursor (.cursor/hooks.json)
 - **Before a package install or one-shot run** (`pip`, `uvx`, `npx`,
   `pnpm dlx`, `bunx`, `go run pkg@v`, ...): blocks hallucinated or
   typosquatted packages, versions reported as malware (OSV, with the ca9
-  feed offline), releases younger than 24 hours (naming the older version to
+  feed offline), releases younger than 48 hours (naming the older version to
   use instead) and npm releases that lost their provenance. `npm ci`,
   `uv sync`, `pip install -r` and other lockfile installs get the malware
   check over every locked package. It asks before installs it cannot verify
   (git and URL sources, unknown registries, failed lookups). Change the wait
   with `[tool.skylos.supply_chain] min_release_age_hours` (0 turns it off).
+- **MCP servers and agent hooks:** the agent hook blocks unpinned or
+  malicious MCP servers (`claude mcp add`, `.mcp.json` edits) with the exact
+  pinned command to use, asks before new SessionStart or folderOpen hooks,
+  and re-checks configured servers each session.
+- `skylos agent harden` prints each agent's own credential-deny and
+  pinned-MCP settings (policy and audit, not a sandbox).
 - **Before a git command:** blocks `--no-verify`, `HUSKY=0` and other ways
   around the repository's git hooks.
 - **At stop:** blocks "done" while issues the agent added are still open.
@@ -1110,12 +1116,30 @@ install scripts disabled, release-age cooldown, pinned actions, no
 `pull_request_target` checkout). See
 [Supply-chain checks](./docs/dependency-scanning.md#supply-chain-checks).
 
+In pull requests (`--diff` or `--diff-base`), `--sca` also fails the gate when
+a change weakens install hardening: a cooldown removed or lowered, install
+scripts turned back on, packages added to pnpm `allowBuilds` or npm
+`allowScripts`, an action moved from a SHA to a tag (`SKY-SCA-HRD001`).
+Reviewed exceptions per package live on the base branch. With
+`--review-upgrades` (on in workflows from `skylos cicd init`), each npm or PyPI
+upgrade is downloaded old and new and compared as data: a new install hook,
+`.pth` or `sitecustomize` code or decode-and-exec fails the gate
+(`SKY-SCA-UPG001`); new import-time network calls or binaries are listed for
+review (`SKY-SCA-UPG002`). `--danger` reports committed agent and editor hooks
+(`SKY-D365`, `SKY-D366`: `.claude/settings.json` `SessionStart`, `.vscode/tasks.json`
+`folderOpen`), unpinned, hidden-path or impersonating MCP servers
+(`SKY-D367`-`SKY-D369`), agent base-URL overrides (`SKY-D370`) and risky
+publish jobs (`SKY-D371`-`SKY-D375`). A whole-repository scan lists them; a
+pull request that adds or changes a hook fails. See
+[Agent configuration and publish-job rules](./docs/agent-config-and-publish-rules.md).
+
 ## Config And Deployment Support
 
 | Surface | Files | Security Scope |
 |:---|:---|:---|
 | GitHub Actions | `.github/workflows/*.yml`, `.github/workflows/*.yaml`, `action.yml`, `action.yaml` | dangerous triggers, token permissions, unpinned actions, template injection, secrets, OIDC, cache, and artifact policy |
 | GitLab CI | `.gitlab-ci.yml` | mutable images, unpinned includes, literal secrets, untrusted eval, Docker-in-Docker, OIDC, cache, timeout, and runner-tag policy |
+| Agent and editor config | `.claude/settings.json`, `.gemini/settings.json`, `.cursor/hooks.json`, `.codex/hooks.json`, `.vscode/tasks.json`, `.mcp.json` and other MCP configs | committed hooks and folder-open tasks, unpinned or hidden-path MCP servers, impersonating MCP packages, and API base-URL overrides |
 | Dockerfile | `Dockerfile`, `Dockerfile.*`, `*.dockerfile` | dangerous `RUN` commands, remote `ADD` without checksum, and literal build `ARG` / `ENV` secrets |
 | Edge Docker Compose | `compose*.yml`, `compose*.yaml`, `docker-compose*.yml`, `docker-compose*.yaml` | privileged containers, broad host device/control mounts, GPU/device runtime, and host networking |
 | Edge systemd | `*.service` | root edge services, mutable `ExecStart` paths, missing sandboxing, broad capabilities, and broad device access |

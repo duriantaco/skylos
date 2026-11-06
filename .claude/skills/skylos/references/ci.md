@@ -61,6 +61,9 @@ passing.
 ## Other CI Platforms
 
 `skylos cicd init` picks the CI from the repository (`skylos/cicd/platforms.py`):
+Generated pull request scans add `--review-upgrades` when dependency checks
+(`--sca`) are selected, on GitHub Actions and the other CI templates; push and
+default-branch scans do not.
 
 - `.github/workflows/` keeps the GitHub workflow; other CI files found get a
   `--ci` hint.
