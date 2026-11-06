@@ -1067,6 +1067,75 @@
           }
         ]
       }
+    },
+    {
+      "id": "csharp-owner-call-identity",
+      "path": "fixtures/csharp_owner_call_identity",
+      "description": "Main constructs both namespace-specific Worker classes but only invokes Primary.Run→Primary.Process. The Secondary private method has no caller; its owner is constructed so parent grouping cannot hide it.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "csharp",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original local static-only language corpus control; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Secondary.Worker.Process"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Program.cs",
+            "symbol": "Portfolio.Program"
+          },
+          {
+            "kind": "function",
+            "file": "Program.cs",
+            "symbol": "Portfolio.Program.Main"
+          },
+          {
+            "kind": "class",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker"
+          },
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker.Run"
+          },
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker.Process"
+          },
+          {
+            "kind": "class",
+            "file": "Workers.cs",
+            "symbol": "Secondary.Worker"
+          }
+        ]
+      },
+      "symbol_identity": "qualified",
+      "coverage_notes": "Known current false positive: the static entrypoint Main is live but its owning Portfolio.Program class is reported unused. Ground truth retained; not a detector fix."
     }
   ]
 }

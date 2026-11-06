@@ -1006,6 +1006,485 @@
           }
         ]
       }
+    },
+    {
+      "id": "csharp-private-call-chain",
+      "path": "fixtures/csharp_private_call_chain",
+      "description": "Main constructs Pipeline and calls Emit→Normalize; Parse has no call, registration, reflection or exported API in this executable.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "csharp",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original local static-only language corpus control; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Program.cs",
+            "symbol": "Ledger.Pipeline.Parse"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Program.cs",
+            "symbol": "Ledger.Pipeline"
+          },
+          {
+            "kind": "function",
+            "file": "Program.cs",
+            "symbol": "Ledger.Pipeline.Main"
+          },
+          {
+            "kind": "function",
+            "file": "Program.cs",
+            "symbol": "Ledger.Pipeline.Emit"
+          },
+          {
+            "kind": "function",
+            "file": "Program.cs",
+            "symbol": "Ledger.Pipeline.Normalize"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "kotlin-private-call-chain",
+      "path": "fixtures/kotlin_private_call_chain",
+      "description": "main calls displayRecord→formatRecord; private parseRecord has no caller or exposed entrypoint.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original local static-only language corpus control; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "parseRecord"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "displayRecord"
+          },
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "formatRecord"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "kotlin-owner-call-identity",
+      "path": "fixtures/kotlin_owner_call_identity",
+      "description": "main constructs both classes, but only Primary.run calls its private process. Same-spelled Secondary.process remains uncalled; constructing the owner prevents dead-parent aggregation.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original local static-only language corpus control; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "SecondaryProcessor.process"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Main.kt",
+            "symbol": "PrimaryProcessor"
+          },
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "PrimaryProcessor.run"
+          },
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "PrimaryProcessor.process"
+          },
+          {
+            "kind": "class",
+            "file": "Main.kt",
+            "symbol": "SecondaryProcessor"
+          },
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "main"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "csharp-top-level-owner-identity",
+      "path": "fixtures/csharp_top_level_owner_identity",
+      "description": "Top-level application statements construct both namespace-specific workers; only the Primary owner calls its private Process method.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "csharp",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original local static-only language corpus control; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Secondary.Worker.Process"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker"
+          },
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker.Run"
+          },
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker.Process"
+          },
+          {
+            "kind": "class",
+            "file": "Workers.cs",
+            "symbol": "Secondary.Worker"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "rust-direct-calls",
+      "path": "fixtures/rust_direct_calls",
+      "description": "Closed source calls retain the selected implementation and report unreferenced siblings.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only corpus fixture; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "render"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "summarize"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "rust-member-owners",
+      "path": "fixtures/rust_member_owners",
+      "description": "Concrete receiver calls retain only the selected member owner.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only corpus fixture; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          },
+          {
+            "kind": "class",
+            "file": "main.rs",
+            "symbol": "TextCodec"
+          },
+          {
+            "kind": "class",
+            "file": "main.rs",
+            "symbol": "BinaryCodec"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "TextCodec.process"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "TextCodec.measure"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "TextCodec.snapshot"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "BinaryCodec.process"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "dart-direct-calls",
+      "path": "fixtures/dart_direct_calls",
+      "description": "Closed source calls retain the selected implementation and report unreferenced siblings.",
+      "languages": [
+        "dart"
+      ],
+      "taxonomy": [
+        "dart",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only corpus fixture; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "_render"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "_normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "_summarize"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "dart-member-owners",
+      "path": "fixtures/dart_member_owners",
+      "description": "Concrete receiver calls retain only the selected member owner.",
+      "languages": [
+        "dart"
+      ],
+      "taxonomy": [
+        "dart",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only corpus fixture; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "main"
+          },
+          {
+            "kind": "class",
+            "file": "main.dart",
+            "symbol": "TextCodec"
+          },
+          {
+            "kind": "class",
+            "file": "main.dart",
+            "symbol": "BinaryCodec"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "TextCodec.run"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "TextCodec._process"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "TextCodec._measure"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "TextCodec._snapshot"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "BinaryCodec._process"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
     }
   ]
 }

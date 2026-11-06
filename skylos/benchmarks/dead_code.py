@@ -20,9 +20,12 @@ from skylos.benchmarks._analysis_validation import analysis_issues as _analysis_
 DEAD_CODE_TAXONOMY: dict[str, str] = {
     "basic_detection": "Core unused import, function, class, variable, and parameter detection.",
     "framework_precision": "Framework-owned symbols that should not be reported as dead code.",
+    "csharp": "C# dead-code and entrypoint liveness patterns.",
+    "dart": "Dart dead-code and entrypoint liveness patterns.",
     "go": "Go dead-code and entrypoint liveness patterns.",
     "java": "Java dead-code and entrypoint liveness patterns.",
     "javascript": "JavaScript dead-code and module liveness patterns.",
+    "kotlin": "Kotlin dead-code and entrypoint liveness patterns.",
     "php": "PHP dead-code and entrypoint liveness patterns.",
     "rust": "Rust dead-code and entrypoint liveness patterns.",
     "typescript": "TypeScript dead-code and module liveness patterns.",
@@ -250,6 +253,8 @@ def _validate_case(
                 f"Allowed: {allowed}"
             )
 
+    _symbol_identity(case)
+
     importance = case.get("importance", "high")
     if importance not in IMPORTANCE_WEIGHTS:
         allowed = ", ".join(sorted(IMPORTANCE_WEIGHTS))
@@ -413,21 +418,51 @@ def _norm_symbol(value: str, kind: str) -> str:
     return symbol
 
 
-def _expectation_keys(item: dict[str, Any]) -> set[DeadCodeKey]:
+def _symbol_identity(case: dict[str, Any]) -> str:
+    identity = case.get("symbol_identity", "simple")
+    if not isinstance(identity, str) or identity not in {"simple", "qualified"}:
+        raise ValueError(
+            f"dead-code case {case.get('id', '<unknown>')} symbol_identity "
+            "must be simple or qualified"
+        )
+    return identity
+
+
+def _expectation_keys(
+    item: dict[str, Any], *, symbol_identity: str = "simple"
+) -> set[DeadCodeKey]:
     kind = str(item["kind"])
     file_name = str(item["file"]).replace("\\", "/")
     symbols = [str(item["symbol"]), *[str(alias) for alias in item.get("aliases", [])]]
     return {
-        DeadCodeKey(kind=kind, file=file_name, symbol=_norm_symbol(symbol, kind))
+        DeadCodeKey(
+            kind=kind,
+            file=file_name,
+            symbol=symbol.strip()
+            if symbol_identity == "qualified"
+            else _norm_symbol(symbol, kind),
+        )
         for symbol in symbols
     }
 
 
-def _primary_expectation_key(item: dict[str, Any]) -> DeadCodeKey:
+def _primary_expectation_key(
+    item: dict[str, Any], *, symbol_identity: str = "simple"
+) -> DeadCodeKey:
+    if symbol_identity == "qualified":
+        return DeadCodeKey(
+            kind=str(item["kind"]),
+            file=str(item["file"]).replace("\\", "/"),
+            symbol=str(item["symbol"]).strip(),
+        )
     return next(iter(_expectation_keys(item)))
 
 
-def _finding_symbol(finding: dict[str, Any], kind: str) -> str:
+def _finding_symbol(
+    finding: dict[str, Any], kind: str, *, symbol_identity: str = "simple"
+) -> str:
+    if symbol_identity == "qualified" and kind != "file":
+        return finding["full_name"].strip()
     for key in ("simple_name", "name", "symbol", "full_name", "value"):
         value = finding.get(key)
         if isinstance(value, str) and value.strip():
@@ -439,6 +474,7 @@ def _collect_dead_code_findings(
     result: dict[str, Any],
     *,
     project_root: Path,
+    symbol_identity: str = "simple",
 ) -> set[DeadCodeKey]:
     findings: set[DeadCodeKey] = set()
     for category, kind in CATEGORY_TO_KIND.items():
@@ -446,13 +482,40 @@ def _collect_dead_code_findings(
             if not isinstance(item, dict):
                 continue
             file_name = _norm_rel_path(str(item.get("file", "")), project_root)
-            symbol = _finding_symbol(item, kind)
+            symbol = _finding_symbol(item, kind, symbol_identity=symbol_identity)
             if kind == "file" and not symbol:
                 symbol = file_name
             if not file_name or not symbol:
                 continue
             findings.add(DeadCodeKey(kind=kind, file=file_name, symbol=symbol))
     return findings
+
+
+def _qualified_finding_issues(result: Mapping[str, Any]) -> list[str]:
+    issues = []
+    for category, kind in CATEGORY_TO_KIND.items():
+        if category not in result:
+            continue
+        records = result[category]
+        if not isinstance(records, list):
+            issues.append(f"{category} must be a list for qualified symbol identity")
+            continue
+        for finding in records:
+            if not isinstance(finding, Mapping):
+                issues.append(f"{category} must contain finding objects")
+                continue
+            file_name = finding.get("file")
+            if not isinstance(file_name, str) or not file_name.strip():
+                issues.append(
+                    f"{category} requires a file for qualified symbol identity"
+                )
+            if kind != "file":
+                full_name = finding.get("full_name")
+                if not isinstance(full_name, str) or not full_name.strip():
+                    issues.append(
+                        f"{category} requires full_name for qualified symbol identity"
+                    )
+    return list(dict.fromkeys(issues))
 
 
 def _scan_case(case_path: Path, case: dict[str, Any]) -> dict[str, Any]:
@@ -735,6 +798,7 @@ def run_case(
     scanner: str = "skylos",
     strict_labels: bool = False,
 ) -> dict[str, Any]:
+    symbol_identity = _symbol_identity(case)
     manifest_root = Path(manifest_path).parent
     case_path = _case_path(
         manifest_root,
@@ -750,10 +814,16 @@ def run_case(
     with _analysis_path(case_path, manifest_root) as analysis_path:
         result = _scan_case_with_scanner(analysis_path, case, scanner=scanner)
         analysis_issues = _analysis_issues(result, scanner=scanner)
+        if symbol_identity == "qualified" and not analysis_issues:
+            analysis_issues.extend(_qualified_finding_issues(result))
         findings = (
             set()
             if analysis_issues
-            else _collect_dead_code_findings(result, project_root=analysis_path)
+            else _collect_dead_code_findings(
+                result,
+                project_root=analysis_path,
+                symbol_identity=symbol_identity,
+            )
         )
     elapsed_seconds = time.perf_counter() - start
 
@@ -769,6 +839,7 @@ def run_case(
             "analysis_status": "incomplete",
             "analysis_issues": analysis_issues,
             "scored": False,
+            "symbol_identity": symbol_identity,
             "findings_by_kind": {},
             "unlabeled_finding_count": 0,
             "unlabeled_findings": [],
@@ -798,10 +869,12 @@ def run_case(
     expected_used_keys = set()
 
     for item in unused_expectations:
-        keys = _expectation_keys(item)
+        keys = _expectation_keys(item, symbol_identity=symbol_identity)
         expected_unused_keys.update(keys)
         matched = sorted(key.label() for key in keys if key in findings)
-        expected = _primary_expectation_key(item).label()
+        expected = _primary_expectation_key(
+            item, symbol_identity=symbol_identity
+        ).label()
         if matched:
             true_positives += 1
         else:
@@ -817,10 +890,12 @@ def run_case(
             )
 
     for item in used_expectations:
-        keys = _expectation_keys(item)
+        keys = _expectation_keys(item, symbol_identity=symbol_identity)
         expected_used_keys.update(keys)
         matched = sorted(key.label() for key in keys if key in findings)
-        expected = _primary_expectation_key(item).label()
+        expected = _primary_expectation_key(
+            item, symbol_identity=symbol_identity
+        ).label()
         if matched:
             false_positives += 1
             failures.append(
@@ -876,6 +951,7 @@ def run_case(
         "analysis_status": "complete",
         "analysis_issues": [],
         "scored": True,
+        "symbol_identity": symbol_identity,
         "findings_by_kind": findings_by_kind,
         "unlabeled_finding_count": len(unlabeled_findings),
         "unlabeled_findings": unlabeled_findings[:50],
