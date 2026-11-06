@@ -127,6 +127,7 @@ def test_pr_upload_jobs_match_the_cloud_contract():
     assert scan_step["working-directory"] == "pr-source"
     assert scan_step["run"] == (
         "skylos cicd pr-scan . --danger --quality --ai-defects --secrets --sca "
+        "--review-upgrades "
         '--policy "$RUNNER_TEMP/skylos-pr-policy" '
         '--output "$RUNNER_TEMP/skylos-pr-report/report.json.gz"'
     )
@@ -1071,3 +1072,56 @@ def test_sync_api_get_sends_extra_headers_without_replacing_auth(monkeypatch):
         "Authorization": "Bearer jwt",
         "X-Skylos-Auth": "oidc",
     }
+
+
+def test_sca_pr_scan_reviews_upgrades():
+    run = _parsed(analysis_types=["sca"])["jobs"]["pr-scan"]["steps"][5]["run"]
+    assert " --sca --review-upgrades " in run
+
+
+@pytest.mark.parametrize("weaken", [True, False])
+def test_pr_scan_uploads_the_diff_only_supply_chain_findings(isolated, monkeypatch, weaken):
+    api = pytest.importorskip("ca9.api")
+    if not hasattr(api, "hardening_regressions"):
+        pytest.skip("this ca9 has no hardening checks")
+    from skylos.rules.sca import supply_chain
+
+    monkeypatch.setattr(supply_chain, "load_ca9_api", lambda: api)
+    repo = isolated / "pr-source"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / "package.json").write_text('{"name": "demo", "version": "1.0.0"}\n')
+    (repo / ".npmrc").write_text("min-release-age=3\nignore-scripts=true\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "base")
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-qb", "feature")
+    (repo / "README.md").write_text("demo\n")
+    if weaken:
+        (repo / ".npmrc").write_text("ignore-scripts=true\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "pr")
+    head = _git(repo, "rev-parse", "HEAD")
+    policy = isolated / "runner" / "skylos-pr-policy"
+    policy.mkdir(parents=True)
+    (policy / "config.yaml").write_text(yaml.safe_dump({"project_id": "p1"}))
+    report = isolated / "runner" / "skylos-pr-report" / "report.json.gz"
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("SKYLOS_COMMIT", head)
+    monkeypatch.setenv("SKYLOS_BRANCH", "feature")
+    monkeypatch.setenv("SKYLOS_PR_NUMBER", "7")
+    monkeypatch.setenv("SKYLOS_PR_BASE_SHA", base)
+
+    code, printed = _cicd(
+        ["pr-scan", ".", "--sca", "--policy", str(policy), "--output", str(report)]
+    )
+
+    assert code == 0, printed
+    _payload, rows = _findings(report)
+    hardening = [row for row in rows if row[0] == "SKY-SCA-HRD001"]
+    if weaken:
+        assert [row[1] for row in hardening] == [".npmrc"]
+    else:
+        assert hardening == []
+    for name in ("SKYLOS_POLICY_BASE", "SKYLOS_SYNCED_POLICY_FILE"):
+        assert name not in os.environ

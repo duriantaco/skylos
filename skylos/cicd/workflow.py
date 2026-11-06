@@ -941,7 +941,7 @@ jobs:
             python_version=python_version,
             skylos_version=skylos_version,
             scan_target=scan_target,
-            analysis_flags=analysis_flags,
+            analysis_flags=analysis_flags + upgrade_flag,
             project_root=project_root,
             use_dart=use_dart,
         )
