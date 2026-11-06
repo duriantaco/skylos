@@ -9,7 +9,6 @@ from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.reporting.sbom import cyclonedx_bom
 from skylos.rules.sca import vulnerability_scanner as sca
 
-
 POETRY = """[[package]]
 name = "parent"
 version = "1.0.0"
@@ -235,6 +234,34 @@ def test_berry_workspace_optional_and_environment_context(tmp_path):
     assert document["compositions"] == [{"aggregate": "incomplete"}]
 
 
+@pytest.mark.parametrize("child_is_direct", [False, True])
+def test_spdx_berry_distinguishes_direct_dependencies_from_reachable_packages(
+    tmp_path, capsys, child_is_direct
+):
+    data = _berry()
+    if child_is_direct:
+        data["app@workspace:."]["dependencies"]["child"] = "npm:^2"
+    _write(tmp_path, "yarn.lock", json.dumps(data))
+
+    assert run_sbom_command([str(tmp_path), "--format", "spdx-json", "--strict"]) == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    document = json.loads(captured.out)
+    ids = {package["name"]: package["SPDXID"] for package in document["packages"]}
+    edges = {
+        (item["spdxElementId"], item["relatedSpdxElement"])
+        for item in document["relationships"]
+        if item["relationshipType"] == "DEPENDS_ON"
+    }
+    expected = {
+        ("SPDXRef-RootPackage", ids["parent"]),
+        (ids["parent"], ids["child"]),
+    }
+    if child_is_direct:
+        expected.add(("SPDXRef-RootPackage", ids["child"]))
+    assert edges == expected
+
+
 def test_berry_optional_peer_is_not_fabricated_as_resolved_graph_edge(tmp_path):
     data = _berry()
     data["parent@npm:^1"].update(
@@ -373,4 +400,3 @@ def test_spdx_written_line_counts_the_same_packages_as_cyclonedx(tmp_path, capsy
         in captured.err
     )
     assert len(json.loads(target.read_text(encoding="utf-8"))["packages"]) == 3
-
