@@ -1572,6 +1572,323 @@
           "danger": ["SKY-D215"]
         }
       }
+    },
+    {
+      "id": "kotlin-sql-interpolation",
+      "path": "fixtures/kotlin_sql_interpolation",
+      "description": "Spring request parameter term is interpolated into SQL text passed to JdbcTemplate.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "sql_injection"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D211"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "kotlin-sql-binding",
+      "path": "fixtures/kotlin_sql_binding",
+      "description": "SQL text is fixed and term is a separate bound argument, not SQL syntax.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "sql_injection",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D211"
+          ]
+        }
+      }
+    },
+    {
+      "id": "kotlin-sql-other-scalar",
+      "path": "fixtures/kotlin_sql_other_scalar",
+      "description": "Converting page cannot sanitize the separate request parameter term interpolated into SQL.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "sql_injection"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D211"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "kotlin-command-shell",
+      "path": "fixtures/kotlin_command_shell",
+      "description": "Servlet command data is passed as shell source to sh -c.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "command_injection"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D212"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "kotlin-command-text",
+      "path": "fixtures/kotlin_command_text",
+      "description": "Sink syntax appears only in a comment and a raw string; no process or shell is invoked.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "command_injection",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D212"
+          ]
+        }
+      }
+    },
+    {
+      "id": "kotlin-ssrf-destination",
+      "path": "fixtures/kotlin_ssrf_destination",
+      "description": "Ktor request data controls the complete network destination.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "ssrf"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D216"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "kotlin-ssrf-fixed-origin",
+      "path": "fixtures/kotlin_ssrf_fixed_origin",
+      "description": "Request data is appended after a fixed origin and path prefix; it cannot choose the initial destination host.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "ssrf",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D216"
+          ]
+        }
+      }
+    },
+    {
+      "id": "kotlin-ssrf-unrelated-allowlist",
+      "path": "fixtures/kotlin_ssrf_unrelated_allowlist",
+      "description": "An unused allowlist is not a validation guard for destination.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "ssrf"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D216"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "kotlin-path-segment",
+      "path": "fixtures/kotlin_path_segment",
+      "description": "An unvalidated request segment can contain parent components and reaches a filesystem read.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "path_traversal"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D215"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "kotlin-path-basename",
+      "path": "fixtures/kotlin_path_basename",
+      "description": "The final child argument is only a platform basename, removing path components for this path-traversal contract.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "path_traversal",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D215"
+          ]
+        }
+      }
+    },
+    {
+      "id": "kotlin-path-prefix",
+      "path": "fixtures/kotlin_path_prefix",
+      "description": "The lexical docs/ prefix still permits docs/../../outside; it is not canonical containment.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "path_traversal"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D215"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "kotlin-command-numeric-argv",
+      "path": "fixtures/kotlin_command_numeric_argv",
+      "description": "Request text is parsed to an integer and formatted as a decimal scalar before occupying a fixed-format argv data position.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "command_injection",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus control; numeric conversion is source validation, not a helper-name assertion."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D212"
+          ]
+        }
+      }
     }
   ]
 }

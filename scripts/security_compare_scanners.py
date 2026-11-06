@@ -23,6 +23,12 @@ def _row(summary: dict[str, Any]) -> dict[str, Any]:
     return {
         "scanner": summary["scanner"],
         "cases": summary["case_count"],
+        "status": summary.get("analysis_status", "complete"),
+        "scored": summary.get("scored_case_count", summary["case_count"]),
+        "unscored": summary.get("unscored_case_count", 0),
+        "metric_scope": "scored cases only"
+        if summary.get("metrics_scoped_to_scored_cases")
+        else "all cases",
         "skipped": summary.get("skipped_case_count", 0),
         "failures": summary["failure_count"],
         "TP": counts["true_positives"],
@@ -43,6 +49,10 @@ def _format_table(rows: list[dict[str, Any]]) -> str:
     columns = [
         "scanner",
         "cases",
+        "status",
+        "scored",
+        "unscored",
+        "metric_scope",
         "skipped",
         "failures",
         "TP",

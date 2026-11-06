@@ -24,6 +24,13 @@ safe behavior in the fixture, not the current Skylos output. Positive and
 negative fixtures should be paired when a rule has realistic sanitizer or guard
 logic.
 
+Incomplete or malformed native scans are `UNSCORED` failures and contribute no
+TP/FP/FN/TN. Scored/unscored counts and metric scope remain visible in comparisons.
+With no valid cases, scores are zero and marked `no_valid_cases`. Bandit does not
+need Skylos metadata, but its explicit errors and invalid payloads also fail.
+Canonical `SKY-*` expectations match the finding's rule ID; a message or filename
+containing that text cannot impersonate a rule.
+
 ## Run
 
 ```bash
@@ -37,14 +44,39 @@ python scripts/security_compare_scanners.py
 Competitor scanners are optional local tools, not project dependencies. If a
 competitor such as Bandit is unavailable, the comparison script reports it as
 skipped and still prints the Skylos scorecard. Python-only scanners are scored
-only on Python cases; Go, Java, TypeScript, C#, PHP, Rust, and Dart cases are
+only on Python cases; Go, Java, TypeScript, C#, Kotlin, PHP, Rust, and Dart cases are
 reported as skipped for that scanner instead of being counted as false
 negatives.
 
-Each Skylos benchmark case is scanned with a fixture-local changed-file set.
-This keeps repository-level config findings from the Skylos repo itself out of
-the case score while still allowing a fixture to include and test its own
-workflow or config files.
+Each Skylos case is scanned as an isolated complete snapshot, including its own
+workflow or config files. It does not inherit parent config, coverage or traces,
+and does not request a Git comparison against a history the fixture does not have.
+
+## Kotlin coverage
+
+Twelve default Kotlin cases cover SQL interpolation/binding, shell commands,
+fixed and request-controlled destinations, and path guards. They include seven
+required findings and five safe controls, with lookalikes that must still report.
+The default security suite now has 84 cases; all 72 earlier cases retain their
+expectations. These are local request-source/API flow contracts, not deployed
+applications or remote exploit proofs. Fixture programs are never executed.
+
+One extra case remains in `adversarial_manifest.json`: a trusted standard
+`printf` executable with fixed `%s` format and request data in a separate argument
+is still reported as command injection. Its safe expectation remains unchanged.
+This does not claim that arbitrary arguments to every fixed executable are safe.
+The case follows the separate program/argument contract of
+[ProcessBuilder](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/ProcessBuilder.html)
+and the fixed-format/data distinction documented for
+[GNU printf](https://www.gnu.org/software/coreutils/manual/html_node/printf-invocation.html).
+
+```bash
+python scripts/security_benchmark.py \
+  --manifest benchmarks/security/adversarial_manifest.json --json
+```
+
+That optional challenge currently exits nonzero to expose the known false
+positive. Its label must not be changed just to obtain a passing score.
 
 ## Adding Cases
 

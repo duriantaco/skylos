@@ -105,6 +105,27 @@ and five used controls. Skylos reads their source; PHP and the fixture programs
 do not need to run. These are basic coverage cases, not evidence that all PHP
 frameworks or dynamic dispatch patterns are covered.
 
+Eight cases add shared coverage for C#, Kotlin, Rust and Dart: each language has
+a direct call chain and an owner/member control, with both used and unused
+symbols. The default suite now has 37 cases and 191 labels. The original 29 cases
+and 148 labels retain their expectations. Rust cases explicitly use confidence
+40, matching its experimental analyzer policy; other new cases use 60.
+
+These cases set `symbol_identity: "qualified"` so `Primary.process` and
+`Secondary.process` are different symbols. Qualified mode requires the native
+`full_name` identity and fails unscored if it is missing; aliases must be declared
+explicitly. Existing cases keep their simple-name matching. This tests the named
+patterns, not general compiler or framework parity.
+
+The adversarial manifest also retains a C# executable whose static `Main` is
+recognized but whose declaring class is still reported as unused. Its live-class
+label remains fixed. This known false positive is separate from the passing
+top-level-statements C# owner case.
+
+Dart requires the optional `skylos[dart]` grammar. Core CI tests the other cases;
+the Dart test group runs when that extra is installed. A CLI run requesting Dart
+without its engine reports unscored failure, not a clean scan.
+
 Optional competitor baseline:
 
 ```bash
@@ -139,8 +160,8 @@ First inspect the request plan. This does not use the network or require a key:
 python3 scripts/jev_dead_code_benchmark.py
 ```
 
-The default checked-in manifest contains 148 ground-truth symbols: 57 unused
-and 91 used. It is useful for request validation and regression testing, but
+The default checked-in manifest contains 191 ground-truth symbols: 67 unused
+and 124 used. It is useful for request validation and regression testing, but
 Skylos already scores every labeled symbol correctly there. A Jev tie on this
 suite does not demonstrate incremental value. The runner always asks the
 `original` question, and adds a second arm only when safe:
