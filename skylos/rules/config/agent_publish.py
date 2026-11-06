@@ -7,19 +7,24 @@ files; this module turns its findings into Skylos rules:
   Codex), ``SKY-D366`` editor task that runs when the folder opens,
   ``SKY-D367`` MCP server without an exact version, ``SKY-D368`` MCP server
   launched from a hidden home path, ``SKY-D369`` MCP package imitating a
-  vendor, ``SKY-D370`` agent API base URL overridden in the repository.
+  vendor, ``SKY-D370`` agent API base URL overridden in the repository,
+  ``SKY-D377`` agent config whose duplicated keys hide what runs.
 - ``SKY-D371`` unpinned tool in a job holding publish credentials,
   ``SKY-D372`` unverified download reaching the publish step, ``SKY-D373``
   OIDC publish job without an environment, ``SKY-D374`` publish workflow
-  started by ``workflow_dispatch`` or a push to any branch.
+  started by ``workflow_dispatch`` or a push to any branch, ``SKY-D376``
+  secrets passed to a reusable workflow from another repository.
+
+Messages, values and evidence go through ``ci_agent_inventory.redact``:
+findings are uploaded, and hook commands can carry credentials.
 
 Every ca9 row must name a regular file inside the scanned folder. In a diff
 scan only files Git tracks count; a full scan also keeps untracked files Git
 does not ignore. Hooks written by ``skylos agent install-hooks`` are not
-reported (see :func:`is_skylos_hook_command`). A missing or failing ca9
-function adds nothing here; diff scans record it as an analysis error when an
-agent or workflow file changed (``supply_chain_diff``), and ``--sca`` scans
-note it in ``analysis_summary.supply_chain_checks``.
+reported (see :func:`is_own_hook`). A missing or failing ca9 function adds
+nothing here; diff scans record it as an analysis error when an agent or
+workflow file changed (``supply_chain_diff``), and ``--sca`` scans note it in
+``analysis_summary.supply_chain_checks``.
 """
 
 from __future__ import annotations
@@ -44,6 +49,7 @@ AGENT_RULES = {
         "MCP package imitating a vendor",
     ),
     "agent_base_url_override": ("SKY-D370", "HIGH", "agent base URL override"),
+    "agent_config_ambiguous": ("SKY-D377", "MEDIUM", "ambiguous agent config"),
 }
 PUBLISH_RULES = {
     "unpinned_tool_in_credentialed_job": (
@@ -65,6 +71,11 @@ PUBLISH_RULES = {
         "SKY-D374",
         "HIGH",
         "publish on dispatch or any branch",
+    ),
+    "credentials_to_remote_reusable_workflow": (
+        "SKY-D376",
+        "MEDIUM",
+        "credentials passed to a remote reusable workflow",
     ),
 }
 AGENT_RULE_IDS = frozenset(rule for rule, _severity, _name in AGENT_RULES.values())
@@ -174,6 +185,21 @@ def is_skylos_hook_command(
     return True
 
 
+def is_own_hook(command: object, *, root: Path, settings_text: str | None) -> bool:
+    """Whether a committed hook is one Skylos wrote; scans and uploads ask here."""
+    return is_skylos_hook_command(command, root=root, settings_text=settings_text)
+
+
+def available_rule_ids(api) -> frozenset[str]:
+    """Rules this ca9 engine can decide (agent_config, audit_workflows)."""
+    found: set[str] = set()
+    if api is not None and callable(getattr(api, "agent_config", None)):
+        found |= AGENT_RULE_IDS
+    if api is not None and callable(getattr(api, "audit_workflows", None)):
+        found |= PUBLISH_RULE_IDS
+    return frozenset(found)
+
+
 def _diff_mode(changed_files) -> bool:
     return changed_files is not None or bool(
         str(os.environ.get("SKYLOS_DIFF_BASE") or "").strip()
@@ -245,9 +271,10 @@ class _Scope:
 
 
 def _text(value: object, limit: int = MAX_TEXT) -> str:
-    if value is None:
-        return ""
-    return " ".join(str(value).split())[:limit]
+    """Bounded text with credentials removed: findings are uploaded."""
+    from skylos.rules.sca.ci_agent_inventory import redact
+
+    return redact(value, limit)
 
 
 def _evidence(value: object) -> dict:
@@ -445,9 +472,7 @@ def _mapped(rows, rules, root: Path, scope: _Scope, domain: str, ignore) -> list
                     max_bytes=MAX_SETTINGS_BYTES,
                 )
             command = (row.get("evidence") or {}).get("command")
-            if is_skylos_hook_command(
-                command, root=root, settings_text=settings_cache[path]
-            ):
+            if is_own_hook(command, root=root, settings_text=settings_cache[path]):
                 continue
         provider = _provider(rule[0], row, path)
         finding = _finding(row, path, root, rule, domain=domain, provider=provider)
@@ -468,6 +493,8 @@ __all__ = [
     "AGENT_RULE_IDS",
     "HOOK_RULE_IDS",
     "PUBLISH_RULE_IDS",
+    "available_rule_ids",
+    "is_own_hook",
     "is_skylos_hook_command",
     "scan_agent_publish",
 ]

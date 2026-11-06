@@ -360,7 +360,9 @@ def _append_threshold_reason(
 
 
 REPORT_ONLY_DEPENDENCY_RULES = frozenset({"SKY-SCA-SRC003", "SKY-SCA-UPG002"})
-FULL_SCAN_REPORT_ONLY_RULES = frozenset(f"SKY-D{number}" for number in range(365, 375))
+FULL_SCAN_REPORT_ONLY_RULES = frozenset(
+    {f"SKY-D{number}" for number in range(365, 375)} | {"SKY-D376", "SKY-D377"}
+)
 CHANGE_BLOCKING_RULES = frozenset(
     {
         "SKY-D365",
@@ -371,6 +373,8 @@ CHANGE_BLOCKING_RULES = frozenset(
         "SKY-SCA-HRD001",
     }
 )
+COMPARED_RULES = FULL_SCAN_REPORT_ONLY_RULES | CHANGE_BLOCKING_RULES
+BASELINE_RULE_COVERAGE_KEY = "baseline_rule_coverage"
 
 
 def _rule_id(finding):
@@ -395,22 +399,48 @@ def _built_in_gate_dependencies(dependencies):
     ]
 
 
-def _built_in_gate_danger(danger, *, changes_only):
+def _new_rule_scope(results):
+    """Supply-chain config rules whose findings this scan compared.
+
+    A diff scan compares every rule: what it reports sits on changed lines.
+    A baseline scan compares only the rules the baseline covered: a baseline
+    saved before these rules existed, or without the ca9 check behind them,
+    never saw the hooks and workflows they report, so those findings are
+    listed like a full scan instead of read as new. A full scan compares none.
+    """
+    from skylos.core.gate_incomplete import _is_diff_scoped
+
+    results = results or {}
+    summary = results.get("analysis_summary")
+    if not isinstance(summary, dict):
+        summary = {}
+    if _is_diff_scoped(results, summary):
+        return COMPARED_RULES
+    if summary.get("baseline_scoped") is not True:
+        return frozenset()
+    covered = summary.get(BASELINE_RULE_COVERAGE_KEY)
+    if not isinstance(covered, list):
+        return frozenset()
+    return frozenset(str(rule).upper() for rule in covered) & COMPARED_RULES
+
+
+def _built_in_gate_danger(danger, *, new_rules):
     """Security findings the built-in gate counts.
 
-    In a scan of the whole repository the agent/editor configuration and
-    publish-job rules (SKY-D365-D374) list what exists without counting it,
-    so repositories that already commit agent hooks, unpinned MCP servers or
-    a manually started release workflow keep their gate on upgrade; a
-    CRITICAL one (a hook that downloads or decodes and runs code) still
-    counts. In a diff or baseline scan they are new and count.
+    The agent/editor configuration and publish-job rules (SKY-D365-D374,
+    D376, D377) list what exists without counting it unless the scan
+    compared them (``_new_rule_scope``), so repositories that already commit
+    agent hooks, unpinned MCP servers or a manually started release workflow
+    keep their gate on upgrade; a CRITICAL one (a hook that downloads or
+    decodes and runs code) always counts. ``new_rules`` None counts all.
     """
-    if changes_only:
+    if new_rules is None:
         return list(danger or ())
     return [
         finding
         for finding in danger or ()
         if _rule_id(finding) not in FULL_SCAN_REPORT_ONLY_RULES
+        or _rule_id(finding) in new_rules
         or str(finding.get("severity") or "").upper() == "CRITICAL"
     ]
 
@@ -421,14 +451,16 @@ def supply_chain_change_blocks(results):
     A new or changed agent hook or folder-open task, an MCP server launched
     from a hidden path, an agent API base-URL override, an upgrade that adds
     install-time or import-time code (SKY-SCA-UPG001) and weakened install
-    hardening (SKY-SCA-HRD001). Full-repository scans only list them.
+    hardening (SKY-SCA-HRD001), when the scan compared that rule
+    (``_new_rule_scope``). Full-repository scans only list them.
     """
-    if not _new_issues_only(results or {}):
+    new_rules = _new_rule_scope(results) & CHANGE_BLOCKING_RULES
+    if not new_rules:
         return []
     blocks = []
     for section in ("danger", "dependency_vulnerabilities"):
         for finding in (results or {}).get(section) or ():
-            if _rule_id(finding) in CHANGE_BLOCKING_RULES:
+            if _rule_id(finding) in new_rules:
                 blocks.append(finding)
     return blocks
 
@@ -442,9 +474,9 @@ def _gate_issue_groups(
     secrets,
     dead_code,
     dependencies=(),
-    changes_only=True,
+    new_rules=None,
 ):
-    danger = _built_in_gate_danger(danger, changes_only=changes_only)
+    danger = _built_in_gate_danger(danger, new_rules=new_rules)
     critical_issues, high_issues = _split_danger_by_severity(danger)
     return {
         "max_critical": critical_issues,
@@ -984,7 +1016,7 @@ def blocking_gate_issues(results, config=None):
     blocking = []
     cloud_gate = active_cloud_gate(config)
     if cloud_gate is None:
-        groups = _gate_issue_groups(**found, changes_only=_new_issues_only(results))
+        groups = _gate_issue_groups(**found, new_rules=_new_rule_scope(results))
         if gate_config.get("fail_on_critical", True):
             blocking.extend(groups["max_critical"])
         for key, _noun, _plural, _label in GATE_LIMITS:
@@ -1065,7 +1097,30 @@ def _coverage_gap_reasons(results, *, strict=False, config=None):
 
 def sca_coverage_warnings(results):
     """Describe requested dependency checks without implying full coverage."""
-    return _sca_receipt_warnings(results) + _upgrade_review_warnings(results)
+    return (
+        _sca_receipt_warnings(results)
+        + _upgrade_review_warnings(results)
+        + _workflow_audit_warnings(results)
+    )
+
+
+def _workflow_audit_warnings(results):
+    audit = results
+    for key in (
+        "analysis_summary",
+        "supply_chain_diff",
+        "checks",
+        "agent_and_workflow_files",
+        "workflow_audit",
+    ):
+        if not isinstance(audit, dict):
+            return []
+        audit = audit.get(key)
+    if not isinstance(audit, dict) or audit.get("complete") is not False:
+        return []
+    reasons = [str(reason) for reason in audit.get("incomplete_reasons") or ()][:3]
+    detail = "; ".join(reasons) or "some workflow parts could not be read"
+    return [f"Workflow audit incomplete for the changed workflows: {detail}"]
 
 
 def _upgrade_review_warnings(results):
@@ -1320,7 +1375,7 @@ def check_gate(results, config, strict=False, provenance=None):
         passed = _apply_gate_thresholds(
             reasons,
             gate_config,
-            _gate_issue_groups(**found, changes_only=_new_issues_only(results)),
+            _gate_issue_groups(**found, new_rules=_new_rule_scope(results)),
         )
     else:
         passed = _apply_cloud_gate(reasons, gate_config, cloud_gate, found, results)
@@ -1464,7 +1519,7 @@ def _passed_gate_summary(results, config, *, strict):
         )
     gate_config = _effective_gate_config(config)
     groups = _gate_issue_groups(
-        **_gate_findings(results, config), changes_only=_new_issues_only(results)
+        **_gate_findings(results, config), new_rules=_new_rule_scope(results)
     )
     security_scanned = _security_scanned(results)
 

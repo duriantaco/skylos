@@ -33,17 +33,43 @@ MAX_DEPTH = 5
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{0,99}")
 _URL = re.compile(r"\b([a-zA-Z][a-zA-Z0-9+.-]*)://([^\s/'\"?#]+)[^\s'\"]*")
 _TOKEN = re.compile(
-    r"\b(?:gh[pousr]_|github_pat_|npm_|pypi-|sk-|xox[abprs]-|glpat-|AKIA)[A-Za-z0-9_\-]{8,}"
+    r"\b(?:gh[pousr]_|github_pat_|npm_|pypi-|sk-ant-|sk-|xox[abprs]-|glpat-)[A-Za-z0-9_\-]{8,}"
+    r"|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_\-]{35}"
     r"|(?<![A-Za-z0-9])(?![0-9a-f]{40}(?![A-Za-z0-9]))[A-Za-z0-9+/_\-]{40,}={0,2}"
 )
-_SECRET_WORDS = (
-    r"[A-Za-z0-9_-]*(?:token|secret|password|passwd|api[_-]?key|auth)[A-Za-z0-9_-]*"
+_VALUE = r"(\"[^\"]*\"|'[^']*'|[^\s'\"]+)"
+_SECRET_NAME = (
+    r"[A-Za-z0-9_.-]*(?:pass|passwd|password|secret|token|key|auth|credential)"
+    r"[A-Za-z0-9_.-]*"
+)
+_AUTH_HEADER = re.compile(
+    r"(?i)\b((?:proxy-)?authorization)(\s*:\s*)"
+    r"(?:(?:bearer|basic|token|digest|negotiate)\s+)?[^\s'\"]+"
+)
+_BEARER = re.compile(r"(?i)\b(bearer)(\s+)[A-Za-z0-9._~+/=\-]{6,}")
+_USER_OPTION = re.compile(
+    r"(?<!\S)(-u|--user|--username-password)(\s+|=)([^\s:'\"]+):" + _VALUE
+)
+_USERINFO = re.compile(r"\b([\w.%+-]+):([^\s@/:'\"]+)@(?=[\w.-])")
+_SECRET_OPTION = re.compile(
+    r"(?i)(?<!\S)(--[a-z0-9-]*(?:password|passwd|pass|token|secret|api-?key|apikey|auth|credential)"
+    r"[a-z0-9-]*)(=|\s+)(?!-|\$)" + _VALUE
 )
 _SECRET_ASSIGN = re.compile(
-    r"(?i)\b(" + _SECRET_WORDS + r")(\s*[=:]\s*)(?!\$)(\"[^\"]*\"|'[^']*'|[^\s'\"]+)"
+    r"(?i)\b(" + _SECRET_NAME + r")([\"']?\s*[=:]\s*)(?!\$)" + _VALUE
 )
-_SECRET_FLAG = re.compile(
-    r"(?i)(?<!\S)(--?" + _SECRET_WORDS + r")(\s+)(?!-|\$)(\"[^\"]*\"|'[^']*'|[^\s'\"]+)"
+_SEGMENTS = re.compile(r"(\s*(?:&&|\|\||;|\|)\s*)")
+_PASSWORD_P_PROGRAMS = frozenset(
+    {
+        "mysql",
+        "mysqldump",
+        "mysqladmin",
+        "mysqlimport",
+        "mysqlsh",
+        "mariadb",
+        "mariadb-dump",
+        "sshpass",
+    }
 )
 
 
@@ -55,14 +81,65 @@ def _secret_value(match: re.Match) -> str:
     return f"{match.group(1)}{match.group(2)}[redacted]"
 
 
+def _program(tokens: list[str]) -> str:
+    for token in tokens:
+        if token in {"sudo", "env", "exec", "command"} or re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*=\S*", token
+        ):
+            continue
+        return token.rsplit("/", 1)[-1].strip("'\"")
+    return ""
+
+
+def _password_p(segment: str) -> str:
+    """``-p`` takes a password for MySQL clients, ``sshpass`` and ``login``
+    subcommands (``docker login -p``); elsewhere it is a port or a flag."""
+    tokens = segment.split(" ")
+    if _program(tokens) not in _PASSWORD_P_PROGRAMS and "login" not in tokens:
+        return segment
+    kept = []
+    redact_next = False
+    for token in tokens:
+        if redact_next and token and not token.startswith(("-", "$")):
+            kept.append("[redacted]")
+            redact_next = False
+            continue
+        redact_next = token == "-p"
+        if token.startswith("-p") and len(token) > 2 and not token.startswith("-p$"):
+            token = "-p[redacted]"
+        kept.append(token)
+    return " ".join(kept)
+
+
+def _redact_segments(text: str) -> str:
+    parts = []
+    for index, part in enumerate(_SEGMENTS.split(text)):
+        if index % 2 == 0:
+            part = _password_p(part)
+        parts.append(part)
+    return "".join(parts)
+
+
 def redact(value: object, limit: int = MAX_TEXT) -> str:
-    """Bounded text without credentials, query strings or token-like values."""
+    """Bounded text without credentials, query strings or token-like values.
+
+    Removed: URL user info, query strings and paths (``scheme://host`` is
+    kept), Authorization and Bearer header values, ``user:password`` pairs,
+    values of password, token, secret, key, auth and credential options and
+    assignments (``$VAR`` references are kept), ``-p`` passwords of MySQL
+    clients, ``sshpass`` and ``login`` commands, and known token prefixes.
+    """
     if value is None:
         return ""
     text = " ".join(str(value).split())
     text = _URL.sub(_url_host, text)
+    text = _AUTH_HEADER.sub(_secret_value, text)
+    text = _BEARER.sub(_secret_value, text)
+    text = _USER_OPTION.sub(r"\1\2\3:[redacted]", text)
+    text = _USERINFO.sub(r"\1:[redacted]@", text)
+    text = _SECRET_OPTION.sub(_secret_value, text)
     text = _SECRET_ASSIGN.sub(_secret_value, text)
-    text = _SECRET_FLAG.sub(_secret_value, text)
+    text = _redact_segments(text)
     text = _TOKEN.sub("[redacted]", text)
     return text[:limit]
 
@@ -203,7 +280,7 @@ def ci_inventory_block(root: str | Path, api) -> tuple[dict | None, dict]:
 def agent_hooks_block(root: str | Path, api) -> tuple[dict | None, dict]:
     """(``analysis_summary.agent_hooks`` or None, receipt)."""
     from skylos.core.safe_cache_io import read_project_text_no_symlink
-    from skylos.rules.config.agent_publish import is_skylos_hook_command
+    from skylos.rules.config.agent_publish import is_own_hook
 
     function = _function(api, "agent_config")
     if function is None:
@@ -249,13 +326,14 @@ def agent_hooks_block(root: str | Path, api) -> tuple[dict | None, dict]:
                     "label",
                     "via",
                     "handler_type",
+                    "duplicate_keys",
                 )
                 if key in hook
             }
         )
         row["file"] = file
         row["command"] = redact(hook.get("command"), MAX_COMMAND)
-        row["skylos_hook"] = is_skylos_hook_command(
+        row["skylos_hook"] = is_own_hook(
             hook.get("command"), root=root_path, settings_text=texts[file]
         )
         hooks.append(row)
@@ -283,6 +361,7 @@ def agent_hooks_block(root: str | Path, api) -> tuple[dict | None, dict]:
                     "fetches",
                     "launcher",
                     "url",
+                    "duplicate_keys",
                 )
                 if key in server
             }
@@ -312,6 +391,9 @@ def agent_hooks_block(root: str | Path, api) -> tuple[dict | None, dict]:
         "mcp_servers": servers,
         "env_overrides": overrides,
     }
+    for key in ("duplicate_keys", "duplicates"):
+        if key in inventory:
+            block[key] = _bounded(inventory[key])
     return block, {"status": status, "hooks": len(hooks), "mcp_servers": len(servers)}
 
 

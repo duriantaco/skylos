@@ -623,6 +623,40 @@ def _add_supply_chain_diff_findings(result, project_root, base_ref, args, config
         summary["analysis_error_count"] = len(result["analysis_errors"])
 
 
+def _record_baseline_rule_coverage(result, baseline, args):
+    """Which supply-chain config rules the baseline saw, and an analysis
+    error when this run's ca9 can no longer decide rules the baseline
+    covered (the comparison would pass without them)."""
+    from skylos.core.baseline import baseline_rule_coverage
+    from skylos.core.gatekeeper import BASELINE_RULE_COVERAGE_KEY
+    from skylos.rules.config.agent_publish import available_rule_ids
+    from skylos.rules.sca import supply_chain
+
+    covered = baseline_rule_coverage(baseline)
+    if covered is None:
+        return
+    summary = result.setdefault("analysis_summary", {})
+    summary[BASELINE_RULE_COVERAGE_KEY] = covered
+    if not getattr(args, "danger", False):
+        return
+    lost = sorted(set(covered) - available_rule_ids(supply_chain.load_ca9_api()))
+    if not lost:
+        return
+    result.setdefault("analysis_errors", []).append(
+        {
+            "kind": "supply_chain_check_unavailable",
+            "component": "supply_chain",
+            "message": (
+                f"The baseline covers {', '.join(lost[:4])} but this run could not "
+                "check them: ca9 is not installed or too old. Upgrade ca9 "
+                "(pip install -U ca9) and rerun."
+            ),
+            "severity": "HIGH",
+        }
+    )
+    summary["analysis_error_count"] = len(result["analysis_errors"])
+
+
 def _run_scan_command(
     argv: Sequence[str], *, cli_module: ModuleType, parser, args
 ) -> None:
@@ -1362,6 +1396,7 @@ def _run_scan_command(
                 result = filter_new_findings(result, baseline)
             if baseline is not None:
                 result.setdefault("analysis_summary", {})["baseline_scoped"] = True
+                _record_baseline_rule_coverage(result, baseline, args)
 
         if getattr(args, "ai_review", False):
             _run_ai_review(

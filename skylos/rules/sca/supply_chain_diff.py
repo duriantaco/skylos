@@ -17,12 +17,14 @@ and handed to ca9 (``ca9.api``), which never sees the checkout itself:
 - ``SKY-D375``: a CI job that publishes packages was added or changed
   (``ci_inventory`` of both sides, line numbers ignored).
 
-When something relevant changed, a ca9 function that is missing or fails, or a
-hardening comparison that reports ``check_failed``, becomes an analysis error
-with no file, so a diff-scoped gate stops as incomplete instead of passing
-without the check. This includes the agent and workflow rules of the danger
-scan (SKY-D365-D374). With no ca9 engine installed at all, the receipt says
-``engine_unavailable``, as the other supply-chain checks do.
+When something relevant changed, a ca9 function that is missing or fails (ca9
+not installed or too old included), or a hardening comparison that reports
+``check_failed``, becomes an analysis error with no file and an "upgrade ca9"
+message, so a diff-scoped gate stops as incomplete instead of passing without
+the check. This covers the agent and workflow rules of the danger scan and the
+dependency checks of ``--sca`` on changed lockfiles and manifests. An
+incomplete workflow audit (a reusable workflow from another repository) is
+noted in the receipt and shown, not failed.
 """
 
 from __future__ import annotations
@@ -274,16 +276,19 @@ def _api_function(api, name: str):
     return function
 
 
+UPGRADE_CA9 = "Upgrade ca9 (pip install -U ca9) and rerun."
+
+
 def _unavailable(api, receipt: dict, errors: list, check: str, message: str) -> None:
-    """A check that cannot run: with no ca9 engine at all a receipt note
-    (the scan works without ca9, as the other supply-chain checks do); with
-    an engine that lacks or fails the function an analysis error."""
+    """A check that cannot run on files the change touched: an analysis
+    error, so a diff gate stops as incomplete instead of passing unchecked.
+    With no usable ca9 engine at all (not installed, or older than API
+    version 1) the message says so."""
+    receipt["status"] = "unavailable"
     if api is None:
         receipt["status"] = "engine_unavailable"
-        receipt["note"] = "ca9 engine is not installed"
-        return
-    receipt["status"] = "unavailable"
-    errors.append(_error(check, message))
+        message = f"{message.split(':', 1)[0]}: ca9 is not installed or too old"
+    errors.append(_error(check, f"{message}. {UPGRADE_CA9}"))
 
 
 def _error(check: str, message: str) -> dict:
@@ -402,10 +407,15 @@ def hardening_findings(sides: GitSides, api, receipt: dict, errors: list) -> lis
         detail = _text(item.get("detail"))
         if kind == "check_failed" or not kind:
             receipt["status"] = "failed"
+            side = _text(item.get("side"), 10)
+            where = ""
+            if side in {"base", "head"}:
+                where = f" ({side} side)"
             errors.append(
                 _error(
                     "hardening_regressions",
-                    f"Install hardening comparison failed: {detail or 'no detail'}",
+                    f"Install hardening comparison failed{where}: "
+                    f"{detail or 'no detail'}",
                 )
             )
             continue
@@ -507,6 +517,74 @@ def config_coverage(sides: GitSides, api, receipt: dict, errors: list) -> list[d
             "Agent, MCP or workflow files changed but were not checked: "
             + ", ".join(f"ca9.api.{name}" for name in missing)
             + " is unavailable",
+        )
+    elif "audit_workflows" in needed:
+        _workflow_audit_receipt(sides, api, receipt)
+    return []
+
+
+def _workflow_audit_receipt(sides: GitSides, api, receipt: dict) -> None:
+    """Note an incomplete audit of the changed workflows (a reusable
+    workflow or include from another repository cannot be read). It is
+    shown, not a failure: such a call may well predate the change."""
+    _base, head = sides.files(ci_path)
+    try:
+        with tempfile.TemporaryDirectory(prefix="skylos-audit-") as temp:
+            result = api.audit_workflows(str(_write_tree(Path(temp) / "head", head)))
+    except Exception as exc:  # noqa: BLE001 - the danger scan already reported what it could
+        receipt["workflow_audit"] = {"complete": False, "error_type": type(exc).__name__}
+        return
+    audit = _get(result, "receipt")
+    if not isinstance(audit, dict) or audit.get("complete") is not False:
+        return
+    reasons = [
+        _text(reason, 160)
+        for reason in _as_list(audit.get("incomplete_reasons"))[:10]
+        if reason
+    ]
+    unknowns = _as_list(audit.get("unknowns"))
+    receipt["workflow_audit"] = {
+        "complete": False,
+        "incomplete_reasons": reasons,
+        "unknowns": len(unknowns),
+    }
+
+
+DEPENDENCY_MANIFESTS = frozenset(
+    {"package.json", "pyproject.toml", "setup.cfg", "Pipfile"}
+)
+
+
+def dependency_file_path(path: str) -> bool:
+    pure = PurePosixPath(path)
+    if any(part in _SKIP_PARTS for part in pure.parts[:-1]):
+        return False
+    return (
+        pure.name in _UPGRADE_PARSERS
+        or pure.name in DEPENDENCY_MANIFESTS
+        or fnmatch.fnmatch(pure.name, "requirements*.txt")
+    )
+
+
+def dependency_coverage(sides: GitSides, api, receipt: dict, errors: list) -> list[dict]:
+    """``--sca`` checks changed lockfiles and manifests through
+    ``ca9.api.evaluate_packages`` (SKY-SCA-SRC001/SRC003/INT001/AGE001); in a
+    diff, a missing engine must not read as clean dependency changes."""
+    base, head = sides.files(dependency_file_path)
+    changed = sorted(name for name in set(base) | set(head) if base.get(name) != head.get(name))
+    receipt["changed"] = len(changed)
+    receipt["status"] = "unchanged"
+    if not changed:
+        return []
+    receipt["status"] = "checked"
+    if _api_function(api, "evaluate_packages") is None:
+        _unavailable(
+            api,
+            receipt,
+            errors,
+            "evaluate_packages",
+            f"Dependency files changed ({', '.join(changed[:3])}) but supply-chain "
+            "checks did not run: ca9.api.evaluate_packages is unavailable",
         )
     return []
 
@@ -942,6 +1020,8 @@ def supply_chain_diff_findings(
         checks.append(
             ("publish_jobs", publish_job_findings, {RULE_PUBLISH_JOB_CHANGED})
         )
+    if dependencies:
+        checks.append(("dependency_files", dependency_coverage, set()))
     if dependencies and RULE_HARDENING not in ignore:
         checks.append(("hardening", hardening_findings, {RULE_HARDENING}))
     if dependencies and review_upgrades:

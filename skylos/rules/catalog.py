@@ -1313,6 +1313,22 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-D376",
+        "Secrets passed to a reusable workflow from another repository",
+        "security",
+        "MEDIUM",
+        aliases=("secrets to remote reusable workflow",),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D377",
+        "Agent config with duplicated keys that hide what runs",
+        "security",
+        "MEDIUM",
+        aliases=("ambiguous agent config", "duplicate keys"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-D510", "Prototype pollution", "security", "HIGH", finding_type="review"
     ),
     RuleCatalogEntry(

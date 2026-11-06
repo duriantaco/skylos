@@ -610,6 +610,8 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-D373": {"default": "Put the OIDC publish job behind a protected environment."},
     "SKY-D374": {"default": "Publish only from protected branches or tags, not workflow_dispatch or any branch."},
     "SKY-D375": {"default": "Review every changed step, trigger and permission of the publish job."},
+    "SKY-D376": {"default": "Pin the reusable workflow to a commit SHA and pass only the secrets it needs, not secrets: inherit."},
+    "SKY-D377": {"default": "Remove the duplicated keys so the file says once what runs."},
     "SKY-D510": {
         "default": "Reject __proto__, constructor and prototype keys before merging objects."
     },
