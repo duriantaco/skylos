@@ -28,6 +28,10 @@ SECURITY_TAXONOMY: dict[str, str] = {
     "auth_bypass": "Authentication or token verification is bypassed or disabled.",
     "cookie_security": "Session cookies omit required browser or transport protections.",
     "cors": "CORS policy is overly permissive or credential unsafe.",
+    "tls_verification": "TLS peer verification settings and provider identity controls.",
+    "weak_hash": "MD5/SHA1 warnings, explicit nonsecurity use and strong-hash lookalikes.",
+    "weak_random": "Security-sensitive random values and the identity of their source.",
+    "sensitive_logging": "Credential-source data reaches output, with redaction and response-data controls.",
     "dart": "Dart security flow and sanitizer patterns.",
     "go": "Go security flow and sanitizer patterns.",
     "java": "Java security flow and sanitizer patterns.",
@@ -88,7 +92,26 @@ _BANDIT_TO_SKYLOS_RULE = {
     "B607": "SKY-D209",
     "B608": "SKY-D211",
     "B310": "SKY-D216",
+    "B501": "SKY-D210",
+    "B311": "SKY-D250",
 }
+
+
+def _bandit_rule_id(finding: Mapping[str, Any]) -> str:
+    test_id = finding["test_id"]
+    if test_id == "B324":
+        # B324 also covers MD4/SHA and crypt methods. Only the exact generated
+        # hashlib message identifies one of the native MD5/SHA1 rule families.
+        # Verified against PyCQA/bandit 48ef27bd1bbc32f4e585c92310f7a574e87f6b04.
+        message = finding.get("issue_text")
+        for algorithm, rule_id in (("MD5", "SKY-D207"), ("SHA1", "SKY-D208")):
+            expected = (
+                f"Use of weak {algorithm} hash for security. "
+                "Consider usedforsecurity=False"
+            )
+            if message == expected:
+                return rule_id
+    return _BANDIT_TO_SKYLOS_RULE.get(test_id, test_id)
 
 
 @dataclass(frozen=True)
@@ -389,7 +412,7 @@ def _scan_bandit_case(
             continue
         danger.append(
             {
-                "rule_id": _BANDIT_TO_SKYLOS_RULE.get(test_id, test_id),
+                "rule_id": _bandit_rule_id(finding),
                 "bandit_rule_id": test_id,
                 "message": finding.get("issue_text", ""),
                 "file": finding.get("filename", ""),
