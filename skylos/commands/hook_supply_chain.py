@@ -10,7 +10,7 @@
   answers instead (``ca9.api.malware_matches``); with neither, the package
   is "could not verify". Ordinary CVEs are not the hook's business.
 * **Release age.** A version published less than
-  ``min_release_age_hours`` ago (default 24) is held, naming the newest older
+  ``min_release_age_hours`` ago (default 48) is held, naming the newest older
   version that is not itself reported as malware (``ca9.api.check_release_age``).
 * **npm provenance.** A version published without the provenance its earlier
   versions had (``ca9.api.check_provenance``) is held. "unknown" holds

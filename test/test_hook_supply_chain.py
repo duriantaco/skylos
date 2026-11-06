@@ -242,7 +242,7 @@ def fresh_sources(suggested="1.9.0"):
 def test_version_younger_than_the_cooldown_is_blocked_with_an_older_version(project):
     decision, reason = hook(project, "npm install fresh", fresh_sources(suggested="1.8.0"))
     assert decision == "deny"
-    assert "published 2 hours ago" in reason and "wait 24 hours" in reason
+    assert "published 2 hours ago" in reason and "wait 48 hours" in reason
     assert "Install fresh@1.8.0 instead" in reason
     assert "min_release_age_hours" in reason and "0 turns it off" in reason
 
@@ -264,7 +264,7 @@ def test_invalid_cooldown_keeps_the_default_and_says_so(project):
     pyproject = '[tool.skylos.supply_chain]\nmin_release_age_hours = "0"\n'
     decision, reason = hook(project, "npm install fresh", fresh_sources(suggested="1.8.0"),
                             pyproject=pyproject)  # fmt: skip
-    assert decision == "deny" and "wait 24 hours" in reason
+    assert decision == "deny" and "wait 48 hours" in reason
     assert "supply-chain policy problem" in reason and "min_release_age_hours" in reason
 
 

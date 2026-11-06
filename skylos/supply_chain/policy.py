@@ -3,7 +3,7 @@
 ```toml
 [tool.skylos.supply_chain]
 block_malware = true
-min_release_age_hours = 24
+min_release_age_hours = 48
 internal_packages = ["acme-*", "@acme/*"]
 private_registries = ["https://npm.acme.dev"]
 trusted_registries = []
@@ -39,7 +39,7 @@ from typing import Any
 
 from skylos.core.safe_cache_io import read_project_text_no_symlink
 
-DEFAULT_HOOK_RELEASE_AGE_HOURS = 24
+DEFAULT_HOOK_RELEASE_AGE_HOURS = 48
 MAX_RELEASE_AGE_HOURS = 24 * 365
 MAX_PATTERNS = 200
 MAX_PATTERN_LENGTH = 200
