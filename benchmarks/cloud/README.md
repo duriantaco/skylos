@@ -13,6 +13,12 @@ The first 16 cases cover two declaration policies:
 - `SKY-D401`: a directly created `aws_db_instance` explicitly sets
   `storage_encrypted = false`.
 
+Six more cases bring the corpus to 22. They cover RDS encryption locals in a
+sibling file and modern ingress resources in `.tf.json`, with unsafe, safe and
+unknown controls for each. A variable's safe default does not establish its
+deployed value. Numeric-string ports remain an unsupported model value, not a
+safe result. These additions close evidence gaps without changing a detector.
+
 Each resource check reports `unsafe`, `safe`, `unknown` or `not_applicable`.
 The runner compares that exact outcome and the corresponding finding. Unknown
 variables, providers and inherited snapshot/replica encryption never count as

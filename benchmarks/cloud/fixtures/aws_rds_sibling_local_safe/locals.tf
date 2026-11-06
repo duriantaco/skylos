@@ -1,0 +1,3 @@
+locals {
+  config = { encrypted = true }
+}

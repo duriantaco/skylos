@@ -261,10 +261,11 @@ _EXPRESSION_HEAD_WORDS = frozenset(
 _LOOP_WORDS = frozenset({"for", "foreach", "while"})
 _WRAPPER_WORDS = frozenset({"using", "lock", "fixed"})
 _BLOCK_WORDS = frozenset({"checked", "unchecked", "unsafe"})
+_PROVIDER_TYPE_TEXT = r"(?:global\s*::\s*)?[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*"
 _TYPE_NAME_HANDLING_RE = re.compile(
     r"\bTypeNameHandling\s*=(?!=)\s*(?:"
-    r"(?:Newtonsoft\s*\.\s*Json\s*\.\s*)?TypeNameHandling\s*\.\s*(?P<value>[A-Za-z]\w*)"
-    r"|\(\s*(?:Newtonsoft\s*\.\s*Json\s*\.\s*)?TypeNameHandling\s*\)\s*(?P<number>\d+))"
+    rf"(?P<enum>{_PROVIDER_TYPE_TEXT})\s*\.\s*(?P<value>[A-Za-z]\w*)"
+    rf"|\(\s*(?P<number_type>{_PROVIDER_TYPE_TEXT})\s*\)\s*(?P<number>\d+))"
 )
 _BINDER_RE = re.compile(r"\b(?:SerializationBinder|Binder)\s*=(?!=)")
 _TYPE_RESOLVER_RE = re.compile(
@@ -314,6 +315,7 @@ class _ClassInfo:
     attrs: frozenset[str]
     mods: frozenset[str]
     bases: tuple[str, ...]
+    raw_bases: tuple[str, ...] = ()
     member_types: dict[str, set[str]] = field(default_factory=dict)
     proof_types: dict[str, set[str]] = field(default_factory=dict)
     bound_properties: set[str] = field(default_factory=set)
@@ -526,6 +528,7 @@ def _classes(masked: str) -> list[_ClassInfo]:
             attrs=_attribute_names(match.group("attrs")),
             mods=frozenset(match.group("mods").split()),
             bases=_base_names(header),
+            raw_bases=_raw_base_names(header),
         )
         primary = re.match(r"\s*(?:<[^{}()]*>)?\s*\(", header)
         if primary:
@@ -576,6 +579,16 @@ def _base_names(header: str) -> tuple[str, ...]:
         if simple:
             names.append(simple)
     return tuple(names)
+
+
+def _raw_base_names(header: str) -> tuple[str, ...]:
+    # Keep provider qualifications for D233; the general type-name index keeps
+    # its existing simple-name behavior for other rules.
+    separator = re.search(r"(?<!:):(?!:)", header)
+    if separator is None:
+        return ()
+    tail = re.split(r"\bwhere\b", header[separator.end() :], maxsplit=1)[0]
+    return tuple(part.strip() for part in _split_top_level(tail) if part.strip())
 
 
 def _collect_members(masked: str, info: _ClassInfo) -> None:
@@ -1268,6 +1281,7 @@ def _findings_for_sinks(
     findings.extend(_sql_sinks(statement, code, state, scope, context))
     findings.extend(_redirect_sinks(statement, code, state, guards, offset))
     findings.extend(_deserialization_sinks(statement, code, state, scope, context))
+    findings.extend(_type_name_handling_sinks(statement, code, state, scope, context))
     findings.extend(_xss_sinks(statement, code, state, offset))
     return findings
 
@@ -1481,7 +1495,7 @@ def _deserialization_sinks(
         else:
             continue
         receiver = _receiver_before(code, match.start())
-        if not _receiver_types(receiver, state, scope, context) & allowed:
+        if not _formatter_receiver_types(receiver, state, scope, context) & allowed:
             continue
         args = _arguments_at(statement, code, match.end() - 1)
         if not args or not args[0].strip():
@@ -1492,6 +1506,89 @@ def _deserialization_sinks(
             findings.append((models.DESERIALIZE_REQUEST, match.start()))
         else:
             findings.append((models.DESERIALIZE, match.start()))
+    return findings
+
+
+_FORMATTER_PROVIDERS = frozenset(
+    {
+        "System.Runtime.Serialization.Formatters.Binary.BinaryFormatter",
+        "System.Runtime.Serialization.Formatters.Soap.SoapFormatter",
+        "System.Runtime.Serialization.NetDataContractSerializer",
+        "System.Web.UI.LosFormatter",
+        "System.Web.UI.ObjectStateFormatter",
+    }
+)
+_JSON_SETTINGS_PROVIDERS = frozenset(
+    {"Newtonsoft.Json.JsonSerializerSettings", "Newtonsoft.Json.JsonSerializer"}
+)
+_TYPE_NAME_HANDLING_PROVIDER = frozenset({"Newtonsoft.Json.TypeNameHandling"})
+
+
+def _formatter_receiver_types(receiver, state, scope, context):
+    created = re.fullmatch(
+        rf"new\s+(?P<type>{_PROVIDER_TYPE_TEXT})\s*\([\s\S]*\)", receiver.strip()
+    )
+    types = (
+        {created.group("type")}
+        if created
+        else _proof_receiver_types(receiver, state, scope)
+    )
+    if not types:
+        types = _receiver_types(receiver, state, scope, context)
+    return {
+        _expanded_type(name, context).rsplit(".", 1)[-1]
+        for name in types
+        if _provider_type(name, context, _FORMATTER_PROVIDERS)
+    }
+
+
+def _json_settings_type(name, context):
+    pending = [name]
+    seen = set()
+    while pending:
+        current = pending.pop()
+        expanded = _expanded_type(current, context)
+        if expanded in seen:
+            continue
+        seen.add(expanded)
+        if _provider_type(current, context, _JSON_SETTINGS_PROVIDERS):
+            return True
+        info = context.classes_by_name.get(expanded.rsplit(".", 1)[-1])
+        if info is not None and "TypeNameHandling" not in info.member_types:
+            pending.extend(info.raw_bases)
+    return False
+
+
+def _type_name_handling_rule(match, context, block):
+    enum = match.group("enum") or match.group("number_type")
+    if not _provider_type(enum, context, _TYPE_NAME_HANDLING_PROVIDER):
+        return None
+    if match.group("value") == "None" or (
+        match.group("number") is not None and int(match.group("number")) == 0
+    ):
+        return None
+    return (
+        models.TYPE_NAME_HANDLING_BOUND
+        if _BINDER_RE.search(block)
+        else models.TYPE_NAME_HANDLING
+    )
+
+
+def _type_name_handling_sinks(statement, code, state, scope, context):
+    findings = []
+    for match in _TYPE_NAME_HANDLING_RE.finditer(code):
+        prefix = code[: match.start()].rstrip()
+        if not prefix.endswith("."):
+            continue
+        receiver = _receiver_before(code, len(prefix) - 1)
+        if not any(
+            _json_settings_type(name, context)
+            for name in _proof_receiver_types(receiver, state, scope)
+        ):
+            continue
+        rule = _type_name_handling_rule(match, context, code)
+        if rule:
+            findings.append((rule, match.start()))
     return findings
 
 
@@ -1970,7 +2067,7 @@ def _track_proof_types(name, rhs, declared_type, state, scope, context) -> None:
         types |= _proof_receiver_types(name, state, scope)
     if declared_type and declared_type not in {"var", "dynamic", "using", "await"}:
         types.add(declared_type)
-    created = re.match(r"\s*new\s+(?P<type>[A-Za-z_][\w.:]*)", rhs)
+    created = re.match(rf"\s*new\s+(?P<type>{_PROVIDER_TYPE_TEXT})", rhs)
     if created:
         types.add(created.group("type"))
     expression = rhs.strip().rstrip(";").strip()
@@ -2775,20 +2872,38 @@ def _scan_file_patterns(context: _FileContext, collector: _Collector) -> None:
     masked = context.masked
     source = context.source
     for match in _TYPE_NAME_HANDLING_RE.finditer(masked):
-        value = match.group("value")
-        number = match.group("number")
-        if value is not None and value == "None":
-            continue
-        if number is not None and int(number) == 0:
-            continue
         block_start, block_end = _enclosing_block(masked, match.start())
-        if _BINDER_RE.search(masked, block_start, block_end):
-            rule = models.TYPE_NAME_HANDLING_BOUND
-        else:
-            rule = models.TYPE_NAME_HANDLING
-        collector.add(rule, source.count("\n", 0, match.start()) + 1)
+        header = masked[:block_start]
+        created = re.search(
+            rf"\bnew\s+(?P<type>{_PROVIDER_TYPE_TEXT})\s*(?:\([^{{}};]*\))?\s*$",
+            header,
+        )
+        target_typed = None
+        if created is None:
+            target_typed = re.search(
+                rf"\b(?P<type>{_PROVIDER_TYPE_TEXT})\s+@?[A-Za-z_]\w*"
+                r"\s*=\s*new\s*\([^{};]*\)\s*$",
+                header,
+            )
+        owner = created or target_typed
+        if owner is None or not _json_settings_type(owner.group("type"), context):
+            continue
+        rule = _type_name_handling_rule(match, context, masked[block_start:block_end])
+        if rule:
+            collector.add(rule, source.count("\n", 0, match.start()) + 1)
     for match in _TYPE_RESOLVER_RE.finditer(masked):
-        collector.add(models.TYPE_RESOLVER, source.count("\n", 0, match.start()) + 1)
+        if _provider_type(
+            "JavaScriptSerializer",
+            context,
+            frozenset({"System.Web.Script.Serialization.JavaScriptSerializer"}),
+        ) and _provider_type(
+            "SimpleTypeResolver",
+            context,
+            frozenset({"System.Web.Script.Serialization.SimpleTypeResolver"}),
+        ):
+            collector.add(
+                models.TYPE_RESOLVER, source.count("\n", 0, match.start()) + 1
+            )
 
 
 def _enclosing_block(masked: str, position: int) -> tuple[int, int]:

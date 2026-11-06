@@ -1766,6 +1766,91 @@
           }
         ]
       }
+    },
+    {
+      "id": "ruby-block-scope",
+      "languages": [
+        "ruby"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/ruby_block_scope",
+      "description": "Ruby closure parameter scope and outer method identity.",
+      "taxonomy": [
+        "ruby",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; expected used/unused labels frozen before detector correction. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Worker#normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Worker#unused"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ruby-inherited-callback",
+      "languages": [
+        "ruby"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/ruby_inherited_callback",
+      "description": "Ruby Rails callbacks through source-visible ApplicationController ancestry.",
+      "taxonomy": [
+        "ruby",
+        "precision_guard",
+        "framework_precision"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; expected used/unused labels frozen before detector correction. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "ReportsController#authenticate"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "ReportsController#unused"
+          }
+        ]
+      }
     }
   ]
 }

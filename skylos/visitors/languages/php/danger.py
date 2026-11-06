@@ -1234,7 +1234,18 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
         if name not in models.GUARD_FUNCTIONS:
             return set(), set()
         if name in {"in_array", "array_key_exists"}:
-            if len(args) < 2 or is_tainted_expr(args[1], tainted_vars, "raw"):
+            if (
+                len(args) < 2
+                or is_dynamic(args[1], tainted_vars)
+                or is_tainted_expr(args[1], tainted_vars, "raw")
+            ):
+                return set(), set()
+            # A loose comparison against true accepts every truthy path string.
+            # Only a source-proved strict comparison can narrow the needle to
+            # the fixed members; an unknown flag is not a safety proof.
+            if name == "in_array" and (
+                len(args) < 3 or text(unwrap(args[2])).strip().casefold() != "true"
+            ):
                 return set(), set()
         return {guard_key(target)}, set()
 
@@ -1756,6 +1767,7 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
             name = text(lhs).strip().lstrip("$")
             tainted_vars[name] = value_contexts(rhs, tainted_vars)
             forget_guards(tainted_vars, name)
+
         elif lhs.type == "list_literal":
             contexts = value_contexts(rhs, tainted_vars)
             for name in assigned_variables(lhs):
@@ -1776,6 +1788,24 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
                 previous = {_DYNAMIC}
             tainted_vars[name] = set(previous) | value_contexts(rhs, tainted_vars)
             forget_guards(tainted_vars, name)
+
+    def handle_array_mutation(node, tainted_vars):
+        if node.type != "function_call_expression":
+            return
+        name = functions.get(node.start_byte, "")
+        if name not in {"array_push", "array_unshift", "array_splice"}:
+            return
+        args = call_arguments(node)
+        if not args or unwrap(args[0]).type != "variable_name":
+            return
+        target = text(unwrap(args[0])).strip().lstrip("$")
+        previous = tainted_vars.get(target, {_DYNAMIC})
+        replacements = args[3:4] if name == "array_splice" else args[1:]
+        contexts = set(previous)
+        for value in replacements:
+            contexts.update(value_contexts(value, tainted_vars))
+        tainted_vars[target] = contexts
+        forget_guards(tainted_vars, target)
 
     def add_finding(
         rule_id: str, message: str, node, severity=None, low_risk=None
@@ -2692,6 +2722,7 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
                 "scoped_call_expression",
             }:
                 check_call_sinks(child, tainted_vars)
+                handle_array_mutation(child, tainted_vars)
             if child.type == "function_call_expression" and declares_non_html(child):
                 tainted_vars[_NON_HTML] = set()
             check_output(child, tainted_vars)

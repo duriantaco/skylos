@@ -95,8 +95,8 @@ deserialization/path traversal with matched safe guards.
 
 ### Additional paired controls
 
-The default suite has 132 cases and 141 expectations: 71 required findings
-and 70 absence controls. All 94 cases from the preceding stage retain their
+The default suite has 139 cases and 148 expectations: 74 required findings
+and 74 absence controls. All 132 cases from the preceding stage retain their
 original labels.
 
 Rust now pairs its command finding with a fixed-command control and includes a
@@ -114,7 +114,8 @@ counts cannot validate Terraform-only inputs.
 
 ### TLS, hashes, randomness and logging
 
-The next 38 cases add 17 required warnings and 23 absence controls. They cover
+The 38 TLS/hash/randomness/logging cases contain 17 required warnings and 23
+absence controls. They cover
 TLS verification in Python and TypeScript, Python MD5/SHA1 use, security-sensitive
 random values, and credentials reaching logs. Controls include real providers
 and similarly named helpers, explicit nonsecurity hash use, strong generators,
@@ -140,3 +141,10 @@ recorded-format JSON; they do not establish a live Bandit comparison score.
 Independent, pinned Ruby and Terraform facts have an
 [offline runner](../holdouts/README.md). Those are selected upstream facts, not
 additional synthetic cases or whole-repository accuracy labels.
+
+Seven PHP/C# review cases add strict versus loose include guards,
+attacker-controlled allowlists, actual Json.NET settings, data-only JSON and
+harmless classes with serializer-like names. Dangerous providers still warn;
+matching a local class/property spelling alone does not establish unsafe
+deserialization. PHP loose comparisons remain conservative until operand types
+are proved; strict literal allowlists and constant path maps remain supported.
