@@ -33,6 +33,7 @@ noted in the receipt and shown, not failed.
 from __future__ import annotations
 
 import fnmatch
+import json
 import logging
 import re
 import tempfile
@@ -641,6 +642,27 @@ def _registry_host(ecosystem: str, row: dict) -> str | None:
     return None
 
 
+def _npm_resolved(path: str, text: str) -> dict[str, str]:
+    """``package path -> resolved URL`` of an npm lockfile, so ca9 can tell a
+    lockfile that points a version at another artifact; other formats send
+    only the integrity hash."""
+    if PurePosixPath(path).name not in {"package-lock.json", "npm-shrinkwrap.json"}:
+        return {}
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return {}
+    packages = _get(data, "packages")
+    if not isinstance(packages, dict):
+        return {}
+    found = {}
+    for key, entry in packages.items():
+        url = _get(entry, "resolved")
+        if isinstance(key, str) and isinstance(url, str) and url.startswith("https://"):
+            found[key] = url[:2000]
+    return found
+
+
 def upgrade_pairs(sides: GitSides) -> tuple[list[dict], int]:
     """(pairs, dropped) for lockfile entries that changed base to head.
 
@@ -662,6 +684,7 @@ def upgrade_pairs(sides: GitSides) -> tuple[list[dict], int]:
         for row in base_rows:
             key = (row["_ecosystem"], _normalized(row["_ecosystem"], row["name"]))
             old.setdefault(key, set()).add(str(row["version"]))
+        resolved = _npm_resolved(path, head_text)
         new: dict[tuple, dict] = {}
         for row in _parse_lockfile(path, path, head_text):
             key = (row["_ecosystem"], _normalized(row["_ecosystem"], row["name"]))
@@ -684,6 +707,12 @@ def upgrade_pairs(sides: GitSides) -> tuple[list[dict], int]:
             host = _registry_host(ecosystem, row)
             if host:
                 pair["registry"] = f"https://{host}"
+            integrity = row.get("integrity")
+            if isinstance(integrity, str) and integrity.strip():
+                pair["integrity"] = integrity.strip()
+            url = resolved.get(str(row.get("package_path") or ""))
+            if url:
+                pair["resolved"] = url
             pairs.setdefault((ecosystem, name, previous, version), pair)
     ordered = sorted(pairs.values(), key=lambda pair: pair["old"] is None)
     return ordered[:MAX_UPGRADE_PAIRS], max(0, len(ordered) - MAX_UPGRADE_PAIRS)
@@ -762,7 +791,15 @@ def upgrade_findings(sides: GitSides, api, receipt: dict, errors: list) -> list[
     request = [
         {
             key: pair[key]
-            for key in ("ecosystem", "name", "old", "new", "registry")
+            for key in (
+                "ecosystem",
+                "name",
+                "old",
+                "new",
+                "registry",
+                "integrity",
+                "resolved",
+            )
             if key in pair
         }
         for pair in pairs
@@ -802,6 +839,10 @@ def upgrade_findings(sides: GitSides, api, receipt: dict, errors: list) -> list[
             reason = _text(item.get("reason"), 60) or "skipped"
             skipped[reason] = skipped.get(reason, 0) + 1
             continue
+        if item.get("complete") is False:
+            skipped["incomplete_result"] = skipped.get("incomplete_result", 0) + 1
+            findings.extend(_partial_findings(sides, pair, item))
+            continue
         reviewed += 1
         block = _deltas(item.get("block"))
         warn = _deltas(item.get("warn"))
@@ -815,6 +856,8 @@ def upgrade_findings(sides: GitSides, api, receipt: dict, errors: list) -> list[
         receipt["no_result"] = len(located)
     engine = _get(result, "receipt")
     engine_complete = isinstance(engine, dict) and engine.get("complete") is True
+    if _count(_get(engine, "incomplete_results")):
+        engine_complete = False
     receipt["engine_complete"] = engine_complete
     unreviewed = (
         sum(count for reason, count in skipped.items() if reason != INTERNAL_SKIP)
@@ -844,14 +887,33 @@ def _skip_text(skipped: dict, located: dict, dropped: int) -> str:
     return ", ".join(parts) or "engine receipt incomplete"
 
 
+def _count(value) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, (list, tuple, dict)):
+        return len(value)
+    return 0
+
+
+def _partial_findings(sides, pair, item) -> list[dict]:
+    """What an incomplete review still found is reported; the pair itself
+    counts as not reviewed."""
+    block = _deltas(item.get("block"))
+    warn = _deltas(item.get("warn"))
+    if block or warn:
+        return [_upgrade_finding(sides, pair, block, warn)]
+    return []
+
+
 def _upgrade_finding(sides, pair, block, warn) -> dict:
     rule_id = RULE_UPGRADE_WARN
     severity = "MEDIUM"
-    lead = warn[0]
+    lead = (block or warn)[0]
     if block:
         rule_id = RULE_UPGRADE_BLOCK
         severity = "CRITICAL"
-        lead = block[0]
     where = lead["path"] or "the package"
     if lead["line"]:
         where = f"{where}:{lead['line']}"

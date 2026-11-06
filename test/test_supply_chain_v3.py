@@ -875,6 +875,7 @@ def test_upgrade_review_pairs_upgrades_and_new_packages_and_maps_by_list(tmp_pat
 
     fake, findings, upgrades, errors = _review(tmp_path, result)
 
+    integrity = "sha512-" + "A" * 86 + "=="
     assert fake.pairs == [
         {
             "ecosystem": "npm",
@@ -882,6 +883,8 @@ def test_upgrade_review_pairs_upgrades_and_new_packages_and_maps_by_list(tmp_pat
             "old": "4.17.20",
             "new": "4.17.21",
             "registry": "https://registry.npmjs.org",
+            "integrity": integrity,
+            "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz",
         },
         {
             "ecosystem": "npm",
@@ -889,6 +892,8 @@ def test_upgrade_review_pairs_upgrades_and_new_packages_and_maps_by_list(tmp_pat
             "old": None,
             "new": "5.3.0",
             "registry": "https://registry.npmjs.org",
+            "integrity": integrity,
+            "resolved": "https://registry.npmjs.org/chalk/-/chalk-5.3.0.tgz",
         },
     ]
     assert sorted(
@@ -1018,6 +1023,43 @@ def test_unreviewed_pairs_or_an_incomplete_receipt_never_read_as_a_pass(
     assert gk.gate_analysis_coverage(gate).blocking
     if text:
         assert text in errors[0]["message"]
+
+
+def test_incomplete_results_stop_the_gate_but_keep_what_they_found(tmp_path):
+    _upgrade_repo(tmp_path)
+    mismatch = dict(HOOK_DELTA, kind="lockfile_artifact_mismatch")
+    partial = dict(
+        _reviewed("lodash", "4.17.20", "4.17.21", block=[mismatch]), complete=False
+    )
+    result = {
+        "results": [partial, _reviewed("chalk", None, "5.3.0")],
+        "receipt": {"complete": True},
+    }
+
+    _fake, findings, _upgrades, errors = _review(tmp_path, result)
+    gate = {"analysis_errors": errors, "analysis_summary": {"diff_scoped": True}}
+
+    assert [
+        (item["rule_id"], item["metadata"]["block_deltas"][0]["kind"])
+        for item in findings
+    ] == [("SKY-SCA-UPG001", "lockfile_artifact_mismatch")]
+    assert "incomplete_result: 1" in errors[0]["message"]
+    assert gk.gate_analysis_coverage(gate).blocking
+
+
+def test_receipt_with_incomplete_results_stops_the_gate(tmp_path):
+    _upgrade_repo(tmp_path)
+    result = {
+        "results": [
+            _reviewed("lodash", "4.17.20", "4.17.21"),
+            _reviewed("chalk", None, "5.3.0"),
+        ],
+        "receipt": {"complete": True, "incomplete_results": 1},
+    }
+
+    _fake, _findings, upgrades, errors = _review(tmp_path, result)
+
+    assert upgrades["engine_complete"] is False and errors
 
 
 def test_without_review_upgrades_no_review_happens(tmp_path):
