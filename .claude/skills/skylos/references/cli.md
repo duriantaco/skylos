@@ -58,8 +58,12 @@ Individual check flags:
   hardening weakened; exceptions only from the base commit's
   `[tool.skylos.supply_chain.hardening_exceptions]`) and, with
   `--review-upgrades` (implies `--sca`), `SKY-SCA-UPG001` (CRITICAL, blocks) /
-  `SKY-SCA-UPG002` (MEDIUM, listed only) from ca9's old-vs-new package diff.
-  Receipt: `analysis_summary.supply_chain_diff`.
+  `SKY-SCA-UPG002` (MEDIUM, listed only) from ca9's old-vs-new package diff,
+  mapped by ca9's `block`/`warn` list, never by kind; packages new at HEAD go
+  with `old: None`. Unreviewed changes (timeout, unreachable registry, cap,
+  `complete: false`) are an analysis error (diff gate exit 2); internal
+  packages are skipped with a warning. Receipt:
+  `analysis_summary.supply_chain_diff`.
 - Agent/editor config and publish jobs (`--danger`, via ca9):
   `SKY-D365` agent hook, `SKY-D366` folderOpen task, `SKY-D367` unpinned MCP
   server, `SKY-D368` hidden-path MCP server, `SKY-D369` impersonating MCP

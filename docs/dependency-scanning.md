@@ -619,19 +619,26 @@ checkout itself is never handed to it, installed or run.
 | ID | Severity | Reported when |
 |:---|:---|:---|
 | `SKY-SCA-HRD001` | HIGH | The change weakens install hardening (`ca9.api.hardening_regressions`): a cooldown removed or lowered (npm `min-release-age`, pnpm `minimumReleaseAge`, Yarn `npmMinimalAgeGate`, Bun `minimumReleaseAge` in seconds, uv `exclude-newer`, pip `--uploaded-prior-to`, Dependabot `cooldown`, Renovate `minimumReleaseAge`; compared in minutes, and a removal that falls back to an equal or longer default such as pnpm 11's one day is not reported), a package newly allowed to skip the cooldown, `ignore-scripts` turned off, packages added to pnpm `allowBuilds`, npm `allowScripts` or Bun `trustedDependencies`, `strictDepBuilds` turned off, or an action pinned to a SHA moved to a tag or branch |
-| `SKY-SCA-UPG001` | CRITICAL | With `--review-upgrades`: a lockfile upgrade (npm or PyPI, base version to new version) adds install-time or start-up code: a `.pth` file or `sitecustomize` with code, a new install or prepare hook, decode-and-exec, a new Git or URL dependency, or agent/editor hook files shipped in the package |
-| `SKY-SCA-UPG002` | MEDIUM | With `--review-upgrades`: the upgrade adds import-time network or exec calls, a much larger obfuscated file, a native binary, or comes from a new publisher. A review signal, not proof |
+| `SKY-SCA-UPG001` | CRITICAL | With `--review-upgrades`: ca9 puts a delta of a lockfile change (npm or PyPI) in its `block` list: an upgrade adds install-time or start-up code (a `.pth` file or `sitecustomize` with code, a new install or prepare hook, decode-and-exec, a new Git or URL dependency, agent/editor hook files shipped in the package) |
+| `SKY-SCA-UPG002` | MEDIUM | With `--review-upgrades`: only ca9's `warn` list has deltas: import-time network or exec calls, a much larger obfuscated file, a native binary, a new publisher, or for a newly added package (no base version) the risky code it ships, install hooks included. A review signal, not proof |
 
 `--review-upgrades` implies `--sca`. It downloads both versions of each
 upgraded package through ca9's hash-verified fetcher (trusted indexes only,
-size-capped) and reads them as data; new packages are not paired. Workflows
+size-capped) and reads them as data. A package the base did not lock is sent
+with no old version and reviewed as newly added. Findings follow ca9's lists,
+never the delta kind: `block` is UPG001, `warn` is UPG002. Workflows
 written by `skylos cicd init` turn it on for pull requests when dependency
 checks are selected; plain CLI runs need the flag. The finding sits on the
 lockfile line of the new version; `metadata.block_deltas` / `warn_deltas`
-name the file inside the package, the line and a redacted snippet. Up to 100
-upgrades are reviewed per run; more, or an upgrade ca9 skipped (for example
-a registry it cannot reach), prints `Upgrade review limited: N of M
-dependency upgrades reviewed (...)` under the verdict.
+name the file inside the package, the line and a redacted snippet;
+`metadata.basis` is `upgrade` or `new_package`. Packages matching
+`internal_packages` are never looked up on a public registry: ca9 skips them,
+and the verdict shows `Upgrade review limited: N of M dependency upgrades
+reviewed (internal_package: K)`. Every other change that was not reviewed (a
+timeout, an unreachable registry, an artifact over the size cap, more than 100
+changes, a pair with no result, or a ca9 receipt with `complete: false`) is an
+analysis error, so a diff gate stops as incomplete (exit 2) instead of
+passing those packages unread.
 
 Exceptions for a package (pnpm 11's cooldown otherwise breaks bot pull
 requests on fresh transitive dependencies) are read from the base commit only,
