@@ -503,6 +503,7 @@ class _SQLFlowChecker(TaintVisitor):
                     f"Receiver resolution unavailable ({type(exc).__name__})."
                 )
         self.receiver_resolution_cache: dict[ast.Call, dict] = {}
+        self.cosmos_provenance = None
         self.passthrough_functions: set[str] = set()
         self.db_names: set[str] = set()
         self.sqlalchemy_text = SQLAlchemyTextProvenance(tree)
@@ -1713,6 +1714,35 @@ class _SQLFlowChecker(TaintVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node):
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "query_items":
+            provider = None
+            try:
+                if self.cosmos_provenance is None:
+                    from .cosmos_provenance import CosmosQueryProvenance
+
+                    root = getattr(self.receiver_resolver, "root", None)
+                    self.cosmos_provenance = CosmosQueryProvenance(
+                        self.untrusted_sources.module, self.file_path, root
+                    )
+                provider = self.cosmos_provenance.query_receiver(node)
+            except Exception:
+                pass
+            query = get_query_expression(node)
+            if (
+                provider is not None
+                and query is not None
+                and self.is_tainted(query)
+                and not self._is_safe_query(query)
+                and not self._is_static_query_expr(query)
+            ):
+                self._sqli_finding(
+                    node,
+                    self.SEVERITY_CRITICAL,
+                    "Possible SQL injection: tainted SQL text passed to Cosmos DB.",
+                    query,
+                    "SQL text passed to Cosmos ContainerProxy.query_items()",
+                )
+                self.findings[-1].setdefault("metadata", {})["cosmos_receiver"] = provider
         if (
             isinstance(node.func, ast.Attribute)
             and node.func.attr in SQL_EXECUTE_METHODS | SQL_FETCH_METHODS
