@@ -363,6 +363,17 @@ def build_main_parser(*, version: str) -> argparse.ArgumentParser:
         help="Scan dependencies for known vulnerabilities (CVEs) via OSV.dev.",
     )
     parser.add_argument(
+        "--review-upgrades",
+        action="store_true",
+        dest="review_upgrades",
+        help=(
+            "With --diff or --diff-base (implies --sca), download the old and new "
+            "version of each npm/PyPI package the change upgrades and report new "
+            "install hooks, .pth/sitecustomize code and other risky code "
+            "(SKY-SCA-UPG001/UPG002). Never installs or runs them."
+        ),
+    )
+    parser.add_argument(
         "--scan-publisher-changes",
         action="store_true",
         help=(

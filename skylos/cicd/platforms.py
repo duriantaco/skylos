@@ -229,6 +229,8 @@ def _scan_command(
         flag = ANALYSIS_FLAG_MAP.get(kind)
         if flag and flag not in parts:
             parts.append(flag)
+    if "--sca" in parts:
+        parts.append("--review-upgrades")
     if settings.use_baseline:
         parts.append("--baseline")
     parts += ["--gate", "--diff"]

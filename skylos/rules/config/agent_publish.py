@@ -1,0 +1,473 @@
+"""Agent/editor configuration and publish-job findings from ca9.
+
+ca9 (``ca9.api.agent_config`` and ``ca9.api.audit_workflows``) reads the
+files; this module turns its findings into Skylos rules:
+
+- ``SKY-D365`` committed agent hook command (Claude Code, Gemini, Cursor,
+  Codex), ``SKY-D366`` editor task that runs when the folder opens,
+  ``SKY-D367`` MCP server without an exact version, ``SKY-D368`` MCP server
+  launched from a hidden home path, ``SKY-D369`` MCP package imitating a
+  vendor, ``SKY-D370`` agent API base URL overridden in the repository.
+- ``SKY-D371`` unpinned tool in a job holding publish credentials,
+  ``SKY-D372`` unverified download reaching the publish step, ``SKY-D373``
+  OIDC publish job without an environment, ``SKY-D374`` publish workflow
+  started by ``workflow_dispatch`` or a push to any branch.
+
+Every ca9 row must name a regular file inside the scanned folder. In a diff
+scan only files Git tracks count; a full scan also keeps untracked files Git
+does not ignore. Hooks written by ``skylos agent install-hooks`` are not
+reported (see :func:`is_skylos_hook_command`). A missing or failing ca9
+function adds nothing here; diff scans record it as an analysis error when an
+agent or workflow file changed (``supply_chain_diff``), and ``--sca`` scans
+note it in ``analysis_summary.supply_chain_checks``.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+from skylos.core.safe_cache_io import read_project_text_no_symlink
+from skylos.rules.config.findings import config_finding
+
+AGENT_RULES = {
+    "agent_hook_command": ("SKY-D365", "HIGH", "agent hook command"),
+    "editor_folder_open_task": ("SKY-D366", "HIGH", "editor folder-open task"),
+    "mcp_server_unpinned": ("SKY-D367", "MEDIUM", "unpinned MCP server"),
+    "mcp_server_hidden_path": ("SKY-D368", "HIGH", "MCP server from a hidden path"),
+    "mcp_server_impersonation": (
+        "SKY-D369",
+        "MEDIUM",
+        "MCP package imitating a vendor",
+    ),
+    "agent_base_url_override": ("SKY-D370", "HIGH", "agent base URL override"),
+}
+PUBLISH_RULES = {
+    "unpinned_tool_in_credentialed_job": (
+        "SKY-D371",
+        "HIGH",
+        "unpinned tool in a publish job",
+    ),
+    "unverified_download_into_publish": (
+        "SKY-D372",
+        "HIGH",
+        "unverified download reaching publish",
+    ),
+    "oidc_publish_without_environment": (
+        "SKY-D373",
+        "HIGH",
+        "OIDC publish job without environment",
+    ),
+    "publish_on_dispatch_or_any_branch": (
+        "SKY-D374",
+        "HIGH",
+        "publish on dispatch or any branch",
+    ),
+}
+AGENT_RULE_IDS = frozenset(rule for rule, _severity, _name in AGENT_RULES.values())
+PUBLISH_RULE_IDS = frozenset(rule for rule, _severity, _name in PUBLISH_RULES.values())
+HOOK_RULE_IDS = frozenset({"SKY-D365", "SKY-D366"})
+SEVERITIES = frozenset({"CRITICAL", "HIGH", "MEDIUM", "LOW"})
+MAX_FINDINGS = 500
+MAX_TEXT = 300
+MAX_SETTINGS_BYTES = 2_000_000
+_HOOK_EVENTS = (
+    "session-start",
+    "pre-edit",
+    "post-edit",
+    "pre-read",
+    "pre-bash",
+    "post-bash",
+    "post-failure",
+    "stop",
+)
+_FALLBACKS = (
+    "exit 0",
+    "echo '{}'",
+    """echo '{"permission":"allow"}'""",
+    """echo '{"continue":true}'""",
+)
+_SAFE_PATH = r"/(?:[A-Za-z0-9_.+@~-]+/)*"
+_SKYLOS_HOOK_RE = re.compile(
+    r"(?P<program>skylos|" + _SAFE_PATH + r"skylos)"
+    r" hook (?:" + "|".join(_HOOK_EVENTS) + r")"
+    r" --client (?:claude|codex|cursor)"
+    r"(?: \|\| (?:" + "|".join(re.escape(item) for item in _FALLBACKS) + r"))?"
+)
+_LOADER_VARIABLES = frozenset(
+    {
+        "PATH",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "PYTHONSTARTUP",
+        "PYTHONUSERBASE",
+        "PYTHONSAFEPATH",
+        "VIRTUAL_ENV",
+        "BASH_ENV",
+        "ENV",
+        "NODE_OPTIONS",
+        "SHELL",
+    }
+)
+_LOADER_PREFIXES = ("LD_", "DYLD_")
+_WORLD_WRITABLE = ("/tmp/", "/private/tmp/", "/var/tmp/", "/dev/shm/")
+
+
+def _settings_env(text: str | None) -> dict | None:
+    if text is None:
+        return None
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    env = data.get("env", {})
+    if not isinstance(env, dict):
+        return None
+    return env
+
+
+def is_skylos_hook_command(
+    command: object, *, root: Path, settings_text: str | None
+) -> bool:
+    """A hook ``skylos agent install-hooks`` wrote, checked by its whole text.
+
+    The command must be exactly ``<program> hook <event> --client <agent>``,
+    optionally followed by one of the fixed ``||`` fallbacks Skylos writes,
+    with no other shell syntax. ``<program>`` is ``skylos`` found on the
+    user's own PATH, or an absolute path ending in ``/skylos`` that is outside
+    the repository and outside world-writable temp folders, so the repository
+    cannot supply the program. The settings file holding the hook must be JSON
+    whose ``env`` does not set PATH or loader variables. ``python -m
+    skylos.entry`` is not accepted: ``-m`` imports from the working folder,
+    which the repository controls. A name check alone would accept any
+    program called skylos.
+    """
+    if not isinstance(command, str):
+        return False
+    match = _SKYLOS_HOOK_RE.fullmatch(command.strip())
+    if match is None:
+        return False
+    program = match.group("program")
+    if program.startswith("/"):
+        parts = PurePosixPath(program).parts
+        if ".." in parts or "." in parts or "//" in program:
+            return False
+        if program.startswith(_WORLD_WRITABLE):
+            return False
+        try:
+            if Path(program).resolve().is_relative_to(root.resolve()):
+                return False
+        except (OSError, RuntimeError, ValueError):
+            return False
+    env = _settings_env(settings_text)
+    if env is None:
+        return False
+    for name in env:
+        key = str(name).upper()
+        if key in _LOADER_VARIABLES or key.startswith(_LOADER_PREFIXES):
+            return False
+    return True
+
+
+def _diff_mode(changed_files) -> bool:
+    return changed_files is not None or bool(
+        str(os.environ.get("SKYLOS_DIFF_BASE") or "").strip()
+    )
+
+
+def _git_files(root: Path, *, tracked_only: bool) -> tuple[Path, set[str]] | None:
+    """(git root, repository-relative paths) Git tracks, plus untracked files
+    it does not ignore unless ``tracked_only``; None outside Git."""
+    from skylos.core.file_discovery import find_git_root
+    from skylos.core.git_context import GitContext
+
+    if find_git_root(root) is None:
+        return None
+    args = ["ls-files", "-z", "--cached", "--full-name"]
+    if not tracked_only:
+        args += ["--others", "--exclude-standard"]
+    try:
+        context = GitContext.from_path(root)
+        result = context.run(*args)
+    except Exception:  # noqa: BLE001 - an unreadable index leaves every file out
+        return Path(root), set()
+    if result.returncode != 0:
+        return Path(root), set()
+    return Path(context.root), {item for item in result.stdout.split("\0") if item}
+
+
+def _changed_paths(root: Path, changed_files) -> set[Path] | None:
+    if changed_files is None:
+        return None
+    paths = set()
+    for item in changed_files:
+        path = Path(item)
+        if not path.is_absolute():
+            path = root / path
+        paths.add(Path(os.path.abspath(path)))
+    return paths
+
+
+class _Scope:
+    """Which ca9-reported files may carry findings."""
+
+    def __init__(self, root: Path, changed_files):
+        self.root = root
+        self.changed = _changed_paths(root, changed_files)
+        self.git = _git_files(root, tracked_only=_diff_mode(changed_files))
+
+    def resolve(self, file: object) -> Path | None:
+        text = str(file or "")
+        pure = PurePosixPath(text.replace("\\", "/"))
+        if not text or pure.is_absolute() or ".." in pure.parts:
+            return None
+        path = self.root / Path(*pure.parts)
+        if path.is_symlink() or not path.is_file():
+            return None
+        if not Path(os.path.abspath(path)).is_relative_to(self.root):
+            return None
+        if self.changed is not None and Path(os.path.abspath(path)) not in self.changed:
+            return None
+        if self.git is not None:
+            git_root, files = self.git
+            try:
+                relative = path.resolve().relative_to(git_root.resolve()).as_posix()
+            except (OSError, ValueError):
+                return None
+            if relative not in files:
+                return None
+        return path
+
+
+def _text(value: object, limit: int = MAX_TEXT) -> str:
+    if value is None:
+        return ""
+    return " ".join(str(value).split())[:limit]
+
+
+def _evidence(value: object) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    kept: dict[str, Any] = {}
+    for key, item in list(value.items())[:24]:
+        name = str(key)[:60]
+        if isinstance(item, bool) or item is None or isinstance(item, (int, float)):
+            kept[name] = item
+        elif isinstance(item, str):
+            kept[name] = _text(item, 200)
+        elif isinstance(item, list):
+            kept[name] = [
+                _scalar(entry)
+                for entry in item[:10]
+                if isinstance(entry, (str, int, float, bool))
+            ]
+    return kept
+
+
+def _scalar(value):
+    if isinstance(value, str):
+        return _text(value, 120)
+    return value
+
+
+def _as_list(value) -> list:
+    if isinstance(value, list):
+        return value
+    return []
+
+
+def _sentence(part: str) -> str:
+    if part.endswith("."):
+        return part
+    return f"{part}."
+
+
+def _severity(finding: dict, default: str) -> str:
+    severity = str(finding.get("severity") or "").upper()
+    if severity in SEVERITIES:
+        return severity
+    return default
+
+
+def _line(finding: dict, path: Path, root: Path, needle: str) -> int:
+    line = finding.get("line")
+    if isinstance(line, bool) or not isinstance(line, int) or line < 1:
+        line = 1
+    if line > 1 or not needle:
+        return line
+    text = read_project_text_no_symlink(
+        root, path.relative_to(root).as_posix(), max_bytes=MAX_SETTINGS_BYTES
+    )
+    if not text:
+        return line
+    quoted = json.dumps(needle)
+    for number, row in enumerate(text.splitlines(), 1):
+        if quoted in row or f"{needle}:" in row or f"{needle} =" in row:
+            return number
+    return line
+
+
+def _message(finding: dict, rule_id: str, label: str) -> str:
+    title = _text(finding.get("title"), 240)
+    reason = _text(finding.get("reason"), 400)
+    remediation = _text(finding.get("remediation"), 240)
+    parts = [part for part in (title, reason, remediation) if part]
+    if not parts:
+        return f"{rule_id}: {label}"
+    return " ".join(_sentence(part) for part in parts)
+
+
+def _finding(
+    finding: dict, path: Path, root: Path, rule: tuple, *, domain: str, provider: str
+) -> dict:
+    rule_id, default_severity, label = rule
+    evidence = _evidence(finding.get("evidence"))
+    name = _text(finding.get("name"), 120) or label
+    needle = ""
+    if rule_id in {"SKY-D367", "SKY-D368", "SKY-D369"}:
+        needle = name
+    value = _text(evidence.get("command") or evidence.get("target") or name, 200)
+    result = config_finding(
+        rule_id=rule_id,
+        domain=domain,
+        provider=provider,
+        name=name,
+        message=_message(finding, rule_id, label),
+        file=path,
+        line=_line(finding, path, root, needle),
+        severity=_severity(finding, default_severity),
+        value=value,
+        finding_type=label,
+    )
+    result["snippet"] = value
+    result["metadata"] = {
+        "engine": "ca9",
+        "signal_type": _text(finding.get("signal_type"), 60),
+        "action": _text(finding.get("action"), 20),
+        "evidence": evidence,
+    }
+    ecosystem = finding.get("ecosystem")
+    if domain == "agent_config" and isinstance(ecosystem, str) and ecosystem:
+        result["metadata"]["ecosystem"] = _text(ecosystem, 20)
+        result["metadata"]["package_version"] = _text(finding.get("version"), 80)
+    return result
+
+
+def _provider(rule_id: str, finding: dict, path: Path) -> str:
+    if rule_id in PUBLISH_RULE_IDS:
+        if str(finding.get("ecosystem") or "") == "gitlab-ci":
+            return "gitlab"
+        return "github"
+    kind = str((finding.get("evidence") or {}).get("kind") or "")
+    if kind.startswith(("claude", "gemini", "cursor", "codex")):
+        return kind.split("_", 1)[0]
+    folder = path.parent.name.lstrip(".")
+    if rule_id == "SKY-D366" or folder == "vscode":
+        return "vscode"
+    if rule_id == "SKY-D370" and folder in {"claude", "gemini", "cursor", "codex"}:
+        return folder
+    return "mcp"
+
+
+def _call(api, name: str, root: Path):
+    if api is None or not hasattr(api, name) or not callable(getattr(api, name)):
+        return None, "ca9.api." + name + " is unavailable"
+    try:
+        result = getattr(api, name)(str(root))
+    except Exception as exc:  # noqa: BLE001 - engine failures leave the files unchecked
+        return None, f"ca9.api.{name} failed ({type(exc).__name__})"
+    if not isinstance(result, dict):
+        return None, f"ca9.api.{name} returned no result"
+    return result, None
+
+
+def scan_agent_publish(
+    root: str | Path,
+    *,
+    changed_files: set[str] | None = None,
+    ignore: set[str] | None = None,
+    api=None,
+) -> list[dict[str, Any]]:
+    """SKY-D365-D374 findings for a scanned folder."""
+    from skylos.rules.sca import supply_chain
+
+    requested = Path(root)
+    if requested.is_symlink() or not requested.is_dir():
+        return []
+    root_path = requested.resolve()
+    ignore = {str(rule).upper() for rule in ignore or ()}
+    wanted_agent = AGENT_RULE_IDS - ignore
+    wanted_publish = PUBLISH_RULE_IDS - ignore
+    if not wanted_agent and not wanted_publish:
+        return []
+    if api is None:
+        api = supply_chain.load_ca9_api()
+    scope = _Scope(root_path, changed_files)
+    findings: list[dict[str, Any]] = []
+    jobs = []
+    if wanted_agent:
+        jobs.append(("agent_config", AGENT_RULES, "agent_config"))
+    if wanted_publish:
+        jobs.append(("audit_workflows", PUBLISH_RULES, "cicd"))
+    for function, rules, domain in jobs:
+        result, problem = _call(api, function, root_path)
+        if problem is not None:
+            continue
+        findings.extend(
+            _mapped(result.get("findings"), rules, root_path, scope, domain, ignore)
+        )
+    return findings[:MAX_FINDINGS]
+
+
+def _mapped(rows, rules, root: Path, scope: _Scope, domain: str, ignore) -> list[dict]:
+    findings = []
+    settings_cache: dict[Path, str | None] = {}
+    seen = set()
+    for row in _as_list(rows):
+        if not isinstance(row, dict):
+            continue
+        rule = rules.get(str(row.get("signal_type") or ""))
+        if rule is None or rule[0] in ignore:
+            continue
+        path = scope.resolve(row.get("file"))
+        if path is None:
+            continue
+        if rule[0] == "SKY-D365":
+            if path not in settings_cache:
+                settings_cache[path] = read_project_text_no_symlink(
+                    root,
+                    path.relative_to(root).as_posix(),
+                    max_bytes=MAX_SETTINGS_BYTES,
+                )
+            command = (row.get("evidence") or {}).get("command")
+            if is_skylos_hook_command(
+                command, root=root, settings_text=settings_cache[path]
+            ):
+                continue
+        provider = _provider(rule[0], row, path)
+        finding = _finding(row, path, root, rule, domain=domain, provider=provider)
+        identity = (
+            finding["rule_id"],
+            finding["file"],
+            finding["line"],
+            finding["value"],
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        findings.append(finding)
+    return findings
+
+
+__all__ = [
+    "AGENT_RULE_IDS",
+    "HOOK_RULE_IDS",
+    "PUBLISH_RULE_IDS",
+    "is_skylos_hook_command",
+    "scan_agent_publish",
+]

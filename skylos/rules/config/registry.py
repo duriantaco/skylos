@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from skylos.core.git_context import GitContext
+from skylos.rules.config.agent_publish import scan_agent_publish
 from skylos.rules.config.cicd.github_actions import (
     scan_github_actions,
     scan_github_actions_file,
@@ -113,6 +114,9 @@ def scan_config_files(
         )
     )
     findings.extend(scan_gitlab_ci(root, changed_files=changed_files, ignore=ignore))
+    findings.extend(
+        scan_agent_publish(root, changed_files=changed_files, ignore=ignore)
+    )
     findings.extend(
         _repository_ci_findings(
             root, changed_files=changed_files, ignore=ignore,

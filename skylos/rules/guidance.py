@@ -599,6 +599,17 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-D364": {
         "default": "Publish with trusted publishing (OIDC) and delete the long-lived token."
     },
+    "SKY-D365": {"default": "Remove the committed hook, or review the exact command and the script it runs before merging."},
+    "SKY-D366": {"default": "Remove runOptions.runOn \"folderOpen\" unless the team added it on purpose, and review what it runs."},
+    "SKY-D367": {"default": "Pin the MCP server to an exact version (pkg@1.2.3) or a full commit."},
+    "SKY-D368": {"default": "Launch MCP servers from reviewed packages at exact versions, not files in hidden home folders."},
+    "SKY-D369": {"default": "Check the MCP package's publisher; use the vendor's own package."},
+    "SKY-D370": {"default": "Move API gateway URLs to user or managed settings, not committed project settings."},
+    "SKY-D371": {"default": "Pin tools in jobs that hold publish credentials to exact versions or hashes."},
+    "SKY-D372": {"default": "Verify downloads in the publish path with a checksum or signature."},
+    "SKY-D373": {"default": "Put the OIDC publish job behind a protected environment."},
+    "SKY-D374": {"default": "Publish only from protected branches or tags, not workflow_dispatch or any branch."},
+    "SKY-D375": {"default": "Review every changed step, trigger and permission of the publish job."},
     "SKY-D510": {
         "default": "Reject __proto__, constructor and prototype keys before merging objects."
     },
@@ -831,6 +842,7 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-SCA-AGE001": {
         "default": "Pin the newest version older than the release-age window, or wait."
     },
+    "SKY-SCA-HRD001": {"default": "Keep the hardening setting, or record a reviewed exception on the base branch."},
     "SKY-SCA-INT001": {
         "default": "Regenerate the lockfile with your package manager so every entry has a hash."
     },
@@ -843,6 +855,8 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-SCA-SRC003": {
         "default": "Pin the Git dependency to a full commit SHA, or add a hash to the URL dependency."
     },
+    "SKY-SCA-UPG001": {"default": "Read the new install/import-time code before merging; pin the old version if it cannot be explained."},
+    "SKY-SCA-UPG002": {"default": "Review the new code the upgrade adds before merging."},
     "SKY-T101": {"default": "Add type annotations to the parameters."},
     "SKY-T102": {"default": "Add a return type annotation."},
     "SKY-T103": {

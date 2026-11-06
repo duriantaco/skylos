@@ -51,8 +51,30 @@ Individual check flags:
   unpinned Git / unhashed URL, `SKY-SCA-INT001` lockfile entry without
   integrity, `SKY-SCA-AGE001` (only with `min_release_age_hours`). Missing ca9
   is a note in `sca_coverage.supply_chain.notes`, not an error.
-  `analysis_summary.dependency_inventory` and `supply_chain_posture` are
-  uploaded next to `sca_coverage`.
+  `analysis_summary.dependency_inventory`, `supply_chain_posture`,
+  `ci_inventory` and `agent_hooks` are uploaded next to `sca_coverage`
+  (`supply_chain_checks` stays local and says what ca9 could not build).
+  With `--diff`/`--diff-base`, `--sca` adds `SKY-SCA-HRD001` (install
+  hardening weakened; exceptions only from the base commit's
+  `[tool.skylos.supply_chain.hardening_exceptions]`) and, with
+  `--review-upgrades` (implies `--sca`), `SKY-SCA-UPG001` (CRITICAL, blocks) /
+  `SKY-SCA-UPG002` (MEDIUM, listed only) from ca9's old-vs-new package diff,
+  mapped by ca9's `block`/`warn` list, never by kind; packages new at HEAD go
+  with `old: None`. Unreviewed changes (timeout, unreachable registry, cap,
+  `complete: false`) are an analysis error (diff gate exit 2); internal
+  packages are skipped with a warning. Receipt:
+  `analysis_summary.supply_chain_diff`.
+- Agent/editor config and publish jobs (`--danger`, via ca9):
+  `SKY-D365` agent hook, `SKY-D366` folderOpen task, `SKY-D367` unpinned MCP
+  server, `SKY-D368` hidden-path MCP server, `SKY-D369` impersonating MCP
+  package, `SKY-D370` base-URL override, `SKY-D371`-`SKY-D374` publish-job
+  rules, `SKY-D375` (diff only) publish job added/changed. Full scans list
+  D365-D374 without counting them (a CRITICAL hook still fails); diff or
+  baseline scans fail on a new D365/D366/D368/D370. Hooks written by
+  `skylos agent install-hooks` are recognised by exact command grammar and
+  not reported. A changed agent/workflow file with a ca9 that lacks the
+  function is an analysis error (exit 2), never a pass. See
+  `docs/agent-config-and-publish-rules.md`.
 
 ## Output Formats
 

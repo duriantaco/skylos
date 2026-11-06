@@ -221,7 +221,11 @@ Git、本地路径、SDK、私有仓库和分支（`dev-*`）条目会列为未�
 
 恶意软件公告（`MAL-*`、CWE-506，例如被劫持的 `chalk`、`debug` 和 `xrpl` 版本）报告为 `CRITICAL` 并带有 `metadata.malicious`，不会因为只是开发依赖而降级，并提示你删除该包、轮换安装过程可能读取到的所有凭据。同一次扫描还会通过 ca9 引擎做供应链检查：针对你配置的 `internal_packages` 的依赖混淆（`SKY-SCA-SRC001`）、未固定到提交的 Git 依赖和没有哈希的 URL 依赖（`SKY-SCA-SRC003`）、没有完整性哈希的锁文件条目（`SKY-SCA-INT001`），以及设置了 `min_release_age_hours` 时比该时间窗口更新的版本（`SKY-SCA-AGE001`）。JSON 还会包含包清单和供应链状况（锁文件已提交、CI 冻结安装、禁用安装脚本、发布冷却期、Action 已固定、没有 `pull_request_target` 检出）。详见 [Supply-chain checks](../dependency-scanning.md#supply-chain-checks)。
 
-Agent 钩子（`skylos agent install-hooks`）在安装前还会拦截被报告为恶意软件的版本、发布不足 24 小时的版本（并给出可改用的较旧版本），以及丢失了此前版本 provenance 的 npm 版本；`npm ci`、`uv sync` 等锁文件安装会对每个锁定的包做恶意软件检查。用 `[tool.skylos.supply_chain] min_release_age_hours` 调整等待时间（设为 0 即关闭）。
+在 Pull Request 中（`--diff` 或 `--diff-base`），如果改动削弱了安装加固设置，`--sca` 也会让门禁失败：删除或缩短发布冷却期、重新开启安装脚本、向 pnpm `allowBuilds` 或 npm `allowScripts` 添加包、把 Action 从 SHA 改成标签（`SKY-SCA-HRD001`）。按包审核过的例外写在基础分支上。使用 `--review-upgrades`（`skylos cicd init` 生成的工作流默认开启）时，每个 npm 或 PyPI 升级都会下载新旧两个版本并作为数据比较：新增安装钩子、`.pth` 或 `sitecustomize` 代码、解码后执行会让门禁失败（`SKY-SCA-UPG001`）；新增导入时网络调用或二进制文件会列出供审查（`SKY-SCA-UPG002`）。`--danger` 会报告提交到仓库的 Agent 和编辑器钩子（`SKY-D365`、`SKY-D366`：`.claude/settings.json` 的 `SessionStart`、`.vscode/tasks.json` 的 `folderOpen`）、未固定版本、来自隐藏路径或冒充厂商的 MCP 服务器（`SKY-D367`-`SKY-D369`）、覆盖 Agent API 基础地址（`SKY-D370`）以及有风险的发布作业（`SKY-D371`-`SKY-D375`）。全仓库扫描只列出它们；新增或修改钩子的 Pull Request 会失败。详见 [Agent configuration and publish-job rules](../agent-config-and-publish-rules.md)。
+
+Agent 钩子（`skylos agent install-hooks`）在安装前还会拦截被报告为恶意软件的版本、发布不足 48 小时的版本（并给出可改用的较旧版本），以及丢失了此前版本 provenance 的 npm 版本；`npm ci`、`uv sync` 等锁文件安装会对每个锁定的包做恶意软件检查。用 `[tool.skylos.supply_chain] min_release_age_hours` 调整等待时间（设为 0 即关闭）。
+
+MCP 服务器和 Agent 钩子：Agent 钩子会拦截未固定版本或恶意的 MCP 服务器（`claude mcp add`、编辑 `.mcp.json`），并给出应使用的精确固定版本命令；在新增 SessionStart 或 folderOpen 钩子前先询问；并在每次会话中重新检查已配置的服务器。`skylos agent harden` 会输出每个 Agent 自身的凭据禁止访问设置和固定版本的 MCP 设置（用于策略和审计，不是沙箱）。
 
 ## 基准测试快照
 

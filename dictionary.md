@@ -103,7 +103,11 @@ Rule IDs use a stable public prefix:
 | Malicious package (SCA) | An OSV advisory with an `MAL-*` ID or alias, a `malicious-packages-origins` record, or CWE-506. Reported `CRITICAL` under its `SKY-SCA-<id>` rule with `metadata.malicious: true`; never demoted as dev-only and never given a reachability verdict. When OSV is unreachable, the installed ca9 malware feed is checked (`metadata.malware_source: "ca9_feed"`). |
 | Supply-chain policy | `[tool.skylos.supply_chain]` (`internal_packages`, `private_registries`, `trusted_registries`, `min_release_age_hours`, `block_malware`, `check_provenance`), merged with the synced Skylos Cloud `supply_chain` block, which can only tighten it. Read by `--sca` scans (SKY-SCA-SRC001/AGE001) and the install hook. |
 | Dependency inventory | `analysis_summary.dependency_inventory` (`skylos.dependency_inventory.v1`): up to 10,000 sorted, de-duplicated packages (`ecosystem`, `name`, `version`, `direct`, `dev`, `file`) with `total`, `truncated` and `complete`; uploaded so Skylos Cloud can match new malware advisories after the scan. |
-| Supply-chain posture | `analysis_summary.supply_chain_posture` (`skylos.supply_chain_posture.v1`): checks `lockfile_committed`, `frozen_install_ci`, `install_scripts_disabled`, `release_age_cooldown`, `actions_pinned` (from SKY-D292) and `no_pr_target_checkout` (from SKY-D290), each `pass`, `fail`, `not_applicable` or `unknown`; `pass` needs evidence in the repository. |
+| Supply-chain posture | `analysis_summary.supply_chain_posture` (`skylos.supply_chain_posture.v1`): checks `lockfile_committed`, `frozen_install_ci`, `install_scripts_disabled`, `release_age_cooldown`, `actions_pinned` (from SKY-D292) and `no_pr_target_checkout` (from SKY-D290), each `pass`, `fail`, `not_applicable` or `unknown`; `pass` needs evidence in the repository. Committed values from `ca9.api.hardening_settings` are read first. Knows npm 12 and pnpm 10+ script blocking, pnpm 11 `allowBuilds`/`strictDepBuilds` and its one-day default cooldown, Yarn 4.15's one-day default, Bun `minimumReleaseAge` in seconds and pip `--uploaded-prior-to`; Dependabot's cooldown is named but does not pass it. |
+| CI inventory | `analysis_summary.ci_inventory` (`ca9.ci_inventory.v1`, from `ca9.api.ci_inventory`): per GitHub Actions / GitLab CI job its triggers, runner, environment, token write scopes, `id-token`, secret names, installs, actions, tools, download hosts and publish steps; bounded (200 workflows, 500 jobs) and names only. Uploaded so Skylos Cloud can tell which jobs could have installed a package and what they could reach. |
+| Agent hooks inventory | `analysis_summary.agent_hooks` (`ca9.agent_hooks.v1`, from `ca9.api.agent_config`): committed agent/editor hooks, MCP servers and base-URL overrides with redacted commands; `skylos_hook: true` marks hooks `skylos agent install-hooks` wrote. Uploaded next to the dependency inventory. |
+| Upgrade review | `--review-upgrades` (implies `--sca`; on in pull request scans from `skylos cicd init` when dependency checks are selected): with `--diff`/`--diff-base`, each npm/PyPI lockfile version change is downloaded old and new by ca9 and compared as data, and a newly added package is reviewed on its own (SKY-SCA-UPG001/UPG002). Never installs or runs the packages. |
+| Hardening exception | `[tool.skylos.supply_chain.hardening_exceptions]` `package = "reason"`, read from the diff base commit only: SKY-SCA-HRD001 regressions that name that package are skipped and listed in `analysis_summary.supply_chain_diff`. |
 | Symlink safety | Checks for file operations that follow repository-controlled symbolic links across the intended scan or output boundary. |
 
 ## CLI Output Modes
@@ -808,6 +812,34 @@ D295 reports at HIGH severity. Runner-label order does not affect the check.
 Simple literal matrices are exempt only when every possible runner value can be
 proved to be a known GitHub-hosted label. Runner groups, unknown expressions and
 matrix combinations that cannot be resolved conservatively still produce a warning.
+
+### Agent, Editor And Publish-Job Configuration (D365-D375)
+
+Decided by the ca9 engine (`ca9.api.agent_config`, `audit_workflows`,
+`ci_inventory`); Skylos keeps only rows naming a regular file inside the
+scanned folder (a diff scan: files Git tracks; a full scan: files Git tracks or
+does not ignore). See
+[docs/agent-config-and-publish-rules.md](./docs/agent-config-and-publish-rules.md).
+
+| ID | Severity | Name | Files |
+|:---|:---|:---|:---|
+| D365 | HIGH-CRITICAL | Agent hook command committed in the repository. CRITICAL when the command downloads remote code, decodes and runs a payload, or runs a script disguised as a font or image. Hooks `skylos agent install-hooks` wrote are not reported: the whole command must be `skylos hook <event> --client claude\|codex\|cursor` with one of Skylos's fixed `\|\|` fallbacks and nothing else, the program `skylos` on PATH or an absolute `/…/skylos` outside the repository and temp folders, and the settings file's `env` must not set PATH or loader variables; `python -m skylos.entry` is reported | `.claude/settings(.local).json`, `.gemini/settings.json`, `.cursor/hooks.json`, `.codex/hooks.json`, `.codex/config.toml` |
+| D366 | HIGH-CRITICAL | Editor task that runs when the folder opens (`runOptions.runOn: "folderOpen"`); severities as D365 | `.vscode/tasks.json`, `*.code-workspace` |
+| D367 | MEDIUM | MCP server launched without an exact version (`npx -y pkg`, `@latest`, `uvx pkg`, an image without a digest) | `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.kiro/settings/mcp.json`, `mcpServers` blocks |
+| D368 | HIGH | MCP server launched from a hidden home-directory or temp path outside the repository | MCP configs |
+| D369 | MEDIUM | MCP server package whose name imitates a vendor it is not published by | MCP configs |
+| D370 | HIGH | Agent API base URL (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`) overridden in committed settings | agent settings |
+| D371 | HIGH | Tool installed without a pinned version or hash in a job holding publish credentials or `id-token: write` | GitHub Actions, GitLab CI |
+| D372 | HIGH | Download without a checksum or signature check reaching the publish step | GitHub Actions, GitLab CI |
+| D373 | HIGH | OIDC publish job without a deployment `environment:` | GitHub Actions |
+| D374 | HIGH | Publishing workflow startable by `workflow_dispatch` or a push to any branch | GitHub Actions |
+| D375 | MEDIUM | `--diff` only: the change adds or modifies a CI job that publishes packages (base `ci_inventory` against head, line numbers ignored) | GitHub Actions, GitLab CI |
+
+Built-in gate: in a whole-repository scan D365-D374 are listed and not
+counted, except a CRITICAL D365/D366. In a diff or baseline scan D365, D366,
+D368 and D370 fail the gate on their own; D367, D369 and D371-D375 count
+under the normal limits. A missing or failing ca9 function records each agent
+or workflow file as not analysed (`security_scan_error`), never as clean.
 
 ### AI Agents In GitHub Actions (D350-D354)
 
@@ -2194,11 +2226,14 @@ suppression, integrations, and public references.
 | SKY-SCA-INT001 | MEDIUM | Lockfile entry without integrity hash | A registry entry in `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock` or `poetry.lock` with no (or an empty) integrity hash; never `requirements.txt` or npm `inBundle` entries |
 | SKY-SCA-AGE001 | HIGH | Dependency version younger than the release-age window | The locked version was published less than `min_release_age_hours` ago; scans check this only when the policy sets it |
 | SKY-SCA-MAL000 | CRITICAL | Malware feed match without an advisory ID | Offline fallback: the installed ca9 malware feed matched a package but named no advisory ID (matches with an ID use `SKY-SCA-<id>`) |
+| SKY-SCA-UPG001 | CRITICAL | Dependency upgrade adds install-time or start-up code | `--diff`/`--diff-base` with `--review-upgrades`: an npm or PyPI lockfile version change whose new artifact adds a `.pth` or `sitecustomize` with code, an install/prepare hook, decode-and-exec, a Git/URL dependency or shipped agent/editor hooks (`ca9.api.review_upgrades`); evidence names the file inside the package and a redacted snippet. Fails a diff gate on its own |
+| SKY-SCA-UPG002 | MEDIUM | Dependency upgrade adds code worth reviewing | As UPG001 when only ca9's `warn` list has deltas (new import-time network or exec, obfuscation growth, a native binary, a publisher change, or the risky code a newly added package ships, install hooks included); findings follow ca9's lists, never the delta kind. Listed, not counted by the built-in gate. Changes ca9 did not review (timeout, unreachable registry, size cap, over 100, `complete: false`) are an analysis error (diff gate incomplete); internal packages are skipped with a warning |
+| SKY-SCA-HRD001 | HIGH | Change weakens install hardening | `--diff`/`--diff-base` with `--sca`: `ca9.api.hardening_regressions` between the merge base and the tracked working tree (cooldown removed, lowered or bypassed for a package, `ignore-scripts` off, `allowBuilds`/`allowScripts`/`trustedDependencies` additions, `strictDepBuilds` off, SHA-pinned action moved to a tag). Packages in the base commit's `[tool.skylos.supply_chain.hardening_exceptions]` with a reason are skipped. Fails a diff gate on its own; a `check_failed` comparison is an analysis error (incomplete), never a pass |
 
 `SKY-SCA-LIC*` IDs are reserved for license policy and are not OSV advisory IDs.
 `SKY-SCA-NPM-PUB001` is a publisher history review signal, not an OSV advisory ID.
-`SKY-SCA-SRC*`, `SKY-SCA-INT*` and `SKY-SCA-AGE*` are supply-chain checks from
-the ca9 engine (`ca9.api`), not OSV advisory IDs. OSV advisories for malware
+`SKY-SCA-SRC*`, `SKY-SCA-INT*`, `SKY-SCA-AGE*`, `SKY-SCA-UPG*` and `SKY-SCA-HRD*`
+are supply-chain checks from the ca9 engine (`ca9.api`), not OSV advisory IDs. OSV advisories for malware
 (`MAL-*` IDs or aliases, `malicious-packages-origins`, CWE-506) keep their
 `SKY-SCA-<id>` rule ID and are reported `CRITICAL` with `metadata.malicious`.
 Declared licenses are normalized to SPDX; ambiguous values (for example `BSD`,
