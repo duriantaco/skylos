@@ -20,6 +20,13 @@ default run reports unlabeled findings separately. `--strict-labels` counts any
 finding outside the explicit `unused` and `used` labels as a false positive, and
 the comparison runner uses that strict mode by default.
 
+Skylos cases with parse errors, incomplete analysis, or no analyzed source files
+are reported as `UNSCORED`. They add no TP, FP, FN or TN and make the run fail.
+Summary metrics cover only scored cases; an incomplete run remains failed even
+when its valid cases score 100. If no cases can be scored, scores are zero and
+`score_unavailable_reason` is `no_valid_cases`. An intentionally selected scan
+scope can still be scored when its files were analyzed successfully.
+
 ## Run
 
 ```bash
@@ -76,7 +83,8 @@ python scripts/dead_code_benchmark.py \
 These cases include known false positives and false negatives in the current
 scanner. A nonzero exit reports the remaining coverage gaps. Keep their semantic
 labels fixed when improving the analyzer, including controls the scanner
-currently misses. The 27 default cases and their 141 labels are unchanged.
+currently misses. The original 27 default cases and their 141 labels retain
+their expectations; two PHP cases add seven labels to the default suite.
 Some misses reflect conservative retention or uncertainty policies; investigate
 their evidence before treating a benchmark miss as a detector bug. The original
 two adversarial cases also retain their existing unlabeled findings, which
@@ -90,6 +98,12 @@ wildcard export, finite `globals()` dispatch and inherited method registries.
 Each has unused controls. A separate Robot case checks that escaped expressions,
 comments and a constant-false branch do not keep a method alive. These fixtures use source inspection;
 Robot Framework and the fixture programs do not need to run.
+
+The PHP cases cover direct and chained function calls, class construction,
+public and private method calls, and unreferenced siblings. They add two unused
+and five used controls. Skylos reads their source; PHP and the fixture programs
+do not need to run. These are basic coverage cases, not evidence that all PHP
+frameworks or dynamic dispatch patterns are covered.
 
 Optional competitor baseline:
 
@@ -125,8 +139,8 @@ First inspect the request plan. This does not use the network or require a key:
 python3 scripts/jev_dead_code_benchmark.py
 ```
 
-The default checked-in manifest contains 141 ground-truth symbols: 55 unused
-and 86 used. It is useful for request validation and regression testing, but
+The default checked-in manifest contains 148 ground-truth symbols: 57 unused
+and 91 used. It is useful for request validation and regression testing, but
 Skylos already scores every labeled symbol correctly there. A Jev tie on this
 suite does not demonstrate incremental value. The runner always asks the
 `original` question, and adds a second arm only when safe:
@@ -482,7 +496,8 @@ multi-file service/repository layers, Django management commands, Celery tasks,
 pytest fixtures, Pydantic validators, Alembic revisions, importlib plugins, and
 package console-script entrypoints. The cross-language cases currently cover Go
 HTTP handler reachability, Java application entrypoints and stale methods, and
-mixed TypeScript/JavaScript package reachability.
+mixed TypeScript/JavaScript package reachability, plus PHP function and member
+calls with unused controls.
 
 For larger accuracy discovery against pinned upstream framework repositories,
 use `benchmarks/framework_corpus`:

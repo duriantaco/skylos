@@ -126,9 +126,11 @@ def test_runner_reports_false_positive_and_false_negative(tmp_path, monkeypatch)
         benchmark,
         "_scan_case",
         lambda case_path, case: {
+            "analysis_summary": {"total_files": 1, "analysis_error_count": 0},
+            "analysis_errors": [],
             "unused_functions": [
                 {"file": str(case_path / "app.py"), "simple_name": "used"}
-            ]
+            ],
         },
     )
 
@@ -309,9 +311,11 @@ def test_strict_labels_count_unlabeled_findings_as_false_positives(
         benchmark,
         "_scan_case",
         lambda case_path, case: {
+            "analysis_summary": {"total_files": 1, "analysis_error_count": 0},
+            "analysis_errors": [],
             "unused_functions": [
                 {"file": str(case_path / "app.py"), "simple_name": "extra"}
-            ]
+            ],
         },
     )
 
