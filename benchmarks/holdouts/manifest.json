@@ -1,0 +1,164 @@
+{
+  "version": 1,
+  "description": "Independently source-labelled targeted checks on immutable upstream snapshots. Selected labels form an open set, not whole-repository truth or a broad accuracy score. No target code is executed.",
+  "label_scope": "open",
+  "targets": [
+    {
+      "id": "rake-private-helper-uses",
+      "kind": "ruby_dead_code",
+      "repo": "https://github.com/ruby/rake",
+      "ref": "3f29d39daa688eb51cd975c06b1501320f10b911",
+      "checkout": "rake",
+      "license": "MIT",
+      "license_file": "MIT-LICENSE",
+      "source_class": "maintained_library",
+      "scan_root": ".",
+      "languages": [
+        "ruby"
+      ],
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "source_files": [
+        {
+          "path": "lib/rake/task.rb",
+          "sha256": "cf250f70792e6b8b4c6ac67e45b49e46510469f35699810d987d493bfc113132"
+        },
+        {
+          "path": "MIT-LICENSE",
+          "sha256": "3e8179ae8e3354a22ad6c9f08a81ac2e7e39cf7b65c7dd97895cb23bf22cd48c"
+        }
+      ],
+      "expectations": [
+        {
+          "kind": "ruby_used",
+          "file": "lib/rake/task.rb",
+          "symbol": "Rake.Task#lookup_prerequisite",
+          "line": 65,
+          "reason": "Public prerequisite_tasks calls lookup_prerequisite inside its map on the same Task receiver; the method is explicitly private."
+        },
+        {
+          "kind": "ruby_used",
+          "file": "lib/rake/task.rb",
+          "symbol": "Rake.Task#add_comment",
+          "line": 308,
+          "reason": "Public add_description and comment= call add_comment on the same Task receiver; the method is explicitly private."
+        },
+        {
+          "kind": "ruby_used",
+          "file": "lib/rake/task.rb",
+          "symbol": "Rake.Task#transform_comments",
+          "line": 328,
+          "reason": "Public full_comment and comment call transform_comments on the same Task receiver; the method is explicitly private."
+        },
+        {
+          "kind": "ruby_used",
+          "file": "lib/rake/task.rb",
+          "symbol": "Rake.Task#first_sentence",
+          "line": 341,
+          "reason": "The block passed by public comment calls first_sentence while transforming Task comments; the method is explicitly private."
+        },
+        {
+          "kind": "ruby_used",
+          "file": "lib/rake/task.rb",
+          "symbol": "Rake.Task#format_trace_flags",
+          "line": 261,
+          "reason": "Public/protected invocation flow references format_trace_flags in trace interpolation; the method is explicitly private."
+        }
+      ],
+      "limitations": [
+        "Only five known-used helper facts are labelled; unreviewed findings are not automatically false positives.",
+        "Ruby command-security, whole-library deadness and independent recall are not measured here."
+      ]
+    },
+    {
+      "id": "terragoat-aws-declarations",
+      "kind": "terraform_policy",
+      "repo": "https://github.com/bridgecrewio/terragoat",
+      "ref": "729f8da62c6a85ce4af5ad3d123de97776d954c4",
+      "checkout": "terragoat",
+      "license": "Apache-2.0",
+      "license_file": "LICENSE",
+      "source_class": "deliberately_vulnerable_training_repository",
+      "scan_root": "terraform/aws",
+      "languages": [
+        "hcl"
+      ],
+      "source_files": [
+        {
+          "path": "terraform/aws/ec2.tf",
+          "sha256": "5fcc2d4cf052fb2032d9470179f63a903d280b99cf5b1bb2db6e15200ecd9428"
+        },
+        {
+          "path": "terraform/aws/db-app.tf",
+          "sha256": "242feb266e4ed7fc3a2725f88bade8b0029d46bbda3d66b60c4936381f7deda9"
+        },
+        {
+          "path": "terraform/aws/providers.tf",
+          "sha256": "edb39e696e7ac40f8f95d27e767435a129e4a651e54046ea2a3adcd12908928d"
+        },
+        {
+          "path": "README.md",
+          "sha256": "de6f87a64f93f53b793cdfea399792a565b29a288924d33630e059f7ff25b966"
+        },
+        {
+          "path": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        }
+      ],
+      "expectations": [
+        {
+          "kind": "terraform_policy",
+          "file": "terraform/aws/ec2.tf",
+          "resource": "aws_security_group.web-node",
+          "rule_id": "SKY-D400",
+          "status": "unsafe",
+          "line": 77,
+          "reason": "Inline ingress at lines 91-95 declares TCP port 22 from literal 0.0.0.0/0. No count/for_each, overridden provider, or module expansion is needed for this declaration fact. README also independently lists CKV_AWS_24 for this resource."
+        },
+        {
+          "kind": "terraform_policy",
+          "file": "terraform/aws/db-app.tf",
+          "resource": "aws_db_instance.default",
+          "rule_id": "SKY-D401",
+          "status": "unsafe",
+          "line": 1,
+          "reason": "Direct new DB has storage_encrypted=false at line 19; no snapshot/replica/restore/S3-import creation context, count/for_each or custom provider. README independently lists CKV_AWS_16."
+        },
+        {
+          "kind": "terraform_policy",
+          "file": "terraform/aws/db-app.tf",
+          "resource": "aws_security_group.default",
+          "rule_id": "SKY-D400",
+          "status": "not_applicable",
+          "line": 117,
+          "reason": "This group has no inline ingress; its separately declared rules are evaluated as their own resources. This does not establish group or deployment safety."
+        },
+        {
+          "kind": "terraform_policy",
+          "file": "terraform/aws/db-app.tf",
+          "resource": "aws_security_group_rule.egress",
+          "rule_id": "SKY-D400",
+          "status": "not_applicable",
+          "line": 145,
+          "reason": "Explicit type=egress; D400 is administrative ingress only. This does not earn safe/TN credit."
+        },
+        {
+          "kind": "terraform_policy",
+          "file": "terraform/aws/db-app.tf",
+          "resource": "aws_security_group_rule.ingress",
+          "rule_id": "SKY-D400",
+          "status": "unknown",
+          "line": 136,
+          "reason": "The bounded source model does not interpret numeric-string port fields; CIDR is also a resource-derived expression. Record unresolved policy coverage, not a safe/TN result."
+        }
+      ],
+      "limitations": [
+        "TerraGoat explicitly is vulnerable-by-design training material, not production or deployment-accuracy evidence.",
+        "Declaration facts do not prove Internet reachability, Terraform application or account state.",
+        "Unknown and not-applicable expectations must not count as safe/TN outcomes; unsupported AWS resource families remain visible."
+      ]
+    }
+  ]
+}

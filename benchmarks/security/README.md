@@ -95,8 +95,9 @@ deserialization/path traversal with matched safe guards.
 
 ### Additional paired controls
 
-The current default suite has 94 cases and 101 expectations: 54 required
-findings and 47 absence controls. All 84 earlier case objects remain unchanged.
+The default suite has 132 cases and 141 expectations: 71 required findings
+and 70 absence controls. All 94 cases from the preceding stage retain their
+original labels.
 
 Rust now pairs its command finding with a fixed-command control and includes a
 path-argument finding. Dart adds command unsafe/safe and path unsafe/basename
@@ -110,3 +111,32 @@ labels. This first Ruby engine does not claim Rails SQL, request provenance,
 path, SSRF, or quality coverage. Cloud policy contracts have their own
 [file/resource-based runner](../cloud/README.md), since application source-file
 counts cannot validate Terraform-only inputs.
+
+### TLS, hashes, randomness and logging
+
+The next 38 cases add 17 required warnings and 23 absence controls. They cover
+TLS verification in Python and TypeScript, Python MD5/SHA1 use, security-sensitive
+random values, and credentials reaching logs. Controls include real providers
+and similarly named helpers, explicit nonsecurity hash use, strong generators,
+redaction, response metadata, and container alias changes. An absence label
+applies to the named rule, not every possible security property of the program.
+
+The random-generator pairs exposed stale import identities after reassignment.
+Both a weak provider replaced with `SystemRandom` and a `secrets` alias replaced
+with `random.Random` now use the actual binding at the credential sink. Separate
+tests cover local shadows, branches, later assignments and visible mutations.
+Opaque replacements do not certify cryptographic safety. See Python's
+[random](https://docs.python.org/3/library/random.html) and
+[secrets](https://docs.python.org/3/library/secrets.html) provider contracts.
+One direct imported-module method capture before alias rebinding remains a
+documented miss in the [gap inventory](../GAPS.md), with its unsafe expectation
+preserved as a strict expected-failure test.
+
+The optional Bandit adapter maps B501 and B311 to the corresponding native rule
+families. B324 maps to MD5/SHA1 only when its exact algorithm-specific message
+identifies that hash. Ambiguous algorithms stay unmapped. Adapter tests use
+recorded-format JSON; they do not establish a live Bandit comparison score.
+
+Independent, pinned Ruby and Terraform facts have an
+[offline runner](../holdouts/README.md). Those are selected upstream facts, not
+additional synthetic cases or whole-repository accuracy labels.
