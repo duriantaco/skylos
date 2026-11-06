@@ -358,3 +358,21 @@ def test_harden_leaves_out_wrapped_inline_and_outside_servers(project):
     allow = out.split('"allowedMcpServers"')[1].split("Cursor:")[0]
     assert "server.js" in allow and "./server.js" in allow
     assert "timeout" not in allow and "require" not in allow and "/opt/outside" not in allow
+
+
+@needs_engine
+def test_ca9_duplicate_key_flag_alone_needs_the_user(project, monkeypatch):
+    from ca9 import api
+
+    real = api.agent_config
+
+    def flagged(root):
+        answer = real(root)
+        for server in answer["inventory"]["mcp_servers"]:
+            server["duplicate_keys"] = True
+        return answer
+
+    monkeypatch.setattr(api, "agent_config", flagged)
+    servers = {"x": {"command": "npx", "args": ["-y", "some-mcp@1.4.2"]}}
+    decision, reason = write(project, ".mcp.json", mcp_json(servers))
+    assert decision == "ask" and "duplicate keys" in reason
