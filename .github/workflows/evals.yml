@@ -1,0 +1,59 @@
+name: Scoped Evals
+
+on:
+  pull_request:
+  push:
+    branches: [main, feat/eval-workflow]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+
+      - name: Install Python and test dependencies
+        run: |
+          uv python install 3.12
+          uv venv --python 3.12
+          uv pip install -e ".[test]"
+
+      - name: Test eval capture, identity and comparisons
+        run: |
+          .venv/bin/python -B -m pytest -q \
+            test/test_eval_workflow.py \
+            test/test_eval_report.py \
+            test/test_eval_identity.py \
+            test/test_benchmark_result_capture.py \
+            test/test_eval_hooks.py \
+            test/test_eval_hook_bootstrap.py \
+            test/test_install_eval_hooks.py \
+            test/test_regression_delta.py
+
+      - name: Check selected head contracts
+        shell: bash
+        run: |
+          set +e
+          .venv/bin/python -B scripts/eval_check.py baseline \
+            --suite security \
+            --case ssrf-tainted-host \
+            --case ssrf-fixed-host-path \
+            --output "$RUNNER_TEMP/skylos-evals/security-head"
+          security_status=$?
+          .venv/bin/python -B scripts/eval_check.py baseline \
+            --suite dead-code \
+            --case fastapi-route-used \
+            --output "$RUNNER_TEMP/skylos-evals/fastapi-head"
+          dead_code_status=$?
+          if [ "$security_status" -ne 0 ] || [ "$dead_code_status" -ne 0 ]; then
+            exit 1
+          fi
