@@ -449,6 +449,195 @@
           "quality": ["helper"]
         }
       }
+    },
+    {
+      "id": "quality-corpus-rust-unreachable",
+      "path": "fixtures/quality_corpus_rust_unreachable",
+      "description": "rust unreachable quality source contract.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "control_flow"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Expected rule identities and locations fixed before native scan; source is never executed."
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            "SKY-UC002"
+          ]
+        },
+        "absent": {
+          "quality": [
+            "SKY-Q305"
+          ]
+        }
+      }
+    },
+    {
+      "id": "quality-corpus-rust-conditional-return",
+      "path": "fixtures/quality_corpus_rust_conditional_return",
+      "description": "rust conditional return quality source contract.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "control_flow",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Expected rule identities and locations fixed before native scan; source is never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "quality": [
+            "SKY-UC002",
+            "SKY-Q305"
+          ]
+        }
+      }
+    },
+    {
+      "id": "quality-corpus-rust-duplicate-bodies",
+      "path": "fixtures/quality_corpus_rust_duplicate_bodies",
+      "description": "rust duplicate bodies quality source contract.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "control_flow"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Expected rule identities and locations fixed before native scan; source is never executed."
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            "SKY-Q305"
+          ]
+        },
+        "absent": {
+          "quality": [
+            "SKY-UC002"
+          ]
+        }
+      }
+    },
+    {
+      "id": "quality-corpus-rust-distinct-bodies",
+      "path": "fixtures/quality_corpus_rust_distinct_bodies",
+      "description": "rust distinct bodies quality source contract.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "control_flow",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Expected rule identities and locations fixed before native scan; source is never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "quality": [
+            "SKY-UC002",
+            "SKY-Q305"
+          ]
+        }
+      }
+    },
+    {
+      "id": "quality-corpus-csharp-unreachable",
+      "path": "fixtures/quality_corpus_csharp_unreachable",
+      "description": "csharp unreachable quality source contract.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "control_flow"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Expected rule identities and locations fixed before native scan; source is never executed."
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            "SKY-UC002"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "quality-corpus-csharp-conditional-return",
+      "path": "fixtures/quality_corpus_csharp_conditional_return",
+      "description": "csharp conditional return quality source contract.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "control_flow",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Expected rule identities and locations fixed before native scan; source is never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "quality": [
+            "SKY-UC002"
+          ]
+        }
+      }
+    },
+    {
+      "id": "quality-corpus-csharp-conditional-compilation",
+      "path": "fixtures/quality_corpus_csharp_conditional_compilation",
+      "description": "csharp conditional compilation quality source contract.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "control_flow",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Expected rule identities and locations fixed before native scan; source is never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "quality": [
+            "SKY-UC002"
+          ]
+        }
+      }
     }
   ]
 }

@@ -7,7 +7,7 @@ Ruby interpreter, Rails route evaluator, or whole-project type resolver.
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from skylos.visitors.base import Definition
@@ -41,6 +41,8 @@ class Scope:
     method: str = ""
     locals: set[str] = field(default_factory=set)
     bindings: dict[str, str] = field(default_factory=dict)
+    assignments: Counter = field(default_factory=Counter)
+    written: set[str] = field(default_factory=set)
 
 
 class RubyCore:
@@ -57,6 +59,9 @@ class RubyCore:
         self.methods = {}
         self.dynamic_dispatch = []
         self.rails_classes = set()
+        self.alias_bindings = defaultdict(list)
+        self.class_aliases = {}
+        self.alias_budget_exhausted = False
         self._referenced = set()
 
     def text(self, node):
@@ -106,6 +111,28 @@ class RubyCore:
         if body is None:
             return
         self.scopes.append(Scope(body, owner, bool(owner) or singleton))
+        pending = list(body.named_children)
+        while pending:
+            node = pending.pop()
+            if node.type in {
+                "class",
+                "module",
+                "method",
+                "singleton_method",
+                "singleton_class",
+            }:
+                continue
+            if node.type in {"assignment", "operator_assignment"}:
+                left = node.child_by_field_name("left")
+                if left and left.type in {"constant", "scope_resolution"}:
+                    self.alias_bindings[self._class_name(left, owner)].append(
+                        (
+                            node.child_by_field_name("right"),
+                            owner,
+                            node.type == "assignment" and node.parent == body,
+                        )
+                    )
+            pending.extend(node.named_children)
         visibility = "public"
         updates = []
         for node in body.named_children:
@@ -167,18 +194,56 @@ class RubyCore:
             for definition in self.methods.get(canonical, []):
                 definition.is_exported = not mode.startswith("private")
 
-    def _constant(self, node, scope):
+    def _constant(self, node, scope, visited=None, at=None):
         if node is None or node.type not in {"constant", "scope_resolution"}:
             return ""
         value = self.text(node).removeprefix("::").replace("::", ".")
         if self.text(node).startswith("::"):
-            return value
+            return self._expand_alias(value, visited, at)
         parts = scope.owner.split(".")
         for size in range(len(parts), -1, -1):
             candidate = ".".join([*parts[:size], value])
-            if candidate in self.classes:
-                return candidate
+            candidate_parts = candidate.split(".")
+            if candidate in self.classes or any(
+                ".".join(candidate_parts[:end]) in self.class_aliases
+                for end in range(1, len(candidate_parts) + 1)
+            ):
+                return self._expand_alias(candidate, visited, at)
+        return self._expand_alias(value, visited, at)
+
+    def _expand_alias(self, value, visited=None, at=None):
+        visited = set() if visited is None else visited
+        if len(visited) >= 64:
+            self.alias_budget_exhausted = True
+            return ""
+        parts = value.split(".")
+        for size in range(len(parts), 0, -1):
+            alias = ".".join(parts[:size])
+            if alias not in self.class_aliases:
+                continue
+            if alias in visited:
+                return ""
+            node, owner = self.class_aliases[alias]
+            if at is not None and node.start_byte >= at:
+                return value
+            target = self._constant(
+                node, Scope(node, owner), visited | {alias}, at=node.start_byte
+            )
+            return ".".join([target, *parts[size:]]) if target else ""
         return value
+
+    def _class_method_overridden(self, owner, method):
+        pending, visited = [owner], set()
+        while pending:
+            current = pending.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            if self.method_name(current, method, True) in self.methods:
+                return True
+            if current in self.classes:
+                pending.extend(self.classes[current].base_classes)
+        return False
 
     def _receiver(self, node, scope):
         if node is None or node.type == "self":
@@ -264,25 +329,73 @@ class RubyCore:
                 "class",
                 "module",
                 "singleton_class",
+                "block",
+                "do_block",
+                "lambda",
             }:
                 continue
             if node.type in {"assignment", "operator_assignment"}:
                 left = node.child_by_field_name("left")
                 if left and left.type == "identifier":
                     name = self.text(left)
-                    scope.locals.add(name)
                     assignments.append((name, node.child_by_field_name("right")))
-            if node.type in {"block_parameters", "lambda_parameters"}:
-                scope.locals.update(
-                    self.text(n) for n in descendants(node) if n.type == "identifier"
-                )
             pending.extend(node.named_children)
-        counts = Counter(name for name, _ in assignments)
-        for name, right in assignments:
-            if counts[name] == 1:
-                owner, singleton = self._receiver(right, scope)
-                if owner and not singleton:
-                    scope.bindings[name] = owner
+        scope.assignments = Counter(name for name, _ in assignments)
+
+    def _parameter_names(self, parameters):
+        if parameters is None:
+            return set()
+        names = set()
+        for node in parameters.named_children:
+            if node.type == "identifier":
+                names.add(self.text(node))
+            elif node.type == "destructured_parameter":
+                names.update(self._parameter_names(node))
+            else:
+                name = node.child_by_field_name("name")
+                if name and name.type == "identifier":
+                    names.add(self.text(name))
+        return names
+
+    def _walk_closure(self, node, scope):
+        parameters = node.child_by_field_name("parameters")
+        body = node.child_by_field_name("body")
+        if node.type == "lambda" and body and body.type in {"block", "do_block"}:
+            body = body.child_by_field_name("body")
+        child = Scope(
+            body,
+            scope.owner,
+            scope.singleton,
+            scope.method,
+            locals=set(scope.locals),
+            bindings=dict(scope.bindings),
+        )
+        parameters_ = self._parameter_names(parameters)
+        child.locals.update(parameters_)
+        for name in parameters_:
+            child.bindings.pop(name, None)
+        self._prepare_locals(child)
+        self._walk(parameters, child)
+        self._walk(body, child)
+        # Captures can write existing outer locals; parameters and newly
+        # introduced block locals cannot replace their outer namesakes.
+        outer_writes = (child.written & scope.locals) - parameters_
+        for name in outer_writes:
+            scope.bindings.pop(name, None)
+        scope.written.update(outer_writes)
+
+    def _assignment_names(self, node):
+        if node is None:
+            return set()
+        if node.type == "identifier":
+            return {self.text(node)}
+        if node.type in {"left_assignment_list", "rest_assignment"}:
+            return {
+                name
+                for child in node.named_children
+                for name in self._assignment_names(child)
+            }
+        return set()
 
     def _walk(self, node, scope):
         if node is None or (
@@ -290,6 +403,31 @@ class RubyCore:
             and node.type
             in {"class", "module", "method", "singleton_method", "singleton_class"}
         ):
+            return
+        if node.type in {"block", "do_block", "lambda"}:
+            self._walk_closure(node, scope)
+            return
+        if node.type in {"assignment", "operator_assignment"}:
+            left = node.child_by_field_name("left")
+            right = node.child_by_field_name("right")
+            owner, singleton = self._receiver(right, scope)
+            names = self._assignment_names(left)
+            scope.locals.update(names)
+            scope.written.update(names)
+            for name in names:
+                scope.bindings.pop(name, None)
+            if (
+                left
+                and left.type == "identifier"
+                and scope.assignments[self.text(left)] == 1
+                and node.type == "assignment"
+                and owner
+                and not singleton
+            ):
+                scope.bindings[self.text(left)] = owner
+            if not names:
+                self._walk(left, scope)
+            self._walk(right, scope)
             return
         if node.type in {"constant", "scope_resolution"}:
             self._ref(self._constant(node, scope), scope)
@@ -359,7 +497,7 @@ class RubyCore:
                 and scope.owner in self.rails_classes
                 and not scope.method
             ):
-                if self.method_name(scope.owner, method, True) not in self.methods:
+                if not self._class_method_overridden(scope.owner, method):
                     for arg in args:
                         if arg.type == "simple_symbol":
                             self._resolve_call(
@@ -437,21 +575,45 @@ class RubyCore:
         if self.root_node is None or self.root_node.has_error:
             return
         self._collect(self.root_node)
+        self.class_aliases = {
+            name: (values[0][0], values[0][1])
+            for name, values in self.alias_bindings.items()
+            if len(values) == 1
+            and name not in self.classes
+            and values[0][2]
+            and values[0][0] is not None
+            and values[0][0].type in {"constant", "scope_resolution"}
+        }
         for name, node in self.base_nodes.items():
-            self.classes[name].base_classes = [
-                self._constant(node, Scope(node, name.rpartition(".")[0]))
-            ]
+            self.alias_budget_exhausted = False
+            base = self._constant(
+                node, Scope(node, name.rpartition(".")[0]), at=node.start_byte
+            )
+            self.classes[name].base_classes = [base]
+            if not base:
+                self._uncertain(
+                    name,
+                    Scope(node, name),
+                    node,
+                    "Ruby class ancestry alias resolution limit"
+                    if self.alias_budget_exhausted
+                    else "unresolved Ruby class ancestry alias",
+                )
         action_controller_shadowed = any(
             n == "ActionController" or n.startswith("ActionController.")
-            for n in self.classes
+            for n in set(self.classes) | set(self.alias_bindings)
         )
         if not action_controller_shadowed:
-            self.rails_classes = {
-                name
-                for name, definition in self.classes.items()
-                if set(definition.base_classes)
-                & {"ActionController.Base", "ActionController.API"}
-            }
+            children = defaultdict(set)
+            for name, definition in self.classes.items():
+                for base in definition.base_classes:
+                    children[base].add(name)
+            pending = ["ActionController.Base", "ActionController.API"]
+            while pending:
+                for name in children[pending.pop()]:
+                    if name not in self.rails_classes:
+                        self.rails_classes.add(name)
+                        pending.append(name)
         for scope in self.scopes:
             self._prepare_locals(scope)
             self._walk(scope.body, scope)

@@ -533,8 +533,8 @@ so the normal benchmark keeps exact TP/FP/FN/TN coverage.
 
 ### C++ and Ruby control pairs
 
-The current default suite has 42 cases and 216 labels: 73 unused and 143 used.
-All 37 earlier case objects and their labels remain unchanged.
+The current default suite has 44 cases and 220 labels: 75 unused and 145 used.
+All 42 cases from the preceding stage retain their original labels.
 
 The default corpus also includes C++ direct-call and address-taken callback
 pairs, plus Ruby private call chains, same-named methods on different owners,
@@ -542,6 +542,13 @@ and Rails callback versus ordinary-class lookalikes. Every case preserves used
 and unused labels. Ruby classes and public methods remain possible external
 API; dynamic dispatch is conservative. Generic grep name matches do not prove a
 Ruby receiver and cannot hide a native Ruby finding.
+
+Two further pairs cover Ruby block-parameter scope and Rails callbacks inherited
+through a source-visible `ApplicationController` in the same file. A closure's
+parameter does not shadow a method outside that closure. Inherited callback
+registration requires a supported ancestry chain and no visible override of the
+registration method. Genuine unused siblings stay reported. Cross-file Rails
+ancestry remains outside this engine's type-resolution model.
 
 These original synthetic cases add regression coverage. Independent pinned
 holdouts for the newer languages are still needed; passing the default corpus

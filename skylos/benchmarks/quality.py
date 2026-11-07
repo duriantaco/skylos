@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 import shutil
 import tempfile
 import time
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from skylos.analyzer import analyze
+from skylos.benchmarks._analysis_validation import analysis_issues
 
 QUALITY_TAXONOMY: dict[str, str] = {
     "api_design": "Parameter shape, call surface, and interface ergonomics.",
@@ -42,6 +44,82 @@ DEFAULT_SCAN = {
     "grep_verify": False,
 }
 MAX_SECONDS_FAILURE_GRACE_RATIO = 0.10
+
+_QUALITY_LANGUAGES = {
+    "python": "Python",
+    "typescript": "TypeScript",
+    "javascript": "TypeScript",
+    "go": "Go",
+    "java": "Java",
+    "rust": "Rust",
+    "csharp": "C#",
+}
+_SOURCE_LANGUAGES = {
+    **dict.fromkeys((".py", ".pyw", ".pyi"), "python"),
+    **dict.fromkeys((".ts", ".tsx", ".mts", ".cts"), "typescript"),
+    **dict.fromkeys((".js", ".jsx", ".mjs", ".cjs"), "javascript"),
+    ".go": "go",
+    ".java": "java",
+    ".rs": "rust",
+    ".cs": "csharp",
+}
+
+
+def _case_languages(case, case_path):
+    declared = case.get("languages")
+    if declared is not None:
+        if (
+            not isinstance(declared, list)
+            or not declared
+            or any(
+                not isinstance(language, str) or language not in _QUALITY_LANGUAGES
+                for language in declared
+            )
+        ):
+            return []
+        return declared
+    paths = case_path.rglob("*") if case_path.is_dir() else [case_path]
+    return sorted(
+        {
+            _SOURCE_LANGUAGES[path.suffix.lower()]
+            for path in paths
+            if path.suffix.lower() in _SOURCE_LANGUAGES
+        }
+    )
+
+
+def _quality_analysis_issues(case, case_path, result):
+    issues = analysis_issues(result, scanner="skylos")
+    languages = _case_languages(case, case_path)
+    if not languages:
+        issues.append("case needs supported quality source languages")
+    if (case.get("scan") or {}).get("enable_quality", True) is not True:
+        issues.append("quality analysis is disabled")
+    if not isinstance(result, Mapping):
+        return issues
+    summary = result.get("analysis_summary")
+    counts = summary.get("languages") if isinstance(summary, Mapping) else None
+    if not isinstance(counts, Mapping) or any(
+        type(counts.get(_QUALITY_LANGUAGES[language])) is not int
+        or counts[_QUALITY_LANGUAGES[language]] <= 0
+        for language in languages
+    ):
+        issues.append("positive native coverage for every case language is required")
+    categories = {
+        category
+        for mode in ("present", "absent")
+        for category in case.get("expect", {}).get(mode, {})
+    }
+    for category in categories:
+        findings = result.get(category, [])
+        if not isinstance(findings, list) or any(
+            not isinstance(finding, Mapping)
+            or not isinstance(finding.get("rule_id"), str)
+            or not finding["rule_id"].strip()
+            for finding in findings
+        ):
+            issues.append(f"{category} needs finding objects with rule IDs")
+    return list(dict.fromkeys(issues))
 
 
 @dataclass(frozen=True)
@@ -231,6 +309,11 @@ def _scan_case(case_path: Path, scan: dict[str, Any] | None = None) -> dict[str,
                 enable_danger=bool(scan_cfg.get("enable_danger", False)),
                 enable_secrets=bool(scan_cfg.get("enable_secrets", False)),
                 grep_verify=bool(scan_cfg.get("grep_verify", False)),
+                grep_cache=False,
+                trace_file=False,
+                enable_ai_defects=False,
+                enable_dependency_hallucinations=False,
+                enable_sca=False,
             )
         finally:
             analyzer_logger.setLevel(prev_level)
@@ -263,8 +346,12 @@ def _evaluate_expectations(
                 matched = sorted(
                     {
                         token
-                        for tokens in finding_tokens
-                        if symbol in tokens
+                        for finding, tokens in zip(findings, finding_tokens)
+                        if (
+                            finding.get("rule_id") == symbol
+                            if symbol.startswith("SKY-")
+                            else symbol in tokens
+                        )
                         for token in tokens
                     }
                 )
@@ -348,6 +435,39 @@ def run_case(case: dict[str, Any], manifest_path: str | Path) -> dict[str, Any]:
     result = _scan_case(case_path, scan=case.get("scan"))
     elapsed_seconds = time.perf_counter() - start
 
+    issues = _quality_analysis_issues(case, case_path, result)
+    if issues:
+        return {
+            "id": case["id"],
+            "path": str(case_path),
+            "description": case.get("description", ""),
+            "taxonomy": list(case.get("taxonomy", [])),
+            "importance": case.get("importance", "high"),
+            "elapsed_seconds": round(elapsed_seconds, 4),
+            "scored": False,
+            "analysis_status": "incomplete",
+            "analysis_issues": issues,
+            "findings_by_category": {},
+            "present_total": 0,
+            "present_matched": 0,
+            "absent_total": 0,
+            "absent_violations": 0,
+            "scores": dict.fromkeys(
+                ("presence_recall", "absence_guard", "latency_score", "overall_score"),
+                0.0,
+            ),
+            "failures": [
+                QualityBenchmarkFailure(
+                    case_id=case["id"],
+                    failure_type="analysis",
+                    category="analysis",
+                    mode="completeness",
+                    expected="complete quality analysis before scoring",
+                    found=issues,
+                ).to_dict()
+            ],
+        }
+
     (
         failures,
         present_total,
@@ -392,6 +512,9 @@ def run_case(case: dict[str, Any], manifest_path: str | Path) -> dict[str, Any]:
         "taxonomy": list(case.get("taxonomy", [])),
         "importance": case.get("importance", "high"),
         "elapsed_seconds": round(elapsed_seconds, 4),
+        "scored": True,
+        "analysis_status": "complete",
+        "analysis_issues": [],
         "findings_by_category": findings_by_category,
         "present_total": present_total,
         "present_matched": present_matched,
@@ -408,6 +531,11 @@ def run_manifest(
     manifest = load_manifest(manifest_path)
     cases = validate_manifest(manifest, manifest_path)
     selected = set(selected_cases or set())
+    unknown = selected - {case["id"] for case in cases}
+    if unknown:
+        raise ValueError(
+            "unknown quality benchmark case id(s): " + ", ".join(sorted(unknown))
+        )
 
     case_results = []
     weighted_scores = {
@@ -428,25 +556,31 @@ def run_manifest(
         case_results.append(result)
 
         weight = IMPORTANCE_WEIGHTS[result["importance"]]
-        total_weight += weight
         total_elapsed += result["elapsed_seconds"]
-
-        for score_name, score_value in result["scores"].items():
-            weighted_scores[score_name] += score_value * weight
+        if result["scored"]:
+            total_weight += weight
+            for score_name, score_value in result["scores"].items():
+                weighted_scores[score_name] += score_value * weight
 
         for label in result["taxonomy"]:
             bucket = taxonomy_totals.setdefault(
                 label,
                 {
                     "case_count": 0.0,
+                    "scored_case_count": 0.0,
+                    "unscored_case_count": 0.0,
                     "weight": 0.0,
                     "overall_score": 0.0,
                     "failures": 0.0,
                 },
             )
             bucket["case_count"] += 1
-            bucket["weight"] += weight
-            bucket["overall_score"] += result["scores"]["overall_score"] * weight
+            if result["scored"]:
+                bucket["scored_case_count"] += 1
+                bucket["weight"] += weight
+                bucket["overall_score"] += result["scores"]["overall_score"] * weight
+            else:
+                bucket["unscored_case_count"] += 1
             bucket["failures"] += len(result["failures"])
 
     failure_count = sum(len(case["failures"]) for case in case_results)
@@ -470,14 +604,27 @@ def run_manifest(
         taxonomy_summary[label] = {
             "description": QUALITY_TAXONOMY[label],
             "case_count": int(bucket["case_count"]),
+            "scored_case_count": int(bucket["scored_case_count"]),
+            "unscored_case_count": int(bucket["unscored_case_count"]),
             "weighted_score": round(bucket["overall_score"] / weight, 2),
             "failure_count": int(bucket["failures"]),
         }
 
     pass_count = sum(1 for case in case_results if not case["failures"])
+    scored_count = sum(case["scored"] for case in case_results)
+    unscored_count = len(case_results) - scored_count
     return {
         "manifest": str(Path(manifest_path).resolve()),
         "case_count": len(case_results),
+        "scored_case_count": scored_count,
+        "unscored_case_count": unscored_count,
+        "analysis_status": "incomplete"
+        if unscored_count
+        else "complete"
+        if scored_count
+        else "not_run",
+        "metrics_scoped_to_scored_cases": True,
+        **({"score_unavailable_reason": "no_valid_cases"} if not scored_count else {}),
         "pass_count": pass_count,
         "failure_count": failure_count,
         "total_elapsed_seconds": round(total_elapsed, 4),
@@ -501,6 +648,11 @@ def format_summary(summary: dict[str, Any]) -> str:
         ),
         f"Quality benchmark total time: {summary['total_elapsed_seconds']:.4f}s",
     ]
+    if "scored_case_count" in summary:
+        lines.append(
+            f"Scored cases: {summary['scored_case_count']}; "
+            f"unscored cases: {summary['unscored_case_count']} (incomplete scans earn no score)"
+        )
 
     if summary["taxonomy"]:
         lines.append("Taxonomy:")
@@ -511,7 +663,13 @@ def format_summary(summary: dict[str, Any]) -> str:
             )
 
     for case in summary["cases"]:
-        status = "PASS" if not case["failures"] else "FAIL"
+        status = (
+            "UNSCORED"
+            if not case.get("scored", True)
+            else "PASS"
+            if not case["failures"]
+            else "FAIL"
+        )
         lines.append(
             f"{status} {case['id']} [{case['importance']}] "
             f"score={case['scores']['overall_score']} "

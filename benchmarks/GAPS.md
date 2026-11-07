@@ -7,10 +7,10 @@ corpus and independent repository holdout answer different questions.
 | Area | Evidence we have | Gap and next useful contract |
 | --- | --- | --- |
 | C++ dead code | Native conservative file-local engine; paired direct calls and address-taken callbacks in the shared corpus | Pinned independent C++ labels; templates, overloads and macros are not general supported proof |
-| Ruby/Rails | Paired private-method owners and literal controller callbacks; explicit Kernel command pairs; five independently labelled used helpers in pinned Rake source | Ruby unused-symbol recall and independent Rails labels; Rails request/SQL provenance, broader security and quality detectors. Override/dynamic cases stay unknown |
-| Terraform/AWS | 16 parser/resource contracts; five pinned TerraGoat facts: two unsafe, two not applicable and one unknown | TerraGoat is training code, not production deployment evidence. Its 59 unsupported resources remain visible. Need independent production labels, IAM, S3, module/data evaluation, CloudFormation, Kubernetes RBAC, Helm and other providers |
+| Ruby/Rails | Paired private-method owners, closure scopes and same-file inherited controller callbacks; explicit Kernel command pairs; five independently labelled used helpers in pinned Rake source | Cross-file Rails ancestry and independent Rails used/unused labels; Rails request/SQL provenance, broader security and quality detectors. Override/dynamic cases stay unknown |
+| Terraform/AWS | 22 parser/resource contracts, including sibling locals and modern ingress TFJSON; five pinned TerraGoat facts: two unsafe, two not applicable and one unknown | TerraGoat is training code, not production deployment evidence. Its 59 unsupported resources remain visible. Need independent production labels, IAM, S3, module/data evaluation, CloudFormation, Kubernetes RBAC, Helm and other providers |
 | Security rule breadth | Shared positive/control pairs now include Python/TS TLS (`SKY-D210`), Python hashes (`SKY-D207`/`208`), randomness (`SKY-D250`) and sensitive logs (`SKY-D251`), plus Rust/Dart command/path cases | Add counterparts for other supported language/rule combinations; these source contracts do not prove deployed exploitability or unsupported detector coverage |
-| Quality evidence | Shared corpus mainly Python and TypeScript, with Go/Java examples; Rust has native quality checks | Add Rust/C# shared controls. PHP, Kotlin and Dart need detector capability before an empty scan can be labelled safe |
+| Quality evidence | Shared Python/TS/Go/Java corpus plus Rust/C# unreachable-code and duplicate-body controls; incomplete/unsupported scans are unscored failures | Broader native quality-rule and independent repository labels. PHP, Kotlin, Dart, Ruby, C++ and Shell need detector capability before an empty quality scan can be labelled safe |
 | Independent dead-code evidence | Existing pinned repository comparisons, a small Python fresh holdout and five known-used Rake methods | Extend independently labelled holdouts to C#, Kotlin, Rust, Dart, PHP and C++; broaden Ruby labels to unused symbols and frameworks. Keep holdout labels separate from tuning fixtures |
 | Framework evidence | Existing framework repository corpus checks count drift | Add per-symbol used/unused labels and negative controls; a lower finding count alone does not prove fewer false positives |
 | Existing challenge cases | Separate adversarial manifests preserve unresolved cases | The C# executable entry class and Kotlin fixed-format `printf` argv control still have known false positives; keep their labels fixed while investigating |
@@ -26,11 +26,19 @@ covered languages. Expand cloud rule families with resource coverage and explici
 unknown outcomes. Avoid repository-name exceptions or suppressions to improve a
 benchmark total.
 
-The default manifest inventory also lacks the opposite polarity for C#
-`SKY-D233`, Go `SKY-D212`, Java `SKY-D216`/`229`/`230`/`239`, PHP `SKY-D255`,
-Shell `SKY-D212`, and TS `SKY-D211`. This is a corpus inventory result; it is
+The default manifest inventory still lacks the opposite polarity for Go
+`SKY-D212`, Java `SKY-D216`/`229`/`230`/`239`, Shell `SKY-D212`, and TS
+`SKY-D211`. C# `SKY-D233` and PHP `SKY-D255` now have both polarities.
+This is a corpus inventory result; it is
 not a reproduced detector bug. Rust and Dart now have both polarities for
 their supported command/path rules (and Dart SSRF).
+
+The PHP include guard now requires an explicit strict comparison against a
+known allowlist; loose string-only comparisons remain conservative warnings.
+Proving their operand types is a remaining precision task. C++ similarly keeps
+its conservative all-identifier reference policy: a same-named local may retain
+an otherwise unused helper until owner/binding evidence is modelled. Neither
+limit should be hidden by a repository-specific suppression.
 
 The [pinned upstream runner](holdouts/README.md) verifies checkout identity,
 source hashes and positive parse coverage before matching selected facts.

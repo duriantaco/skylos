@@ -3160,6 +3160,185 @@
         },
         "absent": {}
       }
+    },
+    {
+      "id": "review-php-strict-page-allowlist",
+      "path": "fixtures/review_php_strict_page_allowlist",
+      "description": "A strict comparison against two source literals permits only those exact files.",
+      "languages": [
+        "php"
+      ],
+      "taxonomy": [
+        "path_traversal",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Source and expectations fixed before native scan; fixture program never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D255"
+          ]
+        }
+      }
+    },
+    {
+      "id": "review-php-loose-boolean-allowlist",
+      "path": "fixtures/review_php_loose_boolean_allowlist",
+      "description": "Loose PHP comparison against true accepts any nonempty path string; this does not constrain inclusion.",
+      "languages": [
+        "php"
+      ],
+      "taxonomy": [
+        "path_traversal"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Source and expectations fixed before native scan; fixture program never executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D255"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "review-php-tainted-allowlist",
+      "path": "fixtures/review_php_tainted_allowlist",
+      "description": "The attacker controls the allowed element as well as the page; strict equality is not trusted source proof.",
+      "languages": [
+        "php"
+      ],
+      "taxonomy": [
+        "path_traversal"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Source and expectations fixed before native scan; fixture program never executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D255"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "review-csharp-json-data-only",
+      "path": "fixtures/review_csharp_json_data_only",
+      "description": "System.Text.Json uses a source-selected data type and is not the unsafe formatter family.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "deserialization",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Source and expectations fixed before native scan; fixture program never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D233"
+          ]
+        }
+      }
+    },
+    {
+      "id": "review-csharp-formatter-named-lookalike",
+      "path": "fixtures/review_csharp_formatter_named_lookalike",
+      "description": "The source-defined helper returns a new plain object; it is unrelated to the framework formatter despite the same name.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "deserialization",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Source and expectations fixed before native scan; fixture program never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D233"
+          ]
+        }
+      }
+    },
+    {
+      "id": "review-csharp-newtonsoft-unsafe",
+      "path": "fixtures/review_csharp_newtonsoft_unsafe",
+      "description": "Actual Json.NET settings enable unrestricted polymorphic type names.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "deserialization"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Source and expectations fixed before native scan; fixture program never executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D233"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "review-csharp-settings-named-lookalike",
+      "path": "fixtures/review_csharp_settings_named_lookalike",
+      "description": "A source-defined display option and enum perform no deserialization; the property spelling alone is not security evidence.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "deserialization",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Source and expectations fixed before native scan; fixture program never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D233"
+          ]
+        }
+      }
     }
   ]
 }
