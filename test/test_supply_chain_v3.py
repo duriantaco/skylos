@@ -2686,3 +2686,27 @@ def test_symlinked_lockfile_is_unread_when_changed(tmp_path, relinked):
 
     assert ("web/package-lock.json: a symbolic link" in json.dumps(errors)) is relinked
     assert (upgrades["status"] == "incomplete") is relinked
+
+
+@pytest.mark.parametrize(
+    ("names", "filters", "job_cut", "block_cut"),
+    [(120, 1, True, False), (3, 1, False, False), (3, 120, False, True)],
+)
+def test_ci_inventory_marks_lists_it_had_to_cut(
+    tmp_path, monkeypatch, names, filters, job_cut, block_cut
+):
+    monkeypatch.delenv("SKYLOS_DIFF_BASE", raising=False)
+    _repo(tmp_path, {".github/workflows/release.yml": "on: push\n"})
+    raw = _ci_raw(secret_names=tuple(f"SECRET_{index:03d}" for index in range(names)))
+    raw["workflows"][0]["branch_filters"] = [f"b{index}" for index in range(filters)]
+
+    class Engine:
+        def ci_inventory(self, root, max_jobs=500):
+            return copy.deepcopy(raw)
+
+    block, _receipt = ci_inventory_block(tmp_path, Engine())
+
+    job = block["workflows"][0]["jobs"][0]
+    assert len(job["secrets"]["names"]) == min(names, 100)
+    assert (job.get("truncated") is True) is job_cut
+    assert block["truncated"] is block_cut

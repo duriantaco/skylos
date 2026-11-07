@@ -26,6 +26,8 @@ AGENT_STATUSES = frozenset({"complete", "partial"})
 MAX_WORKFLOWS = 200
 MAX_JOBS = 500
 MAX_LIST = 50
+MAX_CI_LIST = 100
+MAX_KEYS = 40
 MAX_HOOKS = 200
 MAX_SERVERS = 200
 MAX_TEXT = 200
@@ -161,7 +163,25 @@ def _relative(value: object) -> str | None:
     return pure.as_posix()
 
 
-def _bounded(value: Any, depth: int = 0) -> Any:
+class _Cut:
+    """Set when ``_bounded`` dropped part of a value."""
+
+    def __init__(self):
+        self.cut = False
+
+    def mark(self, dropped: bool) -> None:
+        if dropped:
+            self.cut = True
+
+
+def _bounded(
+    value: Any, depth: int = 0, *, limit: int = MAX_LIST, cut: _Cut | None = None
+) -> Any:
+    """``value`` with known shapes kept, strings redacted and lists cut at
+    ``limit``; ``cut`` records whether anything was dropped, so a cut list is
+    never uploaded as complete."""
+    if cut is None:
+        cut = _Cut()
     if isinstance(value, bool) or value is None:
         return value
     if isinstance(value, int):
@@ -171,26 +191,33 @@ def _bounded(value: Any, depth: int = 0) -> Any:
     if isinstance(value, str):
         return redact(value)
     if depth >= MAX_DEPTH:
+        cut.mark(True)
         return None
     if isinstance(value, list):
-        return [_bounded(item, depth + 1) for item in value[:MAX_LIST]]
+        cut.mark(len(value) > limit)
+        return [
+            _bounded(item, depth + 1, limit=limit, cut=cut) for item in value[:limit]
+        ]
     if isinstance(value, dict):
+        items = list(value.items())
+        cut.mark(len(items) > MAX_KEYS)
         kept = {}
-        for key, item in list(value.items())[:40]:
+        for key, item in items[:MAX_KEYS]:
             name = str(key)[:60]
             if name in {"host"}:
                 kept[name] = _host(item)
             elif name in {"url", "target"}:
                 kept[name] = redact(item)
             elif name in {"names", "publish_credentials"} and isinstance(item, list):
+                cut.mark(len(item) > limit)
                 kept[name] = [
                     entry
-                    for entry in item[:MAX_LIST]
+                    for entry in item[:limit]
                     if isinstance(entry, str)
                     and (_IDENTIFIER.fullmatch(entry) or entry == "id-token: write")
                 ]
             else:
-                kept[name] = _bounded(item, depth + 1)
+                kept[name] = _bounded(item, depth + 1, limit=limit, cut=cut)
         return kept
     return None
 
@@ -256,7 +283,13 @@ def ci_inventory_block(root: str | Path, api) -> tuple[dict | None, dict]:
         if len(workflows) >= MAX_WORKFLOWS:
             truncated = True
             break
-        kept = _bounded({key: item for key, item in workflow.items() if key != "jobs"})
+        workflow_cut = _Cut()
+        kept = _bounded(
+            {key: item for key, item in workflow.items() if key != "jobs"},
+            limit=MAX_CI_LIST,
+            cut=workflow_cut,
+        )
+        truncated = truncated or workflow_cut.cut
         kept["file"] = file
         kept["jobs"] = []
         for job in workflow.get("jobs") or []:
@@ -265,7 +298,11 @@ def ci_inventory_block(root: str | Path, api) -> tuple[dict | None, dict]:
             if jobs >= MAX_JOBS:
                 truncated = True
                 break
-            kept["jobs"].append(_bounded(job))
+            job_cut = _Cut()
+            row = _bounded(job, limit=MAX_CI_LIST, cut=job_cut)
+            if job_cut.cut:
+                row["truncated"] = True
+            kept["jobs"].append(row)
             jobs += 1
         workflows.append(kept)
     status = str(raw.get("status") or "")

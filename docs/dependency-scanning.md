@@ -733,8 +733,11 @@ Both are built from the repository top (the Git root), also when only a
 subfolder was scanned: workflows and agent configs live there, and a subfolder
 scan would otherwise upload a complete, empty CI list. File paths are
 repository-relative; `analysis_summary.supply_chain_checks` marks such blocks
-`scope: repository`. Both are bounded (200 workflows, 500 jobs, 50 items per
-list, 200 hooks and servers, 200-character strings), keep names instead of
+`scope: repository`. Both are bounded (200 workflows, 500 jobs, 100 items per
+CI list as in ca9, 50 per agent-hook list, 200 hooks and servers,
+200-character strings); a CI job whose own lists were cut carries
+`truncated: true`, and a cut workflow or job list sets the block's
+`truncated`, so a cut list is never read as complete. They keep names instead of
 values (secret names that are identifiers, `scheme://host` instead of URLs,
 token-like text replaced by `[redacted]`) and list only files Git tracks or
 does not ignore.
