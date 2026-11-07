@@ -1050,7 +1050,7 @@ def _secret_scannable(path: Path) -> bool:
     if (
         name.endswith(ALLOWED_FILE_SUFFIXES)
         or name.startswith(".env")
-        or is_secret_scan_name(path.name)
+        or is_secret_scan_name(str(path))
     ):
         return True
     return may_be_shell_script(path.name) and file_starts_like_shell_script(path)
@@ -1072,12 +1072,13 @@ def _scan_relpath(path: Path, root: Path) -> str:
 def _secret_findings(
     path: Path, root: Path, text: str, *, ignore_tests: bool = True
 ) -> list[dict[str, Any]]:
-    from skylos.rules.secrets import scan_ctx
+    from skylos.rules.secrets import is_aws_credential_path, scan_ctx
 
     ctx = {
         "relpath": _scan_relpath(path, root),
         "lines": text.splitlines(True),
         "tree": None,
+        "aws_credential_file": is_aws_credential_path(str(path)),
     }
     findings = []
     for raw in scan_ctx(ctx, ignore_tests=ignore_tests):

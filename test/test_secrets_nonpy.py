@@ -404,7 +404,8 @@ def test_public_html_subresource_integrity_is_not_a_secret():
 
 class TestEnvFileScanning:
     def test_detects_aws_key_in_env(self):
-        src = "AWS_SECRET_ACCESS_K" r"E" "Y=AKIAIOSFODNN7EXAMPLE1234567890abcdef\n"
+        value = "Ab3dE5fG7hJ9kL2mN4pQ6rS8tU0vW1xY2zA4" + "bC6d"
+        src = "AWS_SECRET_ACCESS_K" r"E" "Y=" + value + "\n"
         ctx = {"relpath": ".env", "lines": src.splitlines(True), "tree": None}
         findings = list(scan_ctx(ctx))
         assert len(findings) > 0
