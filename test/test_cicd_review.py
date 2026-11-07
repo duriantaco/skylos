@@ -132,6 +132,46 @@ def test_filter_findings_empty_ranges():
     assert filter_findings_to_diff(findings, []) == []
 
 
+@pytest.mark.parametrize("summary_only", [False, True])
+@pytest.mark.parametrize(
+    "diff,expected_count", [(SAMPLE_DIFF, 1), ("", 0)], ids=["changed-lines", "empty-diff"]
+)
+def test_pr_review_summary_only_preserves_diff_scope(
+    sample_results, summary_only, diff, expected_count
+):
+    with (
+        patch("skylos.cicd.review._gh_available", return_value=True),
+        patch("skylos.cicd.review._detect_regressions_from_diff", return_value=[]),
+        patch("skylos.cicd.review._resolve_review_provenance", return_value=None),
+        patch(
+            "skylos.cicd.review.subprocess.run",
+            return_value=Mock(returncode=0, stdout=diff),
+        ),
+        patch("skylos.cicd.review._post_pr_review") as post_review,
+        patch("skylos.cicd.review._post_summary_comment") as post_summary,
+    ):
+        run_pr_review(
+            {"danger": sample_results["danger"]},
+            pr_number=1,
+            repo="owner/repo",
+            diff_base="main",
+            summary_only=summary_only,
+        )
+
+    all_findings, diff_findings = post_summary.call_args.args[:2]
+    assert len(all_findings) == 2
+    assert len(diff_findings) == expected_count
+    assert {finding["file"] for finding in diff_findings} == (
+        {"app.py"} if expected_count else set()
+    )
+    passport = post_summary.call_args.kwargs["risk_passport"]
+    assert sum(passport["changed_line_evidence"].values()) == expected_count
+    if summary_only or not expected_count:
+        post_review.assert_not_called()
+    else:
+        assert post_review.call_args.args[0] == diff_findings
+
+
 def test_pr_review_ignores_old_finding_after_deletion_only_hunk():
     diff = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +0,0 @@\n-# note\n"
     results = {
@@ -159,7 +199,8 @@ def test_pr_review_ignores_old_finding_after_deletion_only_hunk():
     assert post_summary.call_args.args[1] == []
 
 
-def test_pr_review_keeps_deletion_anchor_for_security_regression():
+@pytest.mark.parametrize("summary_only", [False, True])
+def test_pr_review_keeps_deletion_anchor_for_security_regression(summary_only):
     diff = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +0,0 @@\n-# guard\n"
     regression = {
         "file": "a.py",
@@ -183,14 +224,24 @@ def test_pr_review_keeps_deletion_anchor_for_security_regression():
             return_value=Mock(returncode=0, stdout=diff),
         ),
         patch("skylos.cicd.review._post_pr_review") as post_review,
-        patch("skylos.cicd.review._post_summary_comment"),
+        patch("skylos.cicd.review._post_summary_comment") as post_summary,
     ):
-        run_pr_review({}, pr_number=1, repo="owner/repo", diff_base="main")
+        run_pr_review(
+            {},
+            pr_number=1,
+            repo="owner/repo",
+            diff_base="main",
+            summary_only=summary_only,
+        )
 
-    assert post_review.call_args.args[0] == [regression]
-    assert post_review.call_args.kwargs["changed_ranges"] == [
-        {"file": "a.py", "start": 1, "end": 1}
-    ]
+    assert post_summary.call_args.args[1] == [regression]
+    if summary_only:
+        post_review.assert_not_called()
+    else:
+        assert post_review.call_args.args[0] == [regression]
+        assert post_review.call_args.kwargs["changed_ranges"] == [
+            {"file": "a.py", "start": 1, "end": 1}
+        ]
 
 
 def test_pr_review_reports_new_unused_function_once():

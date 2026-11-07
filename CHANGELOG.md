@@ -4,6 +4,7 @@
 
 ### Bug Fixes
 
+* **cicd:** keep changed-line counts and risk evidence scoped to the PR diff in summary-only reviews.
 * **sbom:** keep reachable transitive packages out of SPDX root direct-dependency relationships.
 * **sbom:** refuse output paths named after supported Bun, Cargo, Composer, RubyGems, Pub, Gradle, NuGet, Maven, and setuptools dependency inputs.
 
