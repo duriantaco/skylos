@@ -623,6 +623,8 @@ def _check_non_library_path(def_obj, analyzer, cfg):
         getattr(analyzer, "_project_root", None),
         extra_dirs=extra_dirs,
     )
+    if non_library_kind == "test" and _proven_go_test_helper(def_obj, analyzer, cfg):
+        return None
     if non_library_kind and def_obj.type in (
         "function",
         "method",
@@ -639,6 +641,34 @@ def _check_non_library_path(def_obj, analyzer, cfg):
             folder_role=non_library_kind,
         )
     return None
+
+
+def _proven_go_test_helper(def_obj, analyzer, cfg):
+    if (
+        not getattr(def_obj, "go_proven_unused_test_helper", False)
+        or def_obj.type != "function"
+        or def_obj.is_exported
+        or not str(def_obj.filename).endswith("_test.go")
+    ):
+        return False
+    try:
+        directories = Path(def_obj.filename).resolve().relative_to(
+            Path(analyzer._project_root).resolve()
+        ).parts[:-1]
+    except (AttributeError, TypeError, ValueError, OSError):
+        return False
+    extra_dirs = {
+        folder.lower() for folder in ((cfg or {}).get("non_library_dirs") or {})
+    }
+    for directory in directories:
+        if directory.lower() in extra_dirs or directory.lower() in {
+            "doc", "docs", "documentation"
+        }:
+            return False
+        role = get_non_library_dir_kind(Path(directory) / "source.go")
+        if role is not None and role != "test":
+            return False
+    return True
 
 
 def _check_framework_decorations(def_obj, framework):

@@ -28,9 +28,11 @@ func markFunctionReachability(result *Result, files []reachabilityFile, fset *to
 		packages[key] = append(packages[key], file)
 	}
 	defsByFile := map[string][]*Def{}
+	allNames := map[string]bool{}
 	for i := range result.Defs {
 		def := &result.Defs[i]
 		defsByFile[def.File] = append(defsByFile[def.File], def)
+		allNames[def.Name] = true
 	}
 	preciseFiles := map[string]bool{}
 	preciseRefs := []Ref{}
@@ -41,7 +43,7 @@ func markFunctionReachability(result *Result, files []reachabilityFile, fset *to
 				packageDefs[def.Name] = def
 			}
 		}
-		refs, complete := markPackageFunctionReachability(packageDefs, pkgFiles, fset, modulePath, importer)
+		refs, complete := markPackageFunctionReachability(packageDefs, pkgFiles, fset, modulePath, importer, allNames)
 		if complete {
 			preciseRefs = append(preciseRefs, refs...)
 			for _, file := range pkgFiles {
@@ -58,7 +60,7 @@ func markFunctionReachability(result *Result, files []reachabilityFile, fset *to
 	result.Refs = append(refs, preciseRefs...)
 }
 
-func markPackageFunctionReachability(defs map[string]*Def, files []reachabilityFile, fset *token.FileSet, modulePath string, importer types.Importer) ([]Ref, bool) {
+func markPackageFunctionReachability(defs map[string]*Def, files []reachabilityFile, fset *token.FileSet, modulePath string, importer types.Importer, allNames map[string]bool) ([]Ref, bool) {
 	if len(files) == 0 || packageHasAssembly(filepath.Dir(files[0].path)) {
 		return nil, false
 	}
@@ -103,7 +105,7 @@ func markPackageFunctionReachability(defs map[string]*Def, files []reachabilityF
 				objects[object] = name
 			}
 			def := defs[name]
-			if isTest || generated || fn.Body == nil || fn.Name.Name == "init" || (def != nil && def.IsExported) || hasExportDirective(fn) {
+			if (isTest && (def == nil || !def.TestHelper)) || generated || fn.Body == nil || fn.Name.Name == "init" || (def != nil && def.IsExported) || hasExportDirective(fn) {
 				roots[name] = true
 			}
 		}
@@ -162,6 +164,9 @@ func markPackageFunctionReachability(defs map[string]*Def, files []reachabilityF
 				}
 				target := objects[object]
 				if target == "" {
+					target = projectObjectName(object, modulePath, allNames)
+				}
+				if target == "" {
 					return true
 				}
 				preciseRefs = append(preciseRefs, Ref{Name: target, File: file.path})
@@ -204,6 +209,30 @@ func markPackageFunctionReachability(defs map[string]*Def, files []reachabilityF
 		}
 	}
 	return preciseRefs, true
+}
+
+func projectObjectName(object types.Object, modulePath string, names map[string]bool) string {
+	if object == nil || object.Pkg() == nil || modulePath == "" {
+		return ""
+	}
+	pkgPath := object.Pkg().Path()
+	if pkgPath != modulePath && !strings.HasPrefix(pkgPath, modulePath+"/") {
+		return ""
+	}
+	dir := strings.TrimPrefix(strings.TrimPrefix(pkgPath, modulePath), "/")
+	if dir == "" {
+		dir = "."
+	}
+	name := ""
+	if _, receiver := receiverNameFromMethod(object); receiver != "" {
+		name = qname(dir, receiver, object.Name())
+	} else if object.Parent() == object.Pkg().Scope() {
+		name = qname(dir, object.Name())
+	}
+	if names[name] {
+		return name
+	}
+	return ""
 }
 
 func packageHasAssembly(dir string) bool {

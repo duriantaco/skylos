@@ -165,7 +165,33 @@ def resolve_ts_module(source: str, importer: str, monorepo_resolver=None) -> str
     return None
 
 
-def build_ts_import_graph(ts_raw_imports: dict, defs: dict, monorepo_resolver=None):
+def build_ts_import_graph(
+    ts_raw_imports: dict,
+    defs: dict,
+    monorepo_resolver=None,
+    *,
+    credit_references: bool = True,
+):
+    """Build module demand, optionally without changing symbol references.
+
+    The analyzer first needs the full file graph to establish known roots and
+    inactive consumers. Its final pass credits references exactly once.
+    """
+    if credit_references or not ts_raw_imports:
+        return _build_ts_import_graph(ts_raw_imports, defs, monorepo_resolver)
+    snapshot = {
+        id(defn): (defn, defn.references)
+        for defn in defs.values()
+        if str(defn.filename).endswith(_TS_JS_EXTENSIONS)
+    }
+    try:
+        return _build_ts_import_graph(ts_raw_imports, defs, monorepo_resolver)
+    finally:
+        for defn, references in snapshot.values():
+            defn.references = references
+
+
+def _build_ts_import_graph(ts_raw_imports, defs, monorepo_resolver=None):
     consumed_exports = defaultdict(set)
     wildcard_edges = defaultdict(set)
     importers_of = defaultdict(set)
@@ -2355,6 +2381,255 @@ def find_dead_ts_files(
             }
         )
     return dead_files
+
+
+def _has_opaque_ts_loads(source, root):
+    # This is a negative proof boundary, not alias-sensitive execution modeling.
+    # Once a loading capability escapes, following only its current callee name
+    # would miss assignments, destructuring, callbacks and reassignment chains.
+    # Decline the proof at the capability's source instead. Shadowed lookalikes
+    # may conservatively lose precision; they cannot create a dead-code claim.
+    global_objects = {"globalThis", "window", "self", "global", "navigator"}
+    capability_names = {
+        "eval",
+        "Function",
+        "createRequire",
+        "constructor",
+        "Worker",
+        "SharedWorker",
+        "serviceWorker",
+        "importScripts",
+        "getBuiltinModule",
+    }
+    execution_providers = {
+        prefix + name
+        for prefix in ("", "node:")
+        for name in ("module", "worker_threads", "child_process", "cluster", "vm")
+    }
+    stack = [root]
+    inspected = 0
+    while stack:
+        node = stack.pop()
+        inspected += 1
+        if inspected > 100_000:
+            return True
+        if node.type in {
+            "comment",
+            "string",
+            "type_annotation",
+            "type_alias_declaration",
+            "interface_declaration",
+            "type_parameters",
+            "type_arguments",
+            "type_query",
+            "import_type",
+        }:
+            continue
+        if node.type in {"import_statement", "import_specifier"} and is_type_only(node):
+            continue
+        if node.type == "import_statement":
+            specifier = _string_node_value(source, node.child_by_field_name("source"))
+            if specifier in execution_providers and any(
+                not binding.type_only
+                for clause in node.named_children
+                if clause.type == "import_clause"
+                for binding in iter_import_clause_bindings(source, clause)
+            ):
+                return True
+        if node.type in {
+            "identifier",
+            "property_identifier",
+            "shorthand_property_identifier",
+            "shorthand_property_identifier_pattern",
+        }:
+            name = _node_text(source, node)
+            if "\\" in name or name in capability_names:
+                return True
+            parent = node.parent
+            if name in global_objects and not (
+                parent is not None
+                and parent.type == "member_expression"
+                and parent.child_by_field_name("object") == node
+                and parent.child_by_field_name("property") is not None
+                and parent.child_by_field_name("property").type == "property_identifier"
+            ):
+                return True
+            if name == "require" and not (
+                parent is not None
+                and parent.type == "call_expression"
+                and parent.child_by_field_name("function") == node
+                and (arguments := parent.child_by_field_name("arguments")) is not None
+                and arguments.named_children
+                and arguments.named_children[0].type == "string"
+            ):
+                return True
+        stack.extend(reversed(node.named_children))
+        if node.type not in {"call_expression", "new_expression"}:
+            continue
+        function = node.child_by_field_name("function") or node.child_by_field_name(
+            "constructor"
+        )
+        if function is None:
+            continue
+        name = _node_text(source, function)
+        if name in {"eval", "Function"}:
+            return True
+        if name in {"import", "require", "import.meta.glob", "import.meta.globEager"}:
+            arguments = node.child_by_field_name("arguments")
+            first = next(iter(arguments.named_children), None) if arguments else None
+            if first is None or first.type != "string":
+                return True
+            if (
+                name in {"import", "require"}
+                and _string_node_value(source, first) in execution_providers
+            ):
+                return True
+    return False
+
+
+def prune_dead_ts_import_consumers(
+    ts_raw_imports,
+    defs,
+    files,
+    importers_of,
+    wildcard_edges,
+    *,
+    project_root=None,
+    workspace_inventory=None,
+    exclude_folders=None,
+    browser_entry_points=None,
+    monorepo_resolver=None,
+    analysis_errors=None,
+):
+    """Remove demand from closed ESM consumers outside the selected program.
+
+    Reuse all file-entry, test, framework, config and static path evidence used
+    by E003. Only error-free, explicitly modular consumers with resolved imports
+    inside the analyzed scope qualify. Classic global scripts, opaque loaders
+    and unresolved dependency/alias boundaries retain their earlier evidence.
+    Explicit exclusions define the selected program (e.g. production without
+    tests); this does not assert that excluded callers are globally absent.
+    """
+    if not ts_raw_imports or analysis_errors or not project_root:
+        return ts_raw_imports, set()
+    exclude_root = _resolve_exclude_root(files, project_root)
+    analyzed = _analysed_ts_files(files, exclude_folders, exclude_root)
+    if not analyzed:
+        return ts_raw_imports, set()
+    entry_files = _discover_ts_reachability_entry_files(
+        files,
+        project_root=project_root,
+        workspace_inventory=workspace_inventory,
+        exclude_folders=exclude_folders,
+    )
+    entry_files.update(
+        os.path.realpath(str(path)) for path in browser_entry_points or ()
+    )
+    if not entry_files:
+        return ts_raw_imports, set()
+
+    candidates = {
+        row["file"]
+        for row in find_dead_ts_files(
+            files,
+            exclude_folders,
+            importers_of,
+            wildcard_edges,
+            project_root=project_root,
+            workspace_inventory=workspace_inventory,
+            browser_entry_points=browser_entry_points,
+        )
+    }
+    if not candidates or len(candidates) > 512:
+        return ts_raw_imports, set()
+    # A reachable computed loader can select any otherwise disconnected module.
+    # An absent static edge is not proof of absence. Bound this additional proof
+    # independently of the candidate count, and decline it on incomplete input.
+    possible_loaders = analyzed - candidates
+    if len(possible_loaders) > 1024:
+        return ts_raw_imports, set()
+    total_bytes = 0
+    for path in sorted(possible_loaders):
+        try:
+            if os.path.getsize(path) > 1_000_000:
+                return ts_raw_imports, set()
+        except OSError:
+            return ts_raw_imports, set()
+        source, root = _load_entry_config_ast(path)
+        if source is None or root is None or root.has_error:
+            return ts_raw_imports, set()
+        total_bytes += len(source)
+        if total_bytes > 8_000_000 or _has_opaque_ts_loads(source, root):
+            return ts_raw_imports, set()
+    definitions_by_file = defaultdict(list)
+    for definition in defs.values():
+        definitions_by_file[os.path.realpath(str(definition.filename))].append(
+            definition
+        )
+    imports_by_file = {
+        os.path.realpath(str(path)): imports for path, imports in ts_raw_imports.items()
+    }
+    unresolved_names = set()
+    for importer, imports in imports_by_file.items():
+        for item in imports:
+            specifier = item.get("source", "")
+            if resolve_ts_module(specifier, importer, monorepo_resolver) is None:
+                tail = specifier.split("?", 1)[0].rsplit("/", 1)[-1].lstrip("#")
+                unresolved_names.add(Path(tail).stem)
+
+    dead_modules = set()
+    for path in sorted(candidates):
+        if path not in imports_by_file or Path(path).stem in unresolved_names:
+            continue
+        try:
+            if os.path.getsize(path) > 1_000_000:
+                continue
+        except OSError:
+            continue
+        source, root = _load_entry_config_ast(path)
+        if (
+            source is None
+            or root is None
+            or root.has_error
+            or len(source) > 1_000_000
+            or not any(
+                child.type in {"import_statement", "export_statement"}
+                for child in root.named_children
+            )
+        ):
+            continue
+        total_bytes += len(source)
+        if total_bytes > 8_000_000:
+            return ts_raw_imports, set()
+        if any(
+            any(
+                signal != "type-only declaration"
+                for signal in getattr(definition, "framework_signals", ())
+            )
+            or _export_read_by_loading_tool(definition)
+            for definition in definitions_by_file[path]
+        ):
+            continue
+        if any(
+            (
+                resolved := resolve_ts_module(
+                    item.get("source", ""), path, monorepo_resolver
+                )
+            )
+            is None
+            or os.path.realpath(resolved) not in analyzed
+            for item in imports_by_file[path]
+        ):
+            continue
+        if not _has_opaque_ts_loads(source, root):
+            dead_modules.add(path)
+    if not dead_modules:
+        return ts_raw_imports, set()
+    return {
+        path: imports
+        for path, imports in ts_raw_imports.items()
+        if os.path.realpath(str(path)) not in dead_modules
+    }, dead_modules
 
 
 def find_unused_ts_exports(

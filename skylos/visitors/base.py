@@ -778,6 +778,7 @@ class Definition:
         "confidence",
         "references",
         "is_exported",
+        "go_proven_unused_test_helper",
         "in_init",
         "binding_name",
         "node",
@@ -810,6 +811,7 @@ class Definition:
         "unread_type_checking_import",
         "python_local_owner",
         "python_class_owner",
+        "rust_reference_facts",
         "package_namespace_uncertain",
     )
 
@@ -829,12 +831,14 @@ class Definition:
         self.confidence = 100
         self.references = 0
         self.is_exported = False
+        self.go_proven_unused_test_helper = False
         self.in_init = "__init__.py" in str(filename)
         self.binding_name = self.simple_name
 
         self.node = node
         self.python_local_owner = None
         self.python_class_owner = None
+        self.rust_reference_facts = None
         self.package_namespace_uncertain = False
         self.calls = set()
         self.called_by = set()

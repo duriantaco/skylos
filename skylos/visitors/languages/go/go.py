@@ -116,6 +116,12 @@ def _convert_symbols(symbols_data, file_path):
             line=d.get("line", 0),
         )
         defn.is_exported = d.get("is_exported", False)
+        defn.go_proven_unused_test_helper = (
+            d["type"] == "function"
+            and file_str.endswith("_test.go")
+            and not defn.is_exported
+            and d.get("reachability") == "unreachable"
+        )
         if defn.is_exported or d.get("reachability") == "reachable":
             defn.references = 1
         defs.append(defn)

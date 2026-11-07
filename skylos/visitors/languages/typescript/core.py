@@ -353,6 +353,7 @@ class TypeScriptCore:
         self.imports: list[dict[str, str | int]] = []
         self._namespace_reads = None
         self._shadowed_namespace_properties: set[int] = set()
+        self._local_value_reads: set[int] = set()
         self._self_ref_index: (
             dict[str, tuple[tuple[int, ...], tuple[int, ...]]] | None
         ) = None
@@ -438,7 +439,11 @@ class TypeScriptCore:
         position = bisect_right(starts, node.start_byte) - 1
         return position >= 0 and prefix_max_ends[position] >= node.end_byte
 
-    def _add_ref(self, node) -> None:
+    def _add_ref(self, node, *, value_reference: bool = True) -> None:
+        if value_reference and node.id in self._local_value_reads:
+            parent = node.parent
+            if parent is None or parent.type != "nested_type_identifier":
+                return
         name = self._get_text(node)
         if self._is_self_ref(node, name):
             return
@@ -576,10 +581,7 @@ class TypeScriptCore:
     def _scan_refs(self) -> None:
         c = self._refs_captures
 
-        if c.get("prop_ref") and any(
-            node.parent is not None and node.parent.type == "namespace_import"
-            for node in self._imports_captures.get("import_name", [])
-        ):
+        if c.get("ref") or c.get("prop_ref"):
             self._namespace_import_reads()
 
         for node in c.get("ref", []):
@@ -608,7 +610,7 @@ class TypeScriptCore:
             ):
                 # The declared name, not a use. ``type A = B`` still uses ``B``.
                 continue
-            self._add_ref(node)
+            self._add_ref(node, value_reference=False)
 
         self._scan_default_parameter_refs()
 
@@ -969,8 +971,10 @@ class TypeScriptCore:
             from .namespace_references import namespace_member_reads
 
             self._namespace_reads = namespace_member_reads(
-                self.root_node, self.source,
+                self.root_node,
+                self.source,
                 shadowed_properties=self._shadowed_namespace_properties,
+                local_value_reads=self._local_value_reads,
             )
         return self._namespace_reads
 

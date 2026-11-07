@@ -2250,6 +2250,545 @@
         ]
       },
       "symbol_identity": "qualified"
+    },
+    {
+      "id": "typescript-lexical-value-identity",
+      "path": "fixtures/typescript_lexical_value_identity",
+      "description": "Lexical value and selected-program module reachability with used and unused controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source. Derived from manually confirmed language gaps in pinned repositories; no target execution or repository-specific exemptions."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "measure"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "format"
+          },
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "callback"
+          },
+          {
+            "kind": "function",
+            "file": "index.ts",
+            "symbol": "start"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-dead-import-consumers",
+      "path": "fixtures/typescript_dead_import_consumers",
+      "description": "Lexical value and selected-program module reachability with used and unused controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source. Derived from manually confirmed language gaps in pinned repositories; no target execution or repository-specific exemptions."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "calculate"
+          },
+          {
+            "kind": "variable",
+            "file": "helpers.ts",
+            "symbol": "modes"
+          },
+          {
+            "kind": "function",
+            "file": "orphan.ts",
+            "symbol": "prepare"
+          },
+          {
+            "kind": "file",
+            "file": "orphan.ts",
+            "symbol": "orphan.ts"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "format"
+          },
+          {
+            "kind": "import",
+            "file": "index.ts",
+            "symbol": "format"
+          },
+          {
+            "kind": "import",
+            "file": "orphan.ts",
+            "symbol": "calculate"
+          },
+          {
+            "kind": "import",
+            "file": "orphan.ts",
+            "symbol": "modes"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-loaded-import-consumers",
+      "path": "fixtures/typescript_loaded_import_consumers",
+      "description": "Lexical value and selected-program module reachability with used and unused controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source. Derived from manually confirmed language gaps in pinned repositories; no target execution or repository-specific exemptions."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "calculate"
+          },
+          {
+            "kind": "variable",
+            "file": "helpers.ts",
+            "symbol": "modes"
+          },
+          {
+            "kind": "function",
+            "file": "consumer.ts",
+            "symbol": "prepare"
+          },
+          {
+            "kind": "import",
+            "file": "consumer.ts",
+            "symbol": "calculate"
+          },
+          {
+            "kind": "import",
+            "file": "consumer.ts",
+            "symbol": "modes"
+          }
+        ]
+      }
+    },
+    {
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source distilled from independently reviewed own-module import and private test-helper gaps in pinned go-chi/chi comparison against Staticcheck U1000. No upstream source copied; target code never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "id": "go-project-import-graph",
+      "path": "fixtures/go_project_import_graph",
+      "description": "Visible same-module package imports retain complete object reachability so private dead cycles are reported and returned callbacks remain used.",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "worker/worker.go",
+            "symbol": "worker.alpha"
+          },
+          {
+            "kind": "function",
+            "file": "worker/worker.go",
+            "symbol": "worker.beta"
+          },
+          {
+            "kind": "function",
+            "file": "worker/worker.go",
+            "symbol": "worker.orphan"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "provider/api.go",
+            "symbol": "provider.Touch"
+          },
+          {
+            "kind": "function",
+            "file": "worker/worker.go",
+            "symbol": "worker.Factory"
+          },
+          {
+            "kind": "function",
+            "file": "worker/worker.go",
+            "symbol": "worker.callback"
+          }
+        ]
+      }
+    },
+    {
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source distilled from independently reviewed own-module import and private test-helper gaps in pinned go-chi/chi comparison against Staticcheck U1000. No upstream source copied; target code never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "id": "go-private-test-helpers",
+      "path": "fixtures/go_private_test_helpers",
+      "description": "Full native proof reports unused private internal test helpers while test entries and their live helper chains remain used.",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "core.go",
+            "symbol": "unusedProduction"
+          },
+          {
+            "kind": "function",
+            "file": "core_test.go",
+            "symbol": "alpha"
+          },
+          {
+            "kind": "function",
+            "file": "core_test.go",
+            "symbol": "beta"
+          },
+          {
+            "kind": "function",
+            "file": "core_test.go",
+            "symbol": "stale"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "core.go",
+            "symbol": "core"
+          },
+          {
+            "kind": "function",
+            "file": "core_test.go",
+            "symbol": "TestRun"
+          },
+          {
+            "kind": "function",
+            "file": "core_test.go",
+            "symbol": "liveTestHelper"
+          },
+          {
+            "kind": "function",
+            "file": "core_test.go",
+            "symbol": "testLeaf"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rust-import-expression-uses",
+      "path": "fixtures/rust_import_expression_uses",
+      "description": "Enum payload types, trait extension calls and derive-attribute expressions keep their actual imports; an unrelated import remains unused.",
+      "languages": [
+        "rust"
+      ],
+      "symbol_identity": "qualified",
+      "taxonomy": [
+        "rust",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract distilled from native-compiler-verified real repository patterns, with semantic labels frozen before scanner output; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "fs"
+          },
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "Context"
+          },
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "ArgAction"
+          },
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "Parser"
+          },
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "formatcp"
+          },
+          {
+            "kind": "class",
+            "file": "src/main.rs",
+            "symbol": "Options"
+          },
+          {
+            "kind": "class",
+            "file": "src/main.rs",
+            "symbol": "Input"
+          },
+          {
+            "kind": "function",
+            "file": "src/main.rs",
+            "symbol": "contextualize"
+          },
+          {
+            "kind": "function",
+            "file": "src/main.rs",
+            "symbol": "main"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "HashMap"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rust-private-function-cycles",
+      "path": "fixtures/rust_private_function_cycles",
+      "description": "Unrooted private cycles are unused; a called cycle and callback returned by a public factory stay live.",
+      "languages": [
+        "rust"
+      ],
+      "symbol_identity": "qualified",
+      "taxonomy": [
+        "rust",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract distilled from native-compiler-verified real repository patterns, with semantic labels frozen before scanner output; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "run_first"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "run_second"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "callback"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "factory"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "alpha"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "beta"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "unused_leaf"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rust-cross-file-cycle-roots",
+      "path": "fixtures/rust_cross_file_cycle_roots",
+      "description": "A child module can call a private parent function and thereby keep its whole cycle live.",
+      "languages": [
+        "rust"
+      ],
+      "symbol_identity": "qualified",
+      "taxonomy": [
+        "rust",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract distilled from native-compiler-verified real repository patterns, with semantic labels frozen before scanner output; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "alpha"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "beta"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "child.rs",
+            "symbol": "child.start"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "unused_leaf"
+          }
+        ]
+      }
     }
   ]
 }

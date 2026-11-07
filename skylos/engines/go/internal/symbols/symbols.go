@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -18,6 +19,7 @@ type Def struct {
 	IsExported   bool   `json:"is_exported"`
 	Receiver     string `json:"receiver,omitempty"`
 	Reachability string `json:"reachability,omitempty"`
+	TestHelper   bool   `json:"-"`
 }
 
 type Ref struct {
@@ -152,10 +154,14 @@ func Extract(root string) (*Result, error) {
 		reachabilityFiles = append(reachabilityFiles, reachabilityFile{file, path, pkgDir})
 		isMainPkg := file.Name.Name == "main"
 
-		if !isTest {
+		{
 			for _, decl := range file.Decls {
 				switch d := decl.(type) {
 				case *ast.FuncDecl:
+					testHelper := isTest && isInternalTestHelper(file, d)
+					if isTest && !testHelper {
+						continue
+					}
 					name := d.Name.Name
 					defType := "function"
 					receiver := ""
@@ -187,9 +193,13 @@ func Extract(root string) (*Result, error) {
 						Line:       fset.Position(d.Pos()).Line,
 						IsExported: exported,
 						Receiver:   receiver,
+						TestHelper: testHelper,
 					})
 
 				case *ast.GenDecl:
+					if isTest {
+						continue
+					}
 					for _, spec := range d.Specs {
 						switch s := spec.(type) {
 						case *ast.ValueSpec:
@@ -387,7 +397,7 @@ func Extract(root string) (*Result, error) {
 	})
 
 	markReferencedInterfaceMethods(result, projectInterfaceMethods)
-	typeImporter := newHostStdlibImporter(fset)
+	typeImporter := newProjectSourceImporter(root, modulePath, fset, reachabilityFiles, newHostStdlibImporter(fset))
 
 	if hasMethodDefs(result.Defs) {
 		defNames := symbolDefNames(result.Defs)
@@ -397,8 +407,22 @@ func Extract(root string) (*Result, error) {
 	if proofComplete {
 		markFunctionReachability(result, reachabilityFiles, fset, modulePath, typeImporter)
 	}
+	// Test helpers were previously omitted entirely. Only expose their private
+	// function definitions when complete type information establishes their use.
+	defs := result.Defs[:0]
+	for _, def := range result.Defs {
+		if !def.TestHelper || def.Reachability != "" {
+			defs = append(defs, def)
+		}
+	}
+	result.Defs = defs
 
 	return result, err
+}
+
+func isInternalTestHelper(file *ast.File, fn *ast.FuncDecl) bool {
+	return !strings.HasSuffix(file.Name.Name, "_test") && fn.Recv == nil &&
+		!ast.IsExported(fn.Name.Name) && fn.Name.Name != "init" && fn.Name.Name != "main"
 }
 
 func collectInterfaceMethodsByType(root string, resolvedRoot string) map[string]map[string]bool {
@@ -556,14 +580,27 @@ func isPathWithinRoot(root, path string) bool {
 }
 
 func readModulePath(root string) string {
-	data, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	name := filepath.Join(root, "go.mod")
+	info, err := os.Lstat(name)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		return ""
+	}
+	data, err := os.ReadFile(name)
 	if err != nil {
 		return ""
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "module ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "module "))
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "module" {
+			module := fields[1]
+			if strings.HasPrefix(module, "\"") {
+				module, err = strconv.Unquote(module)
+				if err != nil {
+					return ""
+				}
+			}
+			return module
 		}
 	}
 	return ""

@@ -46,6 +46,7 @@ from skylos.visitors.languages.typescript.analysis import (
     discover_ts_build_aliases,
     discover_ts_bundle_entry_files,
     find_dead_ts_files,
+    prune_dead_ts_import_consumers,
     find_unused_ts_exports,
     mark_package_api_ts_exports_consumed,
 )
@@ -176,6 +177,8 @@ _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "ts_consumed_exports",
     "_ts_wildcard_edges",
     "_ts_importers_of",
+    "_ts_file_wildcard_edges",
+    "_ts_file_importers_of",
     "_ts_demoted_exports",
     "_browser_script_entry_files",
     "_generated_file_scope",
@@ -2226,12 +2229,17 @@ class Skylos:
                     def_obj.is_exported = True
                     def_obj.references = max(def_obj.references, 1)
 
-    def _build_ts_import_graph(self, ts_raw_imports: dict, monorepo_resolver=None):
+    def _build_ts_import_graph(
+        self, ts_raw_imports: dict, monorepo_resolver=None, *, credit_references=True
+    ):
         (
             self.ts_consumed_exports,
             self._ts_wildcard_edges,
             self._ts_importers_of,
-        ) = build_ts_import_graph(ts_raw_imports, self.defs, monorepo_resolver)
+        ) = build_ts_import_graph(
+            ts_raw_imports, self.defs, monorepo_resolver,
+            credit_references=credit_references,
+        )
 
     def _demote_unconsumed_ts_exports(
         self, files=None, exclude_folders=None, workspace_inventory=None
@@ -2271,8 +2279,12 @@ class Skylos:
         return find_dead_ts_files(
             files,
             exclude_folders,
-            getattr(self, "_ts_importers_of", {}),
-            getattr(self, "_ts_wildcard_edges", {}),
+            getattr(
+                self, "_ts_file_importers_of", getattr(self, "_ts_importers_of", {})
+            ),
+            getattr(
+                self, "_ts_file_wildcard_edges", getattr(self, "_ts_wildcard_edges", {})
+            ),
             project_root=str(self._project_root),
             workspace_inventory=workspace_inventory,
             browser_entry_points=getattr(self, "_browser_script_entry_files", ()),
@@ -2290,7 +2302,7 @@ class Skylos:
             workspace_inventory=workspace_inventory,
         )
 
-    def _propagate_transitive_dead(self):
+    def _propagate_transitive_dead(self, analysis_errors=()):
         dead_set = set()
         dead_classes = set()
         defs_by_name_file = defaultdict(list)
@@ -2373,6 +2385,22 @@ class Skylos:
         # Definitions this pass zeroed, with the references they had. A
         # later rescue of their caller (grep verification) must restore them.
         killed = {}
+        from skylos.visitors.languages.rust.reachability import (
+            analyze_rust_reachability,
+        )
+
+        rust_report = analyze_rust_reachability(
+            self.defs,
+            getattr(self, "_project_root", None),
+            getattr(self, "_analysis_scope", None),
+            analysis_errors,
+        )
+        self._rust_reachability_report = rust_report
+        for key in rust_report.unreachable_keys:
+            if key in rust_report.original_refs:
+                killed[key] = rust_report.original_refs[key]
+            self.defs[key].references = 0
+            dead_set.add(key)
         self._transitive_dead_kills = killed
         self._transitive_dead_caller_key = key_for_caller
         self._transitive_dead_class_keys = class_key_by_name_file
@@ -2480,6 +2508,7 @@ class Skylos:
                 defn = self.defs.get(key)
                 if defn is None or defn.references > 0:
                     killed.pop(key, None)
+                    changed = True
                     continue
                 if any(is_live_caller(c, defn) for c in defn.called_by):
                     killed.pop(key, None)
@@ -2691,9 +2720,19 @@ class Skylos:
         try:
             grep_budget = float(os.getenv("SKYLOS_GREP_BUDGET", "120"))
             report_filter = getattr(self, "_python_reachability_report", None)
+            rust_filter = getattr(self, "_rust_reachability_report", None)
+            evidence_filters = [
+                value for value in (report_filter, rust_filter) if value is not None
+            ]
+
+            def filter_evidence(finding, results):
+                for value in evidence_filters:
+                    results = value.filter_grep_results(finding, results)
+                return results
+
             filter_kwargs = (
-                {"evidence_filter": report_filter.filter_grep_results}
-                if report_filter is not None
+                {"evidence_filter": filter_evidence}
+                if evidence_filters
                 else {}
             )
             with grep_verification_scope(
@@ -6256,7 +6295,9 @@ class Skylos:
                     if str(f).endswith(_TS_JS_SOURCE_EXTS)
                 },
             )
-        self._build_ts_import_graph(ts_raw_imports, graph_resolver)
+        self._build_ts_import_graph(
+            ts_raw_imports, graph_resolver, credit_references=False
+        )
         apply_ts_module_substitutions(
             file_replacements,
             self.ts_consumed_exports,
@@ -6313,6 +6354,42 @@ class Skylos:
                 logger.error(
                     "Browser event handler liveness scan failed", exc_info=True
                 )
+
+        # File findings and architecture describe syntactic dependency edges,
+        # including imports inside disconnected modules. Only symbol demand is
+        # rebuilt without those consumers.
+        self._ts_file_importers_of = self._ts_importers_of
+        self._ts_file_wildcard_edges = self._ts_wildcard_edges
+        live_ts_imports, dead_ts_modules = prune_dead_ts_import_consumers(
+            ts_raw_imports,
+            self.defs,
+            files,
+            self._ts_importers_of,
+            self._ts_wildcard_edges,
+            project_root=str(self._project_root),
+            workspace_inventory=workspace_inventory,
+            exclude_folders=exclude_folders,
+            browser_entry_points=self._browser_script_entry_files,
+            monorepo_resolver=graph_resolver,
+            analysis_errors=analysis_errors,
+        )
+        if dead_ts_modules:
+            local_import_reads = {
+                (definition.simple_name, os.path.realpath(str(definition.filename)))
+                for definition in self.defs.values()
+                if definition.type == "import"
+                and os.path.realpath(str(definition.filename)) in dead_ts_modules
+            }
+            self.refs = [
+                (name, filename) for name, filename in self.refs
+                if os.path.realpath(str(filename)) not in dead_ts_modules
+                or (name, os.path.realpath(str(filename))) in local_import_reads
+            ]
+        self._build_ts_import_graph(live_ts_imports, graph_resolver)
+        apply_ts_module_substitutions(
+            file_replacements, self.ts_consumed_exports,
+            self._ts_importers_of, self._ts_wildcard_edges,
+        )
 
         for top_level_ref in all_top_level_refs:
             defn = self.defs.get(top_level_ref)
@@ -6380,7 +6457,7 @@ class Skylos:
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: transitive dead code"))
-        self._propagate_transitive_dead()
+        self._propagate_transitive_dead(analysis_errors=analysis_errors)
         self._prepare_python_reachability(files, analysis_errors, module_names=modmap)
         from skylos.deadcode.wildcard_provider_imports import (
             wildcard_provider_import_reads,
@@ -6513,7 +6590,9 @@ class Skylos:
             architecture_main_guard_modules=architecture_main_guard_modules,
             pyproject_entrypoint_qnames=pyproject_entrypoint_qnames,
             pyproject_entrypoint_modules=pyproject_entrypoint_modules,
-            ts_importers_of=getattr(self, "_ts_importers_of", {}),
+            ts_importers_of=getattr(
+                self, "_ts_file_importers_of", getattr(self, "_ts_importers_of", {})
+            ),
             config_file=config_file,
             analysis_errors=analysis_errors,
             include_review_proofs=include_review_proofs,

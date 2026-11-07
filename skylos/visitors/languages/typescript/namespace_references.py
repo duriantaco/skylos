@@ -104,7 +104,11 @@ def _unwrap(node):
 
 
 def namespace_member_reads(
-    root, source: bytes, *, shadowed_properties: set[int] | None = None
+    root,
+    source: bytes,
+    *,
+    shadowed_properties: set[int] | None = None,
+    local_value_reads: set[int] | None = None,
 ) -> dict[str, set[str] | None]:
     """Map namespace locals to read export names; ``None`` means opaque use.
 
@@ -124,7 +128,7 @@ def namespace_member_reads(
         if len(nodes) > _MAX_NODES:
             return {node_text(source, n): None for n in namespace_nodes}
         stack.extend(reversed(node.named_children))
-    if not namespace_nodes:
+    if not namespace_nodes and local_value_reads is None:
         return {}
     result: dict[str, set[str] | None] = {
         node_text(source, n): set() for n in namespace_nodes
@@ -290,6 +294,36 @@ def namespace_member_reads(
             name = node_text(source, node)
             parent = node.parent
             value = _unwrap(binding.value)
+            # Ordinary reads of a parameter or local value cannot read an
+            # unrelated module function with the same spelling. Callable local
+            # definitions still use the visitor's existing definition identity;
+            # their initializer/reference sources are scanned separately.
+            if (
+                local_value_reads is not None
+                and binding.scope.parent is not None
+                and binding.node.parent is not None
+                and binding.node.parent.type
+                not in {
+                    "function_declaration",
+                    "generator_function_declaration",
+                    "function_expression",
+                    "generator_function",
+                    "class",
+                    "class_declaration",
+                    "abstract_class_declaration",
+                    "enum_declaration",
+                }
+                and (value is None or value.type not in _FUNCTIONS | {"class"})
+            ):
+                local_value_reads.add(node.id)
+            # Type namespace lookup is distinct from a same-spelled value
+            # parameter. Keep the imported namespace opaque in that case.
+            if (
+                name in result
+                and parent is not None
+                and parent.type == "nested_type_identifier"
+            ):
+                result[name] = None
             known_global = bool(
                 value is not None
                 and value.type == "identifier"

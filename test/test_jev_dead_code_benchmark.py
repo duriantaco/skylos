@@ -109,17 +109,17 @@ def test_checked_in_ground_truth_builds_blind_plan_without_duplicate_arms():
     plan = build_plan(MANIFEST_PATH)
 
     assert plan["network_used"] is False
-    assert plan["case_count"] == 50
-    assert plan["request_count"] == 56
-    assert plan["ground_truth_count"] == 260
-    assert plan["decision_count"] == 300
+    assert plan["case_count"] == 58
+    assert plan["request_count"] == 64
+    assert plan["ground_truth_count"] == 315
+    assert plan["decision_count"] == 355
     assert plan["neutralization_status_counts"] == {
         "applied": 6,
-        "skipped": 17,
-        "not_applicable": 27,
+        "skipped": 20,
+        "not_applicable": 32,
     }
-    assert plan["unused_count"] == 90
-    assert plan["used_count"] == 170
+    assert plan["unused_count"] == 108
+    assert plan["used_count"] == 207
     assert plan["model"] == "jev-1.13.0"
     assert plan["endpoint"] == JEV_ENDPOINT
 
@@ -148,6 +148,24 @@ def test_checked_in_ground_truth_builds_blind_plan_without_duplicate_arms():
         (case_id, "original", count) for case_id, count in depth_cases.items()
     }
     assert len(batches) == 6
+
+    # Source-audited language cases add 55 labels and eight original requests.
+    # Three cannot neutralize non-Python cues; five have no cues to neutralize.
+    audit_cases = {
+        "typescript-lexical-value-identity": 4,
+        "typescript-dead-import-consumers": 8,
+        "typescript-loaded-import-consumers": 6,
+        "go-project-import-graph": 6,
+        "go-private-test-helpers": 8,
+        "rust-import-expression-uses": 10,
+        "rust-private-function-cycles": 8,
+        "rust-cross-file-cycle-roots": 5,
+    }
+    batches = prepare_batches(MANIFEST_PATH, set(audit_cases))
+    assert {(batch.case_id, batch.arm, len(batch.questions)) for batch in batches} == {
+        (case_id, "original", count) for case_id, count in audit_cases.items()
+    }
+    assert len(batches) == 8
 
 
 def test_dynamic_dispatch_challenge_builds_single_blind_request():

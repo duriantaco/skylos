@@ -165,12 +165,12 @@ func staleB() { staleA() }
 			states: map[string]string{"API": "", "helper": "", "staleA": "", "staleB": ""},
 		},
 		{
-			name: "project import type errors disable proof in importing package",
+			name: "valid project imports retain typed callback use",
 			files: map[string]string{
 				"main.go":    "package main\nimport \"example.com/demo/lib\"\nfunc main() { lib.API(callback) }\nfunc callback() {}\n",
 				"lib/lib.go": "package lib\nfunc API(callback func()) { callback() }\nfunc unused() {}\n",
 			},
-			states: map[string]string{"main": "", "callback": "", "lib.API": "reachable", "lib.unused": "unreachable"},
+			states: map[string]string{"main": "reachable", "callback": "reachable", "lib.API": "reachable", "lib.unused": "unreachable"},
 		},
 		{
 			name:   "assembly use disables proof",
