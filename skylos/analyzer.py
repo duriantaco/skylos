@@ -71,6 +71,7 @@ from skylos.rules.secrets import (
     SECRET_FILE_NAMES as _SECRET_FILE_NAMES,
     SECRET_ONLY_FILE_SUFFIXES as _SECRET_ONLY_FILE_SUFFIXES,
     file_starts_like_shell_script as _file_starts_like_shell_script,
+    is_aws_credential_path as _is_aws_credential_path,
     is_provider_only_secret_name as _is_provider_only_secret_name,
     is_secret_scan_name as _is_secret_scan_name,
     may_be_shell_script as _may_be_shell_script,
@@ -743,6 +744,8 @@ def _class_has_base_leaf(class_def, leaf_names: set[str]) -> bool:
 
 
 def _is_secret_config_candidate(path: Path) -> bool:
+    if _is_aws_credential_path(str(path)):
+        return True
     name = path.name.lower()
     if name == ".env" or name.startswith(".env."):
         return True
@@ -758,12 +761,17 @@ def _is_secret_config_candidate(path: Path) -> bool:
 
 def _is_provider_only_secret_text(path: Path) -> bool:
     # These files enter the secret-only collector, never a language parser.
-    return _is_provider_only_secret_name(path.name) or path.suffix.lower() in {
-        ".html",
-        ".htm",
-        ".css",
-        ".map",
-    }
+    return (
+        _is_aws_credential_path(str(path))
+        or _is_provider_only_secret_name(path.name)
+        or path.suffix.lower()
+        in {
+            ".html",
+            ".htm",
+            ".css",
+            ".map",
+        }
+    )
 
 
 def _resolve_secret_config_candidate(path: Path, root: Path) -> Path | None:
@@ -964,6 +972,28 @@ def _normalize_secret_changed_files(
     return normalized
 
 
+def _read_secret_file_content(root: Path, path: Path):
+    from skylos.rules.secret_text import decode_secret_file_text
+
+    # Latin-1 plus unchanged newlines transports every original byte through
+    # the existing contained, size-bounded no-follow reader before decoding.
+    raw_text = read_project_text_no_symlink(
+        root,
+        path,
+        max_bytes=MAX_SECRET_CONFIG_BYTES,
+        encoding="latin-1",
+        newline="",
+    )
+    return (
+        decode_secret_file_text(
+            raw_text.encode("latin-1"),
+            strict_utf8=_is_provider_only_secret_text(path),
+        )
+        if raw_text is not None
+        else None
+    )
+
+
 def _scan_secret_config_candidate(
     candidate: Path,
     *,
@@ -1000,29 +1030,30 @@ def _scan_secret_config_candidate(
             scanned.add(str(resolved))
             return []
         scanned.add(str(resolved))
-        if _may_be_shell_script(resolved.name) and not _file_starts_like_shell_script(
-            resolved
+        if (
+            not _is_aws_credential_path(str(resolved))
+            and _may_be_shell_script(resolved.name)
+            and not _file_starts_like_shell_script(resolved)
         ):
             return []
-        source = read_project_text_no_symlink(
-            root,
-            resolved,
-            max_bytes=MAX_SECRET_CONFIG_BYTES,
-            encoding="utf-8",
-            errors="strict" if _is_provider_only_secret_text(resolved) else "ignore",
-        )
-        if source is None:
+        content = _read_secret_file_content(root, resolved)
+        if content is None:
             if analysis_errors is not None:
                 analysis_errors.append(_secret_config_read_error_payload(resolved))
             return []
         ctx = {
             "relpath": rel,
-            "lines": source.splitlines(True),
+            "lines": content.text.splitlines(True),
             "tree": None,
         }
         if _is_provider_only_secret_text(resolved):
             ctx["provider_only"] = True
+        if _is_aws_credential_path(str(resolved)):
+            ctx["aws_credential_file"] = True
         findings = list(_secrets_scan_ctx(ctx))
+        if content.encoding is not None:
+            for finding in findings:
+                finding["source_encoding"] = content.encoding
         if checked_files is not None:
             checked_files.add(str(resolved))
         return findings
@@ -5210,22 +5241,19 @@ class Skylos:
                                 if isinstance(out, tuple) and len(out) > 19
                                 else None
                             )
-                            if file_source_lines:
-                                src_lines = file_source_lines
-                            elif _is_secret_config_candidate(Path(file)):
-                                src = read_project_text_no_symlink(
-                                    root,
-                                    Path(file),
-                                    max_bytes=MAX_SECRET_CONFIG_BYTES,
-                                    encoding="utf-8",
-                                    errors="ignore",
+                            file_secret_content = None
+                            if _is_secret_config_candidate(Path(file)):
+                                file_secret_content = _read_secret_file_content(
+                                    root, Path(file)
                                 )
-                                if src is None:
+                                if file_secret_content is None:
                                     analysis_errors.append(
                                         _secret_config_read_error_payload(Path(file))
                                     )
                                     continue
-                                src_lines = src.splitlines(True)
+                                src_lines = file_secret_content.text.splitlines(True)
+                            elif file_source_lines:
+                                src_lines = file_source_lines
                             else:
                                 src = Path(file).read_text(
                                     encoding="utf-8", errors="ignore"
@@ -5238,6 +5266,13 @@ class Skylos:
                             ):
                                 ctx["honor_inline_ignores"] = False
                             findings = list(_secrets_scan_ctx(ctx))
+                            if file_secret_content is not None and (
+                                file_secret_content.encoding is not None
+                            ):
+                                for finding in findings:
+                                    finding["source_encoding"] = (
+                                        file_secret_content.encoding
+                                    )
                             secret_checked_files.add(str(Path(file).resolve()))
                             if findings:
                                 f_ignore = per_file_ignore_lines.get(str(file), set())
