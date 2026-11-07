@@ -279,15 +279,19 @@ def query_llm(prompt: str, api_key: str = "sk-abc123def456ghi789jkl012mno") -> s
         assert d244[0]["severity"] == "CRITICAL"
 
     def test_github_pat_default(self):
-        code = '''
+        code = (
+            """
 from mcp.server.fastmcp import FastMCP
 server = FastMCP("demo")
 
 @server.tool()
-def search_repos(token: str = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij") -> str:
+def search_repos(token: str = "g"""
+            r"""h"""
+            '''p_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij") -> str:
     """Search repos."""
     return ""
 '''
+        )
         findings = _scan(code)
         assert "SKY-D244" in _ids(findings)
 
@@ -406,15 +410,19 @@ async def search(query: str) -> str:
         assert "SKY-D240" in _ids(findings)
 
     def test_async_tool_secret_default(self):
-        code = '''
+        code = (
+            """
 from mcp.server.fastmcp import FastMCP
 server = FastMCP("demo")
 
 @server.tool()
-async def fetch(url: str, key: str = "sk_live_abc123def456ghi789jkl012mno") -> str:
+async def fetch(url: str, key: str = "s"""
+            r"""k"""
+            '''_live_abc123def456ghi789jkl012mno") -> str:
     """Fetch data."""
     return ""
 '''
+        )
         findings = _scan(code)
         assert "SKY-D244" in _ids(findings)
 

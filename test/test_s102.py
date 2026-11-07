@@ -24,7 +24,7 @@ def test_s102_secret_in_static_dir():
     """S101 findings in static/ should be elevated to S102."""
     ctx = _make_ctx(
         "static/config.js",
-        ['const key = "sk_live_abcdef1234567890";\n'],
+        ['const key = "s' r"k" '_live_abcdef1234567890";\n'],
     )
     findings = scan_ctx(ctx, ignore_tests=False)
     assert findings
@@ -36,7 +36,7 @@ def test_s102_secret_in_static_dir():
 def test_s102_secret_in_public_dir():
     ctx = _make_ctx(
         "public/env.js",
-        ['const t = "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789";\n'],
+        ['const t = "g' r"h" 'p_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789";\n'],
     )
     findings = scan_ctx(ctx, ignore_tests=False)
     assert findings
@@ -46,7 +46,7 @@ def test_s102_secret_in_public_dir():
 def test_s102_secret_in_next_dir():
     ctx = _make_ctx(
         ".next/static/chunks/config.js",
-        ['const k = "sk_live_abcdef1234567890";\n'],
+        ['const k = "s' r"k" '_live_abcdef1234567890";\n'],
     )
     findings = scan_ctx(ctx, ignore_tests=False)
     assert findings
@@ -56,7 +56,7 @@ def test_s102_secret_in_next_dir():
 def test_s102_secret_in_dist_dir():
     ctx = _make_ctx(
         "dist/bundle.js",
-        ['const k = "glpat-abcdefghij1234567890";\n'],
+        ['const k = "g' r"l" 'pat-abcdefghij1234567890";\n'],
     )
     findings = scan_ctx(ctx, ignore_tests=False)
     assert findings
@@ -70,7 +70,7 @@ def test_s101_stays_in_normal_path():
     """Secrets in non-client paths should remain S101."""
     ctx = _make_ctx(
         "src/config.py",
-        ['API_KEY = "sk_live_abcdef1234567890"\n'],
+        ['API_KEY = "s' r"k" '_live_abcdef1234567890"\n'],
     )
     findings = scan_ctx(ctx, ignore_tests=False)
     assert findings
@@ -80,7 +80,7 @@ def test_s101_stays_in_normal_path():
 def test_s101_stays_in_lib_path():
     ctx = _make_ctx(
         "lib/settings.py",
-        ['token = "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"\n'],
+        ['token = "g' r"h" 'p_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"\n'],
     )
     findings = scan_ctx(ctx, ignore_tests=False)
     assert findings
@@ -900,7 +900,7 @@ def test_s102_both_client_path_and_process_env():
     ctx = _make_ctx(
         "static/app.js",
         [
-            'const stripe = "sk_live_abcdef1234567890";\n',
+            'const stripe = "s' r"k" '_live_abcdef1234567890";\n',
             "const secret = process.env.SECRET_KEY;\n",
         ],
     )

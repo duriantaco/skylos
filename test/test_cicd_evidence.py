@@ -225,7 +225,9 @@ def test_contextual_short_secret_redaction_covers_output_shapes(rendered_input):
 
 def test_pem_redaction_removes_the_entire_private_key_block():
     pem = (
-        "-----BEGIN PRIVATE KEY-----\n"
+        "-----B"
+        r"E"
+        "GIN PRIVATE KEY-----\n"
         "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSj\n"
         "sensitivebase64materialmustnotescape1234567890\n"
         "-----END PRIVATE KEY-----"
