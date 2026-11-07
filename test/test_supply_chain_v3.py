@@ -915,6 +915,31 @@ def test_upgrade_review_pairs_upgrades_and_new_packages_and_maps_by_list(tmp_pat
     )
 
 
+def test_newly_added_package_block_deltas_are_listed_not_gated(tmp_path):
+    _upgrade_repo(tmp_path)
+    result = {
+        "results": [
+            _reviewed("lodash", "4.17.20", "4.17.21", block=[HOOK_DELTA]),
+            _reviewed("chalk", None, "5.3.0", block=[HOOK_DELTA]),
+        ],
+        "receipt": {"schema": "ca9.upgrade_review.v1", "complete": True, "skipped": []},
+    }
+
+    _, findings, upgrades, errors = _review(tmp_path, result)
+
+    assert sorted(
+        (item["rule_id"], item["severity"], item["metadata"]["basis"])
+        for item in findings
+    ) == [
+        ("SKY-SCA-UPG001", "CRITICAL", "upgrade"),
+        ("SKY-SCA-UPG002", "MEDIUM", "new_package"),
+    ]
+    added = next(item for item in findings if item["metadata"]["basis"] == "new_package")
+    assert added["metadata"]["block_deltas"][0]["kind"] == "new_install_hook"
+    assert "no earlier version" in added["message"]
+    assert errors == [] and upgrades["status"] == "complete"
+
+
 def test_internal_packages_are_never_looked_up_publicly(tmp_path):
     _upgrade_repo(tmp_path)
     _write(

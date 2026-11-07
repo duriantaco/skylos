@@ -620,13 +620,14 @@ checkout itself is never handed to it, installed or run.
 |:---|:---|:---|
 | `SKY-SCA-HRD001` | HIGH | The change weakens install hardening (`ca9.api.hardening_regressions`): a cooldown removed or lowered (npm `min-release-age`, pnpm `minimumReleaseAge`, Yarn `npmMinimalAgeGate`, Bun `minimumReleaseAge` in seconds, uv `exclude-newer`, pip `--uploaded-prior-to`, Dependabot `cooldown`, Renovate `minimumReleaseAge`; compared in minutes, and a removal that falls back to an equal or longer default such as pnpm 11's one day is not reported), a package newly allowed to skip the cooldown, `ignore-scripts` turned off, packages added to pnpm `allowBuilds`, npm `allowScripts` or Bun `trustedDependencies`, `strictDepBuilds` turned off, or an action pinned to a SHA moved to a tag or branch |
 | `SKY-SCA-UPG001` | CRITICAL | With `--review-upgrades`: ca9 puts a delta of a lockfile change (npm or PyPI) in its `block` list: an upgrade adds install-time or start-up code (a `.pth` file or `sitecustomize` with code, a new install or prepare hook, decode-and-exec, a new Git or URL dependency, agent/editor hook files shipped in the package, two archive entries that install to the same path or differ only by case, a new executable named like a system command such as `node`, `git`, `pip`, `sh` or `curl`, bytecode without source that runs at import or interpreter start, an artifact that does not match the lockfile's integrity) |
-| `SKY-SCA-UPG002` | MEDIUM | With `--review-upgrades`: only ca9's `warn` list has deltas: import-time network or exec calls, a much larger obfuscated file, a native binary, a new publisher, install-time code that changed beyond version strings and other literals, or for a newly added package (no base version) the risky code it ships, install hooks included. A review signal, not proof |
+| `SKY-SCA-UPG002` | MEDIUM | With `--review-upgrades`: only ca9's `warn` list has deltas: import-time network or exec calls, a much larger obfuscated file, a native binary, a new publisher, install-time code that changed beyond version strings and other literals, or anything ca9 flags in a newly added package (no base version), `block` list included, because there is no earlier version to compare against. A review signal, not proof |
 
 `--review-upgrades` implies `--sca`. It downloads both versions of each
 upgraded package through ca9's hash-verified fetcher (trusted indexes only,
 size-capped) and reads them as data. A package the base did not lock is sent
-with no old version and reviewed as newly added. Findings follow ca9's lists,
-never the delta kind: `block` is UPG001, `warn` is UPG002. Workflows
+with no old version and reviewed as newly added; everything ca9 flags in it is
+UPG002, because nothing shows the behaviour is new. Otherwise findings follow
+ca9's lists, never the delta kind: `block` is UPG001, `warn` is UPG002. Workflows
 written by `skylos cicd init` turn it on for pull requests when dependency
 checks are selected; plain CLI runs need the flag. The finding sits on the
 lockfile line of the new version; `metadata.block_deltas` / `warn_deltas`

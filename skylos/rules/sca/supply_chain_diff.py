@@ -1312,16 +1312,23 @@ def _upgrade_finding(sides, pair, block, warn) -> dict:
     rule_id = RULE_UPGRADE_WARN
     severity = "MEDIUM"
     lead = (block or warn)[0]
-    if block:
+    added = pair["old"] is None
+    if block and not added:
         rule_id = RULE_UPGRADE_BLOCK
         severity = "CRITICAL"
     where = lead["path"] or "the package"
     if lead["line"]:
         where = f"{where}:{lead['line']}"
     label = f"{pair['name']} {pair['old']} -> {pair['new']}"
-    if pair["old"] is None:
+    if added:
         label = f"newly added {pair['name']} {pair['new']}"
-    if block:
+    if block and added:
+        message = (
+            f"{label} ships {lead['kind']} in {where}. There is no earlier "
+            "version in this project to compare against, so this may be how "
+            "every release of the package works; read the code before merging."
+        )
+    elif block:
         message = (
             f"{label} adds {lead['kind']} in {where}: code that runs on install, "
             "interpreter start or import, which compromised releases add. "
