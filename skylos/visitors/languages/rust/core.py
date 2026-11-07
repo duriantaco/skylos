@@ -358,6 +358,8 @@ class RustCore:
         self._value_binding_bytes: dict[int, frozenset[int]] = {}
         self._block_value_bindings: dict[int, dict[str, int]] = {}
         self._parameter_value_bindings: dict[int, frozenset[str]] = {}
+        self._local_trait_imports = None
+        self._semantic_import_uses = None
 
         if self.lang:
             self.parser = _get_parser(self.lang)
@@ -1175,7 +1177,7 @@ class RustCore:
                 continue
 
             if child.type == "use_declaration":
-                self._scan_use_imports(child, namespace=namespace)
+                self._scan_use_imports(child, namespace=namespace, attrs=attrs)
                 attrs = []
                 continue
 
@@ -1537,7 +1539,7 @@ class RustCore:
                 pending_attrs=[],
             )
 
-    def _scan_use_imports(self, node, *, namespace: str) -> None:
+    def _scan_use_imports(self, node, *, namespace: str, attrs=()) -> None:
         line = node.start_point[0] + 1
         source = self._node_name_text(node.child_by_field_name("argument"))
         is_public_reexport = self._is_public(node)
@@ -1564,6 +1566,16 @@ class RustCore:
             )
             if qualified_import:
                 self.import_aliases.setdefault(local_name, set()).add(qualified_import)
+            if self._semantic_import_uses is None:
+                from .import_uses import SemanticImportUses
+
+                self._semantic_import_uses = SemanticImportUses(self)
+            if self._semantic_import_uses.conditional_attribute_used(
+                node, local_name, attrs
+            ) or self._semantic_import_uses.writer_macro_used(
+                node, source, original_name
+            ):
+                d.references = max(d.references, 1)
             if self._external_trait_import_is_used(
                 source,
                 local_name=local_name,
@@ -1571,6 +1583,13 @@ class RustCore:
                 scope_node=node.parent,
             ):
                 self._record_ref(local_name, node.start_byte, current_callable=None)
+            elif qualified_import:
+                if self._local_trait_imports is None:
+                    from .local_traits import LocalTraitImports
+
+                    self._local_trait_imports = LocalTraitImports(self)
+                if self._local_trait_imports.is_used(qualified_import, node.parent):
+                    d.references = max(d.references, 1)
         self.raw_imports.append({"source": source, "names": names, "line": line})
 
     def _extract_use_bindings(self, node) -> list[tuple[str, str]]:

@@ -2000,10 +2000,15 @@ such as `api.render()` and `api["render"]`, including stable `const` aliases and
 literal destructuring. A parameter, block variable or other local binding with
 the same name does not count as a read of the imported namespace. Unknown keys,
 namespace escapes, reflection and mutation preserve the whole export surface.
-This follows resolved module edges, including wildcard barrels; named re-export
-barrels can still retain exports that no entry point consumes. Escaped export
-spellings behind wildcard barrels and cross-file classic JS globals remain
-limited.
+This follows resolved module edges, including wildcard barrels. In a closed
+source scope, named re-export chains propagate the selected original binding
+through aliases and wildcard hops. Package APIs and escaping namespaces retain
+their export surfaces. Competing wildcard providers, unmodeled local export
+bindings and opaque source decline that narrowing. Enumerating a literal
+module namespace also supplies positive reads through resolved export paths,
+respecting explicit shadows and the exclusion of default from star exports.
+Direct namespace exports (`export * as tools`), escaped export spellings behind
+wildcard barrels and cross-file classic JS globals remain limited.
 
 TS/JS local parameter and value reads do not reference unrelated module
 functions with the same name. Function values passed or captured still count.
@@ -2023,6 +2028,12 @@ source and incomplete types retain conservative references. Private free helper
 functions in internal `_test.go` packages are reportable only with complete
 native unreachability evidence; test entries, callbacks, hooks, public APIs and
 live helper chains remain roots. External test packages keep their prior policy.
+An explicitly required dependency with a unique unversioned local replacement
+can also supply type identity when its matching module and package sources are
+already inside the native scan. Unsupported metadata, workspace overrides,
+version-specific or remote replacements, excluded providers and paths outside
+the scan retain conservative handling. This does not fetch dependencies or add
+workspace sibling resolution.
 Private functions that only recurse or call one another are reported when no
 entry point reaches them. Local variables and parameters with matching names
 do not keep unrelated package functions alive. Exported APIs, interface methods,
@@ -2063,6 +2074,17 @@ functions can be reported as an unrooted group, including recursion cycles,
 after project references are collected. Cross-file calls, function values,
 static initializers, conditional entries and unknown macro expansion preserve
 roots. These bounded checks do not add Cargo feature or macro expansion.
+
+Within a closed Rust source file, local trait declarations and concrete receiver
+types can establish which import supplies a method, including aliases and
+borrowed receivers. Unknown or competing implementations, conditional items,
+unexpanded macros and out-of-line modules decline that proof. Standard writer
+macros can establish a `std::io::Write` import use for a proven writer receiver;
+local `write_fmt` traits, inherent methods and shadowed macros/providers remain
+separate controls. A feature-matched `cfg_attr` wrapper can read its attribute
+import without treating predicate strings or inactive wrappers as uses. These
+checks preserve Rust's experimental confidence cap of 40 and do not evaluate
+Cargo's active feature set.
 
 A Python module or class variable is kept alive by an attribute read `x.NAME`
 elsewhere only when `x` could be its owner. For a module variable that is the

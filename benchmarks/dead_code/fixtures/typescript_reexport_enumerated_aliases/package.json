@@ -1,0 +1,1 @@
+{"private":true,"main":"./dist/entry.mjs","scripts":{"start":"node index.ts"}}

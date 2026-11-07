@@ -45,6 +45,7 @@ from skylos.visitors.languages.typescript.analysis import (
     _discover_ts_vscode_lifecycle_entry_files,
     discover_ts_build_aliases,
     discover_ts_bundle_entry_files,
+    discover_ts_reexport_context,
     find_dead_ts_files,
     prune_dead_ts_import_consumers,
     find_unused_ts_exports,
@@ -179,6 +180,7 @@ _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_ts_importers_of",
     "_ts_file_wildcard_edges",
     "_ts_file_importers_of",
+    "_ts_reexport_ref_counts",
     "_ts_demoted_exports",
     "_browser_script_entry_files",
     "_generated_file_scope",
@@ -2230,15 +2232,25 @@ class Skylos:
                     def_obj.references = max(def_obj.references, 1)
 
     def _build_ts_import_graph(
-        self, ts_raw_imports: dict, monorepo_resolver=None, *, credit_references=True
+        self,
+        ts_raw_imports: dict,
+        monorepo_resolver=None,
+        *,
+        credit_references=True,
+        reexport_context=None,
     ):
+        self._ts_reexport_ref_counts = {}
         (
             self.ts_consumed_exports,
             self._ts_wildcard_edges,
             self._ts_importers_of,
         ) = build_ts_import_graph(
-            ts_raw_imports, self.defs, monorepo_resolver,
+            ts_raw_imports,
+            self.defs,
+            monorepo_resolver,
             credit_references=credit_references,
+            reexport_context=reexport_context,
+            discarded_reexport_refs=self._ts_reexport_ref_counts,
         )
 
     def _demote_unconsumed_ts_exports(
@@ -6385,10 +6397,33 @@ class Skylos:
                 if os.path.realpath(str(filename)) not in dead_ts_modules
                 or (name, os.path.realpath(str(filename))) in local_import_reads
             ]
-        self._build_ts_import_graph(live_ts_imports, graph_resolver)
+        reexport_context = discover_ts_reexport_context(
+            files,
+            live_ts_imports,
+            project_root=str(self._project_root),
+            workspace_inventory=workspace_inventory,
+            exclude_folders=exclude_folders,
+            browser_entry_points=self._browser_script_entry_files,
+            analysis_errors=analysis_errors,
+        )
+        self._build_ts_import_graph(
+            live_ts_imports,
+            graph_resolver,
+            reexport_context=reexport_context,
+        )
+        if self._ts_reexport_ref_counts:
+            from skylos.visitors.languages.typescript.reexport_demand import (
+                remove_reexport_only_refs,
+            )
+
+            self.refs = remove_reexport_only_refs(
+                self.refs, self._ts_reexport_ref_counts
+            )
         apply_ts_module_substitutions(
-            file_replacements, self.ts_consumed_exports,
-            self._ts_importers_of, self._ts_wildcard_edges,
+            file_replacements,
+            self.ts_consumed_exports,
+            self._ts_importers_of,
+            self._ts_wildcard_edges,
         )
 
         for top_level_ref in all_top_level_refs:

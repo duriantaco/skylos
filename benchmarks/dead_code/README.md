@@ -4,10 +4,22 @@ This benchmark suite measures Skylos dead-code detection against labeled fixture
 
 The benchmark framework lives in the Skylos repo because it must version with analyzer output and CI. Larger realistic targets, such as `/Users/oha/skylos-demo`, stay external and are referenced by config.
 
-The default manifest contains **58 cases and 315 symbol labels**: 108 unused and
-207 used. The first 50 cases and their 260 labels retain their expectations.
-Eight additional cases follow source-reviewed comparisons against native tools
-on pinned real repositories.
+The default manifest contains **65 cases and 351 symbol labels**: 119 unused and
+232 used. The first 58 cases and their 315 labels retain their expectations.
+Seven additional cases cover export forwarding, local Go module replacements,
+and Rust trait, writer-macro and conditional-attribute imports.
+
+| Latest source contracts | Cases / labels |
+|---|---:|
+| TS named export demand, public/escaping namespaces and enumerated aliases | 3 / 13 |
+| Go local replacement modules and live callback cycles | 2 / 12 |
+| Rust local receiver identity and macro/attribute import evidence | 2 / 11 |
+
+The enumerated-alias fixture already passed on the baseline with grep enabled;
+it protects live API bindings rather than measuring an incremental detection
+gain. Separate AST contracts reproduce the missing export propagation.
+
+The eight cases from the preceding real-repository audit are also retained:
 
 | New cases from the real-repository audit | Cases / labels |
 |---|---:|
@@ -39,11 +51,14 @@ The implementations adapt approaches studied in
 (ISC), [Staticcheck U1000](https://github.com/dominikh/go-tools/blob/8371db75e9daf10073dc2ba684c2a24a1d6ead95/unused/unused.go)
 (MIT), and [rustc's dead-code pass](https://github.com/rust-lang/rust/blob/c6ac6ea53f6c8234fd06ddf0b88d89fe8b46edf5/compiler/rustc_passes/src/dead.rs)
 (MIT OR Apache-2.0). No upstream implementation code was copied. These are
-bounded Skylos checks, not compiler parity: named TS re-export barrels can still
-retain unused exports; Go packages with unresolved dependencies do not gain an
-unreachability proof; Rust macros, Cargo features and type resolution remain
-outside this change. The named re-export limitation has an explicit strict
-expected-failure regression test. Separate paired probes also retain existing
+bounded Skylos checks, not compiler parity. Named TS re-export chains follow
+selected bindings through aliases and wildcard hops. Unknown local export
+bindings, competing star providers and opaque namespaces retain conservative
+handling. Direct namespace exports (`export * as tools`) still have an explicit
+strict expected-failure regression test. Go packages with unresolved dependencies
+do not gain an unreachability proof. Rust macro expansion, Cargo feature
+evaluation and general project-wide type resolution remain outside this change.
+Separate paired probes also retain existing
 false positives for escaped exports behind wildcard barrels and cross-file
 classic JS globals; those cases are not counted as passing coverage.
 
@@ -214,8 +229,8 @@ First inspect the request plan. This does not use the network or require a key:
 python3 scripts/jev_dead_code_benchmark.py
 ```
 
-The default checked-in manifest contains 315 ground-truth symbols: 108 unused
-and 207 used. It is useful for request validation and regression testing, but
+The default checked-in manifest contains 351 ground-truth symbols: 119 unused
+and 232 used. It is useful for request validation and regression testing, but
 Skylos already scores every labeled symbol correctly there. A Jev tie on this
 suite does not demonstrate incremental value. The runner always asks the
 `original` question, and adds a second arm only when safe:

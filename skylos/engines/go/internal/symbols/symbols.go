@@ -398,6 +398,13 @@ func Extract(root string) (*Result, error) {
 
 	markReferencedInterfaceMethods(result, projectInterfaceMethods)
 	typeImporter := newProjectSourceImporter(root, modulePath, fset, reachabilityFiles, newHostStdlibImporter(fset))
+	if project, ok := typeImporter.(*projectSourceImporter); ok {
+		for importPath, dir := range project.dirs {
+			if !project.ambiguous[importPath] {
+				pkgDirs[importPath] = dir
+			}
+		}
+	}
 
 	if hasMethodDefs(result.Defs) {
 		defNames := symbolDefNames(result.Defs)
@@ -686,6 +693,11 @@ func callExprCallee(call *ast.CallExpr, pkgDir string, importMap map[string]stri
 }
 
 func resolveImportToPkgDir(impPath, modulePath, root string, pkgDirs map[string]string) string {
+	if dir := pkgDirs[impPath]; dir != "" && isPathWithinRoot(root, dir) {
+		if rel, err := filepath.Rel(root, dir); err == nil {
+			return filepath.ToSlash(rel)
+		}
+	}
 	if modulePath == "" {
 		return ""
 	}

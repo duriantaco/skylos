@@ -109,17 +109,17 @@ def test_checked_in_ground_truth_builds_blind_plan_without_duplicate_arms():
     plan = build_plan(MANIFEST_PATH)
 
     assert plan["network_used"] is False
-    assert plan["case_count"] == 58
-    assert plan["request_count"] == 64
-    assert plan["ground_truth_count"] == 315
-    assert plan["decision_count"] == 355
+    assert plan["case_count"] == 65
+    assert plan["request_count"] == 71
+    assert plan["ground_truth_count"] == 351
+    assert plan["decision_count"] == 391
     assert plan["neutralization_status_counts"] == {
         "applied": 6,
         "skipped": 20,
-        "not_applicable": 32,
+        "not_applicable": 39,
     }
-    assert plan["unused_count"] == 108
-    assert plan["used_count"] == 207
+    assert plan["unused_count"] == 119
+    assert plan["used_count"] == 232
     assert plan["model"] == "jev-1.13.0"
     assert plan["endpoint"] == JEV_ENDPOINT
 
@@ -166,6 +166,23 @@ def test_checked_in_ground_truth_builds_blind_plan_without_duplicate_arms():
         (case_id, "original", count) for case_id, count in audit_cases.items()
     }
     assert len(batches) == 8
+
+    # These source-frozen module/trait cases add 36 labels. None needs a
+    # renamed arm, so each gets exactly one original request.
+    next_cases = {
+        "typescript-reexport-demand-chain": 3,
+        "typescript-reexport-public-and-escape": 6,
+        "go-local-module-replacement": 6,
+        "go-local-replacement-live-callback-cycle": 6,
+        "rust-local-trait-receiver-identity": 5,
+        "typescript-reexport-enumerated-aliases": 4,
+        "rust-macro-import-evidence": 6,
+    }
+    batches = prepare_batches(MANIFEST_PATH, set(next_cases))
+    assert {(batch.case_id, batch.arm, len(batch.questions)) for batch in batches} == {
+        (case_id, "original", count) for case_id, count in next_cases.items()
+    }
+    assert len(batches) == 7
 
 
 def test_dynamic_dispatch_challenge_builds_single_blind_request():

@@ -178,10 +178,6 @@ def test_mixed_default_namespace_import_keeps_default_binding_alive(tmp_path):
     assert not result.get("unused_exports")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Existing gap: named re-exports consume every source export before barrel demand propagation",
-)
 def test_namespace_member_crosses_alias_and_wildcard_barrels(tmp_path):
     _write(
         tmp_path / "package.json",
