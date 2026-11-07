@@ -84,7 +84,7 @@ def test_generated_id_suppression_requires_directory_and_nonsensitive_field():
         assert any(finding["provider"] == "generic" for finding in findings)
 
 
-def test_github_and_generic_both_fire_on_token_assignment():
+def test_github_token_assignment_keeps_provider_without_generic_duplicate():
     src = 'GITHUB_TOKEN = "ghp_1234567890abcdef1234567890abcdef1234"\n'
 
     findings = list(scan_ctx(_ctx_from_source(src)))
@@ -95,7 +95,8 @@ def test_github_and_generic_both_fire_on_token_assignment():
         providers.add(provider_name)
 
     assert "github" in providers
-    assert "generic" in providers
+    assert "generic" not in providers
+    assert len(findings) == 1
 
     github_previews = []
     for finding in findings:
