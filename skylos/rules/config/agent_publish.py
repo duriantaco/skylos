@@ -35,8 +35,16 @@ import os
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from skylos.core.safe_cache_io import read_project_text_no_symlink
 from skylos.core.skylos_hooks import is_skylos_hook_command
+from skylos.rules.config.agent_files import (
+    LinkedConfigs,
+    call_on_copy,
+    contained,
+    link_components,
+    read_text,
+    repository_level,
+    repository_texts,
+)
 from skylos.rules.config.findings import config_finding
 
 AGENT_RULES = {
@@ -144,12 +152,37 @@ def _changed_paths(root: Path, changed_files) -> set[Path] | None:
 
 
 class _Scope:
-    """Which ca9-reported files may carry findings."""
+    """Which ca9-reported files may carry findings.
+
+    A row names the path the agent or editor opens. That path may go through
+    symbolic links that stay inside the repository (the Git top, or the
+    scanned folder outside Git): the target must be a regular file Git lists
+    (a full scan also keeps untracked files Git does not ignore), and so must
+    every link on the way. In a diff scan the row counts when the path, its
+    target or one of those links changed.
+    """
 
     def __init__(self, root: Path, changed_files):
         self.root = root
         self.changed = _changed_paths(root, changed_files)
         self.git = _git_files(root, tracked_only=_diff_mode(changed_files))
+        top = root
+        if self.git is not None:
+            top = self.git[0]
+        self.top = Path(os.path.realpath(top))
+
+    def files(self) -> set[str] | None:
+        if self.git is None:
+            return None
+        return self.git[1]
+
+    def touched(self, path: Path) -> bool:
+        if self.changed is None:
+            return True
+        lexical = Path(os.path.abspath(path))
+        candidates = {lexical, Path(os.path.realpath(path))}
+        candidates.update(link_components(lexical, self.top))
+        return bool(candidates & self.changed)
 
     def resolve(self, file: object) -> Path | None:
         text = str(file or "")
@@ -157,21 +190,28 @@ class _Scope:
         if not text or pure.is_absolute() or ".." in pure.parts:
             return None
         path = self.root / Path(*pure.parts)
-        if path.is_symlink() or not path.is_file():
+        lexical = Path(os.path.abspath(path))
+        if not lexical.is_relative_to(self.root):
             return None
-        if not Path(os.path.abspath(path)).is_relative_to(self.root):
+        real = Path(os.path.realpath(path))
+        if not real.is_file() or not contained(real, self.top):
             return None
-        if self.changed is not None and Path(os.path.abspath(path)) not in self.changed:
+        if not self.touched(path):
             return None
-        if self.git is not None:
-            git_root, files = self.git
-            try:
-                relative = path.resolve().relative_to(git_root.resolve()).as_posix()
-            except (OSError, ValueError):
-                return None
-            if relative not in files:
-                return None
+        files = self.files()
+        if files is not None:
+            listed = [real, *link_components(lexical, self.top)]
+            for item in listed:
+                try:
+                    relative = item.relative_to(self.top).as_posix()
+                except ValueError:
+                    return None
+                if relative not in files:
+                    return None
         return path
+
+    def read(self, path: Path) -> str | None:
+        return read_text(self.top, Path(os.path.realpath(path)))
 
 
 def _text(value: object, limit: int = MAX_TEXT) -> str:
@@ -225,15 +265,13 @@ def _severity(finding: dict, default: str) -> str:
     return default
 
 
-def _line(finding: dict, path: Path, root: Path, needle: str) -> int:
+def _line(finding: dict, path: Path, scope: _Scope, needle: str) -> int:
     line = finding.get("line")
     if isinstance(line, bool) or not isinstance(line, int) or line < 1:
         line = 1
     if line > 1 or not needle:
         return line
-    text = read_project_text_no_symlink(
-        root, path.relative_to(root).as_posix(), max_bytes=MAX_SETTINGS_BYTES
-    )
+    text = scope.read(path)
     if not text:
         return line
     quoted = json.dumps(needle)
@@ -281,7 +319,7 @@ def row_identity(rule_id: str, row: dict) -> str:
 
 
 def _finding(
-    finding: dict, path: Path, root: Path, rule: tuple, *, domain: str, provider: str
+    finding: dict, path: Path, scope: _Scope, rule: tuple, *, domain: str, provider: str
 ) -> dict:
     rule_id, default_severity, label = rule
     evidence = _evidence(finding.get("evidence"))
@@ -297,7 +335,7 @@ def _finding(
         name=name,
         message=_message(finding, rule_id, label),
         file=path,
-        line=_line(finding, path, root, needle),
+        line=_line(finding, path, scope, needle),
         severity=_severity(finding, default_severity),
         value=value,
         finding_type=label,
@@ -345,14 +383,111 @@ def _call(api, name: str, root: Path):
     return result, None
 
 
+def _within(texts: dict[str, str], top: Path, root: Path) -> dict[str, str]:
+    """Client paths relative to ``root`` (they are relative to ``top``)."""
+    try:
+        prefix = root.relative_to(top).as_posix()
+    except ValueError:
+        return {}
+    if prefix == ".":
+        return dict(texts)
+    return {
+        name[len(prefix) + 1 :]: text
+        for name, text in texts.items()
+        if name.startswith(prefix + "/")
+    }
+
+
+def _merged_inventory(main, extra, problems) -> dict | None:
+    if not isinstance(main, dict):
+        return main
+    merged = dict(main)
+    if isinstance(extra, dict):
+        for key in ("hooks", "mcp_servers", "env_overrides"):
+            merged[key] = _as_list(main.get(key)) + _as_list(extra.get(key))
+        if extra.get("status") not in (None, "complete"):
+            merged["status"] = "partial"
+    if problems:
+        merged["status"] = "partial"
+        merged["link_problems"] = list(problems)
+    return merged
+
+
+def agent_config_with_links(api, root: Path, scope: _Scope):
+    """``ca9.api.agent_config`` on ``root``, plus the configs behind links
+    that stay inside the repository, copied for ca9 under the path the client
+    opens (ca9 does not follow linked folders). ``(result, problem)``;
+    ``result["link_problems"]`` lists links that leave the repository or
+    point nowhere."""
+    result, problem = _call(api, "agent_config", root)
+    if problem is not None:
+        return None, problem
+    linked = LinkedConfigs(scope.top, scope.files(), root)
+    extra, _extra_problem = call_on_copy(
+        api, "agent_config", _within(linked.texts, scope.top, root), _call
+    )
+    findings = list(_as_list(result.get("findings")))
+    if isinstance(extra, dict):
+        findings.extend(_as_list(extra.get("findings")))
+    inventory = result.get("inventory")
+    extra_inventory = None
+    if isinstance(extra, dict):
+        extra_inventory = extra.get("inventory")
+    problems = []
+    for item in linked.problems:
+        for name in _within({item["file"]: ""}, scope.top, root):
+            problems.append({**item, "file": name})
+    return {
+        "findings": findings,
+        "inventory": _merged_inventory(inventory, extra_inventory, problems),
+        "link_problems": problems,
+    }, None
+
+
+def _rows(api, function: str, root: Path, scope: _Scope) -> list | None:
+    if function == "agent_config":
+        result, problem = agent_config_with_links(api, root, scope)
+    else:
+        result, problem = _call(api, function, root)
+    if problem is not None:
+        return None
+    return _as_list(result.get("findings"))
+
+
+def _repository_rows(api, function: str, repository: Path, scope: _Scope) -> list:
+    """Repository-level configs for a scan of a subfolder: the workflows
+    ca9 reads at the top, and the agent configs at the top (regular files
+    and those behind in-repo links), copied for ca9."""
+    if function != "agent_config":
+        result, problem = _call(api, function, repository)
+        if problem is not None:
+            return []
+        return _as_list(result.get("findings"))
+    files = scope.files()
+    texts = repository_texts(scope.top, files)
+    linked = LinkedConfigs(scope.top, files)
+    for name, text in linked.texts.items():
+        if repository_level(name):
+            texts.setdefault(name, text)
+    result, problem = call_on_copy(api, function, texts, _call)
+    if problem is not None or not isinstance(result, dict):
+        return []
+    return _as_list(result.get("findings"))
+
+
 def scan_agent_publish(
     root: str | Path,
     *,
     changed_files: set[str] | None = None,
     ignore: set[str] | None = None,
     api=None,
+    repository: Path | None = None,
 ) -> list[dict[str, Any]]:
-    """SKY-D365-D374 findings for a scanned folder."""
+    """SKY-D365-D377 findings for a scanned folder.
+
+    ``repository`` is the Git top when the scan covers only a subfolder of
+    it: its repository-level workflows and agent configs are reported too,
+    like the repository-level GitHub Actions and GitLab CI findings."""
     from skylos.rules.sca import supply_chain
 
     requested = Path(root)
@@ -368,25 +503,32 @@ def scan_agent_publish(
         api = supply_chain.load_ca9_api()
     scope = _Scope(root_path, changed_files)
     findings: list[dict[str, Any]] = []
+    seen: set[tuple] = set()
     jobs = []
     if wanted_agent:
         jobs.append(("agent_config", AGENT_RULES, "agent_config"))
     if wanted_publish:
         jobs.append(("audit_workflows", PUBLISH_RULES, "cicd"))
     for function, rules, domain in jobs:
-        result, problem = _call(api, function, root_path)
-        if problem is not None:
+        rows = _rows(api, function, root_path, scope)
+        if rows is None:
             continue
-        findings.extend(
-            _mapped(result.get("findings"), rules, root_path, scope, domain, ignore)
-        )
+        findings.extend(_mapped(rows, rules, scope, domain, ignore, seen))
+    if repository is not None:
+        top = Path(repository).resolve()
+        if top != root_path and root_path.is_relative_to(top):
+            top_scope = _Scope(top, changed_files)
+            for function, rules, domain in jobs:
+                rows = _repository_rows(api, function, top, top_scope)
+                findings.extend(_mapped(rows, rules, top_scope, domain, ignore, seen))
     return findings[:MAX_FINDINGS]
 
 
-def _mapped(rows, rules, root: Path, scope: _Scope, domain: str, ignore) -> list[dict]:
+def _mapped(rows, rules, scope: _Scope, domain: str, ignore, seen: set) -> list[dict]:
+    """Findings for ca9 rows; one per rule, real file, line and identity, so
+    a config reached through a link and directly is reported once."""
     findings = []
     settings_cache: dict[Path, str | None] = {}
-    seen = set()
     for row in _as_list(rows):
         if not isinstance(row, dict):
             continue
@@ -398,21 +540,19 @@ def _mapped(rows, rules, root: Path, scope: _Scope, domain: str, ignore) -> list
             continue
         if rule[0] == "SKY-D365":
             if path not in settings_cache:
-                settings_cache[path] = read_project_text_no_symlink(
-                    root,
-                    path.relative_to(root).as_posix(),
-                    max_bytes=MAX_SETTINGS_BYTES,
-                )
+                settings_cache[path] = scope.read(path)
             command = (row.get("evidence") or {}).get("command")
-            if is_own_hook(command, root=root, settings_text=settings_cache[path]):
+            if is_own_hook(
+                command, root=scope.root, settings_text=settings_cache[path]
+            ):
                 continue
         provider = _provider(rule[0], row, path)
-        finding = _finding(row, path, root, rule, domain=domain, provider=provider)
+        finding = _finding(row, path, scope, rule, domain=domain, provider=provider)
         identity = (
             finding["rule_id"],
-            finding["file"],
+            os.path.realpath(path),
             finding["line"],
-            finding["value"],
+            finding[IDENTITY_KEY],
         )
         if identity in seen:
             continue
@@ -426,6 +566,7 @@ __all__ = [
     "HOOK_RULE_IDS",
     "IDENTITY_KEY",
     "PUBLISH_RULE_IDS",
+    "agent_config_with_links",
     "available_rule_ids",
     "finding_identity",
     "is_own_hook",

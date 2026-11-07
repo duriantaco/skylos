@@ -1332,7 +1332,9 @@ def posture_line(posture: Any) -> str | None:
 def build_supply_chain_summary(root: str | Path, scan_result) -> dict:
     """The upload blocks for a finished dependency scan, or {} when the scan
     produced no inventory: ``dependency_inventory``, ``supply_chain_posture``
-    and, when ca9 provides them, ``ci_inventory`` and ``agent_hooks``.
+    and, when ca9 provides them, ``ci_inventory`` and ``agent_hooks``, both
+    built from the Git top (``_repository_top``) so a subfolder scan does
+    not upload an empty, complete CI list.
     ``supply_chain_checks`` records what ca9 could not provide; it stays local."""
     inventory = getattr(scan_result, "inventory", None)
     if inventory is None:
@@ -1367,15 +1369,30 @@ def build_supply_chain_summary(root: str | Path, scan_result) -> dict:
                 for check_id in CHECK_IDS
             ],
         }
+    inventory_root = _repository_top(root)
     for key, build in ((CI_INVENTORY_KEY, ci_inventory_block), (AGENT_HOOKS_KEY, agent_hooks_block)):
         try:
-            block, checks[key] = build(root, api)
+            block, checks[key] = build(inventory_root, api)
         except Exception as exc:  # noqa: BLE001 - inventories never fail a scan
             block, checks[key] = None, {"status": "failed", "error_type": type(exc).__name__}
         if block is not None:
             summary[key] = block
+        if Path(inventory_root) != Path(root).resolve():
+            checks[key]["scope"] = "repository"
     summary[CHECKS_KEY] = checks
     return summary
+
+
+def _repository_top(root: str | Path) -> Path:
+    """The Git top of ``root``, else ``root``: CI workflows and agent configs
+    apply to the whole repository, so a subfolder scan reads them there."""
+    from skylos.core.file_discovery import find_git_root
+
+    resolved = Path(root).resolve()
+    top = find_git_root(resolved)
+    if top is None:
+        return resolved
+    return Path(top).resolve()
 
 
 __all__ = [

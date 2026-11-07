@@ -623,6 +623,93 @@ def _add_supply_chain_diff_findings(result, project_root, base_ref, args, config
         summary["analysis_error_count"] = len(result["analysis_errors"])
 
 
+def _config_change_finding(item) -> bool:
+    """An agent/editor-config or publish-job finding (SKY-D365-D377) that
+    carries its change identity."""
+    from skylos.rules.config.agent_publish import (
+        AGENT_RULE_IDS,
+        IDENTITY_KEY,
+        PUBLISH_RULE_IDS,
+    )
+
+    return (
+        isinstance(item, dict)
+        and item.get("kind") == "config"
+        and str(item.get("rule_id") or "").upper() in AGENT_RULE_IDS | PUBLISH_RULE_IDS
+        and isinstance(item.get(IDENTITY_KEY), str)
+    )
+
+
+def _config_findings_new_since_base(
+    result, diff_root, base_ref, changed_ranges, console, machine_output
+):
+    """ids of SKY-D365-D377 findings that are new against the merge base.
+
+    These findings sit on the command line, but what makes one new can be
+    another line (``"runOptions": {"runOn": "folderOpen"}`` added to an
+    existing task, a hook moved from ``Stop`` to ``SessionStart``), so a
+    finding is new when its rule, path and identity (event or job name plus
+    the unredacted command) are not among the base's findings, whatever
+    lines changed. When the base cannot be compared, every such finding in a
+    changed file (or behind a changed link) counts as new.
+    """
+    import os
+    import pathlib
+
+    from skylos.rules.config.agent_files import link_components
+    from skylos.rules.config.agent_publish import IDENTITY_KEY
+
+    items = [
+        item
+        for category in _DIFF_FINDING_CATEGORIES
+        for item in result.get(category) or ()
+        if _config_change_finding(item)
+    ]
+    if not items:
+        return set()
+    from skylos.rules.sca.supply_chain_diff import config_base_identities
+
+    top = pathlib.Path(os.path.realpath(diff_root))
+    try:
+        known = config_base_identities(top, base_ref)
+    except Exception:  # noqa: BLE001 - an unusable base falls back to changed files
+        known = None
+    summary = result.setdefault("analysis_summary", {})
+    if known is not None:
+        summary["config_diff_basis"] = "base_findings"
+        new = set()
+        for item in items:
+            lexical = pathlib.Path(os.path.abspath(str(item.get("file") or "")))
+            try:
+                relative = lexical.relative_to(top).as_posix()
+            except ValueError:
+                new.add(id(item))
+                continue
+            identity = (str(item["rule_id"]).upper(), relative, item[IDENTITY_KEY])
+            if identity not in known:
+                new.add(id(item))
+        return new
+    summary["config_diff_basis"] = "changed_files"
+    if not machine_output:
+        console.print(
+            "[muted]--diff: the base's agent configs and workflows could not be "
+            "compared; every agent-config and publish-job finding in a changed "
+            "file counts as new.[/muted]"
+        )
+    changed = set()
+    for entry in changed_ranges or ():
+        if isinstance(entry, dict) and entry.get("file"):
+            changed.add(pathlib.Path(os.path.abspath(top / entry["file"])))
+    new = set()
+    for item in items:
+        lexical = pathlib.Path(os.path.abspath(str(item.get("file") or "")))
+        candidates = {lexical, pathlib.Path(os.path.realpath(lexical))}
+        candidates.update(link_components(lexical, top))
+        if candidates & changed:
+            new.add(id(item))
+    return new
+
+
 def _policy_base_baseline(project_root):
     """Under ``SKYLOS_POLICY_BASE`` (pull-request CI), the baseline the base
     commit holds: supply-chain trust-boundary findings are baselined only
@@ -650,9 +737,8 @@ def _note_policy_base_baseline(result, receipt, console, machine_output):
     count = int(record.get("not_honoured") or 0)
     if count and not machine_output:
         console.print(
-            f"[warn]Baseline: {count} supply-chain finding"
-            f"{'s' if count != 1 else ''} not in the policy base commit's "
-            "baseline counted as new.[/warn]"
+            f"[warn]Baseline: {count} supply-chain finding(s) not in the policy "
+            "base commit's baseline counted as new.[/warn]"
         )
 
 
@@ -1120,6 +1206,7 @@ def _run_scan_command(
                         )
                         or str(item.get("rule_id", "")).upper()
                         in selected_prerequisite_ids
+                        or _config_change_finding(item)
                     ]
             result.pop("unused_fixtures_counts", None)
             result = _apply_display_filters(result, preserve_grade=False)
@@ -1167,13 +1254,20 @@ def _run_scan_command(
                 summary = result.setdefault("analysis_summary", {})
                 summary["analysis_error_count"] = len(kept_errors)
                 summary["analysis_warning_count"] = len(result["analysis_warnings"])
+            config_new = _config_findings_new_since_base(
+                result, diff_root, base_ref, changed_ranges, console, machine_output
+            )
             for category in _DIFF_FINDING_CATEGORIES:
                 items = result.get(category, [])
                 if items:
                     diff_findings = filter_findings_to_diff(
                         items, changed_ranges, project_root=diff_root
                     )
-                    diff_finding_ids = {id(item) for item in diff_findings}
+                    diff_finding_ids = {
+                        id(item)
+                        for item in diff_findings
+                        if not _config_change_finding(item)
+                    } | config_new
                     result[category] = [
                         item
                         for item in items
@@ -1193,8 +1287,11 @@ def _run_scan_command(
                             and item.get("kind") == "guardrail_tamper"
                         )
                         or item.get("kind") == "supply_chain_diff"
-                        or str(item.get("rule_id", "")).upper()
-                        in selected_prerequisite_ids
+                        or (
+                            not _config_change_finding(item)
+                            and str(item.get("rule_id", "")).upper()
+                            in selected_prerequisite_ids
+                        )
                     ]
             # Fixture totals and aggregate grades describe the full scan, not
             # the findings visible in a diff-scoped report.

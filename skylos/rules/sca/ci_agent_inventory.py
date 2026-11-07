@@ -4,8 +4,9 @@ ca9 builds both (``ca9.api.ci_inventory`` and the ``inventory`` part of
 ``ca9.api.agent_config``). Skylos re-bounds them before they leave the
 machine: known keys only, capped lists, names instead of values (secret
 names must be identifiers, URLs are reduced to ``scheme://host``, token-like
-text is replaced), and only files in the scanned folder that Git tracks or
-does not ignore. Skylos Cloud uses them to tell which jobs could have
+text is replaced), and only files Git tracks or does not ignore. Scans build
+them for the whole repository (the Git top), even when only a subfolder was
+scanned: CI workflows and agent configs live at the top. Skylos Cloud uses them to tell which jobs could have
 installed a malicious version, what they could reach, and which branches
 carry agent or editor hooks.
 """
@@ -201,12 +202,24 @@ class _Files:
         from skylos.rules.config.agent_publish import _Scope
 
         self.scope = _Scope(root, None)
+        self.seen: set[tuple] = set()
 
     def keep(self, file: object) -> str | None:
         relative = _relative(file)
         if relative is None or self.scope.resolve(relative) is None:
             return None
         return relative
+
+    def first(self, file: str, *key) -> bool:
+        """Whether this row is the first for its real file (a config reached
+        through a link and directly is listed once)."""
+        import os
+
+        identity = (os.path.realpath(self.scope.root / file), *key)
+        if identity in self.seen:
+            return False
+        self.seen.add(identity)
+        return True
 
 
 def _function(api, name: str):
@@ -278,9 +291,12 @@ def ci_inventory_block(root: str | Path, api) -> tuple[dict | None, dict]:
 
 
 def agent_hooks_block(root: str | Path, api) -> tuple[dict | None, dict]:
-    """(``analysis_summary.agent_hooks`` or None, receipt)."""
-    from skylos.core.safe_cache_io import read_project_text_no_symlink
-    from skylos.rules.config.agent_publish import is_own_hook
+    """(``analysis_summary.agent_hooks`` or None, receipt).
+
+    Configs reached through links inside the repository are listed under
+    the path the client opens; a link that leaves the repository or points
+    nowhere makes the block ``partial``."""
+    from skylos.rules.config.agent_publish import agent_config_with_links, is_own_hook
 
     function = _function(api, "agent_config")
     if function is None:
@@ -289,16 +305,18 @@ def agent_hooks_block(root: str | Path, api) -> tuple[dict | None, dict]:
             "note": "ca9.api.agent_config is unavailable",
         }
     root_path = Path(root).resolve()
+    files = _Files(root_path)
     try:
-        raw = function(str(root_path))
+        raw, problem = agent_config_with_links(api, root_path, files.scope)
     except Exception as exc:  # noqa: BLE001 - an engine failure leaves the block out
         return None, {"status": "failed", "error_type": type(exc).__name__}
+    if problem is not None:
+        return None, {"status": "failed", "note": problem}
     inventory = None
     if isinstance(raw, dict):
         inventory = raw.get("inventory")
     if not isinstance(inventory, dict) or inventory.get("schema") != AGENT_HOOKS_SCHEMA:
         return None, {"status": "failed", "note": "unexpected agent_hooks schema"}
-    files = _Files(root_path)
     texts: dict[str, str | None] = {}
     truncated = inventory.get("truncated") is True
     hooks = []
@@ -306,15 +324,15 @@ def agent_hooks_block(root: str | Path, api) -> tuple[dict | None, dict]:
         if not isinstance(hook, dict):
             continue
         file = files.keep(hook.get("file"))
-        if file is None:
+        if file is None or not files.first(
+            file, hook.get("line"), hook.get("event"), hook.get("command")
+        ):
             continue
         if len(hooks) >= MAX_HOOKS:
             truncated = True
             break
         if file not in texts:
-            texts[file] = read_project_text_no_symlink(
-                root_path, file, max_bytes=2_000_000
-            )
+            texts[file] = files.scope.read(root_path / file)
         row = _bounded(
             {
                 key: hook.get(key)
@@ -342,7 +360,9 @@ def agent_hooks_block(root: str | Path, api) -> tuple[dict | None, dict]:
         if not isinstance(server, dict):
             continue
         file = files.keep(server.get("file"))
-        if file is None:
+        if file is None or not files.first(
+            file, server.get("line"), server.get("name"), server.get("command")
+        ):
             continue
         if len(servers) >= MAX_SERVERS:
             truncated = True
@@ -374,7 +394,9 @@ def agent_hooks_block(root: str | Path, api) -> tuple[dict | None, dict]:
         if not isinstance(override, dict):
             continue
         file = files.keep(override.get("file"))
-        if file is not None:
+        if file is not None and files.first(
+            file, override.get("line"), override.get("variable")
+        ):
             row = _bounded(
                 {key: override.get(key) for key in ("variable", "target", "line")}
             )
@@ -394,7 +416,15 @@ def agent_hooks_block(root: str | Path, api) -> tuple[dict | None, dict]:
     for key in ("duplicate_keys", "duplicates"):
         if key in inventory:
             block[key] = _bounded(inventory[key])
-    return block, {"status": status, "hooks": len(hooks), "mcp_servers": len(servers)}
+    receipt = {"status": status, "hooks": len(hooks), "mcp_servers": len(servers)}
+    problems = raw.get("link_problems") or []
+    if problems:
+        receipt["link_problems"] = [
+            {"file": _relative(item.get("file")) or ".", "reason": item.get("reason")}
+            for item in problems[:20]
+            if isinstance(item, dict)
+        ]
+    return block, receipt
 
 
 __all__ = [

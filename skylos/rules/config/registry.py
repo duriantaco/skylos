@@ -19,6 +19,47 @@ from skylos.rules.config.edge.systemd import scan_systemd
 from skylos.rules.config.gpu.compatibility import scan_gpu_compatibility
 
 
+def _subfolder_repository(
+    root: str | Path, scan_paths: list[str] | tuple[str, ...] | None = None
+) -> Path | None:
+    """The Git top when ``root`` is a subfolder of that worktree (and every
+    list target belongs to it); None otherwise."""
+    requested = Path(root)
+    if requested.is_symlink() or not requested.is_dir():
+        return None
+    scope = requested.resolve()
+    try:
+        context = GitContext.from_path(scope)
+        proof = context.run("rev-parse", "--show-toplevel")
+    except (OSError, subprocess.SubprocessError):
+        # Git proof is optional. Selected-directory checks must still run.
+        return None
+    if proof.returncode != 0 or not proof.stdout.strip():
+        return None
+    repository = Path(proof.stdout.strip()).resolve()
+    if repository != context.root.resolve() or not scope.is_relative_to(repository):
+        return None
+    if scope == repository:
+        return None  # The selected-root scanners already cover these files.
+    # A common configuration directory does not prove that separate list
+    # targets belong to its worktree (for example, nested repositories).
+    if scan_paths is not None:
+        for target in scan_paths:
+            try:
+                owner = GitContext.from_path(target)
+                owner_proof = owner.run("rev-parse", "--show-toplevel")
+            except (OSError, subprocess.SubprocessError):
+                return None
+            if (
+                owner_proof.returncode != 0
+                or not owner_proof.stdout.strip()
+                or Path(owner_proof.stdout.strip()).resolve() != repository
+                or owner.root.resolve() != repository
+            ):
+                return None
+    return repository
+
+
 def _repository_ci_findings(
     root: str | Path,
     *,
@@ -28,39 +69,10 @@ def _repository_ci_findings(
     scan_paths: list[str] | tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
     """Active worktree CI contracts also apply to a source-directory scan."""
-    requested = Path(root)
-    if requested.is_symlink() or not requested.is_dir():
+    repository = _subfolder_repository(root, scan_paths)
+    if repository is None:
         return []
-    scope = requested.resolve()
-    try:
-        context = GitContext.from_path(scope)
-        proof = context.run("rev-parse", "--show-toplevel")
-    except (OSError, subprocess.SubprocessError):
-        # Git proof is optional. Selected-directory checks must still run.
-        return []
-    if proof.returncode != 0 or not proof.stdout.strip():
-        return []
-    repository = Path(proof.stdout.strip()).resolve()
-    if repository != context.root.resolve() or not scope.is_relative_to(repository):
-        return []
-    if scope == repository:
-        return []  # The selected-root scanners already cover these files.
-    # A common configuration directory does not prove that separate list
-    # targets belong to its worktree (for example, nested repositories).
-    if scan_paths is not None:
-        for target in scan_paths:
-            try:
-                owner = GitContext.from_path(target)
-                owner_proof = owner.run("rev-parse", "--show-toplevel")
-            except (OSError, subprocess.SubprocessError):
-                return []
-            if (
-                owner_proof.returncode != 0
-                or not owner_proof.stdout.strip()
-                or Path(owner_proof.stdout.strip()).resolve() != repository
-                or owner.root.resolve() != repository
-            ):
-                return []
+    scope = Path(root).resolve()
     selected = (
         None
         if changed_files is None
@@ -115,7 +127,12 @@ def scan_config_files(
     )
     findings.extend(scan_gitlab_ci(root, changed_files=changed_files, ignore=ignore))
     findings.extend(
-        scan_agent_publish(root, changed_files=changed_files, ignore=ignore)
+        scan_agent_publish(
+            root,
+            changed_files=changed_files,
+            ignore=ignore,
+            repository=_subfolder_repository(root, scan_paths),
+        )
     )
     findings.extend(
         _repository_ci_findings(

@@ -1144,14 +1144,29 @@ def _upgrade_review_warnings(results):
         count = _coverage_count(upgrades.get(key))
         if count:
             reasons.append(f"{label}: {count}")
-    if not reasons:
-        return []
-    pairs = _coverage_count(upgrades.get("pairs")) or 0
-    reviewed = _coverage_count(upgrades.get("reviewed")) or 0
-    summary = ", ".join(reasons)
-    return [
-        f"Upgrade review limited: {reviewed} of {pairs} dependency upgrades reviewed ({summary})"
+    lines = []
+    if reasons:
+        pairs = _coverage_count(upgrades.get("pairs")) or 0
+        reviewed = _coverage_count(upgrades.get("reviewed")) or 0
+        summary = ", ".join(reasons)
+        lines.append(
+            f"Upgrade review limited: {reviewed} of {pairs} dependency upgrades reviewed ({summary})"
+        )
+    unread = [
+        f"{item.get('file')} ({item.get('reason')})"
+        for item in upgrades.get("limitations") or ()
+        if isinstance(item, dict)
     ]
+    if unread:
+        more = ""
+        if len(unread) > 3:
+            more = f" and {len(unread) - 3} more"
+        lines.append(
+            "Upgrade review did not read changed dependency files: "
+            + "; ".join(unread[:3])
+            + more
+        )
+    return lines
 
 
 def _sca_receipt_warnings(results):
