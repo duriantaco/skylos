@@ -2738,6 +2738,64 @@ def _redirect_target_is_same_origin(node, source_bytes: bytes) -> bool:
     return bool(prefix) and safe_redirect_prefix(prefix)
 
 
+def _redirect_target_from_operator_config(
+    node, source_bytes: bytes, bindings, depth: int = 0
+) -> tuple[bool, bool]:
+    """Prove a target contains only static text and an intact environment.
+
+    Returns (proven, contains_environment). Dynamic environment keys, mutable
+    bindings and request expressions do not establish this narrow provenance.
+    """
+    node = _unwrap_ts_expression(node)
+    if node is None or depth > 12:
+        return False, False
+    if node.type == "string":
+        return True, False
+    if node.type == "identifier":
+        binding = bindings.only_binding(_get_text(source_bytes, node), node)
+        if binding is None or binding[0] != "const":
+            return False, False
+        return _redirect_target_from_operator_config(
+            binding[1], source_bytes, bindings, depth + 1
+        )
+    if node.type == "binary_expression":
+        operator = node.child_by_field_name("operator")
+        if operator is None or _get_text(source_bytes, operator) not in {"+", "??", "||"}:
+            return False, False
+        left = _redirect_target_from_operator_config(
+            node.child_by_field_name("left"), source_bytes, bindings, depth + 1
+        )
+        right = _redirect_target_from_operator_config(
+            node.child_by_field_name("right"), source_bytes, bindings, depth + 1
+        )
+        return left[0] and right[0], left[1] or right[1]
+    if node.type not in {"member_expression", "subscript_expression"}:
+        return False, False
+    if node.type == "subscript_expression":
+        key = node.child_by_field_name("index")
+        if key is None or key.type != "string":
+            return False, False
+    # Escaping a global object can replace its process provider through an
+    # alias or Reflect/Object APIs; the normal environment proof checks direct
+    # provider aliases and writes but does not prove these global exposures.
+    for candidate in bindings.nodes:
+        if candidate.type != "identifier" or _get_text(source_bytes, candidate) not in {
+            "globalThis", "window"
+        }:
+            continue
+        parent = candidate.parent
+        if parent is None or parent.type not in {"member_expression", "subscript_expression"}:
+            return False, False
+        if parent.child_by_field_name("object") != candidate:
+            return False, False
+        if parent.type == "subscript_expression":
+            key = parent.child_by_field_name("index")
+            if key is None or key.type != "string":
+                return False, False
+    intact = _is_environment_lookup(node, source_bytes, bindings)
+    return intact, intact
+
+
 def _prefix_has_fixed_http_host(prefix: str) -> bool:
     match = re.match(r"^https?://([^/?#]+)([/?#].*)", prefix, re.IGNORECASE)
     return bool(match and match.group(1))
@@ -3398,6 +3456,14 @@ def scan_danger(
             continue
         if _redirect_target_is_same_origin(first_arg, source_bytes):
             continue
+        if b".env" in source_bytes:
+            if environment_bindings is None:
+                environment_bindings = _JsBindings(root_node, source_bytes)
+            proven, contains_environment = _redirect_target_from_operator_config(
+                first_arg, source_bytes, environment_bindings
+            )
+            if proven and contains_environment:
+                continue
         if first_arg.type not in (
             "string",
             "template_string",
