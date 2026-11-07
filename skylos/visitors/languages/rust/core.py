@@ -310,6 +310,10 @@ class RustCore:
         self._member_identifier_bytes: set[int] = set()
         self._seen_refs: set[tuple[str, int]] = set()
         self._trait_call_usage: tuple[set[str], set[tuple[str, str]]] | None = None
+        self._value_pattern_names: dict[int, frozenset[str]] = {}
+        self._value_binding_bytes: dict[int, frozenset[int]] = {}
+        self._block_value_bindings: dict[int, dict[str, int]] = {}
+        self._parameter_value_bindings: dict[int, frozenset[str]] = {}
 
         if self.lang:
             self.parser = _get_parser(self.lang)
@@ -1550,6 +1554,8 @@ class RustCore:
         if node.type == "identifier" and self._is_reference_identifier(node):
             if node.start_byte in self._member_identifier_bytes:
                 return
+            if self._is_local_value_reference(node):
+                return
             parent = node.parent
             if (
                 parent is not None
@@ -1601,6 +1607,8 @@ class RustCore:
             )
             return
         if callee.type == "identifier":
+            if self._is_local_value_reference(callee):
+                return
             self._add_ref(
                 self._node_name_text(callee),
                 callee.start_byte,
@@ -1662,6 +1670,8 @@ class RustCore:
             return False
         if self._is_definition_name(node):
             return False
+        if self._is_value_binding_identifier(node):
+            return False
         parent = node.parent
         if parent is None:
             return False
@@ -1669,7 +1679,6 @@ class RustCore:
             "use_declaration",
             "field_declaration",
             "field_identifier",
-            "let_declaration",
             "parameter",
             "self_parameter",
             "for",
@@ -1679,6 +1688,157 @@ class RustCore:
         if parent.type in _DEF_CONTAINER_TYPES:
             return False
         return True
+
+    def _pattern_bindings(self, pattern):
+        """Yield value bindings without treating pattern constructors as locals."""
+        if pattern is None:
+            return
+        if pattern.type in {"identifier", "shorthand_field_identifier"}:
+            yield pattern
+            return
+        if pattern.type in {"scoped_identifier", "type_identifier", "range_pattern"}:
+            return
+        constructor = (
+            pattern.child_by_field_name("type")
+            if pattern.type in {"tuple_struct_pattern", "struct_pattern"}
+            else None
+        )
+        guard = (
+            pattern.child_by_field_name("condition")
+            if pattern.type == "match_pattern"
+            else None
+        )
+        for child in pattern.named_children:
+            if child != constructor and child != guard:
+                yield from self._pattern_bindings(child)
+
+    def _is_value_binding_identifier(self, node) -> bool:
+        current = node.parent
+        while current is not None:
+            if current.type in {
+                "let_declaration",
+                "parameter",
+                "for_expression",
+                "let_condition",
+                "match_arm",
+            }:
+                pattern = current.child_by_field_name("pattern")
+            elif current.type == "closure_parameters":
+                pattern = current
+            else:
+                if current.type in {"block", "function_item", "closure_expression"}:
+                    return False
+                current = current.parent
+                continue
+            self._pattern_binding_names(pattern)
+            return (
+                pattern is not None
+                and node.start_byte in self._value_binding_bytes[pattern.id]
+            )
+        return False
+
+    def _pattern_binding_names(self, pattern) -> frozenset[str]:
+        if pattern is None:
+            return frozenset()
+        if pattern.id not in self._value_pattern_names:
+            bindings = list(self._pattern_bindings(pattern))
+            self._value_pattern_names[pattern.id] = frozenset(
+                self._node_name_text(binding) for binding in bindings
+            )
+            self._value_binding_bytes[pattern.id] = frozenset(
+                binding.start_byte for binding in bindings
+            )
+        return self._value_pattern_names[pattern.id]
+
+    def _parameter_bindings(self, parameters) -> frozenset[str]:
+        if parameters is None:
+            return frozenset()
+        if parameters.id not in self._parameter_value_bindings:
+            names: set[str] = set()
+            for parameter in parameters.named_children:
+                pattern = (
+                    parameter.child_by_field_name("pattern")
+                    if parameter.type == "parameter"
+                    else parameter
+                )
+                names.update(self._pattern_binding_names(pattern))
+            self._parameter_value_bindings[parameters.id] = frozenset(names)
+        return self._parameter_value_bindings[parameters.id]
+
+    def _earliest_block_bindings(self, block) -> dict[str, int]:
+        if block.id not in self._block_value_bindings:
+            bindings: dict[str, int] = {}
+            for statement in block.named_children:
+                if statement.type != "let_declaration":
+                    continue
+                for name in self._pattern_binding_names(
+                    statement.child_by_field_name("pattern")
+                ):
+                    bindings.setdefault(name, statement.end_byte)
+            self._block_value_bindings[block.id] = bindings
+        return self._block_value_bindings[block.id]
+
+    def _is_local_value_reference(self, node) -> bool:
+        """A lexical local read does not reach a same-named module function.
+
+        Initializers are scanned before their new binding applies. Function values
+        on their RHS still provide normal reachability; this does not resolve the
+        local's runtime value or expand macros.
+        """
+        name = self._node_name_text(node)
+
+        def binds(pattern):
+            return name in self._pattern_binding_names(pattern)
+
+        def contains(container):
+            return container is not None and (
+                container.start_byte <= node.start_byte < container.end_byte
+            )
+
+        scope = node.parent
+        while scope is not None:
+            if scope.type == "token_tree":
+                return False
+            if scope.type == "block":
+                binding_end = self._earliest_block_bindings(scope).get(name)
+                if binding_end is not None and binding_end <= node.start_byte:
+                    return True
+            elif scope.type in {"function_item", "closure_expression"}:
+                parameters = scope.child_by_field_name("parameters")
+                if name in self._parameter_bindings(parameters):
+                    return True
+                if scope.type == "function_item":
+                    return False
+            elif scope.type == "for_expression":
+                if contains(scope.child_by_field_name("body")) and binds(
+                    scope.child_by_field_name("pattern")
+                ):
+                    return True
+            elif scope.type == "match_arm":
+                pattern = scope.child_by_field_name("pattern")
+                guard = (
+                    pattern.child_by_field_name("condition")
+                    if pattern is not None
+                    else None
+                )
+                if (
+                    contains(scope.child_by_field_name("value")) or contains(guard)
+                ) and binds(pattern):
+                    return True
+            elif scope.type in {"if_expression", "while_expression"}:
+                condition = scope.child_by_field_name("condition")
+                body = scope.child_by_field_name(
+                    "consequence" if scope.type == "if_expression" else "body"
+                )
+                if (
+                    condition is not None
+                    and condition.type == "let_condition"
+                    and contains(body)
+                    and binds(condition.child_by_field_name("pattern"))
+                ):
+                    return True
+            scope = scope.parent
+        return False
 
     def _build_call_graph(self) -> None:
         exact_defs: dict[str, list[Definition]] = {}

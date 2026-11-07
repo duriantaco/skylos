@@ -3066,6 +3066,17 @@ class Skylos:
                     definition.references += 1
                 continue
 
+            if ref.startswith("~method."):
+                # A proven shadow of a nonescaped TS namespace can dispatch to
+                # object methods, but cannot read that module's free function.
+                method_name = ref[len("~method.") :]
+                for definition in _candidates_in_family(
+                    simple_name_lookup.get(method_name, []), ref_family
+                ):
+                    if definition.type == "method":
+                        definition.references += 1
+                continue
+
             if ref.startswith("~."):
                 # Property access (`x.foo`): dynamic dispatch can reach any
                 # method of this name, so credit them all, then resolve the

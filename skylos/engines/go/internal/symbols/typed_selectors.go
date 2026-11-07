@@ -2,8 +2,6 @@ package symbols
 
 import (
 	"go/ast"
-	"go/build"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -26,13 +24,14 @@ func collectTypedSelectorRefs(
 	modulePath string,
 	pkgDirs map[string]string,
 	defNames map[string]bool,
+	typeImporter types.Importer,
 ) ([]Ref, []CallPair) {
 	packages := collectParsedPackages(root, resolvedRoot, modulePath)
 	refs := []Ref{}
 	calls := []CallPair{}
 
 	for _, pkg := range packages {
-		pkgRefs, pkgCalls := resolveTypedSelectors(pkg, modulePath, root, pkgDirs, defNames)
+		pkgRefs, pkgCalls := resolveTypedSelectors(pkg, modulePath, root, pkgDirs, defNames, typeImporter)
 		refs = append(refs, pkgRefs...)
 		calls = append(calls, pkgCalls...)
 	}
@@ -102,7 +101,7 @@ func collectParsedPackages(root, resolvedRoot, modulePath string) []parsedPackag
 }
 
 func matchesCurrentBuild(path string) bool {
-	ok, err := build.Default.MatchFile(filepath.Dir(path), filepath.Base(path))
+	ok, err := targetBuildContext.MatchFile(filepath.Dir(path), filepath.Base(path))
 	if err != nil {
 		return true
 	}
@@ -128,13 +127,14 @@ func resolveTypedSelectors(
 	root string,
 	pkgDirs map[string]string,
 	defNames map[string]bool,
+	typeImporter types.Importer,
 ) ([]Ref, []CallPair) {
 	info := &types.Info{
 		Selections: map[*ast.SelectorExpr]*types.Selection{},
 		Uses:       map[*ast.Ident]types.Object{},
 	}
 	conf := types.Config{
-		Importer: importer.Default(),
+		Importer: typeImporter,
 		Error: func(error) {
 		},
 	}

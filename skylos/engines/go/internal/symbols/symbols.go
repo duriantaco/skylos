@@ -11,12 +11,13 @@ import (
 )
 
 type Def struct {
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	File       string `json:"file"`
-	Line       int    `json:"line"`
-	IsExported bool   `json:"is_exported"`
-	Receiver   string `json:"receiver,omitempty"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	File         string `json:"file"`
+	Line         int    `json:"line"`
+	IsExported   bool   `json:"is_exported"`
+	Receiver     string `json:"receiver,omitempty"`
+	Reachability string `json:"reachability,omitempty"`
 }
 
 type Ref struct {
@@ -62,8 +63,11 @@ var defaultSkipDirs = map[string]bool{
 }
 
 func Extract(root string) (*Result, error) {
+	ensureHostBuildContext()
 	fset := token.NewFileSet()
 	result := &Result{}
+	var reachabilityFiles []reachabilityFile
+	proofComplete := true
 	resolvedRoot, rootErr := filepath.EvalSymlinks(root)
 	if rootErr != nil {
 		return nil, rootErr
@@ -97,6 +101,7 @@ func Extract(root string) (*Result, error) {
 
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			proofComplete = false
 			return nil
 		}
 		if info.IsDir() {
@@ -110,6 +115,7 @@ func Extract(root string) (*Result, error) {
 			return nil
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
+			proofComplete = false
 			return nil
 		}
 
@@ -117,11 +123,13 @@ func Extract(root string) (*Result, error) {
 
 		resolvedPath, resolveErr := filepath.EvalSymlinks(path)
 		if resolveErr != nil || !isPathWithinRoot(resolvedRoot, resolvedPath) {
+			proofComplete = false
 			return nil
 		}
 
-		file, parseErr := parser.ParseFile(fset, resolvedPath, nil, 0)
+		file, parseErr := parser.ParseFile(fset, resolvedPath, nil, parser.ParseComments)
 		if parseErr != nil {
+			proofComplete = false
 			return nil
 		}
 		path = resolvedPath
@@ -141,6 +149,7 @@ func Extract(root string) (*Result, error) {
 		}
 
 		pkgDir := pkgDirKey(root, path)
+		reachabilityFiles = append(reachabilityFiles, reachabilityFile{file, path, pkgDir})
 		isMainPkg := file.Name.Name == "main"
 
 		if !isTest {
@@ -378,11 +387,15 @@ func Extract(root string) (*Result, error) {
 	})
 
 	markReferencedInterfaceMethods(result, projectInterfaceMethods)
+	typeImporter := newHostStdlibImporter(fset)
 
 	if hasMethodDefs(result.Defs) {
 		defNames := symbolDefNames(result.Defs)
-		typedRefs, typedCalls := collectTypedSelectorRefs(root, resolvedRoot, modulePath, pkgDirs, defNames)
+		typedRefs, typedCalls := collectTypedSelectorRefs(root, resolvedRoot, modulePath, pkgDirs, defNames, typeImporter)
 		appendUniqueTypedSymbols(result, typedRefs, typedCalls)
+	}
+	if proofComplete {
+		markFunctionReachability(result, reachabilityFiles, fset, modulePath, typeImporter)
 	}
 
 	return result, err

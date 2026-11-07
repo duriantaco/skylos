@@ -100,6 +100,12 @@ def _convert_symbols(symbols_data, file_path):
     defs = []
     refs = []
 
+    unreachable = {
+        d["name"]
+        for d in symbols_data.get("defs", [])
+        if d.get("reachability") == "unreachable"
+    }
+
     for d in symbols_data.get("defs", []):
         if d.get("file") != file_str:
             continue
@@ -110,12 +116,12 @@ def _convert_symbols(symbols_data, file_path):
             line=d.get("line", 0),
         )
         defn.is_exported = d.get("is_exported", False)
-        if defn.is_exported:
+        if defn.is_exported or d.get("reachability") == "reachable":
             defn.references = 1
         defs.append(defn)
 
     for r in symbols_data.get("refs", []):
-        if r.get("file") == file_str:
+        if r.get("file") == file_str and r.get("name") not in unreachable:
             refs.append((r["name"], r["file"]))
 
     return defs, refs

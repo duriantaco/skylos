@@ -1851,6 +1851,405 @@
           }
         ]
       }
+    },
+    {
+      "id": "typescript-javascript-namespace-members",
+      "path": "fixtures/typescript_namespace_members",
+      "description": "Static namespace member reads and stable aliases retain selected exports without crediting unrelated or shadowed members.",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "javascript",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only fixture. Selective namespace/opaque-use approach studied in Knip at 2305dad9b0d76e5f603cd353a1820c24ae0e720d (ISC); no upstream code copied."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "retired"
+          },
+          {
+            "kind": "function",
+            "file": "worker.js",
+            "symbol": "legacy"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "format"
+          },
+          {
+            "kind": "function",
+            "file": "worker.js",
+            "symbol": "run"
+          },
+          {
+            "kind": "function",
+            "file": "index.ts",
+            "symbol": "inspect"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-namespace-escape-boundaries",
+      "path": "fixtures/typescript_namespace_escape",
+      "description": "Escaped namespaces and dynamic member keys keep all their exports while an unrelated internal helper remains unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "dynamic_dispatch",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only namespace escape and dynamic-key controls; target code is never executed."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "index.ts",
+            "symbol": "staleHelper"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "format"
+          },
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "retired"
+          },
+          {
+            "kind": "function",
+            "file": "dynamic.ts",
+            "symbol": "first"
+          },
+          {
+            "kind": "function",
+            "file": "dynamic.ts",
+            "symbol": "second"
+          }
+        ]
+      }
+    },
+    {
+      "id": "go-dead-call-graph",
+      "path": "fixtures/go_dead_call_graph",
+      "description": "Private Go declaration-use roots and object identity, with genuine used and unused controls.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source; target programs and tests are never executed. Approach informed by Staticcheck U1000; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "Public"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "rooted"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "callback"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "init"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "initialized"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "startupHook"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "testOnly"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "generatedOnly"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "staleA"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "staleB"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "self"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "unusedOwner"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "deadValue"
+          },
+          {
+            "kind": "variable",
+            "file": "main.go",
+            "symbol": "startup"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "go-scope-identity",
+      "path": "fixtures/go_scope_identity",
+      "description": "Private Go declaration-use roots and object identity, with genuine used and unused controls.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source; target programs and tests are never executed. Approach informed by Staticcheck U1000; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "selected"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "stale"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "retired"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "parameterOnly"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "rust-value-bindings",
+      "path": "fixtures/rust_value_bindings",
+      "description": "Real callback initializer references remain live while shadowed parameter and local reads do not rescue an unrelated function.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only corpus fixture; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "render"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "invoke"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "callback"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "rust-callback-scopes",
+      "path": "fixtures/rust_callback_scopes",
+      "description": "Lexical callback scopes preserve outer function calls and report callbacks referenced only from dead initializers.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only corpus fixture; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "chosen"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "target"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "fallback"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "choice"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "callback"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "abandoned"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
     }
   ]
 }

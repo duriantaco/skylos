@@ -170,6 +170,16 @@ def build_ts_import_graph(ts_raw_imports: dict, defs: dict, monorepo_resolver=No
     wildcard_edges = defaultdict(set)
     importers_of = defaultdict(set)
     consume_all_exports: set[str] = set()
+    # Namespace narrowing needs matching identities on both sides of the edge.
+    # Tree-sitter keeps JS Unicode escape spelling in declaration/export names.
+    escaped_identity_files = {
+        str(defn.filename) for defn in defs.values() if "\\" in defn.name
+    }
+    escaped_identity_files.update(
+        str(file)
+        for file, imports in ts_raw_imports.items()
+        if any("\\" in name for imp in imports for name in imp.get("names", ()))
+    )
 
     for importer_file, raw_imports in ts_raw_imports.items():
         for imp in raw_imports:
@@ -178,7 +188,9 @@ def build_ts_import_graph(ts_raw_imports: dict, defs: dict, monorepo_resolver=No
             )
             if resolved:
                 importers_of[resolved].add(str(importer_file))
-                if imp.get("consume_all_exports"):
+                if imp.get("consume_all_exports") or (
+                    imp.get("namespace_members") and resolved in escaped_identity_files
+                ):
                     consume_all_exports.add(resolved)
                 for name in imp["names"]:
                     if name == "*":

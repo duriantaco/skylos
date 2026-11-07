@@ -1995,6 +1995,27 @@ report/gate policy remain unchanged.
 
 ## Dead Code and Reachability
 
+TS/JS namespace imports keep only the exports selected by static member reads
+such as `api.render()` and `api["render"]`, including stable `const` aliases and
+literal destructuring. A parameter, block variable or other local binding with
+the same name does not count as a read of the imported namespace. Unknown keys,
+namespace escapes, reflection and mutation preserve the whole export surface.
+This follows resolved module edges, including wildcard barrels; named re-export
+barrels can still retain exports that no entry point consumes. Escaped export
+spellings behind wildcard barrels and cross-file classic JS globals remain
+limited.
+
+Go uses a declaration-use graph for packages that can be fully type-checked.
+Standard-library types are read from an installed host Go toolchain without
+building export caches or running cgo.
+Private functions that only recurse or call one another are reported when no
+entry point reaches them. Local variables and parameters with matching names
+do not keep unrelated package functions alive. Exported APIs, interface methods,
+`main`, `init`, test and generated consumers, package initializers and reachable
+function values remain roots. Assembly, unresolved imports, conflicting build
+variants and type errors retain the earlier conservative reference handling;
+they do not establish that a function is unreachable.
+
 Python liveness follows literal logging factory paths into a proven
 `logging.config.dictConfig` consumer and callbacks on registered Flask
 blueprints imported through project modules. A dotted string or an unregistered
@@ -2013,6 +2034,10 @@ references, instantiates or registers is still reported as an unused class.
 Rust references include qualified function values passed as callbacks. Exact
 matching `cfg` predicates can preserve imported filesystem providers inside the
 same feature condition; this does not evaluate Cargo features or macros. Rust
+also follows function values in `let` initializers. Reads of local variables and
+parameters do not keep unrelated module functions with the same name alive.
+Bindings apply within their lexical scope, including closures, match arms and
+loop patterns; an initializer is read before its new binding applies. Rust
 dead-code candidates retain their experimental confidence cap of 40.
 
 A Python module or class variable is kept alive by an attribute read `x.NAME`

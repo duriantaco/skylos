@@ -109,17 +109,17 @@ def test_checked_in_ground_truth_builds_blind_plan_without_duplicate_arms():
     plan = build_plan(MANIFEST_PATH)
 
     assert plan["network_used"] is False
-    assert plan["case_count"] == 44
-    assert plan["request_count"] == 50
-    assert plan["ground_truth_count"] == 220
-    assert plan["decision_count"] == 260
+    assert plan["case_count"] == 50
+    assert plan["request_count"] == 56
+    assert plan["ground_truth_count"] == 260
+    assert plan["decision_count"] == 300
     assert plan["neutralization_status_counts"] == {
         "applied": 6,
-        "skipped": 14,
-        "not_applicable": 24,
+        "skipped": 17,
+        "not_applicable": 27,
     }
-    assert plan["unused_count"] == 75
-    assert plan["used_count"] == 145
+    assert plan["unused_count"] == 90
+    assert plan["used_count"] == 170
     assert plan["model"] == "jev-1.13.0"
     assert plan["endpoint"] == JEV_ENDPOINT
 
@@ -131,6 +131,23 @@ def test_checked_in_ground_truth_builds_blind_plan_without_duplicate_arms():
         (case_id, "original", 2) for case_id in ruby_cases
     }
     assert len(batches) == 2
+
+    # These non-Python fixtures add 40 labels and six original requests.
+    # Three have label cues that cannot be safely renamed in non-Python source;
+    # the other three have no cues to neutralize. Neither produces a duplicate.
+    depth_cases = {
+        "typescript-javascript-namespace-members": 5,
+        "typescript-namespace-escape-boundaries": 5,
+        "go-dead-call-graph": 14,
+        "go-scope-identity": 5,
+        "rust-value-bindings": 4,
+        "rust-callback-scopes": 7,
+    }
+    batches = prepare_batches(MANIFEST_PATH, set(depth_cases))
+    assert {(batch.case_id, batch.arm, len(batch.questions)) for batch in batches} == {
+        (case_id, "original", count) for case_id, count in depth_cases.items()
+    }
+    assert len(batches) == 6
 
 
 def test_dynamic_dispatch_challenge_builds_single_blind_request():

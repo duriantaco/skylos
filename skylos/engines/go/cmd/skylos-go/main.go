@@ -106,12 +106,13 @@ func analyze(args []string) {
 		symData = &output.SymbolData{}
 		for _, d := range symResult.Defs {
 			symData.Defs = append(symData.Defs, output.SymbolDef{
-				Name:       d.Name,
-				Type:       d.Type,
-				File:       d.File,
-				Line:       d.Line,
-				IsExported: d.IsExported,
-				Receiver:   d.Receiver,
+				Name:         d.Name,
+				Type:         d.Type,
+				File:         d.File,
+				Line:         d.Line,
+				IsExported:   d.IsExported,
+				Receiver:     d.Receiver,
+				Reachability: d.Reachability,
 			})
 		}
 		for _, r := range symResult.Refs {
