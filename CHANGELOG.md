@@ -8,6 +8,54 @@
 * **sbom:** keep reachable transitive packages out of SPDX root direct-dependency relationships.
 * **sbom:** refuse output paths named after supported Bun, Cargo, Composer, RubyGems, Pub, Gradle, NuGet, Maven, and setuptools dependency inputs.
 
+## [5.5.0](https://github.com/duriantaco/skylos/compare/v5.4.0...v5.5.0) (2026-11-07)
+
+
+### Features
+
+* **analyzer:** add Ruby and Terraform AWS checks ([#1178](https://github.com/duriantaco/skylos/issues/1178)) ([c71902f](https://github.com/duriantaco/skylos/commit/c71902f69df5300d1aa61444d2ebd9e6e8fd7fd0))
+* **cli:** skylos setup, skylos open and the codebase graph ([#1162](https://github.com/duriantaco/skylos/issues/1162)) ([c04268e](https://github.com/duriantaco/skylos/commit/c04268e513ac6efb60c4c53c76fe38eeebd92906))
+* **csharp:** model ASP.NET sources, typed sinks and unsafe deserialisation  ([#1166](https://github.com/duriantaco/skylos/issues/1166)) ([0496f64](https://github.com/duriantaco/skylos/commit/0496f648a38c07f35ae33728f2345d198eb8c521))
+* **deadcode:** improve TS/JS, Go and Rust checks and add Swift ([#1187](https://github.com/duriantaco/skylos/issues/1187)) ([9472dda](https://github.com/duriantaco/skylos/commit/9472ddaad19d6efcfe124313e7558233fb785c7b))
+* **deadcode:** improve TS/JS, Go and Rust usage tracking ([#1185](https://github.com/duriantaco/skylos/issues/1185)) ([3cbc86a](https://github.com/duriantaco/skylos/commit/3cbc86af764f4e022e0ffdb9822f5b80052e5c0b))
+* **evals:** add internal regression evals and pre-push checks ([#1182](https://github.com/duriantaco/skylos/issues/1182)) ([6262728](https://github.com/duriantaco/skylos/commit/6262728014009dca1ff615b10902ae3cad4c6d5e))
+* **go:** model SQL libraries, XSS and framework sinks in the Go engine ([#1157](https://github.com/duriantaco/skylos/issues/1157)) ([b51dd2c](https://github.com/duriantaco/skylos/commit/b51dd2c2b581564b9478aca4108f9ce616fa1a1b))
+* **java:** expand security checks and spring request tracking ([#1156](https://github.com/duriantaco/skylos/issues/1156)) ([df4fa52](https://github.com/duriantaco/skylos/commit/df4fa52bae0f5b30a8d58778bcadeec16d2cca51))
+* **kotlin:** improve dead code detection and add security checks ([#1164](https://github.com/duriantaco/skylos/issues/1164)) ([9a4a3e3](https://github.com/duriantaco/skylos/commit/9a4a3e362eb303f27396ef20cf93e38e65151449))
+* **php:** add command, code execution, XSS and Laravel SQL checks ([#1167](https://github.com/duriantaco/skylos/issues/1167)) ([2b0d60a](https://github.com/duriantaco/skylos/commit/2b0d60ab03c78f1939aa545dc209f8726c8cc8b6))
+* **sca:** scan dependencies across more package managers ([#1163](https://github.com/duriantaco/skylos/issues/1163)) ([0fc6fc2](https://github.com/duriantaco/skylos/commit/0fc6fc2405d419c537ac1100dba754079dd607b9))
+* **secrets:** more credential and private key detection ([#1188](https://github.com/duriantaco/skylos/issues/1188)) ([1ba3b8e](https://github.com/duriantaco/skylos/commit/1ba3b8ea2af1ea17c5c8ec37515994d0d89f86df))
+* **security:** expand Python security coverage and add CWE IDs ([#1154](https://github.com/duriantaco/skylos/issues/1154)) ([d011d64](https://github.com/duriantaco/skylos/commit/d011d64c550c161d2ffb18e0840a24899492ccd8))
+* **suppress:** honour skylos ignore comments in every language and widen secrets coverage ([#1152](https://github.com/duriantaco/skylos/issues/1152)) ([64936c8](https://github.com/duriantaco/skylos/commit/64936c874f16c73823e0674b871ec956d31e0f8d))
+* **typescript:** expand request taint tracking and add nosql injection checks ([#1155](https://github.com/duriantaco/skylos/issues/1155)) ([724f7a7](https://github.com/duriantaco/skylos/commit/724f7a7e87e6a4f5d8e6089e2630890aae5490d5))
+
+
+### Bug Fixes
+
+* **analyzer:** fix Ruby, PHP and C# checks and benchmark scoring ([#1181](https://github.com/duriantaco/skylos/issues/1181)) ([1a9d806](https://github.com/duriantaco/skylos/commit/1a9d8066e2c725e8b15583115446ce9f8959088f))
+* **analyzer:** improve dead-code precision and security coverage ([#1175](https://github.com/duriantaco/skylos/issues/1175)) ([7766099](https://github.com/duriantaco/skylos/commit/77660999279cdea1e6c2dc88d67d1f0db8086440))
+* **benchmarks:** reject incomplete scans and expand dead-code coverage ([#1176](https://github.com/duriantaco/skylos/issues/1176)) ([b7ffee3](https://github.com/duriantaco/skylos/commit/b7ffee31179d8df4afe8cab12f64b73d43c6aca1))
+* **cicd:** analyze changed files under default exclusions ([#1172](https://github.com/duriantaco/skylos/issues/1172)) ([07265f6](https://github.com/duriantaco/skylos/commit/07265f6ef16b5007f36907c8bab20903f4caf550))
+* **cicd:** preserve diff scope in summary-only PR reviews ([#1186](https://github.com/duriantaco/skylos/issues/1186)) ([99a3e55](https://github.com/duriantaco/skylos/commit/99a3e55ef28682e78450d7d5e9705d290f3cb926))
+* **cicd:** recognize same-commit reusable workflow references ([#1173](https://github.com/duriantaco/skylos/issues/1173)) ([68fec1e](https://github.com/duriantaco/skylos/commit/68fec1e09f77db3309ad060f428b92e4b90d5342))
+* **deadcode:** fix remaining robot and dynamic python FPs ([#1174](https://github.com/duriantaco/skylos/issues/1174)) ([f5d8629](https://github.com/duriantaco/skylos/commit/f5d8629ab2dfd8162caa41a8631570434d709de5))
+* **deadcode:** fix shared-name references and nested file leaks ([#1165](https://github.com/duriantaco/skylos/issues/1165)) ([0af927e](https://github.com/duriantaco/skylos/commit/0af927e1ad62c152592f767334717abc77a0b910))
+* **deadcode:** improve TS/JS, Go and Rust detection ([#1183](https://github.com/duriantaco/skylos/issues/1183)) ([efd665f](https://github.com/duriantaco/skylos/commit/efd665f5fe7120b89f7df5cfe61e0d6a9d23e781))
+* **deadcode:** match python registration decorators and read plugin entry points ([#1153](https://github.com/duriantaco/skylos/issues/1153)) ([613727e](https://github.com/duriantaco/skylos/commit/613727e7567669d44e7fbaff67b6d0f778f139df))
+* **deadcode:** model robot framework library and variable imports ([#1169](https://github.com/duriantaco/skylos/issues/1169)) ([b529347](https://github.com/duriantaco/skylos/commit/b52934735471f61ef5b813ff88c38c6be0a8533c))
+* **sbom:** preserve direct dependency classification in SPDX exports ([#1179](https://github.com/duriantaco/skylos/issues/1179)) ([bf6215f](https://github.com/duriantaco/skylos/commit/bf6215f02f27d58c9c07ac57731505e65f76f8ad))
+* **sbom:** protect additional dependency input filenames ([#1168](https://github.com/duriantaco/skylos/issues/1168)) ([7eff6a5](https://github.com/duriantaco/skylos/commit/7eff6a519ed6c7fdec9263672203ad07902905a5))
+* **secrets:** improve detection and close scan coverage gaps ([#1184](https://github.com/duriantaco/skylos/issues/1184)) ([9fbc521](https://github.com/duriantaco/skylos/commit/9fbc521404b323181bb80081dc1255d9a472b853))
+* **security:** avoid repeated YAML import scans ([#1161](https://github.com/duriantaco/skylos/issues/1161)) ([bf241af](https://github.com/duriantaco/skylos/commit/bf241af31331cc5b1f7112112e5e238a732e1846))
+* **security:** close Python OWASP detection gaps ([#1160](https://github.com/duriantaco/skylos/issues/1160)) ([6f83010](https://github.com/duriantaco/skylos/commit/6f830108160a389ad3697e00aff2fdfd3d1c270b))
+* **security:** improve python security rule precision ([#1159](https://github.com/duriantaco/skylos/issues/1159)) ([9cf0b2b](https://github.com/duriantaco/skylos/commit/9cf0b2b7d376ee1bdddab9fd8147d80de30c2736))
+* **security:** track random aliases and add corpus controls ([#1180](https://github.com/duriantaco/skylos/issues/1180)) ([4481fea](https://github.com/duriantaco/skylos/commit/4481fea70b5a7ccab9e4b362a42c2ebb4f3608ea))
+
+
+### Documentation
+
+* **accessibility:** add accessibility statement ([#1171](https://github.com/duriantaco/skylos/issues/1171)) ([f8e287f](https://github.com/duriantaco/skylos/commit/f8e287fe9975d0b5a7444ff45ff9077503b92071))
+
 ## [5.4.0](https://github.com/duriantaco/skylos/compare/v5.3.0...v5.4.0) (2026-11-02)
 
 
