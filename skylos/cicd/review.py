@@ -121,13 +121,10 @@ def run_pr_review(
             if regression_findings and not summary_only
             else changed_ranges
         )
-        if not summary_only:
-            findings = filter_findings_to_diff(
-                all_findings, changed_ranges, project_root=review_root
-            )
-            findings.extend(regression_findings)
-        else:
-            findings = all_findings + regression_findings
+        findings = filter_findings_to_diff(
+            all_findings, changed_ranges, project_root=review_root
+        )
+        findings.extend(regression_findings)
     except ValueError as exc:
         console.print(f"[red]Skylos PR review unavailable: {exc}[/red]")
         raise SystemExit(2) from None
