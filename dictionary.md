@@ -1061,7 +1061,7 @@ across different operating-system/CPU platforms.
 
 | ID | Severity | Name | Languages / Scope | CWE |
 |:---|:---|:---|:---|:---|
-| S101 | HIGH-CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Kotlin, Go, PHP, Rust, Dart, C#, C/C++, shell scripts (including extensionless files with a shell `#!` line), Dockerfiles, Terraform (`.tf`, `.tfvars`, `.hcl`), `.properties`, XML, Gradle, `.npmrc`, `.pypirc` and config files | CWE-798 |
+| S101 | HIGH-CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Kotlin, Go, PHP, Rust, Swift, Dart, C#, C/C++, shell scripts (including extensionless files with a shell `#!` line), Dockerfiles, Terraform (`.tf`, `.tfvars`, `.hcl`), `.properties`, XML, Gradle, `.npmrc`, `.pypirc` and config files | CWE-798 |
 | S102 | HIGH* | Secret material or server-only environment variable exposed to client-accessible code | TS/JS, HTML, client bundles | CWE-200 |
 
 `SKY-S101` is `CRITICAL` for provider tokens and for high-entropy values
@@ -2007,8 +2007,14 @@ their export surfaces. Competing wildcard providers, unmodeled local export
 bindings and opaque source decline that narrowing. Enumerating a literal
 module namespace also supplies positive reads through resolved export paths,
 respecting explicit shadows and the exclusion of default from star exports.
-Direct namespace exports (`export * as tools`), escaped export spellings behind
-wildcard barrels and cross-file classic JS globals remain limited.
+Direct namespace exports (`export * as tools`) preserve member identity through
+named, default, wildcard and nested forwarding. Selected literal member paths
+leave unused exported siblings reportable; public APIs, mutation, dynamic keys
+and escapes retain the possible exported surface. Escaped export spellings
+behind wildcard barrels and cross-file classic JS globals remain limited.
+Position-preserving parser repairs cover native-valid tagged template escapes
+and generic import-type queries, including queries the grammar otherwise reads
+as relational runtime expressions. Other syntax errors remain incomplete.
 
 TS/JS local parameter and value reads do not reference unrelated module
 functions with the same name. Function values passed or captured still count.
@@ -2033,7 +2039,14 @@ can also supply type identity when its matching module and package sources are
 already inside the native scan. Unsupported metadata, workspace overrides,
 version-specific or remote replacements, excluded providers and paths outside
 the scan retain conservative handling. This does not fetch dependencies or add
-workspace sibling resolution.
+general external dependency resolution. An active contained `go.work` can supply
+source identity for its ordinary `use` modules when the exact admitted file
+inventory is available. Omitted package members, excluded or outside providers,
+unsupported workspace metadata, invalid module requirements, unsupported Go
+versions and type errors decline that additional proof. The module's declared
+Go language version is honored; target commands and dependency fetching remain
+disabled. This does not implement general workspace replacement or build-variant
+resolution.
 Private functions that only recurse or call one another are reported when no
 entry point reaches them. Local variables and parameters with matching names
 do not keep unrelated package functions alive. Exported APIs, interface methods,
@@ -2085,6 +2098,24 @@ separate controls. A feature-matched `cfg_attr` wrapper can read its attribute
 import without treating predicate strings or inactive wrappers as uses. These
 checks preserve Rust's experimental confidence cap of 40 and do not evaluate
 Cargo's active feature set.
+
+Ordinary `mod name;` source closures rooted at a fully scanned `main.rs` or
+`lib.rs` can also establish local trait import use across files. Every module
+must be admitted, readable and unambiguous; attributed, excluded, missing,
+macro-generated or over-budget closures add no proof. Repeated import aliases
+retain their own source-bound identities, so an inner read cannot hide an unused
+outer import. Attributed repeated bindings keep conservative grouping without
+guessing the active Cargo configuration.
+
+Swift dead-code checks parse `.swift` sources and follow `private`/`fileprivate`
+declarations, owner and lexical bindings, function values, callbacks and private
+call cycles. Public/internal APIs and runtime or compiler-generated consumers
+remain roots. Import usage is not inferred from textual module-name matches:
+imports may supply extensions and operators. SwiftPM `.build` source products
+are excluded from directory scans; an explicit file target is still inspectable.
+Missing grammar, unreadable source and syntax errors report incomplete analysis.
+Swift security-flow analysis, quality rules and local API verification are not
+implemented; existing secret scanning also reads Swift sources.
 
 A Python module or class variable is kept alive by an attribute read `x.NAME`
 elsewhere only when `x` could be its owner. For a module variable that is the

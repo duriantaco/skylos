@@ -247,6 +247,7 @@ Timeout-Pflicht beizubringen.
 | C# | Teilweise | Teilweise | Teilweise | C#-Symbole, unerreichbare Anweisungen in direkten Blöcken, ASP.NET-bewusste Security-Prüfung (Anfragequellen, typgebundene Senken, unsichere Deserialisierung, XSS) und NuGet-Inventarisierung (`.csproj` und `packages.lock.json`) |
 | C++ | Teilweise | Nein | Nein | nur scheinbar ungenutzte dateilokale Funktionen in `.cpp`, `.cc`, `.cxx`; C++-Header werden für Referenzen gelesen |
 | Kotlin | Teilweise² | Teilweise² | Nein | lexikalische Symbolerkennung; meldet nur private Deklarationen und Imports; Security-Prüfungen für Spring, Ktor, Servlets und Android-WebView |
+| Swift | Teilweise | Nein | Nein | syntaxbasierte Erreichbarkeit privater und dateiprivater Deklarationen; berücksichtigt Besitzer, lokale Bindungen, Callbacks und Aufrufzyklen; unbekannte Laufzeitkontexte bleiben konservativ |
 | Shell | Nein | Teilweise | Nein | Shell-Script-Security-Prüfungen für Command Injection, SSRF und Path Traversal |
 
 ¹ Dead-Code- und Security-Prüfungen für Go brauchen die native

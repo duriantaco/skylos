@@ -395,6 +395,7 @@ class TestSkylos:
                 *PHP_SOURCE_EXTS,
                 ".rs",
                 ".rb",
+                ".swift",
                 ".dart",
                 ".cs",
                 ".kt",
@@ -2139,9 +2140,7 @@ max_args = false
         }
         assert all(finding["advisory"] is False for finding in enforced)
         assert result["architecture_metrics"].get("advisories", []) == []
-        assert result["analysis_summary"]["quality_count"] == len(
-            result["quality"]
-        )
+        assert result["analysis_summary"]["quality_count"] == len(result["quality"])
 
     def test_typescript_architecture_metrics_and_layer_policy(self, tmp_path):
         (tmp_path / "package.json").write_text(

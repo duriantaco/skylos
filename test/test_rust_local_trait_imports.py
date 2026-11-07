@@ -169,16 +169,7 @@ def test_reference_impl_keeps_the_imports_selected_by_rust(tmp_path, blanket, by
 
 @pytest.mark.parametrize(
     "by_value",
-    [
-        pytest.param(
-            False,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="Existing gap: local trait import proof does not resolve out-of-line module implementations",
-            ),
-        ),
-        True,
-    ],
+    [False, True],
 )
 def test_reference_trait_in_another_file_has_distinct_receiver_uses(tmp_path, by_value):
     (tmp_path / "external.rs").write_text(

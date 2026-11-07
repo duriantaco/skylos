@@ -199,6 +199,7 @@ ALLOWED_FILE_SUFFIXES = (
     ".php",
     ".rs",
     ".rb",
+    ".swift",
     ".dart",
     ".cs",
     ".kt",

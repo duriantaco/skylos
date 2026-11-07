@@ -2,6 +2,8 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
+from contextlib import ExitStack
 from pathlib import Path
 
 import skylos
@@ -53,7 +55,9 @@ def get_go_engine_status() -> dict[str, str]:
         return {
             "status": "unavailable",
             "reason": reason,
-            "configured_by": "SKYLOS_GO_BIN" if os.getenv("SKYLOS_GO_BIN") else "discovery",
+            "configured_by": "SKYLOS_GO_BIN"
+            if os.getenv("SKYLOS_GO_BIN")
+            else "discovery",
             "install": go_engine_install_hint(),
         }
 
@@ -149,7 +153,7 @@ def resolve_go_engine_bin():
     )
 
 
-def run_go_engine_for_module(module_root, timeout_s=60):
+def run_go_engine_for_module(module_root, timeout_s=60, *, source_files=None):
     engine_bin = resolve_go_engine_bin()
     module_root = Path(module_root).resolve()
 
@@ -160,15 +164,30 @@ def run_go_engine_for_module(module_root, timeout_s=60):
     )
 
     try:
-        proc = subprocess.run(
-            argv,
-            cwd=str(module_root),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout_s,
-            check=False,
-        )
+        with ExitStack() as cleanup:
+            if source_files is not None:
+                inventory_dir = Path(
+                    cleanup.enter_context(
+                        tempfile.TemporaryDirectory(prefix="skylos-go-scope-")
+                    )
+                )
+                inventory = inventory_dir / "sources.json"
+                encoded = json.dumps(list(source_files))
+                if len(encoded.encode("utf-8")) > 4 << 20:
+                    raise GoEngineError(
+                        "Go source inventory exceeds the supported limit"
+                    )
+                inventory.write_text(encoded, encoding="utf-8")
+                argv.extend(["--source-files", str(inventory)])
+            proc = subprocess.run(
+                argv,
+                cwd=str(module_root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=timeout_s,
+                check=False,
+            )
     except subprocess.TimeoutExpired:
         raise GoEngineError(
             "Go engine timed out after %ss for module: %s" % (timeout_s, module_root)

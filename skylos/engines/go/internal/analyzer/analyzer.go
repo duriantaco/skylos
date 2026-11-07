@@ -92,6 +92,10 @@ func New() *Analyzer {
 }
 
 func (a *Analyzer) AnalyzeDir(root string) ([]output.Finding, error) {
+	return a.AnalyzeDirScoped(root, nil)
+}
+
+func (a *Analyzer) AnalyzeDirScoped(root string, sourceFiles map[string]bool) ([]output.Finding, error) {
 	resolvedRoot, rootErr := filepath.EvalSymlinks(root)
 	if rootErr != nil {
 		return nil, rootErr
@@ -117,6 +121,9 @@ func (a *Analyzer) AnalyzeDir(root string) ([]output.Finding, error) {
 		}
 
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		if sourceFiles != nil && !sourceFiles[path] {
 			return nil
 		}
 

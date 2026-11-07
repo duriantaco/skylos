@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"go/build"
-	"go/importer"
 	"go/token"
 	"go/types"
 	"os"
@@ -79,7 +78,7 @@ type hostStdlibImporter struct {
 func newHostStdlibImporter(fset *token.FileSet) types.Importer {
 	ensureHostBuildContext()
 	return &hostStdlibImporter{
-		source: importer.ForCompiler(fset, "source", nil),
+		source: newSDKSourceImporter(fset, build.Default),
 		root:   build.Default.GOROOT,
 		cache:  map[string]*types.Package{},
 	}

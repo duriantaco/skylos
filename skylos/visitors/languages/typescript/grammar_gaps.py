@@ -12,19 +12,24 @@ and JavaScript that popular projects use:
 * ``export type * from "./types"`` (TypeScript 5.0);
 * escape sequences such as ``\\n`` inside template literal types;
 * ``using`` as an ordinary identifier (``function f(using) {}``);
-* a raw ``&`` in a quoted JSX attribute value (``href="/?a=1&b=2"``).
+* a raw ``&`` in a quoted JSX attribute value (``href="/?a=1&b=2"``);
+* invalid cooked escapes in tagged templates (``String.raw`\\undefined` ``);
+* literal ``typeof import(...)`` queries in call type arguments.
 
 Each one leaves an error in the syntax tree, which Skylos reports as
 SKY-ANALYSIS-INCOMPLETE and which fails a full-repo gate; error recovery
-often wraps the rest of the file in it. Only when the first parse has
-errors, this module rewrites the offending bytes in a scratch copy of the
-source and parses again:
+often wraps the rest of the file in it. This module rewrites the offending
+bytes in a scratch copy of the source and parses again. Repairs require an
+initial error, except import-query calls that recovered as relational
+expressions without an error node:
 
 * ``in``/``out`` modifiers, the ``type`` of ``export type *`` and template
   literal type escapes become spaces (line breaks are kept);
 * one indentation byte before such a member becomes a ``;`` separator;
 * the keyword-lexed identifier ``using`` becomes the identifier ``usin_``;
-* the ``&`` in a JSX attribute value becomes ``x``.
+* the ``&`` in a JSX attribute value and invalid tagged escape become ``x``;
+* a call's import type query uses a same-width indexed-type scratch shape;
+  the original module literal is separately retained as a type-only import.
 
 Every byte offset and line number stays the same, and the TypeScript
 analysis reads names and text from the original source by byte offset, so
@@ -132,12 +137,25 @@ def repair_typescript_grammar_gaps(
 ):
     """Return a tree for ``source`` with known grammar gaps repaired.
 
-    ``tree`` is the first parse of ``source``. It is returned unchanged when it
-    has no errors, or when no repair both lands where intended and removes
-    errors.
+    ``tree`` is the first parse of ``source``. Error repairs must land where
+    intended and remove errors. An error-free import-query repair instead
+    requires a verified type-argument shape with no new errors.
     """
-    if tree is None or not tree.root_node.has_error:
+    if tree is None:
         return tree
+
+    if not tree.root_node.has_error:
+        # Some import-query calls recover as error-free relational expressions.
+        # Accept only a verified type-argument shape with no new syntax errors.
+        candidates = (
+            _call_type_import_query_candidates(_tokens(tree.root_node, source), source)
+            if typescript
+            else []
+        )
+        trial = _verified_trial(parser, source, [], candidates) if candidates else None
+        return (
+            trial[0] if trial is not None and not trial[0].root_node.has_error else tree
+        )
 
     best_tree = tree
     best_errors = _error_node_count(tree.root_node)
@@ -226,6 +244,7 @@ def _tokens(root_node, source: bytes) -> list[_Token]:
 def _rewrite_candidates(root_node, source: bytes, *, typescript: bool, jsx: bool):
     tokens = _tokens(root_node, source)
     candidates = _using_identifier_candidates(tokens, source)
+    candidates.extend(_tagged_template_escape_candidates(root_node, source))
     if jsx:
         candidates.extend(_jsx_attribute_ampersand_candidates(tokens, source))
     if typescript:
@@ -233,8 +252,111 @@ def _rewrite_candidates(root_node, source: bytes, *, typescript: bool, jsx: bool
         candidates.extend(_member_separator_candidates(tokens, source))
         candidates.extend(_type_star_export_candidates(tokens))
         candidates.extend(_template_literal_type_escape_candidates(tokens, source))
+        candidates.extend(_call_type_import_query_candidates(tokens, source))
     # Nested literals can yield the same escape twice.
     return list(dict.fromkeys(candidates))
+
+
+def _tagged_template_escape_candidates(root_node, source):
+    """Tagged templates allow invalid cooked escapes; their raw text is valid.
+
+    Only actual tagged-template string fragments are repaired. Substitution
+    expressions and ordinary untagged templates retain their syntax errors.
+    """
+    candidates = []
+    stack = [root_node]
+    while stack:
+        node = stack.pop()
+        stack.extend(child for child in node.named_children if child.has_error)
+        parent = node.parent
+        if (
+            node.type != "template_string"
+            or not node.has_error
+            or parent is None
+            or parent.type != "call_expression"
+            or parent.child_by_field_name("arguments") != node
+            or source[node.start_byte : node.start_byte + 1] != b"`"
+            or source[node.end_byte - 1 : node.end_byte] != b"`"
+        ):
+            continue
+        substitutions = [
+            (child.start_byte, child.end_byte)
+            for child in node.named_children
+            if child.type == "template_substitution"
+        ]
+        substitution_index = 0
+        index = node.start_byte + 1
+        while index < node.end_byte - 1:
+            while (
+                substitution_index < len(substitutions)
+                and index >= substitutions[substitution_index][1]
+            ):
+                substitution_index += 1
+            if (
+                substitution_index < len(substitutions)
+                and index >= substitutions[substitution_index][0]
+            ):
+                index = substitutions[substitution_index][1]
+            elif source[index] == 0x5C:
+                if not _escape_is_valid(source, index):
+                    candidates.append(
+                        _Rewrite("tagged_template_escape", index, b"x", node.start_byte)
+                    )
+                index = _escape_end(source, index)
+            else:
+                index += 1
+    return candidates
+
+
+def _call_type_import_query_candidates(tokens, source):
+    """Reparse a literal ``typeof import(...)`` inside call type arguments.
+
+    The grammar accepts this query in a type annotation but treats it as a
+    relational expression in a call. A same-width indexed query provides an
+    unambiguous type-only shape; the original literal is retained for imports.
+    """
+    candidates = []
+    for index in range(1, len(tokens) - 3):
+        keyword, opening, literal = tokens[index : index + 3]
+        if (
+            tokens[index - 1].text != b"typeof"
+            or keyword.text != b"import"
+            or opening.text != b"("
+        ):
+            continue
+        # Strings have separate quote/fragment leaves. Select their enclosing
+        # source node rather than guessing quote boundaries from token text.
+        string = literal.node
+        while string is not None and string.type != "string":
+            string = string.parent
+        if string is None or string.start_byte != literal.start:
+            continue
+        close_index = index + 2
+        while close_index < len(tokens) and tokens[close_index].end <= string.end_byte:
+            close_index += 1
+        if close_index >= len(tokens) or tokens[close_index].text != b")":
+            continue
+        closing = tokens[close_index]
+        # The original module argument remains a literal, with no attributes
+        # or second argument. Nonliteral imports stay an explicit boundary.
+        if (
+            source[opening.end : string.start_byte].strip()
+            or source[string.end_byte : closing.start].strip()
+        ):
+            continue
+        replacement = bytearray(source[keyword.start : closing.end])
+        replacement[len(b"import") - 1] = ord("_")
+        replacement[opening.start - keyword.start] = ord("[")
+        replacement[closing.start - keyword.start] = ord("]")
+        candidates.append(
+            _Rewrite(
+                "call_type_import_query",
+                keyword.start,
+                bytes(replacement),
+                keyword.start,
+            )
+        )
+    return candidates
 
 
 def _is_identifier(token: bytes) -> bool:
@@ -609,6 +731,44 @@ def _template_literal_type_escape_holds(root_node, rewrite: _Rewrite) -> bool:
     )
 
 
+def _tagged_template_escape_holds(root_node, rewrite):
+    node = root_node.descendant_for_byte_range(rewrite.start, rewrite.end)
+    if node is None or node.type != "string_fragment":
+        return False
+    template = node.parent
+    return (
+        template is not None
+        and template.type == "template_string"
+        and template.start_byte == rewrite.anchor
+        and not template.has_error
+        and template.parent is not None
+        and template.parent.type == "call_expression"
+        and template.parent.child_by_field_name("arguments") == template
+    )
+
+
+def _call_type_import_query_holds(root_node, rewrite):
+    node = root_node.named_descendant_for_byte_range(
+        rewrite.start, rewrite.start + len(b"import")
+    )
+    if (
+        node is None
+        or node.type != "identifier"
+        or node.start_byte != rewrite.anchor
+        or node.parent is None
+        or node.parent.type != "type_query"
+        or node.parent.parent is None
+        or node.parent.parent.type != "lookup_type"
+        or node.parent.parent.end_byte != rewrite.end
+        or node.parent.parent.has_error
+    ):
+        return False
+    parent = node.parent.parent
+    while parent is not None and parent.type != "type_arguments":
+        parent = parent.parent
+    return parent is not None and not parent.has_error
+
+
 def _using_identifier_holds(root_node, rewrite: _Rewrite) -> bool:
     node = root_node.named_descendant_for_byte_range(rewrite.start, rewrite.end)
     return (
@@ -637,9 +797,11 @@ def _jsx_attribute_ampersand_holds(root_node, rewrite: _Rewrite) -> bool:
 
 
 _REWRITE_CHECKS = {
+    "call_type_import_query": _call_type_import_query_holds,
     "jsx_attribute_ampersand": _jsx_attribute_ampersand_holds,
     "separator": _separator_holds,
     "template_literal_type_escape": _template_literal_type_escape_holds,
+    "tagged_template_escape": _tagged_template_escape_holds,
     "type_star_export": _type_star_export_holds,
     "using_identifier": _using_identifier_holds,
     "variance": _variance_holds,

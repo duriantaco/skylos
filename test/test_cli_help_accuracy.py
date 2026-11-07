@@ -27,6 +27,7 @@ LANGUAGE_PACKAGES = {
     "PHP": "php",
     "Rust": "rust",
     "Ruby": "ruby",
+    "Swift": "swift",
     "Dart": "dart",
     "C#": "csharp",
     "Kotlin": "kotlin",

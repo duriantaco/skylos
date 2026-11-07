@@ -264,7 +264,9 @@ def test_opaque_forwarding_preserves_existing_reference_evidence(tmp_path, bound
         "library.ts",
         "export function active() {}\nexport function retired() {}\n",
     )
-    assert _provider_unused(_scan(tmp_path)) == set()
+    assert _provider_unused(_scan(tmp_path)) == (
+        {"retired"} if boundary == "namespace" else set()
+    )
 
 
 def test_direct_default_import_resolves_reexported_default(tmp_path):
@@ -316,10 +318,6 @@ def test_unresolved_declared_package_api_prevents_negative_proof(tmp_path):
     assert _provider_unused(_scan(tmp_path)) == set()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Existing gap: namespace-export identity does not connect the named namespace to its provider",
-)
 def test_namespace_export_declines_new_demand_inference(tmp_path):
     _write(
         tmp_path, "package.json", '{"private":true,"scripts":{"start":"node index.ts"}}'

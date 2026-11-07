@@ -64,11 +64,17 @@ func markPackageFunctionReachability(defs map[string]*Def, files []reachabilityF
 	if len(files) == 0 || packageHasAssembly(filepath.Dir(files[0].path)) {
 		return nil, false
 	}
+	if project, ok := importer.(*projectSourceImporter); ok && project.incompleteDirs[filepath.Dir(files[0].path)] {
+		return nil, false
+	}
 	info := &types.Info{
 		Defs: map[*ast.Ident]types.Object{},
 		Uses: map[*ast.Ident]types.Object{},
 	}
 	conf := types.Config{Importer: importer, Error: func(error) {}}
+	if project, ok := importer.(*projectSourceImporter); ok {
+		conf.GoVersion = project.languageVersionForDirectory(filepath.Dir(files[0].path))
+	}
 	asts := make([]*ast.File, 0, len(files))
 	for _, file := range files {
 		asts = append(asts, file.file)
@@ -219,7 +225,7 @@ func markPackageFunctionReachability(defs map[string]*Def, files []reachabilityF
 }
 
 func projectObjectName(object types.Object, modulePath string, names map[string]bool, importer types.Importer) string {
-	if object == nil || object.Pkg() == nil || modulePath == "" {
+	if object == nil || object.Pkg() == nil {
 		return ""
 	}
 	pkgPath := object.Pkg().Path()

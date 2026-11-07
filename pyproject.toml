@@ -89,6 +89,7 @@ dependencies = [
     "tree-sitter-rust>=0.24.2,<0.25",
     "tree-sitter-cpp>=0.23.4,<0.24",
     "tree-sitter-ruby>=0.23.1,<0.24",
+    "tree-sitter-swift>=0.7.4,<0.8",
     "python-hcl2>=8.1.4,<9",
     "tomli>=2.0.1; python_version < '3.11'",
     "pyyaml",

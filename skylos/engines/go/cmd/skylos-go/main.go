@@ -9,6 +9,7 @@ import (
 
 	"skylos/engines/go/internal/analyzer"
 	"skylos/engines/go/internal/output"
+	"skylos/engines/go/internal/scope"
 	"skylos/engines/go/internal/symbols"
 )
 
@@ -54,11 +55,13 @@ func analyze(args []string) {
 	var format string
 	var skylosVersion string
 	var pretty bool
+	var sourceInventory string
 
 	fs.StringVar(&root, "root", ".", "Root directory to analyze (Go module root)")
 	fs.StringVar(&format, "format", "json", "Output format: json")
 	fs.StringVar(&skylosVersion, "skylos-version", "", "Skylos version passed from Python orchestrator")
 	fs.BoolVar(&pretty, "pretty", false, "Pretty-print JSON output")
+	fs.StringVar(&sourceInventory, "source-files", "", "JSON inventory of admitted Go source files")
 
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
@@ -86,8 +89,13 @@ func analyze(args []string) {
 		os.Exit(2)
 	}
 
+	sourceFiles, scopeErr := scope.Load(absRoot, sourceInventory)
+	if scopeErr != nil {
+		fmt.Fprintf(os.Stderr, "Invalid source scope: %v\n", scopeErr)
+		os.Exit(2)
+	}
 	a := analyzer.New()
-	findings, analysisErr := a.AnalyzeDir(absRoot)
+	findings, analysisErr := a.AnalyzeDirScoped(absRoot, sourceFiles)
 	if analysisErr != nil {
 		fmt.Fprintf(os.Stderr, "Warning: analysis encountered errors: %v\n", analysisErr)
 	}
@@ -96,7 +104,7 @@ func analyze(args []string) {
 	}
 
 	// Extract symbols for dead code detection.
-	symResult, symErr := symbols.Extract(absRoot)
+	symResult, symErr := symbols.ExtractScoped(absRoot, sourceFiles)
 	if symErr != nil {
 		fmt.Fprintf(os.Stderr, "Warning: symbol extraction encountered errors: %v\n", symErr)
 	}

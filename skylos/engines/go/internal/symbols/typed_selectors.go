@@ -26,10 +26,18 @@ func collectTypedSelectorRefs(
 	defNames map[string]bool,
 	typeImporter types.Importer,
 ) ([]Ref, []CallPair) {
-	packages := collectParsedPackages(root, resolvedRoot, modulePath)
+	var sourceFiles map[string]bool
+	if project, ok := typeImporter.(*projectSourceImporter); ok {
+		sourceFiles = project.sourceFiles
+	}
+	packages := collectParsedPackages(root, resolvedRoot, modulePath, sourceFiles)
 	if project, ok := typeImporter.(*projectSourceImporter); ok {
 		for index := range packages {
 			pkg := &packages[index]
+			if project.incompleteDirs[filepath.Dir(pkg.fset.Position(pkg.files[0].Pos()).Filename)] {
+				pkg.files = nil
+				continue
+			}
 			if importPath, known := project.packagePath(pkg.pkgDir, pkg.files[0].Name.Name); known {
 				pkg.importPath = importPath
 			}
@@ -39,6 +47,9 @@ func collectTypedSelectorRefs(
 	calls := []CallPair{}
 
 	for _, pkg := range packages {
+		if len(pkg.files) == 0 {
+			continue
+		}
 		pkgRefs, pkgCalls := resolveTypedSelectors(pkg, modulePath, root, pkgDirs, defNames, typeImporter)
 		refs = append(refs, pkgRefs...)
 		calls = append(calls, pkgCalls...)
@@ -47,7 +58,7 @@ func collectTypedSelectorRefs(
 	return refs, calls
 }
 
-func collectParsedPackages(root, resolvedRoot, modulePath string) []parsedPackage {
+func collectParsedPackages(root, resolvedRoot, modulePath string, sourceFiles map[string]bool) []parsedPackage {
 	fset := token.NewFileSet()
 	packagesByKey := map[string]*parsedPackage{}
 
@@ -63,6 +74,9 @@ func collectParsedPackages(root, resolvedRoot, modulePath string) []parsedPackag
 			return nil
 		}
 		if !strings.HasSuffix(path, ".go") || info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if sourceFiles != nil && !sourceFiles[path] {
 			return nil
 		}
 
@@ -145,6 +159,9 @@ func resolveTypedSelectors(
 		Importer: typeImporter,
 		Error: func(error) {
 		},
+	}
+	if project, ok := typeImporter.(*projectSourceImporter); ok {
+		conf.GoVersion = project.languageVersionForDirectory(filepath.Join(root, pkg.pkgDir))
 	}
 	_, _ = conf.Check(pkg.importPath, pkg.fset, pkg.files, info)
 	if len(info.Selections) == 0 {

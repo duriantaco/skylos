@@ -3202,6 +3202,1701 @@
           }
         ]
       }
+    },
+    {
+      "id": "typescript-nested-namespace-export",
+      "path": "fixtures/typescript_nested_namespace_export",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "format.ts",
+            "symbol": "expanded"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "format.ts",
+            "symbol": "compact"
+          }
+        ]
+      },
+      "description": "A closed application reads compact through two namespace exports; expanded has no consumer. A native-valid tagged template must not make the source scope incomplete or disable exact export demand.",
+      "importance": "high",
+      "symbol_identity": "simple",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract. Literal namespace forwarding and native-valid TypeScript grammar are verified with independent compiler/source controls."
+      }
+    },
+    {
+      "id": "typescript-namespace-export-public-and-opaque",
+      "path": "fixtures/typescript_namespace_export_public_and_opaque",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "helper"
+          },
+          {
+            "kind": "function",
+            "file": "renderer.ts",
+            "symbol": "inspect"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "dispatch"
+          },
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "cancel"
+          },
+          {
+            "kind": "function",
+            "file": "renderer.ts",
+            "symbol": "render"
+          },
+          {
+            "kind": "function",
+            "file": "renderer.ts",
+            "symbol": "prepare"
+          }
+        ]
+      },
+      "description": "Escaping namespace preserves exported service functions; declared package API preserves renderer functions; private uncalled helpers remain dead in both providers.",
+      "importance": "high",
+      "symbol_identity": "simple",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract. Literal namespace forwarding and native-valid TypeScript grammar are verified with independent compiler/source controls."
+      }
+    },
+    {
+      "id": "go-workspace-private-cycle",
+      "path": "fixtures/go_workspace_private_cycle",
+      "description": "An active contained Go workspace supplies indexed module type identity while used callbacks and public APIs remain roots.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract with frozen liveness labels; actual Go compiler and Staticcheck U1000 independently confirm. Workspace selected with GOWORK unset/empty; no target application executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.alpha",
+            "aliases": [
+              "alpha"
+            ]
+          },
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.beta",
+            "aliases": [
+              "beta"
+            ]
+          },
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.orphan",
+            "aliases": [
+              "orphan"
+            ]
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.main",
+            "aliases": [
+              "main"
+            ]
+          },
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.callback",
+            "aliases": [
+              "callback"
+            ]
+          },
+          {
+            "kind": "function",
+            "file": "provider/bridge/api.go",
+            "symbol": "provider/bridge.Invoke",
+            "aliases": [
+              "bridge.Invoke"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "go-workspace-live-callback",
+      "path": "fixtures/go_workspace_live_callback",
+      "description": "An active contained Go workspace supplies indexed module type identity while used callbacks and public APIs remain roots.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract with frozen liveness labels; actual Go compiler and Staticcheck U1000 independently confirm. Workspace selected with GOWORK unset/empty; no target application executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.orphan",
+            "aliases": [
+              "orphan"
+            ]
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.main",
+            "aliases": [
+              "main"
+            ]
+          },
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.callback",
+            "aliases": [
+              "callback"
+            ]
+          },
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.alpha",
+            "aliases": [
+              "alpha"
+            ]
+          },
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.beta",
+            "aliases": [
+              "beta"
+            ]
+          },
+          {
+            "kind": "function",
+            "file": "provider/bridge/api.go",
+            "symbol": "provider/bridge.Box.Invoke",
+            "aliases": [
+              "bridge.Box.Invoke"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "rust-source-module-trait",
+      "path": "fixtures/rust_source_module_trait",
+      "description": "Ordinary local Rust modules supply exact trait receiver evidence while unused sibling imports and private functions remain visible.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "precision_guard",
+        "basic_detection",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source fixture; expected import usage independently confirmed by rustc metadata compilation. This is source-module evidence, not Cargo feature evaluation."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "simple",
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "main.rs",
+            "symbol": "Inactive"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "orphan"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "main.rs",
+            "symbol": "Active"
+          },
+          {
+            "kind": "class",
+            "file": "model.rs",
+            "symbol": "Card"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-private-functions",
+      "path": "fixtures/swift_private_functions",
+      "description": "Swift source-defined private reachability: private functions.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "retired"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "format"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-callback",
+      "path": "fixtures/swift_callback",
+      "description": "Swift source-defined private reachability: callback.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "handler"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "register"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-dead-cycle",
+      "path": "fixtures/swift_dead_cycle",
+      "description": "Swift source-defined private reachability: dead cycle.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "first"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "second"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "leaf"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-live-cycle",
+      "path": "fixtures/swift_live_cycle",
+      "description": "Swift source-defined private reachability: live cycle.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "first"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "second"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-parameter-shadow",
+      "path": "fixtures/swift_parameter_shadow",
+      "description": "Swift source-defined private reachability: parameter shadow.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "action"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-local-shadow",
+      "path": "fixtures/swift_local_shadow",
+      "description": "Swift source-defined private reachability: local shadow.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "action"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-initializer-before-binding",
+      "path": "fixtures/swift_initializer_before_binding",
+      "description": "Swift source-defined private reachability: initializer before binding.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "action"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-owner-identity",
+      "path": "fixtures/swift_owner_identity",
+      "description": "Swift source-defined private reachability: owner identity.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "First.render"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "First"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "First.entry"
+          },
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Second"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Second.render"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Second.entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-extension",
+      "path": "fixtures/swift_extension",
+      "description": "Swift source-defined private reachability: extension.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Worker"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.work"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-fileprivate",
+      "path": "fixtures/swift_fileprivate",
+      "description": "Swift source-defined private reachability: fileprivate.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "work"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-function-value",
+      "path": "fixtures/swift_function_value",
+      "description": "Swift source-defined private reachability: function value.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "work"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-keypath",
+      "path": "fixtures/swift_keypath",
+      "description": "Swift source-defined private reachability: keypath.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Worker"
+          },
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Worker.value"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-property-read",
+      "path": "fixtures/swift_property_read",
+      "description": "Swift source-defined private reachability: property read.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Worker.spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Worker"
+          },
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Worker.value"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-string-not-use",
+      "path": "fixtures/swift_string_not_use",
+      "description": "Swift source-defined private reachability: string not use.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "retired"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-comment-not-use",
+      "path": "fixtures/swift_comment_not_use",
+      "description": "Swift source-defined private reachability: comment not use.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "retired"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-overload-labels",
+      "path": "fixtures/swift_overload_labels",
+      "description": "Swift source-defined private reachability: overload labels.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "convert(number:)"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "convert(text:)"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-default-argument",
+      "path": "fixtures/swift_default_argument",
+      "description": "Swift source-defined private reachability: default argument.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "helper"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "run"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-raw-identifiers",
+      "path": "fixtures/swift_raw_identifiers",
+      "description": "Swift source-defined private reachability: raw identifiers.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "repeat"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-protocol-witness",
+      "path": "fixtures/swift_protocol_witness",
+      "description": "Swift source-defined private reachability: protocol witness.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Render"
+          },
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Worker"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.render"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-codable",
+      "path": "fixtures/swift_codable",
+      "description": "Swift source-defined private reachability: codable.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Payload"
+          },
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Payload.secret"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-equatable",
+      "path": "fixtures/swift_equatable",
+      "description": "Swift source-defined private reachability: equatable.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Payload"
+          },
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Payload.value"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-reflection",
+      "path": "fixtures/swift_reflection",
+      "description": "Swift source-defined private reachability: reflection.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Payload"
+          },
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Payload.value"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-objc-selector",
+      "path": "fixtures/swift_objc_selector",
+      "description": "Swift source-defined private reachability: objc selector.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Window"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Window.clicked"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Window.entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-conditional",
+      "path": "fixtures/swift_conditional",
+      "description": "Swift source-defined private reachability: conditional.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "hook"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "debugEntry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-closure-capture",
+      "path": "fixtures/swift_closure_capture",
+      "description": "Swift source-defined private reachability: closure capture.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "work"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-private-type",
+      "path": "fixtures/swift_private_type",
+      "description": "Swift source-defined private reachability: private type.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Retired"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Worker"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.run"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-member-cycle",
+      "path": "fixtures/swift_member_cycle",
+      "description": "Swift source-defined private reachability: member cycle.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.first"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.second"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Worker"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-property-wrapper",
+      "path": "fixtures/swift_property_wrapper",
+      "description": "Swift source-defined private reachability: property wrapper.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Box"
+          },
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Box.wrappedValue"
+          },
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Worker"
+          },
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Worker.value"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.entry"
+          }
+        ]
+      }
     }
   ]
 }

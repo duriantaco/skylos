@@ -37,16 +37,18 @@ _GO_RULE_REMAP = {
 }
 
 _go_module_cache = {}
+_go_scope_cache = {}
 
 
 def clear_go_cache():
     _go_module_cache.clear()
+    _go_scope_cache.clear()
 
 
 def get_go_engine_failures():
     failures = []
-    for module_root in sorted(_go_module_cache):
-        entry = _go_module_cache[module_root]
+    for cache_key in sorted(_go_module_cache, key=str):
+        entry = _go_module_cache[cache_key]
         failure = entry.get("failure") if isinstance(entry, dict) else None
         if not isinstance(failure, dict):
             continue
@@ -59,12 +61,19 @@ def get_go_engine_failures():
     return failures
 
 
-def _get_module_result(module_root, file_path=None):
+def _get_module_result(module_root, file_path=None, *, source_files=None):
     resolved_root = Path(module_root).resolve()
     key = str(resolved_root)
+    if source_files is not None:
+        key = (key, source_files)
     if key not in _go_module_cache:
         try:
-            result = run_go_engine_for_module(resolved_root)
+            if source_files is None:
+                result = run_go_engine_for_module(resolved_root)
+            else:
+                result = run_go_engine_for_module(
+                    resolved_root, source_files=source_files
+                )
             if not isinstance(result, dict):
                 raise TypeError("Go engine returned a non-object result")
             _go_module_cache[key] = {
@@ -80,7 +89,7 @@ def _get_module_result(module_root, file_path=None):
             _go_module_cache[key] = {
                 "result": {"findings": [], "symbols": None},
                 "failure": {
-                    "module_root": key,
+                    "module_root": str(resolved_root),
                     "error_type": type(e).__name__,
                     "reason": str(e) or type(e).__name__,
                 },
@@ -133,7 +142,7 @@ def _convert_symbols(symbols_data, file_path):
     return defs, refs
 
 
-def scan_go_file(file_path, cfg):
+def scan_go_file(file_path, cfg, *, go_scan_scope=None):
     file_path = Path(file_path)
 
     module_root = _find_module_root(file_path)
@@ -141,10 +150,16 @@ def scan_go_file(file_path, cfg):
     if not module_root:
         module_root = file_path.parent
 
+    source_files = None
+    if go_scan_scope is not None:
+        module_root, source_files = _scoped_go_context(
+            file_path, module_root, go_scan_scope
+        )
+
     if not _is_safe_go_file(file_path, module_root):
         return _empty_go_scan_result(cfg)
 
-    result = _get_module_result(module_root, file_path)
+    result = _get_module_result(module_root, file_path, source_files=source_files)
     is_generated = _is_generated_go_file(file_path)
 
     findings = result.get("findings", [])
@@ -237,6 +252,78 @@ def _find_module_root(file_path):
     while current != current.parent:
         if (current / "go.mod").exists():
             return current
+        current = current.parent
+    return None
+
+
+def _scoped_go_context(file_path, module_root, scope):
+    """Admit workspace siblings only through the caller's source inventory."""
+    from skylos.engines.go_runner import GoEngineError
+
+    try:
+        root, paths = scope
+        root = Path(root).resolve(strict=True)
+        if not root.is_dir() or not isinstance(paths, tuple):
+            raise ValueError("invalid inventory")
+        file_path = Path(file_path).absolute()
+        cache_key = (str(root), paths)
+        admitted = _go_scope_cache.get(cache_key)
+        if admitted is None:
+            if len(paths) > 32768:
+                raise ValueError("oversized source inventory")
+            admitted = set()
+            for value in paths:
+                path = Path(value)
+                if not path.is_absolute() or path.suffix != ".go":
+                    raise ValueError("invalid file")
+                relative = path.relative_to(root)
+                current = root
+                for part in relative.parts:
+                    current /= part
+                    if current.is_symlink():
+                        raise ValueError("symlink source")
+                if not path.is_file() or path.resolve() != path:
+                    raise ValueError("non-regular source")
+                admitted.add(path)
+            admitted = frozenset(admitted)
+            _go_scope_cache[cache_key] = admitted
+        if file_path not in admitted:
+            raise ValueError("file is outside admitted inventory")
+
+        workspace = _scoped_workspace_root(file_path, root)
+        engine_root = workspace or Path(module_root).resolve()
+        if workspace is None:
+            # This change admits workspace context only. The ordinary module
+            # scanner retains its existing invocation and discovery policy.
+            return engine_root, None
+        engine_root.relative_to(root)
+        selected = tuple(
+            sorted({str(path) for path in admitted if path.is_relative_to(engine_root)})
+        )
+        return engine_root, selected
+    except (OSError, TypeError, ValueError) as exc:
+        raise GoEngineError("Invalid admitted Go source scope") from exc
+
+
+def _scoped_workspace_root(file_path, scan_root):
+    import os
+
+    workspace = os.getenv("GOWORK", "")
+    if workspace == "off":
+        return None
+    if workspace:
+        path = Path(workspace)
+        if not path.is_absolute() or path.is_symlink() or not path.is_file():
+            return None
+        candidate = path.parent.resolve()
+        return candidate if candidate.is_relative_to(scan_root) else None
+    current = Path(file_path).parent
+    while current.is_relative_to(scan_root):
+        path = current / "go.work"
+        if path.exists() or path.is_symlink():
+            return current if path.is_file() and not path.is_symlink() else None
+        if current == scan_root:
+            break
         current = current.parent
     return None
 
