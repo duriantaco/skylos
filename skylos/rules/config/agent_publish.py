@@ -29,6 +29,7 @@ workflow file changed (``supply_chain_diff``), and ``--sca`` scans note it in
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -85,6 +86,7 @@ SEVERITIES = frozenset({"CRITICAL", "HIGH", "MEDIUM", "LOW"})
 MAX_FINDINGS = 500
 MAX_TEXT = 300
 MAX_SETTINGS_BYTES = 2_000_000
+IDENTITY_KEY = "_change_identity"
 
 
 def is_own_hook(command: object, *, root: Path, settings_text: str | None) -> bool:
@@ -251,6 +253,33 @@ def _message(finding: dict, rule_id: str, label: str) -> str:
     return " ".join(_sentence(part) for part in parts)
 
 
+def _raw_value(row: dict) -> object:
+    evidence = row.get("evidence")
+    if not isinstance(evidence, dict):
+        evidence = {}
+    return evidence.get("command") or evidence.get("target") or row.get("name")
+
+
+def finding_identity(rule_id: str, name: object, value: object) -> str:
+    """A digest of the rule, the event, task, server or job name, and the
+    whole unredacted command or target.
+
+    Shown values are redacted (URL paths, credentials) and cut to 200
+    characters, so two different commands can look the same; the digest
+    tells them apart. It is what baselines and diff scans compare. It stays
+    local: uploads drop ``IDENTITY_KEY``."""
+    payload = json.dumps(
+        [str(rule_id), str(name or ""), str(value or "")],
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8", "replace")).hexdigest()
+
+
+def row_identity(rule_id: str, row: dict) -> str:
+    return finding_identity(rule_id, row.get("name"), _raw_value(row))
+
+
 def _finding(
     finding: dict, path: Path, root: Path, rule: tuple, *, domain: str, provider: str
 ) -> dict:
@@ -280,6 +309,7 @@ def _finding(
         "action": _text(finding.get("action"), 20),
         "evidence": evidence,
     }
+    result[IDENTITY_KEY] = row_identity(rule_id, finding)
     ecosystem = finding.get("ecosystem")
     if domain == "agent_config" and isinstance(ecosystem, str) and ecosystem:
         result["metadata"]["ecosystem"] = _text(ecosystem, 20)
@@ -394,8 +424,10 @@ def _mapped(rows, rules, root: Path, scope: _Scope, domain: str, ignore) -> list
 __all__ = [
     "AGENT_RULE_IDS",
     "HOOK_RULE_IDS",
+    "IDENTITY_KEY",
     "PUBLISH_RULE_IDS",
     "available_rule_ids",
+    "finding_identity",
     "is_own_hook",
     "is_skylos_hook_command",
     "scan_agent_publish",

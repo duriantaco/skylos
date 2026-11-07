@@ -1,12 +1,18 @@
 from __future__ import annotations
 import json
+import os
+import re
 from pathlib import Path
 
 from skylos.core.safe_cache_io import (
     read_project_text_no_symlink,
     save_project_json_cache,
 )
-from skylos.core.sca_baseline import dependency_snapshot, filter_dependency_findings
+from skylos.core.sca_baseline import (
+    dependency_snapshot,
+    filter_dependency_findings,
+    supply_chain_trust_rule,
+)
 
 BASELINE_DIR = ".skylos"
 BASELINE_FILE = "baseline.json"
@@ -54,6 +60,7 @@ _STALE_RESULT_AGGREGATES = (
 
 RULE_COVERAGE_VERSION = 1
 _STABLE_PREFIX = "stable:"
+_HEX_DIGEST = re.compile(r"[0-9a-f]{64}")
 
 
 def _stable_rules() -> frozenset[str]:
@@ -62,46 +69,85 @@ def _stable_rules() -> frozenset[str]:
     return AGENT_RULE_IDS | PUBLISH_RULE_IDS
 
 
+def _identity(finding: dict) -> str:
+    """The unredacted command digest ``agent_publish`` records; findings
+    built elsewhere fall back to their rule, name and shown value."""
+    from skylos.rules.config.agent_publish import IDENTITY_KEY, finding_identity
+
+    value = finding.get(IDENTITY_KEY)
+    if isinstance(value, str) and _HEX_DIGEST.fullmatch(value):
+        return value
+    return finding_identity(
+        str(finding.get("rule_id") or ""),
+        finding.get("name"),
+        finding.get("value") or finding.get("name"),
+    )
+
+
+def _stable_file(finding: dict, project_root: str | Path) -> str | None:
+    file = str(finding.get("file") or "")
+    if not file:
+        return None
+    root = Path(project_root).resolve()
+    for candidate in (Path(os.path.abspath(file)), Path(file).resolve()):
+        try:
+            return candidate.relative_to(root).as_posix()
+        except ValueError:
+            continue
+    try:
+        return Path(os.path.relpath(Path(file).resolve(), root)).as_posix()
+    except (OSError, ValueError):
+        return None
+
+
 def _stable_fingerprint(finding: dict, project_root: str | Path | None) -> str | None:
     """A line-free identity for agent-config and publish-job findings.
 
     Their line moves when unrelated settings are edited, and an older
-    baseline never recorded them, so they are matched by rule, file and the
-    command or job they name.
+    baseline never recorded them, so they are matched by rule, file and a
+    digest of the event or job name and the whole unredacted command: the
+    shown value is redacted and shortened, so two different commands can
+    look the same. Files outside the scanned folder (repository-level
+    configs of a subfolder scan) are kept relative to it (``../``).
     """
     rule_id = str(finding.get("rule_id") or "")
     if rule_id not in _stable_rules():
         return None
     file = str(finding.get("file") or "")
     if project_root is not None:
-        try:
-            file = Path(file).resolve().relative_to(Path(project_root).resolve()).as_posix()
-        except (OSError, ValueError):
+        file = _stable_file(finding, project_root)
+        if file is None:
             return None
-    value = str(finding.get("value") or finding.get("name") or "")
-    return f"{_STABLE_PREFIX}{rule_id}|{file}|{value}"
+    return f"{_STABLE_PREFIX}{rule_id}|{file}|{_identity(finding)}"
 
 
-def _stable_known(finding: dict, stable: set[tuple[str, str, str]]) -> bool:
+def _stable_known(
+    finding: dict, stable: set[tuple[str, str, str]], project_root=None
+) -> bool:
     rule_id = str(finding.get("rule_id") or "")
     if not stable or rule_id not in _stable_rules():
         return False
     file = Path(str(finding.get("file") or "")).as_posix()
-    value = str(finding.get("value") or finding.get("name") or "")
-    for known_rule, known_file, known_value in stable:
-        if known_rule != rule_id or known_value != value or not known_file:
+    relative = None
+    if project_root is not None:
+        relative = _stable_file(finding, project_root)
+    identity = _identity(finding)
+    for known_rule, known_file, known_identity in stable:
+        if known_rule != rule_id or known_identity != identity or not known_file:
             continue
-        if file == known_file or file.endswith("/" + known_file):
+        if known_file == relative or file == known_file:
+            return True
+        if not known_file.startswith("../") and file.endswith("/" + known_file):
             return True
     return False
 
 
-def _known(finding: dict, fp: str, known: set[str], stable) -> bool:
+def _known(finding: dict, fp: str, known: set[str], stable, project_root=None) -> bool:
     """Agent-config and publish-job findings match only by their stable
     identity: a hook whose command changed in place keeps its line, so a line
     match would hide the change."""
     if str(finding.get("rule_id") or "") in _stable_rules():
-        return _stable_known(finding, stable)
+        return _stable_known(finding, stable, project_root)
     return fp in known
 
 
@@ -110,10 +156,20 @@ def _parse_stable(known: set[str]) -> set[tuple[str, str, str]]:
     for item in known:
         if not item.startswith(_STABLE_PREFIX):
             continue
-        parts = item[len(_STABLE_PREFIX) :].split("|", 2)
-        if len(parts) == 3:
-            parsed.add((parts[0], parts[1], parts[2]))
+        rule_id, _, rest = item[len(_STABLE_PREFIX) :].partition("|")
+        file, _, identity = rest.rpartition("|")
+        if rule_id and file and _HEX_DIGEST.fullmatch(identity):
+            parsed.add((rule_id, file, identity))
     return parsed
+
+
+def _fingerprints(baseline: dict | None) -> set[str]:
+    if not isinstance(baseline, dict):
+        return set()
+    raw = baseline.get("fingerprints", [])
+    if not isinstance(raw, list):
+        return set()
+    return {item for item in raw if isinstance(item, str)}
 
 
 def _rule_coverage() -> dict:
@@ -217,26 +273,44 @@ def filter_new_findings(
     dependency_baseline: dict | None = None,
     dependency_disabled_reason: str | None = None,
     dependency_source: dict | None = None,
+    policy_base: bool = False,
+    policy_baseline: dict | None = None,
 ) -> dict:
-    raw_known = baseline.get("fingerprints", [])
-    known = (
-        {item for item in raw_known if isinstance(item, str)}
-        if isinstance(raw_known, list)
-        else set()
-    )
+    """Drop findings the baseline already holds.
+
+    With ``policy_base`` (``SKYLOS_POLICY_BASE`` set: pull-request CI), the
+    working-tree baseline can come from the pull request itself, so a
+    supply-chain trust-boundary finding (``supply_chain_trust_rule``) counts
+    as known only when ``policy_baseline``, the baseline committed on the
+    policy base, holds it too. Other rules keep using the working-tree
+    baseline alone.
+    """
+    known = _fingerprints(baseline)
+    base_known = _fingerprints(policy_baseline)
 
     filtered = dict(result)
     stable = _parse_stable(known)
+    base_stable = _parse_stable(base_known)
+    not_honoured = 0
 
     for category in _FINDING_CATEGORIES:
         original = result.get(category, [])
         new_findings = []
         for finding in original:
             fp = f"{finding.get('rule_id', '')}:{finding.get('file', '')}:{finding.get('line', 0)}"
+            matched = _known(finding, fp, known, stable, project_root)
+            if (
+                matched
+                and policy_base
+                and supply_chain_trust_rule(finding)
+                and not _known(finding, fp, base_known, base_stable, project_root)
+            ):
+                matched = False
+                not_honoured += 1
             # A control removed in this comparison is a new regression, even
             # when a PR adds its fingerprint to the local debt baseline.
             if (
-                not _known(finding, fp, known, stable)
+                not matched
                 or (
                     finding.get("rule_id") == "SKY-L021"
                     and finding.get("kind") == "security_regression"
@@ -265,7 +339,14 @@ def filter_new_findings(
             project_root=project_root,
             disabled_reason=dependency_disabled_reason,
             source=dependency_source,
+            policy_base=policy_base,
+            policy_baseline=policy_baseline,
         )
+        dependency_receipt = (filtered.get("analysis_summary") or {}).get(
+            "dependency_baseline"
+        )
+        if isinstance(dependency_receipt, dict):
+            not_honoured += int(dependency_receipt.get("policy_base_not_honoured") or 0)
 
     if "analysis_summary" in filtered:
         summary = dict(filtered.get("analysis_summary") or {})
@@ -282,6 +363,10 @@ def filter_new_findings(
             summary.pop(key, None)
         if incomplete_grep_verify is not None:
             summary["grep_verify"] = incomplete_grep_verify
+        filtered["analysis_summary"] = summary
+    if policy_base:
+        summary = dict(filtered.get("analysis_summary") or {})
+        summary["baseline_policy_base"] = {"not_honoured": not_honoured}
         filtered["analysis_summary"] = summary
 
     for key in _STALE_RESULT_AGGREGATES:

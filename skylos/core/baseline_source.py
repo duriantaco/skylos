@@ -117,6 +117,23 @@ def _read_git_baseline(root: Path, ref: str, receipt: dict) -> tuple[dict | None
     return baseline, {**receipt, "status": "loaded"}
 
 
+def load_git_baseline(project_root: str | Path, ref: str) -> tuple[dict | None, dict]:
+    """The ``.skylos/baseline.json`` committed at ``ref`` (the policy base of a
+    pull-request scan), read from Git objects only; None with a receipt when
+    the ref or file is missing or invalid."""
+    receipt = {"source": "git_ref"}
+    try:
+        requested_root = Path(project_root).expanduser()
+        if requested_root.is_symlink():
+            return _failure(receipt, "invalid_root")
+        root = requested_root.resolve(strict=True)
+        if not root.is_dir():
+            return _failure(receipt, "invalid_root")
+        return _read_git_baseline(root, ref, receipt)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+        return _failure(receipt, "source_unavailable")
+
+
 def load_dependency_baseline(
     project_root: str | Path,
     *,

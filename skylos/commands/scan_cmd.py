@@ -623,6 +623,39 @@ def _add_supply_chain_diff_findings(result, project_root, base_ref, args, config
         summary["analysis_error_count"] = len(result["analysis_errors"])
 
 
+def _policy_base_baseline(project_root):
+    """Under ``SKYLOS_POLICY_BASE`` (pull-request CI), the baseline the base
+    commit holds: supply-chain trust-boundary findings are baselined only
+    when it lists them too, so a pull request cannot excuse its own."""
+    import os
+
+    from skylos.config import POLICY_BASE_ENV_VAR
+
+    ref = str(os.environ.get(POLICY_BASE_ENV_VAR) or "").strip()
+    if not ref:
+        return {}, None
+    from skylos.core.baseline_source import load_git_baseline
+
+    baseline, receipt = load_git_baseline(project_root, ref)
+    return {"policy_base": True, "policy_baseline": baseline}, receipt
+
+
+def _note_policy_base_baseline(result, receipt, console, machine_output):
+    if receipt is None:
+        return
+    summary = result.setdefault("analysis_summary", {})
+    record = summary.setdefault("baseline_policy_base", {"not_honoured": 0})
+    record["status"] = receipt.get("status")
+    record["error"] = receipt.get("error")
+    count = int(record.get("not_honoured") or 0)
+    if count and not machine_output:
+        console.print(
+            f"[warn]Baseline: {count} supply-chain finding"
+            f"{'s' if count != 1 else ''} not in the policy base commit's "
+            "baseline counted as new.[/warn]"
+        )
+
+
 def _record_baseline_rule_coverage(result, baseline, args):
     """Which supply-chain config rules the baseline saw, and an analysis
     error when this run's ca9 can no longer decide rules the baseline
@@ -1355,6 +1388,7 @@ def _run_scan_command(
             from skylos.core.baseline import load_baseline, filter_new_findings
 
             baseline = load_baseline(project_root)
+            policy_options, policy_receipt = _policy_base_baseline(project_root)
             if "dependency_vulnerabilities" in result:
                 from skylos.config import dependency_baseline_policy_locked
                 from skylos.core.baseline_source import load_dependency_baseline
@@ -1381,6 +1415,7 @@ def _run_scan_command(
                     dependency_baseline=dependency_baseline or {},
                     dependency_disabled_reason=disabled_reason,
                     dependency_source=dependency_source,
+                    **policy_options,
                 )
                 if not machine_output:
                     receipt = result["analysis_summary"]["dependency_baseline"]
@@ -1393,10 +1428,15 @@ def _run_scan_command(
                     "[warn]No baseline found. Run 'skylos baseline .' first.[/warn]"
                 )
             else:
-                result = filter_new_findings(result, baseline)
+                result = filter_new_findings(
+                    result, baseline, project_root=project_root, **policy_options
+                )
             if baseline is not None:
                 result.setdefault("analysis_summary", {})["baseline_scoped"] = True
                 _record_baseline_rule_coverage(result, baseline, args)
+                _note_policy_base_baseline(
+                    result, policy_receipt, console, machine_output
+                )
 
         if getattr(args, "ai_review", False):
             _run_ai_review(

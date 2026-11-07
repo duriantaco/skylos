@@ -211,10 +211,13 @@ def _move_private_metadata(finding: dict) -> None:
 def _copy_review_metadata(finding: dict, *, analyzer_owned: bool) -> None:
     metadata = finding.get("metadata")
     normalized = dict(metadata) if isinstance(metadata, dict) else {}
-    finding.pop("_analysis_config_hash", None)
-    finding.pop("_analysis_worker_config", None)
-    normalized.pop("_analysis_config_hash", None)
-    normalized.pop("_analysis_worker_config", None)
+    for private in (
+        "_analysis_config_hash",
+        "_analysis_worker_config",
+        "_change_identity",
+    ):
+        finding.pop(private, None)
+        normalized.pop(private, None)
     for key in _TRUSTED_REVIEW_METADATA_KEYS:
         normalized.pop(key, None)
         if not analyzer_owned:
