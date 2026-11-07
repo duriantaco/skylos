@@ -6,7 +6,8 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -565,7 +566,13 @@ def run_case(
     manifest_path: str | Path,
     *,
     scanner: str = "skylos",
+    capture_result: Callable[[str, object], None] | None = None,
 ) -> dict[str, Any]:
+    """Score one case, optionally delivering a deep copy of its full raw report.
+
+    Capture includes invalid reports and runs outside the measured analysis time.
+    Callback errors propagate; mutating the captured copy cannot change grading.
+    """
     manifest_root = Path(manifest_path).parent
     case_path = (manifest_root / case["path"]).resolve()
 
@@ -576,6 +583,8 @@ def run_case(
         scanner=scanner,
     )
     elapsed_seconds = time.perf_counter() - start
+    if capture_result is not None:
+        capture_result(case["id"], deepcopy(result))
 
     issues = analysis_issues(result, scanner=scanner)
     if isinstance(result, Mapping):
@@ -720,7 +729,9 @@ def run_manifest(
     selected_cases: set[str] | None = None,
     *,
     scanner: str = "skylos",
+    capture_result: Callable[[str, object], None] | None = None,
 ) -> dict[str, Any]:
+    """Run selected cases, capturing raw reports only for cases actually scanned."""
     manifest = load_manifest(manifest_path)
     cases = validate_manifest(manifest, manifest_path)
     selected = set(selected_cases or set())
@@ -747,7 +758,10 @@ def run_manifest(
                 }
             )
             continue
-        result = run_case(case, manifest_path, scanner=scanner)
+        capture_kwargs = (
+            {"capture_result": capture_result} if capture_result is not None else {}
+        )
+        result = run_case(case, manifest_path, scanner=scanner, **capture_kwargs)
         case_results.append(result)
         total_elapsed += result["elapsed_seconds"]
 
