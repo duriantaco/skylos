@@ -241,3 +241,38 @@ def test_native_quality_rule_failure_is_unscored(case_and_manifest, monkeypatch)
     assert any(e["kind"] == "quality_scan_error" for e in reports[0]["analysis_errors"])
     assert result["scored"] is False
     assert result["scores"]["overall_score"] == 0
+
+
+def test_native_go_engine_missing_stays_unscored_even_with_quality_findings(
+    tmp_path, monkeypatch
+):
+    from pathlib import Path
+
+    manifest = Path(__file__).resolve().parents[1] / "benchmarks/quality/manifest.json"
+    case = next(
+        c
+        for c in quality.load_manifest(manifest)["cases"]
+        if c["id"] == "go-service-quality-hotspot"
+    )
+    monkeypatch.setenv("SKYLOS_GO_BIN", str(tmp_path / "missing-skylos-go"))
+    reports = []
+    scan = quality._scan_case
+
+    def capture(*args, **kwargs):
+        report = scan(*args, **kwargs)
+        reports.append(report)
+        return report
+
+    monkeypatch.setattr(quality, "_scan_case", capture)
+    result = quality.run_case(case, manifest)
+    report = reports[0]
+    assert report["analysis_summary"]["languages"] == {"Go": 1}
+    assert report["analysis_summary"]["total_files"] == 1
+    assert {r["rule_id"] for r in report["quality"]} >= {"SKY-Q301", "SKY-C303"}
+    assert any(
+        e["error_type"] == "GoEngineUnavailable" for e in report["analysis_errors"]
+    )
+    assert result["scored"] is False
+    assert result["analysis_status"] == "incomplete"
+    assert result["present_matched"] == 0
+    assert all(value == 0 for value in result["scores"].values())

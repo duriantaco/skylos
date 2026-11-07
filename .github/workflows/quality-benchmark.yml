@@ -19,6 +19,21 @@ jobs:
 
       - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
 
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.22"
+          cache: false
+
+      - name: Build head Go engine
+        run: |
+          mkdir -p "$RUNNER_TEMP/skylos-quality-head-go-build" "$RUNNER_TEMP/skylos-quality-head-go-path"
+          (
+            cd skylos/engines/go
+            GOCACHE="$RUNNER_TEMP/skylos-quality-head-go-build" GOPATH="$RUNNER_TEMP/skylos-quality-head-go-path" \
+              go build -trimpath -o skylos-go ./cmd/skylos-go
+            ./skylos-go --version
+          )
+
       - name: Create venv + install deps
         run: |
           uv venv
@@ -31,10 +46,11 @@ jobs:
           set +e
           uv run python scripts/quality_benchmark.py --manifest benchmarks/quality/manifest.json --json > quality-benchmark-head.json
           status=$?
+          set -e
           echo "status=$status" >> "$GITHUB_OUTPUT"
           uv run python - <<'PY' | tee /tmp/quality-benchmark-summary.txt
           import json
-          from skylos.quality_benchmark import format_summary
+          from skylos.benchmarks.quality import format_summary
 
           with open("quality-benchmark-head.json", encoding="utf-8") as fh:
               print(format_summary(json.load(fh)))
@@ -49,6 +65,13 @@ jobs:
           git fetch origin "${{ github.base_ref }}" --depth=1
           git worktree add /tmp/skylos-quality-base "${{ github.event.pull_request.base.sha }}"
           cd /tmp/skylos-quality-base
+          mkdir -p "$RUNNER_TEMP/skylos-quality-base-go-build" "$RUNNER_TEMP/skylos-quality-base-go-path"
+          (
+            cd skylos/engines/go
+            GOCACHE="$RUNNER_TEMP/skylos-quality-base-go-build" GOPATH="$RUNNER_TEMP/skylos-quality-base-go-path" \
+              go build -trimpath -o skylos-go ./cmd/skylos-go
+            ./skylos-go --version
+          )
           uv venv
           uv pip install -e .
           set +e
