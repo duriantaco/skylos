@@ -290,14 +290,14 @@ wheels = [
 
 [[package]]
 name = "ca9"
-version = "0.6.0"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "packaging" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4f/16/9c306c2b2bd12e55ab4dc3c8af87c832b86462e4dab425773cc073c27d4b/ca9-0.6.0.tar.gz", hash = "sha256:85ea91c67ccc924c5af5fe79e6f760b41e0feeddfd76aaa888e6593a6cef9202", size = 2075932, upload-time = "2026-09-26T13:25:54.367Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/e5/c1286d42e4922158fc697c6aba9a5c129ed4b40c83c8a737e09c2765ca0f/ca9-0.7.0.tar.gz", hash = "sha256:f665b238e7a4b936315a7a9ccb659fa633b847bb63deccb465c695dea9d5e008", size = 2432071, upload-time = "2026-11-07T12:19:58.343Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/db/d3/7d061e5b0d67f5182aa535c931fad20f942a88a5d51d29a290112b0fdbc3/ca9-0.6.0-py3-none-any.whl", hash = "sha256:5aa17fea39b968a2b7f00b96b5b2f25d3cc91ae59ed291e2821bbf5e33cc24e2", size = 286503, upload-time = "2026-09-26T13:25:52.691Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/4a/df537a5b2afd6cd7714267835f423cd5548214c5d5a01c36c4f7a5f77ecd/ca9-0.7.0-py3-none-any.whl", hash = "sha256:4c704c6d06aa8ca435ea9fea23da7bdf58362226a125bf7c0e77d4ce2f970641", size = 528231, upload-time = "2026-11-07T12:19:56.752Z" },
 ]
 
 [[package]]
@@ -2383,7 +2383,7 @@ verdict = [
 requires-dist = [
     { name = "aiohttp", marker = "extra == 'all'", specifier = ">=3.14.0" },
     { name = "aiohttp", marker = "extra == 'llm'", specifier = ">=3.14.0" },
-    { name = "ca9", specifier = ">=0.6.0" },
+    { name = "ca9", specifier = ">=0.7.0" },
     { name = "cryptography", marker = "extra == 'all'", specifier = ">=42" },
     { name = "cryptography", marker = "extra == 'verdict'", specifier = ">=42" },
     { name = "filelock", marker = "extra == 'all'", specifier = ">=4.2.1" },
