@@ -65,10 +65,10 @@ def _package_id(purl: str) -> str:
 
 
 def _is_direct(occurrence: dict) -> bool:
+    # Roots can describe reachability through transitive edges, not just direct use.
     return (
         occurrence.get("dependency_kind") == "direct"
         or "lockfile_version" not in occurrence
-        or bool(occurrence.get("dependency_roots"))
     )
 
 
