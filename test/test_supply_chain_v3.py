@@ -2656,3 +2656,33 @@ def test_cli_diff_gate_on_linked_configs_and_trigger_only_changes(tmp_path):
     assert results["dangling"].returncode == 2, results["dangling"].stdout
     assert results["trigger"].returncode == 1, results["trigger"].stdout
     assert "SKY-D366" in results["trigger"].stdout
+
+
+@pytest.mark.parametrize("relinked", [True, False])
+def test_symlinked_lockfile_is_unread_when_changed(tmp_path, relinked):
+    _repo(
+        tmp_path,
+        {
+            "package-lock.json": _lock(("chalk", "5.3.0")),
+            "locks/a.json": _lock(("lodash", "4.17.20")),
+            "locks/b.json": _lock(("lodash", "4.17.21")),
+            "web/package-lock.json": _lock(("left-pad", "1.3.0")),
+        },
+    )
+    (tmp_path / "web/package-lock.json").unlink()
+    _link(tmp_path / "web/package-lock.json", "../locks/a.json")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "linked lockfile")
+    if relinked:
+        (tmp_path / "web/package-lock.json").unlink()
+        _link(tmp_path / "web/package-lock.json", "../locks/b.json")
+    _commit(tmp_path, {"package-lock.json": _lock(("chalk", "5.6.1"))})
+    result = {
+        "results": [_reviewed("chalk", "5.3.0", "5.6.1")],
+        "receipt": {"complete": True},
+    }
+
+    _fake, _findings, upgrades, errors = _review(tmp_path, result)
+
+    assert ("web/package-lock.json: a symbolic link" in json.dumps(errors)) is relinked
+    assert (upgrades["status"] == "incomplete") is relinked

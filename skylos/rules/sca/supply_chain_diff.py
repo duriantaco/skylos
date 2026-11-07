@@ -243,9 +243,11 @@ class GitSides:
         if not separator or name != path or len(fields) != 4:
             return None
         mode, kind, object_id, size = fields
+        if mode == LINK_MODE:
+            self.unread.setdefault(path, "a symbolic link")
+            return None
         if mode not in REGULAR_MODES or kind != "blob":
-            if mode != LINK_MODE:
-                self.unread.setdefault(path, "not a regular file at the base")
+            self.unread.setdefault(path, "not a regular file at the base")
             return None
         if not size.isdigit() or int(size) > limit:
             self.unread.setdefault(path, f"over {_megabytes(limit)}")
@@ -264,8 +266,8 @@ class GitSides:
         if text is None:
             target = self.root / path
             if target.is_symlink():
-                return None
-            if target.is_file() and target.stat().st_size > limit:
+                self.unread.setdefault(path, "a symbolic link")
+            elif target.is_file() and target.stat().st_size > limit:
                 self.unread.setdefault(path, f"over {_megabytes(limit)}")
             elif target.exists():
                 self.unread.setdefault(path, "not readable as UTF-8 text")
@@ -301,6 +303,13 @@ class GitSides:
     def _same_on_both_sides(self, path: str) -> bool:
         mode, object_id = self.entries().get(path, ("", ""))
         target = self.root / path
+        if mode == LINK_MODE and target.is_symlink():
+            blob = self.context.run("cat-file", "blob", object_id)
+            try:
+                written = os.readlink(target)
+            except OSError:
+                return False
+            return blob.returncode == 0 and blob.stdout == written
         if mode not in REGULAR_MODES or target.is_symlink() or not target.is_file():
             return False
         return _blob_id(target, len(object_id)) == object_id
