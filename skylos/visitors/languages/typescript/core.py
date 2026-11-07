@@ -351,6 +351,9 @@ class TypeScriptCore:
         self.defs: list[Definition] = []
         self.refs: list[tuple[str, str]] = []
         self.imports: list[dict[str, str | int]] = []
+        self._namespace_reads = None
+        self._shadowed_namespace_properties: set[int] = set()
+        self._local_value_reads: set[int] = set()
         self._self_ref_index: (
             dict[str, tuple[tuple[int, ...], tuple[int, ...]]] | None
         ) = None
@@ -436,7 +439,11 @@ class TypeScriptCore:
         position = bisect_right(starts, node.start_byte) - 1
         return position >= 0 and prefix_max_ends[position] >= node.end_byte
 
-    def _add_ref(self, node) -> None:
+    def _add_ref(self, node, *, value_reference: bool = True) -> None:
+        if value_reference and node.id in self._local_value_reads:
+            parent = node.parent
+            if parent is None or parent.type != "nested_type_identifier":
+                return
         name = self._get_text(node)
         if self._is_self_ref(node, name):
             return
@@ -574,6 +581,9 @@ class TypeScriptCore:
     def _scan_refs(self) -> None:
         c = self._refs_captures
 
+        if c.get("ref") or c.get("prop_ref"):
+            self._namespace_import_reads()
+
         for node in c.get("ref", []):
             self._add_ref(node)
 
@@ -585,8 +595,11 @@ class TypeScriptCore:
             name = self._get_text(node)
             if self._is_self_ref(node, name):
                 continue
-            self.refs.append((name, self.file_path))
-            self.refs.append((f"~.{name}", self.file_path))
+            if node.id in self._shadowed_namespace_properties:
+                self.refs.append((f"~method.{name}", self.file_path))
+            else:
+                self.refs.append((name, self.file_path))
+                self.refs.append((f"~.{name}", self.file_path))
 
         for node in c.get("type_ref", []):
             parent = node.parent
@@ -597,7 +610,7 @@ class TypeScriptCore:
             ):
                 # The declared name, not a use. ``type A = B`` still uses ``B``.
                 continue
-            self._add_ref(node)
+            self._add_ref(node, value_reference=False)
 
         self._scan_default_parameter_refs()
 
@@ -916,8 +929,25 @@ class TypeScriptCore:
                     "names": names,
                     "line": src_node.start_point[0] + 1,
                 }
-                if any(name.startswith("* as ") for name in names):
-                    raw_import["consume_all_exports"] = True
+                namespace_names = [name for name in names if name.startswith("* as ")]
+                if namespace_names:
+                    raw_import["namespace_members"] = True
+                    namespace_reads = self._namespace_import_reads()
+                    selected_names = [
+                        name for name in names if name not in namespace_names
+                    ]
+                    # A mixed default + namespace import also consumes the
+                    # default declaration, whose local name may differ.
+                    if selected_names:
+                        raw_import["consume_all_exports"] = True
+                    for namespace_name in namespace_names:
+                        local = namespace_name.split(" as ", 1)[1]
+                        members = namespace_reads.get(local)
+                        if members is None:
+                            raw_import["consume_all_exports"] = True
+                        else:
+                            selected_names.extend(sorted(members))
+                    raw_import["names"] = selected_names
                 self.raw_imports.append(raw_import)
 
         for src_node in c.get("export_src", []):
@@ -935,6 +965,18 @@ class TypeScriptCore:
 
         self._scan_dynamic_raw_imports()
         self._scan_jsdoc_raw_imports()
+
+    def _namespace_import_reads(self):
+        if self._namespace_reads is None:
+            from .namespace_references import namespace_member_reads
+
+            self._namespace_reads = namespace_member_reads(
+                self.root_node,
+                self.source,
+                shadowed_properties=self._shadowed_namespace_properties,
+                local_value_reads=self._local_value_reads,
+            )
+        return self._namespace_reads
 
     def _extract_import_names_from_stmt(self, import_stmt) -> list[str]:
         names = []

@@ -4,6 +4,60 @@ This benchmark suite measures Skylos dead-code detection against labeled fixture
 
 The benchmark framework lives in the Skylos repo because it must version with analyzer output and CI. Larger realistic targets, such as `/Users/oha/skylos-demo`, stay external and are referenced by config.
 
+The default manifest contains **58 cases and 315 symbol labels**: 108 unused and
+207 used. The first 50 cases and their 260 labels retain their expectations.
+Eight additional cases follow source-reviewed comparisons against native tools
+on pinned real repositories.
+
+| New cases from the real-repository audit | Cases / labels |
+|---|---:|
+| TS lexical values, disconnected import consumers and loaded controls | 3 / 18 |
+| Go project imports and private test helpers | 2 / 14 |
+| Rust import expressions, private cycles and cross-file roots | 3 / 23 |
+
+Used-import controls inside disconnected TS files describe lexical reads for
+the unused-import rule; the file itself and unreachable functions/data remain
+reportable. Those controls do not claim that the selected program executes the
+file. Entry, test, callback and unused sibling controls remain explicit.
+
+The earlier six TS/JS, Go and Rust depth cases are also retained:
+
+| Language | Added patterns | Used controls | Cases / labels |
+|---|---|---|---:|
+| TS/JS | Static namespace members, literal destructuring, stable aliases and shadowed receivers | Escaped namespaces and unknown computed keys retain all exports | 2 / 10 |
+| Go | Unreachable private call cycles, self-recursion and local/function name collisions | Public APIs, function values, initialization, test and generated consumers | 2 / 19 |
+| Rust | Function-valued initializers and lexical callback bindings | Outer-scope calls, closure captures and separate match arms | 2 / 11 |
+
+These fixtures are original static source contracts, with labels based on the
+source before checking analyzer output. They do not run their programs. Rust
+uses confidence 40, retaining its experimental policy. The Go cases require a
+source-built native engine; the declaration-use proof requires complete package
+type information and preserves conservative references when that is unavailable.
+
+The implementations adapt approaches studied in
+[Knip](https://github.com/webpro-nl/knip/tree/2305dad9b0d76e5f603cd353a1820c24ae0e720d)
+(ISC), [Staticcheck U1000](https://github.com/dominikh/go-tools/blob/8371db75e9daf10073dc2ba684c2a24a1d6ead95/unused/unused.go)
+(MIT), and [rustc's dead-code pass](https://github.com/rust-lang/rust/blob/c6ac6ea53f6c8234fd06ddf0b88d89fe8b46edf5/compiler/rustc_passes/src/dead.rs)
+(MIT OR Apache-2.0). No upstream implementation code was copied. These are
+bounded Skylos checks, not compiler parity: named TS re-export barrels can still
+retain unused exports; Go packages with unresolved dependencies do not gain an
+unreachability proof; Rust macros, Cargo features and type resolution remain
+outside this change. The named re-export limitation has an explicit strict
+expected-failure regression test. Separate paired probes also retain existing
+false positives for escaped exports behind wildcard barrels and cross-file
+classic JS globals; those cases are not counted as passing coverage.
+
+The real-repository audit distinguished source evidence from competitor
+warnings: compiler checks proved nine required Rust imports; some Knip file and
+export warnings instead had actual script, declaration or test consumers. New
+contracts cover the language patterns without repository-name exemptions.
+Rust private-cycle proofs preserve cross-file and conditional roots, unknown
+macros and later grep rescues. Go can statically load indexed same-module
+providers; unresolved external or opaque providers decline the proof. TS
+consumer pruning requires a closed source slice and declines unbounded runtime
+loaders and escaping loader capabilities. TSX's user-facing dynamic loader is
+therefore an explicit uncertain boundary, not a forced dead-provider finding.
+
 ## Metrics
 
 - TP: an expected unused symbol was reported.
@@ -160,8 +214,8 @@ First inspect the request plan. This does not use the network or require a key:
 python3 scripts/jev_dead_code_benchmark.py
 ```
 
-The default checked-in manifest contains 191 ground-truth symbols: 67 unused
-and 124 used. It is useful for request validation and regression testing, but
+The default checked-in manifest contains 315 ground-truth symbols: 108 unused
+and 207 used. It is useful for request validation and regression testing, but
 Skylos already scores every labeled symbol correctly there. A Jev tie on this
 suite does not demonstrate incremental value. The runner always asks the
 `original` question, and adds a second arm only when safe:

@@ -91,6 +91,44 @@ _REGISTRATION_MACROS = {
 }
 
 _RUST_EXTERNAL_TRAIT_IMPORTS = {
+    "Context": {
+        "sources": ("anyhow",),
+        "methods": ("context", "with_context"),
+        "associated": (),
+        "exact_source": True,
+    },
+    "CommandFactory": {
+        "sources": ("clap", "clap_builder"),
+        "methods": (),
+        "associated": ("command", "command_for_update"),
+        "exact_source": True,
+    },
+    "Rng": {
+        "sources": ("rand",),
+        "methods": (
+            "gen",
+            "gen_range",
+            "gen_bool",
+            "gen_ratio",
+            "sample",
+            "fill",
+            "try_fill",
+        ),
+        "associated": (),
+        "exact_source": True,
+    },
+    "OwoColorize": {
+        "sources": ("owo_colors",),
+        "methods": ("color", "on_color", "fg", "bg", "truecolor", "on_truecolor"),
+        "associated": (),
+        "exact_source": True,
+    },
+    "Color": {
+        "sources": ("owo_colors",),
+        "methods": (),
+        "associated": ("ANSI_FG", "ANSI_BG"),
+        "exact_source": True,
+    },
     "Error": {
         "sources": ("std::error", "core::error"),
         "methods": ("source",),
@@ -309,7 +347,17 @@ class RustCore:
         self._return_types: dict[str, object] = {}
         self._member_identifier_bytes: set[int] = set()
         self._seen_refs: set[tuple[str, int]] = set()
-        self._trait_call_usage: tuple[set[str], set[tuple[str, str]]] | None = None
+        self._reference_events: list[tuple[str, int, str | None]] = []
+        self._self_reference_events: list[tuple[str, int, str]] = []
+        self._trait_call_usage: dict[
+            tuple[int, tuple[str, str] | None], tuple[set[str], set[tuple[str, str]]]
+        ] = {}
+        self._inherent_associated_items: set[str] = set()
+        self._uncertain_macro_spans: list[tuple[int, int]] = []
+        self._value_pattern_names: dict[int, frozenset[str]] = {}
+        self._value_binding_bytes: dict[int, frozenset[int]] = {}
+        self._block_value_bindings: dict[int, dict[str, int]] = {}
+        self._parameter_value_bindings: dict[int, frozenset[str]] = {}
 
         if self.lang:
             self.parser = _get_parser(self.lang)
@@ -385,6 +433,71 @@ class RustCore:
                         current_callable=current_callable,
                         preserve_qualified=True,
                     )
+            self._add_attribute_expression_refs(attr, current_callable=current_callable)
+
+    def _add_attribute_expression_refs(
+        self, attr, *, current_callable: str | None
+    ) -> None:
+        """Read expression tokens without treating prose or metadata keys as names."""
+        stack = [attr]
+        attribute = self._child_by_type(attr, "attribute")
+        path = (
+            attribute.named_children[0]
+            if attribute is not None and attribute.named_children
+            else None
+        )
+        metadata_attribute = self._node_name_text(path) in {
+            "arg",
+            "command",
+            "clap",
+            "serde",
+            "cfg",
+            "cfg_attr",
+            "allow",
+            "warn",
+            "deny",
+            "forbid",
+            "expect",
+            "repr",
+            "derive",
+        }
+        while stack:
+            node = stack.pop()
+            if node.type in {
+                "string_literal",
+                "raw_string_literal",
+                "char_literal",
+                "line_comment",
+                "block_comment",
+            }:
+                continue
+            if node.type == "token_tree":
+                children = node.children
+                for index, child in enumerate(children):
+                    if child.type not in {"identifier", "type_identifier"}:
+                        continue
+                    before = children[index - 1].type if index else ""
+                    after = (
+                        children[index + 1].type if index + 1 < len(children) else ""
+                    )
+                    # `help = ...` and `action(...)` are metadata keys, while
+                    # `Mode::Enabled` and `format_value!(...)` are expressions.
+                    if before == "::" or after in {"=", "token_tree"}:
+                        continue
+                    if (
+                        metadata_attribute
+                        and node.parent is not None
+                        and node.parent.type == "attribute"
+                        and before != "="
+                        and after not in {"::", "!"}
+                    ):
+                        continue
+                    self._add_ref(
+                        self._node_name_text(child),
+                        child.start_byte,
+                        current_callable=current_callable,
+                    )
+            stack.extend(reversed(node.named_children))
 
     def _is_test_function(self, name: str, attrs: list, line: int) -> bool:
         if self._has_attr_prefix(
@@ -430,6 +543,7 @@ class RustCore:
                 == current_callable
             )
         ):
+            self._self_reference_events.append((ref_name, start_byte, current_callable))
             return
         self._record_ref(ref_name, start_byte, current_callable=current_callable)
 
@@ -463,6 +577,7 @@ class RustCore:
         if key in self._seen_refs:
             return
         self._seen_refs.add(key)
+        self._reference_events.append((ref_name, start_byte, current_callable))
         self.refs.append((ref_name, self.file_path))
         if current_callable:
             self.call_pairs.append((current_callable, ref_name))
@@ -490,6 +605,253 @@ class RustCore:
             pending_attrs=[],
         )
         self._build_call_graph()
+        self._attach_reference_facts()
+
+    def _attach_reference_facts(self) -> None:
+        """Give the global pass exact local provenance, never a local dead verdict.
+
+        Private parent-module functions can be called from another Rust file.
+        The analyzer must see those incoming references before proving a cycle
+        unreachable. Ambiguous/nested identities and unexpanded external macros
+        deliberately supply no proof.
+        """
+        if (
+            self.root_node.has_error
+            or self.root_namespace
+            or not self._closed_macro_scope()
+        ):
+            return
+        by_name: dict[str, list[Definition]] = {}
+        for definition in self.defs:
+            by_name.setdefault(definition.name, []).append(definition)
+        lines = self.source.decode("utf-8", "replace").splitlines()
+        from hashlib import sha256
+
+        digest = sha256(self.source).hexdigest()
+        from bisect import bisect_right
+
+        newline_offsets = [
+            index for index, value in enumerate(self.source) if value == 10
+        ]
+        events: dict[str, list[tuple[int, str | None, bool]]] = {}
+        for reference, offset, owner in self._reference_events:
+            events.setdefault(reference, []).append((offset, owner, True))
+        for reference, offset, owner in self._self_reference_events:
+            events.setdefault(reference, []).append((offset, owner, False))
+        for name, group in by_name.items():
+            if len(group) != 1 or "." in name or not name.isidentifier():
+                continue
+            definition = group[0]
+            node = self._callable_nodes.get(name)
+            if (
+                definition.type != "function"
+                or node is None
+                or node.parent != self.root_node
+            ):
+                continue
+            name_node = node.child_by_field_name("name")
+            owned: dict[str, int] = {}
+            sites: list[dict] = []
+            uncertain_macro_reference = False
+            for offset, owner, counted in events.get(name, ()):
+                if any(
+                    start <= offset < end for start, end in self._uncertain_macro_spans
+                ):
+                    # A local macro can generate a separately exported function
+                    # even when invoked inside a dead function. Its arguments
+                    # cannot safely inherit the surrounding lexical owner.
+                    owner = None
+                    uncertain_macro_reference = True
+                line = bisect_right(newline_offsets, offset) + 1
+                sites.append({"line": line, "owner": owner})
+                if owner is not None and counted:
+                    owned[owner] = owned.get(owner, 0) + 1
+            definition.rust_reference_facts = {
+                "name": name,
+                "file": self.file_path,
+                "sha256": digest,
+                "span": [node.start_point[0] + 1, node.end_point[0] + 1],
+                "declaration_line": name_node.start_point[0] + 1,
+                "owned_counts": owned,
+                "sites": sites,
+                "source_lines": {
+                    str(line): lines[line - 1]
+                    for line in {site["line"] for site in sites}
+                    | {name_node.start_point[0] + 1}
+                },
+                "guarded": bool(
+                    uncertain_macro_reference
+                    or definition.decorators
+                    or self.is_test_file
+                    or any(
+                        child.type == "function_modifiers"
+                        and "extern" in self._get_text(child)
+                        for child in node.children
+                    )
+                ),
+            }
+
+    def _closed_macro_scope(self) -> bool:
+        standard_macros = {
+            "assert",
+            "assert_eq",
+            "assert_ne",
+            "debug_assert",
+            "debug_assert_eq",
+            "debug_assert_ne",
+            "cfg",
+            "matches",
+            "vec",
+            "format",
+            "format_args",
+            "write",
+            "writeln",
+            "print",
+            "println",
+            "eprint",
+            "eprintln",
+            "panic",
+            "todo",
+            "unimplemented",
+            "unreachable",
+            "dbg",
+            "stringify",
+            "concat",
+            "env",
+            "option_env",
+            "line",
+            "column",
+            "file",
+            "module_path",
+            "include_str",
+            "include_bytes",
+        }
+        passive_attributes = {
+            "allow",
+            "warn",
+            "deny",
+            "forbid",
+            "expect",
+            "cfg",
+            "cfg_attr",
+            "inline",
+            "cold",
+            "must_use",
+            "deprecated",
+            "doc",
+            "test",
+            "should_panic",
+            "ignore",
+            "repr",
+            "derive",
+            "non_exhaustive",
+            "track_caller",
+            "export_name",
+            "no_mangle",
+            "link",
+            "link_name",
+            "link_section",
+            "used",
+            "automatically_derived",
+            "unsafe",
+            "macro_export",
+            "macro_use",
+            "no_std",
+            "no_main",
+        }
+        builtin_derives = {
+            "Clone",
+            "Copy",
+            "Debug",
+            "Default",
+            "Eq",
+            "PartialEq",
+            "Ord",
+            "PartialOrd",
+            "Hash",
+        }
+        nodes = list(self._iter_nodes(self.root_node))
+        local_macros = {
+            self._node_name_text(node.child_by_field_name("name"))
+            for node in nodes
+            if node.type == "macro_definition"
+        }
+        self._uncertain_macro_spans = []
+        for node in nodes:
+            if node.type == "macro_invocation":
+                path = self._node_name_text(node.named_children[0])
+                macro = path.split("::")[-1]
+                if "::" in path and path.split("::", 1)[0] not in {"std", "core"}:
+                    return False
+                if (
+                    macro not in standard_macros
+                    and macro not in local_macros
+                    and macro not in _REGISTRATION_MACROS
+                ):
+                    return False
+                aliases = self.import_aliases.get(macro, ())
+                if (
+                    macro in local_macros
+                    or macro in _REGISTRATION_MACROS
+                    or any(not alias.startswith(("std.", "core.")) for alias in aliases)
+                ):
+                    self._uncertain_macro_spans.append((node.start_byte, node.end_byte))
+            elif node.type in {"attribute_item", "inner_attribute_item"}:
+                attribute = self._child_by_type(node, "attribute")
+                if attribute is None or not self._passive_attribute_tokens(
+                    attribute.children, passive_attributes, builtin_derives
+                ):
+                    return False
+        return not re.search(
+            r"\b(?:include|concat_idents|paste)\s*!",
+            self.source.decode("utf-8", "replace"),
+        )
+
+    def _passive_attribute_tokens(
+        self, tokens, passive_attributes, builtin_derives
+    ) -> bool:
+        tokens = [
+            node
+            for node in tokens
+            if node.type not in {"line_comment", "block_comment"}
+        ]
+        if not tokens or self._get_text(tokens[0]) not in passive_attributes:
+            return False
+        name = self._get_text(tokens[0])
+        if len(tokens) > 1 and tokens[1].type == "::":
+            return False
+        if name not in {"cfg_attr", "derive", "unsafe"}:
+            return True
+        arguments = next(
+            (node for node in tokens[1:] if node.type == "token_tree"), None
+        )
+        if arguments is None:
+            return False
+        groups = [[]]
+        for child in arguments.children[1:-1]:
+            if child.type == ",":
+                groups.append([])
+            else:
+                groups[-1].append(child)
+        groups = [group for group in groups if group]
+        if name == "derive":
+            return bool(groups) and all(
+                len(group) == 1
+                and self._get_text(group[0]) in builtin_derives
+                and not any(
+                    not alias.startswith(("std.", "core."))
+                    for alias in self.import_aliases.get(self._get_text(group[0]), ())
+                )
+                for group in groups
+            )
+        if name == "cfg_attr":
+            # The first item is a cfg condition. Every following item can
+            # become an active attribute, including another cfg_attr.
+            groups = groups[1:]
+        return bool(groups) and all(
+            self._passive_attribute_tokens(group, passive_attributes, builtin_derives)
+            for group in groups
+        )
 
     def _collect_identity_items(self, node, namespace: str) -> None:
         if node.type == "mod_item":
@@ -562,6 +924,17 @@ class RustCore:
             return_type = node.child_by_field_name("return_type")
             if return_type is not None:
                 self._return_types[qualified] = return_type
+        elif node.type == "const_item" and owner:
+            implementation = node.parent
+            if implementation is not None and implementation.type == "declaration_list":
+                implementation = implementation.parent
+            if (
+                implementation is not None
+                and implementation.type == "impl_item"
+                and not any(child.type == "for" for child in implementation.children)
+            ):
+                name = self._node_name_text(node.child_by_field_name("name"))
+                self._inherent_associated_items.add(f"{owner}.{name}")
         for child in node.named_children:
             self._index_callable_context(child, namespace, owner)
 
@@ -924,6 +1297,8 @@ class RustCore:
         decl_list = self._child_by_type(node, "declaration_list")
         if decl_list is None:
             decl_list = self._child_by_type(node, "field_declaration_list")
+        if decl_list is None:
+            decl_list = self._child_by_type(node, "enum_variant_list")
         if decl_list is not None and node.type == "trait_item":
             self._scan_trait_members(decl_list, current_type=qualified)
         elif decl_list is not None:
@@ -1341,9 +1716,16 @@ class RustCore:
             return False
         if not self._source_matches_trait_spec(base, spec["sources"]):
             return False
+        if spec.get("exact_source") and base not in spec["sources"]:
+            return False
+        if spec.get("exact_source") and self._provider_is_shadowed(
+            base.split("::", 1)[0], scope_node
+        ):
+            return False
 
         method_names, associated_calls = self._collect_trait_call_usage(
-            scope_node if trait_name == "Error" else None
+            scope_node,
+            trait_identity=(base, trait_name) if spec.get("exact_source") else None,
         )
         if set(spec["methods"]) & method_names:
             return True
@@ -1354,6 +1736,29 @@ class RustCore:
                 if method in associated_names and owner[:1].isupper():
                     return True
 
+        return False
+
+    def _provider_is_shadowed(self, provider: str, scope) -> bool:
+        # An absolute-looking external path can also resolve to a visible local
+        # module or imported alias. Those names do not establish an SDK API.
+        while scope is not None:
+            for child in scope.named_children:
+                if (
+                    child.type == "mod_item"
+                    and self._node_name_text(child.child_by_field_name("name"))
+                    == provider
+                ):
+                    return True
+                if child.type == "use_declaration":
+                    source = self._node_name_text(child.child_by_field_name("argument"))
+                    base = self._use_import_base(source)
+                    if any(
+                        local == provider
+                        and not (base == provider and original == provider)
+                        for local, original in self._extract_use_bindings(child)
+                    ):
+                        return True
+            scope = scope.parent
         return False
 
     def _use_import_base(self, source: str) -> str:
@@ -1372,47 +1777,96 @@ class RustCore:
         )
 
     def _collect_trait_call_usage(
-        self, scope_node=None
+        self, scope_node=None, *, trait_identity=None
     ) -> tuple[set[str], set[tuple[str, str]]]:
-        if scope_node is None and self._trait_call_usage is not None:
-            return self._trait_call_usage
+        scope = scope_node or self.root_node
+        cache_key = (scope.id, trait_identity) if scope is not None else None
+        if cache_key in self._trait_call_usage:
+            return self._trait_call_usage[cache_key]
 
         method_names: set[str] = set()
         associated_calls: set[tuple[str, str]] = set()
 
         if self.root_node is None:
-            self._trait_call_usage = (method_names, associated_calls)
-            return self._trait_call_usage
+            return method_names, associated_calls
 
-        for node in self._iter_nodes(scope_node or self.root_node):
+        nodes = (
+            self._trait_scope_nodes(scope, trait_identity)
+            if trait_identity
+            else self._iter_nodes(scope)
+        )
+        for node in nodes:
+            if node.type == "token_tree":
+                current = self._enclosing_callable(node)
+                for receiver, member in self._token_tree_method_calls(node):
+                    name = self._node_name_text(member)
+                    owner = self._receiver_type(receiver, current)
+                    if not self._is_inherent_target(self._member_target(owner, name)):
+                        method_names.add(name)
             method_name = self._trait_method_name_from_node(node)
             if method_name:
-                if scope_node is not None and self._known_inherent_method(node):
+                if self._known_inherent_method(node):
                     continue
                 method_names.add(method_name)
                 continue
 
             associated_call = self._trait_associated_call_from_node(node)
-            if associated_call is not None:
+            if associated_call is not None and not self._known_inherent_method(node):
                 associated_calls.add(associated_call)
 
         result = (method_names, associated_calls)
-        if scope_node is None:
-            self._trait_call_usage = result
+        self._trait_call_usage[cache_key] = result
         return result
 
+    def _trait_scope_nodes(self, scope, trait_identity):
+        """An inner reimport owns the uses in its lexical scope.
+
+        Alias spelling does not change a trait's identity. Child modules have
+        separate import scopes, so their calls cannot prove a parent import used.
+        """
+        provider, trait = trait_identity
+        pending = [scope]
+        while pending:
+            node = pending.pop()
+            if node != scope:
+                if node.type == "mod_item":
+                    continue
+                if node.type in {"block", "declaration_list"} and any(
+                    child.type == "use_declaration"
+                    and self._use_import_base(
+                        self._node_name_text(child.child_by_field_name("argument"))
+                    )
+                    == provider
+                    and any(
+                        original == trait
+                        for _, original in self._extract_use_bindings(child)
+                    )
+                    for child in node.named_children
+                ):
+                    continue
+            yield node
+            pending.extend(reversed(node.children))
+
     def _known_inherent_method(self, node) -> bool:
+        return self._is_inherent_target(
+            self._qualified_callee(node, self._enclosing_callable(node))
+        )
+
+    def _enclosing_callable(self, node) -> str | None:
         enclosing = [
             (name, declaration)
             for name, declaration in self._callable_nodes.items()
             if declaration.start_byte <= node.start_byte < declaration.end_byte
         ]
-        current = min(
+        return min(
             enclosing,
             key=lambda pair: pair[1].end_byte - pair[1].start_byte,
             default=(None, None),
         )[0]
-        target = self._qualified_callee(node, current)
+
+    def _is_inherent_target(self, target) -> bool:
+        if target in self._inherent_associated_items:
+            return True
         declaration = self._callable_nodes.get(target)
         if declaration is None:
             return False
@@ -1424,6 +1878,44 @@ class RustCore:
             and implementation.type == "impl_item"
             and not any(child.type == "for" for child in implementation.children)
         )
+
+    def _token_tree_method_calls(self, node):
+        """Read a method expression's tokens without matching string contents.
+
+        Rust leaves macro arguments unparsed. The receiver remains its original
+        AST node so local type bindings can still disprove a trait method use.
+        """
+        children = node.children
+        for index in range(2, len(children) - 1):
+            member = children[index]
+            if (
+                children[index - 1].type != "."
+                or re.fullmatch(
+                    r"(?:r#)?[A-Za-z_][A-Za-z_0-9]*", self._get_text(member)
+                )
+                is None
+            ):
+                continue
+            after = index + 1
+            if (
+                children[after].type == "::"
+                and after + 1 < len(children)
+                and children[after + 1].type == "<"
+            ):
+                after += 2
+                depth = 1
+                while after < len(children) and depth:
+                    depth += int(children[after].type == "<") - int(
+                        children[after].type == ">"
+                    )
+                    after += 1
+            if (
+                after < len(children)
+                and children[after].type == "token_tree"
+                and children[after].children
+                and children[after].children[0].type == "("
+            ):
+                yield children[index - 2], member
 
     def _call_parent(self, node):
         parent = node.parent
@@ -1441,16 +1933,15 @@ class RustCore:
         return name or None
 
     def _trait_associated_call_from_node(self, node) -> tuple[str, str] | None:
-        if node.type != "scoped_identifier" or self._call_parent(node) is None:
+        if node.type != "scoped_identifier":
             return None
-        identifiers = [
-            self._node_name_text(child)
-            for child in node.children
-            if child.type in {"identifier", "type_identifier"}
-        ]
-        if len(identifiers) < 2:
+        path = node.child_by_field_name("path")
+        member = node.child_by_field_name("name")
+        if path is None or member is None:
             return None
-        return identifiers[-2], identifiers[-1]
+        return self._node_name_text(path).rsplit("::", 1)[-1], self._node_name_text(
+            member
+        )
 
     def _iter_nodes(self, root_node):
         stack = [root_node]
@@ -1550,6 +2041,8 @@ class RustCore:
         if node.type == "identifier" and self._is_reference_identifier(node):
             if node.start_byte in self._member_identifier_bytes:
                 return
+            if self._is_local_value_reference(node):
+                return
             parent = node.parent
             if (
                 parent is not None
@@ -1601,6 +2094,8 @@ class RustCore:
             )
             return
         if callee.type == "identifier":
+            if self._is_local_value_reference(callee):
+                return
             self._add_ref(
                 self._node_name_text(callee),
                 callee.start_byte,
@@ -1649,6 +2144,8 @@ class RustCore:
         parent = node.parent
         if parent is None:
             return False
+        if parent.type == "enum_variant":
+            return parent.child_by_field_name("name") == node
         if parent.type in _DEF_CONTAINER_TYPES:
             name_node = self._child_by_type(
                 parent, "type_identifier"
@@ -1662,6 +2159,8 @@ class RustCore:
             return False
         if self._is_definition_name(node):
             return False
+        if self._is_value_binding_identifier(node):
+            return False
         parent = node.parent
         if parent is None:
             return False
@@ -1669,7 +2168,6 @@ class RustCore:
             "use_declaration",
             "field_declaration",
             "field_identifier",
-            "let_declaration",
             "parameter",
             "self_parameter",
             "for",
@@ -1679,6 +2177,157 @@ class RustCore:
         if parent.type in _DEF_CONTAINER_TYPES:
             return False
         return True
+
+    def _pattern_bindings(self, pattern):
+        """Yield value bindings without treating pattern constructors as locals."""
+        if pattern is None:
+            return
+        if pattern.type in {"identifier", "shorthand_field_identifier"}:
+            yield pattern
+            return
+        if pattern.type in {"scoped_identifier", "type_identifier", "range_pattern"}:
+            return
+        constructor = (
+            pattern.child_by_field_name("type")
+            if pattern.type in {"tuple_struct_pattern", "struct_pattern"}
+            else None
+        )
+        guard = (
+            pattern.child_by_field_name("condition")
+            if pattern.type == "match_pattern"
+            else None
+        )
+        for child in pattern.named_children:
+            if child != constructor and child != guard:
+                yield from self._pattern_bindings(child)
+
+    def _is_value_binding_identifier(self, node) -> bool:
+        current = node.parent
+        while current is not None:
+            if current.type in {
+                "let_declaration",
+                "parameter",
+                "for_expression",
+                "let_condition",
+                "match_arm",
+            }:
+                pattern = current.child_by_field_name("pattern")
+            elif current.type == "closure_parameters":
+                pattern = current
+            else:
+                if current.type in {"block", "function_item", "closure_expression"}:
+                    return False
+                current = current.parent
+                continue
+            self._pattern_binding_names(pattern)
+            return (
+                pattern is not None
+                and node.start_byte in self._value_binding_bytes[pattern.id]
+            )
+        return False
+
+    def _pattern_binding_names(self, pattern) -> frozenset[str]:
+        if pattern is None:
+            return frozenset()
+        if pattern.id not in self._value_pattern_names:
+            bindings = list(self._pattern_bindings(pattern))
+            self._value_pattern_names[pattern.id] = frozenset(
+                self._node_name_text(binding) for binding in bindings
+            )
+            self._value_binding_bytes[pattern.id] = frozenset(
+                binding.start_byte for binding in bindings
+            )
+        return self._value_pattern_names[pattern.id]
+
+    def _parameter_bindings(self, parameters) -> frozenset[str]:
+        if parameters is None:
+            return frozenset()
+        if parameters.id not in self._parameter_value_bindings:
+            names: set[str] = set()
+            for parameter in parameters.named_children:
+                pattern = (
+                    parameter.child_by_field_name("pattern")
+                    if parameter.type == "parameter"
+                    else parameter
+                )
+                names.update(self._pattern_binding_names(pattern))
+            self._parameter_value_bindings[parameters.id] = frozenset(names)
+        return self._parameter_value_bindings[parameters.id]
+
+    def _earliest_block_bindings(self, block) -> dict[str, int]:
+        if block.id not in self._block_value_bindings:
+            bindings: dict[str, int] = {}
+            for statement in block.named_children:
+                if statement.type != "let_declaration":
+                    continue
+                for name in self._pattern_binding_names(
+                    statement.child_by_field_name("pattern")
+                ):
+                    bindings.setdefault(name, statement.end_byte)
+            self._block_value_bindings[block.id] = bindings
+        return self._block_value_bindings[block.id]
+
+    def _is_local_value_reference(self, node) -> bool:
+        """A lexical local read does not reach a same-named module function.
+
+        Initializers are scanned before their new binding applies. Function values
+        on their RHS still provide normal reachability; this does not resolve the
+        local's runtime value or expand macros.
+        """
+        name = self._node_name_text(node)
+
+        def binds(pattern):
+            return name in self._pattern_binding_names(pattern)
+
+        def contains(container):
+            return container is not None and (
+                container.start_byte <= node.start_byte < container.end_byte
+            )
+
+        scope = node.parent
+        while scope is not None:
+            if scope.type == "token_tree":
+                return False
+            if scope.type == "block":
+                binding_end = self._earliest_block_bindings(scope).get(name)
+                if binding_end is not None and binding_end <= node.start_byte:
+                    return True
+            elif scope.type in {"function_item", "closure_expression"}:
+                parameters = scope.child_by_field_name("parameters")
+                if name in self._parameter_bindings(parameters):
+                    return True
+                if scope.type == "function_item":
+                    return False
+            elif scope.type == "for_expression":
+                if contains(scope.child_by_field_name("body")) and binds(
+                    scope.child_by_field_name("pattern")
+                ):
+                    return True
+            elif scope.type == "match_arm":
+                pattern = scope.child_by_field_name("pattern")
+                guard = (
+                    pattern.child_by_field_name("condition")
+                    if pattern is not None
+                    else None
+                )
+                if (
+                    contains(scope.child_by_field_name("value")) or contains(guard)
+                ) and binds(pattern):
+                    return True
+            elif scope.type in {"if_expression", "while_expression"}:
+                condition = scope.child_by_field_name("condition")
+                body = scope.child_by_field_name(
+                    "consequence" if scope.type == "if_expression" else "body"
+                )
+                if (
+                    condition is not None
+                    and condition.type == "let_condition"
+                    and contains(body)
+                    and binds(condition.child_by_field_name("pattern"))
+                ):
+                    return True
+            scope = scope.parent
+        return False
 
     def _build_call_graph(self) -> None:
         exact_defs: dict[str, list[Definition]] = {}
