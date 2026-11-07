@@ -187,6 +187,10 @@ def source_identity(repo: Path) -> dict[str, Any]:
             raise ValueError(f"source directory symlinks are unsupported: {relative}")
         if path.exists() and not path.is_dir():
             raise ValueError(f"submodule source is not a directory: {relative}")
+        if relative == "skylos-demo":
+            # The demo application is not an analyzer input. Keep its pinned
+            # Git link below without snapshotting its generated example repos.
+            continue
         if path.is_dir():
             # Preserve checked-out submodule bytes as well as its pinned Git link.
             for current, directories, children in os.walk(path, onerror=_walk_error):

@@ -121,6 +121,52 @@ def test_submodule_gitlink_and_checked_out_bytes_are_preserved(checkout):
         assert archive.extractfile("demo/app.py").read() == b"value = 1\n"
 
 
+def test_demo_gitlink_keeps_pin_without_archiving_generated_application(
+    checkout, tmp_path
+):
+    revision = _git(checkout, "rev-parse", "HEAD").stdout.strip()
+    _git(
+        checkout,
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        f"160000,{revision},skylos-demo",
+    )
+    demo = checkout / "skylos-demo"
+    demo.mkdir()
+    (demo / "app.py").write_text("demo_value = 1\n")
+    generated = demo / "real_life_examples"
+    generated.mkdir()
+    outside = tmp_path / "external-demo-certificates"
+    outside.mkdir()
+    (outside / "certificate.pem").write_text("not an analyzer input")
+    (generated / "certificates").symlink_to(outside, target_is_directory=True)
+
+    baseline = eval_identity.source_identity(checkout)
+    assert baseline["files"]["skylos-demo"]["gitlink"] == revision
+    assert not any(name.startswith("skylos-demo/") for name in baseline["files"])
+    (demo / "app.py").write_text("demo_value = 2\n")
+    assert (
+        eval_identity.source_identity(checkout)["snapshot_sha256"]
+        == baseline["snapshot_sha256"]
+    )
+
+    destination = checkout / ".skylos" / "demo-scope.tar.gz"
+    eval_identity.write_source_snapshot(checkout, destination, baseline)
+    with tarfile.open(destination, "r:gz") as archive:
+        assert archive.getmember("skylos-demo").isdir()
+        assert not any(name.startswith("skylos-demo/") for name in archive.getnames())
+
+    (checkout / "skylos/analyzer.py").write_text("value = 99\n")
+    changed = eval_identity.source_identity(checkout)
+    assert changed["snapshot_sha256"] != baseline["snapshot_sha256"]
+    (checkout / "skylos/engine.native").write_bytes(b"changed native analyzer input")
+    assert (
+        eval_identity.source_identity(checkout)["snapshot_sha256"]
+        != changed["snapshot_sha256"]
+    )
+
+
 @pytest.mark.parametrize("directory", [False, True])
 def test_escaping_symlinks_are_rejected_before_reading(checkout, tmp_path, directory):
     outside = tmp_path / "outside"

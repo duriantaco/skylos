@@ -94,8 +94,10 @@ runner does not read or upload the private maintainer regression index.
 
 The source inventory covers tracked/untracked inputs and effective ignored native
 engines. It excludes private instructions, caches, generated reports and root
-marketing/editor media (`assets/` and `editors/vscode/media/`). Fixture assets stay
-included. The archive preserves that inventoried source, rather than every byte
+marketing/editor media (`assets/` and `editors/vscode/media/`). The non-analyzer
+`skylos-demo` submodule is represented by its pinned Git revision; its generated
+application and example checkouts are excluded. Fixture assets and runtime engine
+submodules stay included. The archive preserves that inventoried source, rather than every byte
 of an entire Git checkout. The receipt's SHA256 sidecar detects accidental edits;
 it is not authentication of externally supplied evidence.
 
