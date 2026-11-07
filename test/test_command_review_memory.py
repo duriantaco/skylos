@@ -317,11 +317,11 @@ def test_main_scan_projects_before_baseline_and_keeps_review_audit_for_upload(
         assert kwargs == {"include_identities": True}
         return projected
 
-    def filter_after_projection(result, saved_baseline):
+    def filter_after_projection(result, saved_baseline, **options):
         events.append("baseline")
         assert result["reviewed_findings"] == projected["reviewed_findings"]
         assert saved_baseline == baseline
-        return filter_new_findings(result, saved_baseline)
+        return filter_new_findings(result, saved_baseline, **options)
 
     def fake_upload(result, **kwargs):
         events.append("upload")
