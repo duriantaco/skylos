@@ -37,6 +37,8 @@ jobs:
             test/test_eval_hooks.py \
             test/test_eval_hook_bootstrap.py \
             test/test_install_eval_hooks.py \
+            test/test_eval_push.py \
+            test/test_install_eval_push.py \
             test/test_regression_delta.py
 
       - name: Check selected head contracts

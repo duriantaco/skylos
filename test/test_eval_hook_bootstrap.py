@@ -1,4 +1,4 @@
-"""Broken hook imports must not become advisory-only native hook failures."""
+"""Cached retired agent callbacks must never block ongoing development."""
 
 import json
 from pathlib import Path
@@ -16,7 +16,7 @@ ENTRY = Path(__file__).resolve().parents[1] / "scripts/eval_hook.py"
     "module",
     [None, "this is not valid Python !!!\n", "raise RuntimeError('broken adapter')\n"],
 )
-def test_broken_adapter_exits_with_native_blocking_status(tmp_path, module):
+def test_retired_callback_never_imports_adapter_or_blocks_work(tmp_path, module):
     root = tmp_path / "checkout"
     scripts = root / "scripts"
     scripts.mkdir(parents=True)
@@ -41,6 +41,6 @@ def test_broken_adapter_exits_with_native_blocking_status(tmp_path, module):
         capture_output=True,
         timeout=10,
     )
-    assert result.returncode == 2
-    assert "Skylos eval hook could not run:" in result.stderr
-    assert not result.stdout
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == {}
+    assert not result.stderr

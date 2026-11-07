@@ -72,8 +72,8 @@ selected contracts. Add independently reviewed capability cases and run broader
 required validation before accepting a change. Agents should expand scope when
 their actual diff touches more than initially planned.
 
-Case selection is explicit. The local agent hooks below automate a fixed smoke
-scope; they do not infer all cases affected by a diff. Run relevant focused cases
+Case selection is explicit. The push check below automates a fixed smoke
+scope; it does not infer all cases affected by a diff. Run relevant focused cases
 during development and broader checks at completion; the full benchmark need not
 run twice after every small edit.
 
@@ -122,46 +122,58 @@ integration work.
 Making this job required needs repository branch-protection configuration. Adding
 the workflow does not configure that policy or establish that hosted CI passed.
 
-## Automatic checks in local coding agents
+## Automatic checks before Git push
 
-Install the repository-local configuration from the checkout being edited:
+Automatic blocking belongs at publication boundaries. Agents can edit files and
+finish intermediate turns without a repository-wide eval gate. The former
+request/edit/Stop callbacks are disabled; `scripts/eval_hook.py` remains a harmless
+compatibility entry point for clients that cached an old setting.
+
+Install the local Git check from the checkout containing this tooling:
 
 ```bash
-python scripts/install_eval_hooks.py --python /absolute/path/to/python
+python scripts/install_eval_push.py --python /absolute/path/to/python
 ```
 
-The installer merges private Codex/Claude hook definitions, preserves existing
-settings and saves backups under `.skylos/evals/hooks/setup/`. It ignores the
-configuration locally before writing it. Global settings and hook trust are not
-changed. A checkout without the eval runner is rejected; another checkout's
-passing results cannot validate it.
+The installer preserves an existing `pre-push` hook, including its original
+arguments and update list. It pins an immutable copy of the small evaluation
+harness and its reviewed fixtures under `.skylos/evals/pre-push/`. Global agent
+settings are not changed. The old `install_eval_hooks.py` name delegates to this
+push-only setup; it no longer installs agent lifecycle callbacks.
 
-The hooks use the same deterministic CLI:
+The resulting flow is:
 
-1. `UserPromptSubmit` arms a request without running the benchmark.
-2. `PreToolUse` runs a baseline before the first potentially mutating tool. Shell
-   commands are included because Python and other programs can write files.
-3. `Stop` runs the matching candidate when inputs changed and returns the summary
-   and receipt paths. A failed check asks the agent to continue; repeated unchanged
-   failures remain visible without creating an endless continuation loop.
+1. Develop and run relevant focused tests as needed.
+2. On `git push`, inspect the exact local commit IDs at the outgoing ref tips.
+3. Evaluate each distinct tip in an isolated snapshot, using the pinned grader and
+   expected answers. Unrelated uncommitted edits and other agents' working files
+   do not enter this check.
+4. Stop the push if the selected checks fail or required analysis is incomplete.
+5. Run repository CI after publication and require the appropriate CI checks
+   before merging.
 
-The default smoke scope is the SSRF positive/safe pair plus `fastapi-route-used`.
-It protects those contracts only. Agent instructions still require cases/tests
-appropriate to the actual change. Plain conversation with no covered tools does
-not run these checks. Baselines and final results can be reused within the pending
-request only when source, fixtures, grader, runtime/options and retained evidence
-still match. Follow-up instructions and automatic continuation do not silently
-replace a failed request's starting baseline.
+The initial automatic scope remains three smoke cases: the SSRF positive/safe
+pair and FastAPI dead-code control. It is not a complete regression suite or a
+precision/recall estimate. Existing Git guards remain in force. Local hooks can
+be bypassed; required CI is the independent acceptance gate.
+Intermediate historical commits in a pushed range are not each checked by this
+local gate.
 
-Native hooks are supported by the inspected local Codex CLI 0.158.0 and Claude
-Code 2.1.319. This adapter currently supports macOS/Linux (POSIX locking); the
-installer rejects unsupported platforms. After setup, use each client's `/hooks` interface to inspect its
-configuration. Codex requires project trust and review of the exact hook
-definitions before they run; changed definitions need a new review. See
-[Codex hooks](https://learn.chatgpt.com/docs/hooks) and
-[Claude hooks](https://code.claude.com/docs/en/hooks).
+## Who writes expected answers?
 
-Local command hooks do not run in Codex Work Cloud orchestration. Guidance remains
-useful there, and repository CI is the independent check before code is accepted.
-Hooks can also be disabled by their client; they are development automation, not
-an immutable security boundary. No model call is needed by these command hooks.
+Agents and maintainers write meaningful fixtures and assertions from the requested
+behavior, existing rule contracts and source evidence. A reviewer checks the
+oracle. A new behavior fix should have a reproducing regression case and a safe
+control where appropriate. Ambiguous product behavior needs a maintainer decision.
+Do not generate a golden answer from the changed scanner's output.
+
+The push smoke cases and their expected results are pinned separately from the
+candidate analyzer. Changing a candidate commit's fixture labels cannot silently
+make that candidate pass this installed suite. Updating the pinned smoke suite is
+an explicit, reviewed setup change. New repository tests still run in CI; the
+three-case local suite does not automatically cover every new behavior.
+
+Git's [pre-push interface](https://git-scm.com/docs/githooks#_pre_push) and GitHub's
+[required status checks](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-status-checks-before-merging)
+support this conventional development/push/CI arrangement. There is no universal
+industry mandate to block every agent edit or every agent turn.
