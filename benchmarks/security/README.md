@@ -2,6 +2,10 @@
 
 This benchmark suite measures deterministic Skylos security-analysis behavior against labeled fixtures.
 
+The [7 November score log](real_repo_scores/2026-11-07.md) records the latest
+before/after corpus results and reviewed repository comparisons with Bandit and
+Semgrep, including their configuration limits and the untested Snyk comparison.
+
 It is intentionally separate from `/Users/oha/skylos-demo`. The demo repo is useful for whole-repo comparisons, but this suite is designed to produce precise TP/FP/FN/TN metrics for individual vulnerability classes and rule IDs.
 
 ## Metrics
