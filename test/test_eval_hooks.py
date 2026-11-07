@@ -18,6 +18,7 @@ pytest.importorskip(
 
 from skylos.benchmarks import eval_hooks as hooks  # noqa: E402
 from skylos.benchmarks import eval_workflow as workflow  # noqa: E402
+from test.fixture_paths import write_fixture  # noqa: E402
 
 
 def _hash(value):
@@ -113,8 +114,9 @@ def rig(tmp_path, monkeypatch):
             "elapsed_seconds": 0.1,
         }
         output.mkdir(parents=True)
-        artifact = output / "actual.json"
-        artifact.write_text(json.dumps(cases))
+        artifact = write_fixture(
+            tmp_path, output.relative_to(tmp_path) / "actual.json", json.dumps(cases)
+        )
         receipt["artifacts"] = {
             "actual.json": hashlib.sha256(artifact.read_bytes()).hexdigest()
         }
