@@ -107,14 +107,14 @@ def test_malformed_contract_requires_diagnostic_and_file_receipt():
 
 def test_default_cloud_contracts_native_analyzer():
     summary = run_manifest(MANIFEST)
-    assert summary["case_count"] == 16
+    assert summary["case_count"] == 22
     assert summary["failure_count"] == 0, [
         (c["id"], c["failures"]) for c in summary["cases"] if c["failures"]
     ]
     assert summary["outcome_counts"] == {
-        "unsafe": 5,
-        "safe": 3,
-        "unknown": 5,
+        "unsafe": 7,
+        "safe": 5,
+        "unknown": 7,
         "not_applicable": 2,
     }
     for result in summary["cases"]:
