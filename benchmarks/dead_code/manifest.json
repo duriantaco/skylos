@@ -2789,6 +2789,419 @@
           }
         ]
       }
+    },
+    {
+      "id": "typescript-reexport-demand-chain",
+      "path": "fixtures/typescript_reexport_demand_chain",
+      "description": "Resolved named and wildcard export forwarding with exact unused and used source controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static source contracts for per-export forwarding; labels fixed from source before analysis. No upstream implementation copied."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "obsolete"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "render"
+          },
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "validate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-reexport-public-and-escape",
+      "path": "fixtures/typescript_reexport_public_and_escape",
+      "description": "Resolved named and wildcard export forwarding with exact unused and used source controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static source contracts for per-export forwarding; labels fixed from source before analysis. No upstream implementation copied."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "retiredPrivate"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "announce"
+          },
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "prepare"
+          },
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "cancel"
+          },
+          {
+            "kind": "function",
+            "file": "dynamic_service.ts",
+            "symbol": "action"
+          },
+          {
+            "kind": "function",
+            "file": "dynamic_service.ts",
+            "symbol": "alternative"
+          }
+        ]
+      }
+    },
+    {
+      "id": "go-local-module-replacement",
+      "path": "fixtures/go_local_module_replacement",
+      "description": "A required module replaced by already scanned local source supplies type identity for private cycles while callbacks and its public API remain used.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static source contract for a declared local Go module replacement. Labels frozen before analyzer output; compiler and Staticcheck U1000 confirm unused cycle/leaf and used callback controls. No upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "alpha"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "beta"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "orphan"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "callback"
+          },
+          {
+            "kind": "function",
+            "file": "local/provider/api.go",
+            "symbol": "Invoke"
+          }
+        ]
+      }
+    },
+    {
+      "id": "go-local-replacement-live-callback-cycle",
+      "path": "fixtures/go_local_replacement_live_callback_cycle",
+      "description": "A callback sent through a declared local module replacement retains the private cycle it calls; an unused sibling is still reported.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static source contract for a declared local Go module replacement. Labels frozen before analyzer output; compiler and Staticcheck U1000 confirm unused cycle/leaf and used callback controls. No upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "orphan"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "callback"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "alpha"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "beta"
+          },
+          {
+            "kind": "function",
+            "file": "local/provider/api.go",
+            "symbol": "Invoke"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rust-local-trait-receiver-identity",
+      "path": "fixtures/rust_local_trait_receiver_identity",
+      "description": "Local trait declarations and concrete receiver types preserve the required alias import while unused imports and private siblings remain reportable.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "scan": {
+        "confidence": 40,
+        "grep_verify": true
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "main.rs",
+            "symbol": "Inactive"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "orphan"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "main.rs",
+            "symbol": "Active"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          },
+          {
+            "kind": "class",
+            "file": "main.rs",
+            "symbol": "Card"
+          }
+        ]
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only contract for local trait imports and concrete receiver identity. Alias0 source from the frozen native program plus a separately frozen private unused sibling; compiler verifies required/unused alias identities. No upstream implementation copied."
+      }
+    },
+    {
+      "id": "typescript-reexport-enumerated-aliases",
+      "path": "fixtures/typescript_reexport_enumerated_aliases",
+      "description": "Literal module namespace key enumeration follows resolved wildcard bindings even when generated package outputs are unavailable; private helpers remain unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract distilled from native source snapshot evidence; no upstream code copied. Key enumeration reads exported compatibility binding identities."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "bindings.ts",
+            "symbol": "privateOld"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "bindings.ts",
+            "symbol": "build"
+          },
+          {
+            "kind": "variable",
+            "file": "bindings.ts",
+            "symbol": "legacy"
+          },
+          {
+            "kind": "variable",
+            "file": "bindings.ts",
+            "symbol": "compatibility"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rust-macro-import-evidence",
+      "path": "fixtures/rust_macro_import_evidence",
+      "description": "Standard writer macro receiver types and feature-matched wrapped attribute names preserve required imports while unused trait and attribute siblings remain reportable.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static contract for io writer macros and wrapped cfg_attr import identity. Static labels cover possible checked-feature source; native feature-on and feature-off checks are separate and do not imply Cargo feature evaluation by the scanner."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "main.rs",
+            "symbol": "SpareRead"
+          },
+          {
+            "kind": "import",
+            "file": "main.rs",
+            "symbol": "SpareAttribute"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "main.rs",
+            "symbol": "Output"
+          },
+          {
+            "kind": "import",
+            "file": "main.rs",
+            "symbol": "Applied"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "value"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          }
+        ]
+      }
     }
   ]
 }

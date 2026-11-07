@@ -27,6 +27,14 @@ func collectTypedSelectorRefs(
 	typeImporter types.Importer,
 ) ([]Ref, []CallPair) {
 	packages := collectParsedPackages(root, resolvedRoot, modulePath)
+	if project, ok := typeImporter.(*projectSourceImporter); ok {
+		for index := range packages {
+			pkg := &packages[index]
+			if importPath, known := project.packagePath(pkg.pkgDir, pkg.files[0].Name.Name); known {
+				pkg.importPath = importPath
+			}
+		}
+	}
 	refs := []Ref{}
 	calls := []CallPair{}
 

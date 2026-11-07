@@ -918,6 +918,16 @@ class TypeScriptCore:
         self.raw_imports: list[dict] = []
         self._raw_import_seen: set[tuple] = set()
         c = self._defs_captures
+        reexport_refs: dict[int, list[str]] = {}
+        for node in self._refs_captures.get("ref", ()):
+            parent = node.parent
+            if parent is not None and parent.type == "export_specifier":
+                clause = parent.parent
+                statement = clause.parent if clause is not None else None
+                if statement is not None and statement.type == "export_statement":
+                    reexport_refs.setdefault(statement.id, []).append(
+                        self._get_text(node)
+                    )
 
         for src_node in c.get("import_src", []):
             source_path = self._get_text(src_node).strip("'\"")
@@ -929,6 +939,25 @@ class TypeScriptCore:
                     "names": names,
                     "line": src_node.start_point[0] + 1,
                 }
+                clause = next(
+                    (
+                        child
+                        for child in import_stmt.named_children
+                        if child.type == "import_clause"
+                    ),
+                    None,
+                )
+                if clause is not None:
+                    default = next(
+                        (
+                            child
+                            for child in clause.named_children
+                            if child.type == "identifier"
+                        ),
+                        None,
+                    )
+                    if default is not None:
+                        raw_import["default_import"] = self._get_text(default)
                 namespace_names = [name for name in names if name.startswith("* as ")]
                 if namespace_names:
                     raw_import["namespace_members"] = True
@@ -960,11 +989,31 @@ class TypeScriptCore:
                         "source": source_path,
                         "names": names,
                         "line": src_node.start_point[0] + 1,
+                        "is_reexport": True,
+                        "opaque_reexport": any(
+                            child.type == "namespace_export"
+                            for child in export_stmt.named_children
+                        ),
+                        "reexport_reference_names": reexport_refs.get(
+                            export_stmt.id, []
+                        ),
                     }
                 )
 
         self._scan_dynamic_raw_imports()
         self._scan_jsdoc_raw_imports()
+        if any(
+            statement.type == "export_statement"
+            and statement.child_by_field_name("source") is None
+            and any(child.type == "export_clause" for child in statement.named_children)
+            for statement in self.root_node.named_children
+        ):
+            # Local export bindings may shadow same-named star exports. Their
+            # identities are not represented by source re-export records.
+            if not self.raw_imports:
+                self.raw_imports.append({"source": "", "names": [], "line": 1})
+            for raw_import in self.raw_imports:
+                raw_import["opaque_local_exports"] = True
 
     def _namespace_import_reads(self):
         if self._namespace_reads is None:

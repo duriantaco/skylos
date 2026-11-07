@@ -171,24 +171,123 @@ def build_ts_import_graph(
     monorepo_resolver=None,
     *,
     credit_references: bool = True,
+    reexport_context=None,
+    discarded_reexport_refs=None,
 ):
     """Build module demand, optionally without changing symbol references.
 
     The analyzer first needs the full file graph to establish known roots and
     inactive consumers. Its final pass credits references exactly once.
     """
-    if credit_references or not ts_raw_imports:
+
+    def build():
+        if reexport_context is not None:
+            from .reexport_demand import build_reexport_demand
+
+            refined = build_reexport_demand(
+                ts_raw_imports,
+                defs,
+                lambda source, importer: resolve_ts_module(
+                    source, importer, monorepo_resolver
+                ),
+                reexport_context,
+            )
+            if refined is not None:
+                consumed, wildcard, importers, discarded = refined
+                if discarded_reexport_refs is not None:
+                    discarded_reexport_refs.update(discarded)
+                return consumed, wildcard, importers
         return _build_ts_import_graph(ts_raw_imports, defs, monorepo_resolver)
+
+    if credit_references or not ts_raw_imports:
+        return build()
     snapshot = {
         id(defn): (defn, defn.references)
         for defn in defs.values()
         if str(defn.filename).endswith(_TS_JS_EXTENSIONS)
     }
     try:
-        return _build_ts_import_graph(ts_raw_imports, defs, monorepo_resolver)
+        return build()
     finally:
         for defn, references in snapshot.values():
             defn.references = references
+
+
+def discover_ts_reexport_context(
+    files,
+    raw_imports,
+    *,
+    project_root,
+    workspace_inventory=None,
+    exclude_folders=None,
+    browser_entry_points=(),
+    analysis_errors=(),
+):
+    """Prove a bounded static source scope before narrowing re-export demand."""
+    if (
+        analysis_errors
+        or not project_root
+        or not any(
+            item.get("is_reexport")
+            for imports in raw_imports.values()
+            for item in imports
+        )
+    ):
+        return None
+    source_files = {
+        str(file) for file in files if str(file).endswith(_TS_JS_EXTENSIONS)
+    }
+    if len(source_files) > 1024:
+        return None
+    total_bytes = 0
+    for file in source_files:
+        try:
+            path = Path(file)
+            if path.is_symlink() or path.stat().st_size > 1_000_000:
+                return None
+            source = path.read_bytes()
+            total_bytes += len(source)
+            if total_bytes > 8_000_000:
+                return None
+            parser = _entry_parser_for_path(file)
+            if parser is None:
+                return None
+            root = parser.parse(source).root_node
+            if root.has_error or _has_opaque_ts_loads(source, root):
+                return None
+        except (OSError, RuntimeError, ValueError):
+            return None
+    roots = _discover_ts_reachability_entry_files(
+        files,
+        project_root=project_root,
+        workspace_inventory=workspace_inventory,
+        exclude_folders=exclude_folders,
+    )
+    roots.update(os.path.realpath(str(file)) for file in browser_entry_points)
+    package_roots = _discover_package_roots_from_files(
+        files,
+        project_root,
+        exclude_folders=exclude_folders,
+    )
+    if len(package_roots) > 256:
+        return None
+    for package_root in package_roots:
+        data = _read_json_file(str(package_root / "package.json"))
+        if not data:
+            return None
+        for field in _TS_PACKAGE_API_FIELDS:
+            for target in _iter_package_entry_targets(data.get(field)):
+                if (
+                    "*" not in target
+                    and _resolve_path_target(str(package_root), target) is None
+                ):
+                    return None
+        roots.update(
+            _discover_package_entry_files(
+                str(package_root), fields=_TS_PACKAGE_API_FIELDS
+            )
+        )
+    return {"files": source_files, "roots": roots}
 
 
 def _build_ts_import_graph(ts_raw_imports, defs, monorepo_resolver=None):
@@ -241,6 +340,15 @@ def _build_ts_import_graph(ts_raw_imports, defs, monorepo_resolver=None):
     _resolve_reexport_aliases(consumed_exports, ts_raw_imports, defs, monorepo_resolver)
     _resolve_namespace_reexports(
         consumed_exports, wildcard_edges, defs, ts_raw_imports, monorepo_resolver
+    )
+    from .reexport_demand import add_enumerated_reexport_reads
+
+    add_enumerated_reexport_reads(
+        ts_raw_imports,
+        defs,
+        lambda source, importer: resolve_ts_module(source, importer, monorepo_resolver),
+        consume_all_exports,
+        consumed_exports,
     )
 
     return consumed_exports, wildcard_edges, importers_of

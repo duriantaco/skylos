@@ -74,6 +74,13 @@ func markPackageFunctionReachability(defs map[string]*Def, files []reachabilityF
 		asts = append(asts, file.file)
 	}
 	importPath := packageImportPath(modulePath, files[0].pkgDir, files[0].file.Name.Name)
+	if project, ok := importer.(*projectSourceImporter); ok {
+		var known bool
+		importPath, known = project.packagePath(files[0].pkgDir, files[0].file.Name.Name)
+		if !known {
+			return nil, false
+		}
+	}
 	checkedPkg, err := conf.Check(importPath, fset, asts, info)
 	if err != nil {
 		return nil, false
@@ -164,7 +171,7 @@ func markPackageFunctionReachability(defs map[string]*Def, files []reachabilityF
 				}
 				target := objects[object]
 				if target == "" {
-					target = projectObjectName(object, modulePath, allNames)
+					target = projectObjectName(object, modulePath, allNames, importer)
 				}
 				if target == "" {
 					return true
@@ -211,17 +218,22 @@ func markPackageFunctionReachability(defs map[string]*Def, files []reachabilityF
 	return preciseRefs, true
 }
 
-func projectObjectName(object types.Object, modulePath string, names map[string]bool) string {
+func projectObjectName(object types.Object, modulePath string, names map[string]bool, importer types.Importer) string {
 	if object == nil || object.Pkg() == nil || modulePath == "" {
 		return ""
 	}
 	pkgPath := object.Pkg().Path()
-	if pkgPath != modulePath && !strings.HasPrefix(pkgPath, modulePath+"/") {
-		return ""
+	dir := ""
+	if project, ok := importer.(*projectSourceImporter); ok {
+		dir = project.objectPackageDirectory(pkgPath)
+	} else if pkgPath == modulePath || strings.HasPrefix(pkgPath, modulePath+"/") {
+		dir = strings.TrimPrefix(strings.TrimPrefix(pkgPath, modulePath), "/")
+		if dir == "" {
+			dir = "."
+		}
 	}
-	dir := strings.TrimPrefix(strings.TrimPrefix(pkgPath, modulePath), "/")
 	if dir == "" {
-		dir = "."
+		return ""
 	}
 	name := ""
 	if _, receiver := receiverNameFromMethod(object); receiver != "" {
