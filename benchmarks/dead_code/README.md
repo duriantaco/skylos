@@ -2,6 +2,11 @@
 
 This benchmark suite measures Skylos dead-code detection against labeled fixtures and optional external targets.
 
+The [7 November 2026 fresh-repository comparison](real_repo_scores/2026-11-07.md)
+logs eight pinned targets, competitor results, verified false positives, missed
+findings and incomplete scans. Its reviewed-set scores are separate from the
+synthetic fixture scores below.
+
 The benchmark framework lives in the Skylos repo because it must version with analyzer output and CI. Larger realistic targets, such as `/Users/oha/skylos-demo`, stay external and are referenced by config.
 
 The default manifest contains **98 cases and 466 symbol labels**: 149 unused and
