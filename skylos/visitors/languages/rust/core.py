@@ -547,7 +547,13 @@ class RustCore:
         ):
             self._self_reference_events.append((ref_name, start_byte, current_callable))
             return
-        self._record_ref(ref_name, start_byte, current_callable=current_callable)
+        from .import_bindings import ImportBindings
+
+        if not hasattr(self, "_import_bindings"):
+            self._import_bindings = ImportBindings(self)
+        bindings = self._import_bindings.references(ref_name, start_byte)
+        for binding in bindings or (ref_name,):
+            self._record_ref(binding, start_byte, current_callable=current_callable)
 
         if preserve_qualified:
             return
@@ -1543,6 +1549,12 @@ class RustCore:
         line = node.start_point[0] + 1
         source = self._node_name_text(node.child_by_field_name("argument"))
         is_public_reexport = self._is_public(node)
+        from .import_bindings import ImportBindings
+
+        if not hasattr(self, "_import_bindings"):
+            self._import_bindings = ImportBindings(self)
+        for reference in self._import_bindings.source_references(node):
+            self._record_ref(reference, node.start_byte, current_callable=None)
         if "*" in source:
             self.raw_imports.append({"source": source, "names": ["*"], "line": line})
             return
@@ -1552,6 +1564,11 @@ class RustCore:
             if not local_name:
                 continue
             d = Definition(local_name, "import", self.file_path, line)
+            from .import_bindings import ImportBindings
+
+            if not hasattr(self, "_import_bindings"):
+                self._import_bindings = ImportBindings(self)
+            d.rust_reference_facts = self._import_bindings.facts(node, local_name)
             d.is_exported = is_public_reexport
             self.defs.append(d)
             self.imports.append(
@@ -1582,7 +1599,12 @@ class RustCore:
                 original_name=original_name,
                 scope_node=node.parent,
             ):
-                self._record_ref(local_name, node.start_byte, current_callable=None)
+                facts = d.rust_reference_facts
+                self._record_ref(
+                    facts["key"] if facts["distinct_binding"] else local_name,
+                    node.start_byte,
+                    current_callable=None,
+                )
             elif qualified_import:
                 if self._local_trait_imports is None:
                     from .local_traits import LocalTraitImports

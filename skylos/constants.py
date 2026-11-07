@@ -32,6 +32,7 @@ SUPPORTED_LANGUAGES = (
     "C#",
     "C++",
     "Kotlin",
+    "Swift",
     "Shell",
 )
 SUPPORTED_LANGUAGES_TEXT = (

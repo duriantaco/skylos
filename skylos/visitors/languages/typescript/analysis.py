@@ -252,7 +252,7 @@ def discover_ts_reexport_context(
             parser = _entry_parser_for_path(file)
             if parser is None:
                 return None
-            root = parser.parse(source).root_node
+            root = _parse_entry_source(parser, source, file).root_node
             if root.has_error or _has_opaque_ts_loads(source, root):
                 return None
         except (OSError, RuntimeError, ValueError):
@@ -295,6 +295,7 @@ def _build_ts_import_graph(ts_raw_imports, defs, monorepo_resolver=None):
     wildcard_edges = defaultdict(set)
     importers_of = defaultdict(set)
     consume_all_exports: set[str] = set()
+    namespace_export_surfaces: set[str] = set()
     # Namespace narrowing needs matching identities on both sides of the edge.
     # Tree-sitter keeps JS Unicode escape spelling in declaration/export names.
     escaped_identity_files = {
@@ -317,6 +318,10 @@ def _build_ts_import_graph(ts_raw_imports, defs, monorepo_resolver=None):
                     imp.get("namespace_members") and resolved in escaped_identity_files
                 ):
                     consume_all_exports.add(resolved)
+                if imp.get("is_reexport") and any(
+                    name.startswith("* as ") for name in imp["names"]
+                ):
+                    namespace_export_surfaces.add(resolved)
                 for name in imp["names"]:
                     if name == "*":
                         wildcard_edges[str(importer_file)].add(resolved)
@@ -336,6 +341,11 @@ def _build_ts_import_graph(ts_raw_imports, defs, monorepo_resolver=None):
             consumed_exports[resolved].add(defn.simple_name)
             defn.references = max(defn.references, 1)
 
+    for defn in defs.values():
+        if str(defn.filename) in namespace_export_surfaces and defn.is_exported:
+            consumed_exports[str(defn.filename)].add(defn.simple_name)
+            defn.references = max(defn.references, 1)
+
     _resolve_wildcard_consumed(consumed_exports, wildcard_edges, defs)
     _resolve_reexport_aliases(consumed_exports, ts_raw_imports, defs, monorepo_resolver)
     _resolve_namespace_reexports(
@@ -347,7 +357,7 @@ def _build_ts_import_graph(ts_raw_imports, defs, monorepo_resolver=None):
         ts_raw_imports,
         defs,
         lambda source, importer: resolve_ts_module(source, importer, monorepo_resolver),
-        consume_all_exports,
+        consume_all_exports | namespace_export_surfaces,
         consumed_exports,
     )
 
@@ -746,6 +756,17 @@ def _entry_parser_for_path(path: str) -> Parser | None:
     return _ENTRY_PARSER_CACHE[lang_id]
 
 
+def _parse_entry_source(parser, source, path):
+    from .core import parse_typescript_source
+
+    return parse_typescript_source(
+        parser,
+        source,
+        file_path=str(path),
+        jsx=Path(path).suffix.lower() in {".js", ".jsx", ".tsx"},
+    )
+
+
 def _load_entry_config_ast(path: str) -> tuple[bytes, object] | tuple[None, None]:
     parser = _entry_parser_for_path(path)
     if parser is None:
@@ -756,7 +777,7 @@ def _load_entry_config_ast(path: str) -> tuple[bytes, object] | tuple[None, None
     except OSError:
         return None, None
 
-    tree = parser.parse(source)
+    tree = _parse_entry_source(parser, source, path)
     return source, tree.root_node
 
 

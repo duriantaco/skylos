@@ -16,18 +16,21 @@ import (
 // A direct local replacement can supply module identity only when its source
 // is already indexed inside the scan. No Go dependency discovery is performed.
 type projectSourceImporter struct {
-	host       types.Importer
-	fset       *token.FileSet
-	root       string
-	modulePath string
-	files      map[string][]*ast.File
-	dirs       map[string]string
-	modules    map[string]string
-	ambiguous  map[string]bool
-	cache      map[string]*types.Package
-	failures   map[string]error
-	loading    map[string]bool
-	remaining  int
+	host           types.Importer
+	fset           *token.FileSet
+	root           string
+	modulePath     string
+	files          map[string][]*ast.File
+	dirs           map[string]string
+	modules        map[string]string
+	goVersions     map[string]string
+	ambiguous      map[string]bool
+	cache          map[string]*types.Package
+	failures       map[string]error
+	loading        map[string]bool
+	remaining      int
+	sourceFiles    map[string]bool
+	incompleteDirs map[string]bool
 }
 
 func newProjectSourceImporter(root, modulePath string, fset *token.FileSet, files []reachabilityFile, host types.Importer) types.Importer {
@@ -37,11 +40,19 @@ func newProjectSourceImporter(root, modulePath string, fset *token.FileSet, file
 		failures: map[string]error{}, loading: map[string]bool{}, remaining: 512,
 		dirs: map[string]string{}, ambiguous: map[string]bool{},
 	}
-	if modulePath == "" || path.Clean(modulePath) != modulePath || strings.ContainsAny(modulePath, "\\\" \t\r\n") || path.IsAbs(modulePath) {
+	if modulePath != "" && (path.Clean(modulePath) != modulePath || strings.ContainsAny(modulePath, "\\\" \t\r\n") || path.IsAbs(modulePath)) {
 		imp.modulePath = ""
 		return imp
 	}
-	imp.modules = localReplacementModules(root, modulePath)
+	if modules, versions, active := workspaceSourceModules(root); active {
+		imp.goVersions = versions
+		imp.modules = modules
+		if len(modules) == 0 && modulePath != "" {
+			imp.modules = map[string]string{root: modulePath}
+		}
+	} else if modulePath != "" {
+		imp.modules = localReplacementModules(root, modulePath)
+	}
 	for _, file := range files {
 		if strings.HasSuffix(file.path, "_test.go") {
 			continue
@@ -84,6 +95,9 @@ func (i *projectSourceImporter) Import(importPath string) (*types.Package, error
 		return nil, fmt.Errorf("project import %q crosses the scanned module", importPath)
 	}
 	files := i.files[importPath]
+	if i.incompleteDirs[dir] {
+		return nil, fmt.Errorf("project package %q has source outside the admitted scope", importPath)
+	}
 	if len(files) == 0 || files[0].Name.Name == "main" {
 		return nil, fmt.Errorf("no indexed importable project package %q", importPath)
 	}
@@ -100,7 +114,7 @@ func (i *projectSourceImporter) Import(importPath string) (*types.Package, error
 	i.remaining--
 	i.loading[importPath] = true
 	defer delete(i.loading, importPath)
-	conf := types.Config{Importer: i, Error: func(error) {}}
+	conf := types.Config{Importer: i, Error: func(error) {}, GoVersion: i.languageVersionForDirectory(dir)}
 	pkg, err := conf.Check(importPath, i.fset, files, nil)
 	if err != nil || !pkg.Complete() {
 		if err == nil {
@@ -152,7 +166,7 @@ func (i *projectSourceImporter) moduleForDirectory(dir string) (string, string, 
 }
 
 func (i *projectSourceImporter) packagePath(pkgDir, pkgName string) (string, bool) {
-	if i.modulePath == "" {
+	if i.modulePath == "" && len(i.modules) == 0 {
 		return packageImportPath("", pkgDir, pkgName), true
 	}
 	dir := filepath.Join(i.root, filepath.FromSlash(pkgDir))
@@ -177,4 +191,15 @@ func (i *projectSourceImporter) objectPackageDirectory(importPath string) string
 		return ""
 	}
 	return filepath.ToSlash(rel)
+}
+
+func (i *projectSourceImporter) languageVersionForDirectory(dir string) string {
+	if len(i.goVersions) == 0 {
+		return ""
+	}
+	base, _, known := i.moduleForDirectory(dir)
+	if !known {
+		return ""
+	}
+	return i.goVersions[base]
 }

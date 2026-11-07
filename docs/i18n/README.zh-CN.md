@@ -164,6 +164,7 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 | C# | 部分 | 部分 | 部分 | C# 符号、直接代码块中的不可达语句、感知 ASP.NET 的安全检查（请求来源、按接收者类型识别的汇入点、不安全反序列化、XSS）及 NuGet 依赖清单（`.csproj` 和 `packages.lock.json`） |
 | C++ | 部分 | 否 | 否 | 仅报告 `.cpp`、`.cc`、`.cxx` 中看似未使用的文件内函数；会读取 C++ 头文件中的引用 |
 | Kotlin | 部分² | 部分² | 否 | 词法符号提取；只报告 private 声明和导入；Spring、Ktor、Servlet 和 Android WebView 安全检查 |
+| Swift | 部分 | 否 | 否 | 根据语法分析 private/fileprivate 声明的可达性，识别所属类型、局部绑定、回调和调用环；对未知运行时上下文保持保守处理 |
 | Shell | 否 | 部分 | 否 | shell 脚本安全检查，覆盖命令注入、SSRF 和路径穿越 |
 
 ¹ Go 的死代码和安全检查需要原生 `skylos-go` 引擎。从 4.50 起，Linux、macOS 和 Windows（x86_64 和 arm64）的 PyPI wheel 以及容器镜像都包含该引擎，官方 GitHub Action 会自动构建。其他平台上 `skylos doctor` 会给出构建命令。没有该引擎时只运行 Go 质量检查，Go 文件会被报告为未分析。

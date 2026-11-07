@@ -398,9 +398,9 @@ def _apply_deterministic_rules(
 
 
 def _filter_evidence(finding, results, evidence_filter):
-    # Ruby's native AST follows private calls and dynamic uncertainty. A text
-    # name match cannot prove the receiver, even in another Ruby file.
-    if _finding_language(finding) == "ruby":
+    # These adapters resolve private declarations in their source scopes.
+    # A text match cannot establish the receiver or lexical binding.
+    if _finding_language(finding) in {"ruby", "swift"}:
         return GrepSearchResults({})
     filtered = _filter_typescript_binding_evidence(finding, results)
     filtered = _filter_python_local_binding_evidence(finding, filtered)
@@ -511,7 +511,7 @@ def _filter_typescript_binding_evidence(
 def _search_verification_evidence(
     finding, project_root, *, search_all_strategies=False
 ):
-    if _finding_language(finding) == "ruby":
+    if _finding_language(finding) in {"ruby", "swift"}:
         return GrepSearchResults({})
     if search_all_strategies and _finding_language(finding) == "python":
         # Search every strategy; retained evidence is still bounded. A lost

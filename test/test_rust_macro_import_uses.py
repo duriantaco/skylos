@@ -132,10 +132,6 @@ def test_inactive_item_never_reads_its_wrapped_attribute(tmp_path, attributes):
     assert _imports(tmp_path, source) == {"Applied"}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Existing gap: duplicate Rust imports with the same local name in one file share definition identity",
-)
 def test_inner_attribute_import_does_not_credit_outer_binding(tmp_path):
     source = "use attributes::stamp as Applied;\nfn main() { use attributes::stamp as Applied; #[cfg_attr(all(), Applied)] fn target() {} target(); }\n"
     assert _imports(tmp_path, source, with_lines=True) == {("Applied", 1)}

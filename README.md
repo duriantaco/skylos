@@ -82,8 +82,8 @@ when you want one command to check a repo or pull request for:
   invented package APIs, and impossible dependency versions
 - LLM app risks such as unsafe tool use and missing output validation
 
-Skylos supports 12 languages: Python, TypeScript/JavaScript, Java, Go, PHP,
-Rust, Ruby, Dart, C#, C++, Kotlin and Shell. Python has the deepest coverage.
+Skylos supports 13 languages: Python, TypeScript/JavaScript, Java, Go, PHP,
+Rust, Ruby, Dart, C#, C++, Kotlin, Swift and Shell. Python has the deepest coverage.
 TypeScript/JavaScript and Java also get dead-code, security and quality checks;
 PHP and Dart get dead-code and security checks (PHP security follows request
 data within a function or file into command and code execution, file inclusion,
@@ -101,6 +101,9 @@ security covers Spring, Ktor, servlet and Android WebView basics), C++ is
 limited to unused file-local functions,
 and Shell gets security checks only. Ruby adds bounded private-method liveness,
 literal Rails controller callbacks and explicit Kernel command checks.
+Swift adds syntax-aware private-code reachability and secret scanning. Public
+and internal APIs are retained; Swift security-flow and quality checks are not
+implemented.
 Skylos also checks CI/CD, deployment config and two Terraform/AWS declaration
 policies. See
 [Language Support](#language-support).
@@ -910,6 +913,7 @@ how many in one line of output. Set `include_generated = true` under
 | C# | Partial | Partial | Partial | Unsupported | C# symbols, direct-block unreachable code, ASP.NET-aware security (request sources, receiver-typed sinks, unsafe deserialization, XSS), and NuGet inventory (`.csproj` pins and `packages.lock.json`) |
 | C++ | Partial | No | No | Unsupported | conservative unused file-local functions in `.cpp`, `.cc`, `.cxx`; C++ headers are parsed for references |
 | Kotlin | Partial² | Partial² | No | Unsupported | lexical symbol extraction; reports only private declarations and imports; Spring, Ktor, servlet and Android WebView security checks |
+| Swift | Partial | No | No | Unsupported | `private`/`fileprivate` declaration reachability, owner and lexical bindings, callbacks and call cycles; runtime and unknown compiler contexts retain conservative handling |
 | Shell | No | Partial | No | Unsupported | shell-script security checks for command injection, SSRF, and path traversal |
 
 ¹ Go dead-code and security checks need the native `skylos-go` engine. From
@@ -933,12 +937,16 @@ compiler. Without it, a scan that includes `.dart` files reports them as not
 analysed (`SKY-ANALYSIS-INCOMPLETE`, incomplete coverage) instead of skipping
 them silently; `skylos doctor` shows whether Dart support is installed.
 
-⁴ Rust dead code is experimental: trait-method calls, `pub` items used across
-crates, re-exports, macros and `#[bench]` functions are not resolved, and a
+⁴ Rust dead code is experimental: general trait-method calls, `pub` items used across
+crates, re-exports, macro expansion and `#[bench]` functions are not resolved, and a
 previous hand-checked sample on ripgrep found no true positives. Rust candidates are
 capped at confidence 40, below the default threshold, so they are not listed
 unless you pass `--confidence 40`; the scan says so in one line. `rustc`'s
 own `unused_imports` and `dead_code` lints cover private items.
+
+Rust can prove selected local trait uses across ordinary, fully scanned source
+modules and keep repeated import aliases distinct. Cargo features, attributed
+module paths and general compiler type resolution remain outside that proof.
 
 Rust quality checks cover statements after a direct `return`, `break` or
 `continue`, and duplicate multi-statement `if`/`else` bodies with a plain boolean

@@ -41,6 +41,7 @@ _CPP_EXTS = {".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx"}
 _PHP_EXTS = {".php", ".module", ".install", ".inc", ".theme", ".profile", ".engine"}
 _RUST_EXTS = {".rs"}
 _RUBY_EXTS = {".rb"}
+_SWIFT_EXTS = {".swift"}
 _DART_EXTS = {".dart"}
 _KOTLIN_EXTS = {".kt", ".kts"}
 
@@ -93,6 +94,7 @@ _LANG_GLOBS: dict[str, list[str]] = {
     "php": ["*.php"],
     "rust": ["*.rs"],
     "ruby": ["*.rb"],
+    "swift": ["*.swift"],
     "dart": ["*.dart"],
     "kotlin": ["*.kt", "*.kts"],
 }
@@ -320,6 +322,8 @@ def detect_language(file_path: str) -> str:
         return "rust"
     if ext in _RUBY_EXTS:
         return "ruby"
+    if ext in _SWIFT_EXTS:
+        return "swift"
     if ext in _DART_EXTS:
         return "dart"
     if ext in _KOTLIN_EXTS:

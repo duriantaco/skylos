@@ -19,6 +19,7 @@ def build_reexport_demand(raw_imports, definitions, resolve, context):
         return None
     files = context["files"]
     consumed = defaultdict(set)
+    requests = defaultdict(set)
     importers = defaultdict(set)
     wildcard = defaultdict(set)
     named = defaultdict(lambda: defaultdict(list))
@@ -62,7 +63,17 @@ def build_reexport_demand(raw_imports, definitions, resolve, context):
                             return None
             elif target:
                 if item.get("consume_all_exports"):
-                    consumed[target].add(_ALL)
+                    requests[target].add((_ALL,))
+                paths = item.get("export_paths")
+                if paths:
+                    total += len(paths)
+                    if total > _MAX_EXPORT_DEMAND_ITEMS:
+                        return None
+                    for path in paths:
+                        if not path or not all(_known_name(part) for part in path):
+                            return None
+                        requests[target].add(tuple(path))
+                    continue
                 for value in item["names"]:
                     if not _known_name(value):
                         return None
@@ -70,14 +81,14 @@ def build_reexport_demand(raw_imports, definitions, resolve, context):
                     if value == item.get("default_import"):
                         original = "default"
                     if original == "*":
-                        consumed[target].add(_ALL)
+                        requests[target].add((_ALL,))
                     else:
-                        consumed[target].add(original)
+                        requests[target].add((original,))
     # A source-only export with no source consumer may itself be public. Known
     # package, framework, script and browser entry points are also roots.
     for exporter in reexports:
         if exporter in context["roots"] or not importers.get(exporter):
-            consumed[exporter].add(_ALL)
+            requests[exporter].add((_ALL,))
         if len(stars[exporter]) > 1:
             # Competing star identities require full module binding resolution.
             return None
@@ -89,29 +100,31 @@ def build_reexport_demand(raw_imports, definitions, resolve, context):
         }
         for file, values in by_file.items()
     }
-    pending = deque((file, name) for file, names in consumed.items() for name in names)
+    pending = deque((file, path) for file, paths in requests.items() for path in paths)
     visited = set()
     while pending:
-        file, name = pending.popleft()
-        if (file, name) in visited:
+        file, path = pending.popleft()
+        if (file, path) in visited:
             continue
-        visited.add((file, name))
+        visited.add((file, path))
         if len(visited) > _MAX_EXPORT_DEMAND_ITEMS:
             return None
+        name, *tail = path
+        consumed[file].add(name)
         targets = []
         if name in {_ALL, _STAR}:
             targets.extend(
-                pair
+                (target, (original,))
                 for alias, pairs in named[file].items()
                 if name == _ALL or alias != "default"
-                for pair in pairs
+                for target, original in pairs
             )
             targets.extend(
-                (target, _ALL)
+                (target, (_ALL,))
                 for values in namespaces[file].values()
                 for target in values
             )
-            targets.extend((target, _STAR) for target in stars[file])
+            targets.extend((target, (_STAR,)) for target in stars[file])
             for definition in by_file[file]:
                 if definition.is_exported and (
                     name == _ALL
@@ -122,11 +135,15 @@ def build_reexport_demand(raw_imports, definitions, resolve, context):
                 consumed[file].update(named[file])
                 consumed[file].update(namespaces[file])
         elif name in named[file]:
-            targets.extend(named[file][name])
+            targets.extend(
+                (target, (original, *tail)) for target, original in named[file][name]
+            )
         elif name in namespaces[file]:
-            targets.extend((target, _ALL) for target in namespaces[file][name])
+            targets.extend(
+                (target, tuple(tail) or (_ALL,)) for target in namespaces[file][name]
+            )
         elif name != "default" and name not in local_names.get(file, ()):
-            targets.extend((target, name) for target in stars[file])
+            targets.extend((target, path) for target in stars[file])
         if name == "default":
             consumed[file].update(
                 d.simple_name
@@ -134,8 +151,8 @@ def build_reexport_demand(raw_imports, definitions, resolve, context):
                 if "default_export" in d.confidence_factors
             )
         for target, selected in targets:
-            if selected not in consumed[target]:
-                consumed[target].add(selected)
+            if selected not in requests[target]:
+                requests[target].add(selected)
                 pending.append((target, selected))
     discarded_refs = Counter()
     for file, items in reexports.items():

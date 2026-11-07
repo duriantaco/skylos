@@ -641,6 +641,7 @@ _TS_JS_SOURCE_EXTS = (
 _PHP_SOURCE_EXTS = PHP_SOURCE_EXTS
 _RUST_SOURCE_EXTS = (".rs",)
 _RUBY_SOURCE_EXTS = (".rb",)
+_SWIFT_SOURCE_EXTS = (".swift",)
 _CPP_SOURCE_EXTS = CPP_SOURCE_EXTS + CPP_HEADER_EXTS
 _DART_SOURCE_EXTS = (".dart",)
 _CSHARP_SOURCE_EXTS = (".cs",)
@@ -656,6 +657,7 @@ ANALYZED_SOURCE_SUFFIXES = frozenset(
         *_PHP_SOURCE_EXTS,
         *_RUST_SOURCE_EXTS,
         *_RUBY_SOURCE_EXTS,
+        *_SWIFT_SOURCE_EXTS,
         *_CPP_SOURCE_EXTS,
         *_DART_SOURCE_EXTS,
         *_CSHARP_SOURCE_EXTS,
@@ -671,6 +673,7 @@ _REFERENCE_LANGUAGE_FAMILIES = {
     **dict.fromkeys(_PHP_SOURCE_EXTS, "php"),
     **dict.fromkeys(_RUST_SOURCE_EXTS, "rust"),
     **dict.fromkeys(_RUBY_SOURCE_EXTS, "ruby"),
+    **dict.fromkeys(_SWIFT_SOURCE_EXTS, "swift"),
     **dict.fromkeys(_DART_SOURCE_EXTS, "dart"),
     **dict.fromkeys(_CSHARP_SOURCE_EXTS, "csharp"),
     **dict.fromkeys(_KOTLIN_SOURCE_EXTS, "jvm"),
@@ -2053,6 +2056,7 @@ class Skylos:
         **dict.fromkeys(PHP_SOURCE_EXTS, "PHP"),
         ".rs": "Rust",
         ".rb": "Ruby",
+        ".swift": "Swift",
         ".cpp": "C++",
         ".cc": "C++",
         ".cxx": "C++",
@@ -2134,6 +2138,17 @@ class Skylos:
         else:
             all_files = discover_source_files(p, exts, exclude_folders=exclude_folders)
 
+        # SwiftPM checkouts and generated Swift under .build are dependencies
+        # and build products, rather than this directory scan's application
+        # source. Explicit file targets returned above remain inspectable.
+        all_files = [
+            file
+            for file in all_files
+            if not (
+                str(file).endswith(_SWIFT_SOURCE_EXTS)
+                and ".build" in Path(file).relative_to(root).parts[:-1]
+            )
+        ]
         return all_files, root
 
     def _walk_python_files_py(self, p, exts, exclude_folders=None, root=None):
@@ -2264,7 +2279,11 @@ class Skylos:
         # propogate exports to methods of exported classes
         exported_classes = set()
         for def_obj in self.defs.values():
-            if def_obj.type == "class" and def_obj.is_exported:
+            if (
+                def_obj.type == "class"
+                and def_obj.is_exported
+                and not str(def_obj.filename).endswith(_SWIFT_SOURCE_EXTS)
+            ):
                 exported_classes.add(def_obj.name)
 
         if not exported_classes:
@@ -2278,6 +2297,7 @@ class Skylos:
                 + _CSHARP_SOURCE_EXTS
                 + _KOTLIN_SOURCE_EXTS
                 + _RUBY_SOURCE_EXTS
+                + _SWIFT_SOURCE_EXTS
             ):
                 continue
             if "." not in def_obj.name:
@@ -2846,9 +2866,7 @@ class Skylos:
                 return results
 
             filter_kwargs = (
-                {"evidence_filter": filter_evidence}
-                if evidence_filters
-                else {}
+                {"evidence_filter": filter_evidence} if evidence_filters else {}
             )
             with grep_verification_scope(
                 project_root,
@@ -3155,6 +3173,14 @@ class Skylos:
             if progress_callback and (i == 1 or i % tick_every == 0 or i == total_refs):
                 progress_callback(i, total_refs or 1, Path("PHASE: mark refs"))
             ref_family = _source_family(ref_file)
+
+            if ref_family == "rust" and ref.startswith("@rust-import:"):
+                from skylos.visitors.languages.rust.import_bindings import (
+                    mark_import_reference,
+                )
+
+                mark_import_reference(self.defs, ref_file, ref)
+                continue
 
             if str(ref_file).endswith(_CSHARP_SOURCE_EXTS):
                 if ref.startswith("@type:"):
@@ -4885,6 +4911,7 @@ class Skylos:
         effective_file_configs = {} if include_review_context else None
         configuration_coverage = {}
         ruby_security_coverage = []
+        swift_reflection_facts = {}
 
         injected = False
         if custom_rules_data and not os.getenv("SKYLOS_CUSTOM_RULES"):
@@ -5036,6 +5063,10 @@ class Skylos:
                     coverage = getattr(framework_flags, "security_coverage", None)
                     if isinstance(coverage, dict):
                         ruby_security_coverage.append({"file": str(file), **coverage})
+                if str(file).endswith(_SWIFT_SOURCE_EXTS):
+                    facts = getattr(framework_flags, "swift_reflection_facts", None)
+                    if isinstance(facts, dict) and facts and not file_analysis_error:
+                        swift_reflection_facts[str(file)] = facts
                 if effective_file_configs is not None:
                     effective_file_configs[str(Path(file).resolve())] = cfg
                     for worker_findings in (q_finds, d_finds, pro_finds):
@@ -5104,6 +5135,12 @@ class Skylos:
                 for definition in defs:
                     if definition.type == "import":
                         key = f"{definition.filename}:{definition.name}"
+                        if str(definition.filename).endswith(_RUST_SOURCE_EXTS):
+                            from skylos.visitors.languages.rust.import_bindings import (
+                                import_definition_key,
+                            )
+
+                            key = import_definition_key(definition) or key
                     elif str(definition.filename).endswith(_CSHARP_SOURCE_EXTS):
                         if definition.type == "class":
                             # Partial declarations share one C# type identity.
@@ -5116,6 +5153,11 @@ class Skylos:
                             )
                             if key in self.defs:
                                 key = f"{key}:{definition.line}:{len(self.defs)}"
+                    elif str(definition.filename).endswith(_SWIFT_SOURCE_EXTS):
+                        key = (
+                            f"{definition.filename}:{definition.name}:"
+                            f"{definition.type}:{definition.line}"
+                        )
                     elif str(definition.filename).endswith(
                         _TS_JS_SOURCE_EXTS + _CPP_SOURCE_EXTS
                     ):
@@ -6518,7 +6560,8 @@ class Skylos:
                 and os.path.realpath(str(definition.filename)) in dead_ts_modules
             }
             self.refs = [
-                (name, filename) for name, filename in self.refs
+                (name, filename)
+                for name, filename in self.refs
                 if os.path.realpath(str(filename)) not in dead_ts_modules
                 or (name, os.path.realpath(str(filename))) in local_import_reads
             ]
@@ -6567,6 +6610,28 @@ class Skylos:
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: mark refs"))
+        if any(str(file).endswith(_RUST_SOURCE_EXTS) for file in files):
+            from skylos.visitors.languages.rust.project_traits import (
+                apply_project_trait_imports,
+            )
+
+            apply_project_trait_imports(
+                self.defs,
+                files,
+                scan_root=root,
+                analysis_scope=self._analysis_scope,
+                analysis_errors=analysis_errors,
+            )
+        if swift_reflection_facts:
+            from skylos.visitors.languages.swift.project_reflection import (
+                apply_project_reflection,
+            )
+
+            analysis_errors.extend(
+                apply_project_reflection(
+                    self.defs, swift_reflection_facts, scan_root=root
+                )
+            )
         self._mark_refs(progress_callback=progress_callback, scan_root=root)
         self._mark_reflected_module_members(set(modmap.values()))
         self._mark_call_arg_method_refs()
@@ -6904,6 +6969,7 @@ def proc_file(
     config_file=None,
     project_root=None,
     credential_source_locations=(),
+    go_scan_scope=None,
 ) -> tuple | None:
     return process_file(
         file_or_args,
@@ -6918,6 +6984,7 @@ def proc_file(
         config_file=config_file,
         project_root=project_root,
         credential_source_locations=credential_source_locations,
+        go_scan_scope=go_scan_scope,
         visitor_class=Visitor,
         test_aware_visitor_class=TestAwareVisitor,
         framework_aware_visitor_class=FrameworkAwareVisitor,

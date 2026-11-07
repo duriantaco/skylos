@@ -4,9 +4,20 @@ This benchmark suite measures Skylos dead-code detection against labeled fixture
 
 The benchmark framework lives in the Skylos repo because it must version with analyzer output and CI. Larger realistic targets, such as `/Users/oha/skylos-demo`, stay external and are referenced by config.
 
-The default manifest contains **65 cases and 351 symbol labels**: 119 unused and
-232 used. The first 58 cases and their 315 labels retain their expectations.
-Seven additional cases cover export forwarding, local Go module replacements,
+The default manifest contains **98 cases and 466 symbol labels**: 149 unused and
+317 used. The first 65 cases and their 351 labels retain their expectations.
+Five new cases cover nested namespace exports, contained Go workspaces and Rust
+source-module trait identity. Twenty-eight Swift cases cover private declarations,
+lexical and owner identity, callbacks, overloads, call cycles and runtime consumers.
+
+| Current depth contracts | Cases / labels |
+|---|---:|
+| TS namespace forwarding and public/opaque controls | 2 / 8 |
+| Go workspace private cycles and live callbacks | 2 / 12 |
+| Rust ordinary source-module trait imports | 1 / 5 |
+| Swift private declaration and runtime-use controls | 28 / 90 |
+
+The preceding seven cases cover export forwarding, local Go module replacements,
 and Rust trait, writer-macro and conditional-attribute imports.
 
 | Latest source contracts | Cases / labels |
@@ -54,10 +65,25 @@ The implementations adapt approaches studied in
 bounded Skylos checks, not compiler parity. Named TS re-export chains follow
 selected bindings through aliases and wildcard hops. Unknown local export
 bindings, competing star providers and opaque namespaces retain conservative
-handling. Direct namespace exports (`export * as tools`) still have an explicit
-strict expected-failure regression test. Go packages with unresolved dependencies
-do not gain an unreachability proof. Rust macro expansion, Cargo feature
-evaluation and general project-wide type resolution remain outside this change.
+handling. Direct namespace exports (`export * as tools`) now preserve selected
+member identity through named, default, wildcard and nested forwarding. Native-valid
+tagged templates and generic import-type queries retain correct syntax structure.
+Go workspace proof requires contained modules, the exact admitted source inventory
+and supported module language metadata. Unresolved dependencies do not gain an
+unreachability proof. Rust ordinary source-module closures can supply selected
+trait identity; macro expansion, Cargo feature evaluation and general compiler
+type resolution remain outside this change. Swift analysis retains public/internal
+APIs and uncertain runtime/compiler contexts; it does not infer unused imports
+from textual module names or provide Swift security-flow and quality rules.
+Swift cases were checked with Swift 5.9.2 and Periphery 2.21.2 before scoring.
+Additional compiler-backed probes cover reflection-provider shadowing, separate
+modules, lazy initialization, capture binding order and source-limit failures.
+Production-source scans of Rainbow 4.1.0, Files 4.2.0, Path 1.4.0 and
+swift-log 1.5.4 completed without unused-private findings. These are preservation
+checks, not evidence of whole-program recall: public/internal declarations stay
+roots. In swift-log, two unreferenced internal lock-wrapper methods remain
+outside that scope. Other competitor warnings had test/build-configuration
+consumers or described redundant conformances rather than unused private code.
 Separate paired probes also retain existing
 false positives for escaped exports behind wildcard barrels and cross-file
 classic JS globals; those cases are not counted as passing coverage.
@@ -229,10 +255,10 @@ First inspect the request plan. This does not use the network or require a key:
 python3 scripts/jev_dead_code_benchmark.py
 ```
 
-The default checked-in manifest contains 351 ground-truth symbols: 119 unused
-and 232 used. It is useful for request validation and regression testing, but
-Skylos already scores every labeled symbol correctly there. A Jev tie on this
-suite does not demonstrate incremental value. The runner always asks the
+The default checked-in manifest contains 466 ground-truth symbols: 149 unused
+and 317 used. It is useful for request validation and regression testing.
+A Jev tie on an already-correct static result does not demonstrate incremental
+value. The runner always asks the
 `original` question, and adds a second arm only when safe:
 
 1. `original` uses the checked-in fixture.
