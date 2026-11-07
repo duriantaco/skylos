@@ -27,6 +27,7 @@ except ModuleNotFoundError:  # Keep non-YAML scans available in partial installs
 
 __all__ = [
     "is_client_exposure_context",
+    "is_provider_only_secret_name",
     "is_public_client_env_name",
     "iter_sensitive_client_env_references",
     "scan_ctx",
@@ -171,6 +172,11 @@ SECRET_ONLY_FILE_SUFFIXES = (
     ".dockerfile",
 )
 
+PROVIDER_ONLY_FILE_SUFFIXES = (".md", ".txt", ".key", ".pem")
+_PRIVATE_KEY_FILE_NAMES = frozenset(
+    {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "identity"}
+)
+
 ALLOWED_FILE_SUFFIXES = (
     ".py",
     ".pyi",
@@ -210,6 +216,7 @@ ALLOWED_FILE_SUFFIXES = (
     ".hh",
     ".hxx",
     *SECRET_ONLY_FILE_SUFFIXES,
+    *PROVIDER_ONLY_FILE_SUFFIXES,
 )
 SECRET_FILE_NAMES = frozenset({"dockerfile", "containerfile", ".npmrc", ".pypirc"})
 _SHELL_SHEBANG_RE = re.compile(
@@ -225,6 +232,16 @@ def is_secret_scan_name(name: str) -> bool:
         or name.startswith(".env.")
         or lowered in SECRET_FILE_NAMES
         or lowered.startswith("dockerfile.")
+        or is_provider_only_secret_name(name)
+    )
+
+
+def is_provider_only_secret_name(name: str) -> bool:
+    """Text documents and key files need signatures, not generic entropy."""
+    lowered = name.lower()
+    return (
+        lowered.endswith(PROVIDER_ONLY_FILE_SUFFIXES)
+        or lowered in _PRIVATE_KEY_FILE_NAMES
     )
 
 
@@ -4459,7 +4476,7 @@ def scan_ctx(
     scan_docstrings=True,
     allowlist_patterns=None,
     ignore_path_substrings=None,
-    ignore_tests=True,
+    ignore_tests=False,
 ):
     rel_path = ctx.get("relpath", "")
     rel_name = rel_path.replace("\\", "/").rsplit("/", 1)[-1]
@@ -4470,6 +4487,19 @@ def scan_ctx(
 
     if ignore_tests and IS_TEST_PATH.search(rel_path.replace("\\", "/")):
         return []
+
+    normalized_path = rel_path.replace("\\", "/")
+    in_tests = bool(
+        IS_TEST_PATH.search(normalized_path)
+        or _JS_TEST_PATH.search(normalized_path)
+        or _TEST_FIXTURE_DIR.search(normalized_path)
+        or rel_path.endswith("_test.go")
+    )
+    provider_only = (
+        in_tests
+        or is_provider_only_secret_name(rel_name)
+        or ctx.get("provider_only") is True
+    )
 
     if ignore_path_substrings:
         for substring in ignore_path_substrings:
@@ -4483,32 +4513,40 @@ def scan_ctx(
         client_context_diagnostics,
     ) = _client_exposure_context_with_status(rel_path, file_lines)
     syntax_tree = ctx.get("tree")
-    (
-        approved_structural_spans,
-        structural_context_spans,
-        lock_context_incomplete_line,
-    ) = _lockfile_integrity_spans(rel_name, file_lines)
-    (
-        data_context_spans,
-        data_decoded_context_spans,
-        data_context_incomplete_line,
-    ) = _data_checksum_context_spans(rel_name, file_lines)
-    incompletes = [
-        item
-        for item in (lock_context_incomplete_line, data_context_incomplete_line)
-        if item is not None
-    ]
-    context_incomplete = (
-        min(incompletes, key=_context_incomplete_line) if incompletes else None
-    )
-    decoded_context_spans = _merge_context_maps(
-        structural_context_spans,
-        data_decoded_context_spans,
-    )
-    structural_context_spans = _merge_context_maps(
-        structural_context_spans,
-        data_context_spans,
-    )
+    if provider_only:
+        # No generic entropy candidate needs checksum-suppression proof in
+        # these scopes. Provider signatures still use the bounded decoder.
+        approved_structural_spans = {}
+        structural_context_spans = {}
+        decoded_context_spans = {}
+        context_incomplete = None
+    else:
+        (
+            approved_structural_spans,
+            structural_context_spans,
+            lock_context_incomplete_line,
+        ) = _lockfile_integrity_spans(rel_name, file_lines)
+        (
+            data_context_spans,
+            data_decoded_context_spans,
+            data_context_incomplete_line,
+        ) = _data_checksum_context_spans(rel_name, file_lines)
+        incompletes = [
+            item
+            for item in (lock_context_incomplete_line, data_context_incomplete_line)
+            if item is not None
+        ]
+        context_incomplete = (
+            min(incompletes, key=_context_incomplete_line) if incompletes else None
+        )
+        decoded_context_spans = _merge_context_maps(
+            structural_context_spans,
+            data_decoded_context_spans,
+        )
+        structural_context_spans = _merge_context_maps(
+            structural_context_spans,
+            data_context_spans,
+        )
 
     allowlist_regexes = []
     if allowlist_patterns:
@@ -4753,14 +4791,7 @@ def scan_ctx(
                     findings.append(aws_finding)
                     provider_values.add((aws_token, col_pos, col_pos + len(aws_token)))
 
-        in_tests = bool(
-            IS_TEST_PATH.search(rel_path.replace("\\", "/"))
-            or _JS_TEST_PATH.search(rel_path.replace("\\", "/"))
-            or _TEST_FIXTURE_DIR.search(rel_path.replace("\\", "/"))
-            or rel_path.endswith("_test.go")
-        )
-
-        if in_tests:
+        if provider_only:
             generic_values = ()
         else:
             generic_values = _find_generic_values(
@@ -4864,7 +4895,7 @@ def scan_ctx(
                 generic_finding["severity_reason"] = "no_secret_name"
             findings.append(generic_finding)
 
-        if not in_tests:
+        if not provider_only:
             for scheme, start, end, _password in _url_credential_candidates(
                 line_content
             ):

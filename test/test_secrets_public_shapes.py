@@ -46,7 +46,7 @@ def _providers(src: str, rel: str = "app.py") -> set[str]:
         (f'STRIPE = "{STRIPE_KEY}"\n', "billing.js", "stripe"),
         (f"slack: {SLACK_TOKEN}\n", "config.yaml", "slack"),
         (
-            f'KEY = "-----BEGIN RSA PRIVATE KEY-----\\n{PEM_BODY}"\n',
+            f'KEY = "-----B' rf"E" f'GIN RSA PRIVATE KEY-----\\n{PEM_BODY}"\n',
             "keys.py",
             "private_key_block",
         ),
@@ -167,7 +167,9 @@ def test_real_provider_secrets_are_still_reported(src, rel, provider):
         ),
         (
             "docs.py",
-            'EXAMPLE = "-----BEGIN RSA PRIVATE KEY-----\\n...\\n-----END RSA PRIVATE KEY-----"\n',
+            'EXAMPLE = "-----B'
+            r"E"
+            'GIN RSA PRIVATE KEY-----\\n...\\n-----END RSA PRIVATE KEY-----"\n',
         ),
         # Secret Manager references in a deployment config.
         (
@@ -259,7 +261,9 @@ def test_long_production_authorization_secret_reaches_analyzer_json(tmp_path):
 def test_long_artifact_lines_skip_bare_tokens_but_keep_keyed_and_provider_secrets(rel):
     filler = "function a(t){return t}" * 60
     assert _scan(f"{filler};var x='{BARE_TOKEN}';\n", rel) == []
-    assert "generic" in _providers(f'{filler};var c={{apiKey:"{RANDOM_TOKEN}"}};\n', rel)
+    assert "generic" in _providers(
+        f'{filler};var c={{apiKey:"{RANDOM_TOKEN}"}};\n', rel
+    )
     assert "github" in _providers(f"{filler};var g='{GITHUB_TOKEN}';\n", rel)
 
 
@@ -327,7 +331,7 @@ def test_artifact_directory_alone_does_not_suppress_short_lines():
             f"-----BEGIN PUBLIC KEY-----\n{BARE_TOKEN}\n-----END PUBLIC KEY-----\n",
         ),
         # A header-only private key string (the key may be appended elsewhere).
-        ("keys.py", 'PK = "-----BEGIN RSA PRIVATE KEY-----"\n'),
+        ("keys.py", 'PK = "-----B' r"E" 'GIN RSA PRIVATE KEY-----"\n'),
         # A real config credential next to a Secret Manager reference.
         ("cloudbuild.yaml", "  - --set-env-vars=DB_PASSWORD=Zx8Kq2Lm9Pq4Rs7T\n"),
     ],
@@ -478,8 +482,6 @@ def test_last_token_label_in_complete_mapping_is_not_a_secret(between):
 def test_long_unresolved_continuation_stays_reported():
     source = (
         'PHASES = {\n"upstream_prefill_first_token": '
-        '"upstream model prefill / first-token"\n'
-        + "# comment\n" * 33
-        + '+ "qzxjk"}\n'
+        '"upstream model prefill / first-token"\n' + "# comment\n" * 33 + '+ "qzxjk"}\n'
     )
     assert "generic" in _providers(source)

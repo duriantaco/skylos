@@ -65,6 +65,33 @@ def test_reviewed_manifest_has_frozen_positive_safe_and_scope_contracts():
     assert head == "pat" and len(account) == 22 and len(payload) == 59
 
 
+def test_cross_language_oracle_is_separate_and_balanced():
+    manifest = ROOT / "benchmarks/secrets/cross_language_manifest.json"
+    cases = benchmark.load_manifest(manifest)
+    positives = [case for case in cases if case["expect"]["detected"]]
+    negatives = [case for case in cases if not case["expect"]["detected"]]
+    assert len(cases) == 16 and len(positives) == len(negatives) == 8
+    assert {Path(case["file"]).suffix for case in positives} == {
+        ".ts",
+        ".tsx",
+        ".js",
+        ".mjs",
+        ".cjs",
+    }
+    assert {case["id"] for case in positives if case["file"].startswith("tests/")} == {
+        "ts-tests-credential",
+        "tsx-tests-credential",
+        "js-tests-credential",
+    }
+    assert all(
+        case["expect"] == {"detected": True, "provider": "github", "line": 1}
+        for case in positives
+    )
+    assert all(case["expect"] == {"detected": False} for case in negatives)
+    assert {case["file"] for case in positives} == {case["file"] for case in negatives}
+    assert len(benchmark.load_manifest(MANIFEST)) == 20
+
+
 def test_generated_inputs_are_identical_for_both_scanners(tmp_path):
     case = _case("base64-twice")
     first = benchmark.materialize(case, tmp_path / "skylos")

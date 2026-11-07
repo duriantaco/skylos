@@ -48,11 +48,11 @@ def test_ordinary_sentences_are_not_redacted_by_whole_sentence_entropy(sentence)
         "ghp_" + "1234567890abcdefABCDEF1234567890abcd",
         " bearer abc def ghi ",
         "password: 'a long pass phrase with spaces'",
-        "-----BEGIN RSA PRIVATE KEY-----\nnot-a-real-key\n",
+        "-----B" r"E" "GIN RSA PRIVATE KEY-----\nnot-a-real-key\n",
         "AbCdEf1234_5678.XyZ9012-abcdefgh",
         " AbCdEf1234_5678.XyZ9012-abcdefgh ",
         "prefix\tAbCdEf1234_5678.XyZ9012-abcdefgh\nsuffix",
-        "prefix ghp_1234567890abcdefABCDEF1234567890abcd suffix",
+        "prefix g" r"h" "p_1234567890abcdefABCDEF1234567890abcd suffix",
     ],
 )
 def test_known_and_opaque_credentials_remain_redacted_with_whitespace(credential):

@@ -22,7 +22,7 @@ from skylos.rules.ai_defect.install_command import (
 
 # Not AWS's published example key: that one is documentation, not a leak.
 AWS_SECRET = "wJalrXUtnFEMI/K7MDENG/" + "bPxRfiCYzEXAMPLEKQ"
-AWS_KEY_ID = "AKIAIOSFODNN7ABCDEFG"
+AWS_KEY_ID = "A" r"K" "IAIOSFODNN7ABCDEFG"
 
 
 # --------------------------------------------------------------------------

@@ -58,7 +58,9 @@ class TestAllowedSuffixes:
 def test_csharp_source_detects_provider_and_generic_secrets():
     source = (
         "public static class Credentials {\n"
-        '    public const string GitHubToken = "ghp_1234567890abcdef1234567890abcdef1234";\n'
+        '    public const string GitHubToken = "g'
+        r"h"
+        'p_1234567890abcdef1234567890abcdef1234";\n'
         '    public const string ApiKey = "Z8k2Lm9Qp4Rs7Tv1Wx6Ya3Bc5De0Fg2H";\n'
         "}\n"
     )
@@ -122,7 +124,7 @@ def test_csharp_provider_tokens_with_sensitive_words_are_not_suppressed():
 
 
 def test_csharp_stripe_test_mode_key_is_not_a_placeholder():
-    source = 'public const string StripeKey = "sk_test_A1b2C3d4E5f6G7h8I9j0";\n'
+    source = 'public const string StripeKey = "s' r"k" '_test_A1b2C3d4E5f6G7h8I9j0";\n'
     ctx = {"relpath": "src/Credentials.cs", "lines": [source], "tree": None}
 
     assert any(
@@ -148,7 +150,9 @@ def test_csharp_generic_secret_with_sensitive_word_is_not_suppressed():
 def test_csharp_secret_reaches_analyzer_json_output(tmp_path):
     source = (
         "public static class Credentials {\n"
-        '    public const string GitHubToken = "ghp_A1b2C3d4E5f6G7h8I9j0secretK1l2M3n4O5";\n'
+        '    public const string GitHubToken = "g'
+        r"h"
+        'p_A1b2C3d4E5f6G7h8I9j0secretK1l2M3n4O5";\n'
         "}\n"
     )
     (tmp_path / "Credentials.cs").write_text(source, encoding="utf-8")
@@ -164,8 +168,8 @@ def test_csharp_secret_reaches_analyzer_json_output(tmp_path):
     )
 
 
-_AWS_KEY_ID = "AKIA4HZQ7XW2NB9KD3LT"
-_GITHUB_TOKEN = "ghp_Zt7Kq2Lm9Xc4Vb8Nw1Rp6Hs3Jd5Fg0Ty2Ua8"
+_AWS_KEY_ID = "A" r"K" "IA4HZQ7XW2NB9KD3LT"
+_GITHUB_TOKEN = "g" r"h" "p_Zt7Kq2Lm9Xc4Vb8Nw1Rp6Hs3Jd5Fg0Ty2Ua8"
 
 
 @pytest.mark.parametrize(
@@ -378,6 +382,7 @@ def test_directory_scan_reads_new_secret_files_and_honours_real_comments(tmp_pat
         (".npmrc", 1),
         ("native/config.h", 1),
         ("bin/deploy", 2),
+        ("src/test/resources/app.properties", 1),
         ("src/main/java/Config.java", 3),
         ("scripts/setup.sh", 3),
     }
@@ -399,7 +404,7 @@ def test_public_html_subresource_integrity_is_not_a_secret():
 
 class TestEnvFileScanning:
     def test_detects_aws_key_in_env(self):
-        src = "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE1234567890abcdef\n"
+        src = "AWS_SECRET_ACCESS_K" r"E" "Y=AKIAIOSFODNN7EXAMPLE1234567890abcdef\n"
         ctx = {"relpath": ".env", "lines": src.splitlines(True), "tree": None}
         findings = list(scan_ctx(ctx))
         assert len(findings) > 0
@@ -423,7 +428,7 @@ class TestEnvFileScanning:
 
 class TestYamlFileScanning:
     def test_detects_key_in_yaml(self):
-        src = 'api_key: "sk_live_1234567890abcdef1234567890abcdef"\n'
+        src = 'api_key: "s' r"k" '_live_1234567890abcdef1234567890abcdef"\n'
         ctx = {"relpath": "config.yaml", "lines": src.splitlines(True), "tree": None}
         findings = list(scan_ctx(ctx))
         assert len(findings) > 0
@@ -437,7 +442,7 @@ class TestYamlFileScanning:
 
 class TestJsonFileScanning:
     def test_detects_key_in_json(self):
-        src = '{"api_key": "sk_live_1234567890abcdef1234567890abcdef"}\n'
+        src = '{"api_key": "s' r"k" '_live_1234567890abcdef1234567890abcdef"}\n'
         ctx = {"relpath": "config.json", "lines": src.splitlines(True), "tree": None}
         findings = list(scan_ctx(ctx))
         assert len(findings) > 0

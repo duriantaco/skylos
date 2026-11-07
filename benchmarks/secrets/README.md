@@ -7,7 +7,10 @@ constructed deterministically at runtime; no issued credentials are committed,
 verified or sent to provider services. This is not live-secret precision or an
 independent deployment benchmark.
 
-Run the known-supported Skylos regression subset:
+See the [recorded results](results.md) for the original cohort and the separate
+cross-language cohort, with their scope and limitations.
+
+Run the original regression subset:
 
 ```bash
 python scripts/secrets_benchmark.py --track regression --output .skylos/evals/secrets/regression
@@ -18,6 +21,17 @@ Run the entire capability suite against an explicitly selected source checkout:
 ```bash
 python scripts/secrets_benchmark.py --source /absolute/path/to/skylos-source --output .skylos/evals/secrets/candidate
 ```
+
+Run the separate TypeScript/TSX/JavaScript source and test-path cohort:
+
+```bash
+python scripts/secrets_benchmark.py --manifest benchmarks/secrets/cross_language_manifest.json --output .skylos/evals/secrets/languages
+```
+
+The original 20-case manifest remains frozen. The cross-language cohort adds
+eight provider-shaped positives and eight safe controls; it does not replace or
+relabel the original cases. CI checks both complete cohorts, including the HTML,
+Python-test, README, text and key-file cases.
 
 Run the same filesystem inputs with an independently installed, checksum-verified
 TruffleHog 3.99.8 binary:
@@ -38,7 +52,10 @@ its source location. Each scanner receives the same input bytes. Native scans
 use the normal analyzer entry point, so file discovery and test-directory gaps
 remain visible. A benign source file gives every fixture a native completeness
 anchor; it is never treated as proof that the candidate-bearing file was read.
-Capability cases can intentionally fail; they are not all release gates.
+Data-only file and directory scans without that anchor have separate native and
+CLI regression tests, including truthful secret-file coverage and gate behavior.
+The original case-track labels are retained for historical comparisons; a failed
+case is never relabelled as safe merely to make a run pass.
 
 Positive detection credit requires the reviewed file and source line. Presence
 and provider classification are separate. A fine-grained GitHub-shaped

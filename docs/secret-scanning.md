@@ -6,7 +6,8 @@ accepted the credential. Scanning does not contact credential providers.
 
 ## Detection pipeline
 
-1. Discover eligible source and configuration files using the existing scan scope.
+1. Discover source/configuration files and a separate set of secret-bearing text
+   files, including HTML, Markdown, text, PEM/key files and common SSH key names.
 2. Match known provider formats and retain the existing generic credential checks.
 3. Inspect bounded decoded text for provider signatures, including Base64,
    Base64URL, numeric Unicode escapes and HTML entities.
@@ -48,10 +49,28 @@ update checks disabled. Detection, provider classification, duplicate alerts and
 incomplete execution are reported separately. These cases do not establish
 live-credential validity or production precision and recall.
 
-This implementation preserves the existing file and test-path policies. Python
-test paths, text/key filenames and standalone HTML discovery remain coverage gaps
-in the normal scan; the capability cases retain those misses. It also does not add Git-history,
-cloud-storage or collaboration-service collection.
+Normal scans retain provider signatures in test paths. The internal
+`ignore_tests=True` option remains an explicit opt-out. New document/key scopes
+and native HTML scanning use provider-only detection: they retain known provider
+formats and private-key material while avoiding generic entropy noise. Production
+source/configuration generic checks and existing direct HTML checks keep their
+behavior.
+
+For synthetic test credentials, construct the value at runtime or use adjacent
+string literals rather than storing a contiguous provider-shaped key in source.
+The scanner does not infer safety from a test filename or fixture label.
+
+Secret-only files do not require a Python or other language file in the project.
+They do not enter language parsing or inflate source/AST counts. The JSON
+`analysis_summary.secrets_files_scanned` counts files read and submitted to the
+secret scanner, including empty files. Check analysis errors as well: decoding
+limits can still make a submitted file incomplete. Selected new text that cannot
+be read safely is reported as incomplete and does not increment the count.
+Explicit exclusions, changed-file scope, containment and bounded no-follow reads
+remain enforced.
+
+This implementation does not add Git-history, cloud-storage or
+collaboration-service collection.
 
 Provider-side verification remains separate work. A future verifier should
 distinguish success, rejected credentials, unavailable verification and a skipped

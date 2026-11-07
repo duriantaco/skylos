@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import stat
 import subprocess
 import traceback
 from pathlib import Path
@@ -68,6 +69,8 @@ from skylos.rules.secrets import (
     SECRET_FILE_NAMES as _SECRET_FILE_NAMES,
     SECRET_ONLY_FILE_SUFFIXES as _SECRET_ONLY_FILE_SUFFIXES,
     file_starts_like_shell_script as _file_starts_like_shell_script,
+    is_provider_only_secret_name as _is_provider_only_secret_name,
+    is_secret_scan_name as _is_secret_scan_name,
     may_be_shell_script as _may_be_shell_script,
 )
 from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
@@ -740,13 +743,35 @@ def _is_secret_config_candidate(path: Path) -> bool:
     suffix = path.suffix.lower()
     if suffix in _SECRET_CONFIG_SUFFIXES or suffix in _SECRET_ONLY_FILE_SUFFIXES:
         return True
+    if suffix not in ANALYZED_SOURCE_SUFFIXES and _is_secret_scan_name(path.name):
+        return True
     return _may_be_shell_script(path.name)
+
+
+def _is_provider_only_secret_text(path: Path) -> bool:
+    # These files enter the secret-only collector, never a language parser.
+    return _is_provider_only_secret_name(path.name) or path.suffix.lower() in {
+        ".html",
+        ".htm",
+        ".css",
+        ".map",
+    }
 
 
 def _resolve_secret_config_candidate(path: Path, root: Path) -> Path | None:
     try:
         resolved_root = Path(root).resolve(strict=True)
         raw_candidate = Path(os.path.abspath(Path(path)))
+        if _is_provider_only_secret_text(raw_candidate):
+            from skylos.security.regression_diff import _lexical_repository_path
+
+            raw_candidate = _lexical_repository_path(resolved_root, raw_candidate)
+            relative = raw_candidate.relative_to(resolved_root)
+            current = resolved_root
+            for part in relative.parts:
+                current /= part
+                if current.is_symlink():
+                    return None
         if raw_candidate.is_symlink():
             return None
         candidate = raw_candidate.parent.resolve(strict=True) / raw_candidate.name
@@ -786,7 +811,7 @@ def _iter_secret_config_candidates(
         return
 
     for target in _absolute_secret_scan_targets(scan_target):
-        if target.is_file() or target.is_symlink():
+        if target.is_file() or target.is_symlink() or not target.is_dir():
             yield target
         elif target.is_dir():
             yield from target.rglob("*")
@@ -909,6 +934,18 @@ def _normalize_secret_changed_files(
         if not candidate.is_absolute():
             candidate = root / candidate
         candidate = Path(os.path.abspath(candidate))
+        if _is_provider_only_secret_text(candidate):
+            from skylos.security.regression_diff import _lexical_repository_path
+
+            candidate = _lexical_repository_path(root, candidate)
+            text_targets = tuple(
+                _lexical_repository_path(root, target) for target in scan_targets
+            )
+            if candidate.is_relative_to(root) and _is_within_secret_scan_targets(
+                candidate, text_targets
+            ):
+                normalized.add(str(candidate))
+            continue
         try:
             candidate = candidate.parent.resolve(strict=False) / candidate.name
             scope_candidate = candidate.resolve(strict=False)
@@ -928,13 +965,23 @@ def _scan_secret_config_candidate(
     scan_target=None,
     selected_by_changed_files: bool = False,
     analysis_errors: list[dict] | None = None,
+    checked_files: set[str] | None = None,
 ) -> list[dict]:
+    if _is_provider_only_secret_text(candidate):
+        from skylos.security.regression_diff import _lexical_repository_path
+
+        candidate = _lexical_repository_path(root, candidate)
     resolved = _resolve_secret_config_candidate(candidate, root)
-    if resolved is None or str(resolved) in scanned:
+    if resolved is None:
+        _record_unreadable_secret_text(
+            candidate, root, excluded, scanned, analysis_errors
+        )
+        return []
+    if str(resolved) in scanned:
         return []
     try:
         rel = str(resolved.relative_to(root))
-        if excluded.intersection(Path(rel).parts):
+        if should_exclude_path(resolved, root, excluded):
             return []
         if not _should_scan_generated_grep_cache(
             resolved,
@@ -954,7 +1001,7 @@ def _scan_secret_config_candidate(
             resolved,
             max_bytes=MAX_SECRET_CONFIG_BYTES,
             encoding="utf-8",
-            errors="ignore",
+            errors="strict" if _is_provider_only_secret_text(resolved) else "ignore",
         )
         if source is None:
             if analysis_errors is not None:
@@ -965,10 +1012,55 @@ def _scan_secret_config_candidate(
             "lines": source.splitlines(True),
             "tree": None,
         }
-        return list(_secrets_scan_ctx(ctx))
+        if _is_provider_only_secret_text(resolved):
+            ctx["provider_only"] = True
+        findings = list(_secrets_scan_ctx(ctx))
+        if checked_files is not None:
+            checked_files.add(str(resolved))
+        return findings
     except Exception:
         logger.debug("Secret scan failed for config file: %s", candidate, exc_info=True)
+        if _is_provider_only_secret_text(resolved) and analysis_errors is not None:
+            analysis_errors.append(_secret_config_read_error_payload(resolved))
         return []
+
+
+def _record_unreadable_secret_text(candidate, root, excluded, scanned, analysis_errors):
+    if analysis_errors is None or not _is_provider_only_secret_text(candidate):
+        return
+    candidate = Path(os.path.abspath(candidate))
+    try:
+        relative = candidate.relative_to(root)
+    except ValueError:
+        return
+    if not relative.parts:
+        return
+    if str(candidate) in scanned or should_exclude_path(candidate, root, excluded):
+        return
+    mode = None
+    current = root
+    for part in relative.parts:
+        current /= part
+        try:
+            mode = current.lstat().st_mode
+        except FileNotFoundError:
+            # Deleted changed files are outside the existing-file scan contract.
+            return
+        except OSError:
+            mode = None
+            break
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            break
+    if mode is not None and stat.S_ISDIR(mode):
+        return
+    scanned.add(str(candidate))
+    analysis_errors.append(
+        _analysis_error_payload(
+            relative,
+            RuntimeError(f"Secret scan could not safely read {relative.name}"),
+            kind="secret_text_unsafe_input",
+        )
+    )
 
 
 def _scan_secret_config_candidates(
@@ -980,7 +1072,8 @@ def _scan_secret_config_candidates(
     already_scanned: set[str] | None = None,
     analysis_errors: list[dict] | None = None,
     included_files=(),
-    included_file_exclude_folders=(),
+    included_file_exclude_folders=None,
+    checked_files: set[str] | None = None,
 ) -> list[dict]:
     if _secrets_scan_ctx is None:
         return []
@@ -1002,13 +1095,23 @@ def _scan_secret_config_candidates(
             _scan_secret_config_candidate(
                 candidate,
                 root=root,
-                excluded=included_excluded if candidate in included else excluded,
+                excluded=(
+                    included_excluded
+                    if candidate in included
+                    or (
+                        changed_files is not None
+                        and included_file_exclude_folders is not None
+                        and _is_provider_only_secret_text(candidate)
+                    )
+                    else excluded
+                ),
                 scanned=scanned,
                 scan_target=scan_target,
                 selected_by_changed_files=(
                     changed_files is not None or candidate in included
                 ),
                 analysis_errors=analysis_errors,
+                checked_files=checked_files,
             )
         )
     return findings
@@ -4113,6 +4216,7 @@ class Skylos:
                 changed_files=changed_files,
                 explicit_exclude_folders=changed_file_exclude_folders,
                 diff_base=os.environ.get("SKYLOS_DIFF_BASE"),
+                include_unsafe_secret_text=enable_secrets,
             )
         files, root = self._discover_files(path, exclude_folders)
         changed_secret_configs = [
@@ -4213,6 +4317,7 @@ class Skylos:
             )
 
         refresh_review_context(changed_files)
+        secret_checked_files: set[str] = set()
 
         if not files:
             if enable_danger:
@@ -4475,27 +4580,45 @@ class Skylos:
                     result["analysis_summary"]["ai_defects_count"] = len(
                         ai_defect_findings
                     )
+            if enable_secrets:
+                result["analysis_summary"]["secrets_files_scanned"] = 0
             if enable_secrets and (
-                not first_is_symlink or isinstance(path, (list, tuple))
+                not first_is_symlink
+                or isinstance(path, (list, tuple))
+                or _is_provider_only_secret_text(_first)
             ):
+                secret_only_target = (
+                    _first
+                    if _is_provider_only_secret_text(_first)
+                    and (first_is_symlink or not _first.is_dir())
+                    else no_source_scan_target
+                )
                 secret_findings = _scan_secret_config_candidates(
-                    root=Path(root),
+                    root=(
+                        _first.parent
+                        if not isinstance(path, (list, tuple))
+                        and secret_only_target == _first
+                        and _is_provider_only_secret_text(_first)
+                        else Path(root)
+                    ),
                     scan_target=(
-                        path
-                        if isinstance(path, (list, tuple))
-                        else no_source_scan_target
+                        path if isinstance(path, (list, tuple)) else secret_only_target
                     ),
                     changed_files=changed_files,
                     exclude_folders=exclude_folders,
                     analysis_errors=result["analysis_errors"],
                     included_files=changed_secret_configs,
                     included_file_exclude_folders=changed_file_exclude_folders,
+                    checked_files=secret_checked_files,
                 )
                 if secret_findings:
                     result["secrets"] = secret_findings
                     result["analysis_summary"]["secrets_count"] = len(secret_findings)
                 result["analysis_summary"]["analysis_error_count"] = len(
                     result["analysis_errors"]
+                )
+                result["analysis_summary"]["secrets_files_scanned"] = len(
+                    secret_checked_files
                 )
             if enable_sca:
                 if first_is_symlink:
@@ -5011,6 +5134,7 @@ class Skylos:
                             ):
                                 ctx["honor_inline_ignores"] = False
                             findings = list(_secrets_scan_ctx(ctx))
+                            secret_checked_files.add(str(Path(file).resolve()))
                             if findings:
                                 f_ignore = per_file_ignore_lines.get(str(file), set())
                                 f_ignore_rules = per_file_ignore_rules.get(
@@ -5055,6 +5179,7 @@ class Skylos:
                         analysis_errors=analysis_errors,
                         included_files=changed_secret_configs,
                         included_file_exclude_folders=changed_file_exclude_folders,
+                        checked_files=secret_checked_files,
                     )
                 )
 
@@ -6508,6 +6633,10 @@ class Skylos:
             include_review_proofs=include_review_proofs,
             review_config=project_cfg,
         )
+        if enable_secrets:
+            result["analysis_summary"]["secrets_files_scanned"] = len(
+                secret_checked_files
+            )
         if configuration_coverage:
             result["analysis_summary"]["configuration_coverage"] = (
                 configuration_coverage
@@ -6586,6 +6715,11 @@ def _split_outside_diff_analysis_errors(analysis_errors, changed_files):
             changed.add(str(changed_file))
     errors, warnings = [], []
     for error in analysis_errors:
+        if isinstance(error, dict) and error.get("kind") == "secret_text_unsafe_input":
+            # The secret-only collector emits these only for selected paths.
+            # Their public file names are root-relative, not relative to cwd.
+            errors.append(error)
+            continue
         if (
             isinstance(error, dict)
             and error.get("kind") == "language_engine_unavailable"
