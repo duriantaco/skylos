@@ -61,7 +61,7 @@ That Kotlin stage had 84 cases; all 72 earlier cases retain their
 expectations. These are local request-source/API flow contracts, not deployed
 applications or remote exploit proofs. Fixture programs are never executed.
 
-One extra case remains in `adversarial_manifest.json`: a trusted standard
+One Kotlin case remains in `adversarial_manifest.json`: a trusted standard
 `printf` executable with fixed `%s` format and request data in a separate argument
 is still reported as command injection. Its safe expectation remains unchanged.
 This does not claim that arbitrary arguments to every fixed executable are safe.
@@ -75,8 +75,12 @@ python scripts/security_benchmark.py \
   --manifest benchmarks/security/adversarial_manifest.json --json
 ```
 
-That optional challenge currently exits nonzero to expose the known false
-positive. Its label must not be changed just to obtain a passing score.
+The optional manifest also preserves six Go misses involving function values,
+an HTTP request type alias and a TLS field assignment, plus two Dart misses
+where a local identity helper named `canonicalize` hides unsafe input.
+It currently exits nonzero to expose these known failures. Their labels must
+not be changed just to obtain a passing score. They are outside the passing
+default suite.
 
 ## Adding Cases
 
@@ -95,9 +99,22 @@ deserialization/path traversal with matched safe guards.
 
 ### Additional paired controls
 
-The default suite has 139 cases and 148 expectations: 74 required findings
-and 74 absence controls. All 132 cases from the preceding stage retain their
-original labels.
+The default suite has 200 cases and 212 expectations: 111 required findings
+and 101 absence controls. All 139 cases from the preceding stage retain their
+original objects and labels.
+
+The latest 61 cases add Python captured-callable and provider controls,
+TS/JS shell-enabled `spawn`/`execFile` variants and Go sanitizer/guard pairs.
+The Go corpus also pairs SQL binding, HTML escaping, TLS verification and
+cookie flags; Go grows from four to 36 cases. TS/JS grows from 23 to 40 and
+Python from 49 to 61. Each new expectation was frozen before its corresponding
+fix and replayed against the unchanged baseline. They are regression cases, not
+independent application holdouts or a claim of general competitor superiority.
+Independent guard review also adds a parsed URL scheme/host pair and sibling
+file mutations of a supposed fixed map or directory boundary.
+Matched Go controls cover short-circuit evaluation, parallel assignments,
+parsed-pointer mutation and lexical shadowing. TS/JS pairs operator-configured
+redirects with request suffixes and visible environment replacement.
 
 Rust now pairs its command finding with a fixed-command control and includes a
 path-argument finding. Dart adds command unsafe/safe and path unsafe/basename

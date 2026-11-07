@@ -52,11 +52,12 @@ func findingsByRule(t *testing.T, body string) map[string][]string {
 
 func TestUntrustedPathsAreTraversal(t *testing.T) {
 	cases := map[string]string{
-		"P1 query to ReadFile":              "func h(w http.ResponseWriter, r *http.Request) { os.ReadFile(r.URL.Query().Get(\"f\")) }\n",
-		"P2 ServeFile join":                 "func h(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, filepath.Join(root, r.URL.Path)) }\n",
-		"P3 local then join":                "func h(w http.ResponseWriter, r *http.Request) {\n\tname := r.FormValue(\"n\")\n\tf, _ := os.Open(filepath.Join(root, name))\n\tdefer f.Close()\n}\n",
-		"P4 gin param":                      "func h(c *gin.Context) { os.ReadFile(c.Param(\"file\")) }\n",
-		"P9 prefix check on uncleaned path": "func h(w http.ResponseWriter, r *http.Request) {\n\tp := root + \"/\" + r.FormValue(\"n\")\n\tif !strings.HasPrefix(p, root) {\n\t\treturn\n\t}\n\tos.ReadFile(p)\n}\n",
+		"P1 query to ReadFile":               "func h(w http.ResponseWriter, r *http.Request) { os.ReadFile(r.URL.Query().Get(\"f\")) }\n",
+		"P2 ServeFile join":                  "func h(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, filepath.Join(root, r.URL.Path)) }\n",
+		"P3 local then join":                 "func h(w http.ResponseWriter, r *http.Request) {\n\tname := r.FormValue(\"n\")\n\tf, _ := os.Open(filepath.Join(root, name))\n\tdefer f.Close()\n}\n",
+		"P4 gin param":                       "func h(c *gin.Context) { os.ReadFile(c.Param(\"file\")) }\n",
+		"P9 prefix check on uncleaned path":  "func h(w http.ResponseWriter, r *http.Request) {\n\tp := root + \"/\" + r.FormValue(\"n\")\n\tif !strings.HasPrefix(p, root) {\n\t\treturn\n\t}\n\tos.ReadFile(p)\n}\n",
+		"cleaned form prefix needs boundary": "func h(w http.ResponseWriter, r *http.Request) {\n\tp := filepath.Join(root, filepath.Clean(r.FormValue(\"name\")))\n\tif !strings.HasPrefix(p, root) {\n\t\treturn\n\t}\n\tos.ReadFile(p)\n}\n",
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -70,15 +71,16 @@ func TestUntrustedPathsAreTraversal(t *testing.T) {
 
 func TestGuardedSanitisedAndProgramPathsAreNotTraversal(t *testing.T) {
 	cases := map[string]string{
-		"P5 clean and prefix": "func h(w http.ResponseWriter, r *http.Request) {\n\tp := filepath.Join(root, filepath.Clean(r.URL.Path))\n\tif !strings.HasPrefix(p, root) {\n\t\treturn\n\t}\n\tos.ReadFile(p)\n}\n",
-		"P6 rel dot-dot":      "func h(w http.ResponseWriter, r *http.Request) {\n\tp := filepath.Join(root, r.FormValue(\"n\"))\n\trel, err := filepath.Rel(root, p)\n\tif err != nil || strings.HasPrefix(rel, \"..\") {\n\t\treturn\n\t}\n\tos.ReadFile(p)\n}\n",
-		"P7 is local":         "func h(w http.ResponseWriter, r *http.Request) {\n\tname := r.FormValue(\"n\")\n\tif !filepath.IsLocal(name) {\n\t\treturn\n\t}\n\tos.ReadFile(filepath.Join(root, name))\n}\n",
-		"P8 base":             "func h(w http.ResponseWriter, r *http.Request) { os.ReadFile(filepath.Join(root, filepath.Base(r.FormValue(\"n\")))) }\n",
-		"P10 config":          "func run() { os.ReadFile(cfg.Path) }\n",
-		"P10 flag":            "func run() { os.ReadFile(*flagFile) }\n",
-		"P10 os.Args":         "func run() { os.ReadFile(os.Args[1]) }\n",
-		"P10 temp file":       "func run() { tmp, _ := os.CreateTemp(\"\", \"x\"); tmp.Close(); os.Remove(tmp.Name()) }\n",
-		"P10 parameter":       "func load(name string) ([]byte, error) { return os.ReadFile(name) }\n",
+		"P5 clean and prefix":          "func h(w http.ResponseWriter, r *http.Request) {\n\tp := filepath.Join(root, filepath.Clean(r.URL.Path))\n\tif !strings.HasPrefix(p, root) {\n\t\treturn\n\t}\n\tos.ReadFile(p)\n}\n",
+		"P5 clean and prefix boundary": "func h(w http.ResponseWriter, r *http.Request) {\n\tp := filepath.Join(root, filepath.Clean(r.URL.Path))\n\tif !strings.HasPrefix(p, root+\"/\") {\n\t\treturn\n\t}\n\tos.ReadFile(p)\n}\n",
+		"P6 rel dot-dot":               "func h(w http.ResponseWriter, r *http.Request) {\n\tp := filepath.Join(root, r.FormValue(\"n\"))\n\trel, err := filepath.Rel(root, p)\n\tif err != nil || strings.HasPrefix(rel, \"..\") {\n\t\treturn\n\t}\n\tos.ReadFile(p)\n}\n",
+		"P7 is local":                  "func h(w http.ResponseWriter, r *http.Request) {\n\tname := r.FormValue(\"n\")\n\tif !filepath.IsLocal(name) {\n\t\treturn\n\t}\n\tos.ReadFile(filepath.Join(root, name))\n}\n",
+		"P8 base":                      "func h(w http.ResponseWriter, r *http.Request) { os.ReadFile(filepath.Join(root, filepath.Base(r.FormValue(\"n\")))) }\n",
+		"P10 config":                   "func run() { os.ReadFile(cfg.Path) }\n",
+		"P10 flag":                     "func run() { os.ReadFile(*flagFile) }\n",
+		"P10 os.Args":                  "func run() { os.ReadFile(os.Args[1]) }\n",
+		"P10 temp file":                "func run() { tmp, _ := os.CreateTemp(\"\", \"x\"); tmp.Close(); os.Remove(tmp.Name()) }\n",
+		"P10 parameter":                "func load(name string) ([]byte, error) { return os.ReadFile(name) }\n",
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {

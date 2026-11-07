@@ -3339,6 +3339,1609 @@
           ]
         }
       }
-    }
+    },
+      {
+        "id": "go-command-direct",
+        "path": "fixtures/security_depth_go_command_direct",
+        "description": "HTTP input selects an executable with -c script supplied by the same request.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D212"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-command-basename",
+        "path": "fixtures/security_depth_go_command_basename",
+        "description": "filepath.Base removes directory components but still lets the request select sh or another interpreter; the request also controls its -c script.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D212"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-command-fixed-data",
+        "path": "fixtures/security_depth_go_command_fixed_data",
+        "description": "A fixed printf executable receives a fixed %s format with request data as a separate argument, without a shell.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "go",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D212"
+            ]
+          }
+        }
+      },
+      {
+        "id": "go-ssrf-direct",
+        "path": "fixtures/security_depth_go_ssrf_direct",
+        "description": "HTTP input chooses destination authority after a fixed http scheme.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "ssrf",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D216"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-ssrf-basename",
+        "path": "fixtures/security_depth_go_ssrf_basename",
+        "description": "Base does not validate network destinations; a host such as 127.0.0.1:8080 contains no path separator and survives unchanged.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "ssrf",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D216"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-path-log-only-guard",
+        "path": "fixtures/security_depth_go_path_log_only_guard",
+        "description": "An IsLocal check that only logs and does not return, throw or dominate the sink cannot prevent unsafe os.ReadFile.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "path_traversal",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D215"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-path-reject-guard",
+        "path": "fixtures/security_depth_go_path_reject_guard",
+        "description": "The IsLocal rejection branch returns before the path reaches the file read under a fixed directory.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "path_traversal",
+          "go",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D215"
+            ]
+          }
+        }
+      },
+      {
+        "id": "go-redirect-log-only-guard",
+        "path": "fixtures/security_depth_go_redirect_log_only_guard",
+        "description": "Comparing a request redirect target with /home only logs; it does not restrict the target before http.Redirect.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "open_redirect",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D230"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-redirect-literal-guard",
+        "path": "fixtures/security_depth_go_redirect_literal_guard",
+        "description": "A strict comparison rejects every target other than the single literal /home before redirect.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "open_redirect",
+          "go",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D230"
+            ]
+          }
+        }
+      },
+      {
+        "id": "go-ssrf-fixed-destination",
+        "path": "fixtures/security_depth_go_ssrf_fixed_destination",
+        "description": "A fixed HTTPS destination stays quiet; no request value chooses its authority.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "ssrf",
+          "go",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D216"
+            ]
+          }
+        }
+      },
+      {
+        "id": "go-sql-query-value",
+        "path": "fixtures/security_depth_go_sql_query_value",
+        "description": "Request input is concatenated into SQL syntax before reaching database/sql.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "sql_injection",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D211"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-sql-bound-value",
+        "path": "fixtures/security_depth_go_sql_bound_value",
+        "description": "Request input occupies a bound query value; SQL syntax is fixed.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "sql_injection",
+          "go",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D211"
+            ]
+          }
+        }
+      },
+      {
+        "id": "go-html-response-unsafe",
+        "path": "fixtures/security_depth_go_html_response_unsafe",
+        "description": "Request HTML reaches a response explicitly served as text/html without escaping.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "xss",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D228"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-html-response-escaped",
+        "path": "fixtures/security_depth_go_html_response_escaped",
+        "description": "The real html.EscapeString provider escapes request text before an HTML response.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "xss",
+          "go",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D228"
+            ]
+          }
+        }
+      },
+      {
+        "id": "go-tls-verification-disabled",
+        "path": "fixtures/security_depth_go_tls_verification_disabled",
+        "description": "A real crypto/tls.Config explicitly disables peer certificate validation.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "tls_verification",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D210"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-tls-verification-enabled",
+        "path": "fixtures/security_depth_go_tls_verification_enabled",
+        "description": "The real TLS configuration keeps peer verification enabled.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "tls_verification",
+          "go",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D210"
+            ]
+          }
+        }
+      },
+      {
+        "id": "go-cookie-secure-disabled",
+        "path": "fixtures/security_depth_go_cookie_secure_disabled",
+        "description": "A session cookie explicitly disables Secure while preserving HttpOnly.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "cookie_security",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D252"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-cookie-flags-enabled",
+        "path": "fixtures/security_depth_go_cookie_flags_enabled",
+        "description": "Both browser transport and script-access flags are explicitly enabled.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "cookie_security",
+          "go",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D252"
+            ]
+          }
+        }
+      },
+      {
+        "id": "ts-exec-direct",
+        "path": "fixtures/security_depth_ts_exec_direct",
+        "description": "Existing exec positive.",
+        "languages": [
+          "typescript"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "typescript"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D212"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "ts-spawn-command-shell",
+        "path": "fixtures/security_depth_ts_spawn_command_shell",
+        "description": "Request command interpreted by shell.",
+        "languages": [
+          "typescript"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "typescript"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D212"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "ts-spawn-arg-shell",
+        "path": "fixtures/security_depth_ts_spawn_arg_shell",
+        "description": "Request argument incorporated in shell command.",
+        "languages": [
+          "typescript"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "typescript"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D212"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "ts-execfile-arg-shell",
+        "path": "fixtures/security_depth_ts_execfile_arg_shell",
+        "description": "Execfile shell opt in.",
+        "languages": [
+          "typescript"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "typescript"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D212"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "ts-spawn-sync-shell",
+        "path": "fixtures/security_depth_ts_spawn_sync_shell",
+        "description": "String shell option.",
+        "languages": [
+          "typescript"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "typescript"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D212"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "ts-execfile-sync-shell",
+        "path": "fixtures/security_depth_ts_execfile_sync_shell",
+        "description": "Synchronous shell opt in.",
+        "languages": [
+          "typescript"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "typescript"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D212"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "ts-spawn-default-argv",
+        "path": "fixtures/security_depth_ts_spawn_default_argv",
+        "description": "Request argument remains separate argv.",
+        "languages": [
+          "typescript"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "typescript",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D212"
+            ]
+          }
+        }
+      },
+      {
+        "id": "ts-spawn-false-argv",
+        "path": "fixtures/security_depth_ts_spawn_false_argv",
+        "description": "Shell explicitly disabled.",
+        "languages": [
+          "typescript"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "typescript",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D212"
+            ]
+          }
+        }
+      },
+      {
+        "id": "ts-execfile-default-argv",
+        "path": "fixtures/security_depth_ts_execfile_default_argv",
+        "description": "Execfile defaults to argv.",
+        "languages": [
+          "typescript"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "typescript",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D212"
+            ]
+          }
+        }
+      },
+      {
+        "id": "ts-spawn-spread-unsafe",
+        "path": "fixtures/security_depth_ts_spawn_spread_unsafe",
+        "description": "Last own property enables shell.",
+        "languages": [
+          "typescript"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "typescript"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D212"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "ts-spawn-spread-safe",
+        "path": "fixtures/security_depth_ts_spawn_spread_safe",
+        "description": "Last own property disables shell.",
+        "languages": [
+          "typescript"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "typescript",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D212"
+            ]
+          }
+        }
+      },
+      {
+        "id": "ts-spawn-alias-shell",
+        "path": "fixtures/security_depth_ts_spawn_alias_shell",
+        "description": "Imported sink function value alias.",
+        "languages": [
+          "typescript"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "typescript"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D212"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "ts-spawn-shadow-safe",
+        "path": "fixtures/security_depth_ts_spawn_shadow_safe",
+        "description": "Local provider lookalike does not execute.",
+        "languages": [
+          "typescript"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "typescript",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D212"
+            ]
+          }
+        }
+      },
+      {
+        "id": "ts-spawn-literal-shell",
+        "path": "fixtures/security_depth_ts_spawn_literal_shell",
+        "description": "No request-controlled command text.",
+        "languages": [
+          "typescript"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "typescript",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original static-only source contract, labelled before implementation. This is a regression fixture, not an independent application or a runtime exploit test."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D212"
+            ]
+          }
+        }
+      },
+      {
+        "id": "python-pickle-direct-unsafe",
+        "path": "fixtures/security_depth_python_pickle_direct_unsafe",
+        "description": "Request bytes are passed directly to the actual pickle.loads provider.",
+        "languages": [
+          "python"
+        ],
+        "taxonomy": [
+          "deserialization"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D205"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "python-pickle-capture-unsafe",
+        "path": "fixtures/security_depth_python_pickle_capture_unsafe",
+        "description": "A captured pickle.loads function still deserializes request bytes.",
+        "languages": [
+          "python"
+        ],
+        "taxonomy": [
+          "deserialization"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D205"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "python-pickle-capture-rebind-unsafe",
+        "path": "fixtures/security_depth_python_pickle_capture_rebind_unsafe",
+        "description": "Rebinding the pickle module name to json does not change a previously captured pickle.loads callable.",
+        "languages": [
+          "python"
+        ],
+        "taxonomy": [
+          "deserialization"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D205"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "python-pickle-json-rebind-safe",
+        "path": "fixtures/security_depth_python_pickle_json_rebind_safe",
+        "description": "The module name is rebound to json before loads is looked up, so this call parses data without unpickling.",
+        "languages": [
+          "python"
+        ],
+        "taxonomy": [
+          "deserialization",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D205"
+            ]
+          }
+        }
+      },
+      {
+        "id": "python-pickle-custom-local-safe",
+        "path": "fixtures/security_depth_python_pickle_custom_local_safe",
+        "description": "A source-owned DataParser.loads method returns its input and does not unpickle.",
+        "languages": [
+          "python"
+        ],
+        "taxonomy": [
+          "deserialization",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D205"
+            ]
+          }
+        }
+      },
+      {
+        "id": "python-json-capture-safe",
+        "path": "fixtures/security_depth_python_json_capture_safe",
+        "description": "A captured json.loads callable parses JSON and is not a pickle provider.",
+        "languages": [
+          "python"
+        ],
+        "taxonomy": [
+          "deserialization",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D205"
+            ]
+          }
+        }
+      },
+      {
+        "id": "python-eval-direct-unsafe",
+        "path": "fixtures/security_depth_python_eval_direct_unsafe",
+        "description": "Request text reaches the builtin eval function directly.",
+        "languages": [
+          "python"
+        ],
+        "taxonomy": [
+          "command_injection"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D201"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "python-eval-capture-unsafe",
+        "path": "fixtures/security_depth_python_eval_capture_unsafe",
+        "description": "Request text reaches the builtin eval function captured in a variable.",
+        "languages": [
+          "python"
+        ],
+        "taxonomy": [
+          "command_injection"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D201"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "python-eval-custom-function-safe",
+        "path": "fixtures/security_depth_python_eval_custom_function_safe",
+        "description": "A source-owned function named eval returns text without interpreting it.",
+        "languages": [
+          "python"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D201"
+            ]
+          }
+        }
+      },
+      {
+        "id": "python-command-direct-unsafe",
+        "path": "fixtures/security_depth_python_command_direct_unsafe",
+        "description": "Request text reaches the real subprocess.run provider with shell=True.",
+        "languages": [
+          "python"
+        ],
+        "taxonomy": [
+          "command_injection"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D209",
+              "SKY-D212"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "python-command-capture-unsafe",
+        "path": "fixtures/security_depth_python_command_capture_unsafe",
+        "description": "A captured subprocess.run provider still executes request text with shell=True.",
+        "languages": [
+          "python"
+        ],
+        "taxonomy": [
+          "command_injection"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D209",
+              "SKY-D212"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "python-command-custom-local-safe",
+        "path": "fixtures/security_depth_python_command_custom_local_safe",
+        "description": "A source-owned DataSink.run method accepts a shell keyword but only returns its input.",
+        "languages": [
+          "python"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D209",
+              "SKY-D212"
+            ]
+          }
+        }
+      },
+      {
+        "id": "go-parsed-host-only",
+        "path": "fixtures/security_depth_go_parsed_host_only",
+        "description": "An empty parsed Host still permits http:outside.example. A redirect from an HTTPS base can leave the origin; reject nonempty Scheme as well.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "open_redirect",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original independently reviewed guard challenge; labels and RED native outputs preserved before its fix. Static-only; no target execution."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D230"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-parsed-host-and-scheme",
+        "path": "fixtures/security_depth_go_parsed_host_and_scheme",
+        "description": "Both the parsed Host and Scheme must be empty and parsing must succeed before redirecting a relative destination.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "open_redirect",
+          "go",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original independently reviewed guard challenge; labels and RED native outputs preserved before its fix. Static-only; no target execution."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D230"
+            ]
+          }
+        }
+      },
+      {
+        "id": "go-global-allowlist-other-file-mutation",
+        "path": "fixtures/security_depth_go_global_allowlist_other_file_mutation",
+        "description": "A sibling helper inserts the request destination into the package map before its membership check; a literal initializer alone is not an allowlist proof.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "open_redirect",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original independently reviewed guard challenge; labels and RED native outputs preserved before its fix. Static-only; no target execution."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D230"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-global-boundary-other-file-mutation",
+        "path": "fixtures/security_depth_go_global_boundary_other_file_mutation",
+        "description": "A sibling init function replaces the directory boundary with the filesystem root; the original package variable is not a fixed containment boundary.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "path_traversal",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original independently reviewed guard challenge; labels and RED native outputs preserved before its fix. Static-only; no target execution."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D215"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-path-and-late-write",
+        "path": "fixtures/security_depth_go_path_and_late_write",
+        "description": "IsLocal checks the old string; the RHS operand overwrites it before the guarded sink.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "path_traversal",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original independent expected-first guard review, including both unsafe mutations and matched safe order/scope controls. Same source bytes as the frozen review. Static only."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D215"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-path-and-check-after-write",
+        "path": "fixtures/security_depth_go_path_and_check_after_write",
+        "description": "The final check sees the replacement and every path to the sink requires it to be local.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "path_traversal",
+          "go",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original independent expected-first guard review, including both unsafe mutations and matched safe order/scope controls. Same source bytes as the frozen review. Static only."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D215"
+            ]
+          }
+        }
+      },
+      {
+        "id": "go-redirect-and-late-write",
+        "path": "fixtures/security_depth_go_redirect_and_late_write",
+        "description": "The old literal comparison is true before an independent request-controlled destination replaces the string.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "open_redirect",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original independent expected-first guard review, including both unsafe mutations and matched safe order/scope controls. Same source bytes as the frozen review. Static only."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D230"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-redirect-and-check-after-write",
+        "path": "fixtures/security_depth_go_redirect_and_check_after_write",
+        "description": "The final comparison constrains the actual replacement destination to the trusted literal.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "open_redirect",
+          "go",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original independent expected-first guard review, including both unsafe mutations and matched safe order/scope controls. Same source bytes as the frozen review. Static only."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D230"
+            ]
+          }
+        }
+      },
+      {
+        "id": "go-parallel-old-check-new-value",
+        "path": "fixtures/security_depth_go_parallel_old_check_new_value",
+        "description": "Go evaluates both RHS expressions before assigning either LHS: local checks the old name while the sink uses the replacement.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "path_traversal",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original independent expected-first guard review, including both unsafe mutations and matched safe order/scope controls. Same source bytes as the frozen review. Static only."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D215"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-parallel-same-value-check",
+        "path": "fixtures/security_depth_go_parallel_same_value_check",
+        "description": "The parallel assignment preserves the same string that IsLocal checked.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "path_traversal",
+          "go",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original independent expected-first guard review, including both unsafe mutations and matched safe order/scope controls. Same source bytes as the frozen review. Static only."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D215"
+            ]
+          }
+        }
+      },
+      {
+        "id": "go-parsed-url-pointer-alias-cleared",
+        "path": "fixtures/security_depth_go_parsed_url_pointer_alias_cleared",
+        "description": "url.Parse returns a pointer. Clearing Host/Scheme through its alias makes checks pass, while redirect still uses the original unmodified external string.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "open_redirect",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original independent expected-first guard review, including both unsafe mutations and matched safe order/scope controls. Same source bytes as the frozen review. Static only."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D230"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-parsed-url-unmodified",
+        "path": "fixtures/security_depth_go_parsed_url_unmodified",
+        "description": "The actual parsed value is checked for both external authority and scheme before redirecting the original string.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "open_redirect",
+          "go",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original independent expected-first guard review, including both unsafe mutations and matched safe order/scope controls. Same source bytes as the frozen review. Static only."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D230"
+            ]
+          }
+        }
+      },
+      {
+        "id": "go-inner-shadow-guard-outer-unsafe",
+        "path": "fixtures/security_depth_go_inner_shadow_guard_outer_unsafe",
+        "description": "The checked inner name is a different Go lexical variable. The unvalidated outer request value reaches the sink.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "path_traversal",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original independent expected-first guard review, including both unsafe mutations and matched safe order/scope controls. Same source bytes as the frozen review. Static only."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D215"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-outer-guard-inner-shadow-safe",
+        "path": "fixtures/security_depth_go_outer_guard_inner_shadow_safe",
+        "description": "The outer variable remains checked and unchanged; reading an unrelated inner lexical variable cannot invalidate it.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "path_traversal",
+          "go",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original independent expected-first guard review, including both unsafe mutations and matched safe order/scope controls. Same source bytes as the frozen review. Static only."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D215"
+            ]
+          }
+        }
+      },
+      {
+        "id": "typescript-redirect-operator-env-safe",
+        "path": "fixtures/security_depth_typescript_redirect_operator_env_safe",
+        "description": "An unmodified operator environment setting plus a fixed profile path is independent of HTTP request input.",
+        "languages": [
+          "typescript"
+        ],
+        "taxonomy": [
+          "open_redirect",
+          "typescript",
+          "precision_guard"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original operator-origin regression pair. Expectations were written before the fix; exact original forms were sealed with hashes at handoff after development. Not an independent holdout."
+        },
+        "expect": {
+          "present": {},
+          "absent": {
+            "danger": [
+              "SKY-D230"
+            ]
+          }
+        }
+      },
+      {
+        "id": "typescript-redirect-env-request-suffix",
+        "path": "fixtures/security_depth_typescript_redirect_env_request_suffix",
+        "description": "A request value is appended to the operator setting; the environment reference does not sanitize that request input.",
+        "languages": [
+          "typescript"
+        ],
+        "taxonomy": [
+          "open_redirect",
+          "typescript"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original operator-origin regression pair. Expectations were written before the fix; exact original forms were sealed with hashes at handoff after development. Not an independent holdout."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D230"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "typescript-redirect-env-request-write",
+        "path": "fixtures/security_depth_typescript_redirect_env_request_write",
+        "description": "Request input overwrites the environment setting before it reaches the redirect; a static environment key is not a safety proof.",
+        "languages": [
+          "typescript"
+        ],
+        "taxonomy": [
+          "open_redirect",
+          "typescript"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original operator-origin regression pair. Expectations were written before the fix; exact original forms were sealed with hashes at handoff after development. Not an independent holdout."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D230"
+            ]
+          },
+          "absent": {}
+        }
+      }
   ]
 }
