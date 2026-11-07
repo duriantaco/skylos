@@ -919,8 +919,9 @@
     "registry": "Existing catalog/shared-expectation drift remains unrefreshed and unexecuted; not passed."
   },
   "reproduce": [
-    "python scripts/security_benchmark.py --manifest benchmarks/security/manifest.json --json",
-    "python scripts/security_benchmark.py --manifest benchmarks/security/adversarial_manifest.json --json",
+    "From skylos/engines/go: go build -o /tmp/skylos-security-go ./cmd/skylos-go",
+    "SKYLOS_GO_BIN=/tmp/skylos-security-go python scripts/security_benchmark.py --manifest benchmarks/security/manifest.json --json",
+    "SKYLOS_GO_BIN=/tmp/skylos-security-go python scripts/security_benchmark.py --manifest benchmarks/security/adversarial_manifest.json --json",
     "skylos \"$SNAPSHOT\" --danger --format json --no-upload --no-grep-verify --include-generated",
     "bandit -r \"$PYTHON_SNAPSHOT\" -f json --ignore-nosec",
     "semgrep scan --config \"$PINNED_LOCAL_CONFIG\" --oss-only --metrics=off --disable-version-check --disable-nosem --no-git-ignore --jobs 1 --json \"$SNAPSHOT\""
