@@ -39,6 +39,7 @@ from .calls import (
     _kw_equals,
     _qualified_name_from_call as qualified_name_from_call,
     _weak_random_has_security_context,
+    _weak_random_call_name,
     _yaml_load_without_safeloader,
     _ruamel_unsafe_type,
     track_import_aliases,
@@ -165,6 +166,9 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         name = yaml_load_call_name(node, self._module) or name
         name = unpickler_load_name(name, self._unpickler_classes)
         if name:
+            random_name = _weak_random_call_name(
+                node, name, self._module, self.file_path, self._project_root
+            )
             for rule_key, tup in DANGEROUS_CALLS.items():
                 if tup[0] == "SKY-D210":
                     continue
@@ -174,7 +178,8 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                 else:
                     opts = None
 
-                if not _matches_rule(name, rule_key):
+                candidate = random_name if rule_id == "SKY-D250" else name
+                if not _matches_rule(candidate, rule_key):
                     continue
 
                 if rule_key == "pickle.loads" and id(node) in self._safe_pickle_loads:
@@ -207,8 +212,10 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                 ):
                     continue
 
-                if opts and opts.get("production_only") and _is_test_module(
-                    self.file_path
+                if (
+                    opts
+                    and opts.get("production_only")
+                    and _is_test_module(self.file_path)
                 ):
                     continue
 
@@ -342,6 +349,7 @@ _SQL_TOKENS = (
     "objects.raw",
     ".fetch",
     "execute_sql",
+    "query_items",
 )
 _SQL_RAW_TOKENS = (
     ".raw(",
@@ -737,7 +745,9 @@ def _scan_file(file_path: Path, findings, project_root=None):
     scan_trojan_source_text(src, file_path, findings)
     tree = ast.parse(src)
 
-    scan_file_with_tree(tree, file_path, findings, source=src, project_root=project_root)
+    scan_file_with_tree(
+        tree, file_path, findings, source=src, project_root=project_root
+    )
 
     checker = _DangerousCallsChecker(file_path, findings, project_root)
     checker.visit(tree)

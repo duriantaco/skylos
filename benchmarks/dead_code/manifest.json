@@ -652,6 +652,1205 @@
           {"kind": "function", "file": "src/service.ts", "symbol": "formatJob"}
         ]
       }
+    },
+    {
+      "id": "robot-programmatic-library",
+      "path": "fixtures/robot_programmatic_library",
+      "description": "A native Robot library decorator applied as a function retains its keyword and leaves an unregistered helper unused.",
+      "taxonomy": [
+        "framework_precision",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "keywords.py",
+            "symbol": "_reserve"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "keywords.py",
+            "symbol": "measure"
+          }
+        ]
+      }
+    },
+    {
+      "id": "robot-variable-object-methods",
+      "path": "fixtures/robot_variable_methods",
+      "description": "Robot variable expressions call the exact exported object method while unused helpers and another object remain reported.",
+      "taxonomy": [
+        "framework_precision",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "values.py",
+            "symbol": "reserve"
+          },
+          {
+            "kind": "function",
+            "file": "other.py",
+            "symbol": "render"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "values.py",
+            "symbol": "render"
+          }
+        ]
+      }
+    },
+    {
+      "id": "robot-variable-literal-control",
+      "path": "fixtures/robot_variable_literal",
+      "description": "Escaped Robot variable text, comments and a constant-false branch do not call an exported object method.",
+      "taxonomy": [
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "values.py",
+            "symbol": "render"
+          }
+        ],
+        "used": []
+      }
+    },
+    {
+      "id": "wildcard-provider-binding",
+      "path": "fixtures/wildcard_provider_binding",
+      "description": "A package consumer reads the exact wildcard-exported import binding without retaining an unrelated import of the same module.",
+      "taxonomy": [
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "unrelated.py",
+            "symbol": "settings"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "storage/_implementation.py",
+            "symbol": "settings"
+          }
+        ]
+      }
+    },
+    {
+      "id": "finite-globals-dispatch",
+      "path": "fixtures/finite_globals_dispatch",
+      "description": "A reachable caller selects a literal callback name through globals without retaining an unselected callback.",
+      "taxonomy": [
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "scale_b"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "scale_a"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "transform"
+          }
+        ]
+      }
+    },
+    {
+      "id": "finite-inherited-method-registry",
+      "path": "fixtures/finite_method_registry",
+      "description": "An inherited receiver dispatches through a finite tuple-valued method registry and leaves unrelated or unselected methods unused.",
+      "taxonomy": [
+        "dynamic_dispatch",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "render_c"
+          },
+          {
+            "kind": "function",
+            "file": "peers.py",
+            "symbol": "render_a"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "render_a"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "render_b"
+          },
+          {
+            "kind": "class",
+            "file": "app.py",
+            "symbol": "Formatter"
+          },
+          {
+            "kind": "class",
+            "file": "peers.py",
+            "symbol": "Peer"
+          }
+        ]
+      }
+    },
+    {
+      "id": "php-direct-calls",
+      "path": "fixtures/php_direct_calls",
+      "description": "Native PHP source-owned calls and unreferenced siblings.",
+      "languages": [
+        "php"
+      ],
+      "taxonomy": [
+        "php",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only PHP corpus fixture."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "format_value"
+          },
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "normalize_value"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "parse_value"
+          }
+        ]
+      }
+    },
+    {
+      "id": "php-member-calls",
+      "path": "fixtures/php_member_calls",
+      "description": "Native PHP source-owned calls and unreferenced siblings.",
+      "languages": [
+        "php"
+      ],
+      "taxonomy": [
+        "php",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only PHP corpus fixture."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "app.php",
+            "symbol": "Formatter"
+          },
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "format"
+          },
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "summarize"
+          }
+        ]
+      }
+    },
+    {
+      "id": "csharp-private-call-chain",
+      "path": "fixtures/csharp_private_call_chain",
+      "description": "Main constructs Pipeline and calls Emit→Normalize; Parse has no call, registration, reflection or exported API in this executable.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "csharp",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original local static-only language corpus control; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Program.cs",
+            "symbol": "Ledger.Pipeline.Parse"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Program.cs",
+            "symbol": "Ledger.Pipeline"
+          },
+          {
+            "kind": "function",
+            "file": "Program.cs",
+            "symbol": "Ledger.Pipeline.Main"
+          },
+          {
+            "kind": "function",
+            "file": "Program.cs",
+            "symbol": "Ledger.Pipeline.Emit"
+          },
+          {
+            "kind": "function",
+            "file": "Program.cs",
+            "symbol": "Ledger.Pipeline.Normalize"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "kotlin-private-call-chain",
+      "path": "fixtures/kotlin_private_call_chain",
+      "description": "main calls displayRecord→formatRecord; private parseRecord has no caller or exposed entrypoint.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original local static-only language corpus control; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "parseRecord"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "displayRecord"
+          },
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "formatRecord"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "kotlin-owner-call-identity",
+      "path": "fixtures/kotlin_owner_call_identity",
+      "description": "main constructs both classes, but only Primary.run calls its private process. Same-spelled Secondary.process remains uncalled; constructing the owner prevents dead-parent aggregation.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original local static-only language corpus control; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "SecondaryProcessor.process"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Main.kt",
+            "symbol": "PrimaryProcessor"
+          },
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "PrimaryProcessor.run"
+          },
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "PrimaryProcessor.process"
+          },
+          {
+            "kind": "class",
+            "file": "Main.kt",
+            "symbol": "SecondaryProcessor"
+          },
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "main"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "csharp-top-level-owner-identity",
+      "path": "fixtures/csharp_top_level_owner_identity",
+      "description": "Top-level application statements construct both namespace-specific workers; only the Primary owner calls its private Process method.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "csharp",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original local static-only language corpus control; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Secondary.Worker.Process"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker"
+          },
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker.Run"
+          },
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker.Process"
+          },
+          {
+            "kind": "class",
+            "file": "Workers.cs",
+            "symbol": "Secondary.Worker"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "rust-direct-calls",
+      "path": "fixtures/rust_direct_calls",
+      "description": "Closed source calls retain the selected implementation and report unreferenced siblings.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only corpus fixture; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "render"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "summarize"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "rust-member-owners",
+      "path": "fixtures/rust_member_owners",
+      "description": "Concrete receiver calls retain only the selected member owner.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only corpus fixture; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          },
+          {
+            "kind": "class",
+            "file": "main.rs",
+            "symbol": "TextCodec"
+          },
+          {
+            "kind": "class",
+            "file": "main.rs",
+            "symbol": "BinaryCodec"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "TextCodec.process"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "TextCodec.measure"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "TextCodec.snapshot"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "BinaryCodec.process"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "dart-direct-calls",
+      "path": "fixtures/dart_direct_calls",
+      "description": "Closed source calls retain the selected implementation and report unreferenced siblings.",
+      "languages": [
+        "dart"
+      ],
+      "taxonomy": [
+        "dart",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only corpus fixture; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "_render"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "_normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "_summarize"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "dart-member-owners",
+      "path": "fixtures/dart_member_owners",
+      "description": "Concrete receiver calls retain only the selected member owner.",
+      "languages": [
+        "dart"
+      ],
+      "taxonomy": [
+        "dart",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only corpus fixture; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "main"
+          },
+          {
+            "kind": "class",
+            "file": "main.dart",
+            "symbol": "TextCodec"
+          },
+          {
+            "kind": "class",
+            "file": "main.dart",
+            "symbol": "BinaryCodec"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "TextCodec.run"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "TextCodec._process"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "TextCodec._measure"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "TextCodec._snapshot"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "BinaryCodec._process"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "cpp-direct-call-chain",
+      "path": "fixtures/cpp_direct_call_chain",
+      "description": "Main calls render, which calls normalize; file-local summarize has no caller, address reference, macro or exported contract.",
+      "languages": [
+        "cpp"
+      ],
+      "taxonomy": [
+        "cpp",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only C++ free-function corpus control; no compiler or target program is executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "render"
+          },
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "summarize"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cpp-address-taken-callback",
+      "path": "fixtures/cpp_address_taken_callback",
+      "description": "The address of parse_record flows into the called function pointer; serialize_record has no reference. This is file-local free-function coverage, not C++ linking/template/class analysis.",
+      "languages": [
+        "cpp"
+      ],
+      "taxonomy": [
+        "cpp",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only C++ free-function corpus control; no compiler or target program is executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "parse_record"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "serialize_record"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ruby-private-chain",
+      "languages": ["ruby"],
+      "symbol_identity": "qualified",
+      "path": "fixtures/ruby_private_chain",
+      "description": "Ruby private chain; bounded native Ruby source contract.",
+      "taxonomy": [
+        "ruby",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic Ruby source contract, never executed. Expected source/labels frozen before implementation."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "main.rb",
+            "symbol": "Formatter"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Formatter#publish"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Formatter#render"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Formatter#normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Formatter#snapshot"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ruby-member-owners",
+      "languages": ["ruby"],
+      "symbol_identity": "qualified",
+      "path": "fixtures/ruby_member_owners",
+      "description": "Ruby member owners; bounded native Ruby source contract.",
+      "taxonomy": [
+        "ruby",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic Ruby source contract, never executed. Expected source/labels frozen before implementation."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "main.rb",
+            "symbol": "TextCodec"
+          },
+          {
+            "kind": "class",
+            "file": "main.rb",
+            "symbol": "BinaryCodec"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "TextCodec#publish"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "TextCodec#process"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "BinaryCodec#process"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ruby-callback-owner",
+      "languages": ["ruby"],
+      "symbol_identity": "qualified",
+      "path": "fixtures/ruby_callback_owner",
+      "description": "Ruby callback owner; bounded native Ruby source contract.",
+      "taxonomy": [
+        "ruby",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic Ruby source contract, never executed. Expected source/labels frozen before implementation."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "main.rb",
+            "symbol": "PageController"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PageController#show"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PageController#authorize"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PageController#render_text"
+          },
+          {
+            "kind": "class",
+            "file": "main.rb",
+            "symbol": "PlainHandler"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PlainHandler.before_action"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PageController#preview"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PlainHandler#prepare"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ruby-block-scope",
+      "languages": [
+        "ruby"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/ruby_block_scope",
+      "description": "Ruby closure parameter scope and outer method identity.",
+      "taxonomy": [
+        "ruby",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; expected used/unused labels frozen before detector correction. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Worker#normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Worker#unused"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ruby-inherited-callback",
+      "languages": [
+        "ruby"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/ruby_inherited_callback",
+      "description": "Ruby Rails callbacks through source-visible ApplicationController ancestry.",
+      "taxonomy": [
+        "ruby",
+        "precision_guard",
+        "framework_precision"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; expected used/unused labels frozen before detector correction. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "ReportsController#authenticate"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "ReportsController#unused"
+          }
+        ]
+      }
     }
   ]
 }

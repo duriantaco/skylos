@@ -144,6 +144,8 @@ def test_runner_reports_present_and_budget_failures(tmp_path, monkeypatch):
         benchmark,
         "_scan_case",
         lambda case_path, scan=None: {
+            "analysis_summary": {"total_files": 1, "languages": {"Python": 1}},
+            "analysis_errors": [],
             "quality": [],
             "unused_functions": [],
             "unused_imports": [],
@@ -200,6 +202,8 @@ def test_runner_treats_small_budget_overrun_as_latency_penalty(tmp_path, monkeyp
         benchmark,
         "_scan_case",
         lambda case_path, scan=None: {
+            "analysis_summary": {"total_files": 1, "languages": {"Python": 1}},
+            "analysis_errors": [],
             "quality": [{"rule_id": "SKY-L006"}],
         },
     )

@@ -4568,7 +4568,7 @@ class TestDiffFlag:
             patch("skylos.cli.subprocess.run") as mock_git,
             patch("builtins.print", side_effect=lambda x: captured_output.append(x)),
         ):
-            mock_git.return_value = Mock(returncode=0, stdout="src/app.py\n")
+            mock_git.side_effect = _fake_git("src/app.py\0")
             cli.main()
 
         output = json.loads(captured_output[0])
@@ -4671,7 +4671,7 @@ class TestDiffFlag:
             patch("skylos.cli.subprocess.run") as git_diff,
             patch("builtins.print", side_effect=lambda value: printed.append(value)),
         ):
-            git_diff.side_effect = _fake_git("src/dead.py\n")
+            git_diff.side_effect = _fake_git("src/dead.py\0")
             cli.main()
 
         diff_calls = [

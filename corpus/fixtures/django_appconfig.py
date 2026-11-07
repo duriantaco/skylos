@@ -6,3 +6,11 @@ class DemoConfig(AppConfig):
 
     def ready(self):
         return None
+
+
+class StagingConfig:
+    pass
+
+
+def inspect_config():
+    return None

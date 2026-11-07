@@ -4,6 +4,7 @@
 
 ### Bug Fixes
 
+* **sbom:** keep reachable transitive packages out of SPDX root direct-dependency relationships.
 * **sbom:** refuse output paths named after supported Bun, Cargo, Composer, RubyGems, Pub, Gradle, NuGet, Maven, and setuptools dependency inputs.
 
 ## [5.4.0](https://github.com/duriantaco/skylos/compare/v5.3.0...v5.4.0) (2026-11-02)

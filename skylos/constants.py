@@ -27,6 +27,7 @@ SUPPORTED_LANGUAGES = (
     "Go",
     "PHP",
     "Rust",
+    "Ruby",
     "Dart",
     "C#",
     "C++",

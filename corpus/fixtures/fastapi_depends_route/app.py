@@ -10,3 +10,7 @@ def get_db():
 @app.get("/")
 def read_root(db=Depends(get_db)):
     return {"ok": True}
+
+
+def read_status():
+    return {"ok": False}

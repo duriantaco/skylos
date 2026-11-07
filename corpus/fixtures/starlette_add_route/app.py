@@ -8,3 +8,7 @@ async def homepage(request):
 
 
 app.add_route("/", endpoint=homepage, methods=["GET"])
+
+
+async def status_page(request):
+    return str(request)

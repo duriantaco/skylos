@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "kotlin-command-argv",
+      "path": "fixtures/kotlin_command_argv",
+      "description": "The executable and printf format are fixed; request data occupies an argv data element and no shell runs.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "command_injection",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D212"
+          ]
+        }
+      }
+    }
+  ]
+}

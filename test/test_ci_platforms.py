@@ -296,6 +296,10 @@ def _scan_in(monkeypatch, capsys, clone, *args):
     [
         ("--danger", "--gate", "--diff", "--format", "json"),
         ("--danger", "--diff", "--format", "json"),
+        ("--danger", "--gate", "--diff", "origin/develop", "--format", "json"),
+        ("--danger", "--diff", "origin/develop", "--format", "json"),
+        ("--danger", "--gate", "--diff-base", "origin/develop", "--format", "json"),
+        ("--danger", "--diff-base", "origin/develop", "--format", "json"),
     ],
 )
 def test_scan_with_missing_base_prints_the_fetch_line(
@@ -311,6 +315,8 @@ def test_scan_with_missing_base_prints_the_fetch_line(
         "On Jenkins, run this before the scan: git fetch --no-tags origin "
         "+refs/heads/develop:refs/remotes/origin/develop"
     ) in err
+    if "--gate" not in args:
+        assert "Skylos diff unavailable" in err
 
 
 def _render(key, **settings):

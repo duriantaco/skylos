@@ -398,6 +398,10 @@ def _apply_deterministic_rules(
 
 
 def _filter_evidence(finding, results, evidence_filter):
+    # Ruby's native AST follows private calls and dynamic uncertainty. A text
+    # name match cannot prove the receiver, even in another Ruby file.
+    if _finding_language(finding) == "ruby":
+        return GrepSearchResults({})
     filtered = _filter_typescript_binding_evidence(finding, results)
     filtered = _filter_python_local_binding_evidence(finding, filtered)
     if evidence_filter is None:
@@ -456,8 +460,6 @@ def _filter_python_local_binding_evidence(
     )
 
 
-
-
 def _filter_typescript_binding_evidence(
     finding: dict, results: dict[str, list[str]]
 ) -> dict[str, list[str]]:
@@ -509,6 +511,8 @@ def _filter_typescript_binding_evidence(
 def _search_verification_evidence(
     finding, project_root, *, search_all_strategies=False
 ):
+    if _finding_language(finding) == "ruby":
+        return GrepSearchResults({})
     if search_all_strategies and _finding_language(finding) == "python":
         # Search every strategy; retained evidence is still bounded. A lost
         # match must not silently become a negative ownership conclusion.
@@ -706,10 +710,8 @@ def _grep_verify_findings_batched(
         if time.monotonic() >= deadline:
             incomplete_reason = "budget_exhausted"
         else:
-            batch_verdicts, batch_verified, batch_reason = (
-                _execute_pending_findings(
-                    pending, project_root, cache, deadline, evidence_filter
-                )
+            batch_verdicts, batch_verified, batch_reason = _execute_pending_findings(
+                pending, project_root, cache, deadline, evidence_filter
             )
             verdicts.update(batch_verdicts)
             verified.update(batch_verified)

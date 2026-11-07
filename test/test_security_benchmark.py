@@ -70,7 +70,7 @@ def test_slash_only_redirect_guard_accepts_an_external_destination():
     ]
 
 
-def test_security_benchmark_scans_only_fixture_changed_files(tmp_path, monkeypatch):
+def test_security_benchmark_scans_only_fixture_snapshot(tmp_path, monkeypatch):
     case_dir = tmp_path / "case"
     case_dir.mkdir()
     app = case_dir / "app.py"
@@ -91,13 +91,10 @@ def test_security_benchmark_scans_only_fixture_changed_files(tmp_path, monkeypat
     benchmark._scan_case(case_dir)
 
     isolated_path = Path(captured["path"])
-    resolved_isolated_path = isolated_path.resolve(strict=False)
     assert isolated_path.name == case_dir.name
     assert isolated_path != case_dir.resolve()
-    assert {
-        Path(path).relative_to(resolved_isolated_path).as_posix()
-        for path in captured["changed_files"]
-    } == {"app.py"}
+    # The isolated fixture is a full snapshot without a Git comparison base.
+    assert captured["changed_files"] is None
     assert captured["source"] == app.read_text(encoding="utf-8")
     assert not isolated_path.exists()
 
@@ -117,6 +114,8 @@ def test_security_benchmark_does_not_inherit_parent_project_config(tmp_path):
 
     result = benchmark._scan_case(case_dir)
 
+    assert result["analysis_summary"]["total_files"] == 1
+    assert not result.get("analysis_errors")
     assert any(
         finding.get("rule_id") == "SKY-D209" for finding in result.get("danger", [])
     )
@@ -181,7 +180,9 @@ def test_runner_reports_false_positive_and_false_negative(tmp_path, monkeypatch)
         benchmark,
         "_scan_case",
         lambda case_path, scan=None: {
-            "danger": [{"rule_id": "SKY-D216", "message": "SSRF"}]
+            "analysis_summary": {"total_files": 1, "analysis_error_count": 0},
+            "analysis_errors": [],
+            "danger": [{"rule_id": "SKY-D216", "message": "SSRF"}],
         },
     )
 

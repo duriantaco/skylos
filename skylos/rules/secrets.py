@@ -191,6 +191,7 @@ ALLOWED_FILE_SUFFIXES = (
     ".go",
     ".php",
     ".rs",
+    ".rb",
     ".dart",
     ".cs",
     ".kt",

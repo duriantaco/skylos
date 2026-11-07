@@ -1572,6 +1572,1773 @@
           "danger": ["SKY-D215"]
         }
       }
+    },
+    {
+      "id": "kotlin-sql-interpolation",
+      "path": "fixtures/kotlin_sql_interpolation",
+      "description": "Spring request parameter term is interpolated into SQL text passed to JdbcTemplate.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "sql_injection"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D211"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "kotlin-sql-binding",
+      "path": "fixtures/kotlin_sql_binding",
+      "description": "SQL text is fixed and term is a separate bound argument, not SQL syntax.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "sql_injection",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D211"
+          ]
+        }
+      }
+    },
+    {
+      "id": "kotlin-sql-other-scalar",
+      "path": "fixtures/kotlin_sql_other_scalar",
+      "description": "Converting page cannot sanitize the separate request parameter term interpolated into SQL.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "sql_injection"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D211"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "kotlin-command-shell",
+      "path": "fixtures/kotlin_command_shell",
+      "description": "Servlet command data is passed as shell source to sh -c.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "command_injection"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D212"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "kotlin-command-text",
+      "path": "fixtures/kotlin_command_text",
+      "description": "Sink syntax appears only in a comment and a raw string; no process or shell is invoked.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "command_injection",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D212"
+          ]
+        }
+      }
+    },
+    {
+      "id": "kotlin-ssrf-destination",
+      "path": "fixtures/kotlin_ssrf_destination",
+      "description": "Ktor request data controls the complete network destination.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "ssrf"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D216"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "kotlin-ssrf-fixed-origin",
+      "path": "fixtures/kotlin_ssrf_fixed_origin",
+      "description": "Request data is appended after a fixed origin and path prefix; it cannot choose the initial destination host.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "ssrf",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D216"
+          ]
+        }
+      }
+    },
+    {
+      "id": "kotlin-ssrf-unrelated-allowlist",
+      "path": "fixtures/kotlin_ssrf_unrelated_allowlist",
+      "description": "An unused allowlist is not a validation guard for destination.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "ssrf"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D216"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "kotlin-path-segment",
+      "path": "fixtures/kotlin_path_segment",
+      "description": "An unvalidated request segment can contain parent components and reaches a filesystem read.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "path_traversal"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D215"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "kotlin-path-basename",
+      "path": "fixtures/kotlin_path_basename",
+      "description": "The final child argument is only a platform basename, removing path components for this path-traversal contract.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "path_traversal",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D215"
+          ]
+        }
+      }
+    },
+    {
+      "id": "kotlin-path-prefix",
+      "path": "fixtures/kotlin_path_prefix",
+      "description": "The lexical docs/ prefix still permits docs/../../outside; it is not canonical containment.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "path_traversal"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D215"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "kotlin-command-numeric-argv",
+      "path": "fixtures/kotlin_command_numeric_argv",
+      "description": "Request text is parsed to an integer and formatted as a decimal scalar before occupying a fixed-format argv data position.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "command_injection",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus control; numeric conversion is source validation, not a helper-name assertion."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D212"
+          ]
+        }
+      }
+    },
+    {
+      "id": "rust-shell-literal-command",
+      "path": "fixtures/rust_shell_literal_command",
+      "description": "The shell program and complete command text are fixed literals; the existing tainted shell case is its unsafe counterpart.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "command_injection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only CLI/function-local source-to-sink corpus control; no target program or framework is executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D212"
+          ]
+        }
+      }
+    },
+    {
+      "id": "rust-path-argument",
+      "path": "fixtures/rust_path_argument",
+      "description": "A command-line argument controls the complete filesystem path, without a base directory or containment check.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "path_traversal"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only CLI/function-local source-to-sink corpus control; no target program or framework is executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D215"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "dart-process-command-argument",
+      "path": "fixtures/dart_process_command_argument",
+      "description": "A caller-supplied executable controls which program starts; disabling the shell does not restrict executable selection.",
+      "languages": [
+        "dart"
+      ],
+      "taxonomy": [
+        "dart",
+        "command_injection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only CLI/function-local source-to-sink corpus control; no target program or framework is executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D212"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "dart-process-literal-command",
+      "path": "fixtures/dart_process_literal_command",
+      "description": "The executable and all arguments are fixed literals and shell execution is disabled.",
+      "languages": [
+        "dart"
+      ],
+      "taxonomy": [
+        "dart",
+        "command_injection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only CLI/function-local source-to-sink corpus control; no target program or framework is executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D212"
+          ]
+        }
+      }
+    },
+    {
+      "id": "dart-file-path-argument",
+      "path": "fixtures/dart_file_path_argument",
+      "description": "A caller-supplied path flows through an assignment directly to File/readAsString without a containment or basename guard.",
+      "languages": [
+        "dart"
+      ],
+      "taxonomy": [
+        "dart",
+        "path_traversal"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only CLI/function-local source-to-sink corpus control; no target program or framework is executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D215"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "dart-file-basename-guard",
+      "path": "fixtures/dart_file_basename_guard",
+      "description": "The imported path.basename library operation removes directory components before the fixed-base read; this guards path traversal, not separate symlink/file-authorization policy.",
+      "languages": [
+        "dart"
+      ],
+      "taxonomy": [
+        "dart",
+        "path_traversal",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only CLI/function-local source-to-sink corpus control; no target program or framework is executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D215"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ruby-command-shell",
+      "path": "fixtures/ruby_command_shell",
+      "description": "Ruby command shell; bounded native Ruby source contract.",
+      "taxonomy": [
+        "ruby",
+        "command_injection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic Ruby source contract, never executed. Expected source/labels frozen before implementation."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "languages": [
+        "ruby"
+      ],
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D212"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "ruby-command-string",
+      "path": "fixtures/ruby_command_string",
+      "description": "Ruby command string; bounded native Ruby source contract.",
+      "taxonomy": [
+        "ruby",
+        "command_injection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic Ruby source contract, never executed. Expected source/labels frozen before implementation."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "languages": [
+        "ruby"
+      ],
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D212"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "ruby-command-argv",
+      "path": "fixtures/ruby_command_argv",
+      "description": "Ruby command argv; bounded native Ruby source contract.",
+      "taxonomy": [
+        "ruby",
+        "command_injection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic Ruby source contract, never executed. Expected source/labels frozen before implementation."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "languages": [
+        "ruby"
+      ],
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D212"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ruby-command-literal",
+      "path": "fixtures/ruby_command_literal",
+      "description": "Ruby command literal; bounded native Ruby source contract.",
+      "taxonomy": [
+        "ruby",
+        "command_injection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic Ruby source contract, never executed. Expected source/labels frozen before implementation."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "languages": [
+        "ruby"
+      ],
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D212"
+          ]
+        }
+      }
+    },
+    {
+      "id": "tls-corpus-requests-disabled",
+      "path": "fixtures/tls_corpus_requests_disabled",
+      "description": "An ordinary Requests client explicitly disables certificate verification.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "tls_verification"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only TLS contract. Sources and rule/file/line labels frozen before the first scan; target programs are never executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D210"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "tls-corpus-requests-verified",
+      "path": "fixtures/tls_corpus_requests_verified",
+      "description": "The paired Requests client explicitly keeps certificate verification enabled.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "tls_verification",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only TLS contract. Sources and rule/file/line labels frozen before the first scan; target programs are never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D210"
+          ]
+        }
+      }
+    },
+    {
+      "id": "tls-corpus-context-alias-disabled",
+      "path": "fixtures/tls_corpus_context_alias_disabled",
+      "description": "A native client context is made non-verifying through an alias after its secure-looking constructor.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "tls_verification"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only TLS contract. Sources and rule/file/line labels frozen before the first scan; target programs are never executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D210"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "tls-corpus-context-default-verified",
+      "path": "fixtures/tls_corpus_context_default_verified",
+      "description": "A native PROTOCOL_TLS_CLIENT context preserves certificate and hostname verification.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "tls_verification",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only TLS contract. Sources and rule/file/line labels frozen before the first scan; target programs are never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D210"
+          ]
+        }
+      }
+    },
+    {
+      "id": "tls-corpus-inert-helper",
+      "path": "fixtures/tls_corpus_inert_helper",
+      "description": "A local inert helper stores a similarly named option and performs no TLS operation.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "tls_verification",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only TLS contract. Sources and rule/file/line labels frozen before the first scan; target programs are never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D210"
+          ]
+        }
+      }
+    },
+    {
+      "id": "tls-corpus-imported-helper-patch",
+      "path": "fixtures/tls_corpus_imported_helper_patch",
+      "description": "Import-time code replaces the inert-looking helper with BrowserConfig, so the later disabling option retains a finding.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "tls_verification"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only TLS contract. Sources and rule/file/line labels frozen before the first scan; target programs are never executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D210"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "tls-corpus-context-required-tampered",
+      "path": "fixtures/tls_corpus_context_required_tampered",
+      "description": "A replaced CERT_REQUIRED value cannot prove certificate checking is enabled.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "tls_verification"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only TLS contract. Sources and rule/file/line labels frozen before the first scan; target programs are never executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D210"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "tls-corpus-context-explicit-verified",
+      "path": "fixtures/tls_corpus_context_explicit_verified",
+      "description": "A native legacy client context has both chain and hostname verification explicitly enabled.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "tls_verification",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only TLS contract. Sources and rule/file/line labels frozen before the first scan; target programs are never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D210"
+          ]
+        }
+      }
+    },
+    {
+      "id": "tls-corpus-ts-agent-disabled",
+      "path": "fixtures/tls_corpus_ts_agent_disabled",
+      "description": "A native Node HTTPS agent disables certificate verification.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "tls_verification",
+        "typescript"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only TLS contract. Sources and rule/file/line labels frozen before the first scan; target programs are never executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D210"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "tls-corpus-ts-agent-verified",
+      "path": "fixtures/tls_corpus_ts_agent_verified",
+      "description": "The paired native HTTPS agent explicitly enables certificate verification.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "tls_verification",
+        "typescript",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only TLS contract. Sources and rule/file/line labels frozen before the first scan; target programs are never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D210"
+          ]
+        }
+      }
+    },
+    {
+      "id": "tls-corpus-ts-env-disabled",
+      "path": "fixtures/tls_corpus_ts_env_disabled",
+      "description": "The actual Node process TLS verification environment switch is set to zero.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "tls_verification",
+        "typescript"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only TLS contract. Sources and rule/file/line labels frozen before the first scan; target programs are never executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D210"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "tls-corpus-ts-env-verified",
+      "path": "fixtures/tls_corpus_ts_env_verified",
+      "description": "The paired Node process switch is set to one rather than disabling verification.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "tls_verification",
+        "typescript",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only TLS contract. Sources and rule/file/line labels frozen before the first scan; target programs are never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D210"
+          ]
+        }
+      }
+    },
+    {
+      "id": "tls-corpus-ts-string-lookalike",
+      "path": "fixtures/tls_corpus_ts_string_lookalike",
+      "description": "Text describing disabling flags is not an environment assignment or a TLS options object.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "tls_verification",
+        "typescript",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only TLS contract. Sources and rule/file/line labels frozen before the first scan; target programs are never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D210"
+          ]
+        }
+      }
+    },
+    {
+      "id": "crypto-corpus-md5-password",
+      "path": "fixtures/crypto_corpus_md5_password",
+      "description": "Password bytes enter native hashlib.md5; weak algorithm remains a finding.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_hash"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; no fixture code is executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D207"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "crypto-corpus-md5-nonsecurity",
+      "path": "fixtures/crypto_corpus_md5_nonsecurity",
+      "description": "Explicit usedforsecurity=False marks a nonsecurity content fingerprint under the documented opt-out policy.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_hash",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; no fixture code is executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D207"
+          ]
+        }
+      }
+    },
+    {
+      "id": "crypto-corpus-sha1-token-factory",
+      "path": "fixtures/crypto_corpus_sha1_token_factory",
+      "description": "The aliased hashlib.new factory explicitly chooses SHA1 over an API token.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_hash"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; no fixture code is executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D208"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "crypto-corpus-sha1-nonsecurity",
+      "path": "fixtures/crypto_corpus_sha1_nonsecurity",
+      "description": "The native factory uses the explicit nonsecurity opt-out.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_hash",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; no fixture code is executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D208"
+          ]
+        }
+      }
+    },
+    {
+      "id": "crypto-corpus-sha256-password",
+      "path": "fixtures/crypto_corpus_sha256_password",
+      "description": "SHA256 is neither MD5 nor SHA1. This control makes no claim that unsalted SHA256 is an adequate password storage scheme.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_hash",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; no fixture code is executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D207",
+            "SKY-D208"
+          ]
+        }
+      }
+    },
+    {
+      "id": "crypto-corpus-hash-named-lookalike",
+      "path": "fixtures/crypto_corpus_hash_named_lookalike",
+      "description": "A local method named md5 actually uses SHA256 and is not a native weak-hash API.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_hash",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; no fixture code is executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D207",
+            "SKY-D208"
+          ]
+        }
+      }
+    },
+    {
+      "id": "crypto-corpus-misleading-cache-name",
+      "path": "fixtures/crypto_corpus_misleading_cache_name",
+      "description": "A cache_key name does not prove nonsecurity use; the value is a credential and security use is explicitly true.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_hash"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; no fixture code is executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D207"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "crypto-corpus-weak-random-cookie",
+      "path": "fixtures/crypto_corpus_weak_random_cookie",
+      "description": "Native random.getrandbits controls a session cookie value.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; no fixture code is executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D250"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "crypto-corpus-secrets-cookie",
+      "path": "fixtures/crypto_corpus_secrets_cookie",
+      "description": "Native secrets.token_urlsafe supplies cookie entropy.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; no fixture code is executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D250"
+          ]
+        }
+      }
+    },
+    {
+      "id": "crypto-corpus-system-random-cookie",
+      "path": "fixtures/crypto_corpus_system_random_cookie",
+      "description": "SystemRandom uses OS entropy rather than random.Random PRNG state.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; no fixture code is executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D250"
+          ]
+        }
+      }
+    },
+    {
+      "id": "crypto-corpus-retry-jitter",
+      "path": "fixtures/crypto_corpus_retry_jitter",
+      "description": "Randomness changes retry delay, not a credential, cookie or authentication value.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; no fixture code is executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D250"
+          ]
+        }
+      }
+    },
+    {
+      "id": "crypto-corpus-reassigned-strong",
+      "path": "fixtures/crypto_corpus_reassigned_strong",
+      "description": "The weak value is overwritten with strong entropy before the only security sink.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; no fixture code is executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D250"
+          ]
+        }
+      }
+    },
+    {
+      "id": "crypto-corpus-branch-weak-cookie",
+      "path": "fixtures/crypto_corpus_branch_weak_cookie",
+      "description": "One reachable branch replaces strong entropy with random.getrandbits before the cookie sink.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; no fixture code is executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D250"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "crypto-corpus-random-named-lookalike",
+      "path": "fixtures/crypto_corpus_random_named_lookalike",
+      "description": "A local random-named method delegates to secrets.token_urlsafe; no native weak-random source exists.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; no fixture code is executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D250"
+          ]
+        }
+      }
+    },
+    {
+      "id": "logging-corpus-env-token",
+      "path": "fixtures/logging_corpus_env_token",
+      "description": "Credential environment data reaches a real logger unchanged.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source-to-output contract; fixture programs are never executed. Labels were fixed before the native scan."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D251"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "logging-corpus-public-name",
+      "path": "fixtures/logging_corpus_public_name",
+      "description": "A password-like variable name holds an explicitly public literal, not credential source data.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source-to-output contract; fixture programs are never executed. Labels were fixed before the native scan."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D251"
+          ]
+        }
+      }
+    },
+    {
+      "id": "logging-corpus-literal-redaction",
+      "path": "fixtures/logging_corpus_literal_redaction",
+      "description": "The credential binding is overwritten with a literal before output.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source-to-output contract; fixture programs are never executed. Labels were fixed before the native scan."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D251"
+          ]
+        }
+      }
+    },
+    {
+      "id": "logging-corpus-partial-redaction",
+      "path": "fixtures/logging_corpus_partial_redaction",
+      "description": "The branch where redaction is declined still sends the credential to logging.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source-to-output contract; fixture programs are never executed. Labels were fixed before the native scan."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D251"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "logging-corpus-http-status",
+      "path": "fixtures/logging_corpus_http_status",
+      "description": "The HTTP response status is server data; it is not the password in the request payload.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source-to-output contract; fixture programs are never executed. Labels were fixed before the native scan."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D251"
+          ]
+        }
+      }
+    },
+    {
+      "id": "logging-corpus-http-request-url",
+      "path": "fixtures/logging_corpus_http_request_url",
+      "description": "The response URL retains the credential query parameter sent in the request.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source-to-output contract; fixture programs are never executed. Labels were fixed before the native scan."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D251"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "logging-corpus-redact-identity",
+      "path": "fixtures/logging_corpus_redact_identity",
+      "description": "The helper named redact explicitly returns its input unchanged; its name cannot prove redaction.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source-to-output contract; fixture programs are never executed. Labels were fixed before the native scan."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D251"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "logging-corpus-alias-mutation",
+      "path": "fixtures/logging_corpus_alias_mutation",
+      "description": "Mutating the shared container through an alias actually removes the credential before logging.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source-to-output contract; fixture programs are never executed. Labels were fixed before the native scan."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D251"
+          ]
+        }
+      }
+    },
+    {
+      "id": "logging-corpus-alias-rebind",
+      "path": "fixtures/logging_corpus_alias_rebind",
+      "description": "Rebinding the alias leaves the original credential-bearing container unchanged.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source-to-output contract; fixture programs are never executed. Labels were fixed before the native scan."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D251"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "crypto-corpus-alias-rebound-strong",
+      "path": "fixtures/crypto_corpus_alias_rebound_strong",
+      "description": "The weak-module alias is explicitly rebound to native SystemRandom before its only credential sink.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; no fixture code is executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D250"
+          ]
+        }
+      }
+    },
+    {
+      "id": "crypto-corpus-alias-rebound-weak",
+      "path": "fixtures/crypto_corpus_alias_rebound_weak",
+      "description": "The secrets alias is explicitly rebound to native random.Random before its cookie entropy call.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; no fixture code is executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D250"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "review-php-strict-page-allowlist",
+      "path": "fixtures/review_php_strict_page_allowlist",
+      "description": "A strict comparison against two source literals permits only those exact files.",
+      "languages": [
+        "php"
+      ],
+      "taxonomy": [
+        "path_traversal",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Source and expectations fixed before native scan; fixture program never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D255"
+          ]
+        }
+      }
+    },
+    {
+      "id": "review-php-loose-boolean-allowlist",
+      "path": "fixtures/review_php_loose_boolean_allowlist",
+      "description": "Loose PHP comparison against true accepts any nonempty path string; this does not constrain inclusion.",
+      "languages": [
+        "php"
+      ],
+      "taxonomy": [
+        "path_traversal"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Source and expectations fixed before native scan; fixture program never executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D255"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "review-php-tainted-allowlist",
+      "path": "fixtures/review_php_tainted_allowlist",
+      "description": "The attacker controls the allowed element as well as the page; strict equality is not trusted source proof.",
+      "languages": [
+        "php"
+      ],
+      "taxonomy": [
+        "path_traversal"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Source and expectations fixed before native scan; fixture program never executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D255"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "review-csharp-json-data-only",
+      "path": "fixtures/review_csharp_json_data_only",
+      "description": "System.Text.Json uses a source-selected data type and is not the unsafe formatter family.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "deserialization",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Source and expectations fixed before native scan; fixture program never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D233"
+          ]
+        }
+      }
+    },
+    {
+      "id": "review-csharp-formatter-named-lookalike",
+      "path": "fixtures/review_csharp_formatter_named_lookalike",
+      "description": "The source-defined helper returns a new plain object; it is unrelated to the framework formatter despite the same name.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "deserialization",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Source and expectations fixed before native scan; fixture program never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D233"
+          ]
+        }
+      }
+    },
+    {
+      "id": "review-csharp-newtonsoft-unsafe",
+      "path": "fixtures/review_csharp_newtonsoft_unsafe",
+      "description": "Actual Json.NET settings enable unrestricted polymorphic type names.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "deserialization"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Source and expectations fixed before native scan; fixture program never executed."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            "SKY-D233"
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "review-csharp-settings-named-lookalike",
+      "path": "fixtures/review_csharp_settings_named_lookalike",
+      "description": "A source-defined display option and enum perform no deserialization; the property spelling alone is not security evidence.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "deserialization",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only semantic case. Source and expectations fixed before native scan; fixture program never executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D233"
+          ]
+        }
+      }
     }
   ]
 }

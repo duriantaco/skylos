@@ -109,19 +109,28 @@ def test_checked_in_ground_truth_builds_blind_plan_without_duplicate_arms():
     plan = build_plan(MANIFEST_PATH)
 
     assert plan["network_used"] is False
-    assert plan["case_count"] == 21
-    assert plan["request_count"] == 27
-    assert plan["ground_truth_count"] == 124
-    assert plan["decision_count"] == 164
+    assert plan["case_count"] == 44
+    assert plan["request_count"] == 50
+    assert plan["ground_truth_count"] == 220
+    assert plan["decision_count"] == 260
     assert plan["neutralization_status_counts"] == {
         "applied": 6,
-        "skipped": 12,
-        "not_applicable": 3,
+        "skipped": 14,
+        "not_applicable": 24,
     }
-    assert plan["unused_count"] == 47
-    assert plan["used_count"] == 77
+    assert plan["unused_count"] == 75
+    assert plan["used_count"] == 145
     assert plan["model"] == "jev-1.13.0"
     assert plan["endpoint"] == JEV_ENDPOINT
+
+    # Each new Ruby case adds two labels and one original request. Qualified
+    # member names cannot be neutralized, so no duplicate arm is scheduled.
+    ruby_cases = {"ruby-block-scope", "ruby-inherited-callback"}
+    batches = prepare_batches(MANIFEST_PATH, ruby_cases)
+    assert {(batch.case_id, batch.arm, len(batch.questions)) for batch in batches} == {
+        (case_id, "original", 2) for case_id in ruby_cases
+    }
+    assert len(batches) == 2
 
 
 def test_dynamic_dispatch_challenge_builds_single_blind_request():

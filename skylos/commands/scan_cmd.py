@@ -7,6 +7,7 @@ from typing import Sequence
 from rich.markup import escape
 
 from skylos.core.cli_shared import quiet_analyzer_logs
+from skylos.core.diff_scope import DiffBaseUnavailable
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.constants import RIPGREP_INSTALL_URL
 from skylos.ui.dead_code_evidence import dead_code_uncertainty_summary
@@ -471,6 +472,31 @@ def _report_scope_options(args, config):
     }
 
 
+def _changed_file_scope_options(args, config, changed_files):
+    """Automatic exclusions must not hide the files a diff asks us to review."""
+    import os
+
+    from skylos.constants import parse_exclude_folders
+
+    if not (
+        changed_files is not None
+        or getattr(args, "diff", None)
+        or getattr(args, "diff_base", None)
+        or os.environ.get("SKYLOS_DIFF_BASE")
+    ):
+        return {}
+    return {
+        "changed_file_exclude_folders": sorted(
+            parse_exclude_folders(
+                user_exclude_folders=getattr(args, "exclude_folders", None),
+                config_exclude_folders=(config or {}).get("exclude"),
+                use_defaults=False,
+                include_folders=getattr(args, "include_folders", None),
+            )
+        ),
+    }
+
+
 # Commands dispatched by name before a scan path is read (`skylos done`, ...).
 # Removed commands are left out so a typo is never steered to them.
 _REMOVED_COMMANDS = frozenset({"city", "run"})
@@ -562,6 +588,8 @@ def run_scan_command(
             return _run_scan_command(
                 argv, cli_module=cli_module, parser=parser, args=args
             )
+    except DiffBaseUnavailable as exc:
+        cli_module._exit_diff_unavailable(args, str(exc))
     except cli_module.ConfigError as exc:
         cli_module._exit_config_error(parser, args, str(exc))
     finally:
@@ -914,6 +942,9 @@ def _run_scan_command(
     custom_rules_data = pre_analysis.custom_rules_data
     changed_files = pre_analysis.changed_files
     trace_file = pre_analysis.trace_file
+    changed_file_scope_options = _changed_file_scope_options(
+        args, config, changed_files
+    )
 
     from skylos.cloud.gitlab import cli_full_scan
 
@@ -959,6 +990,7 @@ def _run_scan_command(
                 include_review_proofs=include_review_proofs,
                 include_review_context=include_review_context,
                 **report_scope_options,
+                **changed_file_scope_options,
             )
 
         def run_main_analysis_with_notice(progress_callback=None):
@@ -1260,9 +1292,12 @@ def _run_scan_command(
             for category in _DIFF_FINDING_CATEGORIES:
                 items = result.get(category, [])
                 if items:
-                    diff_findings = filter_findings_to_diff(
-                        items, changed_ranges, project_root=diff_root
-                    )
+                    try:
+                        diff_findings = filter_findings_to_diff(
+                            items, changed_ranges, project_root=diff_root
+                        )
+                    except ValueError as exc:
+                        cli_module._exit_diff_unavailable(args, str(exc))
                     diff_finding_ids = {
                         id(item)
                         for item in diff_findings
@@ -2018,6 +2053,10 @@ def _run_scan_command(
                 raise SystemExit(exit_code)
             return
 
+    except DiffBaseUnavailable as exc:
+        cli_module._exit_diff_unavailable(args, str(exc))
+    except cli_module.ConfigError as exc:
+        cli_module._exit_config_error(parser, args, str(exc))
     except Exception as e:
         if gitlab_output:
             # Exceptions can contain scanned text, credentials, or host paths.

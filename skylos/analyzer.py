@@ -647,6 +647,7 @@ _TS_JS_SOURCE_EXTS = (
 )
 _PHP_SOURCE_EXTS = PHP_SOURCE_EXTS
 _RUST_SOURCE_EXTS = (".rs",)
+_RUBY_SOURCE_EXTS = (".rb",)
 _CPP_SOURCE_EXTS = CPP_SOURCE_EXTS + CPP_HEADER_EXTS
 _DART_SOURCE_EXTS = (".dart",)
 _CSHARP_SOURCE_EXTS = (".cs",)
@@ -661,6 +662,7 @@ ANALYZED_SOURCE_SUFFIXES = frozenset(
         ".java",
         *_PHP_SOURCE_EXTS,
         *_RUST_SOURCE_EXTS,
+        *_RUBY_SOURCE_EXTS,
         *_CPP_SOURCE_EXTS,
         *_DART_SOURCE_EXTS,
         *_CSHARP_SOURCE_EXTS,
@@ -675,6 +677,7 @@ _REFERENCE_LANGUAGE_FAMILIES = {
     **dict.fromkeys(_CPP_SOURCE_EXTS, "cpp"),
     **dict.fromkeys(_PHP_SOURCE_EXTS, "php"),
     **dict.fromkeys(_RUST_SOURCE_EXTS, "rust"),
+    **dict.fromkeys(_RUBY_SOURCE_EXTS, "ruby"),
     **dict.fromkeys(_DART_SOURCE_EXTS, "dart"),
     **dict.fromkeys(_CSHARP_SOURCE_EXTS, "csharp"),
     **dict.fromkeys(_KOTLIN_SOURCE_EXTS, "jvm"),
@@ -991,6 +994,8 @@ def _scan_secret_config_candidates(
     exclude_folders: list[str] | None,
     already_scanned: set[str] | None = None,
     analysis_errors: list[dict] | None = None,
+    included_files=(),
+    included_file_exclude_folders=(),
 ) -> list[dict]:
     if _secrets_scan_ctx is None:
         return []
@@ -1000,16 +1005,24 @@ def _scan_secret_config_candidates(
         return []
     scanned = already_scanned if already_scanned is not None else set()
     excluded = set(exclude_folders or [])
+    included = {Path(candidate) for candidate in included_files}
+    included_excluded = set(included_file_exclude_folders or [])
     findings: list[dict] = []
-    for candidate in _iter_secret_config_candidates(root, scan_target, changed_files):
+    from itertools import chain
+
+    for candidate in chain(
+        _iter_secret_config_candidates(root, scan_target, changed_files), included
+    ):
         findings.extend(
             _scan_secret_config_candidate(
                 candidate,
                 root=root,
-                excluded=excluded,
+                excluded=included_excluded if candidate in included else excluded,
                 scanned=scanned,
                 scan_target=scan_target,
-                selected_by_changed_files=changed_files is not None,
+                selected_by_changed_files=(
+                    changed_files is not None or candidate in included
+                ),
                 analysis_errors=analysis_errors,
             )
         )
@@ -1068,8 +1081,7 @@ def _grep_verify_error_payload(
                 f"Install guide: {RIPGREP_INSTALL_URL}."
             )
         message = (
-            f"Grep verification exceeded its {budget:g}-second budget. "
-            f"{outcome} {hint}"
+            f"Grep verification exceeded its {budget:g}-second budget. {outcome} {hint}"
         )
         kind = "grep_budget_exhausted"
     else:
@@ -1794,11 +1806,9 @@ def _annotate_dead_code_evidence_sources(defs, test_flags, framework_flags) -> N
     is_test_file = bool(getattr(test_flags, "is_test_file", False))
 
     for defn in defs:
-        is_fastapi_parameter = (
-            getattr(defn, "type", None) == "parameter"
-            and getattr(defn, "line", None)
-            in getattr(framework_flags, "fastapi_candidate_lines", ())
-        )
+        is_fastapi_parameter = getattr(defn, "type", None) == "parameter" and getattr(
+            defn, "line", None
+        ) in getattr(framework_flags, "fastapi_candidate_lines", ())
         if getattr(defn, "line", None) in framework_lines and not is_fastapi_parameter:
             _mark_evidence_ref(defn, "framework_root")
             signals = getattr(defn, "framework_signals", None)
@@ -1949,6 +1959,7 @@ class Skylos:
         ".java": "Java",
         **dict.fromkeys(PHP_SOURCE_EXTS, "PHP"),
         ".rs": "Rust",
+        ".rb": "Ruby",
         ".cpp": "C++",
         ".cc": "C++",
         ".cxx": "C++",
@@ -2071,10 +2082,16 @@ class Skylos:
             source_key = _source_file_key(getattr(definition, "filename", None))
             source_keys[id(definition)] = source_key
             has_explicit_all = source_key in explicit_exports_by_file
+            local_variable = (
+                definition.type == "variable"
+                and getattr(definition, "python_local_owner", None) is not None
+                and not getattr(definition, "package_namespace_uncertain", False)
+            )
             if (
                 definition.in_init
                 and not has_explicit_all
                 and not definition.simple_name.startswith("_")
+                and not local_variable
             ):
                 definition.is_exported = True
             if not str(definition.filename).endswith(_TS_JS_SOURCE_EXTS):
@@ -2164,7 +2181,10 @@ class Skylos:
             if def_obj.type not in ("function", "method"):
                 continue
             if str(def_obj.filename).endswith(
-                (".java",) + _CSHARP_SOURCE_EXTS + _KOTLIN_SOURCE_EXTS
+                (".java",)
+                + _CSHARP_SOURCE_EXTS
+                + _KOTLIN_SOURCE_EXTS
+                + _RUBY_SOURCE_EXTS
             ):
                 continue
             if "." not in def_obj.name:
@@ -4017,6 +4037,7 @@ class Skylos:
         skip_generated=False,
         generated_keep_paths=None,
         all_advice=True,
+        changed_file_exclude_folders=None,
     ) -> str:
         if not isinstance(path, (str, list, tuple)):
             raise TypeError(
@@ -4092,11 +4113,50 @@ class Skylos:
         }
         self._project_root = project_root
 
+        # CLI/CI callers distinguish explicit policy from automatic defaults.
+        # Re-include only requested changed files, without walking dependency
+        # trees or overriding an operator's explicit exclusions.
+        diff_scope_enabled = changed_file_exclude_folders is not None and (
+            changed_files is not None or bool(os.environ.get("SKYLOS_DIFF_BASE"))
+        )
+        changed_source_paths = []
+        if diff_scope_enabled and not first_is_symlink:
+            from skylos.core.diff_scope import changed_source_files
+
+            changed_source_paths = changed_source_files(
+                path,
+                project_root,
+                changed_files=changed_files,
+                explicit_exclude_folders=changed_file_exclude_folders,
+                diff_base=os.environ.get("SKYLOS_DIFF_BASE"),
+            )
         files, root = self._discover_files(path, exclude_folders)
+        changed_secret_configs = [
+            candidate
+            for candidate in changed_source_paths
+            if _is_secret_config_candidate(candidate)
+        ]
+        if changed_source_paths:
+            files = list(
+                dict.fromkeys(
+                    [
+                        *files,
+                        *(
+                            candidate
+                            for candidate in changed_source_paths
+                            if candidate.suffix.lower() in ANALYZED_SOURCE_SUFFIXES
+                        ),
+                    ]
+                )
+            )
         self._generated_file_scope = None
         if skip_generated and files:
             files, self._generated_file_scope = _skip_generated_files(
-                path, files, root, generated_keep_paths
+                path,
+                files,
+                root,
+                generated_keep_paths,
+                changed_files=changed_source_paths,
             )
         verification_surface_root = _verification_surface_root(
             path,
@@ -4171,7 +4231,12 @@ class Skylos:
         refresh_review_context(changed_files)
 
         if not files:
-            logger.warning(f"No supported source files found in {path}")
+            if enable_danger:
+                logger.info(
+                    f"No application source files in {path}; running configuration checks"
+                )
+            else:
+                logger.warning(f"No supported source files found in {path}")
             no_source_scan_target, no_source_manifest_root = _no_source_danger_targets(
                 _first,
                 Path(root),
@@ -4311,6 +4376,10 @@ class Skylos:
                             scan_paths=path
                             if isinstance(path, (list, tuple))
                             else None,
+                            configuration_coverage=result[
+                                "analysis_summary"
+                            ].setdefault("configuration_coverage", {}),
+                            exclude_folders=exclude_folders,
                         )
                         result["analysis_summary"]["analysis_error_count"] = len(
                             result["analysis_errors"]
@@ -4435,6 +4504,8 @@ class Skylos:
                     changed_files=changed_files,
                     exclude_folders=exclude_folders,
                     analysis_errors=result["analysis_errors"],
+                    included_files=changed_secret_configs,
+                    included_file_exclude_folders=changed_file_exclude_folders,
                 )
                 if secret_findings:
                     result["secrets"] = secret_findings
@@ -4522,8 +4593,11 @@ class Skylos:
             from skylos.reporting.listing import explicit_rule_ids, normalize_rule_ids
 
             result = apply_advice_policy(
-                result, project_root=str(project_root), all_advice=all_advice,
-                explicit_rules=explicit_rule_ids(project_cfg) | normalize_rule_ids(required_config_rules),
+                result,
+                project_root=str(project_root),
+                all_advice=all_advice,
+                explicit_rules=explicit_rule_ids(project_cfg)
+                | normalize_rule_ids(required_config_rules),
             )
             return json.dumps(result)
 
@@ -4643,6 +4717,8 @@ class Skylos:
         all_call_arg_types = defaultdict(list)
         all_top_level_refs = set()
         effective_file_configs = {} if include_review_context else None
+        configuration_coverage = {}
+        ruby_security_coverage = []
 
         injected = False
         if custom_rules_data and not os.getenv("SKYLOS_CUSTOM_RULES"):
@@ -4761,7 +4837,10 @@ class Skylos:
                 file_annotation_coverage = out[28] if len(out) > 28 else None
                 if len(out) > 29:
                     receiver_facts.add(mod, out[29])
-                if isinstance(file_annotation_coverage, dict) and file_annotation_coverage:
+                if (
+                    isinstance(file_annotation_coverage, dict)
+                    and file_annotation_coverage
+                ):
                     self._annotation_coverage.append(
                         {"file": str(file), **file_annotation_coverage}
                     )
@@ -4787,6 +4866,10 @@ class Skylos:
                     empty_file_finding,
                     cfg,
                 ) = out[:12]
+                if enable_danger and str(file).endswith(_RUBY_SOURCE_EXTS):
+                    coverage = getattr(framework_flags, "security_coverage", None)
+                    if isinstance(coverage, dict):
+                        ruby_security_coverage.append({"file": str(file), **coverage})
                 if effective_file_configs is not None:
                     effective_file_configs[str(Path(file).resolve())] = cfg
                     for worker_findings in (q_finds, d_finds, pro_finds):
@@ -4981,25 +5064,18 @@ class Skylos:
 
             if enable_secrets and _secrets_scan_ctx is not None:
                 scanned = set(secret_scanned_files)
-                cfg_candidates = _iter_secret_config_candidates(
-                    root,
-                    secret_scan_target,
-                    secret_changed_files,
-                )
-
-                excluded = set(exclude_folders or [])
-                for cfg_file in cfg_candidates:
-                    all_secrets.extend(
-                        _scan_secret_config_candidate(
-                            Path(cfg_file),
-                            root=root,
-                            excluded=excluded,
-                            scanned=scanned,
-                            scan_target=secret_scan_target,
-                            selected_by_changed_files=secret_changed_files is not None,
-                            analysis_errors=analysis_errors,
-                        )
+                all_secrets.extend(
+                    _scan_secret_config_candidates(
+                        root=root,
+                        scan_target=secret_scan_target,
+                        changed_files=secret_changed_files,
+                        exclude_folders=exclude_folders,
+                        already_scanned=scanned,
+                        analysis_errors=analysis_errors,
+                        included_files=changed_secret_configs,
+                        included_file_exclude_folders=changed_file_exclude_folders,
                     )
+                )
 
         finally:
             if injected:
@@ -5031,8 +5107,7 @@ class Skylos:
                 top = g.fragments[0]
 
                 members_preview = [
-                    clone_member_label(frag, project_root)
-                    for frag in g.fragments[:4]
+                    clone_member_label(frag, project_root) for frag in g.fragments[:4]
                 ]
 
                 if (
@@ -5102,7 +5177,9 @@ class Skylos:
         # CLI callers already resolved config/default excludes and --include.
         # Direct API callers without an effective list still need config excludes.
         regression_excludes = (
-            exclude_folders
+            changed_file_exclude_folders
+            if diff_scope_enabled
+            else exclude_folders
             if exclude_folders is not None
             else (project_cfg.get("exclude") or [])
         )
@@ -5331,6 +5408,8 @@ class Skylos:
                     required_rules=required_config_rules,
                     analysis_errors=analysis_errors,
                     scan_paths=path if isinstance(path, (list, tuple)) else None,
+                    configuration_coverage=configuration_coverage,
+                    exclude_folders=exclude_folders,
                 )
                 if config_findings:
                     all_dangers.extend(config_findings)
@@ -6314,6 +6393,15 @@ class Skylos:
             progress_callback(0, 1, Path("PHASE: transitive dead code"))
         self._propagate_transitive_dead()
         self._prepare_python_reachability(files, analysis_errors, module_names=modmap)
+        from skylos.deadcode.wildcard_provider_imports import (
+            wildcard_provider_import_reads,
+        )
+
+        for key in wildcard_provider_import_reads(
+            self.defs, getattr(self, "_python_reachability_report", None)
+        ):
+            self.defs[key].references = max(1, self.defs[key].references)
+            self.defs[key].heuristic_refs["wildcard_binding_read"] = 1.0
         # Resolve library callbacks from surviving callers, so speculative
         # callback cycles cannot become roots or consume ordinary references.
         self._apply_external_protocol_liveness(files)
@@ -6404,9 +6492,7 @@ class Skylos:
             )
             from skylos.security.static_trace import attach_security_traces
 
-            attach_security_traces(
-                all_dangers, project_root=project_root, files=files
-            )
+            attach_security_traces(all_dangers, project_root=project_root, files=files)
         if enable_danger:
             from skylos.reporting.metadata_paths import relativize_receiver_paths
 
@@ -6444,6 +6530,14 @@ class Skylos:
             include_review_proofs=include_review_proofs,
             review_config=project_cfg,
         )
+        if configuration_coverage:
+            result["analysis_summary"]["configuration_coverage"] = (
+                configuration_coverage
+            )
+        if ruby_security_coverage:
+            result["analysis_summary"]["ruby_security_coverage"] = (
+                ruby_security_coverage
+            )
         if outside_diff_warnings:
             result["analysis_warnings"] = outside_diff_warnings
             result["analysis_summary"]["analysis_warning_count"] = len(
@@ -6468,22 +6562,26 @@ class Skylos:
         from skylos.reporting.listing import explicit_rule_ids, normalize_rule_ids
 
         result = apply_advice_policy(
-            result, project_root=str(project_root), all_advice=all_advice,
-            explicit_rules=explicit_rule_ids(project_cfg) | normalize_rule_ids(required_config_rules),
+            result,
+            project_root=str(project_root),
+            all_advice=all_advice,
+            explicit_rules=explicit_rule_ids(project_cfg)
+            | normalize_rule_ids(required_config_rules),
         )
 
         return json.dumps(result, indent=2)
 
 
-def _skip_generated_files(path, files, root, keep_paths):
+def _skip_generated_files(path, files, root, keep_paths, *, changed_files=()):
     """Apply the default generated/vendored scope (``skylos.core.generated_files``).
 
-    Files named on the command line are never skipped.
+    Files named on the command line or selected for diff review are never skipped.
     """
     from skylos.core.generated_files import partition_generated_files
 
     targets = path if isinstance(path, (list, tuple)) else [path]
     explicit_files = [Path(target) for target in targets if Path(target).is_file()]
+    explicit_files.extend(changed_files)
     return partition_generated_files(
         files,
         Path(root),
@@ -6630,6 +6728,7 @@ def analyze(
     skip_generated=False,
     generated_keep_paths=None,
     all_advice=True,
+    changed_file_exclude_folders=None,
 ) -> str:
     return Skylos().analyze(
         path,
@@ -6657,6 +6756,7 @@ def analyze(
         skip_generated=skip_generated,
         generated_keep_paths=generated_keep_paths,
         all_advice=all_advice,
+        changed_file_exclude_folders=changed_file_exclude_folders,
     )
 
 

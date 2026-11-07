@@ -70,3 +70,24 @@ def test_manifest_runner_reports_absent_violation(tmp_path):
     assert failure["case_id"] == "bad-case"
     assert failure["category"] == "unused_functions"
     assert failure["expected"] == "definitely_dead"
+
+
+def test_each_corpus_family_has_quiet_and_real_finding_controls():
+    cases = load_manifest(MANIFEST_PATH)["cases"]
+
+    def has_real_finding(case):
+        return any(
+            symbols and (category.startswith("unused_") or category == "quality")
+            for category, symbols in case["expect"].get("present", {}).items()
+        )
+
+    for case in cases:
+        family = [
+            peer
+            for peer in cases
+            if peer["id"] == case["id"]
+            or peer.get("paired_with") == case["id"]
+            or case.get("paired_with") == peer["id"]
+        ]
+        assert any(peer["expect"].get("absent") for peer in family), case["id"]
+        assert any(has_real_finding(peer) for peer in family), case["id"]

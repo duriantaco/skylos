@@ -394,6 +394,7 @@ class TestSkylos:
                 ".hxx",
                 *PHP_SOURCE_EXTS,
                 ".rs",
+                ".rb",
                 ".dart",
                 ".cs",
                 ".kt",

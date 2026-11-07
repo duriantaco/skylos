@@ -6,3 +6,6 @@ if TYPE_CHECKING:
 
 def takes_user(user: "User"):
     return user
+
+
+import decimal as decimal_number

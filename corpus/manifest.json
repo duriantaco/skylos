@@ -14,7 +14,11 @@
         "absent": {
           "unused_functions": ["index"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "catalogue"
+          ]
+        }
       }
     },
     {
@@ -30,7 +34,11 @@
         "absent": {
           "unused_functions": ["get_db", "read_root"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "read_status"
+          ]
+        }
       }
     },
     {
@@ -46,7 +54,11 @@
         "absent": {
           "unused_functions": ["add"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "multiply"
+          ]
+        }
       }
     },
     {
@@ -62,7 +74,11 @@
         "absent": {
           "unused_functions": ["my_hook"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "render_report"
+          ]
+        }
       }
     },
     {
@@ -83,7 +99,14 @@
           ],
           "unused_parameters": ["config", "op", "left", "right"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "serialize_comparison"
+          ],
+          "unused_parameters": [
+            "render_style"
+          ]
+        }
       }
     },
     {
@@ -99,7 +122,11 @@
         "absent": {
           "unused_functions": ["main"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "configure_display"
+          ]
+        }
       }
     },
     {
@@ -115,7 +142,11 @@
         "absent": {
           "unused_functions": ["homepage"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "status_page"
+          ]
+        }
       }
     },
     {
@@ -131,7 +162,11 @@
         "absent": {
           "unused_functions": ["before_start"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "after_boot"
+          ]
+        }
       }
     },
     {
@@ -147,7 +182,11 @@
         "absent": {
           "unused_functions": ["home"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "status"
+          ]
+        }
       }
     },
     {
@@ -168,7 +207,11 @@
             "handler500"
           ]
         },
-        "present": {}
+        "present": {
+          "unused_variables": [
+            "fallback_callback"
+          ]
+        }
       }
     },
     {
@@ -182,10 +225,28 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["to_python", "to_url"],
-          "unused_variables": ["regex"]
+          "unused_functions": [
+            "to_python",
+            "to_url",
+            "DateCodec.decode_date",
+            "DateCodec.encode_date"
+          ],
+          "unused_variables": [
+            "regex"
+          ]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "DateParser.decode_date",
+            "DateParser.encode_date"
+          ],
+          "unused_variables": [
+            "date_pattern"
+          ],
+          "unused_classes": [
+            "DateCodec"
+          ]
+        }
       }
     },
     {
@@ -214,7 +275,14 @@
             "control_socket_disable"
           ]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "on_message"
+          ],
+          "unused_variables": [
+            "worker_hint"
+          ]
+        }
       }
     },
     {
@@ -228,10 +296,22 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["get"],
-          "unused_classes": ["HomeView"]
+          "unused_functions": [
+            "get",
+            "PageFormatter.format_page"
+          ],
+          "unused_classes": [
+            "HomeView"
+          ]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "PageRenderer.format_page"
+          ],
+          "unused_classes": [
+            "PageFormatter"
+          ]
+        }
       }
     },
     {
@@ -245,10 +325,22 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["list"],
-          "unused_classes": ["UserViewSet"]
+          "unused_functions": [
+            "list",
+            "PreviewActions.preview"
+          ],
+          "unused_classes": [
+            "UserViewSet"
+          ]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "ActionPreview.preview"
+          ],
+          "unused_classes": [
+            "PreviewActions"
+          ]
+        }
       }
     },
     {
@@ -262,11 +354,28 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["validate_email"],
-          "unused_classes": ["UserSerializer"],
-          "unused_variables": ["email"]
+          "unused_functions": [
+            "validate_email",
+            "ContactRecord.normalize_address"
+          ],
+          "unused_classes": [
+            "UserSerializer"
+          ],
+          "unused_variables": [
+            "email"
+          ]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "ContactFormatter.normalize_address"
+          ],
+          "unused_classes": [
+            "ContactRecord"
+          ],
+          "unused_variables": [
+            "address"
+          ]
+        }
       }
     },
     {
@@ -283,7 +392,15 @@
           "unused_classes": ["User"],
           "unused_variables": ["id", "name"]
         },
-        "present": {}
+        "present": {
+          "unused_classes": [
+            "AuditRow"
+          ],
+          "unused_variables": [
+            "row_id",
+            "title"
+          ]
+        }
       }
     },
     {
@@ -297,10 +414,24 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["create_user", "validate_email"],
-          "unused_classes": ["UserIn"]
+          "unused_functions": [
+            "create_user",
+            "validate_email",
+            "DraftPayload.clean_contact"
+          ],
+          "unused_classes": [
+            "UserIn"
+          ]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "PayloadCleaner.clean_contact",
+            "preview_user"
+          ],
+          "unused_classes": [
+            "DraftPayload"
+          ]
+        }
       }
     },
     {
@@ -312,11 +443,16 @@
         "license": "MIT",
         "notes": "Distilled from official BaseSettings patterns."
       },
+      "fixture_notes": "Settings is explicitly constructed and api_url read, providing a visible consumer of the class and its settings field.",
       "expect": {
         "absent": {
           "unused_classes": ["Settings"]
         },
-        "present": {}
+        "present": {
+          "unused_classes": [
+            "SettingsSnapshot"
+          ]
+        }
       }
     },
     {
@@ -333,7 +469,14 @@
           "unused_functions": ["hello"],
           "unused_parameters": ["request"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "metadata"
+          ],
+          "unused_parameters": [
+            "format_style"
+          ]
+        }
       }
     },
     {
@@ -349,7 +492,12 @@
         "absent": {
           "unused_variables": ["id", "name"]
         },
-        "present": {}
+        "present": {
+          "unused_variables": [
+            "account_id",
+            "display_name"
+          ]
+        }
       }
     },
     {
@@ -382,10 +530,22 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["make_user"],
-          "unused_classes": ["UserSchema"]
+          "unused_functions": [
+            "make_user",
+            "PayloadParser.parse_item"
+          ],
+          "unused_classes": [
+            "UserSchema"
+          ]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "ItemLoader.parse_item"
+          ],
+          "unused_classes": [
+            "PayloadParser"
+          ]
+        }
       }
     },
     {
@@ -402,7 +562,14 @@
           "unused_functions": ["on_connect"],
           "unused_parameters": ["dbapi_connection", "connection_record"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "connection_closed"
+          ],
+          "unused_parameters": [
+            "label_style"
+          ]
+        }
       }
     },
     {
@@ -418,7 +585,11 @@
         "absent": {
           "unused_functions": ["list_users"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "create_report"
+          ]
+        }
       }
     },
     {
@@ -434,7 +605,11 @@
         "absent": {
           "unused_functions": ["read_items"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "search_items"
+          ]
+        }
       }
     },
     {
@@ -450,7 +625,11 @@
         "absent": {
           "unused_functions": ["ping"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "status_payload"
+          ]
+        }
       }
     },
     {
@@ -467,7 +646,14 @@
           "unused_functions": ["handle"],
           "unused_classes": ["Command"]
         },
-        "present": {}
+        "present": {
+          "unused_classes": [
+            "CommandPreview"
+          ],
+          "unused_functions": [
+            "parse_command"
+          ]
+        }
       }
     },
     {
@@ -483,7 +669,11 @@
         "absent": {
           "unused_functions": ["on_save"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "on_archive"
+          ]
+        }
       }
     },
     {
@@ -500,7 +690,14 @@
           "unused_functions": ["on_connect"],
           "unused_parameters": ["dbapi_connection", "connection_record"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "on_disconnect"
+          ],
+          "unused_parameters": [
+            "audit_token"
+          ]
+        }
       }
     },
     {
@@ -517,7 +714,14 @@
           "unused_functions": ["validate_schema"],
           "unused_classes": ["UserSchema"]
         },
-        "present": {}
+        "present": {
+          "unused_classes": [
+            "PayloadValidator"
+          ],
+          "unused_functions": [
+            "validate_record"
+          ]
+        }
       }
     },
     {
@@ -533,7 +737,11 @@
         "absent": {
           "unused_functions": ["timeout"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "interval"
+          ]
+        }
       }
     },
     {
@@ -549,7 +757,11 @@
         "absent": {
           "unused_functions": ["name"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "label"
+          ]
+        }
       }
     },
     {
@@ -565,7 +777,11 @@
         "absent": {
           "unused_imports": ["User"]
         },
-        "present": {}
+        "present": {
+          "unused_imports": [
+            "decimal"
+          ]
+        }
       }
     },
     {
@@ -582,7 +798,14 @@
           "unused_functions": ["public_function"],
           "unused_classes": ["PublicClass"]
         },
-        "present": {}
+        "present": {
+          "unused_classes": [
+            "RecordDraft"
+          ],
+          "unused_functions": [
+            "parse_record"
+          ]
+        }
       }
     },
     {
@@ -598,7 +821,11 @@
         "absent": {
           "unused_functions": ["main"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "inspect_environment"
+          ]
+        }
       }
     },
     {
@@ -614,7 +841,11 @@
         "absent": {
           "unused_classes": ["UserAdmin"]
         },
-        "present": {}
+        "present": {
+          "unused_classes": [
+            "AdminDraft"
+          ]
+        }
       }
     },
     {
@@ -631,7 +862,14 @@
           "unused_classes": ["DemoConfig"],
           "unused_functions": ["ready"]
         },
-        "present": {}
+        "present": {
+          "unused_classes": [
+            "StagingConfig"
+          ],
+          "unused_functions": [
+            "inspect_config"
+          ]
+        }
       }
     },
     {
@@ -648,7 +886,14 @@
           "unused_classes": ["DemoTask"],
           "unused_functions": ["run"]
         },
-        "present": {}
+        "present": {
+          "unused_classes": [
+            "TaskDraft"
+          ],
+          "unused_functions": [
+            "queue_payload"
+          ]
+        }
       }
     },
     {
@@ -660,12 +905,33 @@
         "license": "BSD-3-Clause",
         "notes": "Distilled from Click command subclass patterns."
       },
+      "policy_controls": [
+        {
+          "source_symbol": "format_arguments",
+          "source_reason": "This source-owned function has no caller or registration in the closed fixture. It remains a dead-source control; its expected report disposition is recorded separately.",
+          "present_category": "dead_code_abstentions",
+          "absent_category": "unused_functions",
+          "policy_reason": "weak helper function"
+        }
+      ],
       "expect": {
         "absent": {
-          "unused_classes": ["DemoCommand"],
-          "unused_functions": ["invoke"]
+          "unused_classes": [
+            "DemoCommand"
+          ],
+          "unused_functions": [
+            "invoke",
+            "format_arguments"
+          ]
         },
-        "present": {}
+        "present": {
+          "unused_classes": [
+            "CommandDraft"
+          ],
+          "dead_code_abstentions": [
+            "format_arguments"
+          ]
+        }
       }
     },
     {
@@ -677,12 +943,34 @@
         "license": "MIT",
         "notes": "Distilled from Pydantic computed_field patterns."
       },
+      "policy_controls": [
+        {
+          "source_symbol": "compose_name",
+          "source_reason": "This source-owned function has no caller or registration in the closed fixture. It remains a dead-source control; its expected report disposition is recorded separately.",
+          "present_category": "dead_code_abstentions",
+          "absent_category": "unused_functions",
+          "policy_reason": "weak helper function"
+        }
+      ],
+      "fixture_notes": "Constructed User.model_dump() provides actual model use; compose_name remains an unreferenced helper whose declared policy is recorded separately.",
       "expect": {
         "absent": {
-          "unused_classes": ["User"],
-          "unused_functions": ["full_name"]
+          "unused_classes": [
+            "User"
+          ],
+          "unused_functions": [
+            "full_name",
+            "compose_name"
+          ]
         },
-        "present": {}
+        "present": {
+          "unused_classes": [
+            "PreviewRecord"
+          ],
+          "dead_code_abstentions": [
+            "compose_name"
+          ]
+        }
       }
     },
     {
@@ -694,12 +982,21 @@
         "license": "MIT",
         "notes": "Distilled from field_serializer/model_serializer patterns."
       },
+      "fixture_notes": "User(name=\"Ada\").model_dump() calls the wrap model serializer, whose handler(self) delegate reaches the default field serializer; both original serializer guards have actual runtime-use witnesses.",
       "expect": {
         "absent": {
           "unused_classes": ["User"],
           "unused_functions": ["serialize_name", "serialize_model"]
         },
-        "present": {}
+        "present": {
+          "unused_classes": [
+            "SerializationDraft"
+          ],
+          "unused_functions": [
+            "serialize_title",
+            "serialize_snapshot"
+          ]
+        }
       }
     },
     {
@@ -711,12 +1008,20 @@
         "license": "MIT",
         "notes": "Distilled from Pydantic model lifecycle patterns."
       },
+      "fixture_notes": "User is now explicitly constructed, providing a source witness for model_post_init and class use.",
       "expect": {
         "absent": {
           "unused_classes": ["User"],
           "unused_functions": ["model_post_init"]
         },
-        "present": {}
+        "present": {
+          "unused_classes": [
+            "ProfileDraft"
+          ],
+          "unused_functions": [
+            "prepare_profile"
+          ]
+        }
       }
     },
     {
@@ -732,7 +1037,11 @@
         "absent": {
           "unused_variables": ["RED", "BLUE"]
         },
-        "present": {}
+        "present": {
+          "unused_variables": [
+            "SHADE"
+          ]
+        }
       }
     },
     {
@@ -748,7 +1057,11 @@
         "absent": {
           "unused_functions": ["run"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "process"
+          ]
+        }
       }
     },
     {
@@ -764,7 +1077,11 @@
         "absent": {
           "unused_functions": ["run"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "stop"
+          ]
+        }
       }
     },
     {
@@ -780,7 +1097,11 @@
         "absent": {
           "unused_functions": ["full_name"]
         },
-        "present": {}
+        "present": {
+          "unused_functions": [
+            "render_name"
+          ]
+        }
       }
     },
     {
@@ -792,11 +1113,81 @@
         "license": "PSF-2.0",
         "notes": "Language-level unittest lifecycle pattern."
       },
+      "policy_controls": [
+        {
+          "source_symbol": "prepare_record",
+          "source_reason": "This source-owned function has no caller or registration in the closed fixture. It remains a dead-source control; its expected report disposition is recorded separately.",
+          "present_category": "whitelisted",
+          "absent_category": "unused_functions",
+          "policy_reason": "test-only path"
+        }
+      ],
       "expect": {
         "absent": {
-          "unused_functions": ["setUpClass", "tearDownClass", "setUpModule", "tearDownModule"]
+          "unused_functions": [
+            "setUpClass",
+            "tearDownClass",
+            "setUpModule",
+            "tearDownModule",
+            "prepare_record"
+          ]
+        },
+        "present": {
+          "whitelisted": [
+            "prepare_record"
+          ],
+          "unused_functions": [
+            "publish_record"
+          ]
+        }
+      }
+    },
+    {
+      "id": "runtime-dependent-loop",
+      "path": "fixtures/runtime_loop.py",
+      "description": "A loop whose condition depends on an input collection remains reachable.",
+      "paired_with": "always-false-loop",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Original local control for the Python language-level always-false loop case; no upstream source copied."
+      },
+      "scan": {
+        "enable_quality": true
+      },
+      "expect": {
+        "absent": {
+          "quality": [
+            "SKY-UC001",
+            "while_false"
+          ]
         },
         "present": {}
+      }
+    },
+    {
+      "id": "pydantic-model-use-boundary",
+      "path": "fixtures/pydantic_model_use.py",
+      "description": "Constructed model/settings classes stay live while unreferenced siblings remain findings.",
+      "paired_with": "pydantic-computed-field",
+      "source": {
+        "repo": "https://github.com/pydantic/pydantic",
+        "license": "MIT",
+        "notes": "Original local controls for BaseModel and pydantic-settings BaseSettings construction and field reads; no upstream source copied."
+      },
+      "expect": {
+        "absent": {
+          "unused_classes": [
+            "ProfileModel",
+            "RuntimeSettings"
+          ]
+        },
+        "present": {
+          "unused_classes": [
+            "DraftModel",
+            "DraftSettings"
+          ]
+        }
       }
     }
   ]

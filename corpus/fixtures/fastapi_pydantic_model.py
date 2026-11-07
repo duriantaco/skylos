@@ -16,3 +16,22 @@ class UserIn(BaseModel):
 @app.post("/users")
 def create_user(user: UserIn):
     return {"email": user.email}
+
+
+class DraftPayload:
+    contact: str = ""
+
+    def clean_contact(self, value):
+        return value
+
+
+def preview_user():
+    return {}
+
+
+class PayloadCleaner:
+    def clean_contact(self, value):
+        return value
+
+
+PayloadCleaner()

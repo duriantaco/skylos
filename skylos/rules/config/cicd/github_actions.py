@@ -14,6 +14,7 @@ from typing import Any
 from skylos.core.safe_cache_io import read_project_text_no_symlink, read_text_no_symlink
 from skylos.rules.config.cicd.runner_labels import runner_may_be_self_hosted
 from skylos.rules.config.cicd.template_injection import interpolates_untrusted
+from skylos.rules.config.cicd.workflow_references import local_workflow_reference
 from skylos.rules.config.cicd.yaml_source import YamlSource, load_yaml_with_locations
 from skylos.rules.config.findings import config_finding
 from skylos.security.command_guard import scan_shell_command
@@ -1352,7 +1353,9 @@ def _scan_uses(
 ) -> None:
     workflow_uses = _job_uses_from_workflow(data) if is_workflow else ()
     for job_uses in workflow_uses:
-        if "SKY-D292" not in ignore and not _is_pinned_uses(job_uses):
+        if "SKY-D292" not in ignore and not (
+            _is_pinned_uses(job_uses) or local_workflow_reference(job_uses)
+        ):
             _add_finding(
                 findings,
                 lines,
