@@ -84,8 +84,8 @@ def test_generated_id_suppression_requires_directory_and_nonsensitive_field():
         assert any(finding["provider"] == "generic" for finding in findings)
 
 
-def test_github_and_generic_both_fire_on_token_assignment():
-    src = 'GITHUB_TOKEN = "ghp_1234567890abcdef1234567890abcdef1234"\n'
+def test_github_token_assignment_keeps_provider_without_generic_duplicate():
+    src = 'GITHUB_TOKEN = "g' r"h" 'p_1234567890abcdef1234567890abcdef1234"\n'
 
     findings = list(scan_ctx(_ctx_from_source(src)))
 
@@ -95,7 +95,8 @@ def test_github_and_generic_both_fire_on_token_assignment():
         providers.add(provider_name)
 
     assert "github" in providers
-    assert "generic" in providers
+    assert "generic" not in providers
+    assert len(findings) == 1
 
     github_previews = []
     for finding in findings:
@@ -112,13 +113,16 @@ def test_github_and_generic_both_fire_on_token_assignment():
 @pytest.mark.parametrize(
     "line,provider",
     [
-        ('GITLAB_PAT = "glpat-A1b2C3d4E5f6G7h8I9j0"\n', "gitlab"),
-        ('SLACK_BOT = "xoxb-1234567890ABCDEF12"\n', "slack"),
-        ('STRIPE = "sk_live_a1B2c3D4e5F6g7H8"\n', "stripe"),
-        ('GOOGLE = "AIzaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"\n', "google_api_key"),
-        ('SENDGRID = "SG.AAAAABBBBBCCCCCC.DDDDDEEEEEFFFFFFF"\n', "sendgrid"),
-        ('TWILIO = "SK0123456789abcdef0123456789abcdef"\n', "twilio"),
-        ('PK = "-----BEGIN RSA PRIVATE KEY-----"\n', "private_key_block"),
+        ('GITLAB_PAT = "g' r"l" 'pat-A1b2C3d4E5f6G7h8I9j0"\n', "gitlab"),
+        ('SLACK_BOT = "x' r"o" 'xb-1234567890ABCDEF12"\n', "slack"),
+        ('STRIPE = "s' r"k" '_live_a1B2c3D4e5F6g7H8"\n', "stripe"),
+        (
+            'GOOGLE = "A' r"I" 'zaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"\n',
+            "google_api_key",
+        ),
+        ('SENDGRID = "S' r"G" '.AAAAABBBBBCCCCCC.DDDDDEEEEEFFFFFFF"\n', "sendgrid"),
+        ('TWILIO = "S' r"K" '0123456789abcdef0123456789abcdef"\n', "twilio"),
+        ('PK = "-----B' r"E" 'GIN RSA PRIVATE KEY-----"\n', "private_key_block"),
         (f'AWS_ACCESS_KEY_ID = "{FAKE_AWS_ACCESS_KEY_ID}"\n', "aws_access_key_id"),
     ],
 )
@@ -156,7 +160,7 @@ def test_allowlist_patterns_suppresses_line():
 
 
 def test_scan_comments_toggle():
-    line = "# cred: xoxb-1234567890ABCDEF12 appears only in comment\n"
+    line = "# cred: x" r"o" "xb-1234567890ABCDEF12 appears only in comment\n"
     findings_default = list(scan_ctx(_ctx_from_source(line)))
 
     found_slack = False
@@ -172,13 +176,17 @@ def test_scan_comments_toggle():
 
 
 def test_scan_docstrings_toggle_with_ast():
-    src = '''"""
-module docstring with a GITHUB token: ghp_1234567890abcdef1234567890abcdef1234
+    src = (
+        '''"""
+module docstring with a GITHUB token: g'''
+        r"""h"""
+        '''p_1234567890abcdef1234567890abcdef1234
 """
 def f():
     """Function docstring with AWS <AWS_KEY_ID> key."""
     return 1
 '''.replace("<AWS_KEY_ID>", FAKE_AWS_ACCESS_KEY_ID)
+    )
     f1 = list(scan_ctx(_ctx_from_source(src, with_ast=True)))
     providers_in_f1 = set()
     for finding in f1:
@@ -192,9 +200,14 @@ def f():
 
 def test_suffix_and_path_filters():
     ctx_txt = _ctx_from_source(
-        'X="ghp_1234567890abcdef1234567890abcdef1234"\n', rel="notes.txt"
+        'X="g' r"h" 'p_1234567890abcdef1234567890abcdef1234"\n', rel="notes.txt"
     )
-    assert list(scan_ctx(ctx_txt)) == []
+    text_findings = list(scan_ctx(ctx_txt))
+    assert len(text_findings) == 1
+    assert text_findings[0]["provider"] == "github"
+    assert text_findings[0]["rule_id"] == "SKY-S101"
+    assert text_findings[0]["severity"] == "CRITICAL"
+    assert list(scan_ctx({**ctx_txt, "relpath": "notes.bin"})) == []
 
     ctx_vendor = _ctx_from_source(
         f'X="{FAKE_AWS_ACCESS_KEY_ID}"\n', rel="vendor/app.py"
@@ -786,9 +799,7 @@ def test_yaml_context_budget_fails_closed(monkeypatch):
 
     incomplete = [f for f in findings if f["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"]
     assert incomplete
-    assert incomplete[0]["metadata"]["analysis_diagnostics"] == [
-        "secret_context_limit"
-    ]
+    assert incomplete[0]["metadata"]["analysis_diagnostics"] == ["secret_context_limit"]
     assert "safety limit" in incomplete[0]["message"]
 
 
@@ -2783,9 +2794,9 @@ _KEY_LINE = "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDRS0LmTwUT0iwP\n"
         "keyPEM := []byte(`-----BEGIN PRIVATE KEY-----\n"
         + _KEY_LINE
         + "...\n-----END PRIVATE KEY-----`)\n",
-        "-----BEGIN RSA PRIVATE KEY-----\n"
-        + _KEY_LINE
-        + "…\n-----END RSA PRIVATE KEY-----\n",
+        "-----B"
+        r"E"
+        "GIN RSA PRIVATE KEY-----\n" + _KEY_LINE + "…\n-----END RSA PRIVATE KEY-----\n",
         'key = "-----BEGIN PRIVATE KEY-----\\n' + _KEY_LINE.strip() + "\\n[...]\\n"
         '-----END PRIVATE KEY-----"\n',
     ],
@@ -2797,7 +2808,9 @@ def test_elided_private_key_excerpt_is_not_a_secret(src):
 
 def test_complete_private_key_is_still_reported():
     src = (
-        "-----BEGIN RSA PRIVATE KEY-----\n"
+        "-----B"
+        r"E"
+        "GIN RSA PRIVATE KEY-----\n"
         + _KEY_LINE * 3
         + "-----END RSA PRIVATE KEY-----\n"
         + "...\n"

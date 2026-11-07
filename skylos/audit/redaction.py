@@ -24,6 +24,9 @@ SECRET_KEYWORDS = {
 
 SECRET_PATTERNS = (
     re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr|gpat)_[A-Za-z0-9]{20,}\b"),
+    # Redaction also protects partial and newer token forms; recognition can
+    # require a narrower, documented provider shape without leaking the rest.
+    re.compile(r"(?<!\w)github_pat_[A-Za-z0-9_]{20,}(?!\w)"),
     re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,48}\b"),
     re.compile(r"\bsk_(?:live|test)_[A-Za-z0-9]{16,}\b"),

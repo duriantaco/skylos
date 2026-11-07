@@ -103,6 +103,7 @@ def changed_source_files(
     changed_files,
     explicit_exclude_folders,
     diff_base,
+    include_unsafe_secret_text=False,
 ) -> list[Path]:
     """Return existing, contained changed files allowed by explicit policy.
 
@@ -113,7 +114,11 @@ def changed_source_files(
     """
     # Import at invocation time: the analyzer owns its supported language list
     # and imports this helper while constructing an analysis run.
-    from skylos.analyzer import ANALYZED_SOURCE_SUFFIXES, _is_secret_config_candidate
+    from skylos.analyzer import (
+        ANALYZED_SOURCE_SUFFIXES,
+        _is_provider_only_secret_text,
+        _is_secret_config_candidate,
+    )
 
     root = Path(project_root).expanduser().resolve()
     targets = _scan_targets(scan_paths, root)
@@ -127,6 +132,26 @@ def changed_source_files(
     selected = set()
     for value in candidates:
         candidate = _lexical_repository_path(root, value)
+        if _is_provider_only_secret_text(candidate):
+            if not include_unsafe_secret_text:
+                continue
+            if not candidate.is_relative_to(root):
+                continue
+            for target, _, directory in targets:
+                within_target = (
+                    candidate.is_relative_to(target)
+                    if directory
+                    else candidate == target
+                )
+                scope_root = target if directory else target.parent
+                if within_target and not should_exclude_path(
+                    candidate, scope_root, explicit_exclude_folders
+                ):
+                    # Selection is lexical. The secret collector rejects unsafe
+                    # ancestors/leafs before reading and emits an incomplete scan.
+                    selected.add(candidate)
+                    break
+            continue
         if (
             not (
                 candidate.suffix.lower() in ANALYZED_SOURCE_SUFFIXES

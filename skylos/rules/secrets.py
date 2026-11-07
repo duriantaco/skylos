@@ -18,6 +18,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import unquote
 
 from skylos.rules import secret_shapes
+from skylos.rules.secret_decoding import decode_provider_views
 
 try:
     import yaml
@@ -26,6 +27,7 @@ except ModuleNotFoundError:  # Keep non-YAML scans available in partial installs
 
 __all__ = [
     "is_client_exposure_context",
+    "is_provider_only_secret_name",
     "is_public_client_env_name",
     "iter_sensitive_client_env_references",
     "scan_ctx",
@@ -170,6 +172,11 @@ SECRET_ONLY_FILE_SUFFIXES = (
     ".dockerfile",
 )
 
+PROVIDER_ONLY_FILE_SUFFIXES = (".md", ".txt", ".key", ".pem")
+_PRIVATE_KEY_FILE_NAMES = frozenset(
+    {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "identity"}
+)
+
 ALLOWED_FILE_SUFFIXES = (
     ".py",
     ".pyi",
@@ -209,6 +216,7 @@ ALLOWED_FILE_SUFFIXES = (
     ".hh",
     ".hxx",
     *SECRET_ONLY_FILE_SUFFIXES,
+    *PROVIDER_ONLY_FILE_SUFFIXES,
 )
 SECRET_FILE_NAMES = frozenset({"dockerfile", "containerfile", ".npmrc", ".pypirc"})
 _SHELL_SHEBANG_RE = re.compile(
@@ -224,6 +232,16 @@ def is_secret_scan_name(name: str) -> bool:
         or name.startswith(".env.")
         or lowered in SECRET_FILE_NAMES
         or lowered.startswith("dockerfile.")
+        or is_provider_only_secret_name(name)
+    )
+
+
+def is_provider_only_secret_name(name: str) -> bool:
+    """Text documents and key files need signatures, not generic entropy."""
+    lowered = name.lower()
+    return (
+        lowered.endswith(PROVIDER_ONLY_FILE_SUFFIXES)
+        or lowered in _PRIVATE_KEY_FILE_NAMES
     )
 
 
@@ -262,7 +280,13 @@ def file_starts_like_shell_script(path) -> bool:
 
 
 PROVIDER_PATTERNS = [
-    ("github", re.compile(r"(ghp|gho|ghu|ghs|ghr|gpat)_[A-Za-z0-9]{36,}")),
+    (
+        "github",
+        re.compile(
+            r"(ghp|gho|ghu|ghs|ghr|gpat)_[A-Za-z0-9]{36,}"
+            r"|(?<!\w)github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59}(?!\w)"
+        ),
+    ),
     ("gitlab", re.compile(r"glpat-[A-Za-z0-9_-]{20,}")),
     ("slack", re.compile(r"xox[abprs]-[A-Za-z0-9-]{10,48}")),
     ("stripe", re.compile(r"sk_(live|test)_[A-Za-z0-9]{16,}")),
@@ -291,6 +315,35 @@ CHECKSUM_PROVIDER_PATTERNS = [
     ("twilio", re.compile(r"SK[0-9a-fA-F]{32}")),
 ]
 PROVIDER_PATTERN_BY_NAME = dict(PROVIDER_PATTERNS)
+_DECODE_PROVIDER_PREFIXES = (
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
+    "gpat_",
+    "github_pat_",
+    "glpat-",
+    "xoxa-",
+    "xoxb-",
+    "xoxp-",
+    "xoxr-",
+    "xoxs-",
+    "sk_live_",
+    "sk_test_",
+    "AKIA",
+    "ASIA",
+    "AGPA",
+    "AIDA",
+    "AROA",
+    "AIPA",
+    "AIza",
+    "SG.",
+    "SK",
+    "-----BEGIN ",
+)
+_MAX_SECRET_DECODE_CANDIDATES = 4_096
+_MAX_SECRET_DECODE_BYTES = 2 * 1024 * 1024
 
 _SEGMENTED_SECRET_KEY_RE = (
     r"(?i:(?:[A-Za-z0-9]+[_-])*(?:(?:api|private)[_-]key|token|secret|"
@@ -4291,6 +4344,130 @@ def _is_shell_script_file(rel_name: str, lines) -> bool:
     return is_shell_script_start(lines[0])
 
 
+def _decoded_provider_findings(
+    views, *, line_content, line_number, rel_path, provider_values, raw_findings
+):
+    """Keep one provider finding per source occurrence in each decoding frame."""
+    findings = []
+    occurrences = {}
+    for finding in raw_findings:
+        start, end = finding["col"], finding["end_col"]
+        occurrences[(finding["provider"], (), start)] = (
+            end,
+            line_content[start:end],
+            finding,
+            0,
+        )
+    patterns = (
+        *PROVIDER_PATTERNS,
+        ("private_key_block", secret_shapes.EXTRA_PRIVATE_KEY_HEADER_RE),
+    )
+    for view in views:
+        decoded_lines = view.text.splitlines(True)
+        matches = []
+        offset = 0
+        for number, line in enumerate(decoded_lines, 1):
+            for provider_name, pattern in patterns:
+                for match in pattern.finditer(line):
+                    token = match.group(0)
+                    if _is_obvious_placeholder(token):
+                        continue
+                    if provider_name == "private_key_block":
+                        material = _private_key_material(decoded_lines, number, match)
+                        if material == "documentation" or (
+                            pattern is secret_shapes.EXTRA_PRIVATE_KEY_HEADER_RE
+                            and material != "key"
+                        ):
+                            continue
+                    matches.append(
+                        (
+                            provider_name,
+                            token,
+                            offset + match.start(),
+                            offset + match.end(),
+                        )
+                    )
+            offset += len(line)
+        for provider_name, token, decoded_start, decoded_end in matches:
+            source_start, source_end = view.source_range(decoded_start, decoded_end)
+            identity = (provider_name, view.frame, source_start)
+            previous = occurrences.get(identity)
+            if previous is not None:
+                previous_end, previous_token, previous_finding, previous_depth = (
+                    previous
+                )
+                if source_end < previous_end or (
+                    source_end == previous_end
+                    and (
+                        token == previous_token or len(view.encodings) <= previous_depth
+                    )
+                ):
+                    continue
+            finding = {
+                "rule_id": "SKY-S101",
+                "severity": "CRITICAL",
+                "provider": provider_name,
+                "message": f"Potential {provider_name} secret detected in encoded text",
+                "file": rel_path,
+                "line": line_number,
+                "col": source_start if not view.frame else view.start,
+                "end_col": source_end if not view.frame else view.end,
+                "preview": _mask(token),
+                "decoding": {
+                    "encodings": list(view.encodings),
+                    "decoded_start": decoded_start,
+                    "decoded_end": decoded_end,
+                    "source_path": [
+                        *(list(segment) for segment in view.frame),
+                        [source_start, source_end],
+                    ],
+                },
+            }
+            if previous is None:
+                findings.append(finding)
+            else:
+                # An escape can extend a visible token prefix. Replace that
+                # partial view in place instead of adding a second alert.
+                previous_finding.clear()
+                previous_finding.update(finding)
+                finding = previous_finding
+            occurrences[identity] = (
+                source_end,
+                token,
+                finding,
+                len(view.encodings),
+            )
+            provider_values.add((token, view.start, view.end))
+            if view.complete_value and len(matches) == 1 and view.text.strip() == token:
+                # The complete encoded value holds this one credential. A
+                # larger decoded string may hold other data and stays generic.
+                provider_values.add(
+                    (line_content[view.start : view.end], view.start, view.end)
+                )
+    return findings
+
+
+def _append_secret_decode_incomplete(findings, *, rel_path, line, diagnostics):
+    findings.append(
+        {
+            "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+            "severity": "HIGH",
+            "kind": "processing_error",
+            "message": (
+                "Encoded-secret analysis reached its safety limit; "
+                "ordinary unencoded secret checks still ran."
+            ),
+            "file": rel_path,
+            "line": line,
+            "col": 0,
+            "metadata": {
+                "analysis_complete": False,
+                "analysis_diagnostics": sorted(diagnostics),
+            },
+        }
+    )
+
+
 def scan_ctx(
     ctx,
     *,
@@ -4299,7 +4476,7 @@ def scan_ctx(
     scan_docstrings=True,
     allowlist_patterns=None,
     ignore_path_substrings=None,
-    ignore_tests=True,
+    ignore_tests=False,
 ):
     rel_path = ctx.get("relpath", "")
     rel_name = rel_path.replace("\\", "/").rsplit("/", 1)[-1]
@@ -4310,6 +4487,19 @@ def scan_ctx(
 
     if ignore_tests and IS_TEST_PATH.search(rel_path.replace("\\", "/")):
         return []
+
+    normalized_path = rel_path.replace("\\", "/")
+    in_tests = bool(
+        IS_TEST_PATH.search(normalized_path)
+        or _JS_TEST_PATH.search(normalized_path)
+        or _TEST_FIXTURE_DIR.search(normalized_path)
+        or rel_path.endswith("_test.go")
+    )
+    provider_only = (
+        in_tests
+        or is_provider_only_secret_name(rel_name)
+        or ctx.get("provider_only") is True
+    )
 
     if ignore_path_substrings:
         for substring in ignore_path_substrings:
@@ -4323,32 +4513,40 @@ def scan_ctx(
         client_context_diagnostics,
     ) = _client_exposure_context_with_status(rel_path, file_lines)
     syntax_tree = ctx.get("tree")
-    (
-        approved_structural_spans,
-        structural_context_spans,
-        lock_context_incomplete_line,
-    ) = _lockfile_integrity_spans(rel_name, file_lines)
-    (
-        data_context_spans,
-        data_decoded_context_spans,
-        data_context_incomplete_line,
-    ) = _data_checksum_context_spans(rel_name, file_lines)
-    incompletes = [
-        item
-        for item in (lock_context_incomplete_line, data_context_incomplete_line)
-        if item is not None
-    ]
-    context_incomplete = (
-        min(incompletes, key=_context_incomplete_line) if incompletes else None
-    )
-    decoded_context_spans = _merge_context_maps(
-        structural_context_spans,
-        data_decoded_context_spans,
-    )
-    structural_context_spans = _merge_context_maps(
-        structural_context_spans,
-        data_context_spans,
-    )
+    if provider_only:
+        # No generic entropy candidate needs checksum-suppression proof in
+        # these scopes. Provider signatures still use the bounded decoder.
+        approved_structural_spans = {}
+        structural_context_spans = {}
+        decoded_context_spans = {}
+        context_incomplete = None
+    else:
+        (
+            approved_structural_spans,
+            structural_context_spans,
+            lock_context_incomplete_line,
+        ) = _lockfile_integrity_spans(rel_name, file_lines)
+        (
+            data_context_spans,
+            data_decoded_context_spans,
+            data_context_incomplete_line,
+        ) = _data_checksum_context_spans(rel_name, file_lines)
+        incompletes = [
+            item
+            for item in (lock_context_incomplete_line, data_context_incomplete_line)
+            if item is not None
+        ]
+        context_incomplete = (
+            min(incompletes, key=_context_incomplete_line) if incompletes else None
+        )
+        decoded_context_spans = _merge_context_maps(
+            structural_context_spans,
+            data_decoded_context_spans,
+        )
+        structural_context_spans = _merge_context_maps(
+            structural_context_spans,
+            data_context_spans,
+        )
 
     allowlist_regexes = []
     if allowlist_patterns:
@@ -4369,6 +4567,10 @@ def scan_ctx(
     )
 
     findings = []
+    decode_candidates_left = _MAX_SECRET_DECODE_CANDIDATES
+    decode_bytes_left = _MAX_SECRET_DECODE_BYTES
+    decode_diagnostics = set()
+    decode_incomplete_line = None
     if context_incomplete is not None:
         _append_secret_context_incomplete(
             findings,
@@ -4405,6 +4607,11 @@ def scan_ctx(
         if should_skip_line:
             continue
 
+        # Keep provider evidence once for a credential's exact value and span.
+        # A larger generic value can contain other bytes, so overlap alone is
+        # insufficient to establish that it is the same credential.
+        provider_values = set()
+        line_finding_start = len(findings)
         for provider_name, pattern_regex in PROVIDER_PATTERNS:
             pattern_matches = pattern_regex.finditer(line_content)
 
@@ -4434,8 +4641,37 @@ def scan_ctx(
                     "preview": _mask(potential_secret),
                 }
                 findings.append(finding)
+                provider_values.add(
+                    (potential_secret, col_pos, col_pos + len(potential_secret))
+                )
 
         findings.extend(_extra_private_key_findings(file_lines, line_number, rel_path))
+
+        decoded = decode_provider_views(
+            line_content,
+            provider_prefixes=_DECODE_PROVIDER_PREFIXES,
+            max_candidates=min(128, decode_candidates_left),
+            max_decoded_bytes=min(65_536, decode_bytes_left),
+        )
+        decode_candidates_left = max(
+            0, decode_candidates_left - decoded.candidates_checked
+        )
+        decode_bytes_left = max(0, decode_bytes_left - decoded.decoded_bytes)
+        if not decoded.complete:
+            decode_diagnostics.update(decoded.diagnostics)
+            if decode_incomplete_line is None:
+                decode_incomplete_line = line_number
+        if decoded.views:
+            findings.extend(
+                _decoded_provider_findings(
+                    decoded.views,
+                    line_content=line_content,
+                    line_number=line_number,
+                    rel_path=rel_path,
+                    provider_values=provider_values,
+                    raw_findings=findings[line_finding_start:],
+                )
+            )
 
         decoded_provider_matches = set()
         decoded_contexts = decoded_context_spans.get(line_number, ())
@@ -4455,6 +4691,12 @@ def scan_ctx(
                     for regex_match in pattern_regex.finditer(decoded_value):
                         potential_secret = regex_match.group(0)
                         if potential_secret in raw_provider_tokens:
+                            continue
+                        if (
+                            potential_secret,
+                            context_start,
+                            context_end,
+                        ) in provider_values:
                             continue
                         if _is_obvious_placeholder(potential_secret):
                             continue
@@ -4479,6 +4721,9 @@ def scan_ctx(
                                 "end_col": max(context_start + 1, context_end),
                                 "preview": _mask(potential_secret),
                             }
+                        )
+                        provider_values.add(
+                            (potential_secret, context_start, context_end)
                         )
 
             if not _is_known_integrity_candidate(
@@ -4511,6 +4756,7 @@ def scan_ctx(
                             "preview": _mask(potential_secret),
                         }
                     )
+                    provider_values.add((potential_secret, context_start, context_end))
 
         aws_key_indicators = ["AWS_SECRET_ACCESS_KEY", "aws_secret_access_key"]
         line_has_aws_key = False
@@ -4543,15 +4789,9 @@ def scan_ctx(
                         "entropy": round(tok_entropy, 2),
                     }
                     findings.append(aws_finding)
+                    provider_values.add((aws_token, col_pos, col_pos + len(aws_token)))
 
-        in_tests = bool(
-            IS_TEST_PATH.search(rel_path.replace("\\", "/"))
-            or _JS_TEST_PATH.search(rel_path.replace("\\", "/"))
-            or _TEST_FIXTURE_DIR.search(rel_path.replace("\\", "/"))
-            or rel_path.endswith("_test.go")
-        )
-
-        if in_tests:
+        if provider_only:
             generic_values = ()
         else:
             generic_values = _find_generic_values(
@@ -4581,6 +4821,8 @@ def scan_ctx(
             clean_token = extracted_token.strip()
 
             if not clean_token:
+                continue
+            if (clean_token, col_pos, source_end) in provider_values:
                 continue
             if is_bare and _looks_like_identifier(clean_token):
                 continue
@@ -4653,7 +4895,7 @@ def scan_ctx(
                 generic_finding["severity_reason"] = "no_secret_name"
             findings.append(generic_finding)
 
-        if not in_tests:
+        if not provider_only:
             for scheme, start, end, _password in _url_credential_candidates(
                 line_content
             ):
@@ -4696,6 +4938,14 @@ def scan_ctx(
                             "preview": _mask_credential(_value),
                         }
                     )
+
+    if decode_incomplete_line is not None:
+        _append_secret_decode_incomplete(
+            findings,
+            rel_path=rel_path,
+            line=decode_incomplete_line,
+            diagnostics=decode_diagnostics,
+        )
 
     # A neutral source file can still be a client boundary when its directive
     # prologue exceeded the parse budget. Preserve a blocking result whenever
