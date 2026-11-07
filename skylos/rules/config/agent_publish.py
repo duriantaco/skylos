@@ -501,6 +501,8 @@ def scan_agent_publish(
         return []
     if api is None:
         api = supply_chain.load_ca9_api()
+    if api is None:
+        return []
     scope = _Scope(root_path, changed_files)
     findings: list[dict[str, Any]] = []
     seen: set[tuple] = set()
