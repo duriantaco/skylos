@@ -30,19 +30,38 @@ manager.
 | `SKY-D377` | MEDIUM | An agent or editor config repeats a key (for example two `hooks` blocks): JSON parsers keep different copies, so what you read is not what runs |
 
 The message quotes the exact command or job; JSON keeps ca9's evidence in
-`metadata.evidence` (bounded). Every row must name a regular file inside the
-scanned folder: rows for paths outside it, symlinks or folders are dropped. A
-full scan reads files Git tracks or does not ignore; a diff scan (`--diff`,
-`--diff-base`) reads only files Git tracks. Suppress one rule project-wide with
-`ignore = ["SKY-D367"]` under `[tool.skylos]`.
+`metadata.evidence` (bounded). Every row must name a file inside the scanned
+folder. A full scan reads files Git tracks or does not ignore; a diff scan
+(`--diff`, `--diff-base`) reads only files Git tracks. Suppress one rule
+project-wide with `ignore = ["SKY-D367"]` under `[tool.skylos]`.
+
+Symbolic links: agents and editors follow them, and Git commits them as links,
+so Skylos follows a link to an agent folder or config (`.claude ->
+tools/claude`, `.claude/settings.json -> ../docs/claude.json`) when it stays
+inside the repository. The target must be a file Git lists, and so must every
+link on the way (in a diff scan: committed). The finding names the path the
+client opens (`.claude/settings.json`); a file reached both directly and
+through a link is reported once. Skylos copies such configs for ca9 itself,
+so this works with ca9 releases that do not follow links. A link that leaves
+the repository or points to a missing file cannot be read: a diff that adds or
+changes one stops the gate as incomplete (exit 2, "Agent config link … points
+outside the repository"); an unchanged one does not.
+
+Subfolder scans (`skylos services/api --danger`, monorepo `repo_subpath`
+uploads) also report the repository-level configs at the Git top: workflows
+under `.github/workflows` and `.gitlab-ci.yml`, and agent configs such as
+`.claude/settings.json`, `.mcp.json` or `.vscode/tasks.json` at the top, the
+same way the GitHub Actions rules report repository workflows. Configs in
+other subfolders are not.
 
 ## Gate
 
 | Scan | Built-in `--gate` |
 |:---|:---|
 | Whole repository | `SKY-D365`-`SKY-D374`, `SKY-D376` and `SKY-D377` are listed and not counted, so repositories that already commit agent hooks, unpinned MCP servers or a manually started release workflow keep passing after an upgrade. A CRITICAL `SKY-D365` or `SKY-D366` (a hook that downloads or decodes and runs code) still fails, like any critical issue |
-| Diff (`--diff`, `--diff-base`) | A new or changed `SKY-D365`, `SKY-D366`, `SKY-D368` or `SKY-D370` fails the gate on its own ("supply-chain change to review"). `SKY-D367`, `SKY-D369` and `SKY-D371`-`SKY-D377` count under the normal limits |
-| Baseline (`--baseline`) | As a diff, but only for the rules the baseline covered. `skylos baseline` records them (`rule_coverage` in `.skylos/baseline.json`: the rules the installed ca9 could decide). A baseline saved by an older Skylos, or without those ca9 checks, never saw the hooks and workflows they report, so their findings are listed like a whole-repository scan instead of failing as new. Agent-config and publish-job findings match the baseline by rule, file and the command or job they name, not by line, so editing other settings does not make an old hook new, and changing a hook's command in place does |
+| Diff (`--diff`, `--diff-base`) | A new or changed `SKY-D365`, `SKY-D366`, `SKY-D368` or `SKY-D370` fails the gate on its own ("supply-chain change to review"). `SKY-D367`, `SKY-D369` and `SKY-D371`-`SKY-D377` count under the normal limits. With `--diff`, "new" is decided against the merge base, not by changed lines: ca9 reads the base's agent configs and workflows (copied into a temporary folder), and a finding is new when its rule, path and identity (the event, task, server or job name plus the whole unredacted command) are not among the base's findings. Adding only `"runOptions": {"runOn": "folderOpen"}` to an existing task, or moving a hook from `Stop` to `SessionStart`, is new; reformatting the file is not. When the base cannot be compared (no usable ca9, too many files), every such finding in a changed file counts as new; `analysis_summary.config_diff_basis` says which (`base_findings` or `changed_files`) |
+| Baseline (`--baseline`) | As a diff, but only for the rules the baseline covered. `skylos baseline` records them (`rule_coverage` in `.skylos/baseline.json`: the rules the installed ca9 could decide). A baseline saved by an older Skylos, or without those ca9 checks, never saw the hooks and workflows they report, so their findings are listed like a whole-repository scan instead of failing as new. Agent-config and publish-job findings match the baseline by rule, file and a SHA-256 digest of the event, task or job name and the whole unredacted command, not by line or by the shown value (which is redacted and cut at 200 characters, so a changed URL path or a change after 200 characters would look the same). Editing other settings does not make an old hook new; changing its command, URL or event does. The digest stays local: uploads drop it |
+| Pull-request baseline (`SKYLOS_POLICY_BASE` set, as `skylos cicd init` workflows and every `--gate` run with a diff base do) | The working-tree `.skylos/baseline.json` comes from the pull request, so for the supply-chain trust-boundary rules (`SKY-D365`-`SKY-D377`, malware `SKY-SCA-MAL*` and other advisories marked malicious, `SKY-SCA-UPG001`, `SKY-SCA-HRD001`, `SKY-SCA-AGE001`) a baseline entry counts only when the base commit's `.skylos/baseline.json` has it too. A pull request that adds a hook and its own baseline entry still fails. `analysis_summary.baseline_policy_base` gives `not_honoured` and the base baseline's `status`. Other rules keep using the working-tree baseline, as before |
 
 A synced Skylos Cloud gate counts every finding the way Cloud does, and the
 diff blocks above still apply.
@@ -80,6 +99,10 @@ rules this run's ca9 cannot decide. A whole-repository scan without a usable
 ca9 reports nothing for these rules; with `--sca` it also notes the gap in
 `analysis_summary.supply_chain_checks`.
 
+A diff that adds or changes a link to an agent folder or config that leaves
+the repository or points to a missing file is also an analysis error (exit 2):
+the agent can follow it, Skylos cannot check it.
+
 When a changed workflow calls a reusable workflow or includes a file from
 another repository, ca9's audit is incomplete for it. The verdict shows
 `Workflow audit incomplete for the changed workflows: …` and
@@ -111,5 +134,7 @@ reads them from the working tree, so a change can still edit them there.
 ## Upload
 
 `--sca` scans upload the `ci_inventory` and `agent_hooks` blocks next to the
-dependency inventory; see
+dependency inventory. Both are built from the repository top (the Git root),
+also for a subfolder scan, so a monorepo project does not upload an empty CI
+list; see
 [Supply-chain posture and package inventory](./dependency-scanning.md#supply-chain-posture-and-package-inventory).

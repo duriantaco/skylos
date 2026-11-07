@@ -61,9 +61,11 @@ Individual check flags:
   `SKY-SCA-UPG002` (MEDIUM, listed only) from ca9's old-vs-new package diff,
   mapped by ca9's `block`/`warn` list, never by kind; packages new at HEAD go
   with `old: None`. Unreviewed changes (timeout, unreachable registry, cap,
-  `complete: false`) are an analysis error (diff gate exit 2); internal
-  packages are skipped with a warning. Receipt:
-  `analysis_summary.supply_chain_diff`.
+  `complete: false`) and changed lockfiles Skylos could not read (over 64 MB,
+  a link, parser rejected) are an analysis error (diff gate exit 2); internal
+  packages and private-registry entries are skipped with a warning; changed
+  requirements pins, `pdm.lock` and `pylock.toml` are listed as not read
+  (`checks.upgrades.limitations`). Receipt: `analysis_summary.supply_chain_diff`.
 - Agent/editor config and publish jobs (`--danger`, via ca9):
   `SKY-D365` agent hook, `SKY-D366` folderOpen task, `SKY-D367` unpinned MCP
   server, `SKY-D368` hidden-path MCP server, `SKY-D369` impersonating MCP
@@ -73,6 +75,14 @@ Individual check flags:
   Full scans list D365-D374/D376/D377 without counting them (a CRITICAL hook
   still fails); diff scans fail on a new D365/D366/D368/D370; baseline scans
   only for rules the baseline's `rule_coverage` lists (older baselines: listed).
+  "New" in `--diff` = not among the merge base's findings by rule, path and
+  identity (name + unredacted command), so trigger-only edits count
+  (`config_diff_basis`); baselines match the same identity digest, and under
+  `SKYLOS_POLICY_BASE` supply-chain baseline entries must also be on the base
+  commit. In-repo links to agent configs are followed (reported under the link
+  path); a new link leaving the repo or dangling is exit 2. Subfolder scans
+  include repository-level workflows/agent configs; uploads build
+  `ci_inventory`/`agent_hooks` from the Git top.
   A diff touching agent configs, workflows or lockfiles without a usable ca9 is
   exit 2 ("upgrade ca9"). Commands in findings/uploads are redacted. Hooks written by
   `skylos agent install-hooks` are recognised by exact command grammar and

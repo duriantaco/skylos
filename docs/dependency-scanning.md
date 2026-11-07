@@ -632,17 +632,37 @@ checks are selected; plain CLI runs need the flag. The finding sits on the
 lockfile line of the new version; `metadata.block_deltas` / `warn_deltas`
 name the file inside the package, the line and a redacted snippet;
 `metadata.basis` is `upgrade` or `new_package`. Packages matching
-`internal_packages` are never looked up on a public registry: ca9 skips them,
-and the verdict shows `Upgrade review limited: N of M dependency upgrades
-reviewed (internal_package: K)`. Every other change that was not reviewed (a
-timeout, an unreachable registry, an artifact over the size cap, more than 100
-changes, a pair with no result, a result or receipt with `complete: false`, or
-`incomplete_results` in the receipt) is an analysis error, so a diff gate stops
-as incomplete (exit 2) instead of passing those packages unread; what an
-incomplete result did find is still reported. Each pair carries the lockfile's
-`integrity` hash and, for npm lockfiles, its `resolved` URL, so ca9 reports a
-lockfile that points a version at a different artifact
-(`lockfile_artifact_mismatch`, UPG001).
+`internal_packages`, and entries the lockfile resolves from one of the
+`private_registries`, are never looked up on a public registry: ca9 skips them
+(`internal_package`, `private_registry`), and the verdict shows `Upgrade
+review limited: N of M dependency upgrades reviewed (internal_package: K)`.
+Every other change that was not reviewed (a timeout, an unreachable registry,
+an artifact over the size cap, more than 100 changes, a pair with no result, a
+result or receipt with `complete: false`, or `incomplete_results` in the
+receipt) is an analysis error, so a diff gate stops as incomplete (exit 2)
+instead of passing those packages unread; what an incomplete result did find is
+still reported. Each pair carries the lockfile's `integrity` hash and, where
+the lockfile records it, the download URL (`resolved` from npm and Yarn
+classic lockfiles, pnpm's `resolution.tarball`), so ca9 skips private entries
+and reports a lockfile that points a version at a different artifact
+(`lockfile_artifact_mismatch`, UPG001). The PyPI lockfiles (`uv.lock`,
+`poetry.lock`, `Pipfile.lock`) list entries from a non-public index as not
+checked, so those are never paired or looked up. The policy values come from
+`[tool.skylos.supply_chain]` (the base commit's under `SKYLOS_POLICY_BASE`); a
+ca9 whose `review_upgrades` takes no `options` is still used when none is set,
+and is an analysis error when `internal_packages` or registries are set (it
+would look them up publicly).
+
+Lockfiles are read up to 64 MB per side (other compared files up to 2 MB). A
+lockfile that changed but could not be read (over 64 MB, not UTF-8, a link) or
+that its parser rejects (invalid, or over 100,000 packages) is an analysis
+error naming the file, never a review with nothing to compare; an unchanged
+large lockfile (same Git object on both sides) is not. Changed dependency files
+the review does not read yet (pins in `requirements*.txt` and
+`requirements/*.txt`, hashed or not, `pdm.lock`, `pylock.toml`) are listed in
+`analysis_summary.supply_chain_diff.checks.upgrades.limitations` and in the
+verdict (`Upgrade review did not read changed dependency files: …`); they do
+not fail the gate on their own.
 
 A diff that changes a lockfile (or a requirements file) under `--sca` while ca9
 is not installed, older than API version 1, or lacks `evaluate_packages` is an
@@ -696,16 +716,28 @@ them next to `sca_coverage`:
 - `ci_inventory` (`ca9.ci_inventory.v1`, when ca9 provides it): per CI job
   (GitHub Actions and GitLab CI) the triggers, runner, environment, token
   write scopes and `id-token`, secret names, installs, actions, tools,
-  downloads (hosts only) and publish steps. Skylos Cloud uses it to tell which
-  jobs could have installed a malicious version and what they could reach.
+  downloads (hosts only), publish steps and, from ca9 releases that report
+  it, `indirect` (`{command, line}`: a build runner, container tool,
+  test-environment manager or repository script such as `make`, `docker` or
+  `tox` that may install packages out of sight). Skylos Cloud uses it to tell
+  which jobs could have installed a malicious version and what they could
+  reach.
 - `agent_hooks` (`ca9.agent_hooks.v1`, when ca9 provides it): committed agent
   and editor hooks, MCP servers and base-URL overrides, with redacted commands
-  and `skylos_hook: true` for hooks `skylos agent install-hooks` wrote.
+  and `skylos_hook: true` for hooks `skylos agent install-hooks` wrote. Configs
+  reached through links inside the repository are listed under the link path;
+  a link that leaves the repository or points nowhere makes the block
+  `partial`.
 
-Both are bounded (200 workflows, 500 jobs, 50 items per list, 200 hooks and
-servers, 200-character strings), keep names instead of values (secret names
-that are identifiers, `scheme://host` instead of URLs, token-like text
-replaced by `[redacted]`) and list only files Git tracks or does not ignore.
+Both are built from the repository top (the Git root), also when only a
+subfolder was scanned: workflows and agent configs live there, and a subfolder
+scan would otherwise upload a complete, empty CI list. File paths are
+repository-relative; `analysis_summary.supply_chain_checks` marks such blocks
+`scope: repository`. Both are bounded (200 workflows, 500 jobs, 50 items per
+list, 200 hooks and servers, 200-character strings), keep names instead of
+values (secret names that are identifiers, `scheme://host` instead of URLs,
+token-like text replaced by `[redacted]`) and list only files Git tracks or
+does not ignore.
 `analysis_summary.supply_chain_checks` says when ca9 could not build one; it
 stays local and is not uploaded.
 
@@ -781,6 +813,12 @@ Without an explicit ref in CI, or if the selected baseline cannot be read,
 Skylos retains all dependency findings and records the reason; it never falls
 back to the checkout's dependency baseline. This restriction applies to the
 new dependency baseline support, not the older non-dependency baseline format.
+
+Under `SKYLOS_POLICY_BASE` (pull-request CI, and every `--gate` run with a
+diff base), malware findings (`SKY-SCA-MAL*` and other advisories marked
+malicious) stay excluded only when the base commit's `.skylos/baseline.json`
+holds them too, wherever the dependency baseline was read from; see
+[agent-config rules](./agent-config-and-publish-rules.md#gate).
 
 Uploads, strict scans, synced Cloud policy, and agent pre-commit checks retain
 full dependency findings. A local baseline does not override those policies.

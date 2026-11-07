@@ -816,9 +816,13 @@ matrix combinations that cannot be resolved conservatively still produce a warni
 ### Agent, Editor And Publish-Job Configuration (D365-D377)
 
 Decided by the ca9 engine (`ca9.api.agent_config`, `audit_workflows`,
-`ci_inventory`); Skylos keeps only rows naming a regular file inside the
-scanned folder (a diff scan: files Git tracks; a full scan: files Git tracks or
-does not ignore). See
+`ci_inventory`); Skylos keeps only rows naming a file inside the scanned folder
+that Git lists (a diff scan: files Git tracks; a full scan: files Git tracks or
+does not ignore). Links to agent folders or configs that stay inside the
+repository are followed and reported under the path the client opens, once per
+real file; a new or changed link that leaves the repository or points nowhere
+is an analysis error in a diff (exit 2). A subfolder scan also reports the
+repository-level workflows and agent configs at the Git top. See
 [docs/agent-config-and-publish-rules.md](./docs/agent-config-and-publish-rules.md).
 
 | ID | Severity | Name | Files |
@@ -840,13 +844,22 @@ does not ignore). See
 Built-in gate: in a whole-repository scan D365-D374, D376 and D377 are listed
 and not counted, except a CRITICAL D365/D366. In a diff scan D365, D366, D368
 and D370 fail the gate on their own; D367, D369 and D371-D377 count under the
-normal limits. A baseline scan does the same only for the rules its baseline
-covered (`rule_coverage`, recorded by `skylos baseline` from the installed
-ca9); with an older baseline these findings are listed, not new. They match
-the baseline by rule, file and command or job, not by line. A diff that changes
-agent/editor configs, workflows or lockfiles without a usable ca9 (missing, too
-old, or lacking the function) is an analysis error ("upgrade ca9"), never a
-pass. Commands in findings and uploads are redacted.
+normal limits. With `--diff` a finding is new when its rule, path and identity
+(event, task, server or job name plus the whole unredacted command) are not
+among the merge base's findings, not by changed lines, so a `folderOpen`
+trigger added to an existing task or a hook moved to `SessionStart` is new;
+without a comparable base every such finding in a changed file counts
+(`analysis_summary.config_diff_basis`). A baseline scan does the same only for
+the rules its baseline covered (`rule_coverage`, recorded by `skylos baseline`
+from the installed ca9); with an older baseline these findings are listed, not
+new. They match the baseline by rule, file and a SHA-256 digest of that
+identity (kept local, never uploaded), not by line or the redacted shown value.
+Under `SKYLOS_POLICY_BASE` (pull-request CI and gated diffs) a baseline entry
+for D365-D377, malware, UPG001, HRD001 or AGE001 counts only when the base
+commit's baseline has it too. A diff that changes agent/editor configs,
+workflows or lockfiles without a usable ca9 (missing, too old, or lacking the
+function) is an analysis error ("upgrade ca9"), never a pass. Commands in
+findings and uploads are redacted.
 
 ### AI Agents In GitHub Actions (D350-D354)
 
@@ -2234,7 +2247,7 @@ suppression, integrations, and public references.
 | SKY-SCA-AGE001 | HIGH | Dependency version younger than the release-age window | The locked version was published less than `min_release_age_hours` ago; scans check this only when the policy sets it |
 | SKY-SCA-MAL000 | CRITICAL | Malware feed match without an advisory ID | Offline fallback: the installed ca9 malware feed matched a package but named no advisory ID (matches with an ID use `SKY-SCA-<id>`) |
 | SKY-SCA-UPG001 | CRITICAL | Dependency upgrade adds install-time or start-up code | `--diff`/`--diff-base` with `--review-upgrades`: an npm or PyPI lockfile version change whose new artifact adds a `.pth` or `sitecustomize` with code, an install/prepare hook, decode-and-exec, a Git/URL dependency, shipped agent/editor hooks, archive entries that install to the same path or differ only by case, an executable named like a system command, sourceless bytecode run at import or start-up, or an artifact that does not match the lockfile's integrity (`ca9.api.review_upgrades`); evidence names the file inside the package and a redacted snippet. Fails a diff gate on its own |
-| SKY-SCA-UPG002 | MEDIUM | Dependency upgrade adds code worth reviewing | As UPG001 when only ca9's `warn` list has deltas (new import-time network or exec, obfuscation growth, a native binary, a publisher change, changed install-time code, or the risky code a newly added package ships, install hooks included); findings follow ca9's lists, never the delta kind. Listed, not counted by the built-in gate. Changes ca9 did not review (timeout, unreachable registry, size cap, over 100, `complete: false`) are an analysis error (diff gate incomplete); internal packages are skipped with a warning |
+| SKY-SCA-UPG002 | MEDIUM | Dependency upgrade adds code worth reviewing | As UPG001 when only ca9's `warn` list has deltas (new import-time network or exec, obfuscation growth, a native binary, a publisher change, changed install-time code, or the risky code a newly added package ships, install hooks included); findings follow ca9's lists, never the delta kind. Listed, not counted by the built-in gate. Changes ca9 did not review (timeout, unreachable registry, size cap, over 100, `complete: false`) and changed lockfiles Skylos could not read (over 64 MB, a link, rejected by the parser) are an analysis error (diff gate incomplete); internal packages and entries the lockfile resolves from a private registry are skipped with a warning; changed requirements pins, `pdm.lock` and `pylock.toml` are listed as not read |
 | SKY-SCA-HRD001 | HIGH | Change weakens install hardening | `--diff`/`--diff-base` with `--sca`: `ca9.api.hardening_regressions` between the merge base and the tracked working tree (cooldown removed, lowered or bypassed for a package, `ignore-scripts` off, `allowBuilds`/`allowScripts`/`trustedDependencies` additions, `strictDepBuilds` off, SHA-pinned action moved to a tag). Packages in the base commit's `[tool.skylos.supply_chain.hardening_exceptions]` with a reason are skipped. Fails a diff gate on its own; a `check_failed` comparison is an analysis error (incomplete), never a pass |
 
 `SKY-SCA-LIC*` IDs are reserved for license policy and are not OSV advisory IDs.
