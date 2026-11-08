@@ -18,6 +18,7 @@ credential:
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import gzip
 import json
@@ -94,6 +95,11 @@ def add_pr_upload_parsers(subparsers) -> None:
     for flag in CATEGORY_FLAGS:
         scan.add_argument(flag, action="store_true", help=f"Pass {flag} to the scan")
     scan.add_argument(
+        "--review-upgrades",
+        action="store_true",
+        help="Pass --review-upgrades to the scan (diff upgraded packages against their previous release)",
+    )
+    scan.add_argument(
         "--policy", required=True, help="Folder written by skylos cicd pr-policy"
     )
     scan.add_argument(
@@ -136,6 +142,8 @@ def run_pr_upload_command(args, *, console: Console | None = None) -> int:
                 for flag in CATEGORY_FLAGS
                 if getattr(args, flag.lstrip("-").replace("-", "_"))
             ]
+            if getattr(args, "review_upgrades", False):
+                flags.append("--review-upgrades")
             return run_pr_scan(
                 args.path,
                 flags,
@@ -380,10 +388,8 @@ def restore_inline_ignored_findings(result: dict) -> tuple[int, int]:
     return restored, dead_code
 
 
-def _run_scan(target: str, flags: list[str], raw_output: Path, env: dict) -> None:
-    import skylos.cli as cli_module
-    from skylos.commands.scan_cmd import run_scan_command
-
+@contextlib.contextmanager
+def _scan_environment(env: dict):
     previous = {name: os.environ.get(name) for name in env}
     try:
         for name, value in env.items():
@@ -391,6 +397,20 @@ def _run_scan(target: str, flags: list[str], raw_output: Path, env: dict) -> Non
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def _run_scan(target: str, flags: list[str], raw_output: Path, env: dict) -> None:
+    import skylos.cli as cli_module
+    from skylos.commands.scan_cmd import run_scan_command
+
+    with _scan_environment(env):
         try:
             run_scan_command(
                 [target, *flags, "--json", "-o", str(raw_output)],
@@ -401,12 +421,37 @@ def _run_scan(target: str, flags: list[str], raw_output: Path, env: dict) -> Non
                 raise PrUploadError(
                     f"The pull request scan failed (exit {exc.code})"
                 ) from exc
-    finally:
-        for name, value in previous.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
+
+
+def _add_pr_supply_chain_findings(
+    result: dict, target: str, flags: list[str], base_sha: str, env: dict
+) -> None:
+    """Base-vs-head supply-chain checks for the uploaded pull-request scan.
+
+    The pull-request scan is a full scan, so the diff-only checks
+    (SKY-SCA-HRD001/UPG001/UPG002, SKY-D375) run here against the pull
+    request's base commit, under the same base-controlled policy, so Skylos
+    Cloud receives the findings the CI gate job reports.
+    """
+    from types import SimpleNamespace
+
+    from skylos.commands.scan_cmd import _add_supply_chain_diff_findings
+    from skylos.config import load_config
+
+    words = set(flags)
+    everything = bool(words & {"-a", "--all"})
+    args = SimpleNamespace(
+        sca=everything or "--sca" in words,
+        danger=everything or "--danger" in words,
+        review_upgrades="--review-upgrades" in words,
+    )
+    if not (args.sca or args.danger):
+        return
+    with _scan_environment(env):
+        config = load_config(target)
+        _add_supply_chain_diff_findings(
+            result, Path(os.path.realpath(target)), base_sha, args, config
+        )
 
 
 def _load_scan_result(path: Path) -> dict:
@@ -493,17 +538,14 @@ def run_pr_scan(
         custom_rules = json.dumps(rules)
     with tempfile.TemporaryDirectory(prefix="skylos-pr-scan-") as scratch:
         raw_output = Path(os.path.realpath(scratch)) / "scan.json"
-        _run_scan(
-            target,
-            flags,
-            raw_output,
-            {
-                POLICY_BASE_ENV_VAR: policy_base,
-                SYNCED_POLICY_ENV_VAR: str(config_path),
-                "SKYLOS_CUSTOM_RULES": custom_rules,
-            },
-        )
+        scan_env = {
+            POLICY_BASE_ENV_VAR: policy_base,
+            SYNCED_POLICY_ENV_VAR: str(config_path),
+            "SKYLOS_CUSTOM_RULES": custom_rules,
+        }
+        _run_scan(target, flags, raw_output, scan_env)
         result = _load_scan_result(raw_output)
+        _add_pr_supply_chain_findings(result, target, flags, base_sha, scan_env)
 
     restored, ignored_dead_code = restore_inline_ignored_findings(result)
     result["project_root"] = project_root

@@ -61,7 +61,7 @@ def test_dart_grammar_is_an_optional_extra(extra):
     ("package", "published_minimum", "missing_version"),
     [
         ("inquirer", "3.1.0", "3.0.3"),
-        ("ca9", "0.6.0", "0.1.0"),
+        ("ca9", "0.7.0", "0.6.0"),
     ],
 )
 def test_runtime_dependency_minimums_use_published_releases(

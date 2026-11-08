@@ -355,6 +355,55 @@ Git-, Pfad-, SDK-, Private-Registry- und Branch-Einträge (`dev-*`) werden als
 nicht geprüft aufgeführt und nie als öffentliche Pakete abgefragt. Details in
 [Dependency scanning](../dependency-scanning.md).
 
+Malware-Advisories (`MAL-*`, CWE-506, etwa die gekaperten Releases von
+`chalk`, `debug` und `xrpl`) sind `CRITICAL` mit `metadata.malicious`, werden
+nie als reine Dev-Abhängigkeit herabgestuft und sagen dir, das Paket zu
+entfernen und alle Zugangsdaten zu rotieren, die eine Installation lesen
+konnte. Derselbe Scan prüft über die ca9-Engine die Lieferkette: Dependency
+Confusion für deine `internal_packages` (`SKY-SCA-SRC001`), Git-Abhängigkeiten
+ohne festen Commit und URL-Abhängigkeiten ohne Hash (`SKY-SCA-SRC003`),
+Lockfile-Einträge ohne Integritäts-Hash (`SKY-SCA-INT001`) und, wenn du
+`min_release_age_hours` setzt, Versionen jünger als dieses Fenster
+(`SKY-SCA-AGE001`). Das JSON enthält zusätzlich ein Paketinventar und eine
+Lieferketten-Bewertung (Lockfile committet, eingefrorene CI-Installationen,
+Install-Skripte deaktiviert, Mindestalter für Releases, gepinnte Actions, kein
+`pull_request_target`-Checkout). Details in
+[Supply-chain checks](../dependency-scanning.md#supply-chain-checks).
+
+In Pull Requests (`--diff` oder `--diff-base`) lässt `--sca` das Gate auch
+scheitern, wenn eine Änderung die Installationshärtung schwächt: eine
+Wartezeit entfernt oder verkürzt, Install-Skripte wieder eingeschaltet,
+Pakete in pnpm `allowBuilds` oder npm `allowScripts` aufgenommen, eine Action
+von einem SHA auf ein Tag umgestellt (`SKY-SCA-HRD001`). Geprüfte Ausnahmen
+pro Paket stehen im Basis-Branch. Mit `--review-upgrades` (in Workflows von
+`skylos cicd init` eingeschaltet) wird jedes npm- oder PyPI-Upgrade alt und neu
+heruntergeladen und als Daten verglichen: ein neuer Install-Hook, `.pth`- oder
+`sitecustomize`-Code oder Dekodieren-und-Ausführen lässt das Gate scheitern
+(`SKY-SCA-UPG001`); neue Netzwerkaufrufe beim Import oder Binärdateien werden
+zur Prüfung gelistet (`SKY-SCA-UPG002`). `--danger` meldet committete Agent-
+und Editor-Hooks (`SKY-D365`, `SKY-D366`: `SessionStart` in
+`.claude/settings.json`, `folderOpen` in `.vscode/tasks.json`), ungepinnte,
+versteckte oder imitierende MCP-Server (`SKY-D367`-`SKY-D369`), überschriebene
+Agent-Basis-URLs (`SKY-D370`), Konfigurationen, deren doppelte Schlüssel verbergen, was ausgeführt wird (`SKY-D377`), und riskante Publish-Jobs (`SKY-D371`-`SKY-D376`).
+Ein Scan des ganzen Repositorys listet sie; ein Pull Request, der einen Hook
+hinzufügt oder ändert, scheitert. Details in
+[Agent configuration and publish-job rules](../agent-config-and-publish-rules.md).
+
+Die Agent-Hooks (`skylos agent install-hooks`) blockieren vor einer
+Installation zusätzlich Versionen, die als Malware gemeldet sind, Releases,
+die jünger als 48 Stunden sind (mit der älteren Version, die stattdessen
+installiert werden soll), und npm-Releases ohne die Provenance ihrer
+Vorgänger; Lockfile-Installationen wie `npm ci` oder `uv sync` bekommen die
+Malware-Prüfung für jedes Paket. Die Wartezeit stellst du mit
+`[tool.skylos.supply_chain] min_release_age_hours` ein (0 schaltet sie ab).
+
+MCP-Server und Agent-Hooks: Der Agent-Hook blockiert ungepinnte oder bösartige
+MCP-Server (`claude mcp add`, Änderungen an `.mcp.json`) und nennt den genauen
+gepinnten Befehl, fragt vor neuen SessionStart- oder folderOpen-Hooks nach und
+prüft konfigurierte Server in jeder Sitzung erneut. `skylos agent harden` gibt
+für jeden Agenten die eigenen Einstellungen zum Sperren von Zugangsdaten und
+für gepinnte MCP-Server aus (Richtlinie und Prüfung, keine Sandbox).
+
 ## Benchmark-Snapshot
 
 Skylos enthält eingecheckte Regression-Suites für Dead Code, Security,

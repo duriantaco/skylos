@@ -143,8 +143,13 @@ request build step:
 ```bash
 python -I -m pip install skylos
 git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
-skylos . --danger --quality --ai-defects --secrets --sca --baseline --gate --diff origin/main
+skylos . --danger --quality --ai-defects --secrets --sca --review-upgrades --baseline --gate --diff origin/main
 ```
+
+Every generated pull request scan adds `--review-upgrades` when dependency
+checks are selected: each upgraded npm or PyPI package is downloaded old and
+new and compared as data (see
+[Pull request checks](./dependency-scanning.md#pull-request-checks-upgrades-and-weakened-hardening)).
 
 ## Skylos Cloud
 

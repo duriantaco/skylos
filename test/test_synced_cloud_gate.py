@@ -480,6 +480,7 @@ def test_malformed_gate_reads_as_zero_new(tmp_path):
         ),
         "by_severity": dict.fromkeys(("CRITICAL", "HIGH", "MEDIUM", "LOW"), 0),
         "block_secrets": False,
+        "ignore_unreachable_dependencies": False,
     }
     passed, reasons = gk.check_gate(
         {"quality": [_finding("SKY-Q301", "LOW", "a.py")]}, config
@@ -974,3 +975,98 @@ def test_without_the_synced_file_the_gate_is_unchanged(scan_repo, monkeypatch, c
         "0 security (limit 10)"
     )
     assert "Skylos Cloud" not in out
+
+
+def _reachability_dependency(vuln_id, verdict="unreachable_static", **metadata):
+    finding = _dependency(vuln_id, "HIGH", 3)
+    finding["metadata"] = {
+        "vuln_id": vuln_id,
+        "display_id": vuln_id,
+        "aliases": [],
+        "reachability_verdict": verdict,
+        **metadata,
+    }
+    return finding
+
+
+IGNORE_UNREACHABLE = _gate_yaml("zero-new", extra="  ignore_unreachable_dependencies: true\n")
+
+
+def test_ignored_unreachable_cve_does_not_fail_the_synced_gate(tmp_path):
+    config = _synced(tmp_path, IGNORE_UNREACHABLE)
+
+    passed, _reasons = gk.check_gate(
+        {"dependency_vulnerabilities": [_reachability_dependency("GHSA-cpwx-vrp4-4pq7")]}, config
+    )
+
+    assert passed is True
+
+
+@pytest.mark.parametrize(
+    "finding",
+    [
+        _reachability_dependency("MAL-2024-11183"),
+        _reachability_dependency("GHSA-jcxm-7wvp-g6p5", aliases=["MAL-2024-11183"]),
+        _reachability_dependency("GHSA-33qr-m49q-rxfx", malicious=True),
+        _reachability_dependency("GHSA-33qr-m49q-rxfx", cwe_ids=["CWE-506"]),
+        _reachability_dependency(
+            "GHSA-33qr-m49q-rxfx",
+            database_specific={"malicious-packages-origins": [{"source": "ossf"}]},
+        ),
+        _reachability_dependency("OSV-2024-1", aliases=[]),
+        _reachability_dependency("GHSA-cpwx-vrp4-4pq7", verdict="inconclusive"),
+        _reachability_dependency("GHSA-cpwx-vrp4-4pq7", verdict="unreachable_dynamic"),
+        _reachability_dependency("GHSA-cpwx-vrp4-4pq7", verdict=None),
+        _reachability_dependency("GHSA-cpwx-vrp4-4pq7", aliases="CVE-2024-1234"),
+    ],
+)
+def test_malware_and_unproven_dependencies_still_fail_when_unreachable_is_ignored(
+    tmp_path, finding
+):
+    config = _synced(tmp_path, IGNORE_UNREACHABLE)
+
+    passed, reasons = gk.check_gate({"dependency_vulnerabilities": [finding]}, config)
+
+    assert passed is False
+    assert reasons == ["1 dependency vulnerability (max: 0)"]
+
+
+@pytest.mark.parametrize("value", ["false", "'true'", "1"])
+def test_unreachable_dependencies_count_unless_cloud_sends_true(tmp_path, value):
+    config = _synced(
+        tmp_path, _gate_yaml("zero-new", extra=f"  ignore_unreachable_dependencies: {value}\n")
+    )
+
+    passed, _reasons = gk.check_gate(
+        {"dependency_vulnerabilities": [_reachability_dependency("GHSA-cpwx-vrp4-4pq7")]}, config
+    )
+
+    assert passed is False
+
+
+@pytest.mark.parametrize(
+    "rule_id, passes",
+    [
+        ("SKY-SCA-SRC003", True),
+        ("SKY-SCA-INT001", False),
+        ("SKY-SCA-SRC001", False),
+        ("SKY-SCA-MAL-2025-46969", False),
+    ],
+)
+def test_built_in_gate_reports_mutable_sources_without_counting_them(tmp_path, rule_id, passes):
+    config = load_config(tmp_path)
+    finding = _finding(rule_id, "MEDIUM", "requirements.txt")
+
+    passed, _reasons = gk.check_gate({"dependency_vulnerabilities": [finding]}, config)
+
+    assert passed is passes
+
+
+def test_synced_cloud_gate_still_counts_mutable_sources(tmp_path):
+    config = _synced(tmp_path, ZERO_NEW)
+    finding = _finding("SKY-SCA-SRC003", "MEDIUM", "requirements.txt")
+
+    passed, reasons = gk.check_gate({"dependency_vulnerabilities": [finding]}, config)
+
+    assert passed is False
+    assert reasons == ["1 dependency vulnerability (max: 0)"]

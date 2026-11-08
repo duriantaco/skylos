@@ -266,6 +266,16 @@ COMMANDS = [
         "group": "Coding agents",
     },
     {
+        "name": "skylos agent harden [--print|--write] [--offline]",
+        "desc": "Print each agent's own settings: credential-file denies, sandbox, pinned MCP allowlist",
+        "details": [
+            "Claude Code permissions/sandbox/allowedMcpServers, Cursor readBoundary, Codex sandbox",
+            "Prints only; --write merges the JSON files after you confirm in a terminal",
+            "Policy and audit, not protection: scripts the agent runs can still read files",
+        ],
+        "group": "Coding agents",
+    },
+    {
         "name": "skylos agent warm-cache [path]",
         "desc": "Prebuild the project index so the first agent edit check is fast",
         "details": [

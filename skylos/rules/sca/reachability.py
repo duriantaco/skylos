@@ -13,8 +13,14 @@ logger = logging.getLogger(__name__)
 
 
 def finding_to_vulnerability(finding: dict) -> Vulnerability | None:
-    """Convert a Skylos SCA finding dict to a ca9 Vulnerability."""
+    """Convert a Skylos SCA finding dict to a ca9 Vulnerability.
+
+    Malicious packages are never converted: their install scripts run whether
+    or not the code is imported, so a reachability verdict must not attach.
+    """
     meta = finding.get("metadata") or {}
+    if meta.get("malicious") is True:
+        return None
     vuln_id = meta.get("vuln_id")
     pkg_name = meta.get("package_name")
     pkg_version = meta.get("package_version")

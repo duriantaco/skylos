@@ -144,6 +144,7 @@ _find_package_boundary_modules = find_package_boundary_modules
 
 _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_sca_coverage",
+    "_supply_chain_summary",
     "_dependency_import_notes",
     "_analysis_scope",
     "_review_context",
@@ -286,6 +287,20 @@ def _python_verification_surface_root(surface_root):
     ):
         return root.parent
     return root
+
+
+def _supply_chain_summary(root, sca_findings) -> dict:
+    """``dependency_inventory``, ``supply_chain_posture``, ``ci_inventory`` and
+    ``agent_hooks`` for a finished dependency scan; empty when they cannot be
+    built."""
+    try:
+        from skylos.rules.sca.posture import build_supply_chain_summary
+
+        return build_supply_chain_summary(root, sca_findings)
+    except Exception:  # noqa: BLE001 - summary blocks never fail a scan
+        if os.getenv("SKYLOS_DEBUG"):
+            logger.error(traceback.format_exc())
+        return {}
 
 
 def _license_policy_findings(
@@ -4263,6 +4278,7 @@ class Skylos:
         clear_go_cache()
         clear_drupal_cache()
         self._sca_coverage = None
+        self._supply_chain_summary = None
 
         raw_first = Path(
             path[0] if isinstance(path, (list, tuple)) else path
@@ -4767,6 +4783,9 @@ class Skylos:
                         )
                         result["dependency_vulnerabilities"] = list(sca_findings)
                         result["analysis_summary"]["sca_count"] = len(sca_findings)
+                        result["analysis_summary"].update(
+                            _supply_chain_summary(project_root, sca_findings)
+                        )
                     except Exception as exc:
                         self._sca_coverage = {
                             "status": "incomplete",
@@ -6394,6 +6413,9 @@ class Skylos:
 
                 scan_root = project_root
                 sca_findings = scan_dependencies(scan_root)
+                self._supply_chain_summary = _supply_chain_summary(
+                    scan_root, sca_findings
+                )
                 sca_receipt = getattr(sca_findings, "receipt", None)
                 self._sca_coverage = (
                     dict(sca_receipt)

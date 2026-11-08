@@ -2738,6 +2738,8 @@ def _build_main_scan_context(args):
         args.quality = True
         args.ai_defects = True
         args.sca = True
+    if getattr(args, "review_upgrades", False):
+        args.sca = True
 
     _apply_selected_rule_analysis_flags(args)
     _validate_display_category(args)
@@ -4384,6 +4386,10 @@ def _build_agent_parser():
 
     add_install_hooks_parser(agent_sub)
 
+    from skylos.commands.agent_harden_cmd import add_agent_harden_parser
+
+    add_agent_harden_parser(agent_sub)
+
     from skylos.commands.install_standards_cmd import add_install_standards_parser
 
     add_install_standards_parser(agent_sub)
@@ -4628,6 +4634,11 @@ def main() -> None:
             from skylos.commands.install_hooks_cmd import run_install_hooks_command
 
             sys.exit(run_install_hooks_command(agent_args))
+
+        if cmd == "harden":
+            from skylos.commands.agent_harden_cmd import run_agent_harden_command
+
+            sys.exit(run_agent_harden_command(agent_args))
 
         if cmd == "install-standards":
             from skylos.commands.install_standards_cmd import (

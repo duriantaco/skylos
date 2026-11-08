@@ -59,7 +59,10 @@ WOODPECKER_PR = {
     "CI_PIPELINE_EVENT": "pull_request",
     "CI_COMMIT_TARGET_BRANCH": "develop",
 }
-SCAN = "skylos . --danger --quality --ai-defects --secrets --sca --baseline --gate --diff"
+SCAN = (
+    "skylos . --danger --quality --ai-defects --secrets --sca --review-upgrades"
+    " --baseline --gate --diff"
+)
 
 
 @pytest.fixture(autouse=True)
