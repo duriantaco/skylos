@@ -420,6 +420,7 @@ def _ca9_supply_chain_engine_off(monkeypatch):
     ca9 release in the environment. ``test_sca_supply_chain.py`` installs the
     engine it needs (a contract fake or the real ``ca9.api``) per test.
     """
-    from skylos.rules.sca import supply_chain
+    from skylos.rules.sca import supply_chain, upgrade_api_diff
 
     monkeypatch.setattr(supply_chain, "load_ca9_api", lambda: None)
+    monkeypatch.setattr(upgrade_api_diff, "_load_ca9", lambda: None)

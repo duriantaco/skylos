@@ -384,7 +384,8 @@ def build_main_parser(*, version: str) -> argparse.ArgumentParser:
             "With --diff or --diff-base (implies --sca), download the old and new "
             "version of each npm/PyPI package the change upgrades and report new "
             "install hooks, .pth/sitecustomize code and other risky code "
-            "(SKY-SCA-UPG001/UPG002). Never installs or runs them."
+            "(SKY-SCA-UPG001/UPG002), and your lines that use Python API the "
+            "upgrade removed (SKY-SCA-API001). Never installs or runs them."
         ),
     )
     parser.add_argument(

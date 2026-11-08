@@ -14,6 +14,8 @@ and handed to ca9 (``ca9.api``), which never sees the checkout itself:
   PyPI lockfile version changes are paired base to head (new packages with
   ``old: None``) and passed to ``review_upgrades``; a ``block`` list is UPG001,
   a ``warn``-only list UPG002, whatever the delta kinds.
+- ``SKY-SCA-API001``: with ``--review-upgrades``, your lines that use API a
+  Python upgrade removed (``upgrade_api_diff``). Advice: never an analysis error.
 - ``SKY-D375``: a CI job that publishes packages was added or changed
   (``ci_inventory`` of both sides, line numbers ignored).
 
@@ -58,9 +60,16 @@ logger = logging.getLogger(__name__)
 RULE_HARDENING = "SKY-SCA-HRD001"
 RULE_UPGRADE_BLOCK = "SKY-SCA-UPG001"
 RULE_UPGRADE_WARN = "SKY-SCA-UPG002"
+RULE_UPGRADE_API = "SKY-SCA-API001"
 RULE_PUBLISH_JOB_CHANGED = "SKY-D375"
 DIFF_RULES = frozenset(
-    {RULE_HARDENING, RULE_UPGRADE_BLOCK, RULE_UPGRADE_WARN, RULE_PUBLISH_JOB_CHANGED}
+    {
+        RULE_HARDENING,
+        RULE_UPGRADE_BLOCK,
+        RULE_UPGRADE_WARN,
+        RULE_UPGRADE_API,
+        RULE_PUBLISH_JOB_CHANGED,
+    }
 )
 FINDING_KIND = "supply_chain_diff"
 ERROR_KIND = "supply_chain_check_unavailable"
@@ -1561,6 +1570,10 @@ def supply_chain_diff_findings(
         checks.append(
             ("upgrades", upgrade_findings, {RULE_UPGRADE_BLOCK, RULE_UPGRADE_WARN})
         )
+    if dependencies and review_upgrades and RULE_UPGRADE_API not in ignore:
+        from skylos.rules.sca.upgrade_api_diff import upgrade_api_findings
+
+        checks.append(("upgrade_api", upgrade_api_findings, {RULE_UPGRADE_API}))
     findings: list[dict] = []
     for name, check, rules in checks:
         check_receipt: dict[str, Any] = {}
@@ -1587,6 +1600,7 @@ __all__ = [
     "FINDING_KIND",
     "RULE_HARDENING",
     "RULE_PUBLISH_JOB_CHANGED",
+    "RULE_UPGRADE_API",
     "RULE_UPGRADE_BLOCK",
     "RULE_UPGRADE_WARN",
     "config_base_identities",

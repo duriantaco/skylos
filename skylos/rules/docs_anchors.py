@@ -276,6 +276,7 @@ RULE_DOCS_ANCHORS = {
     "SKY-S102": "sky-s102--client-side-secret-exposure",
     "SKY-SC001": "sky-sc001--smart-contract-security-issue",
     "SKY-SCA-AGE001": "supply-chain",
+    "SKY-SCA-API001": "supply-chain",
     "SKY-SCA-HRD001": "supply-chain",
     "SKY-SCA-INT001": "supply-chain",
     "SKY-SCA-LIC001": "supply-chain",

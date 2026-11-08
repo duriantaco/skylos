@@ -63,7 +63,9 @@ passing.
 `skylos cicd init` picks the CI from the repository (`skylos/cicd/platforms.py`):
 Generated pull request scans add `--review-upgrades` when dependency checks
 (`--sca`) are selected, on GitHub Actions and the other CI templates; push and
-default-branch scans do not.
+default-branch scans do not. That flag also runs `SKY-SCA-API001` (your lines
+that use Python API the upgrade removed); the `summary` job posts its section on
+plain `pull_request`, so it does not depend on `pull_request_target`.
 
 - `.github/workflows/` keeps the GitHub workflow; other CI files found get a
   `--ci` hint.

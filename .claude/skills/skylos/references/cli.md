@@ -66,6 +66,14 @@ Individual check flags:
   packages and private-registry entries are skipped with a warning; changed
   requirements pins, `pdm.lock` and `pylock.toml` are listed as not read
   (`checks.upgrades.limitations`). Receipt: `analysis_summary.supply_chain_diff`.
+  `--review-upgrades` also adds `SKY-SCA-API001` (MEDIUM, advice: no gate counts
+  it, not uploaded): your line uses a public name, module, method or keyword a
+  Python upgrade removed, read statically from both releases via `ca9.artifacts`,
+  never imported. Unreadable things (failed download, compiled module with no
+  `.pyi`, module `__getattr__`, computed `__all__`) are listed as could not check
+  in `checks.upgrade_api.could_not_check`, never as clean and never an analysis
+  error. PR comment wording is fixed: `Review these N call sites` or `No API-level
+  impact found in N call sites (behaviour changes not checked)`.
 - Agent/editor config and publish jobs (`--danger`, via ca9):
   `SKY-D365` agent hook, `SKY-D366` folderOpen task, `SKY-D367` unpinned MCP
   server, `SKY-D368` hidden-path MCP server, `SKY-D369` impersonating MCP

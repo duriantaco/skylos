@@ -230,6 +230,13 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-SCA-API001",
+        "Your line uses API a dependency upgrade removed",
+        "dependency",
+        "MEDIUM",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-SCA-HRD001",
         "Change weakens install hardening",
         "dependency",
