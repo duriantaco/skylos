@@ -6,6 +6,8 @@ severity_note: >-
   The catalog gives no severity for this rule; the detector always reports
   HIGH.
 languages: [Python]
+gate:
+  full: counted
 
 what_it_is: >-
   Python builds a default value such as `[]` or `{}` once, when the function
@@ -152,14 +154,16 @@ false_alarms_and_suppression:
       It misses `collections.OrderedDict()` written with its module prefix,
       `bytearray()` and lambdas.
   suppress:
-    - text: >-
+    - check: inline
+      text: >-
         Put the marker on the line that holds the default value, not on the
         `def` line of a multi-line signature. `# noqa: B006` (flake8-bugbear's
         code for the same problem) is not read.
       language: python
       code: |
         def lookup(key, _cache={}):  # skylos: ignore[SKY-L001] intentional memo cache
-    - text: >-
+    - check: config
+      text: >-
         `[tool.skylos] ignore = ["SKY-L001"]` turns the rule off for the
         project. A baseline accepts existing findings, but it records the
         absolute file path and the line, so an entry stops matching when the

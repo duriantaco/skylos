@@ -9,6 +9,8 @@ severity_note: >-
   Kotlin and C#, a query string-built from values with no proven outside
   source is HIGH.
 languages: [Python, TypeScript/JavaScript, Java, Kotlin, Go, C#, PHP]
+gate:
+  full: critical_blocks
 cwe: [CWE-89]
 
 what_it_is: >-
@@ -157,18 +159,21 @@ false_alarms_and_suppression:
       A non-database object named like one (for example an SSH `session`)
       whose `.execute()` receives a built string can be reported.
   suppress:
-    - text: >-
+    - check: inline
+      text: >-
         Silence one line and say why. Only the listed rule is hidden. A bare
         `# noqa` does not hide HIGH or CRITICAL security findings.
       language: python
       code: |
         cur.execute(sql)  # skylos: ignore[SKY-D211] sql comes from REPORT_QUERIES
-    - text: >-
+    - check: baseline
+      text: >-
         Accept the findings you already have with `skylos baseline .`, then
         scan with `--baseline` so only new ones are listed. The baseline
         records the absolute file path and the line, so an entry stops
         matching when the checkout moves or the line shifts.
-    - text: >-
+    - check: config
+      text: >-
         Turning the rule off for the whole project with `[tool.skylos]
         ignore = ["SKY-D211"]` is possible but hides real injections too.
 

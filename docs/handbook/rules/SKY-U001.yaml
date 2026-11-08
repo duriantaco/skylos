@@ -7,7 +7,12 @@ severity_note: >-
   them as LOW, SARIF as level `note` and GitLab as `minor`. A confidence
   score from 0 to 100 decides whether they are listed (60 or more by
   default).
-languages: [Python, TypeScript/JavaScript, Java, PHP, Dart, Go, Ruby (partial), C# (partial), C++ (file-local functions), Kotlin (private functions), Rust (hidden below the default threshold)]
+languages: [Python, TypeScript/JavaScript, Java, PHP, Dart, Go, Ruby (partial), C# (partial), C++ (file-local functions), Kotlin (private functions), Swift (private and fileprivate functions), Rust (hidden below the default threshold)]
+gate:
+  full: counted
+  note: >-
+    Counts toward `max_dead_code`, which has no limit by default, so it only
+    fails a gate where you set one.
 
 what_it_is: >-
   A function or method that nothing in the project calls. It still has to
@@ -113,6 +118,8 @@ how_skylos_decides:
     `@shared_task`, a pytest or unittest hook, or a dunder method. Test,
     example and benchmark paths (`tests/`, `test_*.py`, `conftest.py`,
     `*.spec.ts`, `examples/`, `benchmarks/` and similar) are skipped too.
+    The exception is Go: an unexported helper in a `_test.go` file that the
+    Go engine proves nothing calls is reported.
   - >-
     Lowers confidence for names that are often called by convention:
     `handle_*`, `*_callback`, `setup_*`, `on_*`, `visit_*`, `_private`
@@ -182,7 +189,8 @@ false_alarms_and_suppression:
       everything under `tests/`, and on `format_*` and `*_name` helpers, so
       some dead code is missed.
   suppress:
-    - text: >-
+    - check: inline
+      text: >-
         On the `def` line (or its decorator line), with a reason:
       language: python
       code: |
@@ -195,7 +203,8 @@ false_alarms_and_suppression:
         [tool.skylos.whitelist]
         names = ["legacy_*"]
         documented = { "plugin_*" = "loaded through entry points" }
-    - text: >-
+    - check: baseline
+      text: >-
         `[[tool.skylos.dead_code.entrypoints]]` declares extra entry points. A
         baseline accepts the unused functions you already have; it matches
         the bare name in any file, so a new unused function with the same

@@ -8,6 +8,11 @@ severity_note: >-
   (one named for rejecting bad input). LOW for changed or removed snapshot
   content.
 languages: [Python tests (pytest, unittest), JavaScript/TypeScript tests (Jest, Vitest, node:assert), snapshot files]
+gate:
+  full: counted
+  note: >-
+    Counts toward `max_ai_defects`. `skylos done` lists it as advice and does
+    not block on it.
 run_with: >-
   `skylos . --ai-defects --diff origin/main` (or `-a`) on a change; also
   listed as advice by `skylos done`
@@ -208,12 +213,14 @@ false_alarms_and_suppression:
       a helper function. In a `--diff` scan it also misses deletion-only
       changes such as a removed `pytest.raises` block.
   suppress:
-    - text: >-
+    - check: inline
+      text: >-
         On the added line, with the reason the weaker check is right:
       language: python
       code: |
         assert total is not None  # skylos: ignore[SKY-A101] total now comes from pricing
-    - text: >-
+    - check: config
+      text: >-
         `[tool.skylos] ignore = ["SKY-A101"]` turns the rule off for the
         project.
 

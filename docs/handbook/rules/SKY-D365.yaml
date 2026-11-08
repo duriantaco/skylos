@@ -6,7 +6,13 @@ severity_note: >-
   CRITICAL when the command downloads and runs remote code (`curl … | sh`),
   decodes and runs a payload (`base64 -d | sh`), or runs a script disguised
   as another file type, such as `node logo.png`.
-languages: [Claude Code, Gemini CLI, Cursor, Codex and Kiro settings files]
+languages: [Claude Code, Gemini CLI, Cursor and Codex settings files]
+gate:
+  full: listed
+  diff: blocks
+  note: >-
+    A CRITICAL hook fails a full scan too. A baseline scan treats the rule
+    like a diff scan when the baseline recorded it.
 
 what_it_is: >-
   Coding agents such as Claude Code can run shell commands on events like
@@ -60,22 +66,28 @@ not_flagged_example:
       }
     }
   why: >-
-    This is a Skylos hook, as `skylos agent install-hooks` writes it (by
-    default with the absolute path of the `skylos` program, which is also
-    accepted when it is outside the repository). Skylos recognises its own
-    hooks by their exact command grammar. Any other command, or extra text
-    after it, is reported.
+    This is a Skylos hook, as `skylos setup` writes it. Skylos recognises
+    its own hooks by their exact command grammar; `skylos agent
+    install-hooks` writes the absolute path of the `skylos` program you ran
+    it with, which is accepted too when it is outside the repository and
+    temp folders. Any other command, or extra text after it, is reported.
 
 how_skylos_decides:
   - >-
-    Runs with `--danger`. The `ca9` library reads the agent settings files
-    anywhere in the scanned folder: `.claude/settings.json`,
-    `.claude/settings.local.json`, `.gemini/settings.json`,
-    `.cursor/hooks.json`, `.codex/hooks.json` and `.kiro/hooks/*.kiro.hook`.
+    Runs with `--danger` (and `-a`). The `ca9` library reads the hooks in
+    `.claude/settings.json`, `.claude/settings.local.json`,
+    `.gemini/settings.json`, `.cursor/hooks.json` and `.codex/hooks.json`,
+    anywhere in the scanned folder except dependency folders such as
+    `node_modules`, `.venv` and `site-packages`. Codex's `config.toml` and
+    Kiro's settings are read only for MCP servers and API base URLs
+    (SKY-D367 to SKY-D370), not for hooks.
   - >-
-    Every hook with a command (or a URL) becomes a finding. So do other
-    settings that run a command: Claude's `apiKeyHelper`, `statusLine` and
-    similar helpers, and enabled plugins.
+    Every hook with a command (or, for an `http` hook, its URL) becomes a
+    finding. So do Claude settings that run a command (`apiKeyHelper`,
+    `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`,
+    `otelHeadersHelper`, and any top-level setting with
+    `"type": "command"`, such as `statusLine`) and Gemini's
+    `tools.discoveryCommand` and `tools.callCommand`.
   - >-
     Keeps regular files inside the scanned folder, plus, when the scan is
     of a subfolder of a Git repository, the repository's top-level agent
@@ -87,17 +99,20 @@ how_skylos_decides:
     `skylos hook <event> --client claude|codex|cursor` for one of Skylos's
     hook events, optionally followed by one of its fixed fallbacks such as
     `|| exit 0`. The program may be `skylos` or an absolute path outside the
-    repository and temp folders, and the settings file must not change
-    `PATH` or similar variables in its `env`.
+    repository and temp folders, made only of letters, digits and
+    `_ . + @ ~ -`. The settings file must parse as plain JSON (no comments)
+    and must not change `PATH` or similar variables in its `env`.
   - >-
     Takes the severity from ca9: HIGH, or CRITICAL for remote code,
     decode-and-run payloads and disguised scripts. The command is shown
     redacted, because hooks can carry tokens.
   - >-
     In the gate, a full scan lists HIGH findings without counting them; a
-    CRITICAL one fails. A diff scan fails on a hook that is new, meaning the
-    same rule, file, event and command were not on the base commit, whatever
-    lines moved.
+    CRITICAL one counts as a critical issue and fails. In a diff scan a hook
+    is new when its rule, file and a digest of its event and whole command
+    are not among the merge base's findings, whatever lines moved, and a
+    new hook fails the gate on its own. A `--baseline` run behaves like a
+    diff for the rules its baseline recorded.
 
 source_refs:
   - path: skylos/rules/config/agent_publish.py
@@ -109,7 +124,7 @@ source_refs:
     symbol: "def is_skylos_hook_command("
     note: >-
       the file list and CRITICAL triggers come from ca9's `agent_config`;
-      this page was checked against ca9 0.6.0.
+      this page was checked against ca9 0.7.0.
   - path: test/test_supply_chain_v3.py
     symbol: "def test_skylos_hook_is_recognised_by_exact_command_only"
 
@@ -137,15 +152,40 @@ false_alarms_and_suppression:
       Settings in example or template folders, and an untracked
       `settings.local.json` that Git does not ignore, are reported too.
   suppress:
-    - text: >-
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: json
+          filename: .claude/settings.json
+          code: |
+            {
+              "hooks": {
+                "SessionStart": [
+                  {
+                    "hooks": [
+                      {
+                        "type": "command",
+                        // skylos: ignore[SKY-D365] handbook check
+                        "command": "bash .claude/hooks/bootstrap.sh"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+      text: >-
         Skylos reads no inline marker for this rule, even in settings files
         that allow comments.
-    - text: >-
+    - check: baseline
+      text: >-
         Accept a reviewed hook with a baseline: `skylos baseline .`, then
         `--baseline`. The entry matches the rule, file, event and command,
         not the line, so it survives edits elsewhere in the file and
-        checkout moves.
-    - text: >-
+        checkout moves. In pull-request CI (`SKYLOS_POLICY_BASE`), the entry
+        must also be in the base commit's `.skylos/baseline.json`.
+    - check: config
+      text: >-
         `[tool.skylos] ignore = ["SKY-D365"]` turns the rule off for the
         whole project.
 

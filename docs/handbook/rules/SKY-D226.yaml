@@ -7,6 +7,11 @@ severity_note: >-
   Kotlin, C# and PHP findings. Python `Markup()`/`mark_safe()` and Go
   `html/template` findings built from request data are CRITICAL.
 languages: [TypeScript/JavaScript, Python, Go, Java, Kotlin, C#, PHP]
+gate:
+  full: critical_blocks
+  note: >-
+    TypeScript and JavaScript findings are HIGH, so they count toward the
+    limits; Python and Go findings are CRITICAL.
 cwe: [CWE-79]
 
 what_it_is: >-
@@ -137,14 +142,16 @@ false_alarms_and_suppression:
       and its presence also cancels the proof for every plain
       `DOMPurify.sanitize(x)` in the same file.
   suppress:
-    - text: >-
+    - check: inline
+      text: >-
         On the reported line. In JSX, a `{/* … */}` comment on the attribute
         line works.
       language: tsx
       code: |
         el.innerHTML = iconSvg; // skylos: ignore[SKY-D226] bundled icon, no user data
         <div dangerouslySetInnerHTML={{ __html: html }} /> {/* skylos: ignore[SKY-D226] CMS */}
-    - text: >-
+    - check: config
+      text: >-
         `[tool.skylos] ignore = ["SKY-D226"]` turns the rule off for the
         project. A baseline accepts existing findings, but it records the
         absolute file path and the line, so an entry stops matching when the

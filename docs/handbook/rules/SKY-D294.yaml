@@ -9,6 +9,8 @@ severity_note: >-
   free text from an unknown caller, LOW otherwise. It does not currently
   report CRITICAL.
 languages: [GitHub Actions workflows, composite actions]
+gate:
+  full: counted
 
 what_it_is: >-
   GitHub Actions replaces every `${{ … }}` expression with its value before
@@ -155,7 +157,31 @@ false_alarms_and_suppression:
       about its `pull_request_target` trigger. Moving the title to `env:`
       clears both.
   suppress:
-    - text: >-
+    - check:
+        kind: example
+        example:
+          language: yaml
+          filename: .github/workflows/pr-title.yml
+          code: |
+            name: PR title
+            on:
+              pull_request_target:
+                types: [opened, edited, synchronize]
+            permissions:
+              pull-requests: read
+            jobs:
+              check-title:
+                runs-on: ubuntu-latest
+                steps:
+                  - name: Require a Conventional Commits title
+                    run: |
+                      # skylos: ignore[SKY-D294] handbook check
+                      title="${{ github.event.pull_request.title }}"
+                      if ! echo "$title" | grep -Eq '^(feat|fix|docs|chore)(\(.+\))?: '; then
+                        echo "::error::PR title must look like 'fix(api): short summary'"
+                        exit 1
+                      fi
+      text: >-
         In YAML, write exactly one rule per marker, on the reported line or
         on the line directly above it. It may also be a shell comment inside
         the `run:` block.
@@ -164,7 +190,8 @@ false_alarms_and_suppression:
         run: |
           # skylos: ignore[SKY-D294] value is validated by the previous step
           echo "${{ steps.check.outputs.slug }}"
-    - text: >-
+    - check: config
+      text: >-
         `[tool.skylos] ignore = ["SKY-D294"]` turns the rule off for the whole
         project. A baseline also works, but it records the absolute file
         path, so it does not match in a checkout at another location.

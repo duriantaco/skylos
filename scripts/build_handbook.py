@@ -22,10 +22,12 @@ verifiable fix must not.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
 import difflib
 import hashlib
 import html
+import io
 import json
 import os
 import re
@@ -47,6 +49,7 @@ HANDBOOK_DIR = REPO_ROOT / "docs" / "handbook"
 RULES_DIR = HANDBOOK_DIR / "rules"
 INTRO_DIR = HANDBOOK_DIR / "intro"
 FAMILIES_FILE = HANDBOOK_DIR / "families.yaml"
+PENDING_FILE = HANDBOOK_DIR / "pending.yaml"
 CSS_FILE = HANDBOOK_DIR / "handbook.css"
 DEFAULT_OUTPUT = REPO_ROOT / "build" / "handbook" / "skylos-handbook.pdf"
 DEFAULT_CHROME = (
@@ -69,6 +72,7 @@ SEVERITY_LABELS = {
 }
 RULE_REQUIRED = (
     "id",
+    "gate",
     "title",
     "family",
     "severity",
@@ -83,7 +87,7 @@ RULE_REQUIRED = (
     "false_alarms_and_suppression",
     "related",
 )
-RULE_OPTIONAL = ("cwe", "severity_note", "run_with")
+RULE_OPTIONAL = ("cwe", "severity_note", "run_with", "verify", "more_examples")
 EXAMPLE_KEYS = {
     "language",
     "filename",
@@ -95,12 +99,50 @@ EXAMPLE_KEYS = {
     "expect_file",
     "expect_line",
     "why",
+    "verify",
 }
 FILE_KEYS = {"filename", "code", "language", "deleted"}
 SETUPS = ("none", "git", "git_diff")
 FIX_KEYS = {"explanation", "code", "language", "filename", "scan_flags"}
 FALSE_ALARM_KEYS = {"misfires", "suppress"}
-SUPPRESS_KEYS = {"text", "code", "language"}
+SUPPRESS_KEYS = {"text", "code", "language", "check"}
+CHECK_KINDS = ("inline", "config", "baseline", "example")
+CHECK_EXPECTS = ("hidden", "reported")
+GATE_KEYS = {"full", "diff", "opt_in", "note"}
+GATE_STATES = {
+    "counted": "counted toward the gate limits",
+    "critical_blocks": "counted toward the gate limits; a CRITICAL finding fails the gate on its own",
+    "listed": "listed, not counted by the gate",
+    "blocks": "fails the gate on its own",
+    "not_run": "not checked",
+}
+MORE_EXAMPLE_KEYS = {"flagged", "not_flagged"}
+HASH_COMMENT_LANGUAGES = {
+    "python",
+    "yaml",
+    "toml",
+    "shell",
+    "bash",
+    "ruby",
+    "dockerfile",
+    "terraform",
+    "ini",
+}
+SLASH_COMMENT_LANGUAGES = {
+    "typescript",
+    "javascript",
+    "go",
+    "java",
+    "kotlin",
+    "csharp",
+    "rust",
+    "dart",
+    "cpp",
+    "swift",
+    "php",
+    "solidity",
+}
+CHECK_MARKER_REASON = "handbook check"
 SOURCE_REF_KEYS = {"path", "symbol", "note"}
 LANGUAGE_NAMES = {
     "python": "Python",
@@ -143,7 +185,15 @@ FRAGMENT_PATTERN = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")
 MAX_CODE_COLUMNS = 88
 PAGE_NUMBER_PLACEHOLDER = "000"
 VERIFY_TIMEOUT_SECONDS = 300
-VERIFY_ENV_KEEP = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "SYSTEMROOT")
+VERIFY_ENV_KEEP = (
+    "PATH",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TMPDIR",
+    "SYSTEMROOT",
+    "SKYLOS_GO_BIN",
+)
 
 
 class BuildError(Exception):
@@ -214,13 +264,32 @@ def main(argv: list[str] | None = None) -> int:
         help="Keep the --verify scratch folder.",
     )
     parser.add_argument(
+        "--dump-command-reference",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--chrome",
         default=os.environ.get("CHROME_BIN"),
         help="Chrome or Chromium executable for printing.",
     )
+    parser.add_argument(
+        "--chrome-arg",
+        action="append",
+        default=[],
+        metavar="ARG",
+        help="Extra Chrome argument (repeatable), e.g. --chrome-arg=--no-sandbox "
+        "on CI runners where Chrome's sandbox is unavailable.",
+    )
     args = parser.parse_args(argv)
 
     sys.path.insert(0, str(REPO_ROOT))
+    if args.dump_command_reference:
+        quiet = io.StringIO()
+        with contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+            reference = collect_command_reference()
+        print(json.dumps(reference))
+        return 0
     try:
         return run(args)
     except BuildError as exc:
@@ -242,8 +311,15 @@ def run(args) -> int:
     output = args.output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     coverage_path = output.with_name(output.stem + "-coverage.md")
-    coverage = build_coverage(catalog, families, pages)
+    pending = load_pending(catalog)
+    coverage = build_coverage(catalog, families, pages, pending)
     coverage_path.write_text(render_coverage(coverage), encoding="utf-8")
+    if coverage["unaccounted"] and not args.rule:
+        listed = ", ".join(coverage["unaccounted"][:20])
+        raise BuildError(
+            f"{len(coverage['unaccounted'])} catalog rule(s) have neither a page nor "
+            f"an entry in docs/handbook/pending.yaml: {listed}"
+        )
     print(
         f"coverage: {coverage['written']} of {coverage['pages_needed']} rules "
         f"have a page ({coverage['missing']} not yet written; "
@@ -283,8 +359,10 @@ def run(args) -> int:
     chrome = find_chrome(args.chrome)
     page_count = 0
     for _attempt in range(3):
-        print_pdf(chrome, html_path, output)
-        destinations, page_count = pdf_destinations(output.read_bytes())
+        print_pdf(chrome, html_path, output, args.chrome_arg)
+        destinations, page_count = pdf_destinations(
+            output.read_bytes()  # skylos: ignore[SKY-D325] the PDF Chrome just printed to --output
+        )
         if destinations == page_numbers:
             break
         page_numbers = destinations
@@ -517,7 +595,11 @@ def validate_page(path, data, catalog, families, family_ids):
         errors.append(f"{where}: not_flagged_example needs 'why'")
     errors += validate_fix(where, data["fix"])
     errors += validate_false_alarms(where, data["false_alarms_and_suppression"])
+    errors += validate_suppress_checks(where, data)
     errors += validate_related(where, data, catalog)
+    errors += validate_gate(where, data["gate"])
+    errors += validate_verify(f"{where}: verify", data.get("verify"))
+    errors += validate_more_examples(where, data.get("more_examples"))
     if not errors:
         warnings += code_width_warnings(where, data)
     return {"errors": errors, "warnings": warnings}
@@ -683,8 +765,9 @@ def validate_example(where, key, example) -> list[str]:
     unknown = set(example) - EXAMPLE_KEYS
     if unknown:
         errors.append(f"{label}: unknown key(s) {sorted(unknown)}")
-    if key != "not_flagged_example" and "why" in example:
+    if not key.endswith("not_flagged_example") and "why" in example:
         errors.append(f"{label}: 'why' belongs to not_flagged_example")
+    errors.extend(validate_verify(f"{label}.verify", example.get("verify")))
     setup = example.get("setup", "none")
     if setup not in SETUPS:
         errors.append(f"{label}: setup must be one of {', '.join(SETUPS)}")
@@ -723,7 +806,7 @@ def validate_example(where, key, example) -> list[str]:
         errors.append(f"{label}: scan_flags must be a list of CLI options")
     if "expect_line" in example:
         line = example["expect_line"]
-        if key == "not_flagged_example":
+        if key.endswith("not_flagged_example"):
             errors.append(f"{label}: expect_line only applies to flagged examples")
         elif not isinstance(line, int) or line < 1:
             errors.append(f"{label}: expect_line must be a positive line number")
@@ -732,6 +815,123 @@ def validate_example(where, key, example) -> list[str]:
         if example["expect_file"] not in names:
             errors.append(f"{label}: expect_file is not one of the example's files")
     return errors
+
+
+def validate_verify(label, value) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, dict) or set(value) - {"mode", "reason"}:
+        return [f"{label}: expected {{mode: manual, reason: ...}}"]
+    if value.get("mode") != "manual":
+        return [f"{label}: mode must be 'manual' (automatic checks are the default)"]
+    if not isinstance(value.get("reason"), str) or not value["reason"].strip():
+        return [f"{label}: a manual example needs a reason"]
+    return []
+
+
+def validate_gate(where, gate) -> list[str]:
+    label = f"{where}: gate"
+    if not isinstance(gate, dict):
+        return [f"{label}: expected a mapping with at least 'full'"]
+    errors = []
+    unknown = set(gate) - GATE_KEYS
+    if unknown:
+        errors.append(f"{label}: unknown key(s) {sorted(unknown)}")
+    states = ", ".join(GATE_STATES)
+    if gate.get("full") not in GATE_STATES:
+        errors.append(f"{label}: full must be one of {states}")
+    if "diff" in gate and gate["diff"] not in GATE_STATES:
+        errors.append(f"{label}: diff must be one of {states}")
+    for key in ("opt_in", "note"):
+        if key in gate and (not isinstance(gate[key], str) or not gate[key].strip()):
+            errors.append(f"{label}: {key} must be text")
+    return errors
+
+
+def validate_more_examples(where, value) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or not value:
+        return [f"{where}: more_examples must be a non-empty list"]
+    errors = []
+    for index, pair in enumerate(value):
+        label = f"more_examples[{index}]"
+        if not isinstance(pair, dict) or set(pair) != MORE_EXAMPLE_KEYS:
+            errors.append(f"{where}: {label} needs exactly 'flagged' and 'not_flagged'")
+            continue
+        errors += validate_example(where, f"{label}.flagged_example", pair["flagged"])
+        errors += validate_example(
+            where, f"{label}.not_flagged_example", pair["not_flagged"]
+        )
+        if isinstance(pair["not_flagged"], dict) and not pair["not_flagged"].get("why"):
+            errors.append(f"{where}: {label}.not_flagged needs 'why'")
+    return errors
+
+
+def validate_suppress_checks(where, data) -> list[str]:
+    suppress = data["false_alarms_and_suppression"].get("suppress") or []
+    errors = []
+    for index, item in enumerate(suppress):
+        if not isinstance(item, dict) or "check" not in item:
+            continue
+        label = f"{where}: false_alarms_and_suppression.suppress[{index}].check"
+        check = normalize_check(item["check"])
+        if check is None:
+            errors.append(f"{label}: use one of {', '.join(CHECK_KINDS)} or a mapping")
+            continue
+        if check["kind"] not in CHECK_KINDS:
+            errors.append(f"{label}: kind must be one of {', '.join(CHECK_KINDS)}")
+        if check["expect"] not in CHECK_EXPECTS:
+            errors.append(f"{label}: expect must be one of {', '.join(CHECK_EXPECTS)}")
+        if check["kind"] == "example":
+            errors += validate_example(label, "check.example", check.get("example"))
+            continue
+        flagged = data["flagged_example"]
+        if check["kind"] == "inline":
+            errors += inline_check_problems(label, flagged)
+        if check["kind"] == "baseline" and flagged.get("setup", "none") == "git_diff":
+            errors.append(
+                f"{label}: baseline checks need a flagged example without git_diff"
+            )
+        if check["kind"] == "config":
+            names = {entry["filename"] for entry in example_files(flagged)}
+            names |= {entry["filename"] for entry in flagged.get("base_files") or []}
+            if "pyproject.toml" in names:
+                errors.append(
+                    f"{label}: the flagged example already has a pyproject.toml"
+                )
+    return errors
+
+
+def normalize_check(value) -> dict | None:
+    if isinstance(value, str):
+        return {"kind": value, "expect": "hidden"}
+    if not isinstance(value, dict) or set(value) - {"kind", "expect", "example"}:
+        return None
+    check = dict(value)
+    check.setdefault("expect", "hidden")
+    return check
+
+
+def comment_prefix(language: str | None) -> str:
+    name = str(language or "").lower()
+    if name in HASH_COMMENT_LANGUAGES:
+        return "#"
+    if name in SLASH_COMMENT_LANGUAGES:
+        return "//"
+    return ""
+
+
+def inline_check_problems(label, flagged) -> list[str]:
+    if not flagged.get("expect_line"):
+        return [f"{label}: an inline check needs expect_line on the flagged example"]
+    target_file = flagged.get("expect_file") or example_files(flagged)[0]["filename"]
+    for entry in example_files(flagged):
+        language = entry.get("language")
+        if entry["filename"] == target_file and not comment_prefix(language):
+            hint = "use check: {kind: example, ...}"
+            return [f"{label}: no line-comment syntax known for {language}; {hint}"]
+    return []
 
 
 def validate_fix(where, fix) -> list[str]:
@@ -825,7 +1025,28 @@ def example_files(example: dict) -> list[dict]:
     ]
 
 
-def build_coverage(catalog, families, pages) -> dict:
+def load_pending(catalog: dict[str, dict]) -> dict[str, str]:
+    """Rules allowed to have no page yet, with the reason."""
+    if not PENDING_FILE.is_file():
+        return {}
+    data = read_yaml(PENDING_FILE)
+    entries = (data or {}).get("pending")
+    if not isinstance(entries, dict):
+        raise BuildError(f"{PENDING_FILE.name}: expected a 'pending' mapping")
+    pending = {}
+    for rule_id, entry in entries.items():
+        reason = ""
+        if isinstance(entry, dict):
+            reason = str(entry.get("reason") or "").strip()
+        if not reason:
+            raise BuildError(f"{PENDING_FILE.name}: {rule_id} needs a reason")
+        if rule_id not in catalog:
+            raise BuildError(f"{PENDING_FILE.name}: {rule_id} is not in the catalog")
+        pending[rule_id] = reason
+    return pending
+
+
+def build_coverage(catalog, families, pages, pending=None) -> dict:
     aliases = catalog_aliases(catalog)
     by_family = {family["id"]: {"written": [], "missing": []} for family in families}
     for rule_id, entry in catalog.items():
@@ -838,7 +1059,24 @@ def build_coverage(catalog, families, pages) -> dict:
         else:
             by_family[family_id]["missing"].append(rule_id)
     missing = sum(len(item["missing"]) for item in by_family.values())
+    pending = pending or {}
+    missing_ids = [
+        rule_id for item in by_family.values() for rule_id in item["missing"]
+    ]
+    manual = {}
+    for rule_id, page in pages.items():
+        reasons = sorted(
+            {item["manual"] for item in verification_targets(page) if item["manual"]}
+        )
+        if reasons:
+            manual[rule_id] = reasons
     return {
+        "unaccounted": sorted(
+            rule_id for rule_id in missing_ids if rule_id not in pending
+        ),
+        "pending_written": sorted(rule_id for rule_id in pending if rule_id in pages),
+        "pending": pending,
+        "manual": manual,
         "total": len(catalog),
         "pages_needed": len(catalog) - len(aliases),
         "written": len(pages),
@@ -877,6 +1115,26 @@ def render_coverage(coverage) -> str:
             f"| {family['title']} | {total} | {len(counts['written'])} | "
             f"{len(counts['missing'])} |"
         )
+    manual = coverage["manual"]
+    lines += [
+        "",
+        f"Pages with examples that are not machine-checked: {len(manual)}.",
+    ]
+    for rule_id, reasons in sorted(manual.items()):
+        lines.append(f"- {rule_id}: {'; '.join(reasons)}")
+    if coverage["unaccounted"]:
+        lines += [
+            "",
+            "## Missing from pending.yaml",
+            "",
+            "These rules have no page and no pending entry; the build fails until",
+            "each gets one or the other.",
+            "",
+        ]
+        lines += [f"- {rule_id}" for rule_id in coverage["unaccounted"]]
+    if coverage["pending_written"]:
+        lines += ["", "## Written but still in pending.yaml (remove the entry)", ""]
+        lines += [f"- {rule_id}" for rule_id in coverage["pending_written"]]
     lines += ["", "## Not yet written", ""]
     for family in coverage["families"]:
         missing = sorted(coverage["by_family"][family["id"]]["missing"])
@@ -948,10 +1206,12 @@ def example_digest(rule_id: str, kind: str, example: dict, flags: list[str]) -> 
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def verification_targets(page: dict) -> list[tuple[str, dict, bool]]:
+def verification_targets(page: dict) -> list[dict]:
+    """Every check the page makes: its examples, its fix, extra language
+    pairs and suppression checks, each with what Skylos must do."""
     targets = [
-        ("flagged", page["flagged_example"], True),
-        ("not_flagged", page["not_flagged_example"], False),
+        target("flagged", page["flagged_example"], True),
+        target("not_flagged", page["not_flagged_example"], False),
     ]
     fix = page["fix"]
     if fix.get("filename"):
@@ -962,8 +1222,91 @@ def verification_targets(page: dict) -> list[tuple[str, dict, bool]]:
         }
         if fix.get("scan_flags") is not None:
             fix_example["scan_flags"] = fix["scan_flags"]
-        targets.append(("fix", fix_example, False))
+        targets.append(target("fix", fix_example, False))
+    for index, pair in enumerate(page.get("more_examples") or []):
+        targets.append(target(f"more{index}-flagged", pair["flagged"], True))
+        targets.append(target(f"more{index}-not_flagged", pair["not_flagged"], False))
+    targets += suppress_targets(page)
+    page_manual = (page.get("verify") or {}).get("reason")
+    for item in targets:
+        manual = (item["example"].get("verify") or {}).get("reason")
+        if page_manual:
+            manual = page_manual
+        item["manual"] = manual or ""
     return targets
+
+
+def target(kind: str, example: dict, should_flag: bool, baseline: bool = False) -> dict:
+    return {
+        "kind": kind,
+        "example": example,
+        "should_flag": should_flag,
+        "baseline": baseline,
+        "manual": "",
+    }
+
+
+def suppress_targets(page: dict) -> list[dict]:
+    targets = []
+    suppress = page["false_alarms_and_suppression"].get("suppress") or []
+    for index, item in enumerate(suppress):
+        if "check" not in item:
+            continue
+        check = normalize_check(item["check"])
+        should_flag = check["expect"] == "reported"
+        kind = f"suppress{index}"
+        if check["kind"] == "example":
+            targets.append(target(kind, check["example"], should_flag))
+            continue
+        flagged = page["flagged_example"]
+        if check["kind"] == "inline":
+            example = with_inline_marker(flagged, page["id"])
+        elif check["kind"] == "config":
+            example = with_extra_file(
+                flagged, "pyproject.toml", f'[tool.skylos]\nignore = ["{page["id"]}"]\n'
+            )
+        else:
+            example = flagged
+        targets.append(
+            target(kind, example, should_flag, baseline=check["kind"] == "baseline")
+        )
+    return targets
+
+
+def with_inline_marker(example: dict, rule_id: str) -> dict:
+    expected = example.get("expect_file") or example_files(example)[0]["filename"]
+    files = []
+    for entry in example_files(example):
+        entry = dict(entry)
+        if entry["filename"] == expected:
+            lines = entry["code"].split("\n")
+            index = example["expect_line"] - 1
+            prefix = comment_prefix(entry.get("language"))
+            marker = f"{prefix} skylos: ignore[{rule_id}] {CHECK_MARKER_REASON}"
+            lines[index] = f"{lines[index]}  {marker}"
+            entry["code"] = "\n".join(lines)
+        files.append(entry)
+    return replace_files(example, files)
+
+
+def with_extra_file(example: dict, filename: str, code: str) -> dict:
+    files = [dict(entry) for entry in example_files(example)]
+    files.append({"filename": filename, "code": code, "language": "toml"})
+    return replace_files(example, files)
+
+
+def replace_files(example: dict, files: list[dict]) -> dict:
+    derived = {
+        key: value
+        for key, value in example.items()
+        if key not in {"filename", "code", "files", "why"}
+    }
+    derived["files"] = [
+        {key: value for key, value in entry.items() if value is not None}
+        for entry in files
+    ]
+    derived.setdefault("expect_file", files[0]["filename"])
+    return derived
 
 
 def resolve_skylos(explicit: str | None) -> list[str]:
@@ -1008,15 +1351,27 @@ def verification_env(home: Path) -> dict[str, str]:
     return env
 
 
+def contained_path(base: Path, *parts: str) -> Path:
+    """`base/parts`, refused when it would leave `base` or is a symlink."""
+    resolved_base = base.resolve()
+    target = resolved_base.joinpath(*parts)
+    resolved = target.resolve()
+    if not resolved.is_relative_to(resolved_base) or target.is_symlink():
+        raise BuildError(f"refusing to use {target}: outside {resolved_base}")
+    return resolved
+
+
 def write_files(root: Path, entries: list[dict]) -> None:
     for entry in entries:
-        target = root / entry["filename"]
+        target = contained_path(root, entry["filename"])
         if entry.get("deleted"):
             if target.exists():
                 target.unlink()
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(entry["code"], encoding="utf-8")
+        target.write_text(  # skylos: ignore[SKY-D324] contained_path keeps it in the fresh example folder
+            entry["code"], encoding="utf-8"
+        )
 
 
 def run_git(root: Path, env: dict, *args: str) -> None:
@@ -1124,17 +1479,16 @@ def verify_pages(pages: dict, args) -> dict:
     checks = []
     try:
         for rule_id in sorted(pages):
-            page = pages[rule_id]
-            for kind, example, should_flag in verification_targets(page):
-                checks.append(
-                    verify_example(
-                        rule_id, kind, example, should_flag, scratch, env, command
-                    )
-                )
+            for item in verification_targets(pages[rule_id]):
+                if item["manual"]:
+                    checks.append(manual_check(rule_id, item))
+                    continue
+                checks.append(verify_example(rule_id, item, scratch, env, command))
     finally:
         if created and not args.keep_scratch:
             shutil.rmtree(scratch, ignore_errors=True)
     failed = len([check for check in checks if not check["passed"]])
+    manual = len([check for check in checks if check.get("status") == "manual"])
     return {
         "generated": datetime.datetime.now(datetime.timezone.utc).isoformat(
             timespec="seconds"
@@ -1144,8 +1498,31 @@ def verify_pages(pages: dict, args) -> dict:
         "command": command,
         "scratch": str(scratch),
         "checks": checks,
-        "passed": len(checks) - failed,
+        "passed": len(checks) - failed - manual,
         "failed": failed,
+        "manual": manual,
+    }
+
+
+def expected_text(should_flag: bool) -> str:
+    if should_flag:
+        return "reported"
+    return "not reported"
+
+
+def manual_check(rule_id: str, item: dict) -> dict:
+    flags = example_scan_flags(rule_id, item["example"])
+    return {
+        "rule_id": rule_id,
+        "example": item["kind"],
+        "expected": expected_text(item["should_flag"]),
+        "flags": flags,
+        "status": "manual",
+        "reason": item["manual"],
+        "actual": "not machine-checked",
+        "exit_code": None,
+        "passed": True,
+        "digest": example_digest(rule_id, item["kind"], item["example"], flags),
     }
 
 
@@ -1174,22 +1551,28 @@ def probe_skylos(command, env, scratch) -> tuple[str, str]:
     return version_text, module.stdout.strip()
 
 
-def verify_example(rule_id, kind, example, should_flag, scratch, env, command):
+def verify_example(rule_id, item, scratch, env, command):
+    kind = item["kind"]
+    example = item["example"]
+    should_flag = item["should_flag"]
     flags = example_scan_flags(rule_id, example)
-    root = scratch / rule_id / kind
-    output = scratch / rule_id / f"{kind}.json"
-    result = run_example_scan(root, output, example, flags, env, command)
+    if item["baseline"]:
+        flags = [*flags, "--baseline"]
+    root = contained_path(scratch, rule_id, kind)
+    output = contained_path(scratch, rule_id, f"{kind}.json")
+    result = run_example_scan(
+        root, output, example, flags, env, command, item["baseline"]
+    )
     check = {
         "rule_id": rule_id,
         "example": kind,
-        "expected": "reported",
+        "expected": expected_text(should_flag),
         "flags": flags,
         "setup": example.get("setup", "none"),
         "exit_code": result.returncode,
+        "status": "checked",
         "digest": example_digest(rule_id, kind, example, flags),
     }
-    if not should_flag:
-        check["expected"] = "not reported"
     data, problem = read_scan_output(output)
     if problem:
         detail = (result.stderr or result.stdout).strip()[-800:]
@@ -1219,12 +1602,24 @@ def verify_example(rule_id, kind, example, should_flag, scratch, env, command):
     return check
 
 
-def run_example_scan(root, output, example, flags, env, command):
+def run_example_scan(root, output, example, flags, env, command, baseline=False):
     if root.exists():
-        shutil.rmtree(root)
+        shutil.rmtree(root)  # skylos: ignore[SKY-D215] contained_path under scratch
     prepare_example(root, example, env)
     if output.exists():
         output.unlink()
+    if baseline:
+        made = subprocess.run(
+            [*command, "baseline", "."],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=VERIFY_TIMEOUT_SECONDS,
+            check=False,
+        )
+        if made.returncode != 0:
+            return made
     argv = [*command, ".", *flags, "--no-upload", "--format", "json"]
     argv += ["--output", str(output)]
     return subprocess.run(
@@ -1268,19 +1663,27 @@ def expected_hits(example: dict, hits: list[dict]) -> tuple[list[dict], str]:
 
 def print_verify_table(report: dict) -> None:
     print()
-    print(f"{'rule':<15} {'example':<12} {'expected':<13} {'result':<6} actual")
+    print(f"{'rule':<15} {'example':<20} {'expected':<13} {'result':<7} actual")
     for check in report["checks"]:
         status = "pass"
         if not check["passed"]:
             status = "FAIL"
+        if check.get("status") == "manual":
+            status = "manual"
+            detail = check["reason"]
+        else:
+            flags = " ".join(check["flags"]) or "(none)"
+            detail = f"exit {check['exit_code']}, flags {flags}"
         print(
-            f"{check['rule_id']:<15} {check['example']:<12} {check['expected']:<13} "
-            f"{status:<6} {check['actual']} (exit {check['exit_code']}, "
-            f"flags {' '.join(check['flags']) or '(none)'})"
+            f"{check['rule_id']:<15} {check['example']:<20} {check['expected']:<13} "
+            f"{status:<7} {check['actual']} ({detail})"
         )
         if check.get("detail"):
-            print(f"{'':<48}{check['detail']}")
-    print(f"\n{report['passed']} passed, {report['failed']} failed")
+            print(f"{'':<58}{check['detail']}")
+    print(
+        f"\n{report['passed']} passed, {report['failed']} failed, "
+        f"{report.get('manual', 0)} not machine-checked"
+    )
 
 
 def read_verify_report(path: Path) -> dict:
@@ -1292,7 +1695,7 @@ def read_verify_report(path: Path) -> dict:
         return {}
     checks = {}
     for check in data.get("checks") or []:
-        if check.get("passed"):
+        if check.get("passed") and check.get("status") != "manual":
             checks[check["digest"]] = check
     return {
         "version": data.get("skylos_version"),
@@ -1332,7 +1735,7 @@ def find_chrome(explicit: str | None) -> str:
     raise BuildError("Chrome or Chromium not found; pass --chrome or set CHROME_BIN")
 
 
-def print_pdf(chrome: str, html_path: Path, pdf_path: Path) -> None:
+def print_pdf(chrome: str, html_path: Path, pdf_path: Path, extra_args=()) -> None:
     with tempfile.TemporaryDirectory(prefix="skylos-handbook-chrome-") as profile:
         if pdf_path.exists():
             pdf_path.unlink()
@@ -1346,6 +1749,7 @@ def print_pdf(chrome: str, html_path: Path, pdf_path: Path) -> None:
             f"--user-data-dir={profile}",
             "--no-pdf-header-footer",
             "--generate-pdf-document-outline",
+            *extra_args,
             f"--print-to-pdf={pdf_path}",
             html_path.as_uri(),
         ]
@@ -1466,6 +1870,7 @@ class Book:
         self.rules_by_family = {family["id"]: [] for family in families}
         for rule_id in sorted(pages):
             self.rules_by_family[pages[rule_id]["family"]].append(rule_id)
+        self.reference_data: dict | None = None
         self.aliases = catalog_aliases(catalog)
         self.page_rule_count = len(catalog) - len(self.aliases)
         self.aliases_by_target: dict[str, list[str]] = {}
@@ -1491,6 +1896,7 @@ class Book:
             body.append(self.render_family(family))
             for rule_id in self.rules_by_family[family["id"]]:
                 body.append(self.render_rule(self.pages[rule_id]))
+        body.append(self.render_command_appendix())
         body.append(self.render_index())
         css = CSS_FILE.read_text(encoding="utf-8")
         return (
@@ -1640,6 +2046,9 @@ class Book:
                 label = f'<span class="toc-id">{rule_id}</span> {html.escape(page["title"])}'
                 rows.append(self.toc_row(label, rule_anchor(rule_id), "toc-rule"))
         rows.append('<div class="toc-part">Appendix</div>')
+        rows.append(
+            self.toc_row("Command and flag reference", "commands", "toc-chapter")
+        )
         rows.append(self.toc_row("Rule index", "index", "toc-chapter"))
         return (
             '<section class="contents" id="contents">\n'
@@ -1678,6 +2087,7 @@ class Book:
             "skylos_version": self.version,
             "family_table": self.family_table_markdown(),
             "category_table": self.category_table_markdown(),
+            "command_overview": self.command_overview_markdown(),
         }
 
         def replace(match):
@@ -1864,11 +2274,15 @@ class Book:
             if family["id"] == page["family"]:
                 family_title = family["title"]
         entry = page["catalog"]
+        targets = {item["kind"]: item for item in verification_targets(page)}
         meta = [
             ("Languages", html.escape(", ".join(page["languages"]))),
             ("Turned on by", self.run_with(page)),
             ("Finding type", html.escape(entry["finding_type"])),
+            ("Gate", self.gate_text(page["gate"])),
         ]
+        if page["gate"].get("opt_in"):
+            meta.append(("Needs", self.inline(page["gate"]["opt_in"])))
         if page["cwe"]:
             meta.insert(1, ("CWE", html.escape(", ".join(page["cwe"]))))
         if entry["name"].strip().lower() != str(page["title"]).strip().lower():
@@ -1918,21 +2332,52 @@ class Book:
             + self.section(
                 "Why it matters", f"<p>{self.inline(page['why_it_matters'])}</p>"
             )
-            + self.render_example(rule_id, "flagged", page["flagged_example"])
+            + self.render_example(rule_id, targets["flagged"])
             + self.render_example(
-                rule_id,
-                "not_flagged",
-                page["not_flagged_example"],
-                page["flagged_example"],
+                rule_id, targets["not_flagged"], page["flagged_example"]
             )
+            + self.render_more_examples(rule_id, page, targets)
             + self.section("How Skylos decides", f'<ol class="steps">{steps}</ol>')
             + self.render_fix(rule_id, page)
-            + self.render_false_alarms(page["false_alarms_and_suppression"])
+            + self.render_false_alarms(rule_id, page, targets)
             + '<footer class="rule-foot">\n'
             + f'<p><span class="foot-key">Related</span> {related}</p>\n'
             + f'<div class="refs"><span class="foot-key">Source, for maintainers</span><ul>{refs}</ul></div>\n'
             + "</footer>\n</article>"
         )
+
+    def gate_text(self, gate: dict) -> str:
+        full = gate["full"]
+        diff = gate.get("diff", full)
+        if diff == full:
+            text = f"{GATE_STATES[full]} (full and diff scans)"
+        else:
+            text = f"full scan: {GATE_STATES[full]}; diff scan: {GATE_STATES[diff]}"
+        if gate.get("note"):
+            return html.escape(text) + ". " + self.inline(gate["note"])
+        return html.escape(text)
+
+    def render_more_examples(self, rule_id: str, page: dict, targets: dict) -> str:
+        pairs = page.get("more_examples") or []
+        if not pairs:
+            return ""
+        blocks = []
+        for index, pair in enumerate(pairs):
+            label = language_name(pair["flagged"].get("language"))
+            blocks.append(
+                self.render_example(
+                    rule_id, targets[f"more{index}-flagged"], None, label
+                )
+            )
+            blocks.append(
+                self.render_example(
+                    rule_id,
+                    targets[f"more{index}-not_flagged"],
+                    pair["flagged"],
+                    language_name(pair["not_flagged"].get("language")),
+                )
+            )
+        return self.section("More languages", "".join(blocks))
 
     def ref_note(self, ref: dict) -> str:
         if not ref.get("note"):
@@ -1964,23 +2409,38 @@ class Book:
             f"{content}\n</section>\n"
         )
 
-    def verify_note(self, rule_id: str, kind: str, example: dict) -> str:
+    def check_note(self, rule_id: str, item: dict | None) -> str:
+        if item is None:
+            return ""
+        if item["manual"]:
+            reason = self.inline(item["manual"])
+            return (  # skylos: ignore[SKY-D228] joins HTML fragments this module escaped
+                '<div class="verified manual">Example not machine-checked: '
+                f"{reason}</div>"
+            )
         checks = self.verify_report.get("checks") or {}
-        flags = example_scan_flags(rule_id, example)
-        check = checks.get(example_digest(rule_id, kind, example, flags))
+        flags = example_scan_flags(rule_id, item["example"])
+        if item["baseline"]:
+            flags = [*flags, "--baseline"]
+        digest = example_digest(rule_id, item["kind"], item["example"], flags)
+        check = checks.get(digest)
         if not check:
             return ""
         version = html.escape(str(self.verify_report.get("version") or ""))
         command = html.escape(" ".join(["skylos", ".", *flags]))
-        if check["expected"] == "reported":
-            places = ", ".join(
-                f"{html.escape(hit['file'])} line {hit['line']}"
-                for hit in check.get("hits") or []
-            )
-            text = f"Skylos {version}, <code>{command}</code>: reported at {places}."
-        else:
-            text = f"Skylos {version}, <code>{command}</code>: not reported."
-        return f'<div class="verified">Checked. {text}</div>'
+        lead = f"Skylos {version}, <code>{command}</code>"
+        if item["kind"].startswith("suppress"):
+            result = "the finding is hidden"
+            if item["should_flag"]:
+                result = "the finding stays"
+            return f'<div class="verified">Checked. {lead}: {result}.</div>'
+        if check["expected"] != "reported":
+            return f'<div class="verified">Checked. {lead}: not reported.</div>'
+        places = ", ".join(
+            f"{html.escape(hit['file'])} line {hit['line']}"
+            for hit in check.get("hits") or []
+        )
+        return f'<div class="verified">Checked. {lead}: reported at {places}.</div>'
 
     def reference_files(self, reference: dict | None) -> dict[str, str]:
         if not reference or reference.get("setup", "none") == "git_diff":
@@ -1988,13 +2448,18 @@ class Book:
         return {entry["filename"]: entry["code"] for entry in example_files(reference)}
 
     def render_example(
-        self, rule_id: str, kind: str, example: dict, reference: dict | None = None
+        self, rule_id: str, item: dict, reference: dict | None = None, label: str = ""
     ) -> str:
+        example = item["example"]
+        kind = "flagged"
         title = "Flagged"
         tag_class = "tag-flagged"
-        if kind == "not_flagged":
+        if not item["should_flag"]:
+            kind = "not_flagged"
             title = "Not flagged"
             tag_class = "tag-clean"
+        if label:
+            title = f"{title} · {html.escape(label)}"
         blocks = []
         setup = example.get("setup", "none")
         files = example_files(example)
@@ -2026,7 +2491,7 @@ class Book:
                 ):
                     lines = (example["expect_line"],)
                 blocks.append(("file", entry, lines))
-        note = self.verify_note(rule_id, kind, example)
+        note = self.check_note(rule_id, item)
         if example.get("why"):
             note = (
                 '<div class="why"><strong>Why it is not flagged:</strong> '
@@ -2149,8 +2614,8 @@ class Book:
         language = fix.get("language") or page["flagged_example"].get("language")
         if not fix.get("filename"):
             return self.section("Fix", content + self.plain_code(fix["code"], language))
-        example = verification_targets(page)[-1][1]
-        note = self.verify_note(rule_id, "fix", example)
+        targets = {item["kind"]: item for item in verification_targets(page)}
+        note = self.check_note(rule_id, targets.get("fix"))
         flagged = page["flagged_example"]
         before = None
         if flagged.get("setup", "none") != "git_diff":
@@ -2179,15 +2644,17 @@ class Book:
             )
         return self.section("Fix", content)
 
-    def render_false_alarms(self, value: dict) -> str:
+    def render_false_alarms(self, rule_id: str, page: dict, targets: dict) -> str:
+        value = page["false_alarms_and_suppression"]
         misfires = "".join(
             f"<li>{self.inline(item)}</li>" for item in value["misfires"]
         )
         suppress = []
-        for item in value["suppress"]:
+        for index, item in enumerate(value["suppress"]):
             block = f"<li>{self.inline(item['text'])}"
             if item.get("code"):
                 block += self.plain_code(item["code"], item.get("language"))
+            block += self.check_note(rule_id, targets.get(f"suppress{index}"))
             block += "</li>"
             suppress.append(block)
         content = (
@@ -2197,6 +2664,101 @@ class Book:
             f'<ul class="suppress">{"".join(suppress)}</ul>'
         )
         return self.section("False alarms and suppression", content)
+
+    def reference(self) -> dict:
+        if self.reference_data is None:
+            self.reference_data = command_reference()
+        return self.reference_data
+
+    def command_overview_markdown(self) -> str:
+        reference = self.reference()
+        lines = []
+        for group in reference["groups"]:
+            rows = []
+            for command in reference["commands"]:
+                for entry in command["entries"]:
+                    if entry["group"] == group:
+                        rows.append(entry)
+            if not rows:
+                continue
+            lines += ["", f"### {group}", "", "| Command | What it does |", "|:--|:--|"]
+            for entry in rows:
+                name = entry["name"].replace("|", "\\|")
+                desc = entry["desc"].replace("|", "\\|")
+                lines.append(f"| `{name}` | {desc} |")
+        return "\n".join(lines)
+
+    def render_command_appendix(self) -> str:
+        target = self.anchor("commands")
+        reference = self.reference()
+        blocks = []
+        for command in reference["commands"]:
+            blocks.append(self.render_command(command))
+        intro = (
+            "<p>Generated when this book was built, from the argument parsers and "
+            f"the help table of Skylos {html.escape(reference['version'])}. "
+            "<code>skylos &lt;command&gt; --help</code> shows the same options "
+            "for the version you have installed.</p>"
+        )
+        return (  # skylos: ignore[SKY-D228] joins HTML fragments this module escaped
+            f'<section class="appendix commands" id="{target}">\n'
+            '<p class="chapter-number">Appendix</p>\n'
+            "<h1>Command and flag reference</h1>\n"
+            f"{intro}{''.join(blocks)}\n</section>"
+        )
+
+    def render_command(self, command: dict) -> str:
+        title = "skylos PATH"
+        if command["key"]:
+            title = f"skylos {command['key']}"
+        parts = [f'<h2 class="command-title"><code>{html.escape(title)}</code></h2>']
+        for entry in command["entries"]:
+            details = "".join(
+                f"<li>{html.escape(detail)}</li>" for detail in entry["details"]
+            )
+            if details:
+                details = f'<ul class="command-details">{details}</ul>'
+            parts.append(
+                f'<p class="command-entry"><code>{html.escape(entry["name"])}</code> '
+                f"— {html.escape(entry['desc'])}</p>{details}"
+            )
+        parser = command["parser"]
+        if parser:
+            parts.append(self.render_parser(parser))
+        elif not command["entries"]:
+            parts.append(
+                "<p>No description or option list could be read for this command; "
+                "run it with <code>--help</code>.</p>"
+            )
+        return '<div class="command">' + "".join(parts) + "</div>"
+
+    def render_parser(self, parser: dict, level: int = 0) -> str:
+        parts = []
+        if parser["description"] and level:
+            parts.append(f"<p>{html.escape(parser['description'])}</p>")
+        parts.append(f'<pre class="usage">{html.escape(parser["usage"])}</pre>')
+        if parser["options"]:
+            rows = "".join(
+                "<tr>"
+                f'<td class="opt"><code>{html.escape(option["invocation"])}</code></td>'
+                f"<td>{html.escape(option['help'])}</td>"
+                "</tr>"
+                for option in parser["options"]
+            )
+            parts.append(
+                '<table class="grid options"><thead><tr><th>Option</th>'
+                f"<th>What it does</th></tr></thead><tbody>{rows}</tbody></table>"
+            )
+        for sub in parser["subcommands"]:
+            heading = html.escape(f"{sub['name']}")
+            help_text = ""
+            if sub["help"]:
+                help_text = f" — {html.escape(sub['help'])}"
+            parts.append(
+                f'<h3 class="subcommand"><code>{heading}</code>{help_text}</h3>'
+                + self.render_parser(sub, level + 1)
+            )
+        return "".join(parts)
 
     def render_index(self) -> str:
         target = self.anchor("index")
@@ -2233,6 +2795,173 @@ class Book:
             '<th>Family</th><th>Severity</th><th class="al-right">Page</th></tr></thead>'
             f"<tbody>{''.join(rows)}</tbody></table>\n</section>"
         )
+
+
+EXTRA_PARSER_COMMANDS = frozenset({"cicd"})
+
+
+class _ParserCaptured(Exception):
+    pass
+
+
+def capture_command_parser(call) -> argparse.ArgumentParser | None:
+    """The first parser a command builds, taken when it starts parsing.
+
+    Commands build their parser inside their run function. Parsing is
+    stopped at once, so nothing the command does after parsing runs.
+    """
+    captured = []
+    original = argparse.ArgumentParser.parse_known_args
+
+    def stop(self, args=None, namespace=None):
+        captured.append(self)
+        raise _ParserCaptured
+
+    argparse.ArgumentParser.parse_known_args = stop
+    try:
+        call()
+    except (_ParserCaptured, SystemExit):
+        pass
+    finally:
+        argparse.ArgumentParser.parse_known_args = original
+    if captured:
+        return captured[0]
+    return None
+
+
+def describe_parser(parser: argparse.ArgumentParser, depth: int = 0) -> dict:
+    formatter = parser._get_formatter()
+    options = []
+    subcommands = []
+    for action in parser._actions:
+        if isinstance(action, argparse._HelpAction) or action.help == argparse.SUPPRESS:
+            continue
+        if isinstance(action, argparse._SubParsersAction):
+            subcommands += describe_subparsers(action, depth)
+            continue
+        help_text = str(action.help or "")
+        try:
+            help_text = formatter._expand_help(action)
+        except (KeyError, TypeError, ValueError):
+            pass
+        options.append(
+            {
+                "invocation": formatter._format_action_invocation(action),
+                "help": " ".join(help_text.split()),
+                "positional": not action.option_strings,
+            }
+        )
+    return {
+        "usage": " ".join(parser.format_usage().split()),
+        "description": " ".join(str(parser.description or "").split()),
+        "options": options,
+        "subcommands": subcommands,
+    }
+
+
+def describe_subparsers(action, depth: int) -> list[dict]:
+    helps = {choice.dest: str(choice.help or "") for choice in action._choices_actions}
+    seen = set()
+    result = []
+    for name, sub in action.choices.items():
+        if id(sub) in seen or depth >= 2:
+            continue
+        seen.add(id(sub))
+        entry = {"name": name, "help": " ".join(helps.get(name, "").split())}
+        entry.update(describe_parser(sub, depth + 1))
+        result.append(entry)
+    return result
+
+
+def command_key(name: str) -> str:
+    """`skylos setup [path]` -> `setup`; the scan entry `skylos PATH` -> ``."""
+    words = name.split()
+    if len(words) < 2 or words[1].isupper():
+        return ""
+    return words[1]
+
+
+def native_command_parser(cli, handler_name: str, key: str):
+    handler = getattr(cli, handler_name)
+    help_argv = ["--help"]
+    if key == "image":
+        help_argv = ["scan", "--help"]
+    return capture_command_parser(lambda: handler(help_argv))
+
+
+def collect_command_reference() -> dict:
+    """Every top-level command: its help-table entry and, where the command
+    builds an argparse parser, every option it accepts."""
+    import skylos
+    from skylos import cli
+    from skylos.cli_core.dispatch import EARLY_COMMAND_HANDLERS, NATIVE_HELP_COMMANDS
+    from skylos.cli_core.main_parser import build_main_parser
+    from skylos.ui.help import COMMANDS
+
+    entries_by_key: dict[str, list[dict]] = {}
+    groups: list[str] = []
+    for item in COMMANDS:
+        key = command_key(str(item.get("name", "")))
+        entries_by_key.setdefault(key, []).append(item)
+        if item.get("group") and item["group"] not in groups:
+            groups.append(item["group"])
+    keys = [""] + sorted(
+        name
+        for name, handler in EARLY_COMMAND_HANDLERS.items()
+        if "removed" not in handler
+    )
+    keys.append("agent")
+    commands = []
+    for key in sorted(set(keys), key=lambda name: (name != "", name)):
+        parser = None
+        if key == "":
+            parser = build_main_parser(version=str(skylos.__version__))
+        elif key == "agent":
+            parser = cli._build_agent_parser()
+        elif key in NATIVE_HELP_COMMANDS or key in EXTRA_PARSER_COMMANDS:
+            parser = native_command_parser(cli, EARLY_COMMAND_HANDLERS[key], key)
+        described = None
+        if parser is not None:
+            described = describe_parser(parser)
+        commands.append(
+            {
+                "key": key,
+                "entries": [
+                    {
+                        "name": str(item.get("name", "")),
+                        "desc": str(item.get("desc", "")),
+                        "group": str(item.get("group") or ""),
+                        "details": [str(detail) for detail in item.get("details", [])],
+                    }
+                    for item in entries_by_key.get(key, [])
+                ],
+                "parser": described,
+            }
+        )
+    return {"version": str(skylos.__version__), "groups": groups, "commands": commands}
+
+
+def command_reference() -> dict:
+    """Run collect_command_reference in a child process with a throwaway
+    HOME and working folder, so building a parser cannot touch real files."""
+    with tempfile.TemporaryDirectory(prefix="skylos-handbook-commands-") as folder:
+        home = Path(folder) / "home"
+        home.mkdir()
+        env = verification_env(home)
+        result = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--dump-command-reference"],
+            cwd=folder,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+    if result.returncode != 0:
+        raise BuildError(
+            "could not read the command parsers: " + result.stderr.strip()[-800:]
+        )
+    return json.loads(result.stdout)
 
 
 def git_short_head() -> str:

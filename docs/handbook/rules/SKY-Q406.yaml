@@ -3,6 +3,8 @@ title: Async callback passed to forEach
 family: quality
 severity: HIGH
 languages: [TypeScript, JavaScript]
+gate:
+  full: counted
 
 what_it_is: >-
   `Array.prototype.forEach` calls its callback and ignores what it returns.
@@ -138,12 +140,14 @@ false_alarms_and_suppression:
       It misses the same bug on receivers it cannot prove are arrays, such
       as a function parameter typed `string[]` or a `Set`.
   suppress:
-    - text: >-
+    - check: inline
+      text: >-
         On the reported line, where the call starts:
       language: typescript
       code: |
         ids.forEach(async (id) => { // skylos: ignore[SKY-Q406] errors handled inside
-    - text: >-
+    - check: config
+      text: >-
         `[tool.skylos] ignore = ["SKY-Q406"]` turns the rule off for the
         project. A baseline accepts existing findings, but it records the
         absolute file path and the line, so an entry stops matching when the

@@ -600,3 +600,74 @@ table.grid tr {
 .family-rules td:first-child {
   white-space: nowrap;
 }
+
+.verified.manual {
+  color: #6e5600;
+  background: #fbf6e4;
+}
+
+.commands {
+  break-before: page;
+}
+
+.commands h1 {
+  font-size: 21pt;
+  margin-bottom: 12pt;
+}
+
+.command {
+  margin: 0 0 14pt;
+}
+
+.command-title {
+  font-size: 12pt;
+  margin: 12pt 0 4pt;
+  padding-top: 6pt;
+  border-top: 0.75pt solid var(--line);
+}
+
+.command-title code {
+  font-size: 1em;
+}
+
+.command-entry {
+  margin: 0 0 3pt;
+}
+
+.command-details {
+  font-size: 8.6pt;
+  color: var(--muted);
+  margin-bottom: 5pt;
+}
+
+.subcommand {
+  font-size: 9.6pt;
+  margin: 8pt 0 3pt;
+  font-weight: 600;
+}
+
+.usage {
+  font-family: Menlo, "SF Mono", Consolas, monospace;
+  font-size: 7.4pt;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--code-bg);
+  border: 0.75pt solid var(--code-line);
+  border-radius: 2pt;
+  padding: 4pt 7pt;
+  margin: 3pt 0 6pt;
+}
+
+table.options {
+  font-size: 8pt;
+  margin-top: 2pt;
+}
+
+table.options td.opt {
+  width: 38%;
+}
+
+table.options td.opt code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
