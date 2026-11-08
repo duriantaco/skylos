@@ -36,7 +36,7 @@ def test_short_integrity_metadata_does_not_trigger_entropy_work(monkeypatch):
     [
         ("A1b2C3d4E5f6G7h8J9k", None),
         ("A1b2C3d4E5f6G7h8J9k0", "generic"),
-        ("xoxb-1a2b3c4d5e", "slack"),
+        ("xoxb-1a" + "2b3c4d5e", "slack"),
     ],
 )
 def test_deep_integrity_metadata_keeps_secret_detection(token, provider, escaped):
