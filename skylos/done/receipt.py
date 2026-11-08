@@ -65,6 +65,7 @@ LABELS = {
     "security_controls": "Security controls checked for removals",
     "guardrail_tampering": "AI-reviewer settings and scanner markers left alone",
     "branch_orphans": "No code left without callers",
+    "type_check": "No introduced type errors",
 }
 # What went wrong when a check fails, for the verdict line.
 PROBLEMS = {
@@ -80,6 +81,7 @@ PROBLEMS = {
     "security_controls": "security controls were removed",
     "guardrail_tampering": "AI-reviewer settings changed or scanner suppression markers were added",
     "branch_orphans": "the change left code that nothing calls",
+    "type_check": "the change introduced type errors",
 }
 # What an unfinished check could not do.
 UNCHECKED = {
@@ -95,6 +97,7 @@ UNCHECKED = {
     "security_controls": "security control changes were not checked",
     "guardrail_tampering": "AI-reviewer settings and scanner markers were not checked",
     "branch_orphans": "the change was not checked for code left without callers",
+    "type_check": "the type checker comparison could not finish",
 }
 FIXES = {
     "agent_edits": "Fix the remaining edit findings and run skylos hook recheck --session.",
@@ -109,6 +112,7 @@ FIXES = {
     "security_controls": "Restore the removed security controls or use a proven authentication boundary that rejects unauthorized callers before the handler runs.",
     "guardrail_tampering": "Undo the AI-reviewer setting changes and remove the added suppression markers, or have a person approve them in a separate change.",
     "branch_orphans": "Delete the code nothing calls any more, or call it from production code; export it if it is public API.",
+    "type_check": "Fix the introduced type errors and rerun the configured checker.",
 }
 
 
@@ -178,7 +182,131 @@ def build_receipt(
     if origins is not None:
         # Optional and additive: readers of the v1 contract ignore it.
         receipt["failure_origins"] = origins
+    type_check = _type_check_report(result)
+    if type_check is not None:
+        receipt["type_check"] = type_check
     return receipt
+
+
+_TYPE_ORIGINS = ("introduced", "preexisting", "unclassified")
+_TYPE_SEVERITIES = ("error", "warning", "info", "information", "note")
+
+
+def _type_check_diagnostic(diagnostic: dict) -> dict:
+    def position(key):
+        value = diagnostic.get(key)
+        return (
+            value
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 1
+            else None
+        )
+
+    column = position("column") if "column" in diagnostic else position("col")
+    return {
+        "file": _clean_path(diagnostic.get("file")),
+        "line": position("line"),
+        "column": column,
+        "col": column,
+        "code": _clean_text(diagnostic.get("code"), MAX_EVIDENCE_TEXT),
+        "message": _clean_text(diagnostic.get("message"), MAX_MESSAGE)
+        or "Type checker diagnostic",
+        "severity": diagnostic.get("severity")
+        if diagnostic.get("severity") in _TYPE_SEVERITIES
+        else "error",
+        "origin": diagnostic.get("origin")
+        if diagnostic.get("origin") in _TYPE_ORIGINS
+        else "unclassified",
+    }
+
+
+def _type_check_report(result: DoneResult) -> dict | None:
+    for outcome in result.checks:
+        check = outcome.result
+        report = getattr(check, "type_check_report", None)
+        if check.id != "type_check" or not isinstance(report, dict):
+            continue
+        diagnostics = report.get("diagnostics") or []
+        comparison = report.get("comparison") or {}
+        counts = report.get("counts") or {}
+        return {
+            "status": check.status,
+            "complete": check.evidence.get("complete") is True,
+            "checker": _clean_text(
+                report.get("checker") or result.config.type_checker, 40
+            ),
+            "summary": _clean_text(check.summary, MAX_MESSAGE),
+            "reason": _clean_text(report.get("reason"), MAX_MESSAGE),
+            "comparison": {
+                "status": comparison.get("status", "incomplete"),
+                "reason": _clean_text(comparison.get("reason"), MAX_MESSAGE),
+            },
+            "counts": {origin: counts.get(origin, 0) for origin in _TYPE_ORIGINS},
+            "diagnostics": [
+                _type_check_diagnostic(diagnostic)
+                for diagnostic in diagnostics[:MAX_FINDINGS]
+            ],
+            "truncated": max(0, len(diagnostics) - MAX_FINDINGS),
+        }
+    return None
+
+
+def _type_check_problems(report) -> list[str]:
+    if not isinstance(report, dict):
+        return ["type_check is malformed"]
+    diagnostics = report.get("diagnostics")
+    counts = report.get("counts")
+    comparison = report.get("comparison")
+    if not (
+        isinstance(report.get("status"), str)
+        and report["status"] in {"pass", "fail", "incomplete"}
+        and isinstance(report.get("complete"), bool)
+        and (report.get("status") != "pass" or report["complete"])
+        and isinstance(report.get("checker"), str)
+        and _clean_text(report["checker"], 40) == report["checker"]
+        and isinstance(report.get("summary"), str)
+        and _clean_text(report["summary"], MAX_MESSAGE) == report["summary"]
+        and isinstance(report.get("reason"), str)
+        and _clean_text(report["reason"], MAX_MESSAGE) == report["reason"]
+        and isinstance(comparison, dict)
+        and isinstance(comparison.get("status"), str)
+        and comparison["status"] in {"complete", "not_requested", "incomplete"}
+        and isinstance(comparison.get("reason"), str)
+        and _clean_text(comparison["reason"], MAX_MESSAGE) == comparison["reason"]
+        and isinstance(counts, dict)
+        and all(
+            _is_count(counts.get(origin)) and counts[origin] >= 0
+            for origin in _TYPE_ORIGINS
+        )
+        and _is_count(report.get("truncated"))
+        and report["truncated"] >= 0
+        and isinstance(diagnostics, list)
+        and len(diagnostics) <= MAX_FINDINGS
+    ):
+        return ["type_check is malformed"]
+    if any(
+        not isinstance(diagnostic, dict)
+        or _type_check_diagnostic(diagnostic) != diagnostic
+        for diagnostic in diagnostics
+    ):
+        return ["type_check has a malformed diagnostic"]
+    listed = {
+        origin: sum(
+            diagnostic["origin"] == origin and diagnostic["severity"] == "error"
+            for diagnostic in diagnostics
+        )
+        for origin in _TYPE_ORIGINS
+    }
+    if any(counts[origin] < listed[origin] for origin in _TYPE_ORIGINS) or (
+        not report["truncated"] and counts != listed
+    ):
+        return ["type_check counts do not match its diagnostics"]
+    if report["status"] == "pass" and (
+        comparison["status"] != "complete"
+        or counts["introduced"]
+        or counts["unclassified"]
+    ):
+        return ["type_check pass has unresolved errors or comparison"]
+    return []
 
 
 ORIGINS = ("preexisting", "introduced", "new_test", "undetermined")
@@ -377,6 +505,8 @@ def validate_receipt(receipt: Any) -> list[str]:
             seen.add(check.get("id"))
     if "failure_origins" in receipt:
         problems += _failure_origins_problems(receipt["failure_origins"])
+    if "type_check" in receipt:
+        problems += _type_check_problems(receipt["type_check"])
     unverified = receipt.get("unverified", [])
     if not isinstance(unverified, list) or len(unverified) > MAX_UNVERIFIED:
         problems.append("unverified is malformed")

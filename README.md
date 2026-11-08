@@ -1171,6 +1171,8 @@ See [container-image scanning](./docs/container-image-reports.md#scan-an-image-w
 | CLI commands, flags, and examples | [CLI Reference](https://docs.skylos.dev/cli-reference) |
 | CLI output modes, pretty reports, and TUI controls | [CLI Output Modes](./docs/cli-output.md) |
 | Optional Ruff linting through the Skylos CLI | [Python Linting](./docs/python-linting.md) |
+| Opt-in project compiler diagnostics and new versus existing type errors | [Type checking](./docs/type-checking.md) |
+| Find slow scanner phases and functions with `--profile` | [Analysis profiling](./docs/profiling.md) |
 | CI setup, PR gates, annotations, and branch protection | [CI/CD](https://docs.skylos.dev/ci-cd) |
 | GitLab merge request reports and CI example | [GitLab Code Quality](./docs/gitlab-code-quality.md) |
 | Bitbucket Pipelines and Azure Pipelines pull request checks | [Bitbucket and Azure Pipelines](./docs/bitbucket-azure-pipelines.md) |

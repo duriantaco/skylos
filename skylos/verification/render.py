@@ -206,6 +206,10 @@ def render_verify_report(payload: dict[str, Any]) -> str:
     lines.extend(_findings(payload))
     lines.extend(render_verification_scope_notes(payload))
     lines.extend(_behavior(payload))
+    if isinstance(payload.get("type_check"), dict):
+        from skylos.typecheck.cli import render_type_check
+
+        lines.append(render_type_check(payload["type_check"]))
     return "\n".join(lines)
 
 

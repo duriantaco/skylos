@@ -76,6 +76,16 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="CLIENT",
         help="Agent that made the change, e.g. claude-code, codex, cursor (default: unknown)",
     )
+    parser.add_argument(
+        "--type-check",
+        action="store_true",
+        help="Run the repository's type checker and block on introduced errors or an incomplete comparison.",
+    )
+    parser.add_argument(
+        "--type-checker",
+        choices=("auto", "mypy", "pyright", "pyrefly", "tsc"),
+        help="Checker to use with --type-check (default: trusted policy, otherwise auto).",
+    )
     return parser
 
 
@@ -97,7 +107,10 @@ def build_receipt_parser() -> argparse.ArgumentParser:
 def run_done_command(argv: list[str], *, console: Console | None = None) -> int:
     if argv and argv[0] == "receipt":
         return _run_receipt_command(argv[1:], console=console)
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.type_checker is not None and not args.type_check:
+        parser.error("--type-checker requires --type-check")
     out = console or Console(highlight=False)
     err = Console(stderr=True, highlight=False)
 
@@ -111,11 +124,17 @@ def run_done_command(argv: list[str], *, console: Console | None = None) -> int:
     )
 
     try:
+        type_check_options = {}
+        if args.type_check:
+            type_check_options["type_check"] = True
+            if args.type_checker is not None:
+                type_check_options["checker"] = args.type_checker
         result = run(
             args.path,
             base_ref=args.base,
             run_tests=not args.no_tests,
             session_id=args.session,
+            **type_check_options,
         )
         receipt = build_receipt(
             result, agent_client=args.agent, session_id=args.session

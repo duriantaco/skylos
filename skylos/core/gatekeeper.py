@@ -733,6 +733,24 @@ def gate_analysis_coverage(results, *, strict=False, config=None):
     )
 
 
+def _type_check_gate_reasons(results):
+    """Only an explicitly attached checker report can affect the gate."""
+    report = results.get("type_check") if isinstance(results, dict) else None
+    if not isinstance(report, dict):
+        return [], []
+    status = report.get("status")
+    summary = report.get("summary") or "The requested type check did not finish"
+    if (
+        report.get("complete") is not True
+        or not isinstance(status, str)
+        or status not in {"pass", "fail"}
+    ):
+        return [], [f"Type checking incomplete: {summary}"]
+    if status == "fail":
+        return [f"Type checking failed: {summary}"], []
+    return [], []
+
+
 def _analysis_blocking_reasons(results, *, strict=False, config=None):
     """Why the analysis cannot be decided (exit 2); coverage gaps excluded.
 
@@ -742,7 +760,11 @@ def _analysis_blocking_reasons(results, *, strict=False, config=None):
     policy requires complete coverage, or most of the code went unchecked.
     """
     coverage = gate_analysis_coverage(results, strict=strict, config=config)
-    return [_gate_reason(reason) for reason in coverage.blocking]
+    _, type_check_incomplete = _type_check_gate_reasons(results)
+    return [
+        *[_gate_reason(reason) for reason in coverage.blocking],
+        *type_check_incomplete,
+    ]
 
 
 def _coverage_gap_reasons(results, *, strict=False, config=None):
@@ -959,6 +981,8 @@ def check_gate(results, config, strict=False, provenance=None):
 
     found = _gate_findings(results, config)
     gate_config = _effective_gate_config(config)
+    type_check_failures, _ = _type_check_gate_reasons(results)
+    reasons.extend(type_check_failures)
     reasons.extend(_required_coverage_reasons(results, gate_config))
 
     if strict:

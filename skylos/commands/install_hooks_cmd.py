@@ -47,10 +47,10 @@ GITIGNORE_HEADER = "# Skylos agent hooks: local session state, log and cache"
 CURSOR_PERMISSION_FALLBACK = '{"permission":"allow"}'
 CURSOR_PROMPT_FALLBACK = '{"continue":true}'
 # The trusted done configuration permits up to 3,600 seconds for tests,
-# 1,800 for changed-line mutation checks and 1,800 for rerunning failing tests
-# on the base. Leave time to persist the receipt and render feedback; never
-# derive this ceiling from the working tree.
-STOP_TIMEOUT_SECONDS = 3600 + 1800 + 1800 + 60
+# 1,800 for changed-line mutation checks, 1,800 for rerunning failing tests
+# on the base and 1,800 for optional type checking. Leave time to persist the
+# receipt and render feedback; never derive this ceiling from the working tree.
+STOP_TIMEOUT_SECONDS = 3600 + 1800 + 1800 + 1800 + 60
 
 Probe = Callable[[Sequence[str]], "str | None"]
 

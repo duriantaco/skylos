@@ -501,8 +501,10 @@ An explicitly configured but invalid agent standards policy
 gives Claude Code and Codex a repair message at `post-edit` and reports the
 problem to all three agents at `stop`; `skylos hook recheck` exits 2. Hook
 timeouts set by the installer are 15 s (`pre-read`), 30 s
-(`pre-bash`), 120 s (`post-edit`) and 180 s (`stop`). All three agents treat a
-timeout as a non-blocking failure.
+(`pre-bash`), 120 s (`post-edit`) and 9,060 s (`stop`). The stop ceiling covers
+the maximum trusted test, mutation, failing-test baseline and optional type-check
+budgets, plus receipt writing. All three agents treat a timeout as a non-blocking
+failure.
 
 Each hook call appends one JSON line to `.skylos/hook.log` with the time,
 event, client, outcome, counts and duration. `pre-bash` outcomes are `skip`,

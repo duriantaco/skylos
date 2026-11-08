@@ -428,6 +428,38 @@ labeled already failing run once more on the base, so a test that fails there
 only sometimes is not called already failing. A flaky test that happens to pass
 on the base is still labeled introduced; it keeps blocking either way.
 
+## Optional type checking
+
+`skylos done --type-check` runs the repository's declared type checker and compares
+its errors with the trusted base. To select a supported checker explicitly, use
+`skylos done --type-check --type-checker mypy`; the other choices are `pyright`,
+`pyrefly`, `tsc`, and `auto`. Skylos installs no checker and generates no checker
+configuration or replacement type system.
+
+Introduced errors block. Errors confirmed on the base remain visible as
+`preexisting` advice. Errors whose origin cannot be established, a missing checker,
+or a comparison that cannot finish make a blocking type check unfinished. A clean
+head does not establish a comparable baseline when checker settings or dependency
+inputs changed. Diagnostics include their origin, location, code and severity in
+the JSON receipt; text and Markdown receipts label each finding's origin too.
+
+Type checking is off by default. A trusted base can enable it for every Done run:
+
+```toml
+[tool.skylos.done]
+type_checker = "auto"                 # auto | mypy | pyright | pyrefly | tsc
+type_check_timeout_seconds = 120        # 10 to 1800
+
+[tool.skylos.done.checks]
+type_check = "block"                  # or advise for a nonblocking report
+```
+
+`--type-check` enables a blocking check for that invocation and strengthens an
+advisory policy. It cannot replace a checker required by the trusted base.
+Working-tree settings cannot disable that policy. `--no-tests` controls tests
+separately; it does not skip an enabled type check. Type checking waits for earlier
+blocking guards to pass, including the checks for tampering with tests and settings.
+
 ## Settings
 
 Settings live in `[tool.skylos.done]` and are read from the **base commit**,
@@ -448,6 +480,8 @@ protected_paths = [                # default: Skylos settings and agent hook fil
 verify_preexisting = true          # rerun failing tests on the base and label them
 preexisting_timeout_seconds = 120  # 10 to 1800, for that rerun
 allow_preexisting_failures = false # true: verified already-failing tests stop blocking
+type_checker = "auto"              # supported repository type checker; no arbitrary commands
+type_check_timeout_seconds = 120    # 10 to 1800, only used when type_check is enabled
 
 [tool.skylos.done.checks]
 tests_pass = "block"              # block | advise | shadow | off
@@ -461,6 +495,7 @@ silenced_checks = "advise"
 security_controls = "block"
 guardrail_tampering = "advise"
 branch_orphans = "advise"
+type_check = "off"                  # explicit --type-check enables a blocking run
 ```
 
 `branch_orphans_block_rules` (default `["SKY-A135", "SKY-A136"]`) lists the

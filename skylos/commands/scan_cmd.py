@@ -8,6 +8,7 @@ from rich.markup import escape
 
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.constants import RIPGREP_INSTALL_URL
+from skylos.typecheck.cli import scan_type_check_exit
 from skylos.ui.dead_code_evidence import dead_code_uncertainty_summary
 
 
@@ -279,7 +280,19 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
     parser = cli_module._build_main_parser()
     args = cli_module._parse_main_cli_args(parser, argv)
+    from skylos.typecheck.cli import validate_type_check_args
+
+    validate_type_check_args(parser, args)
+    if getattr(args, "type_check", False) and len(args.path) != 1:
+        parser.error("--type-check requires one project path per invocation")
     _exit_on_missing_scan_paths(args, cli_module=cli_module)
+    if getattr(args, "profile_output", None) is not None:
+        from skylos.core.analysis_profile import validate_profile_output
+
+        try:
+            validate_profile_output(args.profile_output, getattr(args, "output", None))
+        except ValueError as exc:
+            parser.error(str(exc))
     base = (
         (getattr(args, "diff_base", None) or getattr(args, "diff", None))
         if (
@@ -308,8 +321,17 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             os.environ.pop("SKYLOS_DIFF_BASE", None)
         else:
             os.environ["SKYLOS_DIFF_BASE"] = previous_diff
+        if getattr(args, "_profile_output_failed", False):
+            import sys
+
+            pending = sys.exc_info()[1]
+            if pending is None or (
+                isinstance(pending, SystemExit) and pending.code in (None, 0, 1)
+            ):
+                raise SystemExit(2)
 
 
+@scan_type_check_exit
 def _run_scan_command(
     argv: Sequence[str], *, cli_module: ModuleType, parser, args
 ) -> None:
@@ -461,7 +483,9 @@ def _run_scan_command(
         else:
             scan_path = args.path[0]
 
-        def run_main_analysis(progress_callback=None):
+        analysis_profile_summary = None
+
+        def call_main_analysis(progress_callback=None):
             return run_analyze(
                 scan_path,
                 all_advice=bool(
@@ -488,6 +512,42 @@ def _run_scan_command(
                 include_review_context=include_review_context,
                 **report_scope_options,
             )
+
+        def run_main_analysis(progress_callback=None):
+            nonlocal analysis_profile_summary
+            if not (
+                getattr(args, "profile", False)
+                or getattr(args, "profile_output", None) is not None
+            ):
+                return call_main_analysis(progress_callback)
+
+            from skylos.core.analysis_profile import (
+                profile_scan,
+                render_profile,
+                write_profile_output,
+            )
+
+            scanner_failed = True
+            try:
+                with profile_scan(True) as profile:
+                    result_json = call_main_analysis(
+                        profile.progress_callback(progress_callback)
+                    )
+                scanner_failed = False
+                return result_json
+            finally:
+                # The profiling context has stopped before formatting or I/O.
+                # An output failure never replaces an active scanner exception.
+                analysis_profile_summary = profile.summary()
+                render_profile(analysis_profile_summary)
+                output_path = getattr(args, "profile_output", None)
+                if output_path is not None:
+                    try:
+                        write_profile_output(analysis_profile_summary, output_path)
+                    except OSError as exc:
+                        print(f"Skylos profile output unavailable: {exc}", file=sys.stderr)
+                        if not scanner_failed:
+                            args._profile_output_failed = True
 
         def run_main_analysis_with_notice(progress_callback=None):
             try:
@@ -535,6 +595,25 @@ def _run_scan_command(
 
         result = json.loads(result_json)
         del result_json
+        if getattr(args, "type_check", False):
+            import os
+            import sys
+
+            from skylos.typecheck.cli import attach_type_check, render_type_check
+
+            type_base = (
+                os.environ.get("SKYLOS_DIFF_BASE")
+                or getattr(args, "diff_base", None)
+                or getattr(args, "diff", None)
+            )
+            if type_base == "auto":
+                type_base = cli_module.auto_diff_base_ref()
+            report = attach_type_check(
+                result, args, path=args.path[0], base_ref=type_base,
+            )
+            print(render_type_check(report), file=sys.stderr)
+        if analysis_profile_summary is not None:
+            result["profiling"] = analysis_profile_summary
 
         rules_receipt = getattr(pre_analysis, "custom_rules_coverage", None)
         if isinstance(rules_receipt, dict):
