@@ -887,7 +887,9 @@ def _structural_generic_candidates(structural_contexts, keyed_spans, approved_sp
     candidates = []
     for context_start, context_end, decoded_value, _ in structural_contexts:
         value = decoded_value.strip()
-        if not value or _is_covered_by_span(
+        # Generic findings require 20 characters. Keep short decoded contexts
+        # for provider checks without generating or comparing generic candidates.
+        if len(value) < 20 or _is_covered_by_span(
             value, context_start, keyed_spans, approved_spans
         ):
             continue
