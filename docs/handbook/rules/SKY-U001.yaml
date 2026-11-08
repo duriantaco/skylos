@@ -1,0 +1,204 @@
+id: SKY-U001
+title: Unused function
+family: dead-code
+severity: UNRATED
+severity_note: >-
+  Unused-code findings carry no severity in JSON. The terminal report shows
+  them as LOW, SARIF as level `note` and GitLab as `minor`. A confidence
+  score from 0 to 100 decides whether they are listed (60 or more by
+  default).
+languages: [Python, TypeScript/JavaScript, Java, PHP, Dart, Go, Ruby (partial), C# (partial), C++ (file-local functions), Kotlin (private functions), Rust (hidden below the default threshold)]
+
+what_it_is: >-
+  A function or method that nothing in the project calls. It still has to
+  be read, tested and kept compiling, but removing it changes nothing.
+  Skylos reports it with a confidence score that says how sure it is.
+
+why_it_matters: >-
+  Dead functions mislead readers and coding agents, who copy and extend code
+  that never runs. They also hide real bugs: a fix applied to an unused copy
+  of a function never reaches production.
+
+flagged_example:
+  language: python
+  expect_file: billing/invoices.py
+  expect_line: 11
+  files:
+    - filename: billing/invoices.py
+      code: |
+        """Invoice maths for the checkout service."""
+
+        TAX_RATE = 0.2
+
+
+        def calculate_total(items):
+            subtotal = sum(item["price"] * item["qty"] for item in items)
+            return round(subtotal * (1 + TAX_RATE))
+
+
+        def legacy_invoice_number(number):
+            """Old INV-0000123 format, replaced by UUID invoice ids in 2024."""
+            return f"INV-{number:07d}"
+    - filename: app.py
+      code: |
+        from billing.invoices import calculate_total
+
+
+        def main():
+            items = [{"price": 1200, "qty": 2}, {"price": 350, "qty": 1}]
+            print(f"Total: {calculate_total(items) / 100:.2f}")
+
+
+        if __name__ == "__main__":
+            main()
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: billing/views.py
+      code: |
+        from flask import Blueprint, jsonify
+
+        from billing.invoices import legacy_invoice_number
+
+        bp = Blueprint("billing", __name__)
+
+
+        @bp.route("/invoices/<int:number>/legacy-id")
+        def show_legacy_id(number):
+            return jsonify({"legacy_id": legacy_invoice_number(number)})
+    - filename: billing/invoices.py
+      code: |
+        """Invoice maths for the checkout service."""
+
+        TAX_RATE = 0.2
+
+
+        def calculate_total(items):
+            subtotal = sum(item["price"] * item["qty"] for item in items)
+            return round(subtotal * (1 + TAX_RATE))
+
+
+        def legacy_invoice_number(number):
+            """Old INV-0000123 format, replaced by UUID invoice ids in 2024."""
+            return f"INV-{number:07d}"
+    - filename: app.py
+      code: |
+        from billing.invoices import calculate_total
+
+
+        def main():
+            items = [{"price": 1200, "qty": 2}, {"price": 350, "qty": 1}]
+            print(f"Total: {calculate_total(items) / 100:.2f}")
+
+
+        if __name__ == "__main__":
+            main()
+  why: >-
+    `show_legacy_id` carries a Flask route decorator, so Skylos treats it as
+    an entry point that the framework calls. `legacy_invoice_number` is
+    reachable from it, even though no code in the project calls the route
+    directly.
+
+how_skylos_decides:
+  - >-
+    Runs on every scan; no flag is needed. Skylos lists every function and
+    method in the project and every reference to them: calls, imports,
+    attribute access, decorators.
+  - >-
+    Starts each candidate at confidence 100 and drops it (confidence 0)
+    when you said to keep it (an inline ignore, a whitelist entry, a
+    configured entry point) or when something outside the code calls it: a
+    framework decorator such as `@app.route`, `@app.command` or
+    `@shared_task`, a pytest or unittest hook, or a dunder method. Test,
+    example and benchmark paths (`tests/`, `test_*.py`, `conftest.py`,
+    `*.spec.ts`, `examples/`, `benchmarks/` and similar) are skipped too.
+  - >-
+    Lowers confidence for names that are often called by convention:
+    `handle_*`, `*_callback`, `setup_*`, `on_*`, `visit_*`, `_private`
+    names, definitions in `__init__.py`, and code behind version checks.
+  - >-
+    Follows reachability: a function called only by other dead code is still
+    dead. Roots are module-level code, `if __name__ == "__main__"` blocks,
+    framework entry points, package entry points and tests.
+  - >-
+    Treats names in a module's `__all__`, and public names of an
+    `__init__.py` without `__all__`, as exported API, and never reports
+    them.
+  - >-
+    Searches the project's text for each remaining candidate (grep
+    verification) and keeps it alive on a real reference that the parser
+    missed, such as a string dispatch through `getattr`. A function named
+    only in a YAML or TOML file is still reported; for Python, config files
+    count only when they name the module's file path.
+  - >-
+    Caps confidence by the weakest evidence (90 for a public module-level
+    name, 80 for a public method, 40 for deprecated code) and lists the
+    function only when it has no references, is not exported and scores at
+    least the threshold (`--confidence`, default 60). Uncertain cases, such
+    as `format_*` and `*_name` helpers, are held back and only appear in
+    JSON under `dead_code_abstentions`.
+
+source_refs:
+  - path: skylos/analysis/penalties.py
+    symbol: "def apply_penalties("
+    note: confidence penalties and the checks that set it to 0.
+  - path: skylos/visitors/framework_aware.py
+    symbol: "FRAMEWORK_DECORATORS"
+  - path: skylos/analyzer.py
+    symbol: "def _mark_exports(self)"
+  - path: skylos/analyzer.py
+    symbol: "def _grep_verify(self"
+  - path: skylos/deadcode/confidence.py
+    symbol: "CONFIDENCE_CAPS = {"
+  - path: skylos/reporting/dead_code_result.py
+    symbol: "def _is_dead_definition("
+    note: references, export and threshold check.
+  - path: skylos/deadcode/evidence.py
+    symbol: "def _is_weak_helper_function("
+    note: names held back as uncertain.
+  - path: test/test_dead_code_confidence.py
+    symbol: "def test_scan_reports_varied_confidence_and_threshold_filters_weak_findings"
+
+fix:
+  explanation: >-
+    Delete the function, and its tests if they only test it. If projects
+    outside this repository import it, it is public API: list it in the
+    module's `__all__`, which Skylos treats as exported.
+  language: python
+  code: |
+    __all__ = ["calculate_total", "legacy_invoice_number"]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Library functions that only other projects call are reported when the
+      module has no `__all__`.
+    - >-
+      Functions called through a plugin registry, a string name or
+      `getattr()` can be reported when Skylos cannot follow the lookup.
+    - >-
+      It stays quiet on routes whose blueprint is never registered, on
+      everything under `tests/`, and on `format_*` and `*_name` helpers, so
+      some dead code is missed.
+  suppress:
+    - text: >-
+        On the `def` line (or its decorator line), with a reason:
+      language: python
+      code: |
+        def legacy_invoice_number(number):  # skylos: ignore[SKY-U001] export job
+    - text: >-
+        Keep names alive by pattern in `pyproject.toml`, optionally with a
+        reason or an expiry date:
+      language: toml
+      code: |
+        [tool.skylos.whitelist]
+        names = ["legacy_*"]
+        documented = { "plugin_*" = "loaded through entry points" }
+    - text: >-
+        `[[tool.skylos.dead_code.entrypoints]]` declares extra entry points. A
+        baseline accepts the unused functions you already have; it matches
+        the bare name in any file, so a new unused function with the same
+        name elsewhere is hidden too.
+
+related: [SKY-U002, SKY-U004, SKY-U006, SKY-A135]

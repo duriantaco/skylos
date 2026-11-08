@@ -1,0 +1,2252 @@
+#!/usr/bin/env python3
+"""Build the Skylos rule handbook as one HTML file and a PDF.
+
+Inputs, all under docs/handbook/:
+
+- rules/<RULE-ID>.yaml: one page per rule (schema in docs/handbook/README.md);
+- families.yaml: the book's rule families, their intros and which catalog
+  rules belong to each;
+- intro/*.md: the front matter, in a small Markdown subset;
+- handbook.css: the page style.
+
+The rule list comes from skylos/rules/catalog.py. Rules without a page are
+listed as "not yet written" in the coverage report and left out of a pilot
+build; a full build refuses to run while any are missing.
+
+--verify writes every example into a scratch folder and runs the real
+skylos CLI on it, with HOME pointed at the scratch folder and --no-upload.
+A flagged example must produce its rule ID, a not-flagged example and a
+verifiable fix must not.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import difflib
+import hashlib
+import html
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from fnmatch import fnmatchcase
+from pathlib import Path, PurePosixPath
+
+import yaml
+from pygments import highlight
+from pygments.formatters import HtmlFormatter
+from pygments.lexers import get_lexer_by_name, get_lexer_for_filename
+from pygments.util import ClassNotFound
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+HANDBOOK_DIR = REPO_ROOT / "docs" / "handbook"
+RULES_DIR = HANDBOOK_DIR / "rules"
+INTRO_DIR = HANDBOOK_DIR / "intro"
+FAMILIES_FILE = HANDBOOK_DIR / "families.yaml"
+CSS_FILE = HANDBOOK_DIR / "handbook.css"
+DEFAULT_OUTPUT = REPO_ROOT / "build" / "handbook" / "skylos-handbook.pdf"
+DEFAULT_CHROME = (
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium",
+    "chromium-browser",
+)
+
+SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+PAGE_SEVERITIES = SEVERITIES + ("VARIES", "UNRATED")
+SEVERITY_LABELS = {
+    "CRITICAL": "Critical",
+    "HIGH": "High",
+    "MEDIUM": "Medium",
+    "LOW": "Low",
+    "VARIES": "Varies",
+    "UNRATED": "No severity",
+}
+RULE_REQUIRED = (
+    "id",
+    "title",
+    "family",
+    "severity",
+    "languages",
+    "what_it_is",
+    "why_it_matters",
+    "how_skylos_decides",
+    "source_refs",
+    "flagged_example",
+    "not_flagged_example",
+    "fix",
+    "false_alarms_and_suppression",
+    "related",
+)
+RULE_OPTIONAL = ("cwe", "severity_note", "run_with")
+EXAMPLE_KEYS = {
+    "language",
+    "filename",
+    "code",
+    "files",
+    "setup",
+    "base_files",
+    "scan_flags",
+    "expect_file",
+    "expect_line",
+    "why",
+}
+FILE_KEYS = {"filename", "code", "language", "deleted"}
+SETUPS = ("none", "git", "git_diff")
+FIX_KEYS = {"explanation", "code", "language", "filename", "scan_flags"}
+FALSE_ALARM_KEYS = {"misfires", "suppress"}
+SUPPRESS_KEYS = {"text", "code", "language"}
+SOURCE_REF_KEYS = {"path", "symbol", "note"}
+LANGUAGE_NAMES = {
+    "python": "Python",
+    "typescript": "TypeScript",
+    "tsx": "TSX",
+    "javascript": "JavaScript",
+    "jsx": "JSX",
+    "go": "Go",
+    "java": "Java",
+    "kotlin": "Kotlin",
+    "php": "PHP",
+    "rust": "Rust",
+    "ruby": "Ruby",
+    "dart": "Dart",
+    "csharp": "C#",
+    "cpp": "C++",
+    "shell": "Shell",
+    "bash": "Shell",
+    "yaml": "YAML",
+    "json": "JSON",
+    "toml": "TOML",
+    "ini": "INI",
+    "dockerfile": "Dockerfile",
+    "terraform": "Terraform",
+    "solidity": "Solidity",
+    "diff": "Diff",
+    "text": "Text",
+}
+LEXER_NAMES = {
+    "shell": "bash",
+    "csharp": "csharp",
+    "terraform": "terraform",
+    "text": "text",
+    "jsx": "jsx",
+    "tsx": "tsx",
+}
+RULE_ID_PATTERN = re.compile(r"\bSKY-(?:CIRC|SCA-[A-Z]+[0-9]{3}|[A-Z]+[0-9]{3})\b")
+PLACEHOLDER_PATTERN = re.compile(r"\{\{\s*([a-z_]+)\s*\}\}")
+FRAGMENT_PATTERN = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")
+MAX_CODE_COLUMNS = 88
+PAGE_NUMBER_PLACEHOLDER = "000"
+VERIFY_TIMEOUT_SECONDS = 300
+VERIFY_ENV_KEEP = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "SYSTEMROOT")
+
+
+class BuildError(Exception):
+    pass
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Build the Skylos rule handbook (HTML and PDF)."
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_OUTPUT,
+        help="PDF path. The HTML, coverage report and verify report are "
+        "written next to it.",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("pilot", "full"),
+        default="pilot",
+        help="pilot leaves rules without a page out of the book; full "
+        "refuses to build while any catalog rule has no page.",
+    )
+    parser.add_argument(
+        "--rule",
+        action="append",
+        default=[],
+        metavar="RULE-ID",
+        help="Only use this rule page (repeatable).",
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Run every example through the skylos CLI before building.",
+    )
+    parser.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="Run the examples through the skylos CLI and stop.",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Validate the pages and write the coverage report only.",
+    )
+    parser.add_argument(
+        "--html-only",
+        action="store_true",
+        help="Write the HTML but do not print the PDF.",
+    )
+    parser.add_argument(
+        "--skylos",
+        default=None,
+        help="skylos executable for --verify (default: the console script "
+        "next to this Python, else skylos on PATH). The checkout this script "
+        "lives in is put first on PYTHONPATH.",
+    )
+    parser.add_argument(
+        "--scratch",
+        type=Path,
+        default=None,
+        help="Scratch folder for --verify (default: a new temporary folder).",
+    )
+    parser.add_argument(
+        "--keep-scratch",
+        action="store_true",
+        help="Keep the --verify scratch folder.",
+    )
+    parser.add_argument(
+        "--chrome",
+        default=os.environ.get("CHROME_BIN"),
+        help="Chrome or Chromium executable for printing.",
+    )
+    args = parser.parse_args(argv)
+
+    sys.path.insert(0, str(REPO_ROOT))
+    try:
+        return run(args)
+    except BuildError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+
+def run(args) -> int:
+    catalog = load_catalog()
+    families = load_families(catalog)
+    pages, problems = load_pages(catalog, families, set(args.rule))
+    for warning in problems["warnings"]:
+        print(f"warning: {warning}", file=sys.stderr)
+    if problems["errors"]:
+        for error in problems["errors"]:
+            print(f"error: {error}", file=sys.stderr)
+        raise BuildError(f"{len(problems['errors'])} page problem(s); nothing built")
+
+    output = args.output.expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    coverage_path = output.with_name(output.stem + "-coverage.md")
+    coverage = build_coverage(catalog, families, pages)
+    coverage_path.write_text(render_coverage(coverage), encoding="utf-8")
+    print(
+        f"coverage: {coverage['written']} of {coverage['pages_needed']} rules "
+        f"have a page ({coverage['missing']} not yet written; "
+        f"{len(coverage['remapped'])} catalog IDs are reported under another "
+        f"rule) -> {coverage_path}"
+    )
+    if args.mode == "full" and coverage["missing"]:
+        raise BuildError(
+            f"--mode full needs a page for every catalog rule; "
+            f"{coverage['missing']} are not yet written (see {coverage_path})"
+        )
+
+    verify_path = output.with_name(output.stem + "-verify.json")
+    if args.verify or args.verify_only:
+        report = verify_pages(pages, args)
+        verify_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        print_verify_table(report)
+        print(f"verify report: {verify_path}")
+        if report["failed"]:
+            raise BuildError(f"{report['failed']} example check(s) failed")
+        if args.verify_only:
+            return 0
+
+    if args.check:
+        return 0
+
+    verify_report = read_verify_report(verify_path)
+    intro = load_intro(catalog, families, pages)
+    book = Book(catalog, families, pages, intro, verify_report, args.mode)
+    html_path = output.with_suffix(".html")
+    page_numbers: dict[str, int] = {}
+    html_path.write_text(book.render(page_numbers), encoding="utf-8")
+    if args.html_only:
+        print(f"html: {html_path}")
+        return 0
+
+    chrome = find_chrome(args.chrome)
+    page_count = 0
+    for _attempt in range(3):
+        print_pdf(chrome, html_path, output)
+        destinations, page_count = pdf_destinations(output.read_bytes())
+        if destinations == page_numbers:
+            break
+        page_numbers = destinations
+        html_path.write_text(book.render(page_numbers), encoding="utf-8")
+    else:
+        raise BuildError("page numbers did not settle after three print passes")
+    missing_targets = sorted(set(book.anchors) - set(page_numbers))
+    if missing_targets:
+        raise BuildError(
+            "the PDF has no destination for: " + ", ".join(missing_targets[:10])
+        )
+    print(f"html: {html_path}")
+    print(f"pdf: {output} ({page_count} pages)")
+    return 0
+
+
+def load_catalog() -> dict[str, dict]:
+    from skylos.rules.catalog import get_rule_catalog, get_rule_cwes
+
+    catalog = {}
+    for entry in get_rule_catalog():
+        item = dict(entry)
+        item["cwe"] = list(get_rule_cwes(entry["id"]))
+        catalog[entry["id"]] = item
+    return catalog
+
+
+def go_remapped_ids() -> dict[str, str]:
+    from skylos.visitors.languages.go.go import _GO_RULE_REMAP
+
+    return dict(_GO_RULE_REMAP)
+
+
+def catalog_aliases(catalog: dict[str, dict]) -> dict[str, str]:
+    """Catalog IDs that are always reported under another rule's ID.
+
+    The Go engine's cross-language findings are renamed before reporting
+    (SKY-G211 becomes SKY-D211), so they are documented on that rule's page.
+    """
+    aliases = {}
+    for rule_id, target in go_remapped_ids().items():
+        if rule_id in catalog and target in catalog:
+            aliases[rule_id] = target
+    return aliases
+
+
+def skylos_version() -> str:
+    import skylos
+
+    return str(getattr(skylos, "__version__", "unknown"))
+
+
+def load_families(catalog: dict[str, dict]) -> list[dict]:
+    data = read_yaml(FAMILIES_FILE)
+    if not isinstance(data, dict) or not isinstance(data.get("families"), list):
+        raise BuildError(f"{FAMILIES_FILE}: expected a 'families' list")
+    families = []
+    seen = set()
+    fallback_count = 0
+    for index, item in enumerate(data["families"]):
+        where = f"{FAMILIES_FILE.name} family #{index + 1}"
+        if not isinstance(item, dict):
+            raise BuildError(f"{where}: expected a mapping")
+        for key in ("id", "title", "prefixes", "intro"):
+            if not item.get(key):
+                raise BuildError(f"{where}: missing '{key}'")
+        if item["id"] in seen:
+            raise BuildError(f"{where}: duplicate id {item['id']}")
+        seen.add(item["id"])
+        match = item.get("match") or {}
+        family = {
+            "id": str(item["id"]),
+            "title": str(item["title"]),
+            "prefixes": str(item["prefixes"]),
+            "intro": str(item["intro"]).strip(),
+            "categories": [str(value) for value in match.get("categories") or []],
+            "ids": [str(value) for value in match.get("ids") or []],
+            "fallback": bool(item.get("fallback")),
+        }
+        if family["fallback"]:
+            fallback_count += 1
+        families.append(family)
+    if fallback_count > 1:
+        raise BuildError(f"{FAMILIES_FILE.name}: only one family may be the fallback")
+    for rule_id, entry in catalog.items():
+        if family_for_rule(entry, families) is None:
+            raise BuildError(f"{FAMILIES_FILE.name}: no family matches {rule_id}")
+    return families
+
+
+def family_for_rule(entry: dict, families: list[dict]) -> str | None:
+    ordered = [family for family in families if not family["fallback"]]
+    ordered += [family for family in families if family["fallback"]]
+    for family in ordered:
+        if entry["category"] in family["categories"]:
+            return family["id"]
+        for pattern in family["ids"]:
+            if fnmatchcase(entry["id"], pattern):
+                return family["id"]
+        if family["fallback"]:
+            return family["id"]
+    return None
+
+
+def read_yaml(path: Path):
+    try:
+        with path.open(encoding="utf-8") as handle:
+            return yaml.safe_load(handle)
+    except FileNotFoundError as exc:
+        raise BuildError(f"missing file: {path}") from exc
+    except yaml.YAMLError as exc:
+        raise BuildError(f"{path}: invalid YAML: {exc}") from exc
+
+
+def load_pages(catalog, families, only_ids: set[str]):
+    problems = {"errors": [], "warnings": []}
+    family_ids = {family["id"] for family in families}
+    pages = {}
+    for path in sorted(RULES_DIR.glob("*.yaml")):
+        rule_id = path.stem
+        if only_ids and rule_id not in only_ids:
+            continue
+        data, fragment_problems = expand_fragments(path, read_yaml(path))
+        problems["errors"].extend(fragment_problems["errors"])
+        problems["warnings"].extend(fragment_problems["warnings"])
+        page_problems = validate_page(path, data, catalog, families, family_ids)
+        aliases = catalog_aliases(catalog)
+        if rule_id in aliases:
+            page_problems["errors"].append(
+                f"rules/{path.name}: {rule_id} is reported as {aliases[rule_id]}; "
+                f"describe it on that rule's page"
+            )
+        problems["errors"].extend(page_problems["errors"])
+        problems["warnings"].extend(page_problems["warnings"])
+        if not page_problems["errors"]:
+            page = dict(data)
+            page["cwe"] = list(catalog[rule_id]["cwe"])
+            page["catalog"] = catalog[rule_id]
+            pages[rule_id] = page
+    unknown = sorted(only_ids - set(pages) - {p.stem for p in RULES_DIR.glob("*.yaml")})
+    for rule_id in unknown:
+        problems["errors"].append(f"--rule {rule_id}: no page at rules/{rule_id}.yaml")
+    return pages, problems
+
+
+def expand_fragments(path, data):
+    """Join ``fragments`` and put them where ``{{NAME}}`` appears.
+
+    A secret example would otherwise sit in this repository as a real
+    finding; stored in parts, no part looks like a secret.
+    """
+    problems = {"errors": [], "warnings": []}
+    if not isinstance(data, dict) or "fragments" not in data:
+        return data, problems
+    where = f"rules/{path.name}"
+    raw = data["fragments"]
+    values = {}
+    if not isinstance(raw, dict):
+        problems["errors"].append(
+            f"{where}: fragments must map NAME to a list of parts"
+        )
+        raw = {}
+    for name, parts in raw.items():
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", str(name)):
+            problems["errors"].append(
+                f"{where}: fragment name {name} must be UPPER_CASE"
+            )
+        elif not isinstance(parts, list) or not all(
+            isinstance(part, str) for part in parts
+        ):
+            problems["errors"].append(
+                f"{where}: fragment {name} must be a list of strings"
+            )
+        else:
+            values[name] = "".join(parts)
+    used = set()
+
+    def substitute(value):
+        if isinstance(value, str):
+
+            def replace(match):
+                name = match.group(1)
+                used.add(name)
+                if name not in values:
+                    problems["errors"].append(
+                        f"{where}: unknown fragment {{{{{name}}}}}"
+                    )
+                    return match.group(0)
+                return values[name]
+
+            return FRAGMENT_PATTERN.sub(replace, value)
+        if isinstance(value, list):
+            return [substitute(item) for item in value]
+        if isinstance(value, dict):
+            return {key: substitute(item) for key, item in value.items()}
+        return value
+
+    expanded = {
+        key: substitute(value) for key, value in data.items() if key != "fragments"
+    }
+    for name in sorted(set(values) - used):
+        problems["warnings"].append(f"{where}: fragment {name} is never used")
+    return expanded, problems
+
+
+def validate_page(path, data, catalog, families, family_ids):
+    where = f"rules/{path.name}"
+    if not isinstance(data, dict):
+        return {"errors": [f"{where}: expected a mapping"], "warnings": []}
+    errors = validate_fields(where, data)
+    if errors:
+        return {"errors": errors, "warnings": []}
+    entry = catalog.get(data["id"])
+    if data["id"] != path.stem:
+        errors.append(f"{where}: id {data['id']} does not match the file name")
+    if entry is None:
+        errors.append(f"{where}: {data['id']} is not in skylos/rules/catalog.py")
+        return {"errors": errors, "warnings": []}
+    family_problems = validate_family(where, data, entry, families, family_ids)
+    text_problems = validate_text(where, data)
+    errors += family_problems["errors"] + text_problems["errors"]
+    warnings = family_problems["warnings"] + text_problems["warnings"]
+    errors += validate_severity(where, data, entry)
+    errors += validate_source_refs(where, data["source_refs"])
+    errors += validate_example(where, "flagged_example", data["flagged_example"])
+    errors += validate_example(
+        where, "not_flagged_example", data["not_flagged_example"]
+    )
+    if not data["not_flagged_example"].get("why"):
+        errors.append(f"{where}: not_flagged_example needs 'why'")
+    errors += validate_fix(where, data["fix"])
+    errors += validate_false_alarms(where, data["false_alarms_and_suppression"])
+    errors += validate_related(where, data, catalog)
+    if not errors:
+        warnings += code_width_warnings(where, data)
+    return {"errors": errors, "warnings": warnings}
+
+
+def validate_fields(where, data) -> list[str]:
+    errors = []
+    for key in RULE_REQUIRED:
+        if key not in data or data[key] in (None, "", []):
+            errors.append(f"{where}: missing '{key}'")
+    for key in data:
+        if key not in RULE_REQUIRED and key not in RULE_OPTIONAL:
+            errors.append(f"{where}: unknown field '{key}'")
+    for key in ("flagged_example", "not_flagged_example", "fix"):
+        if key in data and not isinstance(data[key], dict):
+            errors.append(f"{where}: {key} must be a mapping")
+    return errors
+
+
+def validate_family(where, data, entry, families, family_ids) -> dict:
+    if data["family"] not in family_ids:
+        return {
+            "errors": [f"{where}: unknown family '{data['family']}'"],
+            "warnings": [],
+        }
+    expected = family_for_rule(entry, families)
+    if expected == data["family"]:
+        return {"errors": [], "warnings": []}
+    warning = (
+        f"{where}: family '{data['family']}' differs from families.yaml "
+        f"matching ('{expected}')"
+    )
+    return {"errors": [], "warnings": [warning]}
+
+
+def validate_severity(where, data, entry) -> list[str]:
+    errors = []
+    severity = data["severity"]
+    if severity not in PAGE_SEVERITIES:
+        errors.append(f"{where}: severity must be one of {', '.join(PAGE_SEVERITIES)}")
+    elif entry.get("severity") and severity != entry["severity"]:
+        errors.append(
+            f"{where}: severity {severity} differs from the catalog ({entry['severity']})"
+        )
+    if severity in ("VARIES", "UNRATED") and not data.get("severity_note"):
+        errors.append(f"{where}: severity {severity} needs a severity_note")
+    if "cwe" in data:
+        listed = [str(value) for value in data["cwe"] or []]
+        if listed != list(entry["cwe"]):
+            errors.append(
+                f"{where}: cwe {listed} differs from the catalog {list(entry['cwe'])}"
+            )
+    return errors
+
+
+def validate_text(where, data) -> dict:
+    errors = []
+    warnings = []
+    languages = data["languages"]
+    if not isinstance(languages, list) or not all(
+        isinstance(value, str) and value for value in languages
+    ):
+        errors.append(f"{where}: languages must be a list of names")
+    for key in ("title", "what_it_is", "why_it_matters"):
+        if not isinstance(data[key], str):
+            errors.append(f"{where}: {key} must be text")
+    sentence_limits = (("what_it_is", 2, 3), ("why_it_matters", 1, 3))
+    for key, low, high in sentence_limits:
+        if isinstance(data[key], str):
+            count = sentence_count(data[key])
+            if count < low or count > high:
+                warnings.append(
+                    f"{where}: {key} has {count} sentences (aim for {low}-{high})"
+                )
+    steps = data["how_skylos_decides"]
+    if not isinstance(steps, list) or len(steps) < 2:
+        errors.append(f"{where}: how_skylos_decides must list at least two steps")
+    elif not all(isinstance(step, str) and step.strip() for step in steps):
+        errors.append(f"{where}: how_skylos_decides steps must be text")
+    return {"errors": errors, "warnings": warnings}
+
+
+def validate_related(where, data, catalog) -> list[str]:
+    related = data["related"]
+    if not isinstance(related, list):
+        return [f"{where}: related must be a list of rule IDs"]
+    errors = []
+    for other in related:
+        if other not in catalog:
+            errors.append(f"{where}: related rule {other} is not in the catalog")
+        elif other == data["id"]:
+            errors.append(f"{where}: related lists the rule itself")
+    return errors
+
+
+def sentence_count(text: str) -> int:
+    stripped = re.sub(r"`[^`]*`", "x", text.strip())
+    stripped = re.sub(r"\b(e\.g|i\.e|etc|vs)\.", "x", stripped)
+    return len([part for part in re.split(r"[.!?](?:\s+|$)", stripped) if part.strip()])
+
+
+def validate_source_refs(where, refs) -> list[str]:
+    errors = []
+    if not isinstance(refs, list) or not refs:
+        return [f"{where}: source_refs must be a non-empty list"]
+    for index, ref in enumerate(refs):
+        label = f"{where}: source_refs[{index}]"
+        if not isinstance(ref, dict) or not ref.get("path") or not ref.get("symbol"):
+            errors.append(f"{label}: needs 'path' and 'symbol'")
+            continue
+        unknown = set(ref) - SOURCE_REF_KEYS
+        if unknown:
+            errors.append(f"{label}: unknown key(s) {sorted(unknown)}")
+        target = REPO_ROOT / str(ref["path"])
+        if not target.is_file():
+            errors.append(f"{label}: {ref['path']} does not exist")
+            continue
+        text = target.read_text(encoding="utf-8", errors="replace")
+        if str(ref["symbol"]) not in text:
+            errors.append(f"{label}: '{ref['symbol']}' not found in {ref['path']}")
+    return errors
+
+
+def validate_relative_name(label, name) -> list[str]:
+    if not isinstance(name, str) or not name:
+        return [f"{label}: filename must be text"]
+    pure = PurePosixPath(name)
+    if pure.is_absolute() or ".." in pure.parts or "\\" in name:
+        return [f"{label}: filename must be a relative path inside the example"]
+    return []
+
+
+def validate_file_entries(label, entries, *, allow_deleted) -> list[str]:
+    errors = []
+    if not isinstance(entries, list) or not entries:
+        return [f"{label}: expected a non-empty list of files"]
+    names = set()
+    for index, entry in enumerate(entries):
+        item_label = f"{label}[{index}]"
+        if not isinstance(entry, dict):
+            errors.append(f"{item_label}: expected a mapping")
+            continue
+        unknown = set(entry) - FILE_KEYS
+        if unknown:
+            errors.append(f"{item_label}: unknown key(s) {sorted(unknown)}")
+        errors.extend(validate_relative_name(item_label, entry.get("filename")))
+        if entry.get("filename") in names:
+            errors.append(f"{item_label}: duplicate filename {entry.get('filename')}")
+        names.add(entry.get("filename"))
+        if entry.get("deleted"):
+            if not allow_deleted:
+                errors.append(f"{item_label}: 'deleted' needs setup: git_diff")
+        elif not isinstance(entry.get("code"), str):
+            errors.append(f"{item_label}: needs 'code'")
+    return errors
+
+
+def validate_example(where, key, example) -> list[str]:
+    label = f"{where}: {key}"
+    if not isinstance(example, dict):
+        return [f"{label}: expected a mapping"]
+    errors = []
+    unknown = set(example) - EXAMPLE_KEYS
+    if unknown:
+        errors.append(f"{label}: unknown key(s) {sorted(unknown)}")
+    if key != "not_flagged_example" and "why" in example:
+        errors.append(f"{label}: 'why' belongs to not_flagged_example")
+    setup = example.get("setup", "none")
+    if setup not in SETUPS:
+        errors.append(f"{label}: setup must be one of {', '.join(SETUPS)}")
+    has_single = "filename" in example or "code" in example
+    if has_single and "files" in example:
+        errors.append(f"{label}: use either filename/code or files, not both")
+    elif "files" in example:
+        errors.extend(
+            validate_file_entries(
+                f"{label}.files", example["files"], allow_deleted=setup == "git_diff"
+            )
+        )
+    else:
+        errors.extend(validate_relative_name(label, example.get("filename")))
+        if not isinstance(example.get("code"), str):
+            errors.append(f"{label}: needs 'code'")
+    if not example.get("language"):
+        files = example.get("files")
+        if not isinstance(files, list) or not all(
+            isinstance(entry, dict) and entry.get("language") for entry in files
+        ):
+            errors.append(f"{label}: needs 'language'")
+    if setup == "git_diff":
+        errors.extend(
+            validate_file_entries(
+                f"{label}.base_files", example.get("base_files"), allow_deleted=False
+            )
+        )
+    elif "base_files" in example:
+        errors.append(f"{label}: base_files needs setup: git_diff")
+    flags = example.get("scan_flags")
+    if flags is not None and (
+        not isinstance(flags, list)
+        or not all(isinstance(flag, str) and flag.startswith("-") for flag in flags)
+    ):
+        errors.append(f"{label}: scan_flags must be a list of CLI options")
+    if "expect_line" in example:
+        line = example["expect_line"]
+        if key == "not_flagged_example":
+            errors.append(f"{label}: expect_line only applies to flagged examples")
+        elif not isinstance(line, int) or line < 1:
+            errors.append(f"{label}: expect_line must be a positive line number")
+    if "expect_file" in example:
+        names = [entry["filename"] for entry in example_files(example)]
+        if example["expect_file"] not in names:
+            errors.append(f"{label}: expect_file is not one of the example's files")
+    return errors
+
+
+def validate_fix(where, fix) -> list[str]:
+    label = f"{where}: fix"
+    if not isinstance(fix, dict):
+        return [f"{label}: expected a mapping"]
+    errors = []
+    unknown = set(fix) - FIX_KEYS
+    if unknown:
+        errors.append(f"{label}: unknown key(s) {sorted(unknown)}")
+    if not isinstance(fix.get("explanation"), str) or not fix["explanation"].strip():
+        errors.append(f"{label}: needs 'explanation'")
+    if "code" in fix and not isinstance(fix["code"], str):
+        errors.append(f"{label}: code must be text")
+    if "filename" in fix:
+        errors.extend(validate_relative_name(label, fix["filename"]))
+        if not isinstance(fix.get("code"), str):
+            errors.append(f"{label}: a fix with a filename needs code")
+    return errors
+
+
+def validate_false_alarms(where, value) -> list[str]:
+    label = f"{where}: false_alarms_and_suppression"
+    if not isinstance(value, dict):
+        return [f"{label}: expected a mapping with misfires and suppress"]
+    errors = []
+    unknown = set(value) - FALSE_ALARM_KEYS
+    if unknown:
+        errors.append(f"{label}: unknown key(s) {sorted(unknown)}")
+    misfires = value.get("misfires")
+    if not isinstance(misfires, list) or not misfires:
+        errors.append(f"{label}: misfires must be a non-empty list")
+    elif not all(isinstance(item, str) and item.strip() for item in misfires):
+        errors.append(f"{label}: misfires must be text")
+    suppress = value.get("suppress")
+    if not isinstance(suppress, list) or not suppress:
+        errors.append(f"{label}: suppress must be a non-empty list")
+        return errors
+    for index, item in enumerate(suppress):
+        item_label = f"{label}.suppress[{index}]"
+        if not isinstance(item, dict) or not item.get("text"):
+            errors.append(f"{item_label}: needs 'text'")
+            continue
+        unknown = set(item) - SUPPRESS_KEYS
+        if unknown:
+            errors.append(f"{item_label}: unknown key(s) {sorted(unknown)}")
+    return errors
+
+
+def code_width_warnings(where, data) -> list[str]:
+    warnings = []
+    blocks = []
+    for key in ("flagged_example", "not_flagged_example"):
+        for entry in example_files(data[key]):
+            blocks.append((f"{key} {entry['filename']}", entry.get("code") or ""))
+        for entry in data[key].get("base_files") or []:
+            blocks.append((f"{key} base {entry['filename']}", entry.get("code") or ""))
+    blocks.append(("fix", data["fix"].get("code") or ""))
+    for item in data["false_alarms_and_suppression"].get("suppress") or []:
+        blocks.append(("suppress", item.get("code") or ""))
+    for label, code in blocks:
+        for number, line in enumerate(code.splitlines(), start=1):
+            if len(line) > MAX_CODE_COLUMNS:
+                warnings.append(
+                    f"{where}: {label} line {number} is {len(line)} columns "
+                    f"(over {MAX_CODE_COLUMNS} wraps in print)"
+                )
+    return warnings
+
+
+def example_files(example: dict) -> list[dict]:
+    if "files" in example:
+        files = []
+        for entry in example["files"]:
+            files.append(
+                {
+                    "filename": entry["filename"],
+                    "code": entry.get("code") or "",
+                    "language": entry.get("language") or example.get("language"),
+                    "deleted": bool(entry.get("deleted")),
+                }
+            )
+        return files
+    return [
+        {
+            "filename": example["filename"],
+            "code": example["code"],
+            "language": example.get("language"),
+            "deleted": False,
+        }
+    ]
+
+
+def build_coverage(catalog, families, pages) -> dict:
+    aliases = catalog_aliases(catalog)
+    by_family = {family["id"]: {"written": [], "missing": []} for family in families}
+    for rule_id, entry in catalog.items():
+        if rule_id in aliases:
+            continue
+        family_id = family_for_rule(entry, families)
+        if rule_id in pages:
+            family_id = pages[rule_id]["family"]
+            by_family[family_id]["written"].append(rule_id)
+        else:
+            by_family[family_id]["missing"].append(rule_id)
+    missing = sum(len(item["missing"]) for item in by_family.values())
+    return {
+        "total": len(catalog),
+        "pages_needed": len(catalog) - len(aliases),
+        "written": len(pages),
+        "missing": missing,
+        "families": families,
+        "by_family": by_family,
+        "catalog": catalog,
+        "remapped": aliases,
+        "pages": pages,
+    }
+
+
+def render_coverage(coverage) -> str:
+    lines = [
+        "# Skylos rule handbook coverage",
+        "",
+        (
+            f"Generated {datetime.date.today().isoformat()} from "
+            f"skylos/rules/catalog.py (Skylos {skylos_version()})."
+        ),
+        "",
+        (
+            f"Catalog IDs: {coverage['total']}, of which {len(coverage['remapped'])} "
+            f"are reported under another rule's ID, so {coverage['pages_needed']} "
+            f"rules need a page. Written: {coverage['written']}. "
+            f"Not yet written: {coverage['missing']}."
+        ),
+        "",
+        "| Family | Rules | Written | Not yet written |",
+        "|:--|--:|--:|--:|",
+    ]
+    for family in coverage["families"]:
+        counts = coverage["by_family"][family["id"]]
+        total = len(counts["written"]) + len(counts["missing"])
+        lines.append(
+            f"| {family['title']} | {total} | {len(counts['written'])} | "
+            f"{len(counts['missing'])} |"
+        )
+    lines += ["", "## Not yet written", ""]
+    for family in coverage["families"]:
+        missing = sorted(coverage["by_family"][family["id"]]["missing"])
+        if not missing:
+            continue
+        lines += [f"### {family['title']} ({len(missing)})", ""]
+        for rule_id in missing:
+            entry = coverage["catalog"][rule_id]
+            lines.append(f"- {rule_id} {entry['name']}")
+        lines.append("")
+    if coverage["remapped"]:
+        lines += [
+            "## Catalog IDs reported under another ID",
+            "",
+            "The Go engine emits these IDs, but Skylos reports them under the",
+            "cross-language rule (skylos/visitors/languages/go/go.py).",
+            "",
+        ]
+        for rule_id, target in sorted(coverage["remapped"].items()):
+            status = "target not yet written"
+            if target in coverage["pages"]:
+                status = "described on its page"
+            lines.append(f"- {rule_id} -> {target} ({status})")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def rule_scan_flags(rule_id: str) -> list[str]:
+    from skylos.cli import _apply_selected_rule_analysis_flags
+
+    args = argparse.Namespace(
+        select=[rule_id],
+        danger=False,
+        ai_defects=False,
+        quality=False,
+        secrets=False,
+        sca=False,
+        scan_publisher_changes=False,
+    )
+    _apply_selected_rule_analysis_flags(args)
+    flags = []
+    for attribute, flag in (
+        ("danger", "--danger"),
+        ("secrets", "--secrets"),
+        ("quality", "--quality"),
+        ("ai_defects", "--ai-defects"),
+        ("sca", "--sca"),
+        ("scan_publisher_changes", "--scan-publisher-changes"),
+    ):
+        if getattr(args, attribute):
+            flags.append(flag)
+    return flags
+
+
+def example_scan_flags(rule_id: str, example: dict) -> list[str]:
+    if example.get("scan_flags") is not None:
+        return list(example["scan_flags"])
+    flags = rule_scan_flags(rule_id)
+    if example.get("setup") == "git_diff":
+        flags += ["--diff", "HEAD"]
+    return flags
+
+
+def example_digest(rule_id: str, kind: str, example: dict, flags: list[str]) -> str:
+    payload = json.dumps(
+        {"rule": rule_id, "kind": kind, "example": example, "flags": flags},
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def verification_targets(page: dict) -> list[tuple[str, dict, bool]]:
+    targets = [
+        ("flagged", page["flagged_example"], True),
+        ("not_flagged", page["not_flagged_example"], False),
+    ]
+    fix = page["fix"]
+    if fix.get("filename"):
+        fix_example = {
+            "language": fix.get("language") or page["flagged_example"].get("language"),
+            "filename": fix["filename"],
+            "code": fix["code"],
+        }
+        if fix.get("scan_flags") is not None:
+            fix_example["scan_flags"] = fix["scan_flags"]
+        targets.append(("fix", fix_example, False))
+    return targets
+
+
+def resolve_skylos(explicit: str | None) -> list[str]:
+    if explicit:
+        return [explicit]
+    beside = Path(sys.executable).parent / "skylos"
+    if beside.is_file():
+        return [str(beside)]
+    found = shutil.which("skylos")
+    if found:
+        return [found]
+    raise BuildError("no skylos executable found; pass --skylos")
+
+
+def verification_env(home: Path) -> dict[str, str]:
+    env = {}
+    for key in VERIFY_ENV_KEEP:
+        if os.environ.get(key):
+            env[key] = os.environ[key]
+    python_path = [str(REPO_ROOT)]
+    if os.environ.get("PYTHONPATH"):
+        python_path.append(os.environ["PYTHONPATH"])
+    env.update(
+        {
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "XDG_CONFIG_HOME": str(home / ".config"),
+            "XDG_CACHE_HOME": str(home / ".cache"),
+            "XDG_DATA_HOME": str(home / ".local" / "share"),
+            "PYTHONPATH": os.pathsep.join(python_path),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "SKYLOS_NO_CLIPBOARD": "1",
+            "SKYLOS_CUSTOM_RULES": "[]",
+            "NO_COLOR": "1",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_AUTHOR_NAME": "Handbook",
+            "GIT_AUTHOR_EMAIL": "handbook@example.invalid",
+            "GIT_COMMITTER_NAME": "Handbook",
+            "GIT_COMMITTER_EMAIL": "handbook@example.invalid",
+        }
+    )
+    return env
+
+
+def write_files(root: Path, entries: list[dict]) -> None:
+    for entry in entries:
+        target = root / entry["filename"]
+        if entry.get("deleted"):
+            if target.exists():
+                target.unlink()
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(entry["code"], encoding="utf-8")
+
+
+def run_git(root: Path, env: dict, *args: str) -> None:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise BuildError(
+            f"git {' '.join(args)} failed in {root}: {result.stderr.strip()}"
+        )
+
+
+def prepare_example(root: Path, example: dict, env: dict) -> None:
+    root.mkdir(parents=True, exist_ok=False)
+    setup = example.get("setup", "none")
+    if setup == "none":
+        write_files(root, example_files(example))
+        return
+    run_git(root, env, "init", "--quiet", "--initial-branch=main")
+    if setup == "git_diff":
+        base_entries = []
+        for entry in example["base_files"]:
+            base_entries.append({"filename": entry["filename"], "code": entry["code"]})
+        write_files(root, base_entries)
+        run_git(root, env, "add", "--all")
+        run_git(root, env, "commit", "--quiet", "--no-verify", "-m", "base")
+        write_files(root, example_files(example))
+        return
+    write_files(root, example_files(example))
+    run_git(root, env, "add", "--all")
+    run_git(root, env, "commit", "--quiet", "--no-verify", "-m", "example")
+
+
+def finding_locations(result: dict, root: Path) -> list[dict]:
+    from skylos.cli import _RULE_SELECTION_FINDING_CATEGORIES, _finding_rule_id
+
+    locations = []
+    for category in _RULE_SELECTION_FINDING_CATEGORIES:
+        for item in result.get(category) or []:
+            rule_id = _finding_rule_id(item, category)
+            if not rule_id:
+                continue
+            locations.append(
+                {
+                    "rule_id": rule_id.upper(),
+                    "file": relative_file(item, root),
+                    "line": finding_line(item),
+                }
+            )
+    metrics = result.get("architecture_metrics") or {}
+    for item in metrics.get("advisories") or []:
+        rule_id = _finding_rule_id(item, "quality")
+        if rule_id:
+            locations.append(
+                {
+                    "rule_id": rule_id.upper(),
+                    "file": relative_file(item, root),
+                    "line": finding_line(item),
+                }
+            )
+    return locations
+
+
+def relative_file(item: dict, root: Path) -> str:
+    raw = str(item.get("file") or item.get("file_path") or "")
+    if not raw:
+        return ""
+    path = Path(raw)
+    if not path.is_absolute():
+        return path.as_posix()
+    for base in (root.resolve(), root):
+        try:
+            return path.relative_to(base).as_posix()
+        except ValueError:
+            continue
+    return path.as_posix()
+
+
+def finding_line(item: dict) -> int | None:
+    for key in ("line", "line_number", "lineno"):
+        value = item.get(key)
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def verify_pages(pages: dict, args) -> dict:
+    scratch = args.scratch
+    created = scratch is None
+    if created:
+        scratch = Path(tempfile.mkdtemp(prefix="skylos-handbook-verify-"))
+    scratch = scratch.expanduser().resolve()
+    scratch.mkdir(parents=True, exist_ok=True)
+    home = scratch / "home"
+    home.mkdir(exist_ok=True)
+    env = verification_env(home)
+    command = resolve_skylos(args.skylos)
+    version, module = probe_skylos(command, env, scratch)
+    print(f"verify: {' '.join(command)} (skylos {version}, module {module})")
+    checks = []
+    try:
+        for rule_id in sorted(pages):
+            page = pages[rule_id]
+            for kind, example, should_flag in verification_targets(page):
+                checks.append(
+                    verify_example(
+                        rule_id, kind, example, should_flag, scratch, env, command
+                    )
+                )
+    finally:
+        if created and not args.keep_scratch:
+            shutil.rmtree(scratch, ignore_errors=True)
+    failed = len([check for check in checks if not check["passed"]])
+    return {
+        "generated": datetime.datetime.now(datetime.timezone.utc).isoformat(
+            timespec="seconds"
+        ),
+        "skylos_version": version,
+        "skylos_module": module,
+        "command": command,
+        "scratch": str(scratch),
+        "checks": checks,
+        "passed": len(checks) - failed,
+        "failed": failed,
+    }
+
+
+def probe_skylos(command, env, scratch) -> tuple[str, str]:
+    version = subprocess.run(
+        [*command, "--version"],
+        cwd=scratch,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    module = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import skylos, sys; sys.stdout.write(skylos.__file__)",
+        ],
+        cwd=scratch,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    version_text = (version.stdout or version.stderr).strip().replace("skylos ", "")
+    return version_text, module.stdout.strip()
+
+
+def verify_example(rule_id, kind, example, should_flag, scratch, env, command):
+    flags = example_scan_flags(rule_id, example)
+    root = scratch / rule_id / kind
+    output = scratch / rule_id / f"{kind}.json"
+    result = run_example_scan(root, output, example, flags, env, command)
+    check = {
+        "rule_id": rule_id,
+        "example": kind,
+        "expected": "reported",
+        "flags": flags,
+        "setup": example.get("setup", "none"),
+        "exit_code": result.returncode,
+        "digest": example_digest(rule_id, kind, example, flags),
+    }
+    if not should_flag:
+        check["expected"] = "not reported"
+    data, problem = read_scan_output(output)
+    if problem:
+        detail = (result.stderr or result.stdout).strip()[-800:]
+        check.update({"actual": problem, "passed": False, "detail": detail})
+        return check
+    locations = finding_locations(data, root)
+    hits = [item for item in locations if item["rule_id"] == rule_id]
+    check["hits"] = hits
+    check["other_rules"] = sorted({item["rule_id"] for item in locations} - {rule_id})
+    check["actual"] = describe_hits(hits)
+    errors = data.get("analysis_errors") or []
+    if result.returncode == 2 or errors:
+        check["analysis_errors"] = len(errors)
+    passed = result.returncode in (0, 1) and not errors
+    if errors:
+        check["detail"] = f"{len(errors)} file(s) or check(s) were not analysed"
+    if should_flag:
+        wanted, expected_place = expected_hits(example, hits)
+        passed = passed and bool(wanted)
+        if hits and not wanted:
+            check["detail"] = f"expected {expected_place}"
+    else:
+        passed = passed and not hits
+    if result.returncode not in (0, 1):
+        check["detail"] = (result.stderr or "").strip()[-800:]
+    check["passed"] = passed
+    return check
+
+
+def run_example_scan(root, output, example, flags, env, command):
+    if root.exists():
+        shutil.rmtree(root)
+    prepare_example(root, example, env)
+    if output.exists():
+        output.unlink()
+    argv = [*command, ".", *flags, "--no-upload", "--format", "json"]
+    argv += ["--output", str(output)]
+    return subprocess.run(
+        argv,
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=VERIFY_TIMEOUT_SECONDS,
+        check=False,
+    )
+
+
+def read_scan_output(output: Path) -> tuple[dict, str]:
+    if not output.is_file():
+        return {}, "no JSON output"
+    try:
+        return json.loads(output.read_text(encoding="utf-8")), ""
+    except json.JSONDecodeError as exc:
+        return {}, f"unreadable JSON ({exc})"
+
+
+def describe_hits(hits: list[dict]) -> str:
+    if not hits:
+        return "not reported"
+    return "reported at " + ", ".join(f"{hit['file']}:{hit['line']}" for hit in hits)
+
+
+def expected_hits(example: dict, hits: list[dict]) -> tuple[list[dict], str]:
+    expected_file = example.get("expect_file")
+    expected_line = example.get("expect_line")
+    if expected_file is None and expected_line:
+        expected_file = example_files(example)[0]["filename"]
+    wanted = hits
+    if expected_file:
+        wanted = [hit for hit in wanted if hit["file"] == expected_file]
+    if expected_line:
+        wanted = [hit for hit in wanted if hit["line"] == expected_line]
+    return wanted, f"{expected_file}:{expected_line}"
+
+
+def print_verify_table(report: dict) -> None:
+    print()
+    print(f"{'rule':<15} {'example':<12} {'expected':<13} {'result':<6} actual")
+    for check in report["checks"]:
+        status = "pass"
+        if not check["passed"]:
+            status = "FAIL"
+        print(
+            f"{check['rule_id']:<15} {check['example']:<12} {check['expected']:<13} "
+            f"{status:<6} {check['actual']} (exit {check['exit_code']}, "
+            f"flags {' '.join(check['flags']) or '(none)'})"
+        )
+        if check.get("detail"):
+            print(f"{'':<48}{check['detail']}")
+    print(f"\n{report['passed']} passed, {report['failed']} failed")
+
+
+def read_verify_report(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    checks = {}
+    for check in data.get("checks") or []:
+        if check.get("passed"):
+            checks[check["digest"]] = check
+    return {
+        "version": data.get("skylos_version"),
+        "generated": data.get("generated"),
+        "checks": checks,
+    }
+
+
+def load_intro(catalog, families, pages) -> list[dict]:
+    chapters = []
+    for path in sorted(INTRO_DIR.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        match = re.match(r"#\s+(.+)\n", text)
+        if not match:
+            raise BuildError(f"intro/{path.name}: must start with '# Title'")
+        body = text[match.end() :]
+        slug = re.sub(r"^[0-9]+-", "", path.stem)
+        chapters.append(
+            {"slug": slug, "title": match.group(1).strip(), "body": body, "path": path}
+        )
+    if not chapters:
+        raise BuildError(f"no front matter in {INTRO_DIR}")
+    return chapters
+
+
+def find_chrome(explicit: str | None) -> str:
+    candidates = []
+    if explicit:
+        candidates.append(explicit)
+    candidates.extend(DEFAULT_CHROME)
+    for candidate in candidates:
+        if Path(candidate).is_file():
+            return candidate
+        found = shutil.which(candidate)
+        if found:
+            return found
+    raise BuildError("Chrome or Chromium not found; pass --chrome or set CHROME_BIN")
+
+
+def print_pdf(chrome: str, html_path: Path, pdf_path: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="skylos-handbook-chrome-") as profile:
+        if pdf_path.exists():
+            pdf_path.unlink()
+        command = [
+            chrome,
+            "--headless",
+            "--disable-gpu",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-extensions",
+            f"--user-data-dir={profile}",
+            "--no-pdf-header-footer",
+            "--generate-pdf-document-outline",
+            f"--print-to-pdf={pdf_path}",
+            html_path.as_uri(),
+        ]
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=300, check=False
+        )
+        if result.returncode != 0 or not pdf_path.is_file():
+            raise BuildError(
+                f"Chrome could not print the PDF: {result.stderr.strip()[-600:]}"
+            )
+
+
+def pdf_destinations(data: bytes) -> tuple[dict[str, int], int]:
+    offsets = pdf_object_offsets(data)
+
+    def body(number: int) -> bytes:
+        start = offsets.get(number)
+        if start is None:
+            raise BuildError(f"PDF object {number} is missing")
+        end = data.find(b"endobj", start)
+        return data[start:end]
+
+    catalog_number = None
+    for number in offsets:
+        if re.search(rb"/Type\s*/Catalog\b", body(number)[:4000]):
+            catalog_number = number
+            break
+    if catalog_number is None:
+        raise BuildError("PDF has no catalog")
+    catalog_body = body(catalog_number)
+    pages_ref = re.search(rb"/Pages\s+(\d+)\s+0\s+R", catalog_body)
+    if not pages_ref:
+        raise BuildError("PDF catalog has no page tree")
+    order = []
+    stack = [int(pages_ref.group(1))]
+    while stack:
+        number = stack.pop()
+        node = body(number)
+        kids = re.search(rb"/Kids\s*\[([^\]]*)\]", node)
+        if kids and re.search(rb"/Type\s*/Pages\b", node):
+            references = [
+                int(value) for value in re.findall(rb"(\d+)\s+0\s+R", kids.group(1))
+            ]
+            stack.extend(reversed(references))
+        else:
+            order.append(number)
+    page_index = {number: index + 1 for index, number in enumerate(order)}
+    destinations = {}
+    dests_ref = re.search(rb"/Dests\s+(\d+)\s+0\s+R", catalog_body)
+    if dests_ref:
+        for name, page in re.findall(
+            rb"/([^\s/\[\]<>()]+)\s*\[\s*(\d+)\s+0\s+R", body(int(dests_ref.group(1)))
+        ):
+            decoded = re.sub(
+                rb"#([0-9A-Fa-f]{2})",
+                lambda match: bytes([int(match.group(1), 16)]),
+                name,
+            ).decode("utf-8", errors="replace")
+            if int(page) in page_index:
+                destinations[decoded] = page_index[int(page)]
+    return destinations, len(order)
+
+
+def pdf_object_offsets(data: bytes) -> dict[int, int]:
+    start = data.rfind(b"startxref")
+    match = re.match(rb"startxref\s+(\d+)", data[start:])
+    if start < 0 or not match:
+        raise BuildError("PDF has no cross-reference table")
+    position = int(match.group(1))
+    if not data.startswith(b"xref", position):
+        raise BuildError("PDF uses a cross-reference stream; cannot read page numbers")
+    offsets = {}
+    cursor = position + len(b"xref")
+    section = re.compile(rb"\s*(\d+)\s+(\d+)\s*\r?\n")
+    entry = re.compile(rb"(\d{10}) (\d{5}) ([nf])\s*\r?\n?")
+    while True:
+        header = section.match(data, cursor)
+        if not header:
+            break
+        first, count = int(header.group(1)), int(header.group(2))
+        cursor = header.end()
+        for index in range(count):
+            row = entry.match(data, cursor)
+            if not row:
+                raise BuildError("PDF cross-reference table is malformed")
+            cursor = row.end()
+            if row.group(3) == b"n":
+                offsets[first + index] = int(row.group(1))
+    return offsets
+
+
+def slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def rule_anchor(rule_id: str) -> str:
+    return "rule-" + slug(rule_id)
+
+
+def language_name(language: str | None) -> str:
+    if not language:
+        return ""
+    return LANGUAGE_NAMES.get(language.lower(), language)
+
+
+class Book:
+    def __init__(self, catalog, families, pages, intro, verify_report, mode):
+        self.catalog = catalog
+        self.families = families
+        self.pages = pages
+        self.intro = intro
+        self.verify_report = verify_report
+        self.mode = mode
+        self.version = skylos_version()
+        self.formatter_css = HtmlFormatter(style="default").get_style_defs(".code")
+        self.anchors: list[str] = []
+        self.page_numbers: dict[str, int] = {}
+        self.rules_by_family = {family["id"]: [] for family in families}
+        for rule_id in sorted(pages):
+            self.rules_by_family[pages[rule_id]["family"]].append(rule_id)
+        self.aliases = catalog_aliases(catalog)
+        self.page_rule_count = len(catalog) - len(self.aliases)
+        self.aliases_by_target: dict[str, list[str]] = {}
+        for alias, target in sorted(self.aliases.items()):
+            self.aliases_by_target.setdefault(target, []).append(alias)
+
+    def family_rule_count(self, family_id: str) -> int:
+        count = 0
+        for rule_id, entry in self.catalog.items():
+            if rule_id in self.aliases:
+                continue
+            if family_for_rule(entry, self.families) == family_id:
+                count += 1
+        return count
+
+    def render(self, page_numbers: dict[str, int]) -> str:
+        self.page_numbers = page_numbers
+        self.anchors = []
+        body = [self.render_cover(), self.render_contents()]
+        for number, chapter in enumerate(self.intro, start=1):
+            body.append(self.render_chapter(number, chapter))
+        for family in self.active_families():
+            body.append(self.render_family(family))
+            for rule_id in self.rules_by_family[family["id"]]:
+                body.append(self.render_rule(self.pages[rule_id]))
+        body.append(self.render_index())
+        css = CSS_FILE.read_text(encoding="utf-8")
+        return (
+            '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+            "<title>Skylos Rule Handbook</title>\n"
+            f"<style>\n{css}\n{self.formatter_css}\n</style>\n</head>\n<body>\n"
+            + "\n".join(body)
+            + "\n</body>\n</html>\n"
+        )
+
+    def active_families(self) -> list[dict]:
+        return [
+            family for family in self.families if self.rules_by_family[family["id"]]
+        ]
+
+    def anchor(self, name: str) -> str:
+        self.anchors.append(name)
+        return name
+
+    def page_ref(self, target: str) -> str:
+        number = self.page_numbers.get(target)
+        text = PAGE_NUMBER_PLACEHOLDER
+        if number is not None:
+            text = str(number)
+        return f'<span class="pn">{html.escape(text)}</span>'
+
+    def link_rule_ids(self, escaped: str) -> str:
+        def replace(match):
+            rule_id = match.group(0)
+            label = html.escape(rule_id)
+            if rule_id in self.pages:
+                anchor = html.escape(rule_anchor(rule_id))
+                return f'<a class="rule-link" href="#{anchor}">{label}</a>'
+            return f'<span class="rid">{label}</span>'
+
+        return RULE_ID_PATTERN.sub(replace, escaped)
+
+    def inline(self, text: str) -> str:
+        pieces = re.split(r"(`[^`]+`)", str(text))
+        out = []
+        for piece in pieces:
+            if len(piece) >= 2 and piece.startswith("`") and piece.endswith("`"):
+                out.append(f"<code>{html.escape(piece[1:-1])}</code>")
+                continue
+            escaped = html.escape(piece, quote=False)
+            escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
+            escaped = re.sub(
+                r"\[([^\]]+)\]\(([^)\s]+)\)",
+                lambda match: (
+                    f'<a href="{html.escape(match.group(2))}">{match.group(1)}</a>'
+                ),
+                escaped,
+            )
+            out.append(self.link_rule_ids(escaped))
+        return "".join(out)
+
+    def code_block(
+        self,
+        code: str,
+        language: str | None,
+        filename: str | None = None,
+        highlight_lines=(),
+    ):
+        lexer = None
+        if language:
+            name = LEXER_NAMES.get(language.lower(), language.lower())
+            try:
+                lexer = get_lexer_by_name(name)
+            except ClassNotFound:
+                lexer = None
+        if lexer is None and filename:
+            try:
+                lexer = get_lexer_for_filename(filename, code)
+            except ClassNotFound:
+                lexer = None
+        if lexer is None:
+            lexer = get_lexer_by_name("text")
+        formatter = HtmlFormatter(
+            style="default",
+            cssclass="code",
+            linenos="inline",
+            hl_lines=list(highlight_lines),
+            wrapcode=True,
+        )
+        return highlight(code.rstrip("\n").expandtabs(4) + "\n", lexer, formatter)
+
+    def plain_code(self, code: str, language: str | None) -> str:
+        lexer = get_lexer_by_name("text")
+        if language:
+            try:
+                lexer = get_lexer_by_name(
+                    LEXER_NAMES.get(language.lower(), language.lower())
+                )
+            except ClassNotFound:
+                lexer = get_lexer_by_name("text")
+        formatter = HtmlFormatter(style="default", cssclass="code", wrapcode=True)
+        return highlight(code.rstrip("\n").expandtabs(4) + "\n", lexer, formatter)
+
+    def render_cover(self) -> str:
+        total = self.page_rule_count
+        written = len(self.pages)
+        edition = "Complete edition"
+        scope = f"All {total} rules"
+        if self.mode == "pilot":
+            edition = "Pilot edition"
+            scope = f"{written} of {total} rules"
+        today = datetime.date.today()
+        date_text = f"{today.day} {today.strftime('%B %Y')}"
+        commit = git_short_head()
+        commit_text = ""
+        if commit:
+            commit_text = f" · source {html.escape(commit)}"
+        return (
+            '<section class="cover">\n'
+            '<div class="cover-band"></div>\n'
+            '<div class="cover-body">\n'
+            '<p class="cover-kicker">Skylos</p>\n'
+            '<h1 class="cover-title">Rule Handbook</h1>\n'
+            '<p class="cover-sub">What every rule finds, what the code looks like, '
+            "and how Skylos decides.</p>\n"
+            "</div>\n"
+            '<div class="cover-foot">\n'
+            f'<p class="cover-edition">{edition}</p>\n'
+            f"<p>{scope} · Skylos {html.escape(self.version)} · {date_text}{commit_text}</p>\n"
+            "</div>\n"
+            "</section>"
+        )
+
+    def render_contents(self) -> str:
+        rows = []
+        rows.append('<div class="toc-part">Before you start</div>')
+        for number, chapter in enumerate(self.intro, start=1):
+            target = f"intro-{chapter['slug']}"
+            rows.append(
+                self.toc_row(
+                    f"{number}. {html.escape(chapter['title'])}", target, "toc-chapter"
+                )
+            )
+        rows.append('<div class="toc-part">Rules</div>')
+        for family in self.active_families():
+            target = f"family-{family['id']}"
+            rows.append(
+                self.toc_row(html.escape(family["title"]), target, "toc-family")
+            )
+            for rule_id in self.rules_by_family[family["id"]]:
+                page = self.pages[rule_id]
+                label = f'<span class="toc-id">{rule_id}</span> {html.escape(page["title"])}'
+                rows.append(self.toc_row(label, rule_anchor(rule_id), "toc-rule"))
+        rows.append('<div class="toc-part">Appendix</div>')
+        rows.append(self.toc_row("Rule index", "index", "toc-chapter"))
+        return (
+            '<section class="contents" id="contents">\n'
+            '<h1 class="contents-title">Contents</h1>\n'
+            + "\n".join(rows)
+            + "\n</section>"
+        )
+
+    def toc_row(self, label: str, target: str, css_class: str) -> str:
+        return (  # skylos: ignore[SKY-D228] joins HTML fragments this module escaped
+            f'<a class="toc-row {css_class}" href="#{target}">'
+            f'<span class="toc-label">{label}</span>'
+            f'<span class="toc-fill"></span>{self.page_ref(target)}</a>'
+        )
+
+    def render_chapter(self, number: int, chapter: dict) -> str:
+        target = self.anchor(f"intro-{chapter['slug']}")
+        content = self.markdown(
+            self.expand_placeholders(chapter["body"], chapter["path"])
+        )
+        css_class = "chapter"
+        if number == 1:
+            css_class = "chapter first"
+        return (  # skylos: ignore[SKY-D228] joins HTML fragments this module escaped
+            f'<section class="{css_class}" id="{target}">\n'
+            f'<p class="chapter-number">Chapter {number}</p>\n'
+            f"<h1>{self.inline(chapter['title'])}</h1>\n{content}\n</section>"
+        )
+
+    def expand_placeholders(self, text: str, path: Path) -> str:
+        values = {
+            "rule_count": str(len(self.catalog)),
+            "page_count": str(self.page_rule_count),
+            "alias_count": str(len(self.aliases)),
+            "written_count": str(len(self.pages)),
+            "skylos_version": self.version,
+            "family_table": self.family_table_markdown(),
+            "category_table": self.category_table_markdown(),
+        }
+
+        def replace(match):
+            key = match.group(1)
+            if key not in values:
+                raise BuildError(
+                    f"intro/{path.name}: unknown placeholder {{{{{key}}}}}"
+                )
+            return values[key]
+
+        return PLACEHOLDER_PATTERN.sub(replace, text)
+
+    def family_table_markdown(self) -> str:
+        lines = ["| Family | ID prefixes | Rules |", "|:--|:--|--:|"]
+        for family in self.families:
+            count = self.family_rule_count(family["id"])
+            lines.append(f"| {family['title']} | {family['prefixes']} | {count} |")
+        return "\n".join(lines)
+
+    def category_table_markdown(self) -> str:
+        counts: dict[str, int] = {}
+        for entry in self.catalog.values():
+            counts[entry["category"]] = counts.get(entry["category"], 0) + 1
+        lines = ["| Catalog category | Rules |", "|:--|--:|"]
+        for category in sorted(counts, key=lambda name: (-counts[name], name)):
+            lines.append(f"| `{category}` | {counts[category]} |")
+        return "\n".join(lines)
+
+    def markdown(self, text: str) -> str:
+        lines = text.splitlines()
+        out = []
+        index = 0
+        paragraph: list[str] = []
+
+        def flush():
+            if paragraph:
+                out.append(f"<p>{self.inline(' '.join(paragraph))}</p>")
+                paragraph.clear()
+
+        while index < len(lines):
+            line = lines[index]
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                flush()
+                language = stripped[3:].strip() or None
+                code = []
+                index += 1
+                while index < len(lines) and not lines[index].strip().startswith("```"):
+                    code.append(lines[index])
+                    index += 1
+                index += 1
+                out.append(self.plain_code("\n".join(code), language))
+                continue
+            heading = re.match(r"(#{2,4})\s+(.+)", stripped)
+            if heading:
+                flush()
+                level = len(heading.group(1))
+                out.append(f"<h{level}>{self.inline(heading.group(2))}</h{level}>")
+                index += 1
+                continue
+            if (
+                stripped.startswith("|")
+                and index + 1 < len(lines)
+                and re.match(r"^\|?\s*:?-{2,}", lines[index + 1].strip())
+            ):
+                flush()
+                table_lines = []
+                while index < len(lines) and lines[index].strip().startswith("|"):
+                    table_lines.append(lines[index].strip())
+                    index += 1
+                out.append(self.markdown_table(table_lines))
+                continue
+            if re.match(r"([-*]|\d+\.)\s+", stripped):
+                flush()
+                ordered = bool(re.match(r"\d+\.\s+", stripped))
+                items = []
+                while index < len(lines):
+                    current = lines[index].strip()
+                    item = re.match(r"([-*]|\d+\.)\s+(.*)", current)
+                    if item:
+                        items.append(item.group(2))
+                    elif current and items and lines[index].startswith(("  ", "\t")):
+                        items[-1] += " " + current
+                    else:
+                        break
+                    index += 1
+                tag = "ul"
+                if ordered:
+                    tag = "ol"
+                rendered = "".join(f"<li>{self.inline(item)}</li>" for item in items)
+                out.append(f"<{tag}>{rendered}</{tag}>")
+                continue
+            if stripped.startswith(">"):
+                flush()
+                quote = []
+                while index < len(lines) and lines[index].strip().startswith(">"):
+                    quote.append(lines[index].strip()[1:].strip())
+                    index += 1
+                out.append(f'<div class="note">{self.inline(" ".join(quote))}</div>')
+                continue
+            if not stripped:
+                flush()
+                index += 1
+                continue
+            paragraph.append(stripped)
+            index += 1
+        flush()
+        return "\n".join(out)
+
+    def markdown_table(self, table_lines: list[str]) -> str:
+        def cells(row: str) -> list[str]:
+            return [cell.strip() for cell in row.strip().strip("|").split("|")]
+
+        header = cells(table_lines[0])
+        aligns = []
+        for spec in cells(table_lines[1]):
+            align = "left"
+            if spec.endswith(":") and spec.startswith(":"):
+                align = "center"
+            elif spec.endswith(":"):
+                align = "right"
+            aligns.append(align)
+        head = "".join(
+            f'<th class="al-{aligns[i]}">{self.inline(cell)}</th>'
+            for i, cell in enumerate(header)
+        )
+        body = []
+        for row in table_lines[2:]:
+            values = cells(row)
+            body.append(
+                "<tr>"
+                + "".join(
+                    f'<td class="al-{aligns[min(i, len(aligns) - 1)]}">{self.inline(cell)}</td>'
+                    for i, cell in enumerate(values)
+                )
+                + "</tr>"
+            )
+        return f'<table class="grid"><thead><tr>{head}</tr></thead><tbody>{"".join(body)}</tbody></table>'
+
+    def render_family(self, family: dict) -> str:
+        target = self.anchor(f"family-{family['id']}")
+        rule_ids = self.rules_by_family[family["id"]]
+        total = self.family_rule_count(family["id"])
+        rows = []
+        for rule_id in rule_ids:
+            page = self.pages[rule_id]
+            rows.append(
+                "<tr>"
+                f'<td class="mono"><a href="#{rule_anchor(rule_id)}">{rule_id}</a></td>'
+                f"<td>{self.inline(page['title'])}</td>"
+                f"<td>{self.severity_badge(page['severity'])}</td>"
+                f'<td class="al-right">{self.page_ref(rule_anchor(rule_id))}</td>'
+                "</tr>"
+            )
+        coverage = ""
+        if self.mode == "pilot":
+            coverage = (
+                f'<p class="family-coverage">This pilot covers {len(rule_ids)} of the '
+                f"{total} rules in this family. The rest are listed as not yet written "
+                "in the coverage report.</p>"
+            )
+        intro = self.markdown(family["intro"])
+        return (  # skylos: ignore[SKY-D228] joins HTML fragments this module escaped
+            f'<section class="family" id="{target}">\n'
+            f'<p class="chapter-number">Rule family</p>\n'
+            f"<h1>{html.escape(family['title'])}</h1>\n"
+            f'<p class="family-prefixes">ID prefixes: {self.inline(family["prefixes"])}</p>\n'
+            f"{intro}\n{coverage}\n"
+            '<table class="grid family-rules"><thead><tr><th>Rule</th><th>Title</th>'
+            '<th>Severity</th><th class="al-right">Page</th></tr></thead>'
+            f"<tbody>{''.join(rows)}</tbody></table>\n</section>"
+        )
+
+    def severity_badge(self, severity: str) -> str:
+        label = html.escape(SEVERITY_LABELS.get(severity, severity))
+        css_class = html.escape(severity.lower())
+        return f'<span class="sev sev-{css_class}">{label}</span>'
+
+    def render_rule(self, page: dict) -> str:
+        rule_id = page["id"]
+        target = self.anchor(rule_anchor(rule_id))
+        family_title = ""
+        for family in self.families:
+            if family["id"] == page["family"]:
+                family_title = family["title"]
+        entry = page["catalog"]
+        meta = [
+            ("Languages", html.escape(", ".join(page["languages"]))),
+            ("Turned on by", self.run_with(page)),
+            ("Finding type", html.escape(entry["finding_type"])),
+        ]
+        if page["cwe"]:
+            meta.insert(1, ("CWE", html.escape(", ".join(page["cwe"]))))
+        if entry["name"].strip().lower() != str(page["title"]).strip().lower():
+            meta.append(("Catalog name", html.escape(entry["name"])))
+        if self.aliases_by_target.get(rule_id):
+            meta.append(
+                (
+                    "Go engine ID",
+                    html.escape(", ".join(self.aliases_by_target[rule_id]))
+                    + f", reported as {rule_id}",
+                )
+            )
+        meta_html = "".join(
+            f'<div class="meta-item"><span class="meta-key">{key}</span>'
+            f'<span class="meta-value">{value}</span></div>'
+            for key, value in meta
+        )
+        severity_note = ""
+        if page.get("severity_note"):
+            severity_note = (
+                f'<p class="severity-note">{self.inline(page["severity_note"])}</p>'
+            )
+        steps = "".join(
+            f"<li>{self.inline(step)}</li>" for step in page["how_skylos_decides"]
+        )
+        related = ", ".join(self.related_link(other) for other in page["related"])
+        refs = "".join(
+            "<li><code>"
+            + html.escape(str(ref["path"]))
+            + "</code> · <code>"
+            + html.escape(str(ref["symbol"]))
+            + "</code>"
+            + self.ref_note(ref)
+            + "</li>"
+            for ref in page["source_refs"]
+        )
+        return (  # skylos: ignore[SKY-D228] joins HTML fragments this module escaped
+            f'<article class="rule" id="{target}">\n'
+            '<header class="rule-head">\n'
+            f'<p class="rule-family">{html.escape(family_title)}</p>\n'
+            f'<h2><span class="rule-id">{rule_id}</span>'
+            f'<span class="rule-title">{self.inline(page["title"])}</span></h2>\n'
+            f'<div class="rule-badges">{self.severity_badge(page["severity"])}</div>\n'
+            f'<div class="rule-meta">{meta_html}</div>\n{severity_note}\n'
+            "</header>\n"
+            + self.section("What it is", f"<p>{self.inline(page['what_it_is'])}</p>")
+            + self.section(
+                "Why it matters", f"<p>{self.inline(page['why_it_matters'])}</p>"
+            )
+            + self.render_example(rule_id, "flagged", page["flagged_example"])
+            + self.render_example(
+                rule_id,
+                "not_flagged",
+                page["not_flagged_example"],
+                page["flagged_example"],
+            )
+            + self.section("How Skylos decides", f'<ol class="steps">{steps}</ol>')
+            + self.render_fix(rule_id, page)
+            + self.render_false_alarms(page["false_alarms_and_suppression"])
+            + '<footer class="rule-foot">\n'
+            + f'<p><span class="foot-key">Related</span> {related}</p>\n'
+            + f'<div class="refs"><span class="foot-key">Source, for maintainers</span><ul>{refs}</ul></div>\n'
+            + "</footer>\n</article>"
+        )
+
+    def ref_note(self, ref: dict) -> str:
+        if not ref.get("note"):
+            return ""
+        return " — " + self.inline(ref["note"])
+
+    def related_link(self, rule_id: str) -> str:
+        name = html.escape(self.catalog[rule_id]["name"])
+        label = html.escape(rule_id)
+        if rule_id in self.pages:
+            anchor = html.escape(rule_anchor(rule_id))
+            return f'<a class="rule-link" href="#{anchor}">{label}</a> {name}'
+        return f'<span class="mono">{label}</span> {name}'
+
+    def run_with(self, page: dict) -> str:
+        if page.get("run_with"):
+            return self.inline(page["run_with"])
+        flags = rule_scan_flags(page["id"])
+        if not flags:
+            return "<code>skylos .</code> (the default scan)"
+        return f"<code>skylos . {html.escape(' '.join(flags))}</code> or <code>skylos . -a</code>"
+
+    def section(self, title: str, content: str, css_class: str = "") -> str:
+        extra = ""
+        if css_class:
+            extra = " " + css_class
+        return (  # skylos: ignore[SKY-D228] joins HTML fragments this module escaped
+            f'<section class="sec{extra}"><div class="sec-title">{title}</div>\n'
+            f"{content}\n</section>\n"
+        )
+
+    def verify_note(self, rule_id: str, kind: str, example: dict) -> str:
+        checks = self.verify_report.get("checks") or {}
+        flags = example_scan_flags(rule_id, example)
+        check = checks.get(example_digest(rule_id, kind, example, flags))
+        if not check:
+            return ""
+        version = html.escape(str(self.verify_report.get("version") or ""))
+        command = html.escape(" ".join(["skylos", ".", *flags]))
+        if check["expected"] == "reported":
+            places = ", ".join(
+                f"{html.escape(hit['file'])} line {hit['line']}"
+                for hit in check.get("hits") or []
+            )
+            text = f"Skylos {version}, <code>{command}</code>: reported at {places}."
+        else:
+            text = f"Skylos {version}, <code>{command}</code>: not reported."
+        return f'<div class="verified">Checked. {text}</div>'
+
+    def reference_files(self, reference: dict | None) -> dict[str, str]:
+        if not reference or reference.get("setup", "none") == "git_diff":
+            return {}
+        return {entry["filename"]: entry["code"] for entry in example_files(reference)}
+
+    def render_example(
+        self, rule_id: str, kind: str, example: dict, reference: dict | None = None
+    ) -> str:
+        title = "Flagged"
+        tag_class = "tag-flagged"
+        if kind == "not_flagged":
+            title = "Not flagged"
+            tag_class = "tag-clean"
+        blocks = []
+        setup = example.get("setup", "none")
+        files = example_files(example)
+        if setup == "git_diff":
+            base = {entry["filename"]: entry["code"] for entry in example["base_files"]}
+            changed = {entry["filename"] for entry in files}
+            for entry in files:
+                blocks.append(("diff", entry, base.get(entry["filename"])))
+            for name, code in base.items():
+                if name not in changed:
+                    entry = {
+                        "filename": name,
+                        "code": code,
+                        "language": example.get("language"),
+                    }
+                    blocks.append(("file", entry, ()))
+        else:
+            expected_file = example.get("expect_file") or files[0]["filename"]
+            same = self.reference_files(reference)
+            for entry in files:
+                if len(files) > 1 and same.get(entry["filename"]) == entry["code"]:
+                    blocks.append(("same", entry, ()))
+                    continue
+                lines = ()
+                if (
+                    kind == "flagged"
+                    and example.get("expect_line")
+                    and entry["filename"] == expected_file
+                ):
+                    lines = (example["expect_line"],)
+                blocks.append(("file", entry, lines))
+        note = self.verify_note(rule_id, kind, example)
+        if example.get("why"):
+            note = (
+                '<div class="why"><strong>Why it is not flagged:</strong> '
+                f"{self.inline(example['why'])}</div>{note}"
+            )
+        rendered = []
+        for position, (shape, entry, extra) in enumerate(blocks):
+            footer = ""
+            if position == len(blocks) - 1:
+                footer = note
+            if shape == "diff":
+                rendered.append(self.diff_block(entry, extra, footer))
+            elif shape == "same":
+                rendered.append(
+                    self.figure(
+                        entry["filename"],
+                        "same as in the flagged example",
+                        language_name(entry.get("language")),
+                        "",
+                        footer,
+                    )
+                )
+            else:
+                status = ""
+                if setup == "git_diff":
+                    status = "unchanged"
+                rendered.append(self.file_block(entry, status, extra, footer))
+        setup_note = ""
+        if setup == "git_diff":
+            setup_note = (
+                '<p class="setup-note">Shown as a change against the last commit: '
+                "lines starting with <code>-</code> were removed, lines starting "
+                "with <code>+</code> were added.</p>"
+            )
+        return (  # skylos: ignore[SKY-D228] joins HTML fragments this module escaped
+            f'<section class="sec example {kind}">'
+            f'<div class="sec-title"><span class="tag {tag_class}">{title}</span></div>\n'
+            f"{setup_note}{''.join(rendered)}\n</section>\n"
+        )
+
+    def figure(
+        self, name: str, status: str, language_label: str, code_html: str, footer: str
+    ) -> str:
+        status_html = ""
+        if status:
+            status_html = f'<span class="file-status">{html.escape(status)}</span>'
+        lang = ""
+        if language_label:
+            lang = f'<span class="file-lang">{html.escape(language_label)}</span>'
+        return (  # skylos: ignore[SKY-D228] joins HTML fragments this module escaped
+            '<figure class="file"><figcaption>'
+            f'<span class="file-name">{html.escape(name)}</span>{status_html}{lang}'
+            f"</figcaption>{code_html}{footer}</figure>"
+        )
+
+    def file_block(
+        self, entry: dict, status: str, highlight_lines, footer: str = ""
+    ) -> str:
+        language = entry.get("language")
+        if not entry["code"].strip():
+            if not status:
+                status = "empty file"
+            return self.figure(
+                entry["filename"], status, language_name(language), "", footer
+            )
+        code_html = self.code_block(
+            entry["code"], language, entry["filename"], highlight_lines
+        )
+        return self.figure(
+            entry["filename"], status, language_name(language), code_html, footer
+        )
+
+    def diff_text(
+        self, name: str, before: str | None, after: str | None, context: int
+    ) -> str:
+        old_name = f"a/{name}"
+        new_name = f"b/{name}"
+        if before is None:
+            old_name = "/dev/null"
+        if after is None:
+            new_name = "/dev/null"
+        lines = difflib.unified_diff(
+            (before or "").splitlines(),
+            (after or "").splitlines(),
+            old_name,
+            new_name,
+            n=context,
+            lineterm="",
+        )
+        body = []
+        hunks = 0
+        for line in lines:
+            if line.startswith(("---", "+++")):
+                continue
+            if line.startswith("@@"):
+                hunks += 1
+                if hunks > 1:
+                    body.append("…")
+                continue
+            body.append(line)
+        return "\n".join(body) + "\n"
+
+    def diff_block(self, entry: dict, before: str | None, footer: str = "") -> str:
+        name = entry["filename"]
+        status = "changed"
+        after = entry["code"]
+        if entry.get("deleted"):
+            status = "deleted"
+            after = None
+        elif before is None:
+            status = "new file"
+        text = self.diff_text(name, before, after, 10000)
+        return self.figure(name, status, "Diff", self.plain_code(text, "diff"), footer)
+
+    def render_fix(self, rule_id: str, page: dict) -> str:
+        fix = page["fix"]
+        content = f"<p>{self.inline(fix['explanation'])}</p>"
+        if not fix.get("code"):
+            return self.section("Fix", content)
+        language = fix.get("language") or page["flagged_example"].get("language")
+        if not fix.get("filename"):
+            return self.section("Fix", content + self.plain_code(fix["code"], language))
+        example = verification_targets(page)[-1][1]
+        note = self.verify_note(rule_id, "fix", example)
+        flagged = page["flagged_example"]
+        before = None
+        if flagged.get("setup", "none") != "git_diff":
+            for entry in example_files(flagged):
+                if entry["filename"] == fix["filename"]:
+                    before = entry["code"]
+        if before is None:
+            content += self.file_block(
+                {
+                    "filename": fix["filename"],
+                    "code": fix["code"],
+                    "language": language,
+                },
+                "",
+                (),
+                note,
+            )
+        else:
+            text = self.diff_text(fix["filename"], before, fix["code"], 2)
+            content += self.figure(
+                fix["filename"],
+                "change from the flagged example",
+                "Diff",
+                self.plain_code(text, "diff"),
+                note,
+            )
+        return self.section("Fix", content)
+
+    def render_false_alarms(self, value: dict) -> str:
+        misfires = "".join(
+            f"<li>{self.inline(item)}</li>" for item in value["misfires"]
+        )
+        suppress = []
+        for item in value["suppress"]:
+            block = f"<li>{self.inline(item['text'])}"
+            if item.get("code"):
+                block += self.plain_code(item["code"], item.get("language"))
+            block += "</li>"
+            suppress.append(block)
+        content = (
+            '<div class="sub-title">When it can misfire</div>'
+            f'<ul class="misfires">{misfires}</ul>'
+            '<div class="sub-title">How to silence it</div>'
+            f'<ul class="suppress">{"".join(suppress)}</ul>'
+        )
+        return self.section("False alarms and suppression", content)
+
+    def render_index(self) -> str:
+        target = self.anchor("index")
+        rows = []
+        for rule_id in sorted(self.pages):
+            page = self.pages[rule_id]
+            family_title = ""
+            for family in self.families:
+                if family["id"] == page["family"]:
+                    family_title = family["title"]
+            rows.append(
+                "<tr>"
+                f'<td class="mono"><a href="#{rule_anchor(rule_id)}">{rule_id}</a></td>'
+                f"<td>{self.inline(page['title'])}</td>"
+                f"<td>{html.escape(family_title)}</td>"
+                f"<td>{self.severity_badge(page['severity'])}</td>"
+                f'<td class="al-right">{self.page_ref(rule_anchor(rule_id))}</td>'
+                "</tr>"
+            )
+        note = ""
+        if self.mode == "pilot":
+            missing = self.page_rule_count - len(self.pages)
+            note = (
+                f'<p class="family-coverage">Skylos has {self.page_rule_count} rules. '
+                f"This pilot edition has pages for {len(self.pages)}; the other {missing} "
+                "are listed as not yet written in the coverage report that is built with "
+                "this PDF.</p>"
+            )
+        return (
+            f'<section class="index" id="{target}">\n'
+            '<p class="chapter-number">Appendix</p>\n<h1>Rule index</h1>\n'
+            f"{note}"
+            '<table class="grid index-table"><thead><tr><th>Rule</th><th>Title</th>'
+            '<th>Family</th><th>Severity</th><th class="al-right">Page</th></tr></thead>'
+            f"<tbody>{''.join(rows)}</tbody></table>\n</section>"
+        )
+
+
+def git_short_head() -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

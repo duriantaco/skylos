@@ -1,0 +1,168 @@
+id: SKY-L001
+title: Mutable default argument
+family: logic
+severity: HIGH
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  HIGH.
+languages: [Python]
+
+what_it_is: >-
+  Python builds a default value such as `[]` or `{}` once, when the function
+  is defined, and every call that uses the default gets that same object.
+  If the function changes it, the change is still there on the next call.
+
+why_it_matters: >-
+  Data leaks from one call into the next. In the example below, every call
+  returns the same dictionary: requests running at the same time can go out
+  with another user's `Authorization` header, and any header a caller adds
+  is sent with every later request.
+
+flagged_example:
+  language: python
+  filename: api_client.py
+  expect_line: 8
+  code: |
+    """Small helper around our internal billing API."""
+
+    import requests
+
+    BASE_URL = "https://billing.internal.example.com"
+
+
+    def build_headers(token, headers={}):
+        headers["Authorization"] = f"Bearer {token}"
+        headers.setdefault("Accept", "application/json")
+        return headers
+
+
+    def fetch_invoice(token, invoice_id):
+        response = requests.get(
+            f"{BASE_URL}/invoices/{invoice_id}",
+            headers=build_headers(token),
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.json()
+
+not_flagged_example:
+  language: python
+  filename: api_client.py
+  code: |
+    """Small helper around our internal billing API."""
+
+    import requests
+
+    BASE_URL = "https://billing.internal.example.com"
+
+
+    def build_headers(token, extra={}):
+        headers = dict(extra)
+        headers["Authorization"] = f"Bearer {token}"
+        headers.setdefault("Accept", "application/json")
+        return headers
+
+
+    def fetch_invoice(token, invoice_id):
+        response = requests.get(
+            f"{BASE_URL}/invoices/{invoice_id}",
+            headers=build_headers(token),
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.json()
+  why: >-
+    The default `{}` is only ever copied: `dict(extra)` builds a new
+    dictionary on every call, and the shared default is never changed.
+    Skylos proves this and stays quiet. The `None` default in the fix is
+    still the clearer style.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`. Looks at every `def` and `async def` (not
+    `lambda`) and checks each default value, keyword-only defaults included.
+  - >-
+    Counts a default as mutable when it is a list, dict or set literal, a
+    list, dict or set comprehension, or a call to `list()`, `dict()`,
+    `set()`, `defaultdict()`, `OrderedDict()`, `Counter()`, `deque()` or
+    `array()` written as a bare name.
+  - >-
+    Skips an empty `[]` or `{}` default whose parameter is only ever passed,
+    alone, to `dict()`, `list()` or `set()` (or, for `{}`, to
+    `CaseInsensitiveDict()` imported from `requests.structures`), so the
+    shared object is copied and never changed.
+  - >-
+    That proof is dropped when the module could change what those names
+    mean: it uses reflection anywhere (`getattr`, `setattr`, `vars`,
+    `globals`, `eval`, `exec`, `inspect.signature`, `__dict__` and similar,
+    even without calling it), assigns attributes on an imported module,
+    rebinds `dict`, `list` or `set`, patches them, or uses
+    `from … import *`.
+  - >-
+    Reports HIGH on the line and column of the default value itself, which
+    matters for signatures that span several lines.
+
+source_refs:
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "class MutableDefaultRule"
+  - path: skylos/rules/quality/_mutable_defaults.py
+    symbol: "def copy_only_default_ids("
+    note: the copy-only exemption.
+  - path: test/test_noise_mutable_copy.py
+    symbol: "def test_proven_empty_default_copies_have_independent_storage"
+
+fix:
+  explanation: >-
+    Use `None` as the default and create a new object inside the function.
+  filename: api_client.py
+  code: |
+    """Small helper around our internal billing API."""
+
+    import requests
+
+    BASE_URL = "https://billing.internal.example.com"
+
+
+    def build_headers(token, headers=None):
+        if headers is None:
+            headers = {}
+        headers["Authorization"] = f"Bearer {token}"
+        headers.setdefault("Accept", "application/json")
+        return headers
+
+
+    def fetch_invoice(token, invoice_id):
+        response = requests.get(
+            f"{BASE_URL}/invoices/{invoice_id}",
+            headers=build_headers(token),
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.json()
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A deliberate shared cache such as `def lookup(key, _cache={})` is
+      reported; there is no exemption for it.
+    - >-
+      A copy-only default is reported again when the module also uses
+      `getattr()` or similar reflection anywhere.
+    - >-
+      It misses `collections.OrderedDict()` written with its module prefix,
+      `bytearray()` and lambdas.
+  suppress:
+    - text: >-
+        Put the marker on the line that holds the default value, not on the
+        `def` line of a multi-line signature. `# noqa: B006` (flake8-bugbear's
+        code for the same problem) is not read.
+      language: python
+      code: |
+        def lookup(key, _cache={}):  # skylos: ignore[SKY-L001] intentional memo cache
+    - text: >-
+        `[tool.skylos] ignore = ["SKY-L001"]` turns the rule off for the
+        project. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-L034, SKY-Q404]

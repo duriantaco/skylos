@@ -1,0 +1,602 @@
+@page {
+  size: A4;
+  margin: 18mm 17mm 20mm 17mm;
+  @bottom-left {
+    content: "Skylos Rule Handbook";
+    font: 7.5pt "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #7a858d;
+  }
+  @bottom-right {
+    content: counter(page);
+    font: 7.5pt "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #7a858d;
+  }
+}
+
+@page cover {
+  margin: 0;
+  @bottom-left { content: none; }
+  @bottom-right { content: none; }
+}
+
+:root {
+  --ink: #1c2328;
+  --muted: #5d6870;
+  --faint: #8a949b;
+  --line: #d8dde1;
+  --soft: #f4f6f7;
+  --accent: #0f6b66;
+  --accent-soft: #e6f1f0;
+  --flagged: #a3261b;
+  --flagged-soft: #fbeceb;
+  --clean: #1c6b3e;
+  --clean-soft: #e8f3ec;
+  --code-bg: #f7f8f9;
+  --code-line: #e3e7ea;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 9.6pt;
+  line-height: 1.5;
+  font-kerning: normal;
+  hyphens: manual;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+code,
+.mono {
+  font-family: Menlo, "SF Mono", Consolas, "DejaVu Sans Mono", monospace;
+  font-size: 0.86em;
+}
+
+p code,
+li code,
+td code,
+.note code,
+.meta-value code,
+.verified code {
+  background: #eef1f3;
+  border-radius: 2pt;
+  padding: 0 2pt;
+  overflow-wrap: anywhere;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-weight: 600;
+  line-height: 1.2;
+  margin: 0;
+  break-after: avoid;
+}
+
+p {
+  margin: 0 0 6pt;
+}
+
+ul,
+ol {
+  margin: 0 0 6pt;
+  padding-left: 15pt;
+}
+
+li {
+  margin-bottom: 3pt;
+}
+
+
+.cover {
+  page: cover;
+  position: relative;
+  height: 297mm;
+  width: 210mm;
+  break-after: page;
+  background: #fbfbfa;
+}
+
+.cover-band {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 14mm;
+  background: var(--accent);
+}
+
+.cover-body {
+  position: absolute;
+  left: 34mm;
+  right: 24mm;
+  top: 88mm;
+}
+
+.cover-kicker {
+  font-size: 13pt;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 8pt;
+  font-weight: 600;
+}
+
+.cover-title {
+  font-size: 40pt;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0 0 14pt;
+}
+
+.cover-sub {
+  font-size: 14pt;
+  line-height: 1.4;
+  color: var(--muted);
+  max-width: 120mm;
+}
+
+.cover-foot {
+  position: absolute;
+  left: 34mm;
+  right: 24mm;
+  bottom: 26mm;
+  border-top: 0.75pt solid var(--line);
+  padding-top: 8pt;
+  color: var(--muted);
+  font-size: 9pt;
+}
+
+.cover-foot p {
+  margin: 0 0 2pt;
+}
+
+.cover-edition {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+
+.contents {
+  break-after: page;
+}
+
+.contents-title {
+  font-size: 22pt;
+  margin-bottom: 14pt;
+}
+
+.toc-part {
+  font-size: 7.5pt;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+  margin: 12pt 0 4pt;
+}
+
+.toc-row {
+  display: flex;
+  align-items: baseline;
+  gap: 4pt;
+  padding: 1.6pt 0;
+  break-inside: avoid;
+}
+
+.toc-label {
+  flex: 0 1 auto;
+}
+
+.toc-fill {
+  flex: 1 1 auto;
+  border-bottom: 0.75pt dotted #b9c1c6;
+  transform: translateY(-2.5pt);
+  min-width: 10pt;
+}
+
+.pn {
+  font-variant-numeric: tabular-nums;
+  min-width: 16pt;
+  text-align: right;
+  color: var(--muted);
+}
+
+.toc-chapter,
+.toc-family {
+  font-weight: 600;
+}
+
+.toc-family {
+  margin-top: 4pt;
+}
+
+.toc-rule {
+  padding-left: 12pt;
+  font-size: 9pt;
+}
+
+.toc-id {
+  font-family: Menlo, "SF Mono", Consolas, monospace;
+  font-size: 8pt;
+  color: var(--muted);
+  display: inline-block;
+  min-width: 72pt;
+}
+
+
+.family,
+.index,
+.chapter.first {
+  break-before: page;
+}
+
+.chapter {
+  margin-top: 22pt;
+}
+
+.chapter.first {
+  margin-top: 0;
+}
+
+.chapter-number {
+  font-size: 7.5pt;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+  margin: 0 0 4pt;
+}
+
+.chapter h1,
+.family h1,
+.index h1 {
+  font-size: 21pt;
+  margin-bottom: 12pt;
+}
+
+.chapter h2 {
+  font-size: 12.5pt;
+  margin: 14pt 0 5pt;
+}
+
+.chapter h3 {
+  font-size: 10.5pt;
+  margin: 10pt 0 4pt;
+}
+
+.chapter p,
+.chapter li,
+.family p {
+  max-width: 158mm;
+}
+
+.note {
+  border-left: 2.5pt solid var(--accent);
+  background: var(--accent-soft);
+  padding: 6pt 9pt;
+  margin: 8pt 0 10pt;
+  break-inside: avoid;
+}
+
+.family-prefixes {
+  color: var(--muted);
+}
+
+.family-coverage {
+  color: var(--muted);
+  font-size: 8.8pt;
+}
+
+table.grid {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 6pt 0 12pt;
+  font-size: 8.8pt;
+}
+
+table.grid th {
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 1pt solid var(--ink);
+  padding: 3pt 6pt 3pt 0;
+}
+
+table.grid td {
+  border-bottom: 0.5pt solid var(--line);
+  padding: 3.5pt 6pt 3.5pt 0;
+  vertical-align: top;
+}
+
+table.grid tr {
+  break-inside: avoid;
+}
+
+.al-right {
+  text-align: right !important;
+}
+
+.al-center {
+  text-align: center !important;
+}
+
+
+.sev {
+  display: inline-block;
+  font-size: 7pt;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1pt 5pt;
+  border-radius: 2pt;
+  white-space: nowrap;
+}
+
+.sev-critical { background: #f6e1df; color: #8c1d14; }
+.sev-high { background: #fbe9d9; color: #8a4508; }
+.sev-medium { background: #f8f0d3; color: #6e5600; }
+.sev-low { background: #e6edf2; color: #38505f; }
+.sev-varies,
+.sev-unrated { background: #eceeef; color: #4d585f; }
+
+
+.rule {
+  break-before: page;
+}
+
+.rule-head {
+  border-bottom: 1pt solid var(--ink);
+  padding-bottom: 7pt;
+  margin-bottom: 10pt;
+}
+
+.rule-family {
+  font-size: 7.5pt;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+  margin: 0 0 3pt;
+}
+
+.rule h2 {
+  font-size: 17pt;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2pt 9pt;
+  margin-bottom: 6pt;
+}
+
+.rule-id {
+  font-family: Menlo, "SF Mono", Consolas, monospace;
+  font-size: 12pt;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.rule-badges {
+  margin-bottom: 6pt;
+}
+
+.rule-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3pt 16pt;
+  font-size: 8.4pt;
+}
+
+.meta-item {
+  display: flex;
+  gap: 5pt;
+}
+
+.meta-key {
+  color: var(--faint);
+}
+
+.severity-note {
+  font-size: 8.4pt;
+  color: var(--muted);
+  margin: 5pt 0 0;
+}
+
+.sec {
+  margin: 0 0 10pt;
+}
+
+.sec-title {
+  font-size: 8pt;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--muted);
+  margin-bottom: 4pt;
+  break-after: avoid;
+}
+
+.sub-title {
+  font-weight: 600;
+  font-size: 9pt;
+  margin: 4pt 0 3pt;
+  break-after: avoid;
+}
+
+.steps li {
+  margin-bottom: 4pt;
+}
+
+.tag {
+  display: inline-block;
+  font-size: 7.5pt;
+  letter-spacing: 0.1em;
+  padding: 1pt 6pt;
+  border-radius: 2pt;
+}
+
+.tag-flagged {
+  background: var(--flagged-soft);
+  color: var(--flagged);
+}
+
+.tag-clean {
+  background: var(--clean-soft);
+  color: var(--clean);
+}
+
+.example.flagged .file {
+  border-left: 2.5pt solid var(--flagged);
+}
+
+.example.not_flagged .file {
+  border-left: 2.5pt solid var(--clean);
+}
+
+.file {
+  margin: 0 0 6pt;
+  border: 0.75pt solid var(--code-line);
+  border-radius: 2pt;
+  background: var(--code-bg);
+  break-inside: avoid;
+}
+
+.file figcaption {
+  display: flex;
+  align-items: baseline;
+  gap: 6pt;
+  font-size: 7.8pt;
+  padding: 3pt 7pt;
+  border-bottom: 0.75pt solid var(--code-line);
+  background: #eef1f3;
+}
+
+.file-name {
+  font-family: Menlo, "SF Mono", Consolas, monospace;
+  font-weight: 600;
+}
+
+.file-status {
+  color: var(--muted);
+}
+
+.file-lang {
+  margin-left: auto;
+  color: var(--faint);
+}
+
+.setup-note {
+  font-size: 8.6pt;
+}
+
+.why {
+  font-size: 8.6pt;
+  padding: 5pt 8pt;
+  border-top: 0.75pt solid var(--code-line);
+  background: #fbfcfc;
+}
+
+.setup-note {
+  color: var(--muted);
+}
+
+.verified {
+  color: var(--muted);
+  font-size: 7.4pt;
+  padding: 3pt 8pt;
+  border-top: 0.75pt solid var(--code-line);
+  background: #fbfcfc;
+}
+
+.code {
+  background: transparent !important;
+}
+
+.code pre {
+  margin: 0;
+  padding: 5pt 8pt;
+  font-family: Menlo, "SF Mono", Consolas, "DejaVu Sans Mono", monospace;
+  font-size: 7.6pt;
+  line-height: 1.42;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+}
+
+.sec > .code,
+.suppress .code,
+.chapter .code {
+  border: 0.75pt solid var(--code-line);
+  border-radius: 2pt;
+  background: var(--code-bg) !important;
+  margin: 3pt 0 7pt;
+  break-inside: avoid;
+}
+
+.code .linenos {
+  color: #a3acb2 !important;
+  background: transparent !important;
+  padding-right: 8pt !important;
+  user-select: none;
+}
+
+.code .hll {
+  background-color: #fbe2df !important;
+  display: inline-block;
+  width: 100%;
+}
+
+.rule-foot {
+  border-top: 0.75pt solid var(--line);
+  padding-top: 6pt;
+  margin-top: 4pt;
+  font-size: 8.2pt;
+  color: var(--muted);
+}
+
+.rule-foot p {
+  margin-bottom: 4pt;
+}
+
+.foot-key {
+  font-weight: 600;
+  color: var(--ink);
+  margin-right: 4pt;
+}
+
+.refs ul {
+  margin: 2pt 0 0;
+  padding-left: 12pt;
+}
+
+.refs li {
+  margin-bottom: 1pt;
+}
+
+.rule-link {
+  font-family: Menlo, "SF Mono", Consolas, monospace;
+  font-size: 0.86em;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.rid {
+  white-space: nowrap;
+}
+
+.index-table td:first-child,
+.family-rules td:first-child {
+  white-space: nowrap;
+}

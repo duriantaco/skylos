@@ -1,0 +1,220 @@
+id: SKY-A101
+title: Test assertion weakened
+family: ai-defects
+severity: MEDIUM
+severity_note: >-
+  HIGH when the change skips a test or marks it `xfail`, removes an
+  exception assertion such as `pytest.raises`, or deletes a negative test
+  (one named for rejecting bad input). LOW for changed or removed snapshot
+  content.
+languages: [Python tests (pytest, unittest), JavaScript/TypeScript tests (Jest, Vitest, node:assert), snapshot files]
+run_with: >-
+  `skylos . --ai-defects --diff origin/main` (or `-a`) on a change; also
+  listed as advice by `skylos done`
+
+what_it_is: >-
+  A test is weakened when a change replaces a precise check with a vague
+  one: `== 2400` becomes `is not None`, `pytest.raises(ValueError, match=…)`
+  disappears, or the test gets skipped. SKY-A101 compares each changed test
+  file with the base version and reports these swaps.
+
+why_it_matters: >-
+  A coding agent that cannot make a test pass sometimes edits the test
+  instead of the code. The suite stays green while the behaviour it
+  protected is no longer checked, and reviewers rarely spot a one-line
+  change in a test file.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  expect_file: tests/test_invoices.py
+  expect_line: 8
+  base_files:
+    - filename: billing/invoices.py
+      code: |
+        """Invoice maths for the checkout service."""
+
+        TAX_RATE = 0.2
+
+
+        def calculate_total(items):
+            subtotal = sum(item["price"] * item["qty"] for item in items)
+            return round(subtotal * (1 + TAX_RATE))
+    - filename: tests/test_invoices.py
+      code: |
+        from billing.invoices import calculate_total
+
+
+        def test_total_includes_tax():
+            items = [{"price": 1000, "qty": 2}]
+            total = calculate_total(items)
+
+            assert total == 2400
+  files:
+    - filename: billing/invoices.py
+      code: |
+        """Invoice maths for the checkout service."""
+
+        TAX_RATE = 0.25
+
+
+        def calculate_total(items):
+            subtotal = sum(item["price"] * item["qty"] for item in items)
+            return round(subtotal * (1 + TAX_RATE))
+    - filename: tests/test_invoices.py
+      code: |
+        from billing.invoices import calculate_total
+
+
+        def test_total_includes_tax():
+            items = [{"price": 1000, "qty": 2}]
+            total = calculate_total(items)
+
+            assert total is not None
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: billing/invoices.py
+      code: |
+        """Invoice maths for the checkout service."""
+
+        TAX_RATE = 0.2
+
+
+        def calculate_total(items):
+            subtotal = sum(item["price"] * item["qty"] for item in items)
+            return round(subtotal * (1 + TAX_RATE))
+    - filename: tests/test_invoices.py
+      code: |
+        from billing.invoices import calculate_total
+
+
+        def test_total_includes_tax():
+            items = [{"price": 1000, "qty": 2}]
+            total = calculate_total(items)
+
+            assert total == 2400
+  files:
+    - filename: billing/invoices.py
+      code: |
+        """Invoice maths for the checkout service."""
+
+        TAX_RATE = 0.25
+
+
+        def calculate_total(items):
+            subtotal = sum(item["price"] * item["qty"] for item in items)
+            return round(subtotal * (1 + TAX_RATE))
+    - filename: tests/test_invoices.py
+      code: |
+        from billing.invoices import calculate_total
+
+
+        def test_total_includes_tax():
+            items = [{"price": 1000, "qty": 2}]
+            total = calculate_total(items)
+
+            assert total == 2500
+  why: >-
+    The tax rate changed and the test still checks one exact value, the new
+    one. Changing an expected value is a normal part of changing behaviour;
+    only a swap from a precise check to a vague one is reported.
+
+how_skylos_decides:
+  - >-
+    Runs with `--ai-defects` when there is a change to compare: in a diff
+    scan (`--diff` or `--diff-base`), or in a full scan of a Git checkout
+    with uncommitted changes (in CI, the pull request's changes when the
+    base branch is known and fetched). It reads the Git diff of each changed
+    file against the base; untracked files have no diff and are skipped.
+  - >-
+    Looks only at test files: a `tests`, `test` or `__tests__` folder
+    anywhere in the file's full path, `test_*`, `*_test.py`, `test.py` and
+    `tests.py` names, `.test.` and `.spec.` files, and snapshot files.
+  - >-
+    Splits each changed hunk by test, and classes every removed and added
+    line. Strong checks compare a value or an exception: `==`, `<`, `in`,
+    `pytest.raises`, `assertEqual`, `toBe`, `toEqual`, `toThrow`. Weak
+    checks only test that something exists or is truthy: a bare `assert x`,
+    `is not None`, `assertTrue`, `assertIsNotNone`, `toBeDefined`,
+    `toBeTruthy`.
+  - >-
+    For each test in the hunk, reports the first weakening, in this order:
+    a skip or `xfail` added; snapshot content changed or removed; an
+    exception check loosened (`match=` dropped, widened to `Exception`) or
+    removed; a negative test deleted; a mock check broadened
+    (`assert_called_once_with` to `assert_called`); `spec=` or `autospec`
+    removed from a mock; an expected value replaced by `ANY`; `== v` widened
+    to `in (v, …)`; a value check turned into a length check; a behaviour
+    check replaced by `is not None`; or a strong check replaced by a weak
+    one with no new strong check in the same hunk.
+  - >-
+    Reports on the added line in the new file. A hunk that only deletes
+    lines (a removed `pytest.raises`, a deleted negative test) is reported
+    at its line in the base version, and only by a full scan: a `--diff`
+    scan drops findings on deleted lines. In `skylos done` the findings are
+    advice and do not block.
+
+source_refs:
+  - path: skylos/rules/ai_defect/assertion_weakening.py
+    symbol: "def detect_assertion_weakening("
+  - path: skylos/rules/ai_defect/assertion_weakening.py
+    symbol: "def _finding_for_hunk("
+    note: the order of the weakening checks.
+  - path: skylos/rules/ai_defect/assertion_weakening.py
+    symbol: "def _is_test_file("
+    note: called with the absolute path.
+  - path: skylos/rules/ai_defect/assertion_weakening.py
+    symbol: "def _is_strong_assertion("
+  - path: skylos/analyzer.py
+    symbol: "def _compute_git_diff_for_changed_file("
+    note: which base the diff is taken against.
+  - path: test/test_assertion_weakening.py
+    symbol: "def test_allows_specific_expected_value_change"
+
+fix:
+  explanation: >-
+    Keep the precise assertion and update the expected value to the new,
+    intended behaviour. If the value really cannot be known any more, say
+    why in the pull request and test a property that still matters, such as
+    the type or a range.
+  language: python
+  code: |
+    assert total == 2500
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A deliberate contract change, such as a function that now returns an
+      opaque ID instead of a number, is reported. That is intended: it asks
+      the reviewer to confirm the change.
+    - >-
+      A new test file that arrives already skipped is reported as HIGH once
+      it is staged or committed in the diff. `skylos done` lists it as advice
+      too: it exempts only lines inside a new test's body, and the skip
+      decorator sits above the `def`.
+    - >-
+      If the checkout itself sits inside a folder named `tests` or `test`,
+      every changed file counts as a test file, because the folder check
+      reads the full path.
+    - >-
+      Because checks are compared within one hunk, a precise assertion moved
+      further down the file can leave the weak one reported.
+    - >-
+      It does not see an assertion deleted outright, `== 2400` changed to
+      `>= 0`, a looser `pytest.approx` tolerance, or an assertion moved into
+      a helper function. In a `--diff` scan it also misses deletion-only
+      changes such as a removed `pytest.raises` block.
+  suppress:
+    - text: >-
+        On the added line, with the reason the weaker check is right:
+      language: python
+      code: |
+        assert total is not None  # skylos: ignore[SKY-A101] total now comes from pricing
+    - text: >-
+        `[tool.skylos] ignore = ["SKY-A101"]` turns the rule off for the
+        project.
+
+related: [SKY-A110, SKY-A111, SKY-A112, SKY-A120]

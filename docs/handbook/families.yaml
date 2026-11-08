@@ -1,0 +1,170 @@
+families:
+  - id: security
+    title: Security in code
+    prefixes: "`SKY-D` (code rules), `SKY-SC`"
+    fallback: true
+    match:
+      ids: ["SKY-D*", "SKY-SC*"]
+    intro: |
+      These rules look for code an attacker could abuse: outside input that
+      reaches a database query, a shell, a file path or an outgoing request;
+      unsafe deserialization; weak cryptography; cross-site scripting; and
+      risky use of LLMs and MCP servers.
+
+      Many of them follow values through the code. They report when a value
+      that can come from outside the program reaches a dangerous call
+      without passing a known safe form, such as a bound query parameter.
+      They run with `--danger` (also spelled `--security`) or `-a`.
+
+  - id: secrets
+    title: Secrets
+    prefixes: "`SKY-S`"
+    match:
+      categories: [secrets]
+    intro: |
+      Passwords, API keys and tokens written into source or configuration
+      files, and server-only values exposed to code that runs in the
+      browser. They run with `--secrets` or `-a`. Any reported secret fails
+      the quality gate, whatever the configured limits. Python test folders
+      are not scanned for secrets in a normal scan.
+
+  - id: supply-chain
+    title: Supply chain and agent configuration
+    prefixes: "`SKY-SCA`, `SKY-D223`, `SKY-D365`–`SKY-D370`, `SKY-D377`"
+    match:
+      categories: [dependency]
+      ids:
+        - SKY-D223
+        - SKY-D365
+        - SKY-D366
+        - SKY-D367
+        - SKY-D368
+        - SKY-D369
+        - SKY-D370
+        - SKY-D377
+    intro: |
+      Risks that arrive through what a project installs or what its
+      developer tools run: dependency confusion, lockfile entries without
+      integrity hashes, mutable dependency sources, risky upgrades, imports
+      of packages the project never declared, and agent, editor and MCP
+      settings committed to the repository, such as hooks that run commands
+      on a developer's machine.
+
+      The `SKY-SCA` rules run with `--sca`. Some need more: upgrade review
+      (UPG001, UPG002) needs `--review-upgrades` and a diff scan, install
+      hardening (HRD001) a diff scan, and dependency confusion, release age
+      and licence checks a policy in `pyproject.toml`. SKY-D223 runs with
+      `--ai-defects`, the agent and editor rules with `--danger`. Skylos
+      reads manifests and lockfiles itself; the `ca9` library decides the
+      supply-chain findings and reads the agent settings.
+
+  - id: ci-cd
+    title: CI/CD pipelines
+    prefixes: "`SKY-D290`–`SKY-D323`, `SKY-D350`–`SKY-D364`, `SKY-D371`–`SKY-D376`"
+    match:
+      ids:
+        - "SKY-D29?"
+        - "SKY-D30?"
+        - "SKY-D31?"
+        - "SKY-D32[0-3]"
+        - "SKY-D35?"
+        - "SKY-D36[0-4]"
+        - "SKY-D37[1-6]"
+    intro: |
+      Rules for GitHub Actions workflows, GitLab CI files, Dependabot
+      settings and jobs that publish packages. A CI job often holds secrets
+      and a token that can write to the repository, so one workflow mistake
+      can hand them to anyone who can open an issue or a pull request.
+
+      Skylos reads `.github/workflows/*.yml` and `*.yaml`, `action.yml`,
+      `action.yaml`, `.github/dependabot.yml` and `.gitlab-ci.yml` (whose
+      `include:` entries are checked for pinning; the included files are not
+      read). These rules run with `--danger` or `-a`; the publish-job rules
+      are decided by the `ca9` library, and SKY-D375 appears only in diff
+      scans. Note that `SKY-G` IDs belong to Go, not to CI.
+
+  - id: infrastructure
+    title: Deployment and infrastructure
+    prefixes: "`SKY-DEP`, `SKY-GPU`, `SKY-D330`–`SKY-D336`, `SKY-D342`, `SKY-D343`, `SKY-D400`, `SKY-D401`"
+    match:
+      categories: [reliability]
+      ids:
+        - "SKY-DEP*"
+        - "SKY-GPU*"
+        - "SKY-D33[0-6]"
+        - SKY-D342
+        - SKY-D343
+        - "SKY-D40?"
+    intro: |
+      Rules for the files that describe how code is deployed: Kubernetes
+      manifests, Docker Compose files, systemd units, Dockerfiles, Terraform
+      and GPU release contracts. They read the declarations in the
+      repository; Skylos does not contact a cluster or a cloud account.
+      They run with `--danger` or `-a`.
+
+  - id: ai-defects
+    title: AI-code defects
+    prefixes: "`SKY-A`, and `SKY-D222`, `SKY-D224`, `SKY-D225`, `SKY-L012`, `SKY-L023`"
+    match:
+      categories: [ai_defect]
+    intro: |
+      Mistakes coding agents make often: packages and APIs that do not
+      exist, tests that were weakened, skipped or deleted, loosened CI or
+      linter settings, and code that detects the test run. A few rules read
+      one version of the code. Most compare a change with an earlier commit,
+      either in a diff scan (`--diff`) or in `skylos done`, the check an
+      agent runs when it finishes.
+
+      They run with `--ai-defects` or `-a`; the `skylos done` rules run
+      only in `skylos done`, and SKY-A105 only in `skylos verify`. Some older
+      rules keep their `SKY-L` or `SKY-D` IDs so that existing suppressions
+      and baselines keep working.
+
+  - id: logic
+    title: Logic and resilience
+    prefixes: "`SKY-L`"
+    match:
+      ids: ["SKY-L*"]
+    intro: |
+      Common bug patterns: mutable default arguments, bare or empty
+      exception handlers, debug leftovers, network calls without a timeout,
+      and placeholder code left behind. They run with `--quality` or `-a`.
+
+  - id: quality
+    title: Quality, structure and performance
+    prefixes: "`SKY-Q`, `SKY-C`, `SKY-P`, `SKY-T`, `SKY-F`, `SKY-R`, `SKY-CIRC`"
+    match:
+      ids: ["SKY-Q*", "SKY-C*", "SKY-P*", "SKY-T*", "SKY-F*", "SKY-R*"]
+    intro: |
+      Maintainability and performance: complexity, nesting and size,
+      duplicated code, coupling, async and threading mistakes, typing
+      practice, framework practice and repository policy. They run with
+      `--quality` or `-a`, except circular imports (SKY-CIRC), which every
+      scan reports.
+
+  - id: dead-code
+    title: Dead code
+    prefixes: "`SKY-U`, `SKY-UC`, `SKY-E`"
+    match:
+      categories: [dead_code]
+      ids: ["SKY-U*", "SKY-E*"]
+    intro: |
+      Code nothing uses: functions, classes, imports, variables, parameters,
+      files and declared dependencies, plus statements that can never run.
+      A plain `skylos .` reports unused functions, classes, imports,
+      variables and parameters, and empty or unused files. Unused declared
+      dependencies (SKY-U005) and unreachable code (SKY-UC001, UC002) need
+      `--quality`.
+
+  - id: go
+    title: Go-specific rules
+    prefixes: "`SKY-G`"
+    match:
+      ids: ["SKY-G*"]
+    intro: |
+      `SKY-G` IDs come from the Go engine that ships with Skylos. When a Go
+      problem has a rule shared with other languages, Skylos reports it under
+      that rule: Go SQL injection is reported as SKY-D211, for example. Only
+      the Go-only rules, such as `defer` inside a loop, keep a `SKY-G` ID in
+      the output, so the renamed IDs have no page of their own. They run
+      with `--danger` or `-a`.

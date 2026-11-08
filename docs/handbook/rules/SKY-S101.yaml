@@ -1,0 +1,164 @@
+id: SKY-S101
+title: Secret written into a file
+family: secrets
+severity: CRITICAL
+severity_note: >-
+  Provider keys (Stripe, GitHub, AWS and others) and quoted values assigned
+  to a secret-like name are CRITICAL. A long random-looking value with no
+  secret-like name nearby, an unquoted value in a `.env` or config file, a
+  password inside a URL and a literal password in a config file are
+  reported as HIGH.
+languages: [Python, TypeScript/JavaScript, Go, Java, Kotlin, C#, PHP, Rust, Ruby, Dart, C/C++, Shell, configuration files]
+
+what_it_is: >-
+  A secret is a password, API key, token or private key that gives access to
+  a system. SKY-S101 reports one that is written directly into a source or
+  configuration file, where everyone who can read the repository, its
+  history or a build artefact can copy it.
+
+why_it_matters: >-
+  Anyone who sees the repository can use the key: to charge cards through
+  your Stripe account, push code with your GitHub token or start servers on
+  your AWS bill. Deleting the line later does not help, because the key
+  stays in Git history until it is revoked.
+
+fragments:
+  STRIPE_DEMO_KEY: ["sk_live_", "51HandbookDemo0nly"]
+
+flagged_example:
+  language: python
+  filename: config/settings.py
+  expect_line: 7
+  code: |
+    """Billing settings."""
+    import os
+
+    DATABASE_URL = os.environ["DATABASE_URL"]
+
+    STRIPE_API_VERSION = "2024-06-20"
+    STRIPE_SECRET_KEY = "{{STRIPE_DEMO_KEY}}"
+
+not_flagged_example:
+  language: python
+  filename: config/settings.py
+  code: |
+    """Billing settings."""
+    import os
+
+    DATABASE_URL = os.environ["DATABASE_URL"]
+
+    STRIPE_API_VERSION = "2024-06-20"
+    STRIPE_SECRET_KEY = os.environ["STRIPE_SECRET_KEY"]
+    WEBHOOK_SCHEMA_COMMIT = "9fceb02d0ae598e95dc970b74767f19372d61af8"
+  why: >-
+    The Stripe key is read from the environment at run time, so the file
+    holds only its name. The 40-character commit hash looks random, but its
+    name says nothing about secrets and it is all lower-case hex: without a
+    secret-like name, Skylos only considers values that mix upper-case
+    letters, lower-case letters and digits.
+
+how_skylos_decides:
+  - >-
+    Reads source files in every supported language plus `.yml`, `.json`,
+    `.toml`, `.ini`, `.env` and `.env.*`, Dockerfiles, Terraform, `.npmrc`,
+    `.pypirc` and similar files. GitHub workflow files are included.
+  - >-
+    Skips test folders and files entirely in a normal scan: any path with a
+    `test/` or `tests/` folder, and Python `test_*.py` files. `skylos done`
+    and the agent hooks do check them.
+  - >-
+    Looks for provider key shapes first: GitHub `ghp_…`, GitLab `glpat-…`,
+    Slack `xox…-`, Stripe `sk_live_…` and `sk_test_…`, AWS `AKIA…`, Google
+    `AIza…`, SendGrid, Twilio and private-key headers. A match is CRITICAL
+    without any randomness check.
+  - >-
+    Skips a provider-shaped value that contains a placeholder word such as
+    `example`, `sample`, `fake`, `dummy`, `placeholder` or `changeme` as a
+    separate word (after a `_`, `-` or the start), and AWS's own documented
+    example key.
+  - >-
+    Then looks for generic secrets: a value of 16 or more characters
+    assigned to a name containing `api_key`, `token`, `secret`, `password`,
+    `credential` and similar, or a bare value of 32 or more characters that
+    mixes upper-case letters, lower-case letters and digits. The value must
+    look random (Shannon entropy of at least 3.9 over 20 or more characters,
+    or, under a secret-like name, a long hex value with letters and digits).
+    It must not be an identifier (letters, digits and `_` only), a URL
+    without credentials, a file path, prose or a `${VAR}` reference.
+  - >-
+    Also reports a password written inside a URL, such as a database
+    connection string, and literal values for password and secret keys in
+    config files.
+  - >-
+    A secret in code that ships to the browser (client-side paths) is
+    reported as SKY-S102 instead.
+  - >-
+    With `--danger`, the TypeScript, JavaScript and Java security checks
+    also report SKY-S101, in the security list: strings of 16 or more
+    characters with a well-known key prefix (`sk-`, `ghp_`, `AKIA`, `xoxb-`,
+    `eyJ` and others), and base64-like strings of 20 or more characters with
+    very high entropy (HIGH).
+
+source_refs:
+  - path: skylos/rules/secrets.py
+    symbol: "def scan_ctx("
+    note: the per-file decision order.
+  - path: skylos/rules/secrets.py
+    symbol: "PROVIDER_PATTERNS = ["
+  - path: skylos/rules/secrets.py
+    symbol: "IS_TEST_PATH = "
+    note: test paths skipped in a normal scan.
+  - path: skylos/rules/secrets.py
+    symbol: "_PLACEHOLDER_MARKER_RE"
+  - path: test/test_secrets.py
+    symbol: "def test_safe_hints_suppress_detection"
+
+fix:
+  explanation: >-
+    Revoke the key with the provider first: it is already exposed. Then read
+    the new key from the environment or a secret manager, and keep real
+    values out of Git (for example in an ignored `.env` file).
+  filename: config/settings.py
+  code: |
+    """Billing settings."""
+    import os
+
+    DATABASE_URL = os.environ["DATABASE_URL"]
+
+    STRIPE_API_VERSION = "2024-06-20"
+    STRIPE_SECRET_KEY = os.environ["STRIPE_SECRET_KEY"]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      One key can be reported twice on the same line: once by its provider
+      pattern and once by the generic check.
+    - >-
+      Documentation fixtures shaped like a real key, such as `ghp_000…0`,
+      are reported, because provider patterns have no randomness check.
+      Start the value with a placeholder word after the prefix, as in
+      `ghp_example000…`.
+    - >-
+      Random identifiers with no secret-like name (build IDs, content
+      hashes in odd shapes) can be reported as HIGH.
+    - >-
+      Secrets inside test folders are not reported by a normal scan, and a
+      file named `app.env` (rather than `.env` or `.env.*`) is not read.
+  suppress:
+    - text: >-
+        Mark a reviewed value on the same line. A marker on the line above is
+        not read, and `skylos done` rejects a marker added in the same
+        change.
+      language: python
+      code: |
+        SANDBOX_KEY = "sk_test_51HandbookDemo0nly"  # skylos: ignore[SKY-S101] shared sandbox
+    - text: >-
+        `[tool.skylos] ignore = ["SKY-S101"]` has no effect on the secrets
+        scan: its findings stay reported and still fail the gate. It only
+        hides the SKY-S101 findings that `--danger` adds for TypeScript,
+        JavaScript and Java.
+    - text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts existing
+        findings by file and line. Revoke the keys anyway.
+
+related: [SKY-S102, SKY-L014, SKY-D244, SKY-D343]

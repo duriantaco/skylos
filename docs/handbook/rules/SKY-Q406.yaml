@@ -1,0 +1,152 @@
+id: SKY-Q406
+title: Async callback passed to forEach
+family: quality
+severity: HIGH
+languages: [TypeScript, JavaScript]
+
+what_it_is: >-
+  `Array.prototype.forEach` calls its callback and ignores what it returns.
+  An `async` callback returns a promise, so `forEach` starts every call and
+  moves on without waiting for any of them. SKY-Q406 reports an `async`
+  function passed to `forEach` on a value Skylos can prove is a plain array.
+
+why_it_matters: >-
+  The code after the loop runs while the work is still in progress: a sync
+  job reports success before its writes finish, and an error thrown inside
+  the callback never reaches the caller's `try`/`catch`.
+
+flagged_example:
+  language: typescript
+  filename: src/orders/sync.ts
+  expect_line: 7
+  code: |
+    import { db } from "../db";
+    import { pushToWarehouse } from "./warehouse";
+
+    export async function syncPendingOrders(orderIds: Iterable<string>): Promise<number> {
+      const ids = Array.from(orderIds);
+
+      ids.forEach(async (id) => {
+        const order = await db.orders.findById(id);
+        await pushToWarehouse(order);
+        await db.orders.markSynced(id);
+      });
+
+      return ids.length;
+    }
+
+not_flagged_example:
+  language: typescript
+  filename: src/orders/sync.ts
+  code: |
+    import { db } from "../db";
+    import { pushToWarehouse } from "./warehouse";
+
+    async function syncOne(id: string): Promise<void> {
+      const order = await db.orders.findById(id);
+      await pushToWarehouse(order);
+      await db.orders.markSynced(id);
+    }
+
+    export async function syncPendingOrders(orderIds: Iterable<string>): Promise<number> {
+      const ids = Array.from(orderIds);
+      const pending: Promise<void>[] = [];
+
+      ids.forEach((id) => {
+        pending.push(syncOne(id));
+      });
+
+      await Promise.all(pending);
+      return ids.length;
+    }
+  why: >-
+    The callback given to `forEach` is not `async`. It only starts each job
+    and keeps the promise, and the function then waits for all of them with
+    `await Promise.all(pending)`.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on `.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`,
+    `.mjs` and `.cjs` files. Minified files and generated files (under
+    `build`, `dist`, `generated` or `vendor` folders, `*.gen.*` names, or
+    with an `@generated` header) are skipped, and so is a file that does not
+    parse.
+  - >-
+    Finds calls written `x.forEach(callback)` or `x["forEach"](callback)`.
+  - >-
+    The callback must be `async`: an inline `async` arrow or function, or a
+    name bound once to one (a `const` or an `async function` declaration
+    that is never reassigned). Async generators do not count.
+  - >-
+    The receiver must provably be a built-in array: an array literal, a
+    `const` bound to one, `new Array()`, `Array()`, `Array.from()`,
+    `Array.of()`, or a chain of array methods such as `.filter()` on one of
+    these. Parameters, `let` variables, aliases, `Set`, `Map` and objects
+    with their own `forEach` are left alone because their type is not
+    proven.
+  - >-
+    Gives up when `Array.prototype.forEach` is reassigned in the file, or
+    when a receiver that is not an array literal (such as an `Array.from()`
+    result) is passed to other code before the `forEach`, since that code
+    could have changed it.
+  - >-
+    Reports HIGH on the line where the call expression starts; for a chain
+    split over several lines, that is the chain's first line. The
+    callback's body is not inspected.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/quality_signals.py
+    symbol: "def scan_quality_signals("
+  - path: skylos/visitors/languages/typescript/quality_signals.py
+    symbol: "def _has_proven_async_callback("
+  - path: skylos/visitors/languages/typescript/quality_signals.py
+    symbol: "def _is_proven_array_receiver("
+  - path: test/test_typescript_quality_signals.py
+    symbol: "def test_q406_skips_safe_or_unproven_foreach_calls"
+
+fix:
+  explanation: >-
+    To run the jobs together, map them to promises and await them all. To
+    run them one at a time, use `for (const id of ids) { await … }`; Skylos
+    may then add one LOW SKY-Q402 finding per `await` in the loop, which is
+    expected for deliberate sequential work.
+  filename: src/orders/sync.ts
+  code: |
+    import { db } from "../db";
+    import { pushToWarehouse } from "./warehouse";
+
+    export async function syncPendingOrders(orderIds: Iterable<string>): Promise<number> {
+      const ids = Array.from(orderIds);
+
+      await Promise.all(
+        ids.map(async (id) => {
+          const order = await db.orders.findById(id);
+          await pushToWarehouse(order);
+          await db.orders.markSynced(id);
+        }),
+      );
+
+      return ids.length;
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A deliberate fire-and-forget, where the callback handles its own
+      errors and nobody needs to wait, is still reported.
+    - >-
+      It misses the same bug on receivers it cannot prove are arrays, such
+      as a function parameter typed `string[]` or a `Set`.
+  suppress:
+    - text: >-
+        On the reported line, where the call starts:
+      language: typescript
+      code: |
+        ids.forEach(async (id) => { // skylos: ignore[SKY-Q406] errors handled inside
+    - text: >-
+        `[tool.skylos] ignore = ["SKY-Q406"]` turns the rule off for the
+        project. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-Q407, SKY-Q405, SKY-Q402]
