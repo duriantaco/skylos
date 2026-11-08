@@ -962,6 +962,11 @@ def _prepare_report_upload(
             result_json, commit_hash=commit, repo_root=git_root
         ),
     )
+    from skylos.api._scan_analysis import scan_analysis_metadata
+
+    metadata.update(
+        scan_analysis_metadata(result_json, done_receipt=metadata.get("done_receipt"))
+    )
     if gitlab_managed:
         from skylos.cloud.gitlab import scan_receipt
 
