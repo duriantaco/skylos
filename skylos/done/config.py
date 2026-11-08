@@ -28,6 +28,7 @@ CHECK_IDS = (
     "security_controls",
     "guardrail_tampering",
     "branch_orphans",
+    "type_check",
 )
 MODES = ("block", "advise", "shadow", "off")
 
@@ -60,6 +61,8 @@ DEFAULT_MODES = {
     # analysis has known false alarms, so it advises until it has a measured
     # track record; with "block", the rules in branch_orphans_block_rules block.
     "branch_orphans": "advise",
+    # Repository checker execution is opt-in, independently of test execution.
+    "type_check": "off",
 }
 ORPHAN_RULES = ("SKY-A135", "SKY-A136", "SKY-A137")
 # With branch_orphans = "block": code made dead and new code nothing calls
@@ -90,6 +93,10 @@ MAX_CHANGED_LINES_BUDGET_SECONDS = 1800
 DEFAULT_PREEXISTING_TIMEOUT_SECONDS = 120
 MIN_PREEXISTING_TIMEOUT_SECONDS = 10
 MAX_PREEXISTING_TIMEOUT_SECONDS = 1800
+TYPE_CHECKERS = ("auto", "mypy", "pyright", "pyrefly", "tsc")
+DEFAULT_TYPE_CHECK_TIMEOUT_SECONDS = 120
+MIN_TYPE_CHECK_TIMEOUT_SECONDS = 10
+MAX_TYPE_CHECK_TIMEOUT_SECONDS = 1800
 
 
 @dataclass(frozen=True)
@@ -113,6 +120,8 @@ class DoneConfig:
     configured: bool = False
     # Settings that were ignored, said on the receipt instead of failing.
     problems: tuple[str, ...] = ()
+    type_checker: str = "auto"
+    type_check_timeout_seconds: int = DEFAULT_TYPE_CHECK_TIMEOUT_SECONDS
 
     def mode(self, check_id: str) -> str:
         return self.modes.get(check_id, DEFAULT_MODES.get(check_id, "off"))
@@ -138,6 +147,10 @@ class DoneConfig:
             settings["allow_preexisting_failures"] = True
         if self.preexisting_timeout_seconds != DEFAULT_PREEXISTING_TIMEOUT_SECONDS:
             settings["preexisting_timeout_seconds"] = self.preexisting_timeout_seconds
+        if self.type_checker != "auto":
+            settings["type_checker"] = self.type_checker
+        if self.type_check_timeout_seconds != DEFAULT_TYPE_CHECK_TIMEOUT_SECONDS:
+            settings["type_check_timeout_seconds"] = self.type_check_timeout_seconds
         canonical = json.dumps(settings, sort_keys=True, separators=(",", ":"))
         return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -249,6 +262,18 @@ def parse_done_config(pyproject_text: str | None) -> DoneConfig:
         MAX_PREEXISTING_TIMEOUT_SECONDS,
         problems,
     )
+    type_checker = table.get("type_checker", "auto")
+    if not isinstance(type_checker, str) or type_checker not in TYPE_CHECKERS:
+        problems.append("type_checker must be auto, mypy, pyright, pyrefly or tsc")
+        type_checker = "auto"
+    type_check_timeout = _bounded_int(
+        table.get("type_check_timeout_seconds"),
+        "type_check_timeout_seconds",
+        DEFAULT_TYPE_CHECK_TIMEOUT_SECONDS,
+        MIN_TYPE_CHECK_TIMEOUT_SECONDS,
+        MAX_TYPE_CHECK_TIMEOUT_SECONDS,
+        problems,
+    )
     if allow_preexisting and not verify_preexisting:
         # Nothing is verified, so nothing can be allowed.
         problems.append(
@@ -269,6 +294,8 @@ def parse_done_config(pyproject_text: str | None) -> DoneConfig:
         preexisting_timeout_seconds=preexisting_timeout,
         configured=True,
         problems=tuple(problems),
+        type_checker=type_checker,
+        type_check_timeout_seconds=type_check_timeout,
     )
 
 

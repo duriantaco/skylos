@@ -67,6 +67,9 @@ def build_main_parser(*, version: str) -> argparse.ArgumentParser:
             "pyproject.toml. Relative paths are resolved from the current directory."
         ),
     )
+    from skylos.typecheck.cli import add_type_check_args
+
+    add_type_check_args(parser)
     parser.add_argument(
         "--gate",
         action="store_true",
@@ -104,6 +107,17 @@ def build_main_parser(*, version: str) -> argparse.ArgumentParser:
         "--trace",
         action="store_true",
         help="Run tests with call tracing to capture dynamic dispatch (e.g., visitor patterns)",
+    )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Profile Skylos analysis phases and scanner functions; does not enable target-code execution.",
+    )
+    parser.add_argument(
+        "--profile-output",
+        metavar="PATH",
+        default=None,
+        help="Write analysis profiling JSON to this file (also enables --profile).",
     )
     parser.add_argument(
         "--cache",
