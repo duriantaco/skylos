@@ -13,7 +13,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from skylos.done.base import SKYLOS_DATA_FILES, Comparison, DoneError, _git_text, is_synced_policy_file
@@ -73,6 +73,8 @@ class CheckResult:
     unverified: list[tuple[str, int]] = field(default_factory=list)
     # tests_pass only: whether each failing test also fails on the base.
     failure_origins: dict | None = None
+    # Optional structured checker diagnostics for JSON and human receipts.
+    type_check_report: dict | None = None
 
 
 @dataclass
@@ -1473,9 +1475,7 @@ def check_guardrail_tampering(ctx: CheckContext) -> CheckResult:
     )
 
     outcome = detect_guardrail_tampering(changes_from_comparison(ctx.comparison))
-    findings = [
-        Finding(f.rule, f.file, f.line, f.message) for f in outcome.findings
-    ]
+    findings = [Finding(f.rule, f.file, f.line, f.message) for f in outcome.findings]
     reviewer = sum(f.rule == RULE_REVIEWER_CONFIG for f in findings)
     markers = sum(f.rule == RULE_SCANNER_MARKER for f in findings)
     narrowed = sum(
@@ -1615,7 +1615,107 @@ def _orphans_summary(report, made: int, new: int, tested: int) -> str:
     return text
 
 
-CHECKS: dict[str, tuple[Callable[[CheckContext], CheckResult], str]] = {
+def check_type_check(ctx: CheckContext) -> CheckResult:
+    """Run a supported repository checker against the trusted comparison."""
+    from skylos.typecheck import run_type_check
+
+    report = run_type_check(
+        ctx.comparison.root,
+        checker=ctx.config.type_checker,
+        timeout_seconds=ctx.config.type_check_timeout_seconds,
+        comparison=ctx.comparison,
+    )
+    if not isinstance(report, dict) or not isinstance(report.get("diagnostics"), list):
+        raise DoneError("The type checker returned no diagnostic report")
+    comparison = report.get("comparison")
+    comparison_status = (
+        comparison.get("status") if isinstance(comparison, dict) else "incomplete"
+    )
+    if not isinstance(comparison_status, str) or comparison_status not in {
+        "complete",
+        "not_requested",
+        "incomplete",
+    }:
+        comparison_status = "incomplete"
+    findings = []
+    counts = {"introduced": 0, "preexisting": 0, "unclassified": 0}
+    normalized = []
+    for diagnostic in report["diagnostics"]:
+        if not isinstance(diagnostic, dict):
+            raise DoneError("The type checker returned a malformed diagnostic")
+        origin = diagnostic.get("origin")
+        if not isinstance(origin, str) or origin not in counts:
+            origin = "unclassified"
+        severity = str(diagnostic.get("severity") or "error").lower()
+        severity = {"warn": "warning", "hint": "info"}.get(severity, severity)
+        is_error = severity not in {"warning", "info", "information", "note"}
+        if is_error:
+            counts[origin] += 1
+        code = str(diagnostic.get("code") or "")
+        message = str(diagnostic.get("message") or "Type checker diagnostic")
+        file = diagnostic.get("file")
+        if isinstance(file, str) and Path(file).is_absolute():
+            try:
+                file = (
+                    Path(file)
+                    .resolve()
+                    .relative_to(ctx.comparison.root.resolve())
+                    .as_posix()
+                )
+            except (OSError, RuntimeError, ValueError):
+                file = None
+        item = {**diagnostic, "origin": origin, "file": file, "severity": severity}
+        normalized.append(item)
+        findings.append(
+            Finding(
+                None,
+                file if isinstance(file, str) else None,
+                diagnostic.get("line"),
+                f"[{origin}] {code + ': ' if code else ''}{message}",
+                blocking=is_error and origin != "preexisting",
+            )
+        )
+    complete = report.get("complete") is True and comparison_status == "complete"
+    if complete and counts["introduced"]:
+        status = "fail"
+    elif (
+        not complete
+        or counts["unclassified"]
+        or report.get("status") not in {"pass", "fail"}
+        or report.get("status") == "fail"
+    ):
+        status = "incomplete"
+    else:
+        status = "pass"
+    summary = str(report.get("summary") or "Type checking could not finish")
+    return CheckResult(
+        id="type_check",
+        rule=None,
+        status=status,
+        summary=summary,
+        evidence={
+            "summary": summary,
+            "checker": str(report.get("checker") or ctx.config.type_checker),
+            "complete": complete,
+            "comparison": str(comparison_status),
+            **counts,
+        },
+        findings=findings,
+        type_check_report={
+            **report,
+            "diagnostics": normalized,
+            "counts": counts,
+            "comparison": {
+                "status": comparison_status,
+                "reason": comparison.get("reason", "")
+                if isinstance(comparison, dict)
+                else "",
+            },
+        },
+    )
+
+
+CHECKS: dict[str, tuple[Callable[[CheckContext], CheckResult], str | None]] = {
     # id: (function, rule shown when the check is skipped or off)
     "tests_pass": (check_tests_pass, RULE_TESTS_PASS),
     "test_tampering": (check_test_tampering, RULE_DELETED_TEST),
@@ -1628,6 +1728,7 @@ CHECKS: dict[str, tuple[Callable[[CheckContext], CheckResult], str]] = {
     "security_controls": (_check_security_controls, "SKY-L021"),
     "guardrail_tampering": (check_guardrail_tampering, "SKY-A122"),
     "branch_orphans": (check_branch_orphans, "SKY-A135"),
+    "type_check": (check_type_check, None),
 }
 # Cheap checks first; the test run (slowest) last.
 RUN_ORDER = (
@@ -1640,6 +1741,7 @@ RUN_ORDER = (
     "secrets",
     "unknown_imports",
     "branch_orphans",  # two dead-code analyses; the base one is cached
+    "type_check",  # optional external checker; wait for the static guards
     "tests_pass",
     "changed_lines_checked",  # reuses the tests_pass run and its line trace
 )

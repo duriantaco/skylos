@@ -25,18 +25,54 @@ def run_verify_command(
 ) -> int:
     parser = _build_parser()
     args = parser.parse_args(list(argv))
+    from skylos.typecheck.cli import validate_type_check_args
+
+    validate_type_check_args(parser, args)
     exclude_folders = _exclude_folders(args, parse_exclude_folders_func)
 
     try:
+        if args.profile_output is not None:
+            from skylos.core.analysis_profile import validate_profile_output
+
+            validate_profile_output(args.profile_output, args.output)
         # The analyzer logs progress at INFO; keep it out of the report.
         with quiet_analyzer_logs():
-            payload = _run_from_args(
+            payload = _run_profiled_from_args(
                 args,
                 parser,
                 exclude_folders,
                 verify_change_path_func,
                 verify_change_stdin_payload_func,
                 verify_change_diff_func,
+            )
+        if getattr(args, "type_check", False):
+            from pathlib import Path
+
+            from skylos.typecheck.cli import attach_type_check
+
+            target = Path(args.path).resolve()
+            selected = None
+            if args.file:
+                selected = [str((target / args.file).resolve())]
+            elif target.is_file():
+                selected = [str(target)]
+            report = attach_type_check(
+                payload,
+                args,
+                path=args.path,
+                base_ref=args.diff,
+                target_files=selected,
+            )
+            type_status = report.get("status")
+            if type_status in {"incomplete", "not_configured"}:
+                if payload.get("status") != "fail":
+                    payload["status"] = "incomplete"
+            elif type_status == "fail":
+                payload["status"] = "fail"
+            payload["summary"] = (
+                str(payload.get("summary", ""))
+                + " Type check: "
+                + str(report.get("summary", ""))
             )
         _write_payload(
             payload,
@@ -49,6 +85,8 @@ def run_verify_command(
     except ValueError as exc:
         parser.error(str(exc))
 
+    if getattr(args, "_profile_output_failed", False):
+        return 2
     return _exit_code(payload, no_fail=args.no_fail)
 
 
@@ -79,6 +117,10 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_scope_args(parser)
     _add_runtime_args(parser)
     _add_output_args(parser)
+    from skylos.typecheck.cli import add_type_check_args
+
+    add_type_check_args(parser)
+    _add_profile_args(parser)
     return parser
 
 
@@ -218,6 +260,72 @@ def _add_output_args(parser: argparse.ArgumentParser) -> None:
             "short: one line per finding and a verdict line."
         ),
     )
+
+
+def _add_profile_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Profile Skylos verification; does not enable target-code execution.",
+    )
+    parser.add_argument(
+        "--profile-output",
+        metavar="PATH",
+        default=None,
+        help="Write static verification profiling JSON (also enables --profile).",
+    )
+
+
+def _run_profiled_from_args(
+    args,
+    parser,
+    exclude_folders,
+    verify_change_path_func,
+    verify_change_stdin_payload_func,
+    verify_change_diff_func,
+) -> dict[str, Any]:
+    if not (args.profile or args.profile_output is not None):
+        return _run_from_args(
+            args,
+            parser,
+            exclude_folders,
+            verify_change_path_func,
+            verify_change_stdin_payload_func,
+            verify_change_diff_func,
+        )
+
+    from skylos.core.analysis_profile import (
+        profile_scan,
+        render_profile,
+        write_profile_output,
+    )
+
+    scanner_failed = True
+    try:
+        with profile_scan(True) as profile:
+            profile.phase("static verification")
+            payload = _run_from_args(
+                args,
+                parser,
+                exclude_folders,
+                verify_change_path_func,
+                verify_change_stdin_payload_func,
+                verify_change_diff_func,
+            )
+        scanner_failed = False
+    finally:
+        summary = profile.summary()
+        render_profile(summary)
+        if args.profile_output is not None:
+            try:
+                write_profile_output(summary, args.profile_output)
+            except OSError as exc:
+                print(f"Skylos profile output unavailable: {exc}", file=sys.stderr)
+                if not scanner_failed:
+                    args._profile_output_failed = True
+
+    payload["profiling"] = summary
+    return payload
 
 
 def _run_from_args(
@@ -385,6 +493,10 @@ def render_short(payload: dict[str, Any]) -> str:
     from skylos.verification.render import render_verification_scope_notes
 
     lines.extend(render_verification_scope_notes(payload))
+    if isinstance(payload.get("type_check"), dict):
+        from skylos.typecheck.cli import render_type_check
+
+        lines.append(render_type_check(payload["type_check"]))
     status = str(payload.get("status") or "unknown")
     lines.append(f"{status.upper()}: {payload.get('summary', '')}")
     return "\n".join(lines)

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from skylos.done.base import Comparison, open_comparison
 from skylos.done.checks import CHECKS, RUN_ORDER, CheckContext, CheckResult, run_check
 from skylos.done.config import (
     CHECK_IDS,
+    TYPE_CHECKERS,
     DoneConfig,
     base_config_text,
     parse_done_config,
@@ -44,6 +45,8 @@ def run(
     base_ref: str | None = None,
     run_tests: bool = True,
     session_id: str | None = None,
+    type_check: bool | None = None,
+    checker: str | None = None,
 ) -> DoneResult:
     started = time.monotonic()
     if session_id is not None:
@@ -59,6 +62,7 @@ def run(
     # The change under review never supplies its own settings: they come
     # from the base commit (the target branch's tip for a pull request).
     config = parse_done_config(base_config_text(comparison, sha=comparison.config_sha))
+    config = _type_check_policy(config, type_check=type_check, checker=checker)
     ctx = CheckContext(comparison, config, run_tests=run_tests)
     results: dict[str, CheckOutcome] = {}
     for check_id in RUN_ORDER:
@@ -75,7 +79,7 @@ def run(
                 ),
             )
             continue
-        if check_id in {"tests_pass", "changed_lines_checked"} and any(
+        if check_id in {"tests_pass", "changed_lines_checked", "type_check"} and any(
             outcome.blocking for outcome in results.values()
         ):
             result = CheckResult(
@@ -120,6 +124,30 @@ def run(
         checks=checks,
         verdict=decide_verdict(checks),
         seconds=round(time.monotonic() - started, 1),
+    )
+
+
+def _type_check_policy(
+    config: DoneConfig, *, type_check: bool | None, checker: str | None
+) -> DoneConfig:
+    from skylos.done.base import DoneError
+
+    if type_check is not None and not isinstance(type_check, bool):
+        raise DoneError("type_check must be true or false")
+    if checker is not None:
+        if checker not in TYPE_CHECKERS:
+            raise DoneError("type checker must be auto, mypy, pyright, pyrefly or tsc")
+        if type_check is not True:
+            raise DoneError("choosing a type checker requires --type-check")
+        if config.mode("type_check") != "off" and checker != config.type_checker:
+            raise DoneError("the type checker is fixed by the trusted Done policy")
+    if type_check is not True:
+        # A caller cannot disable a check enabled by the trusted baseline.
+        return config
+    return replace(
+        config,
+        modes={**config.modes, "type_check": "block"},
+        type_checker=checker or config.type_checker,
     )
 
 

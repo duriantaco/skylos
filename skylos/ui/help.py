@@ -65,6 +65,8 @@ COMMANDS = [
         "desc": "Scan source code; dead code by default, main analyzers with -a",
         "details": [
             "--ai-review: an AI model (and Jev, with TYPESAFE_API_KEY) double-checks unused code and Python security issues; blocking never changes",
+            "--type-check: explicitly run the project's installed type checker",
+            "--profile: show scanner phase times and slow functions",
         ],
         "group": "Core Analysis",
     },
@@ -99,6 +101,8 @@ COMMANDS = [
             "Use --file and --range L1:L2 to narrow the check; "
             "--project-context keeps repo context",
             "Use --output FILE for JSON or --no-fail to preserve status while exiting 0",
+            "--type-check: include compiler diagnostics; --diff REF also compares origins and new compiler escapes",
+            "--profile: show slow Skylos scanner phases and functions",
             "Terminal output is human-readable; redirected, stdin, and saved output use JSON",
         ],
         "group": "Coding agents",
@@ -193,6 +197,7 @@ COMMANDS = [
             "--base origin/main: compare a pull request with its merge base (CI)",
             "--session ID: recheck all edits against the captured session baseline",
             "Settings come from [tool.skylos.done] at the base, never the change",
+            "--type-check: run the installed checker, block new errors and compiler escapes, and retain confirmed old errors",
             "Writes .skylos/receipts/latest.json; receipt [path]: print it again",
             "Exit 0 pass, 1 fail or unfinished, 2 could not run",
         ],
@@ -675,6 +680,14 @@ MORE_COMMANDS = (
         "skylos done --base main",
         "What your coding agent runs when it finishes: runs the tests and flags "
         "deleted tests, loosened CI and test-only shortcuts.",
+    ),
+    (
+        "skylos . --type-check",
+        "Include diagnostics from the project's installed type checker.",
+    ),
+    (
+        "skylos . --profile",
+        "See slow scanner phases and functions.",
     ),
     (
         "skylos verify [PATH]",

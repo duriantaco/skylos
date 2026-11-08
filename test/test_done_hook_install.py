@@ -11,7 +11,13 @@ import subprocess
 import pytest
 
 from skylos.commands import install_hooks_cmd as installer
-from skylos.done.config import MAX_TEST_BUDGET_SECONDS, parse_done_config
+from skylos.done.config import (
+    MAX_CHANGED_LINES_BUDGET_SECONDS,
+    MAX_PREEXISTING_TIMEOUT_SECONDS,
+    MAX_TEST_BUDGET_SECONDS,
+    MAX_TYPE_CHECK_TIMEOUT_SECONDS,
+    parse_done_config,
+)
 
 
 def _handlers(config, agent, event):
@@ -71,6 +77,21 @@ def test_cursor_native_limit_allows_supported_done_retry_budget(maximum):
     for native_loop_count in range(trusted.max_stop_blocks):
         assert native_loop_count < stop["loop_limit"]
     assert stop["loop_limit"] == 10
+
+
+@pytest.mark.parametrize("agent", installer.AGENTS)
+def test_stop_hook_timeout_includes_the_optional_type_checker_budget(agent):
+    config, _, _ = installer.install_hooks({}, agent, "skylos")
+    event = "stop" if agent == "cursor" else "Stop"
+    stop = _handlers(config, agent, event)[0]
+
+    assert stop["timeout"] >= (
+        MAX_TEST_BUDGET_SECONDS
+        + MAX_CHANGED_LINES_BUDGET_SECONDS
+        + MAX_PREEXISTING_TIMEOUT_SECONDS
+        + MAX_TYPE_CHECK_TIMEOUT_SECONDS
+        + 60
+    )
 
 
 @pytest.mark.parametrize("agent", installer.AGENTS)

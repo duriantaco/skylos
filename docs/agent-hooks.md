@@ -823,11 +823,12 @@ gives Claude Code and Codex a repair message at `post-edit` and reports the
 problem to all three agents at `stop`; `skylos hook recheck` exits 2. Hook
 timeouts set by the installer are 15 s (`pre-read`), 30 s
 (`session-start`, `pre-edit`, `pre-bash`, `post-bash`, `post-failure`),
-120 s (`post-edit`) and 7,260 s (`stop`). The `stop` timeout covers the
-largest test budgets the Done gate allows when it runs your tests at stop:
+120 s (`post-edit`) and 9,060 s (`stop`). The `stop` timeout covers the
+largest trusted budgets the Done gate allows when it runs checks at stop:
 3,600 s for the test command, 1,800 s for changed-line mutation checks and
-1,800 s for rerunning failing tests on the session's starting commit, plus
-60 s to save the receipt. Without a committed `[tool.skylos.done]` table,
+1,800 s for rerunning failing tests on the session's starting commit,
+1,800 s for optional type checking, plus 60 s to save the receipt.
+Without a committed `[tool.skylos.done]` table,
 `stop` runs no tests and only rechecks recorded issues. All three agents treat
 a timeout as a non-blocking failure.
 

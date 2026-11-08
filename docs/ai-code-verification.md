@@ -1,9 +1,14 @@
 # AI Code Verification Coverage
 
 `skylos verify` checks generated or edited source code before an agent hands it
-to review. It is deterministic static analysis: Skylos does not execute target
-code, invoke package managers or compilers, call an LLM judge, or query a
-network service for local/workspace API verification.
+to review. By default it uses deterministic static analysis: Skylos does not
+execute target code, invoke package managers or compilers, call an LLM judge,
+or query a network service for local/workspace API verification.
+
+Add [`--type-check`](type-checking.md) to explicitly run the project's installed
+type checker and include its diagnostics. Add [`--profile`](profiling.md) to
+see slow phases and functions inside Skylos's scanner. Both are available to
+CLI users; neither option is specific to an agent integration.
 
 This command has a narrower purpose than `skylos defend`:
 
