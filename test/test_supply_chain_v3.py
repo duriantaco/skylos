@@ -36,14 +36,17 @@ from skylos.rules.sca.ci_agent_inventory import (
 from skylos.rules.sca.posture import supply_chain_posture
 
 
-def test_redaction_fixture_source_contains_no_provider_secrets():
+@pytest.mark.parametrize(
+    "source_name", ["test_supply_chain_v3.py", "test_secrets_integrity_work.py"]
+)
+def test_redaction_fixture_source_contains_no_provider_secrets(source_name):
     from skylos.rules.secrets import scan_ctx
 
-    source = Path(__file__).read_text(encoding="utf-8")
+    source = Path(__file__).with_name(source_name).read_text(encoding="utf-8")
     findings = list(
         scan_ctx(
             {
-                "relpath": "test/test_supply_chain_v3.py",
+                "relpath": f"test/{source_name}",
                 "lines": source.splitlines(True),
                 "tree": ast.parse(source),
             },
