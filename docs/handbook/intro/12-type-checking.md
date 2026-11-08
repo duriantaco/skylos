@@ -14,14 +14,15 @@ skylos . --type-check --diff origin/main
 
 | Checker | Command Skylos runs |
 |:--|:--|
-| mypy | `mypy --no-pretty --show-column-numbers --show-error-codes … .` with your mypy config |
+| mypy | `mypy --no-pretty --no-color-output --show-column-numbers --show-error-codes --error-summary --config-file <your config> .` (the `.` is left out when the config names its files) |
 | pyright | `pyright --project . --outputjson` |
 | pyrefly | `pyrefly check --output-format json` |
 | tsc | `tsc --project tsconfig.json --noEmit --pretty false` |
 
 Skylos picks the checker from the project's configuration
-(`[tool.mypy]`, `mypy.ini`, `setup.cfg`, `pyrightconfig.json`,
-`[tool.pyright]`, `pyrefly.toml`, `tsconfig.json`), or from
+(`[tool.mypy]`, `mypy.ini`, `.mypy.ini`, a `[mypy]` section in `setup.cfg`,
+`pyrightconfig.json`, `[tool.pyright]`, `pyrefly.toml`, `[tool.pyrefly]`,
+`tsconfig.json`), or from
 `[tool.skylos.type_check] checker = "…"`, or `--type-checker`. If several are
 configured, name one. It looks for the program in `.venv/bin`, `venv/bin`
 and `node_modules/.bin` before `PATH`. This runs the checker and any plugins
@@ -37,9 +38,12 @@ there are no SKY rule IDs for them.
 - **With `--diff REF`** (or in `skylos verify --diff` and `skylos done`),
   Skylos copies the base commit to a temporary folder and runs the same
   checker there with the same settings. Each error is then `introduced` by
-  the change or `preexisting`. It also flags type-suppression comments the
-  change added to production code: `type: ignore`, `pyright: ignore`,
-  `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck` and TypeScript `as any`.
+  the change, `preexisting`, or still `unclassified` when Skylos cannot
+  match it reliably. It also flags type-suppression comments the change
+  added to production code, for the checker in use: `type: ignore` (all
+  Python checkers), `mypy: ignore-errors` and `mypy: disable-error-code`,
+  `pyright: ignore` and `pyright: basic`, `pyrefly: ignore`, and for tsc
+  `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck` and `as any`.
 
 The terminal shows up to 50 errors; JSON output carries everything under a
 top-level `type_check` key.
@@ -48,11 +52,12 @@ top-level `type_check` key.
 
 | Result | Exit code |
 |:--|:--|
-| No errors | 0 |
-| Type errors | 1 (`--force` turns this into 0) |
+| No errors, or only pre-existing errors in a comparison | 0 |
+| Introduced or unclassified type errors | 1 (`--force` turns this part into 0) |
 | Not configured, checker missing, timed out, or unreadable output | 2 |
 
-With `--gate`, type errors are a gate failure ("Type checking failed") and
+The type-check result is combined with the scan's own exit code (the higher
+one wins). With `--gate`, type errors are a gate failure ("Type checking failed") and
 an unfinished check makes the gate INCOMPLETE.
 
 ## In `skylos done`

@@ -12,7 +12,7 @@ tricked into publishing. Skylos checks these in four places.
 | Upgrade review | What a version upgrade adds | `--review-upgrades` with `--diff` |
 | Configuration scans | Agent, editor and MCP settings, and publish jobs | `--danger` (or `-a`) |
 
-The rule IDs start with `SKY-SCA` for dependencies, and are SKY-D365 to
+The rule IDs start with `SKY-SCA` for dependencies, and are SKY-D364 to
 SKY-D377 for agent settings and publish jobs.
 
 ## The install hook
@@ -28,7 +28,8 @@ the command runs:
 - **Known malware** is blocked: a fresh OSV lookup, where an advisory counts
   as malware when its ID starts with `MAL-`, it comes from the
   malicious-packages project, or it lists CWE-506. When OSV does not answer,
-  the malware feed installed with the `ca9` library is used.
+  the local `ca9` feed is used if you downloaded it with `ca9 feed update`;
+  otherwise the install counts as unchecked.
 - **The 48-hour hold.** A version published less than 48 hours ago is
   blocked, and the message names the newest version that is old enough.
   Set `min_release_age_hours` under `[tool.skylos.supply_chain]` to change
@@ -36,10 +37,17 @@ the command runs:
 - **npm provenance.** A version that lost the build provenance its earlier
   releases had is blocked.
 
+The malware, release-age and provenance checks cover npm and PyPI
+packages. The release-age and provenance checks run for packages named on
+the command line; lockfile installs (`npm ci`, `uv sync`,
+`pip install -r …`) get the malware check. Go and JSR packages get only the
+existence and look-alike checks.
+
 Installs from Git, a URL or an untrusted registry, and installs Skylos could
 not check, ask the person first (Codex has no "ask", so they are blocked).
-The whole check has a budget of about 20 seconds. Packages from private
-registries, and those listed in `hooks_allow_packages`, are not looked up.
+The whole check has a budget of about 20 seconds. Packages from registries
+declared as trusted (and `GOPRIVATE` modules), and those listed in
+`hooks_allow_packages`, are not looked up.
 
 ## Dependency scans
 
@@ -49,17 +57,18 @@ version.
 | Rule | Severity | Finds |
 |:--|:--|:--|
 | `SKY-SCA-<advisory>` | from the advisory | a known vulnerability, named after the OSV, GHSA or CVE ID |
-| `SKY-SCA-<MAL-…>`, `SKY-SCA-MAL000` | CRITICAL | known malware, from OSV or, when OSV cannot be reached, the installed `ca9` feed |
+| `SKY-SCA-<MAL-…>`, `SKY-SCA-MAL000` | CRITICAL | known malware, from OSV or, when OSV cannot be reached, the local `ca9` feed if one was downloaded |
 | SKY-SCA-INT001 | MEDIUM | a lockfile entry without an integrity hash |
 | SKY-SCA-SRC001 | CRITICAL (HIGH when transitive) | possible dependency confusion; needs `internal_packages` |
 | SKY-SCA-SRC003 | MEDIUM | a Git dependency not pinned to a commit, or a URL without a hash |
 | SKY-SCA-AGE001 | HIGH | a locked version younger than `min_release_age_hours`; scans check it only when you set the value |
-| SKY-SCA-LIC001 | HIGH | a licence your policy denies |
+| SKY-SCA-LIC001 | HIGH (configurable) | a licence on your deny list, or missing from your allow list |
 | SKY-SCA-HRD001 | HIGH | a change that weakens install hardening (diff scans only) |
 
 Malware is always CRITICAL. Dependency findings count toward
-`max_dependency_vulnerabilities`, which is 0 by default; SKY-SCA-SRC003 and
-SKY-SCA-UPG002 are listed but not counted.
+`max_dependency_vulnerabilities`, which is 0 by default; the built-in gate
+lists SKY-SCA-SRC003 and SKY-SCA-UPG002 without counting them (a gate
+policy pulled from Skylos Cloud counts them).
 
 ## Upgrade review
 
@@ -78,8 +87,10 @@ them.
   new network or execute calls at import, more obfuscation, a new native
   binary, a publisher change, changed install scripts.
 
-A changed package that could not be reviewed makes the scan incomplete
-(exit 2).
+A package new to the project is compared with its previous release; an
+install hook there is reported as UPG002. A changed package that could not
+be reviewed makes the scan incomplete (exit 2). Changes in requirements
+files, `pdm.lock` and `pylock.toml` are listed as not reviewed.
 
 ## Agent, editor and MCP settings
 
@@ -92,10 +103,10 @@ others).
 
 | Rule | Severity | Finds |
 |:--|:--|:--|
-| SKY-D365 | HIGH (CRITICAL for remote or hidden code) | an agent hook command |
+| SKY-D365 | HIGH (CRITICAL when it downloads, decodes or disguises the code it runs) | an agent hook command |
 | SKY-D366 | HIGH (CRITICAL as D365) | an editor task that runs when the folder opens |
 | SKY-D367 | MEDIUM | an MCP server launched without an exact version |
-| SKY-D368 | HIGH | an MCP server launched from a hidden home-directory path |
+| SKY-D368 | HIGH | an MCP server launched from a hidden home-directory or temporary folder |
 | SKY-D369 | MEDIUM | an MCP package name imitating a vendor |
 | SKY-D370 | HIGH | the agent's API base URL overridden |
 | SKY-D377 | MEDIUM | duplicated keys that hide what runs |

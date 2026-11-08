@@ -12,7 +12,7 @@ gate:
   diff: blocks
   note: >-
     A CRITICAL hook fails a full scan too. A baseline scan treats the rule
-    like a diff scan when the baseline recorded it.
+    like a diff scan when the baseline's `rule_coverage` lists it.
 
 what_it_is: >-
   Coding agents such as Claude Code can run shell commands on events like
@@ -78,16 +78,17 @@ how_skylos_decides:
     `.claude/settings.json`, `.claude/settings.local.json`,
     `.gemini/settings.json`, `.cursor/hooks.json` and `.codex/hooks.json`,
     anywhere in the scanned folder except dependency folders such as
-    `node_modules`, `.venv` and `site-packages`. Codex's `config.toml` and
-    Kiro's settings are read only for MCP servers and API base URLs
-    (SKY-D367 to SKY-D370), not for hooks.
+    `node_modules`, `.venv` and `site-packages`. Codex's `config.toml` is
+    read only for MCP servers and API base URLs, and Kiro's
+    `.kiro/settings/mcp.json` only for MCP servers, never for hooks.
   - >-
     Every hook with a command (or, for an `http` hook, its URL) becomes a
     finding. So do Claude settings that run a command (`apiKeyHelper`,
     `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`,
     `otelHeadersHelper`, and any top-level setting with
-    `"type": "command"`, such as `statusLine`) and Gemini's
-    `tools.discoveryCommand` and `tools.callCommand`.
+    `"type": "command"`, such as `statusLine`) and Gemini's tool discovery
+    and tool call commands (`tools.discoveryCommand`, `tools.callCommand`,
+    `toolDiscoveryCommand`, `toolCallCommand`).
   - >-
     Keeps regular files inside the scanned folder, plus, when the scan is
     of a subfolder of a Git repository, the repository's top-level agent
@@ -112,7 +113,7 @@ how_skylos_decides:
     is new when its rule, file and a digest of its event and whole command
     are not among the merge base's findings, whatever lines moved, and a
     new hook fails the gate on its own. A `--baseline` run behaves like a
-    diff for the rules its baseline recorded.
+    diff for the rules its baseline's `rule_coverage` lists.
 
 source_refs:
   - path: skylos/rules/config/agent_publish.py

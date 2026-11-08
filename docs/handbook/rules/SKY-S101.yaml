@@ -4,11 +4,11 @@ family: secrets
 severity: CRITICAL
 severity_note: >-
   Provider keys (Stripe, GitHub, AWS and others), private keys, structured
-  credentials such as a Google service-account file, and quoted values
-  assigned to a secret-like name are CRITICAL. A long random-looking value
-  with no secret-like name earlier on the same line, an unquoted value in a
-  `.env` or config file, a password inside a URL and a literal password in
-  a config file are reported as HIGH.
+  credentials such as a Google service-account file, and random-looking
+  values assigned to a secret-like name are CRITICAL. A long random-looking
+  value with no secret-like name earlier on the same line, a password inside
+  a URL, and a literal password or secret in a config or `.env` file that
+  only the config-credential check catches are reported as HIGH.
 languages: [Python, TypeScript/JavaScript, Go, Java, Kotlin, C#, PHP, Rust, Ruby, Swift, Dart, C/C++, Shell, configuration, Markdown and key files]
 gate:
   full: blocks
@@ -63,17 +63,19 @@ not_flagged_example:
 
 how_skylos_decides:
   - >-
-    Reads source files in every supported language; configuration such as
+    Reads source files in every supported language (except Drupal's
+    `.module`-style PHP files); configuration such as
     `.yml`, `.json`, `.toml`, `.ini`, `.properties`, `.xml`, `.gradle`,
     `.hcl` and Terraform; `.env` and `.env.*` (and names like `app.env`);
     Dockerfiles, `.npmrc`, `.pypirc`, HTML, CSS and source maps; shell
-    scripts without an extension; and, for provider keys only, Markdown,
-    text, `.pem`/`.key` files, SSH keys and `.aws/credentials`.
+    scripts without an extension; and, for provider keys, private keys and
+    structured credentials only, Markdown, text, `.pem`/`.key` files, SSH
+    keys and `.aws/credentials`.
   - >-
     In test files and folders (`test/`, `tests/`, `test_*.py`, `__tests__/`,
     `*.test.ts`, `*.spec.js`, `testdata/`, `*_test.go` and similar) it looks
-    only for provider keys and private keys; the generic, URL-password and
-    config-credential checks are off there. `skylos done` and the agent
+    only for provider keys, private keys and structured credentials; the
+    generic, URL-password and config-credential checks are off there. `skylos done` and the agent
     hooks use the same rule.
   - >-
     Looks for provider key shapes first: GitHub `ghp_…` and `github_pat_…`,
@@ -95,15 +97,16 @@ how_skylos_decides:
     start or a non-alphanumeric character, and not followed by a letter. It
     also skips the example keys AWS and Slack publish in their docs.
   - >-
-    Then looks for generic secrets: a quoted value of 16 or more characters
-    assigned to a name containing `api_key`, `token`, `secret`, `password`,
-    `credential` and similar, or a bare value of 32 or more characters that
-    mixes upper-case letters, lower-case letters and digits. The value must
-    look random (Shannon entropy of at least 3.9 over 20 or more characters,
-    or, under a secret-like name, a long hex value with letters and digits).
-    It must not be an identifier (letters, digits and `_` only), a URL
-    without credentials, a file path, prose or a `${VAR}` reference. Bare
-    values are not reported in HTML, CSS, source maps and minified bundles.
+    Then looks for generic secrets: a value assigned to a name containing
+    `api_key`, `token`, `secret`, `password`, `credential` and similar, or a
+    bare value of 32 or more characters that mixes upper-case letters,
+    lower-case letters and digits. The value must look random (Shannon
+    entropy of at least 3.9 over 20 or more characters, or, under a
+    secret-like name, a long hex value with letters and digits). A bare
+    value is skipped when it looks like an identifier (starts with a letter
+    or `_`, then only letters, digits and `_`), a URL without credentials, a
+    file path, prose or a `${VAR}` reference, and is not reported at all in
+    HTML, CSS, source maps and minified bundles.
   - >-
     Also reports a password written inside a URL, such as a database
     connection string, and literal values for password and secret keys in
@@ -171,16 +174,17 @@ false_alarms_and_suppression:
       hashes in odd shapes) can be reported as HIGH.
     - >-
       A random-looking value in a test folder is not reported unless it has
-      a provider shape, and files such as `.env-local`, `.envrc` or
-      `env.local` are not read.
+      a provider or structured-credential shape, and a scan does not read
+      files such as `.env-local`, `.envrc` or `env.local` (the agent hooks
+      do).
   suppress:
     - check: inline
       text: >-
         Mark a reviewed value on the same line; a marker on the line above is
-        not read. In Python and config files the text
+        not read. In Python, Ruby, Swift and config files the text
         `skylos: ignore[SKY-S101]` anywhere on the line works; in
-        TypeScript, JavaScript, Go, Java and the other C-like languages it
-        must be a real comment. `skylos done` checks only the lines a change
+        TypeScript, JavaScript, Go, Java, the other C-like languages, Shell
+        and PHP it must be a real comment. `skylos done` checks only the lines a change
         adds and ignores any marker on them.
       language: python
       code: |

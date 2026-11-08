@@ -2,7 +2,9 @@
   "description": "Rules on main that still need a handbook page, split into six batches for parallel writing. Each batch agent writes only docs/handbook/rules/<RULE-ID>.yaml files for its own rules; it never edits pending.yaml, families.yaml, the intro chapters or the build script.",
   "source": "skylos/rules/catalog.py on origin/main 32aa94e9",
   "rules_without_page": 274,
-  "verify_one_rule": ".venv/bin/python scripts/build_handbook.py --rule RULE-ID --verify-only --output build/handbook-batch/RULE-ID/handbook.pdf",
+  "environment": "Any Python environment with this checkout's dependencies installed (pip install -e .). The build puts the checkout it lives in first on PYTHONPATH, so one shared environment serves every worktree. Go rules need a skylos-go built from the same source: from the checkout root run (cd skylos/engines/go && go build -o ../../../build/skylos-go ./cmd/skylos-go), then export SKYLOS_GO_BIN=\"$PWD/build/skylos-go\".",
+  "verify_one_rule": "python scripts/build_handbook.py --rule RULE-ID --verify-only --output build/handbook-batch/RULE-ID/handbook.pdf",
+  "check_all_pages": "python -m pytest -q test/test_handbook_coverage.py",
   "batches": [
     {
       "id": 1,

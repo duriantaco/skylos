@@ -14,27 +14,30 @@ file) and SKY-S102 (a secret in code that ships to the browser).
 | Private keys | RSA, EC, OpenSSH, PKCS#8 and PGP private-key blocks with key material | CRITICAL |
 | Structured credentials | AWS secret keys and key pairs, Azure Storage connection strings, Google service-account files, private JSON Web Keys | CRITICAL |
 | Encoded keys | provider keys hidden in base64 or URL encoding | CRITICAL |
-| Generic secrets | a quoted, random-looking value assigned to a name such as `api_key`, `token`, `secret` or `password` (HIGH when unquoted in a `.env` or config file) | CRITICAL |
-| Unnamed random values | a long value that mixes upper case, lower case and digits, with no secret-like name earlier on the line | HIGH |
-| Passwords in URLs and config | `postgres://app:pa55word@db/…`, `password: …` in a config file | HIGH |
+| Generic secrets | a random-looking value of 20 or more characters assigned to a name such as `api_key`, `token`, `secret` or `password` | CRITICAL |
+| Unnamed random values | a value of 32 or more characters that mixes upper case, lower case and digits and does not look like an identifier, with no secret-like name earlier on the line | HIGH |
+| Config credentials | a literal value for a password or secret key in a config or `.env` file that the generic check does not catch | HIGH |
+| Passwords in URLs | a database connection string with a literal password | HIGH |
 
 A provider key needs only its shape; generic values must also look random
-(enough entropy over enough characters). Identifiers, file paths, URLs
-without credentials, prose and `${VAR}` references are not secrets.
+(enough entropy over enough characters). A value with no secret-like name
+is not reported when it looks like an identifier, a file path, a URL
+without credentials, prose or a `${VAR}` reference.
 
 ## Which files
 
 Source files in every supported language, configuration files (`.yml`,
 `.json`, `.toml`, `.ini`, `.properties`, `.xml`, Terraform and others),
 `.env` files, Dockerfiles, `.npmrc` and `.pypirc`, HTML, CSS and source
-maps, and shell scripts. Markdown, text, `.pem` and `.key` files, SSH keys
-and `.aws/credentials` are checked for provider keys and private keys only.
+maps, and shell scripts; Drupal's `.module`-style PHP files are not read.
+Markdown, text, `.pem` and `.key` files, SSH keys and `.aws/credentials` are
+checked for provider keys, private keys and structured credentials only.
 
 ## Avoiding test fixtures and examples
 
 - **Test code.** In test files and folders (`tests/`, `test_*.py`,
   `__tests__/`, `*.test.ts`, `testdata/`, `*_test.go` and similar) only
-  provider keys and private keys are reported. A random-looking fixture
+  provider keys, private keys and structured credentials are reported. A random-looking fixture
   value is left alone; a real-looking GitHub token is not.
 - **Placeholders.** A provider-shaped value containing a placeholder word,
   such as `example`, `sample`, `fake`, `dummy`, `placeholder` or
@@ -56,8 +59,9 @@ client code, such as `process.env.STRIPE_SECRET_KEY`.
 
 - `skylos done` checks only the lines a change adds, and ignores any
   suppression marker added in the same change.
-- The agent hooks check files as a coding agent edits them, and block an
-  agent from reading `.env` files and other credential stores.
+- The agent hooks check files as a coding agent edits them, and block a
+  read or a shell command that would show a detected secret, such as the
+  contents of a `.env` file, to the model.
 
 To silence one value, put `skylos: ignore[SKY-S101]` on its line with the
 reason (see "Silencing a finding"). Then revoke the key anyway.

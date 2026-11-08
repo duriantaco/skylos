@@ -13,7 +13,8 @@ skylos verify . --profile
 ## What it measures
 
 - **Phases.** Wall-clock time for each stage of the analysis, such as
-  parsing, clone detection, the AI-defect scan or dead-code verification.
+  `file analysis`, `clone detection`, `AI defect scan`, `grep verify` or
+  `dead-code liveness`.
   Time before the first stage is shown as `analysis setup`.
 - **Functions.** Python's `cProfile` run over the analysis, keeping the 20
   slowest Skylos functions by total time and the 20 by own time.
@@ -30,7 +31,8 @@ not measured.
 - `--profile-output PATH` writes the same JSON to a file and turns profiling
   on. It must differ from `--output`; a path Skylos cannot write exits 2.
 
-The JSON holds `schema_version`, `wall_seconds`, `phases` (name, seconds,
-visits), `functions` (`by_cumulative` and `by_self`, each row with file,
-line, function, calls and seconds) and `notes` on what was not measured.
+The JSON holds `schema_version`, `kind`, `completed`, `wall_seconds`,
+`phases` (name, seconds, visits), `functions` (`by_cumulative` and
+`by_self`, each row with file, line, function, calls, primitive calls, own
+seconds and cumulative seconds) and `notes` on what was not measured.
 Attach it when you report a slow scan.

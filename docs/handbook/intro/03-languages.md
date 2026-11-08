@@ -7,11 +7,11 @@ languages that rule covers.
 
 | Language | Files | Dead code | Security | Quality | Read with |
 |:--|:--|:--|:--|:--|:--|
-| Python | `.py` | Yes | Yes | Yes | Python's `ast` |
+| Python | `.py .pyi .pyw` | Yes | Yes | Yes | Python's `ast` |
 | TypeScript, JavaScript | `.ts .tsx .js .jsx .mts .cts .mjs .cjs` | Yes | Yes | Yes | tree-sitter |
 | Java | `.java` | Yes | Yes | Yes | tree-sitter |
 | Go | `.go` | Yes | Partial | Partial | the `skylos-go` engine; tree-sitter for quality |
-| PHP | `.php`, Drupal `.module .install .inc .theme` | Yes | Yes | No | tree-sitter |
+| PHP | `.php`, Drupal `.module .install .inc .theme .profile .engine` | Yes | Yes | No | tree-sitter |
 | Rust | `.rs` | Experimental | Partial | Partial | tree-sitter |
 | Ruby | `.rb` | Partial | Partial | No | tree-sitter |
 | Dart | `.dart` | Yes | Partial | No | tree-sitter, with the `skylos[dart]` extra |
@@ -21,7 +21,8 @@ languages that rule covers.
 | Swift | `.swift` | Partial | No | No | tree-sitter |
 | Shell | `.sh .bash .zsh .ksh .bats` | No | Partial | No | Skylos's own reader |
 
-Secrets are checked in all of these source files and in configuration,
+Secrets are checked in these source files (except Drupal's `.module`-style
+PHP files) and in configuration,
 `.env`, Dockerfile, Terraform, HTML and key files (see "Secret detection").
 CI workflows, agent settings, Docker Compose, systemd, Kubernetes and
 Terraform files have their own rules.
@@ -45,7 +46,7 @@ Terraform files have their own rules.
 
 Swift support is new. It reports unused `private` and `fileprivate`
 functions, methods, properties and types; every `internal`, `public` or
-`open` declaration counts as used, because other modules can reach it.
+`open` declaration counts as used, because Skylos cannot see every caller.
 
 Skylos builds a graph of declarations and the references between them, and
 also counts as used:
@@ -56,8 +57,9 @@ also counts as used:
   classes;
 - properties with a wrapper, such as `@State` or `@Published`, and members
   that `Codable`, `Equatable` or `Hashable` use;
-- protocol requirements, code inside conditional compilation, and anything
-  behind an attribute or macro it does not know.
+- protocol requirements, code inside conditional compilation, anything
+  behind an attribute it does not know, and every declaration in a file
+  that uses a macro.
 
 It does not expand macros, follow build configurations or infer general
 types. A Swift file over 2 MB, or one too large for its internal limits, is
