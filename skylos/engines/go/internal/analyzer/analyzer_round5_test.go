@@ -70,16 +70,17 @@ func TestOpenRedirectNeedsUntrustedOrigin(t *testing.T) {
 		body string
 		want []string
 	}{
-		"Z1 query param":                  {"func h(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, r.URL.Query().Get(\"next\"), 302) }\n", []string{"HIGH"}},
-		"Z2 single slash check":           {"func h(w http.ResponseWriter, r *http.Request) {\n\tnext := r.FormValue(\"next\")\n\tif !strings.HasPrefix(next, \"/\") || strings.HasPrefix(next, \"//\") {\n\t\tnext = \"/\"\n\t}\n\thttp.Redirect(w, r, next, 302)\n}\n", nil},
-		"Z3 parsed host check":            {"func h(w http.ResponseWriter, r *http.Request) {\n\tnext := r.FormValue(\"next\")\n\tu, err := url.Parse(next)\n\tif err != nil || u.Host != \"\" {\n\t\treturn\n\t}\n\thttp.Redirect(w, r, next, 302)\n}\n", nil},
-		"Z4 allowlist":                    {"func h(w http.ResponseWriter, r *http.Request) {\n\tnext := r.FormValue(\"next\")\n\tif !allowed[next] {\n\t\treturn\n\t}\n\thttp.Redirect(w, r, next, 302)\n}\n", nil},
-		"Z5 query only":                   {"func h(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, \"/login?next=\"+r.URL.Path, 302) }\n", nil},
-		"Z5 appended query":               {"func redirect(w http.ResponseWriter, r *http.Request, to string) {\n\tfor strings.HasPrefix(to, \"//\") {\n\t\tto = strings.TrimPrefix(to, \"/\")\n\t}\n\tif r.URL.RawQuery != \"\" {\n\t\tto += \"?\" + r.URL.RawQuery\n\t}\n\thttp.Redirect(w, r, to, 308)\n}\n", nil},
-		"Z6 config":                       {"func h(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, cfg.HomeURL, 302) }\n", nil},
-		"Z7 host header":                  {"func h(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, \"https://\"+r.Host+\"/x\", 302) }\n", []string{"HIGH"}},
-		"Sprintf with query after verb":   {"func h(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, fmt.Sprintf(\"%s?x=1\", r.FormValue(\"next\")), 302) }\n", []string{"HIGH"}},
-		"Sprintf with verb only in query": {"func h(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, fmt.Sprintf(\"/login?next=%s\", r.URL.Path), 302) }\n", nil},
+		"Z1 query param":                      {"func h(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, r.URL.Query().Get(\"next\"), 302) }\n", []string{"HIGH"}},
+		"Z2 single slash check":               {"func h(w http.ResponseWriter, r *http.Request) {\n\tnext := r.FormValue(\"next\")\n\tif !strings.HasPrefix(next, \"/\") || strings.HasPrefix(next, \"//\") {\n\t\tnext = \"/\"\n\t}\n\thttp.Redirect(w, r, next, 302)\n}\n", nil},
+		"Z3 parsed host alone permits scheme": {"func h(w http.ResponseWriter, r *http.Request) {\n\tnext := r.FormValue(\"next\")\n\tu, err := url.Parse(next)\n\tif err != nil || u.Host != \"\" {\n\t\treturn\n\t}\n\thttp.Redirect(w, r, next, 302)\n}\n", []string{"HIGH"}},
+		"Z3 parsed host and scheme check":     {"func h(w http.ResponseWriter, r *http.Request) {\n\tnext := r.FormValue(\"next\")\n\tu, err := url.Parse(next)\n\tif err != nil || u.Host != \"\" || u.Scheme != \"\" {\n\t\treturn\n\t}\n\thttp.Redirect(w, r, next, 302)\n}\n", nil},
+		"Z4 allowlist":                        {"func h(w http.ResponseWriter, r *http.Request) {\n\tnext := r.FormValue(\"next\")\n\tif !allowed[next] {\n\t\treturn\n\t}\n\thttp.Redirect(w, r, next, 302)\n}\n", nil},
+		"Z5 query only":                       {"func h(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, \"/login?next=\"+r.URL.Path, 302) }\n", nil},
+		"Z5 appended query":                   {"func redirect(w http.ResponseWriter, r *http.Request, to string) {\n\tfor strings.HasPrefix(to, \"//\") {\n\t\tto = strings.TrimPrefix(to, \"/\")\n\t}\n\tif r.URL.RawQuery != \"\" {\n\t\tto += \"?\" + r.URL.RawQuery\n\t}\n\thttp.Redirect(w, r, to, 308)\n}\n", nil},
+		"Z6 config":                           {"func h(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, cfg.HomeURL, 302) }\n", nil},
+		"Z7 host header":                      {"func h(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, \"https://\"+r.Host+\"/x\", 302) }\n", []string{"HIGH"}},
+		"Sprintf with query after verb":       {"func h(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, fmt.Sprintf(\"%s?x=1\", r.FormValue(\"next\")), 302) }\n", []string{"HIGH"}},
+		"Sprintf with verb only in query":     {"func h(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, fmt.Sprintf(\"/login?next=%s\", r.URL.Path), 302) }\n", nil},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

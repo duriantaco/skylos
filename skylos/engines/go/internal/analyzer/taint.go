@@ -20,15 +20,17 @@ import (
 
 type funcTaint struct {
 	tainted map[string]bool
+	// Path-only barriers must not erase command, SQL or destination evidence.
+	pathTainted map[string]bool
 	// values assigned to each local name, to resolve one hop when checking
 	// whether a URL's host is fixed
 	defs map[string][]ast.Expr
 	// names a containment check proves stay under a fixed base (G215)
-	guarded map[string]bool
+	guarded map[token.Pos]map[string]bool
 	// parameters tainted on entry (source type or a tainted caller)
 	paramTainted map[string]bool
 	// names a same-origin check covers (G220)
-	redirectGuarded map[string]bool
+	redirectGuarded map[token.Pos]map[string]bool
 	// names carrying untrusted data that is not HTML-escaped (G226/G228)
 	xss map[string]bool
 	// declared types of parameters, receivers and typed vars
@@ -47,6 +49,7 @@ type taintKind int
 const (
 	taintGeneral taintKind = iota
 	taintXSS
+	taintPath
 )
 
 const maxTaintRounds = 12
@@ -175,7 +178,7 @@ func (a *Analyzer) isPackageIdent(expr ast.Expr, tainted map[string]bool) bool {
 		return false
 	}
 	_, isPkg := a.imports[id.Name]
-	return isPkg && !tainted[id.Name]
+	return isPkg && id.Obj == nil && !tainted[id.Name]
 }
 
 // isTainted reports whether expr may carry untrusted data.
@@ -274,7 +277,7 @@ func (a *Analyzer) isTaintBarrier(call *ast.CallExpr, tainted map[string]bool, k
 		if numericBarriers[a.imports[sel.X.(*ast.Ident).Name]][sel.Sel.Name] {
 			return true
 		}
-		if kind == taintGeneral && a.pathSanitizer(sel) {
+		if kind == taintPath && a.pathSanitizer(sel) {
 			return true
 		}
 	}
@@ -332,7 +335,8 @@ func (a *Analyzer) propagate(body ast.Node, ft *funcTaint) bool {
 	defer func() { a.scope = nil }()
 	general := a.propagateKind(body, ft, ft.tainted, taintGeneral)
 	xss := a.propagateKind(body, ft, ft.xss, taintXSS)
-	return general || xss
+	paths := a.propagateKind(body, ft, ft.pathTainted, taintPath)
+	return general || xss || paths
 }
 
 func (a *Analyzer) propagateKind(body ast.Node, ft *funcTaint, t map[string]bool, kind taintKind) bool {
@@ -513,6 +517,7 @@ func (a *Analyzer) computeTaint(file *ast.File) {
 		ft.declTypes = collectDeclTypes(fd, a.imports)
 		a.seedSourceParams(fd.Type.Params, ft.tainted)
 		a.seedSourceParams(fd.Type.Params, ft.xss)
+		a.seedSourceParams(fd.Type.Params, ft.pathTainted)
 		for name := range ft.tainted {
 			ft.paramTainted[name] = true
 		}
@@ -560,6 +565,10 @@ func (a *Analyzer) computeTaint(file *ast.File) {
 							scopes[callee].xss[name] = true
 							changed = true
 						}
+						if !scopes[callee].pathTainted[name] && a.taintedIn(arg, caller.pathTainted, taintPath) {
+							scopes[callee].pathTainted[name] = true
+							changed = true
+						}
 					}
 				}
 				return true
@@ -571,11 +580,11 @@ func (a *Analyzer) computeTaint(file *ast.File) {
 		}
 	}
 
+	guardMetadata := a.guardFileMetadata(file)
 	for _, fd := range funcs {
 		ft := scopes[fd]
 		a.scope = ft
-		a.collectPathGuards(fd.Body, ft)
-		a.collectRedirectGuards(fd.Body, ft)
+		a.collectValueGuards(guardMetadata, fd, ft)
 		a.collectResponseFacts(fd.Body, ft)
 		a.collectURLAssignments(fd.Body, ft)
 		a.scope = nil
@@ -590,8 +599,8 @@ func (a *Analyzer) computeTaint(file *ast.File) {
 
 func emptyFuncTaint() *funcTaint {
 	return &funcTaint{
-		tainted: map[string]bool{}, defs: map[string][]ast.Expr{}, guarded: map[string]bool{},
-		paramTainted: map[string]bool{}, redirectGuarded: map[string]bool{}, xss: map[string]bool{},
+		tainted: map[string]bool{}, pathTainted: map[string]bool{}, defs: map[string][]ast.Expr{}, guarded: map[token.Pos]map[string]bool{},
+		paramTainted: map[string]bool{}, redirectGuarded: map[token.Pos]map[string]bool{}, xss: map[string]bool{},
 		declTypes: map[string]ast.Expr{}, multiDefs: map[string][]ast.Expr{},
 		responseWrites: map[string][]respWrite{}, urlAssigned: map[string]bool{},
 	}
@@ -771,7 +780,7 @@ func (a *Analyzer) isPkgCall(call *ast.CallExpr, importPath, name string) bool {
 		return false
 	}
 	pkgIdent, ok := sel.X.(*ast.Ident)
-	return ok && a.imports[pkgIdent.Name] == importPath
+	return ok && pkgIdent.Obj == nil && a.imports[pkgIdent.Name] == importPath
 }
 
 func identNames(expr ast.Expr) []string {
@@ -796,80 +805,13 @@ func mentionsDotDot(expr ast.Expr) bool {
 	return found
 }
 
-// collectPathGuards records the names a containment check in the function
-// proves stay under a fixed base:
-//   - strings.HasPrefix(v, base) in an if condition, v cleaned (Clean/Join/
-//     Abs/EvalSymlinks, directly or in v's definition);
-//   - rel, _ := filepath.Rel(base, v) with a ".." check on rel;
-//   - filepath.IsLocal(v).
-func (a *Analyzer) collectPathGuards(body ast.Node, ft *funcTaint) {
-	ft.guarded = map[string]bool{}
-	relOf := map[string][]string{} // rel variable -> names in the checked path
-	ast.Inspect(body, func(n ast.Node) bool {
-		assign, ok := n.(*ast.AssignStmt)
-		if !ok || len(assign.Rhs) != 1 || len(assign.Lhs) == 0 {
-			return true
-		}
-		call, ok := assign.Rhs[0].(*ast.CallExpr)
-		if ok && a.isPkgCall(call, "path/filepath", "Rel") && len(call.Args) == 2 {
-			if id, ok := assign.Lhs[0].(*ast.Ident); ok {
-				relOf[id.Name] = identNames(call.Args[1])
-			}
-		}
-		return true
-	})
-	ast.Inspect(body, func(n ast.Node) bool {
-		ifStmt, ok := n.(*ast.IfStmt)
-		if !ok {
-			return true
-		}
-		ast.Inspect(ifStmt.Cond, func(c ast.Node) bool {
-			if id, ok := c.(*ast.Ident); ok && relOf[id.Name] != nil && mentionsDotDot(ifStmt.Cond) {
-				for _, name := range relOf[id.Name] {
-					ft.guarded[name] = true
-				}
-			}
-			call, ok := c.(*ast.CallExpr)
-			if !ok || len(call.Args) == 0 {
-				return true
-			}
-			switch {
-			case a.isPkgCall(call, "path/filepath", "IsLocal"):
-				for _, name := range identNames(call.Args[0]) {
-					ft.guarded[name] = true
-				}
-			case a.isPkgCall(call, "strings", "HasPrefix") && len(call.Args) == 2:
-				checked := call.Args[0]
-				if a.cleaningCall(checked) {
-					for _, name := range identNames(checked) {
-						ft.guarded[name] = true
-					}
-				} else if name := rootName(checked); name != "" {
-					for _, value := range ft.defs[name] {
-						if value != nil && a.cleaningCall(value) {
-							ft.guarded[name] = true
-						}
-					}
-				}
-			}
-			return true
-		})
-		return true
-	})
-}
-
 // isUntrustedPath: untrusted input reaches the path and no guard covers every
 // untrusted name it uses.
 func (a *Analyzer) isUntrustedPath(expr ast.Expr, ft *funcTaint) bool {
-	if !a.isTainted(expr, ft.tainted) {
+	if !a.taintedIn(expr, ft.pathTainted, taintPath) {
 		return false
 	}
-	for _, name := range identNames(expr) {
-		if ft.tainted[name] && !ft.guarded[name] {
-			return true
-		}
-	}
-	return false
+	return !ft.guarded[expr.Pos()]["value"]
 }
 
 // Open redirect (SKY-G220): untrusted input must be able to choose where the
@@ -964,9 +906,6 @@ func (a *Analyzer) originTaintedVisit(expr ast.Expr, ft *funcTaint, visiting map
 				return true
 			}
 		}
-		if sel, ok := e.Fun.(*ast.SelectorExpr); ok && a.isPackageIdent(sel.X, ft.tainted) && a.pathSanitizer(sel) {
-			return false
-		}
 		for _, arg := range e.Args {
 			if a.originTaintedVisit(arg, ft, visiting) {
 				return true
@@ -977,114 +916,13 @@ func (a *Analyzer) originTaintedVisit(expr ast.Expr, ft *funcTaint, visiting map
 	return a.isTainted(expr, ft.tainted)
 }
 
-// collectRedirectGuards records names a same-origin check covers:
-//   - strings.HasPrefix(v, "/") and a "//" check on v (single leading slash);
-//   - u, _ := url.Parse(v) with a check on u.Host, u.Scheme or u.IsAbs();
-//   - an allowlist: allowed[v], slices.Contains(list, v) or v == "literal" in
-//     a condition.
-func (a *Analyzer) collectRedirectGuards(body ast.Node, ft *funcTaint) {
-	ft.redirectGuarded = map[string]bool{}
-	parsedFrom := map[string][]string{}
-	slashChecked := map[string]bool{}
-	doubleSlashChecked := map[string]bool{}
-	ast.Inspect(body, func(n ast.Node) bool {
-		assign, ok := n.(*ast.AssignStmt)
-		if !ok || len(assign.Rhs) != 1 || len(assign.Lhs) == 0 {
-			return true
-		}
-		if call, ok := assign.Rhs[0].(*ast.CallExpr); ok && len(call.Args) == 1 &&
-			(a.isPkgCall(call, "net/url", "Parse") || a.isPkgCall(call, "net/url", "ParseRequestURI")) {
-			if id, ok := assign.Lhs[0].(*ast.Ident); ok {
-				parsedFrom[id.Name] = identNames(call.Args[0])
-			}
-		}
-		return true
-	})
-	conditions := []ast.Expr{}
-	ast.Inspect(body, func(n ast.Node) bool {
-		switch node := n.(type) {
-		case *ast.IfStmt:
-			conditions = append(conditions, node.Cond)
-		case *ast.ForStmt:
-			if node.Cond != nil {
-				conditions = append(conditions, node.Cond)
-			}
-		}
-		return true
-	})
-	for _, cond := range conditions {
-		ast.Inspect(cond, func(n ast.Node) bool {
-			switch node := n.(type) {
-			case *ast.CallExpr:
-				if a.isPkgCall(node, "strings", "HasPrefix") && len(node.Args) == 2 {
-					if prefix, ok := stringLiteralValue(node.Args[1]); ok {
-						if name := rootName(node.Args[0]); name != "" {
-							switch prefix {
-							case "/":
-								slashChecked[name] = true
-							case "//":
-								doubleSlashChecked[name] = true
-							}
-						}
-					}
-				}
-				if a.isPkgCall(node, "slices", "Contains") && len(node.Args) == 2 {
-					for _, name := range identNames(node.Args[1]) {
-						ft.redirectGuarded[name] = true
-					}
-				}
-				if sel, ok := node.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "IsAbs" {
-					for _, name := range parsedFrom[rootName(sel.X)] {
-						ft.redirectGuarded[name] = true
-					}
-				}
-			case *ast.SelectorExpr:
-				if node.Sel.Name == "Host" || node.Sel.Name == "Scheme" {
-					for _, name := range parsedFrom[rootName(node.X)] {
-						ft.redirectGuarded[name] = true
-					}
-				}
-			case *ast.IndexExpr:
-				for _, name := range identNames(node.Index) {
-					ft.redirectGuarded[name] = true
-				}
-			case *ast.BinaryExpr:
-				if node.Op == token.EQL || node.Op == token.NEQ {
-					_, leftLit := stringLiteralValue(node.X)
-					_, rightLit := stringLiteralValue(node.Y)
-					if rightLit {
-						if name := rootName(node.X); name != "" {
-							ft.redirectGuarded[name] = true
-						}
-					} else if leftLit {
-						if name := rootName(node.Y); name != "" {
-							ft.redirectGuarded[name] = true
-						}
-					}
-				}
-			}
-			return true
-		})
-	}
-	for name := range slashChecked {
-		if doubleSlashChecked[name] {
-			ft.redirectGuarded[name] = true
-		}
-	}
-}
-
 // isOpenRedirectTarget: untrusted input chooses where the redirect goes and
 // no same-origin check covers it.
 func (a *Analyzer) isOpenRedirectTarget(expr ast.Expr, ft *funcTaint) bool {
 	if !a.originTainted(expr, ft) {
 		return false
 	}
-	for _, name := range identNames(expr) {
-		if ft.tainted[name] && !ft.redirectGuarded[name] {
-			return true
-		}
-	}
-	return false
+	return !ft.redirectGuarded[expr.Pos()]["value"]
 }
 
 // sqlQuerySeverity (SKY-G211): CRITICAL when request or network input reaches

@@ -15,6 +15,8 @@ corpus and independent repository holdout answer different questions.
 | Framework evidence | Existing framework repository corpus checks count drift | Add per-symbol used/unused labels and negative controls; a lower finding count alone does not prove fewer false positives |
 | Existing challenge cases | Separate adversarial manifests preserve unresolved cases | The C# executable entry class and Kotlin fixed-format `printf` argv control still have known false positives; keep their labels fixed while investigating |
 | Python random method capture | Constructor-instance aliases, copied methods and visible rebinding have native/direct regression controls | A method copied directly from an imported `random` module before that module alias is rebound can still be missed at a later credential sink. Its required warning remains a strict expected-failure contract; it is not labelled safe |
+| Go security callable identity | Default corpus now pairs SQL, SSRF, command, redirect, path, XSS, TLS and cookie behavior | Six reproduced misses remain in the optional security challenge: copied `http.Get`/client methods, `exec.Command`, `os.ReadFile`, a request type alias and TLS `InsecureSkipVerify` field assignment. These are detector gaps, not safe cases |
+| Dart sanitizer identity | Default command/path/SSRF pairs remain; direct unsafe calls still warn | A source-owned identity helper called `canonicalize` hides command and URL input. Two positive optional challenges preserve the miss; provider proof and sink-specific sanitizers need deeper work |
 | Local API verification | Python, TS/JS, Go and Java have supported checks | PHP, Rust, Dart, C#, C++, Kotlin, Shell and Ruby explicitly report unsupported verification; static scanning is a separate capability |
 | Dependency ecosystems | Existing Cargo, Composer, NuGet, Pub and RubyGems inventory/SCA | SwiftPM, CocoaPods and Hex remain unsupported; a lockfile inventory alone does not prove vulnerability coverage |
 | WebAssembly artifacts | No dedicated Wasm analyzer or labelled artifact corpus | Proposed next artifact corpus: host imports and granted capabilities against an explicit policy, runtime resource limits and malformed/unsupported modules; host configuration can make a module's outcome unknown |
@@ -26,9 +28,11 @@ covered languages. Expand cloud rule families with resource coverage and explici
 unknown outcomes. Avoid repository-name exceptions or suppressions to improve a
 benchmark total.
 
-The default manifest inventory still lacks the opposite polarity for Go
-`SKY-D212`, Java `SKY-D216`/`229`/`230`/`239`, Shell `SKY-D212`, and TS
-`SKY-D211`. C# `SKY-D233` and PHP `SKY-D255` now have both polarities.
+The 200-case default manifest now has both polarities for every Go rule it
+labels. Java `SKY-D216`/`229`/`230`/`239` and Shell `SKY-D212` still need
+negative counterparts; TS `SKY-D211` and Python `SKY-D206` need positive
+counterparts. Python `SKY-D231`/`232` need negative counterparts. C#
+`SKY-D233` and PHP `SKY-D255` retain both polarities.
 This is a corpus inventory result; it is
 not a reproduced detector bug. Rust and Dart now have both polarities for
 their supported command/path rules (and Dart SSRF).

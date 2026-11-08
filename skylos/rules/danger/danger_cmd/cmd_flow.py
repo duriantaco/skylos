@@ -6,6 +6,7 @@ from skylos.rules.danger.project_source import project_source_snapshot
 from skylos.rules.danger.import_proof import _effects
 from skylos.rules.danger.taint import TaintVisitor, CMD_SANITIZERS
 from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
+from skylos.rules.danger.callable_bindings import callable_names
 
 
 # The bounded whole-command proof must remain valid under another neutral
@@ -848,9 +849,19 @@ class _CmdFlowChecker(TaintVisitor):
         return False
 
     def visit_Call(self, node):
-        qn = self._resolved_name(node)
+        legacy = self._resolved_name(node)
+        for qn in callable_names(
+            node,
+            legacy,
+            self.untrusted_sources.module,
+            self.file_path,
+            getattr(self, "project_root", None),
+        ):
+            self._check_call(node, qn)
+        self.generic_visit(node)
+
+    def _check_call(self, node, qn):
         if not qn:
-            self.generic_visit(node)
             return
 
         shell_call = SHELL_STRING_CALLS.get(qn)
@@ -900,8 +911,6 @@ class _CmdFlowChecker(TaintVisitor):
                     )
             else:
                 self._check_argv_shell_script(node, qn)
-
-        self.generic_visit(node)
 
 
 def scan(tree, file_path, findings, *, project_root=None):

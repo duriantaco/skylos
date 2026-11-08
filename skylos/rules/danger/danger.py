@@ -23,6 +23,7 @@ from .danger_ml.model_deserialization import scan as scan_ml_model_load
 from .danger_logging import scan as scan_secret_logging
 from .pickle_provenance import safe_pickle_loads
 from .yaml_loader_provenance import yaml_loader_classes, yaml_load_call_name
+from .callable_bindings import callable_names
 from skylos.security.command_guard import (
     findings_for_command,
     is_external_url,
@@ -165,6 +166,13 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         )
         name = yaml_load_call_name(node, self._module) or name
         name = unpickler_load_name(name, self._unpickler_classes)
+        for candidate in callable_names(
+            node, name, self._module, self.file_path, self._project_root
+        ):
+            self._check_call(node, candidate)
+        self.generic_visit(node)
+
+    def _check_call(self, node, name):
         if name:
             random_name = _weak_random_call_name(
                 node, name, self._module, self.file_path, self._project_root
@@ -247,8 +255,6 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                 break
             else:
                 self._append_tls_finding(name, node)
-
-        self.generic_visit(node)
 
     def _append_tls_finding(self, name: str, node: ast.Call) -> None:
         if _is_test_module(self.file_path):

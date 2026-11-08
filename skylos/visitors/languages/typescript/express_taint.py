@@ -37,6 +37,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from skylos.visitors.languages.typescript.child_process_shell import ShellProcessCalls
+
 _MAX_NODES = 200_000
 _MAX_LABEL = 80
 _MAX_TAINT_DEPTH = 40
@@ -771,6 +773,9 @@ class _FileContext:
         self.merge_memo: dict[int, bool] = {}
         self.summary_active: set[int] = set()
         self._collect()
+        self.shell_process_calls = (
+            ShellProcessCalls(source, root) if b"child_process" in source else None
+        )
 
     def _declare(self, name: str) -> None:
         self.declarations[name] = self.declarations.get(name, 0) + 1
@@ -2695,6 +2700,18 @@ class _SinkChecker:
             if args:
                 self._command(node, args[0])
             return
+        shell_call = (
+            self.ctx.shell_process_calls.command_parts(node)
+            if self.ctx.shell_process_calls is not None
+            else None
+        )
+        if shell_call is not None:
+            method, parts = shell_call
+            for part in parts:
+                if self._unguarded(part, "cmd", node) is not None:
+                    self._command(node, part, method)
+                    break
+            return
         if not args:
             return
         self._sql(node, callee, args)
@@ -2705,7 +2722,7 @@ class _SinkChecker:
         self._nosql(node, callee, args)
         self._merge(node, callee, args)
 
-    def _command(self, node, first) -> None:
+    def _command(self, node, first, method: str = "exec") -> None:
         found = self._unguarded(first, "cmd", node)
         if found is None:
             return
@@ -2713,12 +2730,12 @@ class _SinkChecker:
             node,
             "SKY-D212",
             "CRITICAL",
-            "Command injection: request data reaches child_process.exec() "
-            "command text. Use execFile() with an argument array.",
+            f"Command injection: request data reaches child_process.{method}() "
+            "shell command text. Use an argument array with the shell disabled.",
             first,
             found.label,
             "cmd",
-            "child_process.exec() command",
+            f"child_process.{method}() command",
             "argument array (execFile/spawn) or shell quoting",
         )
 
@@ -3853,6 +3870,21 @@ def _scan(
         lines = safe_lines.get(finding["rule_id"])
         if lines is not None:
             lines.discard(finding["line"])
+    if ctx.shell_process_calls is not None and not ctx.shell_process_calls.complete:
+        findings.append(
+            {
+                "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+                "severity": "HIGH",
+                "kind": "processing_error",
+                "message": (
+                    "TypeScript child_process shell-option analysis exceeded its "
+                    "bounded work budget; a security candidate remains unresolved."
+                ),
+                "file": str(file_path),
+                "line": 1,
+                "col": 0,
+            }
+        )
     return findings, safe_lines
 
 
