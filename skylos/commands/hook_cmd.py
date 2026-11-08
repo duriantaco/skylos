@@ -649,29 +649,92 @@ def _fail_open_message(event: str, reason: str) -> str:
 
 
 def _handle_session_start(payload, root, client, deps, record):
-    record["outcome"] = "captured" if record.get("done_configured") else "skip"
-    output = _allow_output("session-start", client)
     from skylos.commands.hook_agent_guard import session_agent_check
 
+    record["outcome"] = "captured" if record.get("done_configured") else "skip"
+    output = _allow_output("session-start", client)
     try:
-        text = session_agent_check(payload, root, deps, record)
+        notice = session_agent_check(payload, root, deps, record)
     except Exception as exc:  # noqa: BLE001
         record["agent_config_error"] = type(exc).__name__
-        text = "Skylos could not check agent configs and MCP servers this time."
-    if not text:
+        notice = "Skylos could not check agent configs and MCP servers this time."
+    if notice:
+        record["agent_config_report"] = True
+        if client == "cursor":
+            record["_stderr_notes"] = [notice]
+        else:
+            output = dict(output or {})
+            output["systemMessage"] = notice
+            if client == "claude":
+                output["hookSpecificOutput"] = {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": notice,
+                }
+
+    if client != "claude":
         return output
-    record["agent_config_report"] = True
-    if client == "cursor":
-        record["_stderr_notes"] = [text]
+    session_id = _session_id(payload)
+    state_root = _state_root(root)
+    session = _load_session_state(state_root).get("sessions", {}).get(session_id)
+    if isinstance(session, dict) and session.get("told_checks"):
         return output
+    try:
+        text = _session_rules_text(root, bool(record.get("done_configured")))
+    except Exception as exc:
+        record["told_error"] = type(exc).__name__
+        return output
+    _mutate_session(state_root, session_id, _mark_told)
+    record["outcome"] = "told"
     merged = dict(output or {})
-    merged["systemMessage"] = text
-    if client == "claude":
-        merged["hookSpecificOutput"] = {
-            "hookEventName": "UserPromptSubmit",
-            "additionalContext": text,
-        }
+    merged["hookSpecificOutput"] = {
+        "hookEventName": "UserPromptSubmit",
+        "additionalContext": f"{text}\n{notice}" if notice else text,
+    }
     return merged
+
+
+def _mark_told(session: dict[str, Any]) -> None:
+    session["told_checks"] = int(time.time())
+
+
+def _session_rules_text(root: Path, configured: bool) -> str:
+    """What blocks in this repository, told to the agent once per session."""
+    if configured:
+        from skylos.done.base import open_comparison
+        from skylos.done.config import CHECK_IDS, base_config_text, parse_done_config
+        from skylos.done.receipt import LABELS
+
+        config = parse_done_config(base_config_text(open_comparison(root)))
+        names = [LABELS[check] for check in CHECK_IDS if config.mode(check) == "block"]
+        if names:
+            first = "Skylos Done runs at Stop and blocks on: " + "; ".join(names) + "."
+        else:
+            first = "Skylos Done runs at Stop; no check is set to block in [tool.skylos.done]."
+    else:
+        first = (
+            "Skylos Done tests are not configured here (no committed "
+            "[tool.skylos.done] table); Stop only rechecks issues your edits introduced."
+        )
+    return "\n".join(
+        [
+            first,
+            "Edit hooks block secrets, dangerous sinks fed by untrusted input and "
+            "hallucinated packages.",
+            "The pull request gate fails on critical security issues, secrets and "
+            "critical AI-code defects.",
+            f"Before you finish, run: skylos done --base {_done_base_hint(root)}",
+        ]
+    )
+
+
+def _done_base_hint(root: Path) -> str:
+    """The base ``skylos open`` would compare with: origin/HEAD, else main/master."""
+    from skylos.commands.setup_cmd import current_branch, default_base
+
+    base = default_base(root)
+    if not base or base == current_branch(root):
+        return "HEAD"
+    return base
 
 
 def _handle_pre_edit(payload, root, client, deps, record):
@@ -1295,7 +1358,9 @@ def _output_decision(output, client) -> tuple[str, str]:
     if not isinstance(output, dict):
         return "allow", ""
     if client == "cursor":
-        return str(output.get("permission") or "allow"), str(output.get("user_message") or "")
+        return str(output.get("permission") or "allow"), str(
+            output.get("user_message") or ""
+        )
     specific = output.get("hookSpecificOutput") or {}
     return (str(specific.get("permissionDecision") or "allow"),
             str(specific.get("permissionDecisionReason") or ""))  # fmt: skip
@@ -1389,7 +1454,12 @@ def _pre_bash_checks(command, cwd, root, client, deps, record):
             )  # fmt: skip
     if chain_problem and (registry_targets or any(t.kind == MANIFEST for t in targets)):
         result.setdefault("unverified", []).append(
-            {"tool": "install", "name": "policy", "outcome": "unchecked", "reason": chain_problem}
+            {
+                "tool": "install",
+                "name": "policy",
+                "outcome": "unchecked",
+                "reason": chain_problem,
+            }
         )
     return _install_output(result, policy, client, record)
 
@@ -1482,7 +1552,9 @@ def _install_output(result, policy, client, record):
             )
             if client == "cursor":
                 record["_stderr_notes"] = [text]
-            return _with_notice("pre-bash", client, _allow_output("pre-bash", client), text)
+            return _with_notice(
+                "pre-bash", client, _allow_output("pre-bash", client), text
+            )
         record["outcome"] = "pass"
         return _allow_output("pre-bash", client)
     if decision == "ask" and client == "codex":
@@ -1943,6 +2015,7 @@ def _done_stop_count(root: Path, session_id: str, digest: str | None, maximum: i
             return
         if session.get("done_problem_digest") != digest:
             prior = 0
+        session.pop("done_pass", None)
         should_block = prior < maximum
         count = prior + 1 if should_block else prior
         session["done_problem_digest"] = digest
@@ -2056,6 +2129,16 @@ def _handle_done_stop(payload, root, client, deps, record):
     session = (
         _load_session_state(_state_root(root)).get("sessions", {}).get(session_id, {})
     )
+    reused = _reusable_done_pass(
+        root, session, session_id, comparison, config, workspace_digest
+    )
+    if reused is not None:
+        assert_session_unchanged(comparison)
+        record["done_verdict"] = "pass"
+        record["done_reused"] = True
+        record["findings"] = 0
+        record["outcome"] = "pass"
+        return _done_pass_output(client, reused)
     prior = session.get("done_stop_blocks", 0)
     if (
         session.get("done_problem_digest") == workspace_digest
@@ -2118,7 +2201,8 @@ def _handle_done_stop(payload, root, client, deps, record):
     record["findings"] = len(problems)
     if result.verdict == "pass":
         record["outcome"] = "pass"
-        return _allow_output("stop", client)
+        _remember_done_pass(root, session_id, workspace_digest, receipt)
+        return _done_pass_output(client, receipt)
 
     if not should_block:
         return _done_exhausted_output(
@@ -2148,6 +2232,7 @@ def _handle_done_stop(payload, root, client, deps, record):
         )
     else:
         lines.append(f"Fix these problems, then recheck: {_done_recheck(session_id)}.")
+    lines.append(f"Receipt: {_done_receipt_display()}")
     return _stop_block_output(client, "\n".join(lines))
 
 
@@ -2156,7 +2241,7 @@ def _done_exhausted_output(
 ):
     warning = (
         f"Skylos Done remains {verdict} after {count} stop blocks. "
-        "The agent may stop; the receipt is not passing. "
+        f"The agent may stop; the receipt is not passing ({_done_receipt_display()}). "
         f"Recheck: {_done_recheck(session_id)}."
     )
     if open_findings and root is not None:
@@ -2166,6 +2251,86 @@ def _done_exhausted_output(
     record["outcome"] = "gave-up"
     record["warning"] = warning
     return _done_warning_output("stop", client, warning)
+
+
+def _done_receipt_display() -> str:
+    from skylos.done.receipt import LATEST_NAME, RECEIPTS_DIR
+
+    return (RECEIPTS_DIR / LATEST_NAME).as_posix()
+
+
+def _done_tests_run(receipt: dict[str, Any]) -> int:
+    for check in receipt.get("checks") or []:
+        if isinstance(check, dict) and check.get("id") == "tests_pass":
+            run = (check.get("evidence") or {}).get("run")
+            if isinstance(run, int) and not isinstance(run, bool):
+                return run
+    return 0
+
+
+def _done_pass_output(client: str, receipt: dict[str, Any]) -> dict[str, Any]:
+    output = _allow_output("stop", client) or {}
+    if client != "claude":
+        return output
+    run = _done_tests_run(receipt)
+    unit = "tests"
+    if run == 1:
+        unit = "test"
+    output["systemMessage"] = (
+        f"Skylos Done passed: {run} {unit} run; receipt {_done_receipt_display()}"
+    )
+    return output
+
+
+def _done_pass_identity(receipt: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "session_id": (receipt.get("agent") or {}).get("session_id"),
+        "head_sha": (receipt.get("head") or {}).get("sha"),
+        "base_sha": (receipt.get("base") or {}).get("sha"),
+        "base_source": (receipt.get("base") or {}).get("source"),
+        "config_digest": receipt.get("config_digest"),
+        "skylos_version": receipt.get("skylos_version"),
+    }
+
+
+def _remember_done_pass(root: Path, session_id: str, digest: str, receipt) -> None:
+    """A later Stop on the same tree, policy and receipt skips the engine."""
+
+    def mutate(session):
+        session["done_pass"] = {"digest": digest, **_done_pass_identity(receipt)}
+
+    _mutate_session(_state_root(root), session_id, mutate)
+
+
+def _reusable_done_pass(root, session, session_id, comparison, config, digest):
+    """The latest receipt, when it is this session's pass for exactly this tree."""
+    from skylos.done.receipt import (
+        LATEST_NAME,
+        RECEIPTS_DIR,
+        _version,
+        read_receipt,
+        validate_receipt,
+    )
+
+    stored = session.get("done_pass")
+    if not isinstance(stored, dict) or stored.get("digest") != digest:
+        return None
+    receipt = read_receipt(root / RECEIPTS_DIR / LATEST_NAME)
+    if receipt is None or validate_receipt(receipt) or receipt.get("verdict") != "pass":
+        return None
+    current = {
+        "session_id": session_id,
+        "head_sha": comparison.head_sha,
+        "base_sha": comparison.base_sha,
+        "base_source": comparison.base_source,
+        "config_digest": config.digest(),
+        "skylos_version": _version(),
+    }
+    recorded = _done_pass_identity(receipt)
+    for key, value in current.items():
+        if stored.get(key) != value or recorded[key] != value:
+            return None
+    return receipt
 
 
 def _publish_done_error_receipt(root: Path, session_id: str, client: str) -> None:

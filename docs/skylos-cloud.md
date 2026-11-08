@@ -26,9 +26,21 @@ dependency check asks OSV.dev about package names and versions.
 
 1. The first time, it opens your browser to log in and pick the project for
    this repo.
-2. It scans with every check (`-a`) and shows the findings, like `skylos . -a`.
+2. When the repository has a committed `[tool.skylos.done]` table (`skylos
+   setup` writes it) and your working tree is clean, it takes this commit's
+   Done receipt along: the one `skylos done` already wrote for this commit,
+   or it runs `skylos done` first, against the branch pull requests merge
+   into, and prints its `Verdict:` line. A failed Done does not stop the
+   upload; Skylos Cloud gets the receipt with its verdict. With uncommitted
+   changes the receipt could not name a clean commit, so it prints
+   `Done receipt not sent: commit your changes first (the receipt must name a
+   clean commit)` and sends the findings alone. `--done-receipt FILE` sends a
+   receipt you chose instead. In CI it does not run Done (the workflow from
+   `skylos setup` has its own Done job).
+3. It scans with every check (`-a`) and shows the findings, like `skylos . -a`.
    Name checks to run only those: `skylos cloud --danger --secrets`.
-3. It uploads the findings and prints the gate for this branch.
+4. It uploads the findings and prints the gate for this branch, one link, and
+   a `Sent:` line that says what reached Skylos Cloud and its standing.
 
 What it sends: findings with file paths and code snippets of up to 7 lines
 (none for secrets), the branch, the commit, the git author email of each
@@ -48,10 +60,19 @@ Failed gate on a branch:
 ```text
 ✗ Quality gate on feat/login: FAILED (was PASSED on 24 Oct 15:38 UTC, 1ba9895) · 1 critical security issue
   Open: https://skylos.dev/dashboard/projects/<project>?branch=feat%2Flogin
+  Sent: findings and the Done receipt (fail) · laptop upload, unverified until CI runs the workflow
   Next: fix the issues behind the failed gate, then run skylos cloud again.
 ```
 
 The issues are in the findings tables printed above these lines.
+
+`Sent:` names what reached Skylos Cloud: the findings, and the Done receipt
+with its verdict (`pass`, `fail` or `unfinished`) when one went along. Without
+a Done table it reads `Sent: findings · no Done table in this repo (skylos
+setup adds one)`; with a table that is not committed yet it names the file.
+After the `·`, the standing: an upload from your laptop is `unverified until
+CI runs the workflow`. It is shown in Skylos Cloud, but it does not publish a
+GitHub check or set the project verdict; uploads from CI (GitHub OIDC) do.
 
 Passed gate on `main`, no CI yet:
 

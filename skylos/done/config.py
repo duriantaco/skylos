@@ -7,6 +7,7 @@ import json
 import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 
 try:
     import tomllib
@@ -141,17 +142,31 @@ class DoneConfig:
         return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+CONFIG_FILE_NAMES = (".skylos.toml", "skylos.toml", "pyproject.toml")
+
+
 def base_config_text(comparison, *, sha: str | None = None) -> str | None:
     """The repository-root Skylos config at the base commit (or ``sha``).
 
     The same file ``load_config`` reads at the root: ``.skylos.toml``, else
     ``skylos.toml``, else ``pyproject.toml``. Never the working tree.
     """
-    for name in (".skylos.toml", "skylos.toml"):
+    for name in CONFIG_FILE_NAMES[:-1]:
         text = comparison.base_text(name, sha=sha)
         if text is not None:
             return text
-    return comparison.base_text("pyproject.toml", sha=sha)
+    return comparison.base_text(CONFIG_FILE_NAMES[-1], sha=sha)
+
+
+def working_tree_config_file(root) -> Path:
+    """The file ``base_config_text`` reads once it is committed: the first of
+    ``.skylos.toml``, ``skylos.toml`` and ``pyproject.toml`` that exists in the
+    working tree, else ``pyproject.toml``."""
+    root = Path(root)
+    for name in CONFIG_FILE_NAMES[:-1]:
+        if (root / name).is_file():
+            return root / name
+    return root / CONFIG_FILE_NAMES[-1]
 
 
 def skylos_settings_table(data) -> dict | None:

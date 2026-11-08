@@ -485,7 +485,7 @@ being uploaded:
 
 ```text
 Skylos Cloud project: hatchpoint-dronecode
-  Token:  your saved login token; this repo is not linked (skylos project use links it)
+  Token:  your saved login token; this repo is not linked (skylos login links it)
   Branch: feat/lidar @ 1acce90
 ```
 
@@ -522,7 +522,7 @@ and a CI-verified scan of the default branch no longer finds it.
 When your saved login token belongs to a project connected to a different
 repository than this checkout's `origin` (host and path compared without
 regard to letter case), the upload is refused with exit `1`
-and nothing is sent. Link this repository with `skylos project use`, or upload
+and nothing is sent. Link this repository with `skylos login`, or upload
 with a project token of that project in `SKYLOS_TOKEN`. A linked project or `SKYLOS_TOKEN`
 with a different repository only prints a warning. With `--json` or another
 machine format, the destination line and any refusal go to stderr.
@@ -1272,12 +1272,21 @@ terminal; without a terminal (outside CI) it stops before scanning with
 SKYLOS_TOKEN to a project token.` and exit `1`. `--no-upload` is refused with
 exit `2`.
 
+With a committed `[tool.skylos.done]` table and a clean working tree, it first
+takes this commit's Done receipt along: an existing `.skylos/receipts/latest.json`
+for this commit, or it prints `Running skylos done first; its receipt goes with
+the upload…`, runs Done against the branch pull requests merge into and prints
+Done's `Verdict:` line. With uncommitted changes it prints `Done receipt not
+sent: commit your changes first (the receipt must name a clean commit)` and
+uploads without it. Not in CI, and not with `--done-receipt`.
+
 After the destination lines, `skylos cloud` prints
 `Uploading findings to Skylos Cloud…` and then:
 
 ```text
 ✗ Quality gate on feat/login: FAILED (was PASSED on 24 Oct 15:38 UTC, 1ba9895) · 1 critical security issue
   Open: https://skylos.dev/dashboard/projects/<project>?branch=feat%2Flogin
+  Sent: findings and the Done receipt (fail) · laptop upload, unverified until CI runs the workflow
   Next: fix the issues behind the failed gate, then run skylos cloud again.
 ```
 
@@ -1287,6 +1296,7 @@ After the destination lines, `skylos cloud` prints
 | `✓ Uploaded to Skylos Cloud (no quality gate result was reported)` | Skylos Cloud reported no gate result |
 | `  Open: <url>` | Always: the project Overview, with `?branch=` for a branch that is not the default branch; the scan page when no project ID is known |
 | `  This is main, but a login-token upload is unverified: …` | Default branch, login-token upload |
+| `  Sent: findings[ and the Done receipt (pass|fail|unfinished)] · <note>` | Always: what reached Skylos Cloud; the note is `no Done table in this repo (skylos setup adds one)`, `the Done table in <file> is not committed yet`, else the standing Skylos Cloud reported (`laptop upload, unverified until CI runs the workflow` or `verified CI upload`) |
 | `  Next: fix the issues behind the failed gate, then run skylos cloud again.` | The gate failed |
 | `  Next: skylos cicd init — adds a Skylos check to every pull request.` | The gate passed, this is not a CI run, and `.github/workflows/skylos.yml` does not exist |
 

@@ -2454,7 +2454,7 @@ def _complete_report_artifact_upload(
 
 
 _NO_TOKEN_ERROR = (
-    "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN."
+    "No token found. Run 'skylos login', or set SKYLOS_TOKEN."
 )
 
 
@@ -3117,7 +3117,7 @@ def upload_defense_report(defense_json_str, quiet=False, scan_bundle_id=None) ->
     if not token:
         return {
             "success": False,
-            "error": "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN.",
+            "error": "No token found. Run 'skylos login', or set SKYLOS_TOKEN.",
         }
 
     defense_data, error = _parse_defense_upload_data(defense_json_str)

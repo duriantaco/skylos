@@ -357,7 +357,7 @@ class TestSkylosApi(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertEqual(
             result["error"],
-            "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN.",
+            "No token found. Run 'skylos login', or set SKYLOS_TOKEN.",
         )
 
     def test_get_project_token_uses_repo_subpath_link(self):

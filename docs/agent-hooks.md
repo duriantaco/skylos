@@ -38,6 +38,14 @@ only for install commands, MCP servers and new imports.
 
 ## Install
 
+`skylos setup` installs the Claude Code and Codex hooks for the project
+(`.claude/settings.json` and `.codex/hooks.json`; `--no-codex` skips Codex)
+with the hook command `skylos`, resolved on each machine's PATH, so the
+committed files work for every teammate. It runs the same check as the
+installer below: the `skylos` on PATH must support `skylos hook`, or nothing is
+installed. The commands below install one agent at a time, or Cursor, or the
+user-level config:
+
 ```bash
 pip install skylos
 cd your-project
@@ -169,13 +177,21 @@ The installer writes eight hooks. Five of them check and can block:
 | `pre-edit` | `PreToolUse` on `Edit\|Write\|MultiEdit` | `PreToolUse` on `apply_patch\|Edit\|Write` | not available | Blocks edits to agent configs that add unpinned or unsafe MCP servers; asks before new agent hooks and `folderOpen` tasks ([MCP servers and agent configs](#mcp-servers-and-agent-configs)). It also records the file before the edit for `skylos provenance` |
 | `stop` | `Stop` | `Stop` | `stop` | Blocks "done" while issues this session added are still open |
 
-The other three only record state and never block:
+The other three never block:
 
-| Hook | Claude Code | Codex | Cursor | What it records |
+| Hook | Claude Code | Codex | Cursor | What it does |
 |:---|:---|:---|:---|:---|
-| `session-start` | `UserPromptSubmit` | `UserPromptSubmit` | `beforeSubmitPrompt` | The starting checkout, so `stop` can tell the agent's changes from earlier ones (with a committed `[tool.skylos.done]` table; see [Done gate](./done-gate.md#in-the-agent-loop)). It also reports agent config changes and MCP server problems ([below](#at-each-prompt-session-start)) |
+| `session-start` | `UserPromptSubmit` | `UserPromptSubmit` | `beforeSubmitPrompt` | Records the starting checkout, so `stop` can tell the agent's changes from earlier ones (with a committed `[tool.skylos.done]` table; see [Done gate](./done-gate.md#in-the-agent-loop)). Tells Claude Code the blocking checks once per session, and reports agent config changes and MCP server problems at every prompt ([below](#at-each-prompt-session-start)) |
 | `post-bash` | `PostToolUse` on `Bash\|PowerShell` | `PostToolUse` on `Bash` | not available | Files a shell command changed (their lines stay unattributed) |
 | `post-failure` | `PostToolUseFailure` on `Edit\|Write\|MultiEdit` and on `Bash\|PowerShell` | not available | not available | Partial changes from a failed edit or command (their lines stay unattributed) |
+
+On the first prompt of a session, Claude Code gets at most six lines explaining
+which Done checks block in this repository (the `block` checks of the committed
+table, or that Done tests are not configured), what the edit and pull request
+gates block, and the command to run before finishing (`skylos done --base <base>`,
+using the base `skylos open` would use). These instructions are sent once per
+session and only to Claude Code. Agent config and MCP server warnings still run
+at every prompt for Claude Code, Codex and Cursor.
 
 `skylos hook recheck FILE... [--range L1:L2]` and `skylos hook recheck --session`
 are commands for the agent, not hooks; see [post-edit](#post-edit).
@@ -728,12 +744,26 @@ this hook and the issues are unchanged:
 - **Cursor:** Skylos sends no follow-up message. Cursor's own `loop_limit`
   also applies; the installer sets it to 10.
 
+With a committed `[tool.skylos.done]` table, `stop` also runs the Done checks
+and your tests (see [Done gate](./done-gate.md#in-the-agent-loop)). When they
+pass, Claude Code shows you
+`Skylos Done passed: 4 tests run; receipt .skylos/receipts/latest.json`;
+Codex and Cursor show nothing. A second `stop` on the same tree, policy and
+Skylos version, while that session's passing receipt is still
+`.skylos/receipts/latest.json`, reuses the pass instead of running the static
+checks and tests again: the recorded-edit recheck still runs, no new receipt is
+written, and the hook log line carries `done_reused: true`. Any difference
+runs everything again, and a failed or unfinished Done is never reused. A
+blocking Done message ends with the receipt path.
+
 ## Hook contract used
 
 Every hook exits `0` and signals through JSON on stdout.
 
 | Situation | Claude Code / Codex output | Cursor output |
 |:---|:---|:---|
+| session-start, first prompt of a session | Claude: `{"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": "..."}}`; Codex: no output | `{"continue": true}` |
+| session-start, later prompts | no output | `{"continue": true}` |
 | pre-read / pre-bash block | `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "..."}}` | `{"permission": "deny", "user_message": "...", "agent_message": "..."}` (`beforeReadFile`: `permission` + `user_message`) |
 | pre-bash ask (unverifiable install) | Claude: `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": "...", "additionalContext": "..."}}`; Codex: the deny shape above (Codex has no `ask`) | `{"permission": "ask", "user_message": "...", "agent_message": "..."}` |
 | pre-bash allowed by policy (`"allow"`) | Claude: `{"systemMessage": "...", "hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "..."}}` (no `permissionDecision`); Codex: `{"systemMessage": "..."}` | `{"permission": "allow"}`; the note goes to stderr |
@@ -743,6 +773,7 @@ Every hook exits `0` and signals through JSON on stdout.
 | post-edit pass | no output | no output |
 | stop, issues open | `{"decision": "block", "reason": "..."}` | `{"followup_message": "..."}` |
 | stop, clean | `{}` (Codex requires JSON from Stop) | `{}` |
+| stop, Done passed | Claude: `{"systemMessage": "Skylos Done passed: ..."}` (no `decision`, so the agent stops); Codex: `{}` | `{}` |
 | Skylos error (fails open) | the allow/stop output above plus `"systemMessage": "..."`; Claude `pre-read`/`pre-bash`/`post-edit` also get `hookSpecificOutput.additionalContext` (no `permissionDecision`) | the allow/stop output above; the message goes to stderr |
 
 References:

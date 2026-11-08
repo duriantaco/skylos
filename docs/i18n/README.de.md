@@ -58,7 +58,7 @@ skylos cicd init    # jedem Pull Request eine Skylos-Prüfung hinzufügen
 Mit einem Coding-Agenten reichen zwei Befehle:
 
 ```bash
-skylos setup   # einmal pro Repository: verbindet Claude Code und Codex, schreibt die PR-Prüfung, kartiert den Code
+skylos setup   # einmal pro Repository: verbindet Claude Code und Codex, installiert ihre Hooks, lässt Done die Tests ausführen, schreibt die PR-Prüfung, kartiert den Code
 skylos open    # jeden Tag: Diagramm des Codes, Änderungen in einfacher Sprache, jeder Prüflauf
 ```
 
@@ -72,6 +72,7 @@ zeigt das Quality Gate dieses Branches mit einem Link:
 ```text
 ✗ Quality gate on feat/login: FAILED (was PASSED on 24 Oct 15:38 UTC, 1ba9895) · 1 critical security issue
   Open: https://skylos.dev/dashboard/projects/<project>?branch=feat%2Flogin
+  Sent: findings and the Done receipt (fail) · laptop upload, unverified until CI runs the workflow
   Next: fix the issues behind the failed gate, then run skylos cloud again.
 ```
 
@@ -79,7 +80,12 @@ Beim ersten Mal öffnet sich der Browser zum Anmelden und zur Projektauswahl.
 Gesendet werden die Funde mit Dateipfaden und Codeausschnitten von bis zu 7
 Zeilen (keine bei Secrets), Branch, Commit, die Git-Autor-E-Mail jeder
 markierten Zeile und eine Übersicht deiner Funktionen und Klassen (Namen,
-Dateien, Zeilen, Größe, wer wen aufruft). Nicht dein Repository. Der Exit-Code
+Dateien, Zeilen, Größe, wer wen aufruft). Nicht dein Repository. Hat das
+Repository eine committete `[tool.skylos.done]`-Tabelle (`skylos setup`
+schreibt sie) und einen sauberen Arbeitsbaum, geht auch der Done-Beleg dieses
+Commits mit (ohne Beleg läuft `skylos done` zuerst); die Zeile `Sent:` sagt,
+was Skylos Cloud erreicht hat. Uploads vom Laptop gelten als unverifiziert,
+bis CI den Workflow ausführt. Der Exit-Code
 ist auch bei fehlgeschlagenem Skylos-Cloud-Gate `0`; mit `--gate` ist er `1`
 (für CI). Einen Schlüssel
 zum Bestehen des Gates brauchst du nie: Behebe die Funde, die es blockieren.

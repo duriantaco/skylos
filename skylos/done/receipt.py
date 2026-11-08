@@ -803,7 +803,10 @@ def render_markdown(receipt: dict[str, Any], *, max_findings: int = 10) -> str:
         )
     for check in _visible(receipt):
         findings = check.get("findings", [])
-        if not findings:
+        fix = None
+        if check.get("status") == "fail":
+            fix = FIXES.get(check["id"])
+        if not findings and not fix:
             continue
         out += ["", f"**{_md(LABELS.get(check['id'], check['id']))}**", ""]
         origins_line = _origins_line(receipt) if check["id"] == "tests_pass" else None
@@ -819,6 +822,8 @@ def render_markdown(receipt: dict[str, Any], *, max_findings: int = 10) -> str:
         hidden = len(findings) - max_findings
         if hidden > 0:
             out.append(f"- … and {hidden} more")
+        if fix:
+            out.append(f"- Fix: {_md(fix)}")
     out += ["", f"**{_verdict_line(receipt)}**", ""]
     return "\n".join(out)
 

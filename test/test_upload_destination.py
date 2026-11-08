@@ -87,7 +87,7 @@ def test_saved_key_for_same_repo_over_ssh_and_https_uploads(repo):
     assert dest.on_default_branch is None
     assert destination_lines(dest) == [
         "Skylos Cloud project: hatchpoint-dronecode",
-        "  Token:  your saved login token; this repo is not linked (skylos project use links it)",
+        "  Token:  your saved login token; this repo is not linked (skylos login links it)",
         "  Branch: feat/lidar @ 1acce90",
     ]
 

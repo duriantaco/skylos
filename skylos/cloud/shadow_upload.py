@@ -472,7 +472,7 @@ def _upload_shadow_report(
         return {
             "success": False,
             "error": (
-                "No token found. Run 'skylos login' or 'skylos project use', "
+                "No token found. Run 'skylos login', "
                 "or set SKYLOS_TOKEN."
             ),
             "code": "NO_TOKEN",

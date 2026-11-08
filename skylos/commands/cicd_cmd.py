@@ -1,6 +1,7 @@
 import argparse
 import dataclasses
 import json
+import logging
 import os
 from pathlib import Path
 import stat
@@ -14,7 +15,15 @@ from skylos.core.git_safety import (
 
 from rich.markup import escape
 
+logger = logging.getLogger(__name__)
+
 REVIEW_SIDECAR_MAX_BYTES = 2 * 1024 * 1024
+_SUMMARY_INPUT_FLAGS = ("gate_result", "done_receipt", "change_map", "risk_review")
+_SUMMARY_SIDECARS = (
+    ("done_receipt", "--done-receipt"),
+    ("change_map", "--change-map"),
+    ("risk_review", "--risk-review"),
+)
 
 
 GATE_ERROR_VERDICT = "Quality Gate: ERROR — could not decide (exit 1)"
@@ -229,6 +238,80 @@ def _read_review_sidecar_json(raw_path: str, *, label: str) -> dict | list:
             os.close(fd)
 
     return json.loads(data.decode("utf-8"))
+
+
+def _summary_inputs_requested(args) -> bool:
+    return any(getattr(args, name, None) for name in _SUMMARY_INPUT_FLAGS)
+
+
+def _missing_input_file(args) -> bool:
+    raw = getattr(args, "input_file", None)
+    if not raw:
+        return False
+    try:
+        return not Path(raw).is_file()
+    except OSError:
+        return True
+
+
+def _read_optional_sidecar(raw_path: str, *, label: str, console) -> dict | None:
+    """The JSON a workflow job saved, or None when that job saved nothing."""
+    try:
+        data = _read_review_sidecar_json(raw_path, label=label)
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        console.print(f"[yellow]Could not read {label}: {escape(str(exc))}[/yellow]")
+        return None
+    if isinstance(data, dict):
+        return data
+    console.print(f"[yellow]Could not read {label}: not a JSON object[/yellow]")
+    return None
+
+
+def _review_gate_reasons(args, results, load_config_func) -> tuple[str, ...]:
+    """The gate's own failure reasons, decided under the base branch's policy
+    exactly as `cicd gate` decides them."""
+    if not results:
+        return ()
+    from skylos.cicd.policy import base_policy_context
+    from skylos.core.gatekeeper import check_gate
+    from skylos.security.regression_gate import recheck_control_regressions
+
+    try:
+        with base_policy_context(args.path, args.diff_base):
+            config = load_config_func(args.path)
+            rechecked = recheck_control_regressions(results, args.path, config)
+            _passed, reasons = check_gate(rechecked, config)
+    except Exception:
+        logger.debug("gate reasons unavailable for the PR summary", exc_info=True)
+        return ()
+    return tuple(str(reason) for reason in reasons)
+
+
+def _review_summary_inputs(args, results, console, load_config_func):
+    from skylos.cicd.pr_summary import SummaryInputs, run_url_from_env
+
+    gate_result = getattr(args, "gate_result", None)
+    gate_reasons = ()
+    if gate_result == "failure":
+        gate_reasons = _review_gate_reasons(args, results, load_config_func)
+    sidecars = {}
+    for name, label in _SUMMARY_SIDECARS:
+        sidecars[name] = None
+        raw = getattr(args, name, None)
+        if raw:
+            sidecars[name] = _read_optional_sidecar(raw, label=label, console=console)
+    return SummaryInputs(
+        gate_result=gate_result,
+        gate_reasons=gate_reasons,
+        done_requested=bool(getattr(args, "done_receipt", None)),
+        done_receipt=sidecars["done_receipt"],
+        change_map=sidecars["change_map"],
+        risk_requested=bool(getattr(args, "risk_review", None)),
+        risk_review=sidecars["risk_review"],
+        run_url=run_url_from_env(),
+    )
 
 
 def _review_sidecar_path(raw_path: str, *, label: str) -> Path:
@@ -781,6 +864,34 @@ def run_cicd_command(
         action="store_true",
         help="Format PR comments with Proven, Likely, or Speculative evidence labels.",
     )
+    p_ci_rev.add_argument(
+        "--gate-result",
+        help=(
+            "Workflow-internal: the gate job's result (success, failure, "
+            "cancelled or skipped) for the summary comment's verdict line"
+        ),
+    )
+    p_ci_rev.add_argument(
+        "--done-receipt",
+        help=(
+            "Workflow-internal: the Done receipt JSON the Done job saved "
+            "(filename in the current directory or path under RUNNER_TEMP)"
+        ),
+    )
+    p_ci_rev.add_argument(
+        "--change-map",
+        help=(
+            "Workflow-internal: the change map JSON from "
+            "`skylos done map --format json` that the Done job saved"
+        ),
+    )
+    p_ci_rev.add_argument(
+        "--risk-review",
+        help=(
+            "Workflow-internal: the JSON from `skylos cicd risk-review "
+            "--format json` that the risk review job saved"
+        ),
+    )
 
     from skylos.commands.risk_review_cmd import add_risk_review_parser
     from skylos.cicd.agent_review import add_agent_review_parser
@@ -914,13 +1025,21 @@ def run_cicd_command(
     if cicd_args.cicd_cmd == "review":
         from skylos.cicd.review import run_pr_review
 
-        results, exit_code = _cicd_load_results(
-            cicd_args,
-            console_factory=console_factory,
-            load_config_func=load_config_func,
-        )
-        if exit_code:
-            return exit_code
+        summary_requested = _summary_inputs_requested(cicd_args)
+        if summary_requested and _missing_input_file(cicd_args):
+            console.print(
+                f"[yellow]No scan results at {escape(cicd_args.input_file)}: "
+                "the gate job did not save them[/yellow]"
+            )
+            results = {}
+        else:
+            results, exit_code = _cicd_load_results(
+                cicd_args,
+                console_factory=console_factory,
+                load_config_func=load_config_func,
+            )
+            if exit_code:
+                return exit_code
 
         llm_findings = None
         if getattr(cicd_args, "llm_input", None):
@@ -939,6 +1058,12 @@ def run_cicd_command(
             except Exception as e:
                 console.print(f"[yellow]Could not read defense results: {e}[/yellow]")
 
+        summary_inputs = None
+        if summary_requested:
+            summary_inputs = _review_summary_inputs(
+                cicd_args, results, console, load_config_func
+            )
+
         run_pr_review(
             results,
             pr_number=cicd_args.pr,
@@ -949,6 +1074,7 @@ def run_cicd_command(
             llm_findings=llm_findings,
             defense_report=defense_report,
             evidence_cards=cicd_args.evidence_cards,
+            summary_inputs=summary_inputs,
         )
         return 0
 

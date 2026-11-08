@@ -7,6 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 from textwrap import dedent
+from urllib.parse import unquote
 
 import pytest
 
@@ -151,6 +152,10 @@ def _run(root: Path, *extra: str, fmt: str = "json", capsys=None):
     return code, (json.loads(out) if fmt == "json" and out else out)
 
 
+def _no_network(token):
+    raise AssertionError("no GitHub call expected")
+
+
 @pytest.fixture(autouse=True)
 def _offline(monkeypatch):
     """No registry lookups and no GitHub context unless a test sets one."""
@@ -159,6 +164,7 @@ def _offline(monkeypatch):
         "scan_diff_dependency_hallucinations",
         lambda *a, **k: {"findings": [], "registry_unreachable": False},
     )
+    monkeypatch.setattr(approval_github, "_requests_sender", _no_network)
     for name in (
         "GITHUB_TOKEN",
         "GH_TOKEN",
@@ -962,12 +968,34 @@ def _review(
     }
 
 
+LABEL = "skylos:needs-human"
+LABEL_URL = "https://api.github.com/repos/acme/web/labels/skylos%3Aneeds-human"
+PR_LABELS_URL = "https://api.github.com/repos/acme/web/issues/7/labels"
+
+
 class FakeGitHub:
-    def __init__(self, reviews, permissions=None, fail=None):
+    """Reviews and collaborator permissions through ``__call__`` (GET), the
+    label endpoints through ``send``; ``label_fail`` is (method, url part,
+    status) for one failing write."""
+
+    def __init__(
+        self,
+        reviews,
+        permissions=None,
+        fail=None,
+        *,
+        repo_labels=(),
+        pr_labels=(),
+        label_fail=None,
+    ):
         self.reviews = reviews
         self.permissions = permissions or {}
         self.fail = fail
         self.urls: list[str] = []
+        self.repo_labels = set(repo_labels)
+        self.pr_labels = set(pr_labels)
+        self.label_fail = label_fail
+        self.sends: list[tuple[str, str, dict | None]] = []
 
     def __call__(self, url: str):
         self.urls.append(url)
@@ -978,6 +1006,30 @@ class FakeGitHub:
             return self.reviews[(page - 1) * 100 : page * 100]
         login = url.rsplit("/collaborators/", 1)[1].split("/", 1)[0]
         return {"permission": self.permissions.get(login, "write")}
+
+    def send(self, method: str, url: str, body):
+        self.sends.append((method, url, body))
+        if (
+            self.label_fail
+            and method == self.label_fail[0]
+            and self.label_fail[1] in url
+        ):
+            return self.label_fail[2], {"message": "nope"}
+        name = unquote(url.rsplit("/", 1)[1])
+        if method == "GET":
+            if name in self.repo_labels:
+                return 200, {"name": name}
+            return 404, None
+        if method == "DELETE":
+            if name in self.pr_labels:
+                self.pr_labels.discard(name)
+                return 200, []
+            return 404, None
+        if "/issues/" not in url:
+            self.repo_labels.add(body["name"])
+            return 201, body
+        self.pr_labels.update(body["labels"])
+        return 200, [{"name": item} for item in sorted(self.pr_labels)]
 
 
 @pytest.fixture
@@ -991,7 +1043,7 @@ def pr_env(tmp_path: Path, monkeypatch):
             {
                 "pull_request": {
                     "number": 7,
-                    "head": {"sha": head},
+                    "head": {"sha": head, "repo": {"full_name": "acme/web"}},
                     "base": {"ref": "main"},
                 }
             }
@@ -1003,6 +1055,9 @@ def pr_env(tmp_path: Path, monkeypatch):
 
     def set_api(fake):
         monkeypatch.setattr(approval_github, "_requests_getter", lambda token: fake)
+        monkeypatch.setattr(
+            approval_github, "_requests_sender", lambda token: fake.send
+        )
         return fake
 
     return root, head, set_api
@@ -1125,12 +1180,13 @@ def test_reviews_are_read_across_pages(pr_env, capsys):
 @pytest.mark.parametrize("failing", ["/reviews?", "/permission"])
 def test_github_api_errors_fail_closed(pr_env, capsys, failing):
     root, head, set_api = pr_env
-    set_api(FakeGitHub([_review("alice", commit=head)], fail=failing))
+    fake = set_api(FakeGitHub([_review("alice", commit=head)], fail=failing))
     code, payload = _run(root, capsys=capsys)
     data = payload["approval"]
     assert code == 2
     assert data["verdict"] == "review_check_failed" and data["passed"] is False
     assert data["human_approval"]["detail"] == "could not read the reviews: HTTP 403"
+    assert data["label"] is None and fake.sends == []
 
 
 def test_checked_commit_must_be_the_pull_request_head(pr_env, capsys, tmp_path):
@@ -1145,7 +1201,8 @@ def test_checked_commit_must_be_the_pull_request_head(pr_env, capsys, tmp_path):
         "is not the pull request head"
         in payload["approval"]["human_approval"]["detail"]
     )
-    assert fake.urls == []
+    assert fake.urls == [] and fake.sends == []
+    assert payload["approval"]["label"] is None
 
 
 def test_malformed_github_context_fails_closed(pr_env, capsys, monkeypatch):
@@ -1168,11 +1225,21 @@ def test_no_reviews_are_read_when_nothing_needs_a_human(tmp_path, monkeypatch, c
     monkeypatch.setenv("GITHUB_REPOSITORY", "acme/web")
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
 
-    def no_calls(token):
-        raise AssertionError("no GitHub call expected")
-
-    monkeypatch.setattr(approval_github, "_requests_getter", no_calls)
-    assert _run(root, capsys=capsys)[0] == 0
+    monkeypatch.setattr(approval_github, "_requests_getter", _no_network)
+    fake = FakeGitHub([])
+    monkeypatch.setattr(approval_github, "_requests_sender", lambda token: fake.send)
+    code, payload = _run(root, capsys=capsys)
+    assert code == 0
+    assert fake.sends == [
+        (
+            "DELETE",
+            "https://api.github.com/repos/acme/web/issues/1/labels/skylos%3Aneeds-human",
+            None,
+        )
+    ]
+    data = payload["approval"]
+    assert data["label"] == {"name": LABEL, "action": "absent", "detail": ""}
+    assert risk_review_cmd.label_lines(data) == []
 
 
 def test_without_a_token_risks_are_reported_and_exit_1(pr_env, capsys, monkeypatch):
@@ -1180,6 +1247,124 @@ def test_without_a_token_risks_are_reported_and_exit_1(pr_env, capsys, monkeypat
     monkeypatch.delenv("GITHUB_TOKEN")
     code, payload = _run(root, capsys=capsys)
     assert code == 1 and payload["approval"]["human_approval"] is None
+    assert payload["approval"]["label"] is None
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+
+
+def test_needs_approval_adds_the_label_and_creates_it_when_missing(pr_env, capsys):
+    root, _head, set_api = pr_env
+    fake = set_api(FakeGitHub([]))
+    code, text = _run(root, fmt="text", capsys=capsys)
+    assert code == 1
+    assert fake.sends == [
+        ("GET", LABEL_URL, None),
+        (
+            "POST",
+            "https://api.github.com/repos/acme/web/labels",
+            {
+                "name": LABEL,
+                "color": "d93f0b",
+                "description": "Skylos: a risk class in this PR needs a person's approval",
+            },
+        ),
+        ("POST", PR_LABELS_URL, {"labels": [LABEL]}),
+    ]
+    assert fake.pr_labels == {LABEL}
+    assert "Added the skylos:needs-human label to this pull request" in text
+    assert (
+        "Find every pull request waiting on a person: "
+        "is:pr is:open label:skylos:needs-human"
+    ) in text
+
+
+def test_needs_approval_reuses_an_existing_label(pr_env, capsys):
+    root, _head, set_api = pr_env
+    fake = set_api(FakeGitHub([], repo_labels=[LABEL]))
+    code, payload = _run(root, capsys=capsys)
+    assert code == 1
+    assert [(method, url) for method, url, _ in fake.sends] == [
+        ("GET", LABEL_URL),
+        ("POST", PR_LABELS_URL),
+    ]
+    assert payload["approval"]["label"] == {
+        "name": LABEL,
+        "action": "added",
+        "detail": "",
+    }
+    markdown = risk_review_cmd.render_markdown(payload)
+    assert "Added the skylos:needs-human label to this pull request" in markdown
+    assert "`is:pr is:open label:skylos:needs-human`" in markdown
+
+
+def test_a_human_approval_removes_the_label(pr_env, capsys):
+    root, head, set_api = pr_env
+    fake = set_api(
+        FakeGitHub(
+            [_review("alice", commit=head)], repo_labels=[LABEL], pr_labels=[LABEL]
+        )
+    )
+    code, text = _run(root, fmt="text", capsys=capsys)
+    assert code == 0
+    assert fake.sends == [("DELETE", f"{PR_LABELS_URL}/skylos%3Aneeds-human", None)]
+    assert fake.pr_labels == set()
+    assert "Removed the skylos:needs-human label from this pull request" in text
+    assert "Find every pull request" not in text
+
+
+@pytest.mark.parametrize(
+    "approved, label_fail, expected_code",
+    [
+        (False, ("POST", "/issues/7/labels", 500), 1),
+        (True, ("DELETE", "/issues/7/labels/", 500), 0),
+    ],
+)
+def test_label_api_errors_never_change_the_exit_code(
+    pr_env, capsys, approved, label_fail, expected_code
+):
+    root, head, set_api = pr_env
+    reviews = []
+    if approved:
+        reviews = [_review("alice", commit=head)]
+    fake = set_api(FakeGitHub(reviews, pr_labels=[LABEL], label_fail=label_fail))
+    code, text = _run(root, fmt="text", capsys=capsys)
+    assert code == expected_code
+    assert text.count("Could not update the skylos:needs-human label: HTTP 500") == 1
+    assert [method for method, _, _ in fake.sends][-1] == label_fail[0]
+
+
+@pytest.mark.parametrize(
+    "head_repo, reason",
+    [
+        (
+            "someone/web",
+            "HTTP 403: on a pull request from a fork the token is read-only",
+        ),
+        ("acme/web", "HTTP 403: the job needs the pull-requests: write permission"),
+    ],
+)
+def test_a_read_only_token_says_why_the_label_was_not_set(
+    pr_env, capsys, tmp_path, head_repo, reason
+):
+    root, _head, set_api = pr_env
+    event_path = tmp_path / "event.json"
+    event = json.loads(event_path.read_text())
+    event["pull_request"]["head"]["repo"] = {"full_name": head_repo}
+    event_path.write_text(json.dumps(event))
+    fake = set_api(FakeGitHub([], label_fail=("POST", "/repos/acme/web/labels", 403)))
+    code, payload = _run(root, capsys=capsys)
+    assert code == 1
+    assert payload["approval"]["label"] == {
+        "name": LABEL,
+        "action": "failed",
+        "detail": reason,
+    }
+    assert risk_review_cmd.label_lines(payload["approval"]) == [
+        f"Could not update the skylos:needs-human label: {reason}"
+    ]
+    assert [method for method, _, _ in fake.sends] == ["GET", "POST"]
 
 
 def test_decide_never_passes_an_incomplete_result():

@@ -1484,7 +1484,7 @@ def _render_upload_failure(console: Console, upload_resp: dict[str, object]) -> 
         return
 
     if err and err != (
-        "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN."
+        "No token found. Run 'skylos login', or set SKYLOS_TOKEN."
     ):
         # Server wording is plain text; never let it act as Rich markup.
         from rich.markup import escape as _escape_markup

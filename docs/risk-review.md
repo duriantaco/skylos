@@ -6,6 +6,10 @@ auth check or a new dependency. It runs as the GitHub check **Skylos risk
 review**. The check fails while the pull request has risks. It passes when
 there are none, or when a person with write access approves the head commit.
 Approvals from review bots (Copilot, CodeRabbit and others) do not count.
+While the check fails on a pull request, the job puts the label
+`skylos:needs-human` on it and removes the label once the check passes, so the
+GitHub search `is:pr is:open label:skylos:needs-human` lists every pull request
+waiting on a person.
 
 Each fact is deterministic and fits in one line: the same commit gives the
 same answer on every run. The check does not score or summarize the change.
@@ -118,6 +122,29 @@ when the checked-out commit is not the pull request head.
 Without a token or a pull-request event, for example on your machine, the
 command lists the risks and exits 1 when there are any.
 
+### The `skylos:needs-human` label
+
+On a pull request the job also keeps one label in step with its verdict:
+
+- Exit 1 (needs a human approval): it adds `skylos:needs-human` to the pull
+  request, creating the label in the repository the first time (colour
+  `d93f0b`, description "Skylos: a risk class in this PR needs a person's
+  approval"). The output and the step summary say
+  `Added the skylos:needs-human label to this pull request` and
+  `Find every pull request waiting on a person: is:pr is:open label:skylos:needs-human`.
+- Exit 0 (a person approved, or no risk class): it removes the label when the
+  pull request has it and says
+  `Removed the skylos:needs-human label from this pull request`.
+- Exit 2 (could not decide): the label is left as it is.
+
+A label update that fails never changes the exit code: the run prints one
+line, `Could not update the skylos:needs-human label: <reason>`, and
+continues. The usual reasons are a job without `pull-requests: write` (a
+workflow generated before this label existed: run `skylos cicd init` again)
+and a pull request from a fork, where GitHub gives the token read access only;
+the line says which. Outside a pull-request run (your machine, merge groups)
+the label is not touched. `--format json` reports the update under `label`.
+
 ## Setting it up on GitHub
 
 ```bash
@@ -134,7 +161,8 @@ job:
 - checks out the pull request head with full history (on a merge group: the
   merge-group commit);
 - reads the base branch from the event (on a merge group: its `base_sha`);
-- has `contents: read` and `pull-requests: read` permissions;
+- has `contents: read` and `pull-requests: write` permissions (write, to add
+  and remove the `skylos:needs-human` label);
 - passes `GITHUB_TOKEN` to the command;
 - shares a concurrency group per pull request (per merge-group commit in a
   queue), so its runs finish in the order they started.
@@ -163,7 +191,9 @@ repository.
 - The re-check job needs `actions: write` to re-run a job. On pull requests
   from forks, GitHub gives the token read access only, so the re-check fails
   and the risk review stays failed: re-run the **Skylos risk review** job
-  from the pull request's checks after approving.
+  from the pull request's checks after approving. The `skylos:needs-human`
+  label is not updated there either; the run prints one line saying so and
+  keeps its exit code.
 - Pushing a new commit runs the check again on that commit. If it still has
   risks, the check fails until someone approves the new head commit, whether
   or not branch protection dismisses stale approvals.
@@ -262,6 +292,9 @@ then passes again, through the re-check job), and someone queues it again.
 
 Limits:
 
+- Merge-group runs do not touch the `skylos:needs-human` label: a
+  `merge_group` event has no pull request to label, and each pull request's
+  own run already added or removed it.
 - When an entry ahead has already merged, its queue branch is gone and its
   changes are attributed to the next entry, which then needs an approval
   for them. Queue it again; the new group starts after the merged commit.
@@ -318,6 +351,7 @@ Settings that cannot be used are listed as "Setting ignored" and in
     "human_approval": {"status": "missing", "login": null, "review_id": null,
                        "detail": "no person with write access approved the head commit",
                        "ignored": ["copilot-pull-request-reviewer[bot] (not a person)"]},
+    "label": {"name": "skylos:needs-human", "action": "added", "detail": ""},
     "vetoes": [{"class": "tests_weakened", "rule_id": "SKY-A110",
                 "file": "tests/test_refund.py", "line": 41,
                 "reason": "test_partial_refund was deleted; no test with the same body exists now"}],
@@ -347,6 +381,11 @@ The `verdict` field takes one of these values:
 | `review_check_failed` | Risks found, and the reviews could not be read | 2 |
 | `error` | The comparison could not start, for example the base was not fetched; `error` says why | 2 |
 
+`label` is `null` outside a pull-request run and when the exit code is 2.
+Otherwise its `action` is `added`, `removed`, `absent` (the check passed and
+the pull request did not have the label) or `failed`, with the reason in
+`detail`.
+
 In GitHub Actions the command also writes:
 
 - the step summary;
@@ -355,3 +394,11 @@ In GitHub Actions the command also writes:
 
 Other workflow steps can read these outputs. For example, a step that
 auto-merges dependency updates can run only when `eligible` is `true`.
+
+In the workflow from `skylos cicd init --risk-review`, the risk review job
+writes `--format json` to a file for the **Skylos PR summary** job, which
+lists the risk classes under **Needs a person** in the one Skylos comment on
+the pull request, with the sentence that says who can clear them: a person
+with write access approving the head commit turns the check green; bot
+approvals and approvals of older commits do not. The job's step summary keeps
+the readable text.

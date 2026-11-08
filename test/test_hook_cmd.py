@@ -2434,3 +2434,31 @@ def test_post_edit_incomplete_without_parse_error_stays_pass(tmp_path):
     )
     assert "SKY-ANALYSIS-INCOMPLETE" not in json.dumps(out)
     assert _log_lines(tmp_path)[-1]["outcome"] == "pass"
+
+
+# --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+
+
+def test_session_start_tells_claude_once_and_codex_nothing(tmp_path):
+    payload = {"session_id": "s1", "cwd": str(tmp_path)}
+    _, out, _ = _run(tmp_path, "session-start", payload, client="claude")
+    assert out["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+    lines = out["hookSpecificOutput"]["additionalContext"].split("\n")
+    assert lines[0] == (
+        "Skylos Done tests are not configured here (no committed [tool.skylos.done] "
+        "table); Stop only rechecks issues your edits introduced."
+    )
+    assert lines[-1] == "Before you finish, run: skylos done --base HEAD"
+    assert len(lines) <= 6
+    _, again, _ = _run(tmp_path, "session-start", payload, client="claude")
+    assert again is None
+    _, codex, _ = _run(
+        tmp_path, "session-start", {**payload, "session_id": "s2"}, client="codex"
+    )
+    assert codex is None
+    assert [line["outcome"] for line in _log_lines(tmp_path)] == [
+        "told",
+        "skip",
+        "skip",
+    ]
