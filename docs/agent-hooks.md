@@ -24,6 +24,14 @@ and new imports.
 
 ## Install
 
+`skylos setup` installs the Claude Code and Codex hooks for the project
+(`.claude/settings.json` and `.codex/hooks.json`; `--no-codex` skips Codex)
+with the hook command `skylos`, resolved on each machine's PATH, so the
+committed files work for every teammate. It runs the same check as the
+installer below: the `skylos` on PATH must support `skylos hook`, or nothing is
+installed. The commands below install one agent at a time, or Cursor, or the
+user-level config:
+
 ```bash
 pip install skylos
 cd your-project
@@ -154,11 +162,11 @@ The installer writes eight hooks. Four of them check and can block:
 | `pre-bash` | `PreToolUse` on `Bash\|PowerShell` | `PreToolUse` on `Bash` | `beforeShellExecution` | Blocks commands that would print a secret file or variable, installs of hallucinated or typosquatted packages, and git-hook bypasses; asks before installs it cannot verify |
 | `stop` | `Stop` | `Stop` | `stop` | Blocks "done" while issues this session added are still open |
 
-The other four only record state and never block:
+The other four never block:
 
-| Hook | Claude Code | Codex | Cursor | What it records |
+| Hook | Claude Code | Codex | Cursor | What it does |
 |:---|:---|:---|:---|:---|
-| `session-start` | `UserPromptSubmit` | `UserPromptSubmit` | `beforeSubmitPrompt` | The starting checkout, so `stop` can tell the agent's changes from earlier ones (with a committed `[tool.skylos.done]` table; see [Done gate](./done-gate.md#in-the-agent-loop)) |
+| `session-start` | `UserPromptSubmit` | `UserPromptSubmit` | `beforeSubmitPrompt` | Records the starting checkout, so `stop` can tell the agent's changes from earlier ones (with a committed `[tool.skylos.done]` table; see [Done gate](./done-gate.md#in-the-agent-loop)). On the first prompt of a session it also tells Claude Code the rules, in at most six lines: which Done checks block in this repository (the `block` checks of the committed table, or that Done tests are not configured and what the edit hooks block), that the pull request gate fails on critical security issues, secrets and critical AI-code defects, and the command to run before finishing (`skylos done --base <base>`, the base `skylos open` would use). Later prompts of the same session add nothing; Codex and Cursor get no context |
 | `pre-edit` | `PreToolUse` on `Edit\|Write\|MultiEdit` | `PreToolUse` on `apply_patch\|Edit\|Write` | not available | The file before the edit, so the agent's new lines can be attributed in `skylos provenance`; it can also capture the starting checkout when `session-start` did not run |
 | `post-bash` | `PostToolUse` on `Bash\|PowerShell` | `PostToolUse` on `Bash` | not available | Files a shell command changed (their lines stay unattributed) |
 | `post-failure` | `PostToolUseFailure` on `Edit\|Write\|MultiEdit` and on `Bash\|PowerShell` | not available | not available | Partial changes from a failed edit or command (their lines stay unattributed) |
@@ -452,12 +460,26 @@ this hook and the issues are unchanged:
 - **Cursor:** Skylos sends no follow-up message. Cursor's own `loop_limit`
   also applies; the installer sets it to 10.
 
+With a committed `[tool.skylos.done]` table, `stop` also runs the Done checks
+and your tests (see [Done gate](./done-gate.md#in-the-agent-loop)). When they
+pass, Claude Code shows you
+`Skylos Done passed: 4 tests run; receipt .skylos/receipts/latest.json`;
+Codex and Cursor show nothing. A second `stop` on the same tree, policy and
+Skylos version, while that session's passing receipt is still
+`.skylos/receipts/latest.json`, reuses the pass instead of running the static
+checks and tests again: the recorded-edit recheck still runs, no new receipt is
+written, and the hook log line carries `done_reused: true`. Any difference
+runs everything again, and a failed or unfinished Done is never reused. A
+blocking Done message ends with the receipt path.
+
 ## Hook contract used
 
 Every hook exits `0` and signals through JSON on stdout.
 
 | Situation | Claude Code / Codex output | Cursor output |
 |:---|:---|:---|
+| session-start, first prompt of a session | Claude: `{"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": "..."}}`; Codex: no output | `{"continue": true}` |
+| session-start, later prompts | no output | `{"continue": true}` |
 | pre-read / pre-bash block | `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "..."}}` | `{"permission": "deny", "user_message": "...", "agent_message": "..."}` (`beforeReadFile`: `permission` + `user_message`) |
 | pre-bash ask (unverifiable install) | Claude: `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": "...", "additionalContext": "..."}}`; Codex: the deny shape above (Codex has no `ask`) | `{"permission": "ask", "user_message": "...", "agent_message": "..."}` |
 | pre-bash allowed by policy (`"allow"`) | Claude: `{"systemMessage": "...", "hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "..."}}` (no `permissionDecision`); Codex: `{"systemMessage": "..."}` | `{"permission": "allow"}`; the note goes to stderr |
@@ -467,6 +489,7 @@ Every hook exits `0` and signals through JSON on stdout.
 | post-edit pass | no output | no output |
 | stop, issues open | `{"decision": "block", "reason": "..."}` | `{"followup_message": "..."}` |
 | stop, clean | `{}` (Codex requires JSON from Stop) | `{}` |
+| stop, Done passed | Claude: `{"systemMessage": "Skylos Done passed: ..."}` (no `decision`, so the agent stops); Codex: `{}` | `{}` |
 | Skylos error (fails open) | the allow/stop output above plus `"systemMessage": "..."`; Claude `pre-read`/`pre-bash`/`post-edit` also get `hookSpecificOutput.additionalContext` (no `permissionDecision`) | the allow/stop output above; the message goes to stderr |
 
 References:

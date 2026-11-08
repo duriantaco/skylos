@@ -39,7 +39,7 @@ skylos cicd init    # 为每个拉取请求添加 Skylos 检查
 使用编码代理时，只需要两个命令：
 
 ```bash
-skylos setup   # 每个仓库一次：连接 Claude Code 和 Codex，写入 PR 检查，生成代码地图
+skylos setup   # 每个仓库一次：连接 Claude Code 和 Codex，安装它们的钩子，让 Done 运行测试，写入 PR 检查，生成代码地图
 skylos open    # 每天：代码图、用简单语言说明的改动、每一次检查
 ```
 
@@ -51,12 +51,16 @@ skylos open    # 每天：代码图、用简单语言说明的改动、每一次
 ```text
 ✗ Quality gate on feat/login: FAILED (was PASSED on 24 Oct 15:38 UTC, 1ba9895) · 1 critical security issue
   Open: https://skylos.dev/dashboard/projects/<project>?branch=feat%2Flogin
+  Sent: findings and the Done receipt (fail) · laptop upload, unverified until CI runs the workflow
   Next: fix the issues behind the failed gate, then run skylos cloud again.
 ```
 
 第一次运行会打开浏览器登录并为此仓库选择项目。它发送的是发现的问题：文件路径、最多
 7 行的代码片段（密钥类问题不带片段）、分支、提交、每个被标记行的 git 作者邮箱，以及函数和类的
-概览（名称、文件、行号、大小、调用关系）。不会发送你的仓库。即使 Skylos Cloud 质量门失败，退出码
+概览（名称、文件、行号、大小、调用关系）。不会发送你的仓库。当仓库已提交 `[tool.skylos.done]`
+表（`skylos setup` 会写入）且工作区干净时，它还会一并发送本次提交的 Done 回执（没有回执时先运行
+`skylos done`）；`Sent:` 行说明哪些内容到达了 Skylos Cloud。来自笔记本的上传在 CI 运行工作流之前
+视为未验证。即使 Skylos Cloud 质量门失败，退出码
 也是 `0`；加上 `--gate` 时退出码为 `1`（用于 CI）。通过质量门永远不需要密钥：修复导致失败的问题即可。详见
 [Skylos Cloud](../skylos-cloud.md)。
 

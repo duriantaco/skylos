@@ -172,6 +172,15 @@ nothing is sent to Skylos Cloud.
 markdown output. It never changes the verdict, the receipt or the exit code.
 For JSON, run `skylos done map --format json` separately.
 
+## On the pull request
+
+The workflow from `skylos cicd init` saves the map as JSON in the Skylos Done
+job and hands it to the Skylos PR summary job, which puts the **Read first**
+entries (`file:line · symbol · why`) and one line of counts (more to read,
+proven unchanged, files not mapped) into the one Skylos comment on the pull
+request, and lists the files it could not map under **Not checked by tests**.
+The full map stays in the Done job's step summary, linked from the comment.
+
 ## Not yet
 
 - Languages: Python and TypeScript/JavaScript (`.ts`, `.tsx`, `.js`, `.jsx`,
@@ -192,5 +201,3 @@ For JSON, run `skylos done map --format json` separately.
   inside the repository was updated in the same change.
 - Logic errors inside a function are not detected: the map shows the change,
   it does not judge it.
-- The pull-request comment from `skylos cicd review` does not include the
-  map yet.

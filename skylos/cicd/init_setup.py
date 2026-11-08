@@ -22,8 +22,10 @@ from skylos.cicd.workflow import (
     GATE_JOB_NAME,
     PR_PUBLISH_JOB_NAME,
     RISK_REVIEW_JOB_NAME,
+    SUMMARY_JOB_NAME,
     UPLOAD_JOB_NAME,
 )
+from skylos.done.config import parse_done_config, working_tree_config_file
 
 _REQUIREMENTS_FILES = (
     "requirements.txt",
@@ -155,7 +157,7 @@ def _jest_junit_path(package: dict[str, Any]) -> str:
     )
 
 
-def _js_runner_settings(root: Path) -> tuple[str, tuple[str, ...], str] | None:
+def js_runner_settings(root: Path) -> tuple[str, tuple[str, ...], str] | None:
     """(runner, [tool.skylos.done] lines, install hint) for a root
     package.json that depends on Vitest or Jest."""
     package = _read_package_json(root)
@@ -193,11 +195,12 @@ def detect_done_setup(repo_root: str | Path) -> DoneSetup:
 
     Done blocks a pull request whose tests it cannot run, so the job is only
     added when Done will find tests: a pytest project (the same detection
-    Done uses) or a configured [tool.skylos.done] test_command.
+    Done uses) or a configured [tool.skylos.done] test_command, read from the
+    file Done reads (.skylos.toml, else skylos.toml, else pyproject.toml).
     """
     root = Path(repo_root)
     pyproject = _read_pyproject(root)
-    test_command = _table(pyproject, "tool", "skylos", "done").get("test_command")
+    test_command = _configured_test_command(root)
     pytest_project = _looks_like_pytest_project(root)
     install = _done_install_commands(
         root, pyproject, node=_runs_node_tests(test_command)
@@ -206,7 +209,7 @@ def detect_done_setup(repo_root: str | Path) -> DoneSetup:
         return DoneSetup(True, "[tool.skylos.done] test_command is set", install)
     if pytest_project:
         return DoneSetup(True, "pytest project found", install)
-    js_runner = _js_runner_settings(root)
+    js_runner = js_runner_settings(root)
     if js_runner is not None:
         runner, settings, js_install = js_runner
         return DoneSetup(
@@ -221,6 +224,18 @@ def detect_done_setup(repo_root: str | Path) -> DoneSetup:
         "no pytest project or [tool.skylos.done] test_command found",
         install,
     )
+
+
+def _configured_test_command(root: Path) -> list[str] | None:
+    path = working_tree_config_file(root)
+    try:
+        text = path.read_text("utf-8")
+    except (OSError, UnicodeError):
+        return None
+    command = parse_done_config(text).test_command
+    if command is None:
+        return None
+    return list(command)
 
 
 def _display_path(path: str) -> str:
@@ -296,8 +311,14 @@ def print_init_next_steps(
                 RISK_REVIEW_JOB_NAME,
                 "fails while the PR has risks no person with write access approved",
                 "(deleted tests, removed auth, new dependencies, weakened CI, ...);",
-                "bot approvals do not count; reruns when a review is submitted",
+                "bot approvals do not count; labels the PR skylos:needs-human while",
+                "it waits; reruns when a review is submitted",
             )
+        row(
+            SUMMARY_JOB_NAME,
+            "posts the one pull request comment: verdicts, what blocks,",
+            "what to read first; not a required check",
+        )
     if upload and "push" in triggers:
         console.print(f"[bold]Pushes to {branch_text}[/bold]")
         row(
@@ -338,7 +359,7 @@ def print_init_next_steps(
     console.print("     gh pr create --fill")
     console.print("  2. Wait for: " + ", ".join(required))
     console.print(
-        "  3. Make those checks required on your default branch "
-        "(the guide has a one-line gh command)."
+        "  3. After the merge, run skylos setup: it makes those checks required "
+        "on your default branch (needs gh; the guide has the manual command)."
     )
     console.print(f"  Guide: {FIRST_GATED_PR_GUIDE_URL}", soft_wrap=True)

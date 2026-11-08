@@ -1,5 +1,7 @@
 """`skylos cloud`: one command that scans with every check, uploads and shows the gate."""
 
+import subprocess
+
 import pytest
 
 import skylos.api as api
@@ -9,10 +11,17 @@ from skylos.cloud.cloud_receipt import (
     FAILED_NEXT_STEP,
     cloud_receipt_lines,
     local_next_steps,
+    sent_line,
 )
 from skylos.cloud.upload_destination import UploadDestination
-from skylos.commands import cloud_cmd
+from skylos.commands import cloud_cmd, done_cmd
 from skylos.commands.cloud_cmd import cloud_scan_argv, run_cloud_command
+from skylos.done.base import open_comparison
+from skylos.done.checks import CheckResult
+from skylos.done.config import DoneConfig
+from skylos.done.engine import CheckOutcome, DoneResult
+from skylos.done.receipt import build_receipt, read_receipt, write_receipt
+from skylos.done.session import invalidate_latest_receipt
 from test.test_cli_report_serialization import _configure
 
 BASE = "https://skylos.dev"
@@ -203,6 +212,7 @@ def test_help_is_reached_from_the_top_level_command(monkeypatch, capsys):
 
 def test_no_upload_is_refused(monkeypatch, capsys):
     monkeypatch.setattr("skylos.commands.scan_cmd.run_scan_command", _no_scan)
+    monkeypatch.setattr(done_cmd, "run_done_command", _no_scan)
 
     assert run_cloud_command(["--no-upload"], cli_module=cli) == 2
     assert "skylos cloud always uploads" in capsys.readouterr().err
@@ -251,7 +261,7 @@ def test_ci_without_a_token_leaves_the_identity_check_to_the_upload(
     seen = []
     monkeypatch.setattr(
         "skylos.commands.scan_cmd.run_scan_command",
-        lambda argv, *, cli_module, cloud, cloud_gate: seen.append(
+        lambda argv, *, cli_module, cloud, cloud_gate, **_kwargs: seen.append(
             (argv, cloud, cloud_gate)
         ),
     )
@@ -265,13 +275,267 @@ def test_connected_runs_the_scan_in_cloud_mode(monkeypatch, tmp_path):
     seen = []
     monkeypatch.setattr(
         "skylos.commands.scan_cmd.run_scan_command",
-        lambda argv, *, cli_module, cloud, cloud_gate: seen.append(
+        lambda argv, *, cli_module, cloud, cloud_gate, **_kwargs: seen.append(
             (argv, cloud, cloud_gate)
         ),
     )
 
     assert run_cloud_command([str(tmp_path), "--gate"], cli_module=cli) == 0
     assert seen == [([str(tmp_path), "-a", "--upload"], True, True)]
+
+
+# --- the Done receipt rides on the upload ---------------------------------
+
+DONE_TABLE = '[project]\nname = "shop"\n\n[tool.skylos.done]\ntest_budget_seconds = 300\n'
+
+
+def _git(root, *args):
+    subprocess.run(
+        ["git", "-c", "user.email=a@b", "-c", "user.name=a", *args],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _commit(root, message):
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", message)
+
+
+@pytest.fixture
+def repo(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("SKYLOS_TOKEN", "local-test-key")
+    monkeypatch.setattr(cli, "_is_ci", lambda: False)
+    monkeypatch.setattr("skylos.cloud.login.run_login", _no_scan)
+    root = tmp_path / "shop"
+    root.mkdir()
+    (root / "shop.py").write_text("def total(items):\n    return sum(items)\n")
+    (root / "pyproject.toml").write_text(DONE_TABLE)
+    _git(root, "init", "-q", "-b", "main")
+    _commit(root, "start")
+    return root
+
+
+def _receipt_for(root, *, status="pass"):
+    check = CheckResult(
+        id="tests_pass",
+        rule="SKY-A113",
+        status=status,
+        summary="Test verification result",
+        evidence={"summary": "Test verification result"},
+    )
+    result = DoneResult(
+        open_comparison(root), DoneConfig(), [CheckOutcome("block", check)], status, 0.0
+    )
+    return build_receipt(result)
+
+
+def _scan_spy(monkeypatch):
+    seen = []
+
+    def fake_scan(argv, *, cli_module, cloud, cloud_gate, cloud_done_note=None):
+        seen.append((list(argv), cloud_done_note))
+
+    monkeypatch.setattr("skylos.commands.scan_cmd.run_scan_command", fake_scan)
+    return seen
+
+
+def _fake_done(monkeypatch, root, *, status="pass", code=None):
+    calls = []
+
+    def fake_done(argv, *, console=None):
+        calls.append(list(argv))
+        if code == done_cmd.EXIT_ERROR:
+            assert invalidate_latest_receipt(root)
+            return code
+        receipt = _receipt_for(root, status=status)
+        assert write_receipt(root, receipt) is not None
+        if status == "pass":
+            return done_cmd.EXIT_PASS
+        return done_cmd.EXIT_BLOCKED
+
+    monkeypatch.setattr(done_cmd, "run_done_command", fake_done)
+    return calls
+
+
+def _receipt_flags(root):
+    return ["--done-receipt", str(root / ".skylos" / "receipts" / "latest.json")]
+
+
+def test_a_fresh_receipt_for_head_rides_on_the_upload(repo, monkeypatch, capsys):
+    assert write_receipt(repo, _receipt_for(repo)) is not None
+    seen = _scan_spy(monkeypatch)
+    monkeypatch.setattr(done_cmd, "run_done_command", _no_scan)
+
+    assert run_cloud_command([str(repo)], cli_module=cli) == 0
+
+    assert seen == [([str(repo), "-a", "--upload", *_receipt_flags(repo)], None)]
+    assert cloud_cmd.DONE_RUNNING not in capsys.readouterr().out
+
+
+def test_without_a_receipt_done_runs_against_the_base_first(repo, monkeypatch, capsys):
+    _git(repo, "checkout", "-qb", "feat/x")
+    (repo / "shop.py").write_text("def total(items):\n    return sum(items) + 0\n")
+    _commit(repo, "change")
+    seen = _scan_spy(monkeypatch)
+    calls = _fake_done(monkeypatch, repo)
+
+    assert run_cloud_command([str(repo)], cli_module=cli) == 0
+
+    out = capsys.readouterr().out
+    assert calls == [[str(repo), "--base", "main"]]
+    assert seen == [([str(repo), "-a", "--upload", *_receipt_flags(repo)], None)]
+    assert cloud_cmd.DONE_RUNNING in out
+    assert "Verdict: PASS" in out
+    assert read_receipt(repo / ".skylos/receipts/latest.json")["verdict"] == "pass"
+
+
+def test_on_the_base_branch_done_compares_with_head(repo, monkeypatch):
+    _scan_spy(monkeypatch)
+    calls = _fake_done(monkeypatch, repo)
+
+    assert run_cloud_command([str(repo)], cli_module=cli) == 0
+
+    assert calls == [[str(repo)]]
+
+
+def test_a_receipt_for_another_commit_makes_done_run_again(repo, monkeypatch):
+    assert write_receipt(repo, _receipt_for(repo)) is not None
+    (repo / "shop.py").write_text("def total(items):\n    return sum(items) + 0\n")
+    _commit(repo, "change")
+    seen = _scan_spy(monkeypatch)
+    calls = _fake_done(monkeypatch, repo)
+
+    assert run_cloud_command([str(repo)], cli_module=cli) == 0
+
+    assert len(calls) == 1
+    assert seen[0][0][-2:] == _receipt_flags(repo)
+
+
+def test_a_dirty_tree_sends_the_findings_without_a_receipt(repo, monkeypatch, capsys):
+    (repo / "shop.py").write_text("def total(items):\n    return sum(items) + 1\n")
+    seen = _scan_spy(monkeypatch)
+    monkeypatch.setattr(done_cmd, "run_done_command", _no_scan)
+
+    assert run_cloud_command([str(repo)], cli_module=cli) == 0
+
+    assert seen == [([str(repo), "-a", "--upload"], None)]
+    assert cloud_cmd.DONE_NOT_SENT_DIRTY in capsys.readouterr().out
+
+
+def test_without_a_done_table_nothing_runs_and_the_sent_line_says_so(
+    repo, monkeypatch, capsys
+):
+    (repo / "pyproject.toml").write_text('[project]\nname = "shop"\n')
+    _commit(repo, "no table")
+    seen = _scan_spy(monkeypatch)
+    monkeypatch.setattr(done_cmd, "run_done_command", _no_scan)
+
+    assert run_cloud_command([str(repo)], cli_module=cli) == 0
+
+    assert seen == [([str(repo), "-a", "--upload"], cloud_cmd.NO_DONE_TABLE)]
+    assert cloud_cmd.DONE_RUNNING not in capsys.readouterr().out
+
+
+def test_an_uncommitted_done_table_is_named_instead_of_run(repo, monkeypatch):
+    (repo / "pyproject.toml").write_text('[project]\nname = "shop"\n')
+    _commit(repo, "no table")
+    (repo / "pyproject.toml").write_text(DONE_TABLE)
+    seen = _scan_spy(monkeypatch)
+    monkeypatch.setattr(done_cmd, "run_done_command", _no_scan)
+
+    assert run_cloud_command([str(repo)], cli_module=cli) == 0
+
+    assert seen[0][1] == "the Done table in pyproject.toml is not committed yet"
+    assert "--done-receipt" not in seen[0][0]
+
+
+def test_a_receipt_passed_by_hand_is_not_run_again(repo, monkeypatch):
+    seen = _scan_spy(monkeypatch)
+    monkeypatch.setattr(done_cmd, "run_done_command", _no_scan)
+
+    assert run_cloud_command([str(repo), "--done-receipt", "r.json"], cli_module=cli) == 0
+
+    assert seen == [([str(repo), "--done-receipt", "r.json", "-a", "--upload"], None)]
+
+
+def test_a_failed_done_still_uploads_with_its_fail_receipt(repo, monkeypatch, capsys):
+    seen = _scan_spy(monkeypatch)
+    calls = _fake_done(monkeypatch, repo, status="fail")
+
+    assert run_cloud_command([str(repo)], cli_module=cli) == 0
+
+    assert len(calls) == 1
+    assert seen == [([str(repo), "-a", "--upload", *_receipt_flags(repo)], None)]
+    assert "Verdict: FAIL" in capsys.readouterr().out
+    assert read_receipt(repo / ".skylos/receipts/latest.json")["verdict"] == "fail"
+
+
+def test_done_that_could_not_run_leaves_the_upload_without_a_receipt(
+    repo, monkeypatch, capsys
+):
+    seen = _scan_spy(monkeypatch)
+    _fake_done(monkeypatch, repo, code=done_cmd.EXIT_ERROR)
+
+    assert run_cloud_command([str(repo)], cli_module=cli) == 0
+
+    assert seen == [([str(repo), "-a", "--upload"], None)]
+    assert "Done receipt not sent: skylos done could not run (see above)" in capsys.readouterr().out
+
+
+def test_in_ci_the_workflow_owns_done(repo, monkeypatch):
+    monkeypatch.setattr(cli, "_is_ci", lambda: True)
+    seen = _scan_spy(monkeypatch)
+    monkeypatch.setattr(done_cmd, "run_done_command", _no_scan)
+
+    assert run_cloud_command([str(repo)], cli_module=cli) == 0
+
+    assert seen == [([str(repo), "-a", "--upload"], None)]
+
+
+@pytest.mark.parametrize(
+    "receipt,response,note,expected",
+    [
+        (
+            {"verdict": "fail"},
+            {"upload_trust": "unverified"},
+            None,
+            "Sent: findings and the Done receipt (fail) · laptop upload, unverified until CI runs the workflow",
+        ),
+        (
+            None,
+            {"upload_trust": "unverified"},
+            cloud_cmd.NO_DONE_TABLE,
+            "Sent: findings · no Done table in this repo (skylos setup adds one)",
+        ),
+        (
+            {"verdict": "pass"},
+            {"upload_trust": "verified_ci"},
+            None,
+            "Sent: findings and the Done receipt (pass) · verified CI upload",
+        ),
+        (None, {}, None, "Sent: findings"),
+        ({"verdict": "incomplete"}, {}, None, "Sent: findings and the Done receipt (unfinished)"),
+    ],
+)
+def test_sent_line_names_what_reached_cloud_and_its_standing(
+    receipt, response, note, expected
+):
+    assert sent_line(receipt, response, note) == expected
+
+
+def test_sent_line_sits_between_the_link_and_the_next_step():
+    sent = "Sent: findings"
+    failed = cloud_receipt_lines(_dest(), _response(False), BASE, ci_configured=False, sent=sent)
+    unreported = _response(True)
+    unreported["quality_gate_reported"] = False
+    plain = cloud_receipt_lines(_dest(), unreported, BASE, ci_configured=False, sent=sent)
+
+    assert failed[1].startswith("  Open: ") and failed[2] == "  Sent: findings"
+    assert failed[3] == FAILED_NEXT_STEP
+    assert plain[-1] == "  Sent: findings" and len(plain) == 3
 
 
 def _cloud_scan(monkeypatch, tmp_path, response, *, command):
@@ -321,6 +585,43 @@ def test_cloud_scan_prints_the_short_receipt_only(monkeypatch, capsys, tmp_path)
     assert "does not change this command's exit code" not in out
     assert "new issues" not in out
     assert "Unused function: unused" in out.split("Uploading findings")[0]
+
+
+def test_cloud_scan_ends_with_what_was_sent(monkeypatch, capsys, tmp_path):
+    response = _response(False, upload_trust="unverified")
+    _cloud_scan(monkeypatch, tmp_path, response, command=["cloud"])
+    monkeypatch.setattr(cli, "_is_ci", lambda: False)
+
+    assert _main_exit() == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    sent = lines.index("  Sent: findings · no Done table in this repo (skylos setup adds one)")
+    assert lines[sent - 1].startswith("  Open: https://skylos.dev/dashboard/projects/proj-1")
+    assert lines[sent + 1] == FAILED_NEXT_STEP
+
+
+def test_cloud_scan_sends_the_receipt_of_this_commit(monkeypatch, capsys, tmp_path):
+    response = _response(True, upload_trust="unverified")
+    _cloud_scan(monkeypatch, tmp_path, response, command=["cloud"])
+    monkeypatch.setattr(cli, "_is_ci", lambda: False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "pyproject.toml").write_text(DONE_TABLE)
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _commit(tmp_path, "start")
+    assert write_receipt(tmp_path, _receipt_for(tmp_path)) is not None
+    uploaded = []
+    monkeypatch.setattr(
+        cli, "upload_report", lambda result, **kwargs: uploaded.append(result) or response
+    )
+    monkeypatch.setattr(done_cmd, "run_done_command", _no_scan)
+
+    assert _main_exit() == 0
+
+    assert uploaded[0]["done_receipt"]["verdict"] == "pass"
+    assert (
+        "  Sent: findings and the Done receipt (pass) · laptop upload, unverified until CI runs the workflow"
+        in capsys.readouterr().out.splitlines()
+    )
 
 
 def test_cloud_scan_in_ci_does_not_suggest_ci_setup(monkeypatch, capsys, tmp_path):

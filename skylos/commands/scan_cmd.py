@@ -186,16 +186,24 @@ def _print_cloud_gate_exit(console, args) -> None:
 
 
 def _print_cloud_receipt(
-    console, project_root, destination, upload_resp, *, in_ci: bool
+    console,
+    project_root,
+    destination,
+    upload_resp,
+    *,
+    in_ci: bool,
+    done_receipt=None,
+    done_note=None,
 ) -> None:
     from skylos.api import BASE_URL
-    from skylos.cloud.cloud_receipt import cloud_receipt_lines
+    from skylos.cloud.cloud_receipt import cloud_receipt_lines, sent_line
 
     lines = cloud_receipt_lines(
         destination,
         upload_resp,
         BASE_URL,
         ci_configured=in_ci or _ci_workflow_exists(project_root),
+        sent=sent_line(done_receipt, upload_resp, done_note),
     )
     for line in lines:
         console.print(escape(line), soft_wrap=True)
@@ -556,6 +564,7 @@ def run_scan_command(
     cli_module: ModuleType,
     cloud: bool = False,
     cloud_gate: bool = False,
+    cloud_done_note: str | None = None,
 ) -> None:
     """Keep compared gates and impact scans on one immutable policy."""
     import os
@@ -566,6 +575,7 @@ def run_scan_command(
     args = cli_module._parse_main_cli_args(parser, argv)
     args._cloud_command = cloud
     args._cloud_gate = cloud_gate
+    args._cloud_done_note = cloud_done_note
     _exit_on_missing_scan_paths(args, cli_module=cli_module)
     base = (
         (getattr(args, "diff_base", None) or getattr(args, "diff", None))
@@ -2357,7 +2367,13 @@ def _run_scan_command(
         elif cloud_command:
             _check_managed_gitlab_delivery(upload_resp)
             _print_cloud_receipt(
-                console, project_root, upload_destination, upload_resp, in_ci=_is_ci()
+                console,
+                project_root,
+                upload_destination,
+                upload_resp,
+                in_ci=_is_ci(),
+                done_receipt=done_receipt,
+                done_note=getattr(args, "_cloud_done_note", None),
             )
             cloud_passed = upload_resp.get("quality_gate_passed")
             cloud_gate = getattr(args, "_cloud_gate", False)

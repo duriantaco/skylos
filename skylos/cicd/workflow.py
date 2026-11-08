@@ -51,7 +51,13 @@ GATE_JOB_NAME = "Skylos Quality Gate"
 DONE_JOB_NAME = "Skylos Done"
 RISK_REVIEW_JOB_NAME = "Skylos risk review"
 RISK_REVIEW_RECHECK_JOB_NAME = "Skylos risk review (re-check after review)"
+SUMMARY_JOB_NAME = "Skylos PR summary"
 UPLOAD_JOB_NAME = "Skylos Cloud upload"
+RESULTS_ARTIFACT = "skylos-results"
+DONE_ARTIFACT = "skylos-done"
+RISK_REVIEW_ARTIFACT = "skylos-risk-review"
+DEFENSE_ARTIFACT = "skylos-defense"
+SUMMARY_DIR = "skylos-summary"
 PR_POLICY_JOB_NAME = "Skylos Cloud PR policy"
 PR_SCAN_JOB_NAME = "Skylos Cloud PR scan"
 PR_PUBLISH_JOB_NAME = "Skylos Cloud PR upload"
@@ -239,6 +245,10 @@ def _header_comment(
         lines.append(
             "#   Make these required checks on your default branch to block failing PRs."
         )
+        lines += [
+            f'#   "{SUMMARY_JOB_NAME}" posts the one pull request comment: the verdicts,',
+            "#   what blocks, what to read first. It is not a required check.",
+        ]
         if merge_queue:
             lines += [
                 "#",
@@ -294,20 +304,31 @@ def _build_done_job(
     project_install = "\n".join(
         f"          {command}" for command in done_install_commands
     )
-    done_run = 'skylos done --base "origin/$GITHUB_BASE_REF"'
-    map_run = 'skylos done map --base "origin/$GITHUB_BASE_REF" --format markdown >> "$GITHUB_STEP_SUMMARY"'
+    base_arg = '"origin/$GITHUB_BASE_REF"'
+    queue_env = ""
     if merge_queue:
         # On merge_group the base is the queue's base commit, from the event
         # through the environment (GITHUB_BASE_REF is empty there).
+        base_arg = '"${MERGE_GROUP_BASE_SHA:-origin/$GITHUB_BASE_REF}"'
         queue_env = (
             "\n        env:\n"
             "          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}"
         )
-        done_run = 'skylos done --base "${MERGE_GROUP_BASE_SHA:-origin/$GITHUB_BASE_REF}"' + queue_env
-        map_run = (
-            'skylos done map --base "${MERGE_GROUP_BASE_SHA:-origin/$GITHUB_BASE_REF}" '
-            '--format markdown >> "$GITHUB_STEP_SUMMARY"' + queue_env
+    done_run = f"skylos done --base {base_arg}" + queue_env
+    saved = f"$RUNNER_TEMP/{DONE_ARTIFACT}"
+    map_run = (
+        "\n".join(
+            [
+                "|",
+                f'          mkdir -p "{saved}"',
+                "          if [ -f .skylos/receipts/latest.json ]; then "
+                f'cp .skylos/receipts/latest.json "{saved}/receipt.json"; fi',
+                f'          skylos done map --base {base_arg} --format markdown >> "$GITHUB_STEP_SUMMARY"',
+                f'          skylos done map --base {base_arg} --format json > "{saved}/change-map.json"',
+            ]
         )
+        + queue_env
+    )
     return f"""
   done:
     if: {_pr_or_queue_condition(merge_queue)}
@@ -344,6 +365,16 @@ def _build_done_job(
         if: ${{{{ !cancelled() }}}}
         continue-on-error: true
         run: {map_run}
+
+      - name: Save the receipt and change map for the summary job
+        if: ${{{{ !cancelled() }}}}
+        uses: {PINNED_ACTIONS_UPLOAD_ARTIFACT}
+        with:
+          name: {DONE_ARTIFACT}
+          path: ${{{{ runner.temp }}}}/{DONE_ARTIFACT}
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 """
 
 
@@ -383,7 +414,7 @@ def _build_risk_review_job(
       cancel-in-progress: false
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
     steps:
       - name: Checkout pull request head
         uses: {PINNED_ACTIONS_CHECKOUT}
@@ -400,11 +431,24 @@ def _build_risk_review_job(
       - name: Install Skylos
         run: {install_command}
 
+      # The JSON goes to the summary job; this job's step summary has the text.
       - name: List risks that need a human approval
-        run: skylos cicd risk-review --base {base_arg}
+        run: |
+          mkdir -p "$RUNNER_TEMP/{RISK_REVIEW_ARTIFACT}"
+          skylos cicd risk-review --base {base_arg} --format json > "$RUNNER_TEMP/{RISK_REVIEW_ARTIFACT}/risk-review.json"
         env:
           PR_BASE_REF: ${{{{ github.event.pull_request.base.ref }}}}{merge_group_env}
           GITHUB_TOKEN: ${{{{ github.token }}}}
+
+      - name: Save the risk review for the summary job
+        if: ${{{{ !cancelled() }}}}
+        uses: {PINNED_ACTIONS_UPLOAD_ARTIFACT}
+        with:
+          name: {RISK_REVIEW_ARTIFACT}
+          path: ${{{{ runner.temp }}}}/{RISK_REVIEW_ARTIFACT}
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
   risk-review-recheck:
     # A review was submitted or dismissed: re-run "{RISK_REVIEW_JOB_NAME}" in the
@@ -447,6 +491,82 @@ def _build_risk_review_job(
           fi
           gh api -X POST "repos/$REPO/actions/jobs/$job_id/rerun" --silent
           echo "Re-ran '$JOB_NAME' (job $job_id in run $run_id) for $HEAD_SHA."
+"""
+
+
+def _build_summary_job(
+    *,
+    python_version: str,
+    install_command: str,
+    scan_target: str,
+    needs: Sequence[str],
+    use_llm: bool,
+    use_defend: bool,
+    done_job: bool,
+    risk_review_job: bool,
+) -> str:
+    saved = f"$RUNNER_TEMP/{SUMMARY_DIR}"
+    review_args = [f'--input "{saved}/skylos-results.json"']
+    if use_llm:
+        review_args.append(f'--llm-input "{saved}/skylos-llm-results.json"')
+    if use_defend:
+        review_args.append(f'--defense-input "{saved}/defense-results.json"')
+    review_args += [
+        '--diff-base "$pr_base_ref"',
+        "--evidence-cards",
+        '--gate-result "$SKYLOS_GATE_RESULT"',
+    ]
+    if done_job:
+        review_args += [
+            f'--done-receipt "{saved}/receipt.json"',
+            f'--change-map "{saved}/change-map.json"',
+        ]
+    if risk_review_job:
+        review_args.append(f'--risk-review "{saved}/risk-review.json"')
+    review_command = f"skylos cicd review {scan_target} " + " ".join(review_args)
+    return f"""
+  summary:
+    # One comment per pull request, from what the jobs above saved. It runs
+    # after them whatever their result and never blocks a merge.
+    if: always() && github.event_name == 'pull_request'
+    needs: [{", ".join(needs)}]
+    name: {SUMMARY_JOB_NAME}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: {PINNED_ACTIONS_CHECKOUT}
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: {PINNED_ACTIONS_SETUP_PYTHON}
+        with:
+          python-version: '{python_version}'
+
+      - name: Install Skylos
+        run: {install_command}
+
+      # A job that failed early saved nothing; the comment says so.
+      - name: Download what the pull request jobs saved
+        continue-on-error: true
+        uses: {PINNED_ACTIONS_DOWNLOAD_ARTIFACT}
+        with:
+          pattern: skylos-*
+          merge-multiple: true
+          path: ${{{{ runner.temp }}}}/{SUMMARY_DIR}
+
+      - name: Post the pull request summary
+        run: |
+          pr_base_ref="origin/${{GITHUB_BASE_REF:-main}}"
+          {review_command}
+        env:
+          GH_TOKEN: ${{{{ github.token }}}}
+          SKYLOS_GATE_RESULT: ${{{{ needs.skylos.result }}}}
 """
 
 
@@ -657,7 +777,9 @@ def generate_workflow(
     Generate the GitHub Actions workflow YAML for Skylos scans.
 
     Pull requests get the "Skylos Quality Gate" job (diff-aware scan, gate,
-    annotations, review comments) and, with use_done, the "Skylos Done" job.
+    annotations), with use_done the "Skylos Done" job, and the "Skylos PR
+    summary" job, which posts the one pull request comment (summary and inline
+    review comments) from what the other pull request jobs saved as artifacts.
     With use_upload, pushes to the default branch upload a full scan through
     GitHub OIDC from a separate job. With use_pr_upload as well, pull requests
     to the default branch upload through pull_request_target: a read-only job
@@ -670,6 +792,7 @@ def generate_workflow(
         skylos/cicd/workflow.py _skylos_install_command;
         skylos/cicd/workflow.py _shell_path;
         skylos/cicd/workflow.py _build_done_job;
+        skylos/cicd/workflow.py _build_summary_job;
         skylos/cicd/workflow.py _build_upload_job;
         skylos/cicd/workflow.py _build_pr_upload_jobs;
         skylos/cicd/workflow.py _build_claude_security_jobs.
@@ -791,19 +914,22 @@ def generate_workflow(
             ]
         )
 
-    review_args = ["--input skylos-results.json"]
+    results_paths = "skylos-results.json"
     if use_llm:
-        review_args.append("--llm-input skylos-llm-results.json")
+        results_paths = "|\n            skylos-results.json\n            skylos-llm-results.json"
+    defense_save = ""
     if use_defend:
-        review_args.append(f"--defense-input {SKYLOS_DEFENSE_RESULTS_SHELL_PATH}")
-    review_args.extend(['--diff-base "$pr_base_ref"', "--evidence-cards"])
-    review_command = "skylos cicd review " + " ".join(review_args)
-    review_run = "\n".join(
-        [
-            '          pr_base_ref="origin/${GITHUB_BASE_REF:-main}"',
-            f"          {review_command}",
-        ]
-    )
+        defense_save = f"""
+      - name: Save the AI app safety check for the summary job
+        if: always()
+        uses: {PINNED_ACTIONS_UPLOAD_ARTIFACT}
+        with:
+          name: {DEFENSE_ARTIFACT}
+          path: ${{{{ runner.temp }}}}/defense-results.json
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+"""
     skylos_environment = "\n    environment: skylos-security" if use_llm else ""
     # The upload job owns default-branch pushes; the gate job covers the rest.
     skipped_events = []
@@ -857,7 +983,6 @@ jobs:
     timeout-minutes: 15{skylos_environment}
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - name: Checkout
         uses: {PINNED_ACTIONS_CHECKOUT}
@@ -886,25 +1011,16 @@ jobs:
         if: always()
         run: skylos cicd annotate --input skylos-results.json
 
-      - name: PR Review Comments
-        if: github.event_name == 'pull_request' && always()
-        run: |
-{review_run}
-        env:
-          GH_TOKEN: ${{{{ github.token }}}}
-{
-        ""
-        if not use_claude_security
-        else f'''
-      - name: Upload Skylos Results for Cross-Reference
+      - name: Save the scan for the summary job
         if: always()
         uses: {PINNED_ACTIONS_UPLOAD_ARTIFACT}
         with:
-          name: skylos-results
-          path: skylos-results.json
+          name: {RESULTS_ARTIFACT}
+          path: {results_paths}
           if-no-files-found: error
-'''
-    }"""
+          retention-days: 1
+          overwrite: true
+{defense_save}"""
 
     if done_job:
         workflow += _build_done_job(
@@ -921,6 +1037,23 @@ jobs:
             python_version=python_version,
             install_command=install_command,
             merge_queue=merge_queue,
+        )
+
+    if "pull_request" in triggers:
+        needs = ["skylos"]
+        if done_job:
+            needs.append("done")
+        if risk_review_job:
+            needs.append("risk-review")
+        workflow += _build_summary_job(
+            python_version=python_version,
+            install_command=_skylos_install_command(skylos_version, dart=False),
+            scan_target=scan_target,
+            needs=needs,
+            use_llm=use_llm,
+            use_defend=use_defend,
+            done_job=done_job,
+            risk_review_job=risk_review_job,
         )
 
     if upload_job:

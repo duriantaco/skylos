@@ -4,7 +4,7 @@ You use two commands. Your coding agent runs everything else itself.
 
 | When | You run | What you get |
 |---|---|---|
-| Once per repository | `skylos setup` | Claude Code and Codex know the Skylos steps, the PR check is written, the code is mapped |
+| Once per repository | `skylos setup` | Claude Code and Codex know the Skylos steps and run the Skylos hooks, Done runs your tests, the PR check is written and required, the code is mapped |
 | Every day | `skylos open` | One page: the diagram of your code, what changed in plain English and what it affects, and every check run |
 
 This tutorial follows one real session on a small shop repository: a real
@@ -38,15 +38,21 @@ skylos setup
 ```text
 Skylos is set up in shop
 
-  ✓ Coding agents  CLAUDE.md, AGENTS.md: Skylos steps added
-  ✓ Claude Code    .mcp.json: Skylos tools connected (Claude Code asks you to approve them once)
-  ✓ Codex          Skylos tools connected (in your Codex settings)
-  ✓ PR check       .github/workflows/skylos.yml: scans changed lines and runs your tests on every pull request
-  ✓ Code map       22 functions and classes in 12 files, 6 areas; 0 described in plain English
+  ✓ Coding agents    CLAUDE.md, AGENTS.md: Skylos steps added
+  ✓ Claude Code      .mcp.json: Skylos tools connected (Claude Code asks you to approve them once)
+  ✓ Codex            Skylos tools connected (in your Codex settings)
+  ✓ Agent hooks      .claude/settings.json, .codex/hooks.json: Skylos checks every edit and the finished change
+  ✓ Tests            pyproject.toml: [tool.skylos.done] added; Done runs pytest once it is committed
+  ✓ PR check         .github/workflows/skylos.yml: scans changed lines and runs your tests on every pull request
+  - Skylos Cloud     not connected (optional): skylos login once, then skylos setup again adds the Cloud upload jobs
+  - Required checks  waits for .github/workflows/skylos.yml to be merged into main
+  ✓ Code map         22 functions and classes in 12 files, 6 areas; 0 described in plain English
 
 Next
   skylos open   the map of your code, what changed and every check, in one page
-  Commit CLAUDE.md, .github/workflows/skylos.yml, .mcp.json, .skylos/graph/.gitignore, AGENTS.md so your team and CI get them.
+  Commit pyproject.toml, .claude/settings.json, .codex/hooks.json, .github/workflows/skylos.yml, .mcp.json, .skylos/.gitignore, .skylos/graph/.gitignore, AGENTS.md, CLAUDE.md so your team and CI get them.
+  Merge .github/workflows/skylos.yml, then run skylos setup again: it makes the checks required.
+  Hooks start with the next Claude Code session; in Codex, trust them once with /hooks.
   For plain-English descriptions, ask your coding agent: "describe the code with Skylos".
 ```
 
@@ -60,12 +66,37 @@ What each line did:
 - **Claude Code**: added the Skylos tools to `.mcp.json`. Claude Code asks you
   to approve them the first time.
 - **Codex**: ran `codex mcp add skylos`.
+- **Agent hooks**: installed the Skylos hooks in `.claude/settings.json`
+  (Claude Code) and `.codex/hooks.json` (Codex; skip it with `--no-codex`).
+  They check each edit, guard secret reads and package installs, and run
+  `skylos done` when the agent stops. The hook command is the `skylos` on PATH,
+  so the committed file works on every machine; where Skylos is missing the
+  hooks do nothing. Setup first checks that the `skylos` on PATH supports
+  `skylos hook`, and refuses to install otherwise. See
+  [Agent-loop hooks](./agent-hooks.md).
+- **Tests**: added `[tool.skylos.done]` to `pyproject.toml` (or to
+  `skylos.toml` when the repository uses one), so the Stop hook and the PR
+  check run your tests. A pytest project gets the default settings; a Vitest
+  or Jest project gets the `test_command` that writes JUnit XML. Done reads
+  the table from the base branch, so it applies once the commit is in. With
+  no tests found, nothing is written and the line says so. An existing table
+  is left alone.
 - **PR check**: wrote the GitHub Actions workflow (other CIs get the block to
   add). It runs the same checks on every pull request.
+- **Skylos Cloud**: optional. When this machine is logged in (`skylos login`),
+  the workflow also gets the Cloud upload jobs (GitHub OIDC, no secret) and
+  the line says `connected; the workflow uploads to Skylos Cloud with GitHub
+  OIDC; see this branch with skylos cloud`. Setup never starts the login.
+  See [9. Skylos Cloud](#9-skylos-cloud-optional-for-teams).
+- **Required checks**: once `.github/workflows/skylos.yml` is merged into
+  your default branch, `skylos setup` creates a branch ruleset named
+  **Skylos** that requires its checks (needs `gh`, logged in, and admin
+  access). Until then the line says what is missing and setup still exits 0.
 - **Code map**: built `.skylos/graph/`.
 
 Commit the files it lists. Running `skylos setup` again only changes what is
-missing or out of date.
+missing or out of date. After the workflow is merged, run it once more: that
+run makes the checks required.
 
 ## 2. Let your agent describe the code
 
@@ -221,23 +252,31 @@ the job summary.
 
 ![The change map in the job summary](https://docs.skylos.dev/img/workflow/16-pr-change-map.png)
 
-To block merging until it passes, make **Skylos Done** a required check on
-your default branch. The
+To block merging until it passes, run `skylos setup` again after this pull
+request is merged: it makes **Skylos Quality Gate** and **Skylos Done**
+required checks on your default branch. The
 [first gated PR guide](first-gated-pr.md)
-has the steps.
+has the manual steps.
 
 ## 9. Skylos Cloud (optional, for teams)
 
 `skylos cloud` uploads findings (not your code) to Skylos Cloud, which keeps
-each branch's gate, its history and one policy for your team.
+each branch's gate, its history and one policy for your team. Run it once to
+see this branch there: it runs every check, sends the findings and this
+commit's Done receipt (running `skylos done` first when there is none for
+this commit), and prints the branch's gate, one link and a `Sent:` line that
+says what reached Skylos Cloud. Uploads from a laptop are unverified until
+CI runs the workflow. `skylos setup` adds the Cloud upload jobs to the
+workflow when this machine is logged in (`skylos login`); its **Skylos
+Cloud** row says whether it did. See [Skylos Cloud](skylos-cloud.md).
 
 ## Who runs what
 
-| You | Your coding agent (from CLAUDE.md / AGENTS.md) | CI (from `skylos setup`) |
+| You | Your coding agent (from CLAUDE.md / AGENTS.md and the hooks) | CI (from `skylos setup`) |
 |---|---|---|
-| `skylos setup`, once | Looks up code before changing it | Runs `skylos done` on every pull request |
-| `skylos open`, every day | Runs `skylos done --base origin/main` | Writes the result and change map to the job summary |
-| Check this change, Copy fix brief | Explains changes and describes new code | |
+| `skylos setup`, once (again after the workflow is merged) | Looks up code before changing it | Runs `skylos done` on every pull request |
+| `skylos open`, every day | Runs `skylos done --base origin/main`; the Stop hook runs it again | Writes the result and change map to the job summary |
+| Check this change, Copy fix brief | Explains changes and describes new code | Blocks the merge until the required checks pass |
 
 The other Skylos commands (`skylos graph …`, `skylos done map`, `skylos cicd
 init`) still work for scripts and CI. You don't need them for this workflow.

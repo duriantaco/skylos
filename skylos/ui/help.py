@@ -4,12 +4,16 @@ from rich.markup import escape
 COMMANDS = [
     {
         "name": "skylos setup [path] [--base REF] [--no-ci] [--no-codex]",
-        "desc": "Set up Skylos in a repository once: coding agents, their Skylos tools, the PR check and the code map",
+        "desc": "Set up Skylos in a repository once: coding agents, their Skylos tools and hooks, the Done table, the PR check and the code map",
         "details": [
             "Adds the Skylos steps to CLAUDE.md and AGENTS.md between skylos:start and skylos:end markers; "
             "the rest of each file is left as it is",
-            "Connects Claude Code through .mcp.json and Codex through codex mcp add",
-            "Writes the pull request check with skylos cicd init; --ci picks the CI when there are several",
+            "Connects Claude Code through .mcp.json and Codex through codex mcp add; installs the agent hooks "
+            "in .claude/settings.json and .codex/hooks.json (the PATH skylos, so the committed file works everywhere)",
+            "Adds [tool.skylos.done] when tests are found (pytest, Vitest or Jest) so Done runs them when the agent stops",
+            "Writes the pull request check with skylos cicd init (with the Skylos Cloud upload jobs when this "
+            "machine is logged in); --ci picks the CI when there are several; "
+            "once the workflow is merged and gh is logged in, creates the Skylos ruleset that requires its checks",
             "Maps the code; run it again at any time, it only changes what is missing or out of date",
         ],
         "group": "Start here",
@@ -637,8 +641,8 @@ COMMANDS = [
 START_HERE = (
     (
         "skylos setup",
-        "Once per repository: connect Claude Code and Codex to Skylos, add the "
-        "pull request check and map the code.",
+        "Once per repository: connect Claude Code and Codex to Skylos, install "
+        "their hooks, let Done run your tests, add the pull request check and map the code.",
     ),
     (
         "skylos open",

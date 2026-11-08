@@ -168,8 +168,12 @@ and prints the findings tables, logs in through the browser first when there is 
 token (in a terminal; outside CI without a terminal it exits 1 before
 scanning), and prints a short receipt: the branch gate line
 (`✓`/`✗ Quality gate on <branch>: PASSED|FAILED (<history>) · <reasons>`),
-`  Open: <project Overview URL, ?branch= for non-default branches>` and a
-`  Next:` line. Exit 0 on a failed gate unless `--gate`/`--strict`; its
+`  Open: <project Overview URL, ?branch= for non-default branches>`, a
+`  Sent:` line (`findings` or `findings and the Done receipt (<verdict>)`,
+then the Done-table note or the upload standing) and a `  Next:` line. With a
+committed `[tool.skylos.done]` table and a clean tree it attaches this
+commit's `.skylos/receipts/latest.json` or runs `skylos done` first (not in
+CI, not with `--done-receipt`). Exit 0 on a failed gate unless `--gate`/`--strict`; its
 `--gate` is the Cloud gate only (no local `[tool.skylos.gate]` evaluation).
 `--no-upload` is refused (exit 2). It sends findings, not the repository.
 Plain `skylos . --upload` keeps its full upload output. Other Cloud commands

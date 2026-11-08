@@ -740,7 +740,7 @@ def cmd_project_status() -> None:
         print("  Active Name:  not connected")
 
     if not linked_project_id:
-        print("\nUse 'skylos project use' to select or create a project for this repo.")
+        print("\nRun 'skylos login' to select or create a project for this repo.")
 
 
 def cmd_project_list() -> None:
@@ -750,7 +750,7 @@ def cmd_project_list() -> None:
 
     if not items:
         print("\nNo saved Skylos projects found.")
-        print("Run 'skylos login' or 'skylos project use' first.\n")
+        print("Run 'skylos login' first.\n")
         return
 
     print("\nKnown Skylos Projects\n")
@@ -764,7 +764,7 @@ def cmd_project_list() -> None:
     if linked_project_id:
         print("\n* active for this repo")
     else:
-        print("\nNo active repo link. Use 'skylos project use' to select one.")
+        print("\nNo active repo link. Run 'skylos login' to select one.")
 
 
 def cmd_project_use() -> None:

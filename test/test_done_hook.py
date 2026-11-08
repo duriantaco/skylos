@@ -110,6 +110,34 @@ def _latest(root):
     return receipt
 
 
+def _log(root):
+    log = root / ".skylos" / "hook.log"
+    return [json.loads(line) for line in log.read_text().splitlines()]
+
+
+_RECEIPT = ".skylos/receipts/latest.json"
+_PASS_NO_TESTS = {
+    "systemMessage": f"Skylos Done passed: 0 tests run; receipt {_RECEIPT}"
+}
+_RULES_CONTEXT = (
+    "Skylos Done runs at Stop and blocks on: Tests pass when Skylos runs them; "
+    "No tests deleted, skipped or weakened; Skylos settings and hooks left alone; "
+    "No secrets added; Code doesn't special-case the tests; "
+    "Security controls checked for removals.\n"
+    "Edit hooks block secrets, dangerous sinks fed by untrusted input and "
+    "hallucinated packages.\n"
+    "The pull request gate fails on critical security issues, secrets and "
+    "critical AI-code defects.\n"
+    "Before you finish, run: skylos done --base origin/main"
+)
+
+
+def _with_origin_main(root):
+    _git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
+    _git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    _git(root, "checkout", "-q", "-b", "feature")
+
+
 @pytest.mark.parametrize("client", ["claude", "codex", "cursor"])
 def test_configured_stop_runs_done_without_post_edit_records(
     configured_repo, monkeypatch, client
@@ -157,7 +185,8 @@ def test_prompt_capture_is_idempotent_and_preserves_preexisting_dirty_work(
     configured_repo,
 ):
     _write(configured_repo, "app.py", "value = 7\n")
-    assert _hook(configured_repo, "session-start")[1] is None
+    told = _hook(configured_repo, "session-start")[1]
+    assert told["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
     first = hook_cmd._load_session_state(configured_repo)["sessions"]["session-1"][
         "done_base"
     ]
@@ -178,6 +207,73 @@ def test_cursor_prompt_capture_has_explicit_continue_contract(configured_repo):
     assert _hook(configured_repo, "session-start", client="cursor")[1] == {
         "continue": True
     }
+
+
+def test_first_prompt_tells_claude_the_blocking_checks_once(configured_repo):
+    _with_origin_main(configured_repo)
+    _, output = _hook(configured_repo, "session-start")
+    assert output == {
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": _RULES_CONTEXT,
+        }
+    }
+    assert len(_RULES_CONTEXT.split("\n")) <= 6
+    session = hook_cmd._load_session_state(configured_repo)["sessions"]["session-1"]
+    base = session["done_base"]
+    assert session["told_checks"]
+    assert _hook(configured_repo, "session-start")[1] is None
+    session = hook_cmd._load_session_state(configured_repo)["sessions"]["session-1"]
+    assert session["done_base"] == base
+    assert [entry["outcome"] for entry in _log(configured_repo)] == ["told", "captured"]
+
+
+def test_prompt_context_lists_only_committed_block_checks(configured_repo):
+    _write(
+        configured_repo,
+        "pyproject.toml",
+        "[tool.skylos.done]\n[tool.skylos.done.checks]\n"
+        'tests_pass = "off"\nsecrets = "advise"\nunknown_imports = "block"\n',
+    )
+    _git(configured_repo, "add", "pyproject.toml")
+    _git(configured_repo, "commit", "-qm", "policy")
+    _write(
+        configured_repo,
+        "pyproject.toml",
+        "[tool.skylos.done]\n[tool.skylos.done.checks]\n"
+        'tests_pass = "off"\nsecrets = "advise"\nunknown_imports = "block"\n'
+        'security_controls = "off"\n',
+    )
+    _, output = _hook(configured_repo, "session-start")
+    first = output["hookSpecificOutput"]["additionalContext"].split("\n")[0]
+    assert first == (
+        "Skylos Done runs at Stop and blocks on: No tests deleted, skipped or "
+        "weakened; Skylos settings and hooks left alone; Every package and import "
+        "is real; Code doesn't special-case the tests; Security controls checked "
+        "for removals."
+    )
+
+
+def test_prompt_context_without_table_says_done_is_not_configured(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _write(tmp_path, "app.py", "value = 1\n")
+    _git(tmp_path, "add", "app.py")
+    _git(tmp_path, "commit", "-qm", "initial")
+    _, output = _hook(tmp_path, "session-start")
+    lines = output["hookSpecificOutput"]["additionalContext"].split("\n")
+    assert lines[0] == (
+        "Skylos Done tests are not configured here (no committed [tool.skylos.done] "
+        "table); Stop only rechecks issues your edits introduced."
+    )
+    assert lines[-1] == "Before you finish, run: skylos done --base HEAD"
+    assert _log(tmp_path)[-1]["outcome"] == "told"
+
+
+def test_codex_prompt_output_is_unchanged(configured_repo):
+    assert _hook(configured_repo, "session-start", client="codex")[1] is None
+    assert _hook(configured_repo, "session-start", client="codex")[1] is None
+    session = hook_cmd._load_session_state(configured_repo)["sessions"]["session-1"]
+    assert "told_checks" not in session
 
 
 def test_schema1_migration_preserves_existing_findings(configured_repo):
@@ -233,11 +329,82 @@ def test_success_resets_retry_budget_for_later_regression(configured_repo, monke
     _hook(configured_repo, "stop")
     _write(configured_repo, "app.py", "value = 2\n")
     _mock_run(monkeypatch, _result(configured_repo, status="pass"))
-    assert _hook(configured_repo, "stop")[1] == {}
+    assert _hook(configured_repo, "stop")[1] == _PASS_NO_TESTS
     assert _latest(configured_repo)["verdict"] == "pass"
+    _write(configured_repo, "app.py", "value = 3\n")
     _mock_run(monkeypatch, _result(configured_repo))
     assert _hook(configured_repo, "stop")[1]["decision"] == "block"
     assert _latest(configured_repo)["stop_blocks"] == 1
+
+
+def test_done_pass_is_shown_and_reused_on_an_unchanged_tree(
+    configured_repo, monkeypatch
+):
+    result = _result(configured_repo, status="pass")
+    result.checks[0].result.evidence["run"] = 4
+    calls = _mock_run(monkeypatch, result)
+    shown = {"systemMessage": f"Skylos Done passed: 4 tests run; receipt {_RECEIPT}"}
+    history = configured_repo / ".skylos" / "receipts" / "history"
+    assert _hook(configured_repo, "stop")[1] == shown
+    assert len(calls) == 1
+    assert len(list(history.glob("*.json"))) == 1
+    assert "done_reused" not in _log(configured_repo)[-1]
+    assert _hook(configured_repo, "stop")[1] == shown
+    assert len(calls) == 1
+    assert len(list(history.glob("*.json"))) == 1
+    assert _log(configured_repo)[-1]["done_reused"] is True
+    assert _log(configured_repo)[-1]["outcome"] == "pass"
+    assert _hook(configured_repo, "stop", client="codex")[1] == {}
+    assert len(calls) == 1
+
+
+def test_done_pass_is_not_reused_after_a_change(configured_repo, monkeypatch):
+    calls = _mock_run(monkeypatch, _result(configured_repo, status="pass"))
+    _hook(configured_repo, "stop")
+    _hook(configured_repo, "stop")
+    assert len(calls) == 1
+    monkeypatch.setattr("skylos.done.receipt._version", lambda: "0.0.1")
+    _hook(configured_repo, "stop")
+    assert len(calls) == 2
+    _hook(configured_repo, "stop")
+    assert len(calls) == 2
+    _hook(configured_repo, "stop", session="session-2")
+    assert len(calls) == 3
+    _hook(configured_repo, "stop")
+    assert len(calls) == 4
+    _write(configured_repo, "app.py", "value = 2\n")
+    _hook(configured_repo, "stop")
+    assert len(calls) == 5
+    _write(
+        configured_repo, "pyproject.toml", "[tool.skylos.done]\nmax_stop_blocks = 3\n"
+    )
+    _git(configured_repo, "add", "pyproject.toml")
+    _git(configured_repo, "commit", "-qm", "policy")
+    _hook(configured_repo, "stop")
+    assert len(calls) == 6
+
+
+def test_failed_done_is_never_reused(configured_repo, monkeypatch):
+    _mock_run(monkeypatch, _result(configured_repo, status="pass"))
+    _hook(configured_repo, "stop")
+    sessions = hook_cmd._load_session_state(configured_repo)["sessions"]
+    assert "done_pass" in sessions["session-1"]
+    _write(configured_repo, "app.py", "value = 2\n")
+    calls = _mock_run(monkeypatch, _result(configured_repo))
+    assert _hook(configured_repo, "stop")[1]["decision"] == "block"
+    sessions = hook_cmd._load_session_state(configured_repo)["sessions"]
+    assert "done_pass" not in sessions["session-1"]
+    assert _hook(configured_repo, "stop")[1]["decision"] == "block"
+    assert len(calls) == 2
+
+
+def test_block_message_names_the_receipt_path(configured_repo, monkeypatch):
+    _mock_run(monkeypatch, _result(configured_repo))
+    _, output = _hook(configured_repo, "stop")
+    assert output["reason"].endswith(
+        "Fix these problems, then recheck: skylos done --session session-1.\n"
+        f"Receipt: {_RECEIPT}"
+    )
 
 
 def test_stop_message_has_at_most_ten_concrete_reasons(configured_repo, monkeypatch):
@@ -271,6 +438,7 @@ def test_done_error_warns_and_replaces_earlier_passing_receipt(
     def broken(*args, **kwargs):
         raise RuntimeError("do not expose raw exception contents")
 
+    _write(configured_repo, "app.py", "value = 2\n")
     monkeypatch.setattr("skylos.done.engine.run", broken)
     code, output = _hook(configured_repo, "stop")
     assert code == 0
@@ -482,7 +650,9 @@ def test_real_stop_pipeline_records_actual_test_evidence(
     receipt = _latest(configured_repo)
     assert receipt["verdict"] == expected
     if expected == "pass":
-        assert output == {}
+        assert output == {
+            "systemMessage": f"Skylos Done passed: 1 test run; receipt {_RECEIPT}"
+        }
     else:
         assert output["decision"] == "block"
 
@@ -559,6 +729,7 @@ def test_recorded_edit_guards_block_before_done_even_when_core_would_pass(
     assert output["decision"] == "block"
     assert f"app.py:5 {rule}" in output["reason"]
     assert "hook recheck app.py" in output["reason"]
+    assert output["reason"].endswith(f"\nReceipt: {_RECEIPT}")
     assert calls == []
     assert verify.calls == [configured_repo / "app.py"]
     receipt = _latest(configured_repo)
@@ -579,7 +750,10 @@ def test_resolved_recorded_issue_allows_done_without_trusting_cached_failure(
     _write(configured_repo, "app.py", "value = 1\n")
     verify.open = False
     calls = _mock_run(monkeypatch, _result(configured_repo, status="pass"))
-    assert _hook(configured_repo, "stop", deps=HookDeps(verify=verify))[1] == {}
+    assert (
+        _hook(configured_repo, "stop", deps=HookDeps(verify=verify))[1]
+        == _PASS_NO_TESTS
+    )
     assert calls == [(configured_repo, "session-1")]
     assert verify.calls == [configured_repo / "app.py"]
     receipt = _latest(configured_repo)
@@ -699,7 +873,10 @@ def test_deleted_recorded_file_is_resolved_only_when_absent_from_snapshot(
     verify = _record_issue(configured_repo)
     (configured_repo / "app.py").unlink()
     calls = _mock_run(monkeypatch, _result(configured_repo, status="pass"))
-    assert _hook(configured_repo, "stop", deps=HookDeps(verify=verify))[1] == {}
+    assert (
+        _hook(configured_repo, "stop", deps=HookDeps(verify=verify))[1]
+        == _PASS_NO_TESTS
+    )
     assert calls == [(configured_repo, "session-1")]
     assert verify.calls == []
     assert _latest(configured_repo)["verdict"] == "pass"

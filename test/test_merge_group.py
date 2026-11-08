@@ -170,8 +170,15 @@ class FakeGitHub:
 
 
 def _set_api(monkeypatch, fake):
+    fake.sends = []
+
+    def send(method, url, body):
+        fake.sends.append((method, url, body))
+        return 200, None
+
     monkeypatch.setattr(approval_github, "_requests_getter", lambda token: fake)
     monkeypatch.setattr(merge_group, "_requests_getter", lambda token: fake)
+    monkeypatch.setattr(approval_github, "_requests_sender", lambda token: send)
     return fake
 
 
@@ -443,9 +450,12 @@ def test_a_risk_added_by_the_queued_pull_request_needs_its_own_approval(
     queue.entry(7, {"requirements.txt": "flask==3.0.0\nrequests==2.32.0\n"})
     queue.event(tmp_path, 7, monkeypatch)
     heads = {5: "5" * 40, 7: "7" * 40}
-    _set_api(monkeypatch, FakeGitHub(heads, {5: [_review("alice", commit=heads[5])]}))
+    fake = _set_api(
+        monkeypatch, FakeGitHub(heads, {5: [_review("alice", commit=heads[5])]})
+    )
     code, data = _run(queue.root, capsys)
     assert code == 1 and "#7" in data["human_approval"]["detail"]
+    assert data["label"] is None and fake.sends == []
 
 
 def test_the_wrong_commit_or_base_never_passes(tmp_path, monkeypatch, capsys):

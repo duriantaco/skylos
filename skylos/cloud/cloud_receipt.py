@@ -22,6 +22,9 @@ FAILED_NEXT_STEP = (
     "  Next: fix the issues behind the failed gate, then run skylos cloud again."
 )
 CI_NEXT_STEP = "  Next: skylos cicd init — adds a Skylos check to every pull request."
+UNVERIFIED_STANDING = "laptop upload, unverified until CI runs the workflow"
+VERIFIED_STANDING = "verified CI upload"
+RECEIPT_VERDICTS = {"pass": "pass", "fail": "fail", "incomplete": "unfinished"}
 
 
 def local_next_steps(*, ci_configured: bool) -> list[tuple[str, str]]:
@@ -82,12 +85,36 @@ def _open_url(dest: UploadDestination, upload_resp: dict, base_url: str) -> str 
     return details_url(base, None, upload_resp.get("scan_id"))
 
 
+def _standing(upload_trust) -> str | None:
+    if upload_trust == "unverified":
+        return UNVERIFIED_STANDING
+    if upload_trust == "verified_ci":
+        return VERIFIED_STANDING
+    return None
+
+
+def sent_line(done_receipt, upload_resp: dict, done_note: str | None) -> str:
+    """What reached Skylos Cloud and its standing, e.g.
+    ``Sent: findings and the Done receipt (fail) · laptop upload, unverified
+    until CI runs the workflow``."""
+    what = "findings"
+    if isinstance(done_receipt, dict):
+        verdict = RECEIPT_VERDICTS.get(done_receipt.get("verdict"), "unfinished")
+        what = f"findings and the Done receipt ({verdict})"
+    parts = [what]
+    note = done_note or _standing(upload_resp.get("upload_trust"))
+    if note:
+        parts.append(note)
+    return "Sent: " + " · ".join(parts)
+
+
 def cloud_receipt_lines(
     dest: UploadDestination | None,
     upload_resp: dict,
     base_url: str,
     *,
     ci_configured: bool,
+    sent: str | None = None,
 ) -> list[str]:
     if dest is None:
         dest = UploadDestination(key_source="none")
@@ -101,6 +128,8 @@ def cloud_receipt_lines(
         note = receipt_note(dest, upload_trust)
         if note:
             lines.append(f"  {note}")
+    if sent:
+        lines.append(f"  {sent}")
     passed = upload_resp.get("quality_gate_passed")
     if upload_resp.get("quality_gate_reported") is False:
         return [_printable(line) for line in lines]

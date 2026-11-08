@@ -11,7 +11,7 @@ KEY_SOURCE_LABELS = {
     "env": "project token from SKYLOS_TOKEN",
     "ci": "GitHub Actions or GitLab CI identity",
     "link": "login token for this repo's linked project (.skylos/link.json)",
-    "saved": "your saved login token; this repo is not linked (skylos project use links it)",
+    "saved": "your saved login token; this repo is not linked (skylos login links it)",
 }
 
 _PROJECT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
@@ -215,7 +215,7 @@ def mismatch_refusal_lines(dest: UploadDestination) -> list[str]:
         f"Not uploaded: this repo is {_shown(dest.local_repo)}, but your saved login token "
         f"belongs to project {project_label(dest)} ({_shown(dest.project_repo)}).",
         "  Uploading would put this repo's findings into that project.",
-        "  Pick the right project for this repo: skylos project use",
+        "  Pick the right project for this repo: skylos login",
         "  Or upload with a project token of that project: SKYLOS_TOKEN=<token> skylos . --upload",
     ]
     return [_printable(line) for line in lines]

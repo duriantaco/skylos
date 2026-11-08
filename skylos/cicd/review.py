@@ -23,6 +23,7 @@ from skylos.cicd.evidence import (
     sanitize_markdown_text,
     sanitize_untrusted_text,
 )
+from skylos.cicd.pr_summary import SummaryInputs, brief_lines, verdict_line
 from skylos.cicd.risk_passport import (
     build_risk_passport,
     format_risk_passport_markdown,
@@ -57,6 +58,7 @@ def run_pr_review(
     llm_findings: list[dict] | None = None,
     defense_report: dict | None = None,
     evidence_cards: bool = False,
+    summary_inputs: SummaryInputs | None = None,
 ) -> None:
     pr_number = pr_number or _detect_pr_number()
     repo = repo or os.environ.get("GITHUB_REPOSITORY")
@@ -175,6 +177,7 @@ def run_pr_review(
         risk_passport=risk_passport,
         identity=identity,
         left_unused=left_unused,
+        summary_inputs=summary_inputs,
     )
 
     console.print(
@@ -1640,6 +1643,7 @@ def _post_summary_comment(
     risk_passport: dict | None = None,
     identity: _TokenIdentity | None = None,
     left_unused: list[tuple[str, str]] | None = None,
+    summary_inputs: SummaryInputs | None = None,
 ) -> _CommentOutcome:
     left_unused = left_unused or []
     existing_comments, list_error = _gh_list(
@@ -1668,9 +1672,13 @@ def _post_summary_comment(
         if previous_changed is not None and previous_changed != changed_now
         else ""
     )
-    lines = [SUMMARY_MARKER, _SUMMARY_HEADING, ""]
+    head = [SUMMARY_MARKER, _SUMMARY_HEADING, ""]
+    if summary_inputs is not None:
+        verdict = verdict_line(summary_inputs)
+        if verdict:
+            head.extend([verdict, ""])
     if changed_now == 0 and previous_max > 0:
-        lines.extend(
+        head.extend(
             [
                 "✅ **All issues Skylos reported on this PR's changed lines are "
                 f"fixed.** Earlier runs reported up to {previous_max}.",
@@ -1680,10 +1688,16 @@ def _post_summary_comment(
     left_unused_count = (
         f" | **{len(left_unused)}** left unused by this change" if left_unused else ""
     )
-    lines.append(
+    head.append(
         f"**{changed_now}** issue(s) on changed lines{was} | "
         f"**{len(all_findings)}** total{left_unused_count}"
     )
+    if summary_inputs is not None:
+        brief = brief_lines(summary_inputs)
+        if brief:
+            head.append("")
+            head.extend(brief)
+    lines: list[str] = []
     lines.extend(format_risk_passport_markdown(risk_passport))
     lines.extend(
         [
@@ -1884,8 +1898,14 @@ def _post_summary_comment(
             )
         lines.extend(["", "Historical result; this score is not a current risk assessment."])
 
-    lines.extend(
+    body = "\n".join(
         [
+            *head,
+            "",
+            "<details><summary>Details</summary>",
+            *lines,
+            "",
+            "</details>",
             "",
             "---",
             "_Skylos edits this comment on each push instead of adding a new "
@@ -1894,7 +1914,6 @@ def _post_summary_comment(
             f"changed={changed_now} max={max(previous_max, changed_now)} -->",
         ]
     )
-    body = "\n".join(lines)
 
     note = (
         f"could not read existing comments ({list_error})"

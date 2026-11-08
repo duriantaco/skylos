@@ -1,14 +1,26 @@
 # Your First Skylos-Gated Pull Request
 
 This takes about 8 minutes. At the end, every pull request in your repository
-gets two GitHub checks, and a pull request that fails them cannot merge:
+gets two GitHub checks and one Skylos comment, and a pull request that fails
+the checks cannot merge:
 
 | Check | What it does |
 |:---|:---|
-| **Skylos Quality Gate** | Scans the lines the pull request changes for security issues, secrets, quality problems, AI-code mistakes and vulnerable dependencies. Fails on any critical security issue, secret or critical AI-code mistake (such as an import of a package that does not exist), and when other findings pass their limits. Posts a summary comment and inline comments. |
+| **Skylos Quality Gate** | Scans the lines the pull request changes for security issues, secrets, quality problems, AI-code mistakes and vulnerable dependencies. Fails on any critical security issue, secret or critical AI-code mistake (such as an import of a package that does not exist), and when other findings pass their limits. |
 | **Skylos Done** | Runs your tests and checks that the change is finished: no deleted or skipped tests, no edits to Skylos settings, no added secrets. Added when Skylos can find your tests. |
 
-No API key or repository secret is needed for either check.
+A third job, **Skylos PR summary**, runs after those checks, whatever their
+result, and posts the one Skylos comment on the pull request: the verdicts,
+what blocks and how to fix it, what to read first, which changed lines no test
+checks and what needs a person, with the full tables under **Details**. It
+also posts the inline comments. It is not a required check.
+
+No API key or repository secret is needed for any of them.
+
+`skylos setup` does steps 2 and 5 for you: it writes the workflow, and once
+that workflow is merged into your default branch, running it again creates the
+ruleset from step 5 (it needs `gh` logged in). The steps below are the manual
+path and explain what each piece does.
 
 ## Before you start
 
@@ -36,6 +48,9 @@ From your repository, on a new branch:
 git checkout -b add-skylos-gate
 skylos cicd init
 ```
+
+`skylos setup` runs this same command, after adding `[tool.skylos.done]` when
+it finds pytest, Vitest or Jest tests.
 
 This guide is for GitHub Actions. For GitLab CI, Jenkins, Bitbucket Pipelines,
 Azure Pipelines or CircleCI, see [Skylos on any CI](./ci-platforms.md). A
@@ -114,6 +129,7 @@ Expected (the exact columns depend on your `gh` version):
 ```text
 ✓  Skylos Analysis/Skylos Quality Gate (pull_request)
 ✓  Skylos Analysis/Skylos Done (pull_request)
+✓  Skylos Analysis/Skylos PR summary (pull_request)
 ```
 
 A workflow with the Cloud upload jobs also lists them as skipped:
@@ -133,11 +149,20 @@ The gate checks only the lines a pull request changes, so findings already in
 your code do not fail this first pull request. On the pull request you will
 also see:
 
-- a **Skylos Analysis Summary** comment. Later pushes edit this same comment
-  instead of adding new ones, and it says so when every issue it reported on
-  the changed lines is fixed;
-- the gate table and the Done receipt in each job's summary (click the check,
-  then **Summary**);
+- one **Skylos Analysis Summary** comment, posted by the Skylos PR summary
+  job once the other checks finish. It opens with a verdict line (**Gate**,
+  **Done**, **Risk review** when that check is on), then **Blocking** (the
+  gate's reasons and each failing Done check with its findings and a Fix
+  line), **Read first** (the change map's entries as `file:line · symbol ·
+  why`, with a count of what is left to read, proven unchanged and not
+  mapped), **Not checked by tests** (changed lines no test checks) and
+  **Needs a person** (risk classes and who can clear them), a link to the
+  workflow run, and the issue tables under **Details**. Later pushes edit
+  this same comment instead of adding new ones, and it says so when every
+  issue it reported on the changed lines is fixed;
+- the gate table in the gate job's summary and the Done receipt with the full
+  change map in the Done job's summary (click the check, then **Summary**, or
+  follow the comment's link);
 - inline comments and file annotations when a changed line has a finding. A
   finding gets one inline comment: later pushes add comments only for new
   findings, up to `--max-comments` (default 25) per pull request.
@@ -150,8 +175,14 @@ gh pr merge --squash --delete-branch
 
 ## 5. Make the checks required (1 minute)
 
-This creates a ruleset on your default branch. Skip `"Skylos Done"` if
-step 2 said it was not added.
+The short way: run `skylos setup` again now that the workflow is on your
+default branch. It creates a branch ruleset named **Skylos** that requires
+exactly the checks the merged workflow has, and leaves an existing ruleset of
+that name alone. It needs `gh auth status` to succeed and admin access; when
+something is missing, the **Required checks** line says what.
+
+The manual way creates the same ruleset. Skip `"Skylos Done"` if step 2 said
+it was not added.
 
 ```bash
 gh api --method POST "repos/{owner}/{repo}/rulesets" --input - <<'EOF'
@@ -233,9 +264,12 @@ the Skylos Cloud dashboard. The checks from steps 4 to 6 do not depend on it.
    GitHub App** on this repository. In an organization, an owner may have to
    approve the install.
 3. If your workflow has no upload jobs (step 2 printed `Cloud upload: off`),
-   add them: on a new branch run `skylos cicd init --upload --force` (the old
-   file is kept as `skylos.yml.bak`), then open and merge a pull request with
-   the new `.github/workflows/skylos.yml`.
+   add them: now that this machine is logged in, `skylos setup` writes them
+   (it asks before replacing the existing workflow; `skylos setup --yes`
+   replaces it without asking, keeping the old file as `skylos.yml.bak`), and
+   its **Skylos Cloud** row says whether the workflow uploads. By hand:
+   `skylos cicd init --upload --force`. Then open and merge a pull request
+   with the new `.github/workflows/skylos.yml`.
 4. Push to your default branch (or merge any pull request). The **Skylos Cloud
    upload** job runs `skylos cloud` and should end with the gate for your
    default branch, for example `✓ Quality gate on main: PASSED`, and an
@@ -250,6 +284,10 @@ check and uploads; add `--gate` to exit `1` on a failed gate). It prints the
 Cloud gate result for the branch, how it changed since the last run, and one
 link, for example
 `✓ Quality gate on main: PASSED (was FAILED on 21 Oct 14:05 UTC, abc1234)`.
+With a committed `[tool.skylos.done]` table and a clean working tree it also
+sends this commit's Done receipt (running `skylos done` first when there is
+none) and ends with a `Sent:` line naming what reached Skylos Cloud; see
+[Skylos Cloud](./skylos-cloud.md).
 Follow the link to the branch's gate and results, signing in if asked. The
 manual form, `skylos . -a --gate --upload`, uploads the same scan with the
 full upload output. Formatted output keeps the link on stderr so
@@ -325,9 +363,10 @@ those; add yourself to the ruleset's bypass list to do it.
   those paths waits forever. Remove the filter; see below.
 
 Pull requests from forks get a read-only token, so the summary and inline
-comments are skipped there: the `PR Review Comments` step prints one line
-saying it could not comment and does not fail. The checks still run and still
-block.
+comments are skipped there: the **Skylos PR summary** job prints one line
+saying it could not comment and does not fail, and the risk review cannot add
+or remove its `skylos:needs-human` label (it prints one line and keeps its
+verdict). The checks still run and still block.
 
 ## Merge queues and monorepos
 
@@ -343,10 +382,12 @@ and each required check runs there under the same name:
   base.
 - **Skylos risk review** checks the risks in the merge group and the
   approvals of the pull requests that added them; see
-  [Merge queues](./risk-review.md#merge-queues).
+  [Merge queues](./risk-review.md#merge-queues). On pull requests it also
+  adds the label `skylos:needs-human` while it waits for a person and removes
+  it once the check passes; merge-group runs leave the label alone.
 
-Review comments, the Cloud upload and the Claude jobs do not run on merge
-groups. Turn the queue on in the same ruleset (**Require merge queue**); the
+The PR summary comment, the Cloud upload and the Claude jobs do not run on
+merge groups. Turn the queue on in the same ruleset (**Require merge queue**); the
 required checks stay the same.
 
 **One required check per job, no path filters.** GitHub does not report a
@@ -374,8 +415,9 @@ these jobs:
 
 | Job | Runs on | Permissions |
 |:---|:---|:---|
-| `skylos` (Skylos Quality Gate) | pull requests, merge groups (and default-branch pushes when the workflow has no upload job) | read code, write PR comments |
-| `done` (Skylos Done) | pull requests, checking out the PR head with full history, and merge groups, checking out the merge-group commit | read code |
+| `skylos` (Skylos Quality Gate) | pull requests, merge groups (and default-branch pushes when the workflow has no upload job); saves the scan for the summary job | read code |
+| `done` (Skylos Done) | pull requests, checking out the PR head with full history, and merge groups, checking out the merge-group commit; saves the receipt and change map for the summary job | read code |
+| `summary` (Skylos PR summary) | pull requests, after the other pull request jobs finish, whatever their result; downloads what they saved and posts the one comment | read code, write PR comments |
 | `cloud-upload` (Skylos Cloud upload) | pushes to the default branch | read code, GitHub OIDC token |
 | `pr-policy` (Skylos Cloud PR policy) | `pull_request_target` for pull requests to the default branch; no checkout | GitHub OIDC token |
 | `pr-scan` (Skylos Cloud PR scan) | after `pr-policy`; installs Skylos, then checks out the PR head into `pr-source` without saved credentials and scans it as data | read code |

@@ -34,7 +34,7 @@ skylos done --base main   # is this branch finished? runs your tests, compares w
 Working with a coding agent? Two commands:
 
 ```bash
-skylos setup   # once per repo: connects Claude Code and Codex, writes the PR check, maps the code
+skylos setup   # once per repo: connects Claude Code and Codex, installs their hooks, lets Done run your tests, writes the PR check, maps the code
 skylos open    # every day: diagram of your code, what changed in plain English, every check run
 ```
 
@@ -149,7 +149,7 @@ current directory. `suite` and `defend` require a directory; `verify` and
 | Question | Command | Input checked |
 |:---|:---|:---|
 | What problems are in this source tree? | `skylos PATH` | Source files and project configuration; dead code by default, every main source analyzer with `-a` |
-| How is this branch doing on Skylos Cloud? | `skylos cloud [PATH]` | Every main source analyzer, then the findings are uploaded and the branch's quality gate is printed with one link |
+| How is this branch doing on Skylos Cloud? | `skylos cloud [PATH]` | Every main source analyzer, then the findings and this commit's Done receipt are uploaded and the branch's quality gate is printed with one link |
 | Did the agent really finish this branch? | `skylos done --base main` | The branch's changes since its merge base with `main`: Skylos runs your tests (pytest automatically; other runners need `test_command` in `[tool.skylos.done]`) and compares the tests, test settings and CI steps with the base; writes a receipt to `.skylos/receipts/` |
 | What does this change touch, and what should I read first? | `skylos done map --base main` | Each changed Python or TypeScript/JavaScript function since the merge base, with old and new code, calls added and removed, its callers and removed security checks, sorted into read first, read, skim and skip (skip only when the logic is proven the same); computed from the code, so the same commit gives the same map |
 | Does this code contain AI-code mistakes? | `skylos verify [PATH]` | AI-defect checks over the selected file or tree, plus a separate Git HEAD behavior comparison for supported Python working changes |
@@ -204,6 +204,7 @@ this branch's quality gate with one link to it:
 ```text
 ✗ Quality gate on feat/login: FAILED (was PASSED on 24 Oct 15:38 UTC, 1ba9895) · 1 critical security issue
   Open: https://skylos.dev/dashboard/projects/<project>?branch=feat%2Flogin
+  Sent: findings and the Done receipt (fail) · laptop upload, unverified until CI runs the workflow
   Next: fix the issues behind the failed gate, then run skylos cloud again.
 ```
 
@@ -211,10 +212,14 @@ The first run opens your browser to log in and pick the project for this repo.
 It sends findings with file paths and code snippets of up to 7 lines (none for
 secrets), the branch, the commit, the git author email of each flagged line,
 and a map of your functions and classes (names, files, lines, sizes, which
-calls which). Not your repository. It exits `0` even when the Skylos Cloud gate
-fails; add `--gate` to exit `1` (use that in CI). You never need a key to pass
-the gate: fix the issues that fail it. See [Skylos Cloud](./docs/skylos-cloud.md) for the other
-Cloud commands.
+calls which). Not your repository. When the repository has a committed
+`[tool.skylos.done]` table (`skylos setup` writes it) and the working tree is
+clean, it also sends this commit's Done receipt, running `skylos done` first
+when there is none; the `Sent:` line says what reached Skylos Cloud. Uploads
+from a laptop are unverified until CI runs the workflow. It exits `0` even
+when the Skylos Cloud gate fails; add `--gate` to exit `1` (use that in CI).
+You never need a key to pass the gate: fix the issues that fail it. See
+[Skylos Cloud](./docs/skylos-cloud.md) for the other Cloud commands.
 
 Before 4.47.2, `pip install skylos` also installs a Dart parser that builds
 from source and needs a C compiler. From 4.47.2, Dart support is the optional
@@ -408,7 +413,9 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 
 ## Check Every Agent Edit (Claude Code, Codex, Cursor)
 
-Install local hooks so the agent is checked while it works, not after:
+Install local hooks so the agent is checked while it works, not after.
+`skylos setup` installs the Claude Code and Codex hooks for a repository; the
+commands below install one agent at a time, or Cursor:
 
 ```bash
 skylos agent install-hooks            # Claude Code (.claude/settings.json)
@@ -450,11 +457,11 @@ every command. See [what they don't do](./docs/agent-hooks.md#what-it-doesnt-do)
 | Combined repo report | `skylos suite .` | Reports static findings, technical debt, AI app safety, and provenance; SCA can query OSV, and findings alone exit `0` | [CLI Reference](https://docs.skylos.dev/cli-reference) |
 | Optional Python linting | `pip install "skylos[lint]" && skylos lint .` | Runs Ruff with its native configuration, output, fixes, and exit codes through the Skylos CLI | [Python linting](./docs/python-linting.md) |
 | Agent branch done check | `skylos done --base origin/main` | Runs your tests and flags deleted, skipped or weakened tests, loosened test settings and CI test steps, silenced checks, and test-only special cases; writes a receipt | [Done gate](./docs/done-gate.md) |
-| Change map for review | `skylos done map --base origin/main` | Old and new code of each changed Python or TypeScript/JavaScript function, calls added and removed, who calls it and whether those callers were updated, removed auth checks, breaking signatures, and what to read first, read, skim or skip, with a count of the changed lines a person has to read; `--format json` for a review agent. The GitHub check from `skylos cicd init` shows it on every pull request | [Change map](./docs/change-map.md) |
+| Change map for review | `skylos done map --base origin/main` | Old and new code of each changed Python or TypeScript/JavaScript function, calls added and removed, who calls it and whether those callers were updated, removed auth checks, breaking signatures, and what to read first, read, skim or skip, with a count of the changed lines a person has to read; `--format json` for a review agent. The pull request comment from `skylos cicd init` shows what to read first, and the Skylos Done check's summary has the full map | [Change map](./docs/change-map.md) |
 | MCP change map | `change_map` MCP tool | Gives a review agent the change map as JSON before it reads the diff, including what to read first, read, skim and skip. Needs no Skylos API key and has no daily limit; the map is built on your machine | [Change map](./docs/change-map.md#in-the-agent-loop) |
 | Codebase graph | `skylos graph open` | Every Python and TypeScript/JavaScript function and class (Go, Java, Rust and PHP as a first pass, calls matched by name), grouped into areas, what calls what, tests and their expected outputs, in a local browser view; marks changed code and says whether its logic is still the same (only claimed when proven). Plain-English descriptions come from your coding agent or your own model key; `skylos graph show/impact --format json` and the `graph_*` MCP tools (no key needed) give agents the same answers | [Codebase graph](./docs/graph.md) |
-| Risks that need a human approval | `skylos cicd risk-review --base origin/main` | Lists deleted or weakened tests, removed auth checks, added or changed dependencies, weakened CI, silenced checks, added secrets, guardrail setting edits, migration changes and very large diffs. As a required GitHub check (`skylos cicd init --risk-review`) it fails until a person with write access approves the head commit; bot approvals do not count | [Risk review](./docs/risk-review.md) |
-| PR gate | `skylos cicd init --no-upload` | Sets up the pull request gate for your CI. On GitHub Actions it writes a workflow that gates pull requests and runs `skylos done` when your tests can run; add `--upload` (the default once you are logged in to Skylos Cloud) to also upload default-branch scans to Skylos Cloud with GitHub OIDC, and that job fails until the Skylos GitHub App is installed on the repository. GitLab CI, Jenkins, Bitbucket Pipelines, Azure Pipelines and CircleCI get a gate for that CI | [First gated PR](./docs/first-gated-pr.md), [Skylos on any CI](./docs/ci-platforms.md) |
+| Risks that need a human approval | `skylos cicd risk-review --base origin/main` | Lists deleted or weakened tests, removed auth checks, added or changed dependencies, weakened CI, silenced checks, added secrets, guardrail setting edits, migration changes and very large diffs. As a required GitHub check (`skylos cicd init --risk-review`) it fails until a person with write access approves the head commit; bot approvals do not count. While it waits it labels the pull request `skylos:needs-human`, so `is:pr is:open label:skylos:needs-human` lists every pull request that needs a person | [Risk review](./docs/risk-review.md) |
+| PR gate | `skylos cicd init --no-upload` | Sets up the pull request gate for your CI. On GitHub Actions it writes a workflow that gates pull requests, runs `skylos done` when your tests can run and posts one comment per pull request (verdicts, what blocks, what to read first); add `--upload` (the default once you are logged in to Skylos Cloud) to also upload default-branch scans to Skylos Cloud with GitHub OIDC, and that job fails until the Skylos GitHub App is installed on the repository. GitLab CI, Jenkins, Bitbucket Pipelines, Azure Pipelines and CircleCI get a gate for that CI | [First gated PR](./docs/first-gated-pr.md), [Skylos on any CI](./docs/ci-platforms.md) |
 | GitLab merge request report | `skylos . --format gitlab -o gl-code-quality-report.json` | Exports a native Code Quality report for GitLab CI artifacts | [GitLab Code Quality](./docs/gitlab-code-quality.md) |
 | Offline dependency SBOM | `skylos sbom . -o sbom.cdx.json` | Lists supported recorded dependencies as CycloneDX 1.6 JSON without network requests | [Dependency scanning](./docs/dependency-scanning.md#export-an-sbom-offline) |
 | SPDX SBOM + license policy | `skylos sbom . --format spdx-json` / `license_deny = ["GPL-*"]` | SPDX 2.3 JSON with declared licenses; `SKY-SCA-LIC001` flags denied licenses in `-a` scans | [License compliance](./docs/license-compliance.md) |
@@ -1343,8 +1350,9 @@ skylos cicd init --no-upload --risk-review         # plus the "Skylos risk revie
 skylos cicd init --ci jenkins                      # a Jenkinsfile pull request stage
 ```
 
-On GitHub Actions, the generated workflow reviews changed lines on pull requests and adds a
-`skylos done` job when it finds your tests. With `--upload` (the default when
+On GitHub Actions, the generated workflow reviews changed lines on pull requests, adds a
+`skylos done` job when it finds your tests, and posts one comment per pull request
+with the verdicts, what blocks and what to read first. With `--upload` (the default when
 this machine is logged in to Skylos Cloud; without a login it prints how to
 add it) it also uploads full scans to Skylos Cloud using GitHub OIDC, from default-branch
 pushes and from pull requests to the default branch (`pull_request_target`:

@@ -17,11 +17,17 @@ API. An approval counts when, as GitHub itself counts approvals:
 
 Any API error, unexpected response or missing context that should be there
 leaves the result undecided; the caller then fails closed.
+
+The same token also keeps the ``skylos:needs-human`` label on the pull
+request: added while the check needs a person's approval, removed once it
+passes, so ``is:pr is:open label:skylos:needs-human`` lists every pull request
+waiting on a person. A label update that fails is reported, never raised.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from collections.abc import Callable, Mapping
@@ -38,6 +44,11 @@ _LOGIN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?")
 _DECISIVE = frozenset({"APPROVED", "CHANGES_REQUESTED", "DISMISSED"})
 _WRITE_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 _WRITE_PERMISSIONS = frozenset({"admin", "maintain", "write"})
+NEEDS_HUMAN_LABEL = "skylos:needs-human"
+_LABEL_COLOR = "d93f0b"
+_LABEL_DESCRIPTION = "Skylos: a risk class in this PR needs a person's approval"
+
+logger = logging.getLogger(__name__)
 
 
 class GitHubApiError(Exception):
@@ -51,6 +62,7 @@ class PullRequestContext:
     number: int
     head_sha: str
     token: str = field(repr=False)
+    fork: bool = False
 
 
 @dataclass
@@ -74,6 +86,20 @@ class HumanApproval:
         }
 
 
+@dataclass
+class LabelUpdate:
+    """What happened to the ``skylos:needs-human`` label: ``added``,
+    ``removed``, ``absent`` (nothing to remove) or ``failed`` (``detail``
+    says why)."""
+
+    action: str
+    detail: str = ""
+    name: str = NEEDS_HUMAN_LABEL
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "action": self.action, "detail": self.detail}
+
+
 def pull_request_context(
     environ: Mapping[str, str] | None = None,
 ) -> PullRequestContext | None:
@@ -93,7 +119,8 @@ def pull_request_context(
     if not _REPO_RE.fullmatch(repository):
         raise GitHubApiError("GITHUB_REPOSITORY is not owner/name")
     number = pull_request.get("number")
-    head_sha = (pull_request.get("head") or {}).get("sha")
+    head = pull_request.get("head") or {}
+    head_sha = head.get("sha")
     if not isinstance(number, int) or isinstance(number, bool) or number < 1:
         raise GitHubApiError("the event has no pull request number")
     if not isinstance(head_sha, str) or not _SHA_RE.fullmatch(head_sha):
@@ -101,7 +128,16 @@ def pull_request_context(
     api_url = (env.get("GITHUB_API_URL") or "https://api.github.com").rstrip("/")
     if not api_url.startswith("https://"):
         raise GitHubApiError("GITHUB_API_URL must be an https:// URL")
-    return PullRequestContext(api_url, repository, number, head_sha, token)
+    return PullRequestContext(
+        api_url, repository, number, head_sha, token, _from_fork(head, repository)
+    )
+
+
+def _from_fork(head: dict, repository: str) -> bool:
+    repo = head.get("repo")
+    if not isinstance(repo, dict) or not isinstance(repo.get("full_name"), str):
+        return True
+    return repo["full_name"].lower() != repository.lower()
 
 
 def _read_event(event_path: str) -> dict:
@@ -214,7 +250,66 @@ def _latest_decisive_reviews(reviews: list[dict]) -> dict[str, dict]:
     return latest
 
 
-def _requests_getter(token: str) -> Callable[[str], object]:
+def update_needs_human_label(
+    context: PullRequestContext,
+    needed: bool,
+    *,
+    send: Callable[[str, str, dict | None], tuple[int, object]] | None = None,
+) -> LabelUpdate:
+    """Put ``skylos:needs-human`` on the pull request when ``needed``, creating
+    the label in the repository first when it is missing; remove it from the
+    pull request otherwise. Never raises: a failed update comes back as
+    ``failed`` with the reason."""
+    try:
+        request = send or _requests_sender(context.token)
+        base = f"{context.api_url}/repos/{context.repository}"
+        name = quote(NEEDS_HUMAN_LABEL, safe="")
+        issue_labels = f"{base}/issues/{context.number}/labels"
+        if not needed:
+            status, _ = request("DELETE", f"{issue_labels}/{name}", None)
+            if status == 404:
+                return LabelUpdate("absent")
+            _expect(status, 200)
+            return LabelUpdate("removed")
+        status, _ = request("GET", f"{base}/labels/{name}", None)
+        if status == 404:
+            created, _ = request(
+                "POST",
+                f"{base}/labels",
+                {
+                    "name": NEEDS_HUMAN_LABEL,
+                    "color": _LABEL_COLOR,
+                    "description": _LABEL_DESCRIPTION,
+                },
+            )
+            _expect(created, 201, 422)
+        else:
+            _expect(status, 200)
+        status, _ = request("POST", issue_labels, {"labels": [NEEDS_HUMAN_LABEL]})
+        _expect(status, 200)
+        return LabelUpdate("added")
+    except Exception as exc:
+        logger.debug("could not update the %s label", NEEDS_HUMAN_LABEL, exc_info=True)
+        return LabelUpdate("failed", detail=_label_failure(context, exc))
+
+
+def _expect(status: int, *accepted: int) -> None:
+    if status not in accepted:
+        raise GitHubApiError(f"HTTP {status}")
+
+
+def _label_failure(context: PullRequestContext, exc: Exception) -> str:
+    if not isinstance(exc, GitHubApiError):
+        return type(exc).__name__
+    reason = str(exc)
+    if reason != "HTTP 403":
+        return reason
+    if context.fork:
+        return "HTTP 403: on a pull request from a fork the token is read-only"
+    return "HTTP 403: the job needs the pull-requests: write permission"
+
+
+def _session(token: str):
     import requests
 
     session = requests.Session()
@@ -226,6 +321,35 @@ def _requests_getter(token: str) -> Callable[[str], object]:
             "User-Agent": "skylos-risk-review",
         }
     )
+    return session
+
+
+def _requests_sender(
+    token: str,
+) -> Callable[[str, str, dict | None], tuple[int, object]]:
+    import requests
+
+    session = _session(token)
+
+    def send(method: str, url: str, body: dict | None) -> tuple[int, object]:
+        try:
+            response = session.request(method, url, json=body, timeout=_TIMEOUT_SECONDS)
+        except requests.RequestException as exc:
+            raise GitHubApiError(type(exc).__name__) from exc
+        if not response.content:
+            return response.status_code, None
+        try:
+            return response.status_code, response.json()
+        except ValueError:
+            return response.status_code, None
+
+    return send
+
+
+def _requests_getter(token: str) -> Callable[[str], object]:
+    import requests
+
+    session = _session(token)
 
     def get_json(url: str) -> object:
         try:
