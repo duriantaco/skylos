@@ -101,6 +101,14 @@ Rule IDs use a stable public prefix:
 | npm publisher review | Opt-in `--scan-publisher-changes` checks direct npm dependencies in a lockfile for a newly observed publisher after a long release gap. `publisher_change_findings` are WARN review signals, not evidence of compromise or known vulnerabilities; they do not affect the vulnerability count or gate. |
 | SBOM | `skylos sbom .`; offline dependency inventory as CycloneDX 1.6 (default) or SPDX 2.3 (`--format spdx-json`) JSON, including declared licenses. |
 | License policy | `[tool.skylos] license_deny` / `license_allow` / `license_exceptions` / `license_severity`; flags dependencies whose declared SPDX license violates policy as `SKY-SCA-LIC001`. Unknown licenses are `NOASSERTION` and never fire. |
+| Malicious package (SCA) | An OSV advisory with an `MAL-*` ID or alias, a `malicious-packages-origins` record, or CWE-506. Reported `CRITICAL` under its `SKY-SCA-<id>` rule with `metadata.malicious: true`; never demoted as dev-only and never given a reachability verdict. When OSV is unreachable, the installed ca9 malware feed is checked (`metadata.malware_source: "ca9_feed"`). |
+| Supply-chain policy | `[tool.skylos.supply_chain]` (`internal_packages`, `private_registries`, `trusted_registries`, `min_release_age_hours`, `block_malware`, `check_provenance`), merged with the synced Skylos Cloud `supply_chain` block, which can only tighten it. Read by `--sca` scans (SKY-SCA-SRC001/AGE001) and the install hook. |
+| Dependency inventory | `analysis_summary.dependency_inventory` (`skylos.dependency_inventory.v1`): up to 10,000 sorted, de-duplicated packages (`ecosystem`, `name`, `version`, `direct`, `dev`, `file`) with `total`, `truncated` and `complete`; uploaded so Skylos Cloud can match new malware advisories after the scan. |
+| Supply-chain posture | `analysis_summary.supply_chain_posture` (`skylos.supply_chain_posture.v1`): checks `lockfile_committed`, `frozen_install_ci`, `install_scripts_disabled`, `release_age_cooldown`, `actions_pinned` (from SKY-D292) and `no_pr_target_checkout` (from SKY-D290), each `pass`, `fail`, `not_applicable` or `unknown`; `pass` needs evidence in the repository. Committed values from `ca9.api.hardening_settings` are read first. Knows npm 12 and pnpm 10+ script blocking, pnpm 11 `allowBuilds`/`strictDepBuilds` and its one-day default cooldown, Yarn 4.15's one-day default, Bun `minimumReleaseAge` in seconds and pip `--uploaded-prior-to`; Dependabot's cooldown is named but does not pass it. |
+| CI inventory | `analysis_summary.ci_inventory` (`ca9.ci_inventory.v1`, from `ca9.api.ci_inventory`): per GitHub Actions / GitLab CI job its triggers, runner, environment, token write scopes, `id-token`, secret names, installs, actions, tools, download hosts and publish steps; bounded (200 workflows, 500 jobs) and names only. Uploaded so Skylos Cloud can tell which jobs could have installed a package and what they could reach. |
+| Agent hooks inventory | `analysis_summary.agent_hooks` (`ca9.agent_hooks.v1`, from `ca9.api.agent_config`): committed agent/editor hooks, MCP servers and base-URL overrides with redacted commands; `skylos_hook: true` marks hooks `skylos agent install-hooks` wrote. Uploaded next to the dependency inventory. |
+| Upgrade review | `--review-upgrades` (implies `--sca`; on in pull request scans from `skylos cicd init` when dependency checks are selected): with `--diff`/`--diff-base`, each npm/PyPI lockfile version change is downloaded old and new by ca9 and compared as data, and a newly added package is reviewed on its own (SKY-SCA-UPG001/UPG002). Never installs or runs the packages. |
+| Hardening exception | `[tool.skylos.supply_chain.hardening_exceptions]` `package = "reason"`, read from the diff base commit only: SKY-SCA-HRD001 regressions that name that package are skipped and listed in `analysis_summary.supply_chain_diff`. |
 | Symlink safety | Checks for file operations that follow repository-controlled symbolic links across the intended scan or output boundary. |
 
 ## CLI Output Modes
@@ -225,6 +233,14 @@ the same name is not a sink. A `shell=` value that is not a literal `False`,
 `None` or `0` may enable the shell, so a tainted command is reported there
 too. An untrusted argument to a fixed program (`["git", "fetch", ref]`) is not
 command injection and is not reported. `shlex.quote`/`shlex.join` clear taint.
+
+Python D201/D202, D205 and command-call rules also follow captured function
+values within the module's bounded flow analysis. Capturing `pickle.loads`,
+the builtin `eval`, or `subprocess.run` retains that callable's identity even
+if its original module name is later rebound. A known data-only replacement
+or source-owned function with the same name does not retain the obsolete
+library identity. Unknown bindings keep the existing conservative warnings;
+this does not add arbitrary cross-file callable tracing.
 
 Python D205 suppresses only proven local `pickle.dumps` / `pickle.loads`
 round-trips over built-in data. Unknown objects can define reduction hooks;
@@ -550,6 +566,23 @@ DTO class counts as validated text (Skylos assumes the usual global
 filters. `app.use(mongoSanitize())` from `express-mongo-sanitize` or
 `sanitizeFilter: true` in the same file clears the file.
 
+TS/JS D212 also checks `spawn`, `spawnSync`, `execFile` and `execFileSync`
+from Node's `child_process` modules when their effective `shell` option is
+literal `true` or a nonempty shell path. Request data in either the command
+or its arguments can then become shell syntax. Import aliases, captured
+callables and source-visible option objects are resolved, including spread
+property order and visible reassignment. Fixed commands and separate arguments
+with the shell absent or disabled stay quiet for this rule. Arbitrary
+executable argument injection, unknown dynamic options and cross-file wrappers
+are not general supported proofs.
+
+For TS/JS D230, an intact operator environment lookup with a fixed key,
+literal suffix or default, including a proven `const` alias, is not HTTP
+request input. Request-dependent keys/suffixes, visible provider replacement,
+environment writes or exposed aliases do not qualify for that proof. This
+does not certify operator configuration itself or trace arbitrary writes
+across files.
+
 TS/JS D510 reports `obj[a][b] = v` when request data chooses `a` (`a =
 '__proto__'` makes the write change `Object.prototype`), unless a dominating
 guard rejects `'__proto__'`, allowlists `a`, checks `hasOwnProperty`, or the
@@ -586,7 +619,7 @@ C# security findings (`--danger`) come from a lexical taint scan of each method,
 
 PHP security findings (`--danger`) come from an intra-procedural, flow-sensitive taint engine (one function or file; branches, loops, `switch`, `try`, early `return`/`exit`/`die`). Request data is: `$_GET`, `$_POST`, `$_REQUEST`, `$_COOKIE`; `$_FILES[...]['name'|'type'|'full_path']` (not `tmp_name`, `size` or `error`); the `$_SERVER` keys the client sends (Psalm's list: `HTTP_*`, `REQUEST_URI`, `QUERY_STRING`, `PHP_SELF`, `PATH_INFO`, `REQUEST_METHOD`, `CONTENT_TYPE`, `PHP_AUTH_*`, ... and any non-literal key; not `REQUEST_TIME`, `REMOTE_ADDR`, `DOCUMENT_ROOT` or `SERVER_NAME`); `file_get_contents('php://input')`; `getallheaders()`; `filter_input()` unless it validates an int, float or boolean; Laravel `$request->input/query/get/post/all/only/except/route/header/cookie/string/json/validated/getContent`, `request('x')`, `request()->...`, `Request::input(...)` and `old('x')`; Symfony request bags (`query`, `request`, `cookies`, and `headers`/`attributes`/`files` on a request object); PSR-7 `getQueryParams`/`getParsedBody`/`getCookieParams`/`getHeader*`/`getBody`; CodeIgniter `$this->input->get/post/...` and `$this->request->getGet/getPost/...`; Drupal Form API input and `getClientOriginalName()`. A request object is a `$request`/`$req` variable, a `->request` property or a parameter typed `*Request`/`*RequestInterface`. Function and method parameters are never request data by themselves (a Laravel route parameter `show($id)` is not reported). Typed getters (`$request->integer()`, `boolean()`, `has()`), numeric casts and builtins that return numbers, booleans or hashes, and lookups (`User::find(...)`, `mysqli_fetch_*`, `->fetch*()`, `get_userdata()`) carry no request text. Sanitisers count only for the sink they protect: `escapeshellarg()` for commands, only as a whole unquoted argument (not inside quotes in the command, not as the program, and not as the code of `sh -c`/`bash -c`, `cmd /c`, `powershell -Command`, `eval` or an interpreter's `-c`/`-e`/`-r`, also behind `sudo`/`env`/`timeout`), where the command stays SKY-D212 (`escapeshellcmd()` is not one: it still lets input add arguments); `htmlspecialchars()`/`htmlentities()` (text and quoted attributes; `ENT_NOQUOTES` only text), `esc_html`, `esc_attr`, `e()`, `esc_url()`/`urlencode()` (also links) and `strip_tags()` (element text only) for HTML; `PDO::quote()`, `$wpdb->prepare()` and `pg_escape_literal()` for SQL anywhere, and SQL escaping (`mysqli_real_escape_string`, `addslashes`, `esc_sql`, ...) only inside a quoted SQL literal; `basename()` for paths and includes. Allow-list checks clean a variable or array element in the guarded branch and after an early exit: `in_array(...)`, `array_key_exists(...)`, `ctype_digit`/`ctype_alnum`, `is_numeric`, `filter_var(..., FILTER_VALIDATE_INT)`, `=== 'literal'` (also through `strtolower`/`trim`) and `preg_match()` with a pattern anchored at both ends that only allows letters, digits, `_` and `-` (not with `/m`). Each echo is checked against the HTML context it lands in, following the page's literal HTML and `<?= ?>` tags: `htmlspecialchars()` inside `href` or a `<script>` block is still reported. Output after `header('Content-Type: application/json')` (or a `*content_type*` helper with a non-HTML type) on every path is not HTML and not reported. SQL sinks: `mysqli_query`/`mysql_query`/`pg_query`/`sqlsrv_query`/..., any `->query/prepare/multi_query/real_query/executeQuery/executeStatement/createQuery/whereRaw/orWhereRaw/havingRaw/orderByRaw/groupByRaw/selectRaw/fromRaw`, `->exec()` on a database-named receiver, `$wpdb->get_results/get_row/get_var/get_col`, and Laravel `DB::raw/select/statement/unprepared/insert/update/delete`; `->where()` only for an SQL string, not an array of conditions. Bound parameters (`DB::select($sql, [$v])`, `$stmt->execute([$v])`) are not reported. D216 covers `curl_init`, `curl_setopt(CURLOPT_URL)`, `curl_setopt_array`, `get_headers`, `fsockopen` and Laravel `Http::`, with the same fixed-host barrier as Java. D204 `unserialize()` is not reported with `['allowed_classes' => false]` or a class list. Values passed through other functions keep their taint, so an application's own sanitiser (for example `yourls_sanitize_version()`) is not recognised; mark such a line with `// skylos: ignore[SKY-D228] reason`. Not covered: taint across functions, files, properties (`$this->x`) or into Blade variables set by a controller, Twig `|raw`, Guzzle, `call_user_func`/variable functions, `extract()`, mass assignment, open redirect and XXE.
 
-Go D216 and D212 (Go engine) also need untrusted input: an incoming `*http.Request` (URL, form, headers, decoded body; not `r.Context()`), a gin, echo or fiber request context and the structs they bind (gin `ShouldBind*`/`Bind*` including `ShouldBindQuery`/`ShouldBindUri`, echo `Bind`, fiber `BodyParser`/`QueryParser`/`ParamsParser`), or network input (`net.Conn`, `Accept()`, `Read`/`Decode`/`Unmarshal` from such a reader), followed through locals, concatenation, `fmt.Sprintf`, calls and same-file helper parameters. Literals, loopback URLs, config structs, flags, `os.Args` and `os.Executable()` are the program's own inputs. Numbers and booleans carry no taint: the results of `strconv.Atoi`/`ParseInt`/`ParseUint`/`ParseFloat`/`ParseBool` and `uuid.Parse`, and values whose declared type is numeric (an `int` field of a bound struct). D216 also needs the host to be choosable: a leading literal `scheme://host/` fixes it. Go D216 sinks are `http.Get`/`Post`/`Head`/`PostForm`, `http.NewRequest(WithContext)`, the same methods on an `*http.Client` (package variable, struct field or `http.DefaultClient`), `client.Do(req)` after `req.URL` or `req.URL.Host` is set from input, and `httputil.NewSingleHostReverseProxy`. D212 is CRITICAL for an untrusted program path or shell command string, HIGH for a shell (`sh -c`, `cmd /c`, PowerShell `-Command`) running a non-constant command that is not proven untrusted, and not reported for a constant or own program with argv elements (`exec.Command(os.Args[0], "run")`); Go D212 also covers `syscall.Exec` and `golang.org/x/crypto/ssh` `Session.Run`/`Start`/`Output`/`CombinedOutput` with an untrusted command. Go D215 (file paths in `os.Open`/`ReadFile`/`WriteFile`/`Create`/`Remove`/`MkdirAll`/`ReadDir`/`Rename`/`Chmod`/`Stat`..., `http.ServeFile`, gin `c.File`/`FileAttachment`, echo `c.File`/`Attachment`/`Inline`, fiber `c.SendFile`/`Download`) uses the same sources and is not reported after a containment check on the path: `strings.HasPrefix` on a cleaned path (`filepath.Clean`/`Join`/`Abs`/`EvalSymlinks`), `filepath.Rel` with a `..` check, or `filepath.IsLocal`; `filepath.Base` and `securejoin.SecureJoin` sanitise. The Go engine's reliability checks follow their Python equivalent: unclosed resource (SKY-G260) and defer in a loop (SKY-G203) are MEDIUM like SKY-L008, and `unsafe` use (SKY-G206) is LOW like gosec G103; a defer followed by an unconditional `return` (or a `break` in an outermost loop) runs once and is not reported, and a handle that is closed explicitly, returned or stored in a field is not unclosed. Go D230 (open redirect: `http.Redirect`, gin and echo `c.Redirect(code, url)`, fiber `c.Redirect(url)`) needs untrusted input that can choose where the redirect goes: data after a literal `?` or `#` cannot, and a same-origin check (`strings.HasPrefix(v, "/")` with a `"//"` check, `url.Parse` with a `.Host`/`IsAbs()` check, or an allowlist lookup) clears it. Go D211 is CRITICAL when request or network input reaches the query text, HIGH when the query is string-built from a non-constant value with no proven source (Python D211 reports that case too), directly in the call or in a variable built with `+` or `fmt.Sprintf` in the same function (like gosec G201/G202), and not reported for placeholders, constants, or values of numeric type or placed with a numeric verb (`%d`) that are not request input (request text formatted with `%d` stays CRITICAL). The receiver is resolved from declarations (parameters, struct fields of the package, package variables, constructor calls such as `sql.Open`, `sqlx.Connect`, `pgxpool.New`, `gorm.Open`): `database/sql` `DB`/`Tx`/`Conn`; `jmoiron/sqlx` (also `Select`/`Get` after the destination, `NamedExec`, `Queryx`, `MustExec` and their `Context` forms, and the package functions); `jackc/pgx` and `pgxpool` (the query is the argument after the context); GORM `Where`/`Raw`/`Exec`/`Order`/`Group`/`Having`/`Select`/`Joins`/`Table`/`Not`/`Or`/`Distinct`/`Pluck` and the inline condition of `First`/`Find`/`Take`/`Last`/`Delete` (a struct, map, slice or pointer argument is bound as parameters and not reported); a local struct embedding one of these, or a local interface with query methods (sqlc's `DBTX`). `*sql.Stmt` arguments are parameters, not query text. When the receiver cannot be resolved, a database-like name is accepted: a plain variable (`db`, `tx`, `conn`, `sqldb`, `database`) always, a field (`s.db`, `r.DB`) only when the package imports a SQL library; a package of the scanned module named `sqlx` is not `jmoiron/sqlx`. Go D226 reports request input converted to `html/template`'s `HTML`, `JS`, `URL`, `HTMLAttr`, `CSS`, `JSStr` or `Srcset` (CRITICAL). Go D228 reports request input written to an HTML response: `fmt.Fprint`/`Fprintf`/`Fprintln`, `io.WriteString` or `Write`/`WriteString` on an `http.ResponseWriter` (also gin `c.Writer`, echo `c.Response()`), gin `c.Data` and echo `c.Blob` with an HTML content type, echo `c.HTML`/`HTMLBlob`, and gin `c.String` or fiber `SendString`/`Send`/`Write` after an HTML content type was set on that context. Following CodeQL `go/reflected-xss`, a write is not reported after a non-HTML `Content-Type` was set on the same writer (a value taken from the request counts as HTML), or when every write to that response up to this one starts with constant text whose first character is not `<` (net/http then sniffs `text/plain`); `html.EscapeString`, the `html/template` escapers, `url.QueryEscape`/`PathEscape`, `json.Marshal` and a `bluemonday` policy's `Sanitize` clear the value, request cookies are not reflected input, and gin `c.String`/`c.JSON`, echo `c.String`/`c.JSON` and fiber's default `text/plain` responses are not HTML. Not covered: `text/template` used for HTML, and taint across files or packages. Go D210 (`InsecureSkipVerify: true`) is not reported in Go test-support code (a file that imports `testing` and takes a `testing.TB`/`*testing.T`/`B`/`F`/`M`), like D346 in Python test modules; `_test.go` files are not scanned by the Go engine. For L012, an external test file (`package pkg_test`) sees the exports of its own directory's internal test files (`package pkg`, the `export_test.go` convention), because `go test` compiles them into the package.
+Go D216 and D212 (Go engine) also need untrusted input: an incoming `*http.Request` (URL, form, headers, decoded body; not `r.Context()`), a gin, echo or fiber request context and the structs they bind (gin `ShouldBind*`/`Bind*` including `ShouldBindQuery`/`ShouldBindUri`, echo `Bind`, fiber `BodyParser`/`QueryParser`/`ParamsParser`), or network input (`net.Conn`, `Accept()`, `Read`/`Decode`/`Unmarshal` from such a reader), followed through locals, concatenation, `fmt.Sprintf`, calls and same-file helper parameters. Literals, loopback URLs, config structs, flags, `os.Args` and `os.Executable()` are the program's own inputs. Numbers and booleans carry no taint: the results of `strconv.Atoi`/`ParseInt`/`ParseUint`/`ParseFloat`/`ParseBool` and `uuid.Parse`, and values whose declared type is numeric (an `int` field of a bound struct). D216 also needs the host to be choosable: a leading literal `scheme://host/` fixes it. Go D216 sinks are `http.Get`/`Post`/`Head`/`PostForm`, `http.NewRequest(WithContext)`, the same methods on an `*http.Client` (package variable, struct field or `http.DefaultClient`), `client.Do(req)` after `req.URL` or `req.URL.Host` is set from input, and `httputil.NewSingleHostReverseProxy`. D212 is CRITICAL for an untrusted program path or shell command string, HIGH for a shell (`sh -c`, `cmd /c`, PowerShell `-Command`) running a non-constant command that is not proven untrusted, and not reported for a constant or own program with argv elements (`exec.Command(os.Args[0], "run")`); Go D212 also covers `syscall.Exec` and `golang.org/x/crypto/ssh` `Session.Run`/`Start`/`Output`/`CombinedOutput` with an untrusted command. Go D215 (file paths in `os.Open`/`ReadFile`/`WriteFile`/`Create`/`Remove`/`MkdirAll`/`ReadDir`/`Rename`/`Chmod`/`Stat`..., `http.ServeFile`, gin `c.File`/`FileAttachment`, echo `c.File`/`Attachment`/`Inline`, fiber `c.SendFile`/`Download`) uses the same sources. A containment check protects only the accepted branch or code after a rejecting return, and only until the checked value changes. A `strings.HasPrefix` boundary must be fixed, end with a path separator and check the actual cleaned value; `filepath.Rel` needs its error and parent traversal checked. `filepath.IsLocal` also supports a rejecting guard. Existing `filepath.Base` and `securejoin.SecureJoin` path policies remain specific to filesystem sinks: they do not sanitize SQL, command text or network destinations. The Go engine's reliability checks follow their Python equivalent: unclosed resource (SKY-G260) and defer in a loop (SKY-G203) are MEDIUM like SKY-L008, and `unsafe` use (SKY-G206) is LOW like gosec G103; a defer followed by an unconditional `return` (or a `break` in an outermost loop) runs once and is not reported, and a handle that is closed explicitly, returned or stored in a field is not unclosed. Go D230 (open redirect: `http.Redirect`, gin and echo `c.Redirect(code, url)`, fiber `c.Redirect(url)`) needs untrusted input that can choose where the redirect goes: data after a literal `?` or `#` cannot, and a dominating same-origin check can clear it. This requires both the leading `/` and rejected `//`, or successful `url.Parse` with empty `Host` and `Scheme`, or a proven literal allowlist. A comparison that only logs, a later check, or an unrelated value does not protect the redirect. Mutable package state is not a fixed boundary or allowlist merely because its initializer is literal. Go D211 is CRITICAL when request or network input reaches the query text, HIGH when the query is string-built from a non-constant value with no proven source (Python D211 reports that case too), directly in the call or in a variable built with `+` or `fmt.Sprintf` in the same function (like gosec G201/G202), and not reported for placeholders, constants, or values of numeric type or placed with a numeric verb (`%d`) that are not request input (request text formatted with `%d` stays CRITICAL). The receiver is resolved from declarations (parameters, struct fields of the package, package variables, constructor calls such as `sql.Open`, `sqlx.Connect`, `pgxpool.New`, `gorm.Open`): `database/sql` `DB`/`Tx`/`Conn`; `jmoiron/sqlx` (also `Select`/`Get` after the destination, `NamedExec`, `Queryx`, `MustExec` and their `Context` forms, and the package functions); `jackc/pgx` and `pgxpool` (the query is the argument after the context); GORM `Where`/`Raw`/`Exec`/`Order`/`Group`/`Having`/`Select`/`Joins`/`Table`/`Not`/`Or`/`Distinct`/`Pluck` and the inline condition of `First`/`Find`/`Take`/`Last`/`Delete` (a struct, map, slice or pointer argument is bound as parameters and not reported); a local struct embedding one of these, or a local interface with query methods (sqlc's `DBTX`). `*sql.Stmt` arguments are parameters, not query text. When the receiver cannot be resolved, a database-like name is accepted: a plain variable (`db`, `tx`, `conn`, `sqldb`, `database`) always, a field (`s.db`, `r.DB`) only when the package imports a SQL library; a package of the scanned module named `sqlx` is not `jmoiron/sqlx`. Go D226 reports request input converted to `html/template`'s `HTML`, `JS`, `URL`, `HTMLAttr`, `CSS`, `JSStr` or `Srcset` (CRITICAL). Go D228 reports request input written to an HTML response: `fmt.Fprint`/`Fprintf`/`Fprintln`, `io.WriteString` or `Write`/`WriteString` on an `http.ResponseWriter` (also gin `c.Writer`, echo `c.Response()`), gin `c.Data` and echo `c.Blob` with an HTML content type, echo `c.HTML`/`HTMLBlob`, and gin `c.String` or fiber `SendString`/`Send`/`Write` after an HTML content type was set on that context. Following CodeQL `go/reflected-xss`, a write is not reported after a non-HTML `Content-Type` was set on the same writer (a value taken from the request counts as HTML), or when every write to that response up to this one starts with constant text whose first character is not `<` (net/http then sniffs `text/plain`); `html.EscapeString`, the `html/template` escapers, `url.QueryEscape`/`PathEscape`, `json.Marshal` and a `bluemonday` policy's `Sanitize` clear the value, request cookies are not reflected input, and gin `c.String`/`c.JSON`, echo `c.String`/`c.JSON` and fiber's default `text/plain` responses are not HTML. Not covered: `text/template` used for HTML, and taint across files or packages. Go D210 (`InsecureSkipVerify: true`) is not reported in Go test-support code (a file that imports `testing` and takes a `testing.TB`/`*testing.T`/`B`/`F`/`M`), like D346 in Python test modules; `_test.go` files are not scanned by the Go engine. For L012, an external test file (`package pkg_test`) sees the exports of its own directory's internal test files (`package pkg`, the `export_test.go` convention), because `go test` compiles them into the package.
 
 `bleach.linkify` (it only adds links) and `cgi.escape` (it leaves quotes alone)
 are not XSS sanitizers. Path traversal (D215) also accepts a sanitizer imported by name
@@ -818,6 +851,54 @@ D295 reports at HIGH severity. Runner-label order does not affect the check.
 Simple literal matrices are exempt only when every possible runner value can be
 proved to be a known GitHub-hosted label. Runner groups, unknown expressions and
 matrix combinations that cannot be resolved conservatively still produce a warning.
+
+### Agent, Editor And Publish-Job Configuration (D365-D377)
+
+Decided by the ca9 engine (`ca9.api.agent_config`, `audit_workflows`,
+`ci_inventory`); Skylos keeps only rows naming a file inside the scanned folder
+that Git lists (a diff scan: files Git tracks; a full scan: files Git tracks or
+does not ignore). Links to agent folders or configs that stay inside the
+repository are followed and reported under the path the client opens, once per
+real file; a new or changed link that leaves the repository or points nowhere
+is an analysis error in a diff (exit 2). A subfolder scan also reports the
+repository-level workflows and agent configs at the Git top. See
+[docs/agent-config-and-publish-rules.md](./docs/agent-config-and-publish-rules.md).
+
+| ID | Severity | Name | Files |
+|:---|:---|:---|:---|
+| D365 | HIGH-CRITICAL | Agent hook command committed in the repository. CRITICAL when the command downloads remote code, decodes and runs a payload, or runs a script disguised as a font or image. Hooks `skylos agent install-hooks` wrote are not reported: the whole command must be `skylos hook <event> --client claude\|codex\|cursor` with one of Skylos's fixed `\|\|` fallbacks and nothing else, the program `skylos` on PATH or an absolute `/…/skylos` outside the repository and temp folders, and the settings file's `env` must not set PATH or loader variables; `python -m skylos.entry` is reported | `.claude/settings(.local).json`, `.gemini/settings.json`, `.cursor/hooks.json`, `.codex/hooks.json`, `.codex/config.toml` |
+| D366 | HIGH-CRITICAL | Editor task that runs when the folder opens (`runOptions.runOn: "folderOpen"`); severities as D365 | `.vscode/tasks.json`, `*.code-workspace` |
+| D367 | MEDIUM | MCP server launched without an exact version (`npx -y pkg`, `@latest`, `uvx pkg`, an image without a digest) | `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.kiro/settings/mcp.json`, `mcpServers` blocks |
+| D368 | HIGH | MCP server launched from a hidden home-directory or temp path outside the repository | MCP configs |
+| D369 | MEDIUM | MCP server package whose name imitates a vendor it is not published by | MCP configs |
+| D370 | HIGH | Agent API base URL (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`) overridden in committed settings | agent settings |
+| D371 | HIGH | Tool installed without a pinned version or hash in a job holding publish credentials or `id-token: write` | GitHub Actions, GitLab CI |
+| D372 | HIGH | Download without a checksum or signature check reaching the publish step | GitHub Actions, GitLab CI |
+| D373 | HIGH | OIDC publish job without a deployment `environment:` | GitHub Actions (`id-token: write`), GitLab CI (`id_tokens`) |
+| D374 | HIGH | Publishing workflow startable by `workflow_dispatch` or a push to any branch | GitHub Actions |
+| D375 | MEDIUM | `--diff` only: the change adds or modifies a CI job that publishes packages (base `ci_inventory` against head, line numbers ignored) | GitHub Actions, GitLab CI |
+| D376 | MEDIUM | Secrets (`secrets: inherit` or named) passed to a reusable workflow from another repository | GitHub Actions |
+| D377 | MEDIUM | Agent or editor config with duplicated keys, so what you read is not what runs | agent and editor settings, MCP configs |
+
+Built-in gate: in a whole-repository scan D365-D374, D376 and D377 are listed
+and not counted, except a CRITICAL D365/D366. In a diff scan D365, D366, D368
+and D370 fail the gate on their own; D367, D369 and D371-D377 count under the
+normal limits. With `--diff` a finding is new when its rule, path and identity
+(event, task, server or job name plus the whole unredacted command) are not
+among the merge base's findings, not by changed lines, so a `folderOpen`
+trigger added to an existing task or a hook moved to `SessionStart` is new;
+without a comparable base every such finding in a changed file counts
+(`analysis_summary.config_diff_basis`). A baseline scan does the same only for
+the rules its baseline covered (`rule_coverage`, recorded by `skylos baseline`
+from the installed ca9); with an older baseline these findings are listed, not
+new. They match the baseline by rule, file and a SHA-256 digest of that
+identity (kept local, never uploaded), not by line or the redacted shown value.
+Under `SKYLOS_POLICY_BASE` (pull-request CI and gated diffs) a baseline entry
+for D365-D377, malware, UPG001, HRD001 or AGE001 counts only when the base
+commit's baseline has it too. A diff that changes agent/editor configs,
+workflows or lockfiles without a usable ca9 (missing, too old, or lacking the
+function) is an analysis error ("upgrade ca9"), never a pass. Commands in
+findings and uploads are redacted.
 
 ### AI Agents In GitHub Actions (D350-D354)
 
@@ -1062,7 +1143,7 @@ across different operating-system/CPU platforms.
 
 | ID | Severity | Name | Languages / Scope | CWE |
 |:---|:---|:---|:---|:---|
-| S101 | HIGH-CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Kotlin, Go, PHP, Rust, Dart, C#, C/C++, shell scripts (including extensionless files with a shell `#!` line), Dockerfiles, Terraform (`.tf`, `.tfvars`, `.hcl`), `.properties`, XML, Gradle, `.npmrc`, `.pypirc` and config files | CWE-798 |
+| S101 | HIGH-CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Kotlin, Go, PHP, Rust, Swift, Dart, C#, C/C++, shell scripts (including extensionless files with a shell `#!` line), Dockerfiles, Terraform (`.tf`, `.tfvars`, `.hcl`), `.properties`, XML, Gradle, `.npmrc`, `.pypirc` and config files | CWE-798 |
 | S102 | HIGH* | Secret material or server-only environment variable exposed to client-accessible code | TS/JS, HTML, client bundles | CWE-200 |
 
 `SKY-S101` is `CRITICAL` for provider tokens and for high-entropy values
@@ -2001,10 +2082,21 @@ such as `api.render()` and `api["render"]`, including stable `const` aliases and
 literal destructuring. A parameter, block variable or other local binding with
 the same name does not count as a read of the imported namespace. Unknown keys,
 namespace escapes, reflection and mutation preserve the whole export surface.
-This follows resolved module edges, including wildcard barrels; named re-export
-barrels can still retain exports that no entry point consumes. Escaped export
-spellings behind wildcard barrels and cross-file classic JS globals remain
-limited.
+This follows resolved module edges, including wildcard barrels. In a closed
+source scope, named re-export chains propagate the selected original binding
+through aliases and wildcard hops. Package APIs and escaping namespaces retain
+their export surfaces. Competing wildcard providers, unmodeled local export
+bindings and opaque source decline that narrowing. Enumerating a literal
+module namespace also supplies positive reads through resolved export paths,
+respecting explicit shadows and the exclusion of default from star exports.
+Direct namespace exports (`export * as tools`) preserve member identity through
+named, default, wildcard and nested forwarding. Selected literal member paths
+leave unused exported siblings reportable; public APIs, mutation, dynamic keys
+and escapes retain the possible exported surface. Escaped export spellings
+behind wildcard barrels and cross-file classic JS globals remain limited.
+Position-preserving parser repairs cover native-valid tagged template escapes
+and generic import-type queries, including queries the grammar otherwise reads
+as relational runtime expressions. Other syntax errors remain incomplete.
 
 TS/JS local parameter and value reads do not reference unrelated module
 functions with the same name. Function values passed or captured still count.
@@ -2024,6 +2116,19 @@ source and incomplete types retain conservative references. Private free helper
 functions in internal `_test.go` packages are reportable only with complete
 native unreachability evidence; test entries, callbacks, hooks, public APIs and
 live helper chains remain roots. External test packages keep their prior policy.
+An explicitly required dependency with a unique unversioned local replacement
+can also supply type identity when its matching module and package sources are
+already inside the native scan. Unsupported metadata, workspace overrides,
+version-specific or remote replacements, excluded providers and paths outside
+the scan retain conservative handling. This does not fetch dependencies or add
+general external dependency resolution. An active contained `go.work` can supply
+source identity for its ordinary `use` modules when the exact admitted file
+inventory is available. Omitted package members, excluded or outside providers,
+unsupported workspace metadata, invalid module requirements, unsupported Go
+versions and type errors decline that additional proof. The module's declared
+Go language version is honored; target commands and dependency fetching remain
+disabled. This does not implement general workspace replacement or build-variant
+resolution.
 Private functions that only recurse or call one another are reported when no
 entry point reaches them. Local variables and parameters with matching names
 do not keep unrelated package functions alive. Exported APIs, interface methods,
@@ -2064,6 +2169,35 @@ functions can be reported as an unrooted group, including recursion cycles,
 after project references are collected. Cross-file calls, function values,
 static initializers, conditional entries and unknown macro expansion preserve
 roots. These bounded checks do not add Cargo feature or macro expansion.
+
+Within a closed Rust source file, local trait declarations and concrete receiver
+types can establish which import supplies a method, including aliases and
+borrowed receivers. Unknown or competing implementations, conditional items,
+unexpanded macros and out-of-line modules decline that proof. Standard writer
+macros can establish a `std::io::Write` import use for a proven writer receiver;
+local `write_fmt` traits, inherent methods and shadowed macros/providers remain
+separate controls. A feature-matched `cfg_attr` wrapper can read its attribute
+import without treating predicate strings or inactive wrappers as uses. These
+checks preserve Rust's experimental confidence cap of 40 and do not evaluate
+Cargo's active feature set.
+
+Ordinary `mod name;` source closures rooted at a fully scanned `main.rs` or
+`lib.rs` can also establish local trait import use across files. Every module
+must be admitted, readable and unambiguous; attributed, excluded, missing,
+macro-generated or over-budget closures add no proof. Repeated import aliases
+retain their own source-bound identities, so an inner read cannot hide an unused
+outer import. Attributed repeated bindings keep conservative grouping without
+guessing the active Cargo configuration.
+
+Swift dead-code checks parse `.swift` sources and follow `private`/`fileprivate`
+declarations, owner and lexical bindings, function values, callbacks and private
+call cycles. Public/internal APIs and runtime or compiler-generated consumers
+remain roots. Import usage is not inferred from textual module-name matches:
+imports may supply extensions and operators. SwiftPM `.build` source products
+are excluded from directory scans; an explicit file target is still inspectable.
+Missing grammar, unreadable source and syntax errors report incomplete analysis.
+Swift security-flow analysis, quality rules and local API verification are not
+implemented; existing secret scanning also reads Swift sources.
 
 A Python module or class variable is kept alive by an attribute read `x.NAME`
 elsewhere only when `x` could be its owner. For a module variable that is the
@@ -2248,9 +2382,21 @@ suppression, integrations, and public references.
 | SCA-* | varies | Software composition analysis vulnerability | Dependency manifests / installed packages |
 | SKY-SCA-LIC001 | HIGH (configurable via `license_severity`) | Dependency license policy violation | Declared dependency license (offline lockfile / installed metadata) cannot be satisfied without a license in `license_deny`, or outside `license_allow`; `NOASSERTION` never fires |
 | SKY-SCA-NPM-PUB001 | WARN (review only) | npm publisher change after release dormancy | Direct npm dependency pinned in a package lockfile; verify the publisher and release provenance before upgrading or deploying |
+| SKY-SCA-SRC001 | CRITICAL (direct) / HIGH (transitive) | Possible dependency confusion | A package matching `[tool.skylos.supply_chain] internal_packages` resolves from a public or merged index (`--extra-index-url`, a public lockfile registry); decided by the ca9 engine, reported only with configured patterns and registry evidence |
+| SKY-SCA-SRC003 | MEDIUM | Mutable dependency source | A Git dependency not pinned to a full commit, or a URL dependency without a hash, in a requirements file, `pyproject.toml`, `package.json` without a lockfile, or a lockfile Git/URL entry; local paths are not reported |
+| SKY-SCA-INT001 | MEDIUM | Lockfile entry without integrity hash | A registry entry in `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock` or `poetry.lock` with no (or an empty) integrity hash; never `requirements.txt` or npm `inBundle` entries |
+| SKY-SCA-AGE001 | HIGH | Dependency version younger than the release-age window | The locked version was published less than `min_release_age_hours` ago; scans check this only when the policy sets it |
+| SKY-SCA-MAL000 | CRITICAL | Malware feed match without an advisory ID | Offline fallback: the installed ca9 malware feed matched a package but named no advisory ID (matches with an ID use `SKY-SCA-<id>`) |
+| SKY-SCA-UPG001 | CRITICAL | Dependency upgrade adds install-time or start-up code | `--diff`/`--diff-base` with `--review-upgrades`: an npm or PyPI lockfile version change whose new artifact adds a `.pth` or `sitecustomize` with code, an install/prepare hook, decode-and-exec, a Git/URL dependency, shipped agent/editor hooks, archive entries that install to the same path or differ only by case, an executable named like a system command, sourceless bytecode run at import or start-up, or an artifact that does not match the lockfile's integrity (`ca9.api.review_upgrades`); evidence names the file inside the package and a redacted snippet. Fails a diff gate on its own |
+| SKY-SCA-UPG002 | MEDIUM | Dependency upgrade adds code worth reviewing | As UPG001 when only ca9's `warn` list has deltas (new import-time network or exec, obfuscation growth, a native binary, a publisher change, changed install-time code, or anything ca9 flags in a newly added package, `block` list included, since there is no earlier version to compare against); otherwise findings follow ca9's lists, never the delta kind. Listed, not counted by the built-in gate. Changes ca9 did not review (timeout, unreachable registry, size cap, over 100, `complete: false`) and changed lockfiles Skylos could not read (over 64 MB, a link, rejected by the parser) are an analysis error (diff gate incomplete); internal packages and entries the lockfile resolves from a private registry are skipped with a warning; changed requirements pins, `pdm.lock` and `pylock.toml` are listed as not read |
+| SKY-SCA-HRD001 | HIGH | Change weakens install hardening | `--diff`/`--diff-base` with `--sca`: `ca9.api.hardening_regressions` between the merge base and the tracked working tree (cooldown removed, lowered or bypassed for a package, `ignore-scripts` off, `allowBuilds`/`allowScripts`/`trustedDependencies` additions, `strictDepBuilds` off, SHA-pinned action moved to a tag). Packages in the base commit's `[tool.skylos.supply_chain.hardening_exceptions]` with a reason are skipped. Fails a diff gate on its own; a `check_failed` comparison is an analysis error (incomplete), never a pass |
 
 `SKY-SCA-LIC*` IDs are reserved for license policy and are not OSV advisory IDs.
 `SKY-SCA-NPM-PUB001` is a publisher history review signal, not an OSV advisory ID.
+`SKY-SCA-SRC*`, `SKY-SCA-INT*`, `SKY-SCA-AGE*`, `SKY-SCA-UPG*` and `SKY-SCA-HRD*`
+are supply-chain checks from the ca9 engine (`ca9.api`), not OSV advisory IDs. OSV advisories for malware
+(`MAL-*` IDs or aliases, `malicious-packages-origins`, CWE-506) keep their
+`SKY-SCA-<id>` rule ID and are reported `CRITICAL` with `metadata.malicious`.
 Declared licenses are normalized to SPDX; ambiguous values (for example `BSD`,
 `GPLv3`) are `NOASSERTION`, never guessed.
 

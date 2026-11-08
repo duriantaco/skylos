@@ -298,6 +298,61 @@ def _informational(matching: list[dict]) -> str | None:
     return None
 
 
+MALICIOUS_CWE = "CWE-506"
+MALICIOUS_ID_PREFIX = "MAL-"
+MALICIOUS_ORIGINS_KEY = "malicious-packages-origins"
+
+
+def malicious_package_message(name: str, version: str, advisory_id: str) -> str:
+    return (
+        f"{name}@{version} is a known malicious package ({advisory_id}). "
+        "Remove it, reinstall from a clean lockfile, and rotate every credential "
+        "an install could read (CI secrets, registry and cloud tokens, SSH keys)."
+    )
+
+
+def _cwe_ids(database) -> set[str]:
+    if not isinstance(database, dict):
+        return set()
+    found = {str(item).upper() for item in _strings(database.get("cwe_ids"))}
+    for entry in _objects(database.get("cwes")):
+        cwe = entry.get("cweId")
+        if isinstance(cwe, str):
+            found.add(cwe.upper())
+    return found
+
+
+def malicious_evidence(vuln: dict, matching: list[dict] | None = None) -> list[str]:
+    """Why an OSV record describes malicious code, or an empty list.
+
+    An ``MAL-*`` id or alias (the OpenSSF malicious-packages database), a
+    ``malicious-packages-origins`` import record, or CWE-506 (Embedded
+    Malicious Code) on the record or on the queried package's entry.
+    """
+    if not isinstance(vuln, dict):
+        return []
+    evidence = []
+    vuln_id = vuln.get("id")
+    ids = []
+    if isinstance(vuln_id, str):
+        ids.append(vuln_id)
+    ids.extend(_strings(vuln.get("aliases")))
+    if any(item.upper().startswith(MALICIOUS_ID_PREFIX) for item in ids):
+        evidence.append("osv_malicious_package_id")
+    sources = [vuln.get("database_specific")]
+    sources.extend(
+        affected.get("database_specific") for affected in (matching or [])
+    )
+    if any(
+        isinstance(database, dict) and database.get(MALICIOUS_ORIGINS_KEY)
+        for database in sources
+    ):
+        evidence.append("malicious_packages_origin")
+    if any(MALICIOUS_CWE in _cwe_ids(database) for database in sources):
+        evidence.append("cwe_506_embedded_malicious_code")
+    return evidence
+
+
 def extract_advisory_metadata(vuln: dict, dep: dict) -> dict:
     """Extract report data without implying that omitted details are known."""
     matching = _matching_affected(vuln, dep)
@@ -334,4 +389,9 @@ def extract_advisory_metadata(vuln: dict, dep: dict) -> dict:
     }
     if informational is not None:
         metadata["informational"] = informational
+    malicious = []
+    if metadata["withdrawn"] is None:
+        malicious = malicious_evidence(vuln, matching)
+    if malicious:
+        metadata["malicious_evidence"] = malicious
     return metadata

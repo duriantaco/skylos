@@ -65,11 +65,16 @@ var defaultSkipDirs = map[string]bool{
 }
 
 func Extract(root string) (*Result, error) {
+	return ExtractScoped(root, nil)
+}
+
+func ExtractScoped(root string, sourceFiles map[string]bool) (*Result, error) {
 	ensureHostBuildContext()
 	fset := token.NewFileSet()
 	result := &Result{}
 	var reachabilityFiles []reachabilityFile
 	proofComplete := true
+	incompleteDirs := map[string]bool{}
 	resolvedRoot, rootErr := filepath.EvalSymlinks(root)
 	if rootErr != nil {
 		return nil, rootErr
@@ -77,7 +82,7 @@ func Extract(root string) (*Result, error) {
 	root = resolvedRoot
 
 	modulePath := readModulePath(root)
-	projectInterfaceMethods := collectInterfaceMethodsByType(root, resolvedRoot)
+	projectInterfaceMethods := collectInterfaceMethodsByType(root, resolvedRoot, sourceFiles)
 
 	pkgDirs := map[string]string{}
 	if modulePath != "" {
@@ -114,6 +119,10 @@ func Extract(root string) (*Result, error) {
 			return nil
 		}
 		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		if sourceFiles != nil && !sourceFiles[path] {
+			incompleteDirs[filepath.Dir(path)] = true
 			return nil
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
@@ -398,6 +407,15 @@ func Extract(root string) (*Result, error) {
 
 	markReferencedInterfaceMethods(result, projectInterfaceMethods)
 	typeImporter := newProjectSourceImporter(root, modulePath, fset, reachabilityFiles, newHostStdlibImporter(fset))
+	if project, ok := typeImporter.(*projectSourceImporter); ok {
+		project.incompleteDirs = incompleteDirs
+		project.sourceFiles = sourceFiles
+		for importPath, dir := range project.dirs {
+			if !project.ambiguous[importPath] {
+				pkgDirs[importPath] = dir
+			}
+		}
+	}
 
 	if hasMethodDefs(result.Defs) {
 		defNames := symbolDefNames(result.Defs)
@@ -425,7 +443,7 @@ func isInternalTestHelper(file *ast.File, fn *ast.FuncDecl) bool {
 		!ast.IsExported(fn.Name.Name) && fn.Name.Name != "init" && fn.Name.Name != "main"
 }
 
-func collectInterfaceMethodsByType(root string, resolvedRoot string) map[string]map[string]bool {
+func collectInterfaceMethodsByType(root string, resolvedRoot string, sourceFiles map[string]bool) map[string]map[string]bool {
 	methodsByType := map[string]map[string]bool{}
 	fset := token.NewFileSet()
 
@@ -441,6 +459,9 @@ func collectInterfaceMethodsByType(root string, resolvedRoot string) map[string]
 			return nil
 		}
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		if sourceFiles != nil && !sourceFiles[path] {
 			return nil
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
@@ -686,6 +707,11 @@ func callExprCallee(call *ast.CallExpr, pkgDir string, importMap map[string]stri
 }
 
 func resolveImportToPkgDir(impPath, modulePath, root string, pkgDirs map[string]string) string {
+	if dir := pkgDirs[impPath]; dir != "" && isPathWithinRoot(root, dir) {
+		if rel, err := filepath.Rel(root, dir); err == nil {
+			return filepath.ToSlash(rel)
+		}
+	}
 	if modulePath == "" {
 		return ""
 	}

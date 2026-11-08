@@ -359,9 +359,124 @@ def _append_threshold_reason(
     return True
 
 
+REPORT_ONLY_DEPENDENCY_RULES = frozenset({"SKY-SCA-SRC003", "SKY-SCA-UPG002"})
+FULL_SCAN_REPORT_ONLY_RULES = frozenset(
+    {f"SKY-D{number}" for number in range(365, 375)} | {"SKY-D376", "SKY-D377"}
+)
+CHANGE_BLOCKING_RULES = frozenset(
+    {
+        "SKY-D365",
+        "SKY-D366",
+        "SKY-D368",
+        "SKY-D370",
+        "SKY-SCA-UPG001",
+        "SKY-SCA-HRD001",
+    }
+)
+COMPARED_RULES = FULL_SCAN_REPORT_ONLY_RULES | CHANGE_BLOCKING_RULES
+BASELINE_RULE_COVERAGE_KEY = "baseline_rule_coverage"
+
+
+def _rule_id(finding):
+    if not isinstance(finding, dict):
+        return ""
+    return str(finding.get("rule_id") or "").upper()
+
+
+def _built_in_gate_dependencies(dependencies):
+    """Dependency findings the built-in gate counts.
+
+    ``SKY-SCA-SRC003`` (a Git or URL dependency that is not pinned to a
+    commit or hash) and ``SKY-SCA-UPG002`` (an upgrade adds code worth a
+    look, not a block) are reported but not counted here, so a tag-pinned Git
+    dependency does not start failing an existing gate. A synced Skylos
+    Cloud gate counts them like Cloud does.
+    """
+    return [
+        finding
+        for finding in dependencies or ()
+        if _rule_id(finding) not in REPORT_ONLY_DEPENDENCY_RULES
+    ]
+
+
+def _new_rule_scope(results):
+    """Supply-chain config rules whose findings this scan compared.
+
+    A diff scan compares every rule: what it reports sits on changed lines.
+    A baseline scan compares only the rules the baseline covered: a baseline
+    saved before these rules existed, or without the ca9 check behind them,
+    never saw the hooks and workflows they report, so those findings are
+    listed like a full scan instead of read as new. A full scan compares none.
+    """
+    from skylos.core.gate_incomplete import _is_diff_scoped
+
+    results = results or {}
+    summary = results.get("analysis_summary")
+    if not isinstance(summary, dict):
+        summary = {}
+    if _is_diff_scoped(results, summary):
+        return COMPARED_RULES
+    if summary.get("baseline_scoped") is not True:
+        return frozenset()
+    covered = summary.get(BASELINE_RULE_COVERAGE_KEY)
+    if not isinstance(covered, list):
+        return frozenset()
+    return frozenset(str(rule).upper() for rule in covered) & COMPARED_RULES
+
+
+def _built_in_gate_danger(danger, *, new_rules):
+    """Security findings the built-in gate counts.
+
+    The agent/editor configuration and publish-job rules (SKY-D365-D374,
+    D376, D377) list what exists without counting it unless the scan
+    compared them (``_new_rule_scope``), so repositories that already commit
+    agent hooks, unpinned MCP servers or a manually started release workflow
+    keep their gate on upgrade; a CRITICAL one (a hook that downloads or
+    decodes and runs code) always counts. ``new_rules`` None counts all.
+    """
+    if new_rules is None:
+        return list(danger or ())
+    return [
+        finding
+        for finding in danger or ()
+        if _rule_id(finding) not in FULL_SCAN_REPORT_ONLY_RULES
+        or _rule_id(finding) in new_rules
+        or str(finding.get("severity") or "").upper() == "CRITICAL"
+    ]
+
+
+def supply_chain_change_blocks(results):
+    """Supply-chain changes that fail a diff or baseline gate on their own.
+
+    A new or changed agent hook or folder-open task, an MCP server launched
+    from a hidden path, an agent API base-URL override, an upgrade that adds
+    install-time or import-time code (SKY-SCA-UPG001) and weakened install
+    hardening (SKY-SCA-HRD001), when the scan compared that rule
+    (``_new_rule_scope``). Full-repository scans only list them.
+    """
+    new_rules = _new_rule_scope(results) & CHANGE_BLOCKING_RULES
+    if not new_rules:
+        return []
+    blocks = []
+    for section in ("danger", "dependency_vulnerabilities"):
+        for finding in (results or {}).get(section) or ():
+            if _rule_id(finding) in new_rules:
+                blocks.append(finding)
+    return blocks
+
+
 def _gate_issue_groups(
-    *, danger, reliability, ai_defects, quality, secrets, dead_code, dependencies=()
+    *,
+    danger,
+    reliability,
+    ai_defects,
+    quality,
+    secrets,
+    dead_code,
+    dependencies=(),
+    new_rules=None,
 ):
+    danger = _built_in_gate_danger(danger, new_rules=new_rules)
     critical_issues, high_issues = _split_danger_by_severity(danger)
     return {
         "max_critical": critical_issues,
@@ -371,7 +486,7 @@ def _gate_issue_groups(
         "max_quality": quality,
         "max_ai_defects": ai_defects,
         "max_secrets": secrets,
-        "max_dependency_vulnerabilities": dependencies,
+        "max_dependency_vulnerabilities": _built_in_gate_dependencies(dependencies),
         "max_dead_code": dead_code,
     }
 
@@ -901,7 +1016,7 @@ def blocking_gate_issues(results, config=None):
     blocking = []
     cloud_gate = active_cloud_gate(config)
     if cloud_gate is None:
-        groups = _gate_issue_groups(**found)
+        groups = _gate_issue_groups(**found, new_rules=_new_rule_scope(results))
         if gate_config.get("fail_on_critical", True):
             blocking.extend(groups["max_critical"])
         for key, _noun, _plural, _label in GATE_LIMITS:
@@ -922,6 +1037,7 @@ def blocking_gate_issues(results, config=None):
             if _issue_severity(issue) in severities
         )
     blocking.extend(_security_control_regressions(results))
+    blocking.extend(supply_chain_change_blocks(results))
     unique = {}
     for issue in blocking:
         if isinstance(issue, dict):
@@ -981,6 +1097,79 @@ def _coverage_gap_reasons(results, *, strict=False, config=None):
 
 def sca_coverage_warnings(results):
     """Describe requested dependency checks without implying full coverage."""
+    return (
+        _sca_receipt_warnings(results)
+        + _upgrade_review_warnings(results)
+        + _workflow_audit_warnings(results)
+    )
+
+
+def _workflow_audit_warnings(results):
+    audit = results
+    for key in (
+        "analysis_summary",
+        "supply_chain_diff",
+        "checks",
+        "agent_and_workflow_files",
+        "workflow_audit",
+    ):
+        if not isinstance(audit, dict):
+            return []
+        audit = audit.get(key)
+    if not isinstance(audit, dict) or audit.get("complete") is not False:
+        return []
+    reasons = [str(reason) for reason in audit.get("incomplete_reasons") or ()][:3]
+    detail = "; ".join(reasons) or "some workflow parts could not be read"
+    return [f"Workflow audit incomplete for the changed workflows: {detail}"]
+
+
+def _upgrade_review_warnings(results):
+    upgrades = results
+    for key in ("analysis_summary", "supply_chain_diff", "checks", "upgrades"):
+        if not isinstance(upgrades, dict):
+            return []
+        upgrades = upgrades.get(key)
+    if not isinstance(upgrades, dict):
+        return []
+    reasons = []
+    for item in upgrades.get("skipped") or ():
+        if isinstance(item, dict) and _coverage_count(item.get("count")):
+            reasons.append(
+                f"{item.get('reason')}: {_coverage_count(item.get('count'))}"
+            )
+    for key, label in (
+        ("no_result", "no result"),
+        ("not_reviewed_over_limit", "over the limit"),
+    ):
+        count = _coverage_count(upgrades.get(key))
+        if count:
+            reasons.append(f"{label}: {count}")
+    lines = []
+    if reasons:
+        pairs = _coverage_count(upgrades.get("pairs")) or 0
+        reviewed = _coverage_count(upgrades.get("reviewed")) or 0
+        summary = ", ".join(reasons)
+        lines.append(
+            f"Upgrade review limited: {reviewed} of {pairs} dependency upgrades reviewed ({summary})"
+        )
+    unread = [
+        f"{item.get('file')} ({item.get('reason')})"
+        for item in upgrades.get("limitations") or ()
+        if isinstance(item, dict)
+    ]
+    if unread:
+        more = ""
+        if len(unread) > 3:
+            more = f" and {len(unread) - 3} more"
+        lines.append(
+            "Upgrade review did not read changed dependency files: "
+            + "; ".join(unread[:3])
+            + more
+        )
+    return lines
+
+
+def _sca_receipt_warnings(results):
     summary = results.get("analysis_summary") if isinstance(results, dict) else None
     receipt = summary.get("sca_coverage") if isinstance(summary, dict) else None
     if not isinstance(receipt, dict):
@@ -1199,7 +1388,9 @@ def check_gate(results, config, strict=False, provenance=None):
     cloud_gate = active_cloud_gate(config)
     if cloud_gate is None:
         passed = _apply_gate_thresholds(
-            reasons, gate_config, _gate_issue_groups(**found)
+            reasons,
+            gate_config,
+            _gate_issue_groups(**found, new_rules=_new_rule_scope(results)),
         )
     else:
         passed = _apply_cloud_gate(reasons, gate_config, cloud_gate, found, results)
@@ -1212,6 +1403,16 @@ def check_gate(results, config, strict=False, provenance=None):
                 _count_noun(len(regressions), "security control regression")
                 + " (security controls must be preserved)",
                 regressions,
+            )
+        )
+        passed = False
+    supply_chain_blocks = supply_chain_change_blocks(results)
+    if supply_chain_blocks:
+        reasons.append(
+            GateReason(
+                _count_noun(len(supply_chain_blocks), "supply-chain change")
+                + " to review (agent hooks, MCP servers, upgrade code or install hardening)",
+                supply_chain_blocks,
             )
         )
         passed = False
@@ -1332,7 +1533,9 @@ def _passed_gate_summary(results, config, *, strict):
             cloud_gate_scope_note(results, config),
         )
     gate_config = _effective_gate_config(config)
-    groups = _gate_issue_groups(**_gate_findings(results, config))
+    groups = _gate_issue_groups(
+        **_gate_findings(results, config), new_rules=_new_rule_scope(results)
+    )
     security_scanned = _security_scanned(results)
 
     parts = []

@@ -177,7 +177,12 @@ def _masked_tree(tree: ast.AST, file, cfg) -> tuple[ast.AST, int]:
 
 
 def _quality_findings(
-    file, prepared: _PreparedPython, cfg, options: _WorkerOptions, *, annotation_coverage=None
+    file,
+    prepared: _PreparedPython,
+    cfg,
+    options: _WorkerOptions,
+    *,
+    annotation_coverage=None,
 ) -> tuple[list, dict | None]:
     if not options.full_scan or not options.enable_quality_rules:
         return [], None
@@ -623,6 +628,7 @@ def process_file(
     *,
     project_root: str | Path | None = None,
     credential_source_locations: tuple | list = (),
+    go_scan_scope: tuple | None = None,
     visitor_class: type = Visitor,
     test_aware_visitor_class: type = TestAwareVisitor,
     framework_aware_visitor_class: type = FrameworkAwareVisitor,
@@ -653,4 +659,5 @@ def process_file(
         enable_quality_rules=enable_quality_rules,
         enable_danger_rules=enable_danger_rules,
         project_root=project_root,
+        go_scan_scope=go_scan_scope,
     )

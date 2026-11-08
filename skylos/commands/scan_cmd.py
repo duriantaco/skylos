@@ -609,6 +609,211 @@ def run_scan_command(
             os.environ["SKYLOS_DIFF_BASE"] = previous_diff
 
 
+def _add_supply_chain_diff_findings(result, project_root, base_ref, args, config):
+    """SKY-SCA-HRD001/UPG001/UPG002 and SKY-D375 for a diff-scoped scan.
+
+    They compare the merge base with the working tree, so they are diff
+    scoped by construction and are kept outside changed lines. A check that
+    could not run is an analysis error, which a diff-scoped gate treats as
+    incomplete.
+    """
+    from skylos.core.file_discovery import find_git_root
+    from skylos.rules.sca.supply_chain_diff import supply_chain_diff_findings
+
+    ignore = set()
+    if isinstance(config, dict):
+        ignore = {str(rule).upper() for rule in config.get("ignore") or []}
+    try:
+        findings, receipt, errors = supply_chain_diff_findings(
+            find_git_root(project_root) or project_root,
+            base_ref,
+            dependencies=bool(getattr(args, "sca", False)),
+            security=bool(getattr(args, "danger", False)),
+            review_upgrades=bool(getattr(args, "review_upgrades", False)),
+            ignore=ignore,
+        )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "supply-chain diff checks failed", exc_info=True
+        )
+        findings, receipt = [], {"status": "failed", "error_type": type(exc).__name__}
+        errors = [
+            {
+                "kind": "supply_chain_check_unavailable",
+                "component": "supply_chain",
+                "message": f"Supply-chain diff checks failed ({type(exc).__name__})",
+                "severity": "HIGH",
+            }
+        ]
+    summary = result.setdefault("analysis_summary", {})
+    summary["supply_chain_diff"] = receipt
+    for finding in findings:
+        section = "dependency_vulnerabilities"
+        if finding.get("category") == "SECURITY":
+            section = "danger"
+        result.setdefault(section, []).append(finding)
+    if findings:
+        summary["sca_count"] = len(result.get("dependency_vulnerabilities") or [])
+    if errors:
+        result.setdefault("analysis_errors", []).extend(errors)
+        summary["analysis_error_count"] = len(result["analysis_errors"])
+
+
+def _config_change_finding(item) -> bool:
+    """An agent/editor-config or publish-job finding (SKY-D365-D377) that
+    carries its change identity."""
+    from skylos.rules.config.agent_publish import (
+        AGENT_RULE_IDS,
+        IDENTITY_KEY,
+        PUBLISH_RULE_IDS,
+    )
+
+    return (
+        isinstance(item, dict)
+        and item.get("kind") == "config"
+        and str(item.get("rule_id") or "").upper() in AGENT_RULE_IDS | PUBLISH_RULE_IDS
+        and isinstance(item.get(IDENTITY_KEY), str)
+    )
+
+
+def _config_findings_new_since_base(
+    result, diff_root, base_ref, changed_ranges, console, machine_output
+):
+    """ids of SKY-D365-D377 findings that are new against the merge base.
+
+    These findings sit on the command line, but what makes one new can be
+    another line (``"runOptions": {"runOn": "folderOpen"}`` added to an
+    existing task, a hook moved from ``Stop`` to ``SessionStart``), so a
+    finding is new when its rule, path and identity (event or job name plus
+    the unredacted command) are not among the base's findings, whatever
+    lines changed. When the base cannot be compared, every such finding in a
+    changed file (or behind a changed link) counts as new.
+    """
+    import os
+    import pathlib
+
+    from skylos.rules.config.agent_files import link_components
+    from skylos.rules.config.agent_publish import IDENTITY_KEY
+
+    items = [
+        item
+        for category in _DIFF_FINDING_CATEGORIES
+        for item in result.get(category) or ()
+        if _config_change_finding(item)
+    ]
+    if not items:
+        return set()
+    from skylos.rules.sca.supply_chain_diff import config_base_identities
+
+    top = pathlib.Path(os.path.realpath(diff_root))
+    try:
+        known = config_base_identities(top, base_ref)
+    except Exception:  # noqa: BLE001 - an unusable base falls back to changed files
+        known = None
+    summary = result.setdefault("analysis_summary", {})
+    if known is not None:
+        summary["config_diff_basis"] = "base_findings"
+        new = set()
+        for item in items:
+            lexical = pathlib.Path(os.path.abspath(str(item.get("file") or "")))
+            try:
+                relative = lexical.relative_to(top).as_posix()
+            except ValueError:
+                new.add(id(item))
+                continue
+            identity = (str(item["rule_id"]).upper(), relative, item[IDENTITY_KEY])
+            if identity not in known:
+                new.add(id(item))
+        return new
+    summary["config_diff_basis"] = "changed_files"
+    if not machine_output:
+        console.print(
+            "[muted]--diff: the base's agent configs and workflows could not be "
+            "compared; every agent-config and publish-job finding in a changed "
+            "file counts as new.[/muted]"
+        )
+    changed = set()
+    for entry in changed_ranges or ():
+        if isinstance(entry, dict) and entry.get("file"):
+            changed.add(pathlib.Path(os.path.abspath(top / entry["file"])))
+    new = set()
+    for item in items:
+        lexical = pathlib.Path(os.path.abspath(str(item.get("file") or "")))
+        candidates = {lexical, pathlib.Path(os.path.realpath(lexical))}
+        candidates.update(link_components(lexical, top))
+        if candidates & changed:
+            new.add(id(item))
+    return new
+
+
+def _policy_base_baseline(project_root):
+    """Under ``SKYLOS_POLICY_BASE`` (pull-request CI), the baseline the base
+    commit holds: supply-chain trust-boundary findings are baselined only
+    when it lists them too, so a pull request cannot excuse its own."""
+    import os
+
+    from skylos.config import POLICY_BASE_ENV_VAR
+
+    ref = str(os.environ.get(POLICY_BASE_ENV_VAR) or "").strip()
+    if not ref:
+        return {}, None
+    from skylos.core.baseline_source import load_git_baseline
+
+    baseline, receipt = load_git_baseline(project_root, ref)
+    return {"policy_base": True, "policy_baseline": baseline}, receipt
+
+
+def _note_policy_base_baseline(result, receipt, console, machine_output):
+    if receipt is None:
+        return
+    summary = result.setdefault("analysis_summary", {})
+    record = summary.setdefault("baseline_policy_base", {"not_honoured": 0})
+    record["status"] = receipt.get("status")
+    record["error"] = receipt.get("error")
+    count = int(record.get("not_honoured") or 0)
+    if count and not machine_output:
+        console.print(
+            f"[warn]Baseline: {count} supply-chain finding(s) not in the policy "
+            "base commit's baseline counted as new.[/warn]"
+        )
+
+
+def _record_baseline_rule_coverage(result, baseline, args):
+    """Which supply-chain config rules the baseline saw, and an analysis
+    error when this run's ca9 can no longer decide rules the baseline
+    covered (the comparison would pass without them)."""
+    from skylos.core.baseline import baseline_rule_coverage
+    from skylos.core.gatekeeper import BASELINE_RULE_COVERAGE_KEY
+    from skylos.rules.config.agent_publish import available_rule_ids
+    from skylos.rules.sca import supply_chain
+
+    covered = baseline_rule_coverage(baseline)
+    if covered is None:
+        return
+    summary = result.setdefault("analysis_summary", {})
+    summary[BASELINE_RULE_COVERAGE_KEY] = covered
+    if not getattr(args, "danger", False):
+        return
+    lost = sorted(set(covered) - available_rule_ids(supply_chain.load_ca9_api()))
+    if not lost:
+        return
+    result.setdefault("analysis_errors", []).append(
+        {
+            "kind": "supply_chain_check_unavailable",
+            "component": "supply_chain",
+            "message": (
+                f"The baseline covers {', '.join(lost[:4])} but this run could not "
+                "check them: ca9 is not installed or too old. Upgrade ca9 "
+                "(pip install -U ca9) and rerun."
+            ),
+            "severity": "HIGH",
+        }
+    )
+    summary["analysis_error_count"] = len(result["analysis_errors"])
+
+
 def _run_scan_command(
     argv: Sequence[str], *, cli_module: ModuleType, parser, args
 ) -> None:
@@ -928,6 +1133,20 @@ def _run_scan_command(
                 }
                 logger.debug("npm publisher scan failed", exc_info=True)
 
+        supply_chain_base = getattr(args, "diff", None) or getattr(
+            args, "diff_base", None
+        )
+        if supply_chain_base == "auto":
+            from skylos.core.ci_env import auto_diff_base_ref
+
+            supply_chain_base = auto_diff_base_ref()
+        if supply_chain_base and (
+            getattr(args, "sca", False) or getattr(args, "danger", False)
+        ):
+            _add_supply_chain_diff_findings(
+                result, project_root, supply_chain_base, args, config
+            )
+
         if getattr(args, "diff", None):
             from skylos.cicd.review import (
                 get_changed_line_ranges,
@@ -1029,6 +1248,7 @@ def _run_scan_command(
                         )
                         or str(item.get("rule_id", "")).upper()
                         in selected_prerequisite_ids
+                        or _config_change_finding(item)
                     ]
             result.pop("unused_fixtures_counts", None)
             result = _apply_display_filters(result, preserve_grade=False)
@@ -1076,6 +1296,9 @@ def _run_scan_command(
                 summary = result.setdefault("analysis_summary", {})
                 summary["analysis_error_count"] = len(kept_errors)
                 summary["analysis_warning_count"] = len(result["analysis_warnings"])
+            config_new = _config_findings_new_since_base(
+                result, diff_root, base_ref, changed_ranges, console, machine_output
+            )
             for category in _DIFF_FINDING_CATEGORIES:
                 items = result.get(category, [])
                 if items:
@@ -1085,7 +1308,11 @@ def _run_scan_command(
                         )
                     except ValueError as exc:
                         cli_module._exit_diff_unavailable(args, str(exc))
-                    diff_finding_ids = {id(item) for item in diff_findings}
+                    diff_finding_ids = {
+                        id(item)
+                        for item in diff_findings
+                        if not _config_change_finding(item)
+                    } | config_new
                     result[category] = [
                         item
                         for item in items
@@ -1104,8 +1331,12 @@ def _run_scan_command(
                             item.get("rule_id") in {"SKY-A122", "SKY-A125"}
                             and item.get("kind") == "guardrail_tamper"
                         )
-                        or str(item.get("rule_id", "")).upper()
-                        in selected_prerequisite_ids
+                        or item.get("kind") == "supply_chain_diff"
+                        or (
+                            not _config_change_finding(item)
+                            and str(item.get("rule_id", "")).upper()
+                            in selected_prerequisite_ids
+                        )
                     ]
             # Fixture totals and aggregate grades describe the full scan, not
             # the findings visible in a diff-scoped report.
@@ -1299,6 +1530,7 @@ def _run_scan_command(
             from skylos.core.baseline import load_baseline, filter_new_findings
 
             baseline = load_baseline(project_root)
+            policy_options, policy_receipt = _policy_base_baseline(project_root)
             if "dependency_vulnerabilities" in result:
                 from skylos.config import dependency_baseline_policy_locked
                 from skylos.core.baseline_source import load_dependency_baseline
@@ -1325,6 +1557,7 @@ def _run_scan_command(
                     dependency_baseline=dependency_baseline or {},
                     dependency_disabled_reason=disabled_reason,
                     dependency_source=dependency_source,
+                    **policy_options,
                 )
                 if not machine_output:
                     receipt = result["analysis_summary"]["dependency_baseline"]
@@ -1337,9 +1570,15 @@ def _run_scan_command(
                     "[warn]No baseline found. Run 'skylos baseline .' first.[/warn]"
                 )
             else:
-                result = filter_new_findings(result, baseline)
+                result = filter_new_findings(
+                    result, baseline, project_root=project_root, **policy_options
+                )
             if baseline is not None:
                 result.setdefault("analysis_summary", {})["baseline_scoped"] = True
+                _record_baseline_rule_coverage(result, baseline, args)
+                _note_policy_base_baseline(
+                    result, policy_receipt, console, machine_output
+                )
 
         if getattr(args, "ai_review", False):
             _run_ai_review(
@@ -1643,9 +1882,11 @@ def _run_scan_command(
                 sarif_data["runs"][0].setdefault("properties", {})["grade"] = grade_data
             summary = output_result.get("analysis_summary")
             if isinstance(summary, dict):
+                from skylos.rules.sca.posture import UPLOAD_SUMMARY_KEYS
+
                 coverage = {
                     key: summary[key]
-                    for key in ("sca_coverage", "custom_rules_coverage")
+                    for key in UPLOAD_SUMMARY_KEYS
                     if isinstance(summary.get(key), dict)
                 }
                 if coverage:
@@ -1850,6 +2091,11 @@ def _run_scan_command(
     if not args.gate:
         for warning in sca_coverage_warnings(result):
             console.print(f"[warn]{escape(warning)}[/warn]", soft_wrap=True)
+        from skylos.rules.sca.posture import POSTURE_KEY, posture_line
+
+        posture = posture_line((result.get("analysis_summary") or {}).get(POSTURE_KEY))
+        if posture:
+            console.print(f"[muted]{escape(posture)}[/muted]", soft_wrap=True)
 
     if args.gate:
         incomplete_exit_code = _strict_scan_exit_code(result, args)

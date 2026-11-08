@@ -64,16 +64,29 @@ func markPackageFunctionReachability(defs map[string]*Def, files []reachabilityF
 	if len(files) == 0 || packageHasAssembly(filepath.Dir(files[0].path)) {
 		return nil, false
 	}
+	if project, ok := importer.(*projectSourceImporter); ok && project.incompleteDirs[filepath.Dir(files[0].path)] {
+		return nil, false
+	}
 	info := &types.Info{
 		Defs: map[*ast.Ident]types.Object{},
 		Uses: map[*ast.Ident]types.Object{},
 	}
 	conf := types.Config{Importer: importer, Error: func(error) {}}
+	if project, ok := importer.(*projectSourceImporter); ok {
+		conf.GoVersion = project.languageVersionForDirectory(filepath.Dir(files[0].path))
+	}
 	asts := make([]*ast.File, 0, len(files))
 	for _, file := range files {
 		asts = append(asts, file.file)
 	}
 	importPath := packageImportPath(modulePath, files[0].pkgDir, files[0].file.Name.Name)
+	if project, ok := importer.(*projectSourceImporter); ok {
+		var known bool
+		importPath, known = project.packagePath(files[0].pkgDir, files[0].file.Name.Name)
+		if !known {
+			return nil, false
+		}
+	}
 	checkedPkg, err := conf.Check(importPath, fset, asts, info)
 	if err != nil {
 		return nil, false
@@ -164,7 +177,7 @@ func markPackageFunctionReachability(defs map[string]*Def, files []reachabilityF
 				}
 				target := objects[object]
 				if target == "" {
-					target = projectObjectName(object, modulePath, allNames)
+					target = projectObjectName(object, modulePath, allNames, importer)
 				}
 				if target == "" {
 					return true
@@ -211,17 +224,22 @@ func markPackageFunctionReachability(defs map[string]*Def, files []reachabilityF
 	return preciseRefs, true
 }
 
-func projectObjectName(object types.Object, modulePath string, names map[string]bool) string {
-	if object == nil || object.Pkg() == nil || modulePath == "" {
+func projectObjectName(object types.Object, modulePath string, names map[string]bool, importer types.Importer) string {
+	if object == nil || object.Pkg() == nil {
 		return ""
 	}
 	pkgPath := object.Pkg().Path()
-	if pkgPath != modulePath && !strings.HasPrefix(pkgPath, modulePath+"/") {
-		return ""
+	dir := ""
+	if project, ok := importer.(*projectSourceImporter); ok {
+		dir = project.objectPackageDirectory(pkgPath)
+	} else if pkgPath == modulePath || strings.HasPrefix(pkgPath, modulePath+"/") {
+		dir = strings.TrimPrefix(strings.TrimPrefix(pkgPath, modulePath), "/")
+		if dir == "" {
+			dir = "."
+		}
 	}
-	dir := strings.TrimPrefix(strings.TrimPrefix(pkgPath, modulePath), "/")
 	if dir == "" {
-		dir = "."
+		return ""
 	}
 	name := ""
 	if _, receiver := receiverNameFromMethod(object); receiver != "" {

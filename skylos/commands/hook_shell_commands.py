@@ -82,6 +82,8 @@ class SimpleCommand:
     dynamic: frozenset[int] = frozenset()
     # xargs: more arguments come from stdin.
     more_args: bool = False
+    outputs: tuple[str, ...] = ()
+    program_word: str = ""
 
     def is_dynamic(self, index: int) -> bool:
         return index in self.dynamic
@@ -89,9 +91,15 @@ class SimpleCommand:
 
 def simple_commands(command: str, cwd: Path) -> list[SimpleCommand]:
     """Every simple command ``command`` runs, in order, run from ``cwd``."""
+    return walk(command, cwd)[0]
+
+
+def walk(command: str, cwd: Path) -> tuple[list[SimpleCommand], list[list[str]]]:
+    """The simple commands, and the words of commands whose program is only
+    known at run time (``$c mcp add ...``)."""
     walker = _Walker(cwd)
     walker.parse(command)
-    return walker.commands[:MAX_COMMANDS]
+    return walker.commands[:MAX_COMMANDS], walker.unknown
 
 
 def is_dynamic_word(word: str) -> bool:
@@ -108,9 +116,11 @@ class _Walker:
         self.depth = depth
         self.exported: dict[str, str] = dict(exported or {})
         self.commands: list[SimpleCommand] = []
+        self.unknown: list[list[str]] = []
         self.subshells: list[tuple[Path, dict[str, str]]] = []
         self.bodies: list[str] = []
         self.parsed_bodies: set[int] = set()
+        self._outputs: tuple[str, ...] = ()
 
     def parse(self, command: str) -> None:
         text, self.bodies = prepare(command)
@@ -118,6 +128,7 @@ class _Walker:
             for simple in pipeline:
                 if len(self.commands) >= MAX_COMMANDS:
                     return
+                self._outputs = tuple(simple.outputs)
                 self._command(list(simple.words))
 
     # -- one simple command ---------------------------------------------
@@ -176,7 +187,8 @@ class _Walker:
             return
         program_word = words[0]
         if is_dynamic_word(program_word):
-            return  # the program itself is only known at run time
+            self.unknown.append([_plain(word) for word in words])
+            return
         program = os.path.basename(_plain(program_word))
         args = words[1:]
         if program == "cd":
@@ -207,6 +219,8 @@ class _Walker:
                 cwd=cwd,
                 dynamic=dynamic,
                 more_args=more_args,
+                outputs=self._outputs,
+                program_word=_plain(program_word),
             )
         )
 
@@ -227,6 +241,7 @@ class _Walker:
         child = _Walker(cwd, self.depth + 1, self.exported)
         child.parse(script)
         self.commands.extend(child.commands)
+        self.unknown.extend(child.unknown)
 
     def _cd(self, args: list[str]) -> None:
         operands = [arg for arg in args if not arg.startswith("-")]
@@ -300,4 +315,4 @@ def _shell_script(args: list[str]) -> str | None:
     return None
 
 
-__all__ = ["SimpleCommand", "is_dynamic_word", "simple_commands"]
+__all__ = ["SimpleCommand", "is_dynamic_word", "simple_commands", "walk"]

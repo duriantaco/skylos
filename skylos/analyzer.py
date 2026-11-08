@@ -46,6 +46,7 @@ from skylos.visitors.languages.typescript.analysis import (
     _discover_ts_vscode_lifecycle_entry_files,
     discover_ts_build_aliases,
     discover_ts_bundle_entry_files,
+    discover_ts_reexport_context,
     find_dead_ts_files,
     prune_dead_ts_import_consumers,
     find_unused_ts_exports,
@@ -70,6 +71,7 @@ from skylos.rules.secrets import (
     SECRET_FILE_NAMES as _SECRET_FILE_NAMES,
     SECRET_ONLY_FILE_SUFFIXES as _SECRET_ONLY_FILE_SUFFIXES,
     file_starts_like_shell_script as _file_starts_like_shell_script,
+    is_aws_credential_path as _is_aws_credential_path,
     is_provider_only_secret_name as _is_provider_only_secret_name,
     is_secret_scan_name as _is_secret_scan_name,
     may_be_shell_script as _may_be_shell_script,
@@ -142,6 +144,7 @@ _find_package_boundary_modules = find_package_boundary_modules
 
 _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_sca_coverage",
+    "_supply_chain_summary",
     "_dependency_import_notes",
     "_analysis_scope",
     "_review_context",
@@ -182,6 +185,7 @@ _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_ts_importers_of",
     "_ts_file_wildcard_edges",
     "_ts_file_importers_of",
+    "_ts_reexport_ref_counts",
     "_ts_demoted_exports",
     "_browser_script_entry_files",
     "_generated_file_scope",
@@ -283,6 +287,20 @@ def _python_verification_surface_root(surface_root):
     ):
         return root.parent
     return root
+
+
+def _supply_chain_summary(root, sca_findings) -> dict:
+    """``dependency_inventory``, ``supply_chain_posture``, ``ci_inventory`` and
+    ``agent_hooks`` for a finished dependency scan; empty when they cannot be
+    built."""
+    try:
+        from skylos.rules.sca.posture import build_supply_chain_summary
+
+        return build_supply_chain_summary(root, sca_findings)
+    except Exception:  # noqa: BLE001 - summary blocks never fail a scan
+        if os.getenv("SKYLOS_DEBUG"):
+            logger.error(traceback.format_exc())
+        return {}
 
 
 def _license_policy_findings(
@@ -639,6 +657,7 @@ _TS_JS_SOURCE_EXTS = (
 _PHP_SOURCE_EXTS = PHP_SOURCE_EXTS
 _RUST_SOURCE_EXTS = (".rs",)
 _RUBY_SOURCE_EXTS = (".rb",)
+_SWIFT_SOURCE_EXTS = (".swift",)
 _CPP_SOURCE_EXTS = CPP_SOURCE_EXTS + CPP_HEADER_EXTS
 _DART_SOURCE_EXTS = (".dart",)
 _CSHARP_SOURCE_EXTS = (".cs",)
@@ -654,6 +673,7 @@ ANALYZED_SOURCE_SUFFIXES = frozenset(
         *_PHP_SOURCE_EXTS,
         *_RUST_SOURCE_EXTS,
         *_RUBY_SOURCE_EXTS,
+        *_SWIFT_SOURCE_EXTS,
         *_CPP_SOURCE_EXTS,
         *_DART_SOURCE_EXTS,
         *_CSHARP_SOURCE_EXTS,
@@ -669,6 +689,7 @@ _REFERENCE_LANGUAGE_FAMILIES = {
     **dict.fromkeys(_PHP_SOURCE_EXTS, "php"),
     **dict.fromkeys(_RUST_SOURCE_EXTS, "rust"),
     **dict.fromkeys(_RUBY_SOURCE_EXTS, "ruby"),
+    **dict.fromkeys(_SWIFT_SOURCE_EXTS, "swift"),
     **dict.fromkeys(_DART_SOURCE_EXTS, "dart"),
     **dict.fromkeys(_CSHARP_SOURCE_EXTS, "csharp"),
     **dict.fromkeys(_KOTLIN_SOURCE_EXTS, "jvm"),
@@ -738,6 +759,8 @@ def _class_has_base_leaf(class_def, leaf_names: set[str]) -> bool:
 
 
 def _is_secret_config_candidate(path: Path) -> bool:
+    if _is_aws_credential_path(str(path)):
+        return True
     name = path.name.lower()
     if name == ".env" or name.startswith(".env."):
         return True
@@ -753,12 +776,17 @@ def _is_secret_config_candidate(path: Path) -> bool:
 
 def _is_provider_only_secret_text(path: Path) -> bool:
     # These files enter the secret-only collector, never a language parser.
-    return _is_provider_only_secret_name(path.name) or path.suffix.lower() in {
-        ".html",
-        ".htm",
-        ".css",
-        ".map",
-    }
+    return (
+        _is_aws_credential_path(str(path))
+        or _is_provider_only_secret_name(path.name)
+        or path.suffix.lower()
+        in {
+            ".html",
+            ".htm",
+            ".css",
+            ".map",
+        }
+    )
 
 
 def _resolve_secret_config_candidate(path: Path, root: Path) -> Path | None:
@@ -959,6 +987,28 @@ def _normalize_secret_changed_files(
     return normalized
 
 
+def _read_secret_file_content(root: Path, path: Path):
+    from skylos.rules.secret_text import decode_secret_file_text
+
+    # Latin-1 plus unchanged newlines transports every original byte through
+    # the existing contained, size-bounded no-follow reader before decoding.
+    raw_text = read_project_text_no_symlink(
+        root,
+        path,
+        max_bytes=MAX_SECRET_CONFIG_BYTES,
+        encoding="latin-1",
+        newline="",
+    )
+    return (
+        decode_secret_file_text(
+            raw_text.encode("latin-1"),
+            strict_utf8=_is_provider_only_secret_text(path),
+        )
+        if raw_text is not None
+        else None
+    )
+
+
 def _scan_secret_config_candidate(
     candidate: Path,
     *,
@@ -995,29 +1045,30 @@ def _scan_secret_config_candidate(
             scanned.add(str(resolved))
             return []
         scanned.add(str(resolved))
-        if _may_be_shell_script(resolved.name) and not _file_starts_like_shell_script(
-            resolved
+        if (
+            not _is_aws_credential_path(str(resolved))
+            and _may_be_shell_script(resolved.name)
+            and not _file_starts_like_shell_script(resolved)
         ):
             return []
-        source = read_project_text_no_symlink(
-            root,
-            resolved,
-            max_bytes=MAX_SECRET_CONFIG_BYTES,
-            encoding="utf-8",
-            errors="strict" if _is_provider_only_secret_text(resolved) else "ignore",
-        )
-        if source is None:
+        content = _read_secret_file_content(root, resolved)
+        if content is None:
             if analysis_errors is not None:
                 analysis_errors.append(_secret_config_read_error_payload(resolved))
             return []
         ctx = {
             "relpath": rel,
-            "lines": source.splitlines(True),
+            "lines": content.text.splitlines(True),
             "tree": None,
         }
         if _is_provider_only_secret_text(resolved):
             ctx["provider_only"] = True
+        if _is_aws_credential_path(str(resolved)):
+            ctx["aws_credential_file"] = True
         findings = list(_secrets_scan_ctx(ctx))
+        if content.encoding is not None:
+            for finding in findings:
+                finding["source_encoding"] = content.encoding
         if checked_files is not None:
             checked_files.add(str(resolved))
         return findings
@@ -2051,6 +2102,7 @@ class Skylos:
         **dict.fromkeys(PHP_SOURCE_EXTS, "PHP"),
         ".rs": "Rust",
         ".rb": "Ruby",
+        ".swift": "Swift",
         ".cpp": "C++",
         ".cc": "C++",
         ".cxx": "C++",
@@ -2132,6 +2184,17 @@ class Skylos:
         else:
             all_files = discover_source_files(p, exts, exclude_folders=exclude_folders)
 
+        # SwiftPM checkouts and generated Swift under .build are dependencies
+        # and build products, rather than this directory scan's application
+        # source. Explicit file targets returned above remain inspectable.
+        all_files = [
+            file
+            for file in all_files
+            if not (
+                str(file).endswith(_SWIFT_SOURCE_EXTS)
+                and ".build" in Path(file).relative_to(root).parts[:-1]
+            )
+        ]
         return all_files, root
 
     def _walk_python_files_py(self, p, exts, exclude_folders=None, root=None):
@@ -2262,7 +2325,11 @@ class Skylos:
         # propogate exports to methods of exported classes
         exported_classes = set()
         for def_obj in self.defs.values():
-            if def_obj.type == "class" and def_obj.is_exported:
+            if (
+                def_obj.type == "class"
+                and def_obj.is_exported
+                and not str(def_obj.filename).endswith(_SWIFT_SOURCE_EXTS)
+            ):
                 exported_classes.add(def_obj.name)
 
         if not exported_classes:
@@ -2276,6 +2343,7 @@ class Skylos:
                 + _CSHARP_SOURCE_EXTS
                 + _KOTLIN_SOURCE_EXTS
                 + _RUBY_SOURCE_EXTS
+                + _SWIFT_SOURCE_EXTS
             ):
                 continue
             if "." not in def_obj.name:
@@ -2333,15 +2401,25 @@ class Skylos:
                     def_obj.references = max(def_obj.references, 1)
 
     def _build_ts_import_graph(
-        self, ts_raw_imports: dict, monorepo_resolver=None, *, credit_references=True
+        self,
+        ts_raw_imports: dict,
+        monorepo_resolver=None,
+        *,
+        credit_references=True,
+        reexport_context=None,
     ):
+        self._ts_reexport_ref_counts = {}
         (
             self.ts_consumed_exports,
             self._ts_wildcard_edges,
             self._ts_importers_of,
         ) = build_ts_import_graph(
-            ts_raw_imports, self.defs, monorepo_resolver,
+            ts_raw_imports,
+            self.defs,
+            monorepo_resolver,
             credit_references=credit_references,
+            reexport_context=reexport_context,
+            discarded_reexport_refs=self._ts_reexport_ref_counts,
         )
 
     def _demote_unconsumed_ts_exports(
@@ -2834,9 +2912,7 @@ class Skylos:
                 return results
 
             filter_kwargs = (
-                {"evidence_filter": filter_evidence}
-                if evidence_filters
-                else {}
+                {"evidence_filter": filter_evidence} if evidence_filters else {}
             )
             with grep_verification_scope(
                 project_root,
@@ -3143,6 +3219,14 @@ class Skylos:
             if progress_callback and (i == 1 or i % tick_every == 0 or i == total_refs):
                 progress_callback(i, total_refs or 1, Path("PHASE: mark refs"))
             ref_family = _source_family(ref_file)
+
+            if ref_family == "rust" and ref.startswith("@rust-import:"):
+                from skylos.visitors.languages.rust.import_bindings import (
+                    mark_import_reference,
+                )
+
+                mark_import_reference(self.defs, ref_file, ref)
+                continue
 
             if str(ref_file).endswith(_CSHARP_SOURCE_EXTS):
                 if ref.startswith("@type:"):
@@ -4194,6 +4278,7 @@ class Skylos:
         clear_go_cache()
         clear_drupal_cache()
         self._sca_coverage = None
+        self._supply_chain_summary = None
 
         raw_first = Path(
             path[0] if isinstance(path, (list, tuple)) else path
@@ -4698,6 +4783,9 @@ class Skylos:
                         )
                         result["dependency_vulnerabilities"] = list(sca_findings)
                         result["analysis_summary"]["sca_count"] = len(sca_findings)
+                        result["analysis_summary"].update(
+                            _supply_chain_summary(project_root, sca_findings)
+                        )
                     except Exception as exc:
                         self._sca_coverage = {
                             "status": "incomplete",
@@ -4873,6 +4961,7 @@ class Skylos:
         effective_file_configs = {} if include_review_context else None
         configuration_coverage = {}
         ruby_security_coverage = []
+        swift_reflection_facts = {}
 
         injected = False
         if custom_rules_data and not os.getenv("SKYLOS_CUSTOM_RULES"):
@@ -5024,6 +5113,10 @@ class Skylos:
                     coverage = getattr(framework_flags, "security_coverage", None)
                     if isinstance(coverage, dict):
                         ruby_security_coverage.append({"file": str(file), **coverage})
+                if str(file).endswith(_SWIFT_SOURCE_EXTS):
+                    facts = getattr(framework_flags, "swift_reflection_facts", None)
+                    if isinstance(facts, dict) and facts and not file_analysis_error:
+                        swift_reflection_facts[str(file)] = facts
                 if effective_file_configs is not None:
                     effective_file_configs[str(Path(file).resolve())] = cfg
                     for worker_findings in (q_finds, d_finds, pro_finds):
@@ -5092,6 +5185,12 @@ class Skylos:
                 for definition in defs:
                     if definition.type == "import":
                         key = f"{definition.filename}:{definition.name}"
+                        if str(definition.filename).endswith(_RUST_SOURCE_EXTS):
+                            from skylos.visitors.languages.rust.import_bindings import (
+                                import_definition_key,
+                            )
+
+                            key = import_definition_key(definition) or key
                     elif str(definition.filename).endswith(_CSHARP_SOURCE_EXTS):
                         if definition.type == "class":
                             # Partial declarations share one C# type identity.
@@ -5104,6 +5203,11 @@ class Skylos:
                             )
                             if key in self.defs:
                                 key = f"{key}:{definition.line}:{len(self.defs)}"
+                    elif str(definition.filename).endswith(_SWIFT_SOURCE_EXTS):
+                        key = (
+                            f"{definition.filename}:{definition.name}:"
+                            f"{definition.type}:{definition.line}"
+                        )
                     elif str(definition.filename).endswith(
                         _TS_JS_SOURCE_EXTS + _CPP_SOURCE_EXTS
                     ):
@@ -5156,22 +5260,19 @@ class Skylos:
                                 if isinstance(out, tuple) and len(out) > 19
                                 else None
                             )
-                            if file_source_lines:
-                                src_lines = file_source_lines
-                            elif _is_secret_config_candidate(Path(file)):
-                                src = read_project_text_no_symlink(
-                                    root,
-                                    Path(file),
-                                    max_bytes=MAX_SECRET_CONFIG_BYTES,
-                                    encoding="utf-8",
-                                    errors="ignore",
+                            file_secret_content = None
+                            if _is_secret_config_candidate(Path(file)):
+                                file_secret_content = _read_secret_file_content(
+                                    root, Path(file)
                                 )
-                                if src is None:
+                                if file_secret_content is None:
                                     analysis_errors.append(
                                         _secret_config_read_error_payload(Path(file))
                                     )
                                     continue
-                                src_lines = src.splitlines(True)
+                                src_lines = file_secret_content.text.splitlines(True)
+                            elif file_source_lines:
+                                src_lines = file_source_lines
                             else:
                                 src = Path(file).read_text(
                                     encoding="utf-8", errors="ignore"
@@ -5184,6 +5285,13 @@ class Skylos:
                             ):
                                 ctx["honor_inline_ignores"] = False
                             findings = list(_secrets_scan_ctx(ctx))
+                            if file_secret_content is not None and (
+                                file_secret_content.encoding is not None
+                            ):
+                                for finding in findings:
+                                    finding["source_encoding"] = (
+                                        file_secret_content.encoding
+                                    )
                             secret_checked_files.add(str(Path(file).resolve()))
                             if findings:
                                 f_ignore = per_file_ignore_lines.get(str(file), set())
@@ -6305,6 +6413,9 @@ class Skylos:
 
                 scan_root = project_root
                 sca_findings = scan_dependencies(scan_root)
+                self._supply_chain_summary = _supply_chain_summary(
+                    scan_root, sca_findings
+                )
                 sca_receipt = getattr(sca_findings, "receipt", None)
                 self._sca_coverage = (
                     dict(sca_receipt)
@@ -6506,14 +6617,38 @@ class Skylos:
                 and os.path.realpath(str(definition.filename)) in dead_ts_modules
             }
             self.refs = [
-                (name, filename) for name, filename in self.refs
+                (name, filename)
+                for name, filename in self.refs
                 if os.path.realpath(str(filename)) not in dead_ts_modules
                 or (name, os.path.realpath(str(filename))) in local_import_reads
             ]
-        self._build_ts_import_graph(live_ts_imports, graph_resolver)
+        reexport_context = discover_ts_reexport_context(
+            files,
+            live_ts_imports,
+            project_root=str(self._project_root),
+            workspace_inventory=workspace_inventory,
+            exclude_folders=exclude_folders,
+            browser_entry_points=self._browser_script_entry_files,
+            analysis_errors=analysis_errors,
+        )
+        self._build_ts_import_graph(
+            live_ts_imports,
+            graph_resolver,
+            reexport_context=reexport_context,
+        )
+        if self._ts_reexport_ref_counts:
+            from skylos.visitors.languages.typescript.reexport_demand import (
+                remove_reexport_only_refs,
+            )
+
+            self.refs = remove_reexport_only_refs(
+                self.refs, self._ts_reexport_ref_counts
+            )
         apply_ts_module_substitutions(
-            file_replacements, self.ts_consumed_exports,
-            self._ts_importers_of, self._ts_wildcard_edges,
+            file_replacements,
+            self.ts_consumed_exports,
+            self._ts_importers_of,
+            self._ts_wildcard_edges,
         )
 
         for top_level_ref in all_top_level_refs:
@@ -6532,6 +6667,28 @@ class Skylos:
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: mark refs"))
+        if any(str(file).endswith(_RUST_SOURCE_EXTS) for file in files):
+            from skylos.visitors.languages.rust.project_traits import (
+                apply_project_trait_imports,
+            )
+
+            apply_project_trait_imports(
+                self.defs,
+                files,
+                scan_root=root,
+                analysis_scope=self._analysis_scope,
+                analysis_errors=analysis_errors,
+            )
+        if swift_reflection_facts:
+            from skylos.visitors.languages.swift.project_reflection import (
+                apply_project_reflection,
+            )
+
+            analysis_errors.extend(
+                apply_project_reflection(
+                    self.defs, swift_reflection_facts, scan_root=root
+                )
+            )
         self._mark_refs(progress_callback=progress_callback, scan_root=root)
         self._mark_reflected_module_members(set(modmap.values()))
         self._mark_call_arg_method_refs()
@@ -6869,6 +7026,7 @@ def proc_file(
     config_file=None,
     project_root=None,
     credential_source_locations=(),
+    go_scan_scope=None,
 ) -> tuple | None:
     return process_file(
         file_or_args,
@@ -6883,6 +7041,7 @@ def proc_file(
         config_file=config_file,
         project_root=project_root,
         credential_source_locations=credential_source_locations,
+        go_scan_scope=go_scan_scope,
         visitor_class=Visitor,
         test_aware_visitor_class=TestAwareVisitor,
         framework_aware_visitor_class=FrameworkAwareVisitor,

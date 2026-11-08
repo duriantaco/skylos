@@ -11,6 +11,7 @@ from .tls_provenance import tls_verification_disabled as _tls_verification_disab
 from .flow_env import ValueFlow, _scope_bindings, _scope_children
 from .module_namespace import module_name_for, module_rebinding
 from .builtin_bindings import builtin_references
+from .callable_bindings import callable_names
 from skylos.security.command_guard import scan_shell_command
 from skylos.security.sensitive_data import first_sensitive_name
 from skylos.security.command_guard_types import (
@@ -3157,8 +3158,20 @@ class DangerousCallsRule(SkylosRule):
         )
         name = yaml_load_call_name(node, self._module) or name
         name = unpickler_load_name(name, self._unpickler_classes)
+        findings = []
+        for candidate in callable_names(
+            node,
+            name,
+            self._module,
+            context.get("filename"),
+            context.get("project_root"),
+        ):
+            findings.extend(self._call_findings(node, context, candidate))
+        return findings or None
+
+    def _call_findings(self, node, context, name):
         if not name:
-            return None
+            return []
 
         findings = []
         weak_hash_key = _hashlib_new_weak_rule(node, name)
@@ -3286,4 +3299,4 @@ class DangerousCallsRule(SkylosRule):
                 }
             )
 
-        return findings if findings else None
+        return findings

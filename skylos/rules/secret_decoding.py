@@ -23,6 +23,12 @@ _UNICODE_ESCAPE = re.compile(r"\\(?:u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|x[0-9A-Fa-f]
 _HTML_ENTITY = re.compile(
     r"&(?:\#(?:[xX][0-9A-Fa-f]{1,8}|[0-9]{1,8})|[A-Za-z][A-Za-z0-9]{1,31});"
 )
+_PERCENT_ESCAPE = re.compile(r"%[0-9A-Fa-f]{2}")
+_RECORD_HINT = re.compile(
+    r"kty|AccountKey|private_key|secretAccessKey|secret_access_key", re.I
+)
+_ENCODED_QUOTE = re.compile(r"&(?:quot|#0*34|#[xX]0*22);|\\u0022|\\x22")
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +120,8 @@ class _Candidate:
 class _DecodedText:
     text: str = field(repr=False)
     runs: tuple[_SourceRun, ...] | None = field(default=None, repr=False)
+    extra_encodings: tuple[str, ...] = ()
+    intermediate_bytes: int = 0
 
 
 def _base64_candidate(value: str) -> str | None:
@@ -129,7 +137,50 @@ def _base64_candidate(value: str) -> str | None:
     return "base64url" if any(char in body for char in "-_") else "base64"
 
 
-def _candidates(text: str):
+def _json_string_candidates(text: str):
+    """Visit complete double-quoted literals once, including escaped quotes.
+
+    The decoder validates JSON syntax.  This lexer only finds a closing quote
+    without treating an escaped quote as a new literal. Unicode-only escapes
+    retain their existing decoder path and metadata.
+    """
+    position = 0
+    while position < len(text):
+        start = text.find('"', position)
+        if start < 0:
+            return
+        position = start + 1
+        has_json_escape = False
+        while position < len(text):
+            character = text[position]
+            if character == "\\":
+                if position + 1 < len(text) and text[position + 1] != "u":
+                    has_json_escape = True
+                position += 2
+            elif character == '"':
+                position += 1
+                if has_json_escape:
+                    yield _Candidate(text[start:position], start, position, "json")
+                break
+            else:
+                position += 1
+        else:
+            return
+
+
+def _candidates(text: str, *, include_record_escapes: bool = False):
+    # Structured credentials need their sibling fields and separators together.
+    # Token-sized escape views remain useful for ordinary provider signatures.
+    # Whole-line views use exactly the same byte/count/depth/source-map limits.
+    if include_record_escapes and (
+        _RECORD_HINT.search(text) or ("{" in text and _ENCODED_QUOTE.search(text))
+    ):
+        if _HTML_ENTITY.search(text):
+            yield _Candidate(text, 0, len(text), "html")
+        if _UNICODE_ESCAPE.search(text):
+            yield _Candidate(text, 0, len(text), "unicode")
+    if include_record_escapes:
+        yield from _json_string_candidates(text)
     for match in _BASE64_BLOCK.finditer(text):
         # A third pad character is not a boundary around a valid encoding.
         if match.end() < len(text) and text[match.end()] == "=":
@@ -144,6 +195,8 @@ def _candidates(text: str):
             yield _Candidate(value, match.start(), match.end(), "unicode")
         if _HTML_ENTITY.search(value):
             yield _Candidate(value, match.start(), match.end(), "html")
+        if "%" in value and _PERCENT_ESCAPE.search(value):
+            yield _Candidate(value, match.start(), match.end(), "percent")
 
 
 def _unicode_character(match: re.Match[str]) -> str:
@@ -167,7 +220,8 @@ def _has_printable_base64_prefix(candidate: _Candidate, max_chars: int) -> bool:
     encoded = candidate.text[:length].translate(str.maketrans("-_", "+/"))
     try:
         data = base64.b64decode(encoded, validate=True)
-        decoded = codecs.getincrementaldecoder("utf-8")().decode(data, final=False)
+        codec, _ = _base64_text_encoding(data)
+        decoded = codecs.getincrementaldecoder(codec)().decode(data, final=False)
     except (binascii.Error, UnicodeDecodeError):
         return False
     return all(
@@ -210,6 +264,147 @@ def _decode_escapes(candidate: _Candidate) -> _DecodedText:
     return _DecodedText("".join(pieces), tuple(runs))
 
 
+def _decode_percent(candidate: _Candidate) -> _DecodedText | None:
+    """Decode complete UTF-8 byte escapes without URL form normalization.
+
+    A malformed escape or invalid UTF-8 sequence rejects this view as a whole;
+    replacement characters and partial decoding cannot create a provider match.
+    Each decoded codepoint maps to all bytes that produced it.
+    """
+    pieces = []
+    runs = []
+    output_position = 0
+    position = 0
+    source = candidate.text
+
+    def append(value: str, start: int, end: int) -> None:
+        nonlocal output_position
+        following = output_position + len(value)
+        runs.append(
+            _SourceRun(
+                output_position,
+                following,
+                candidate.start + start,
+                candidate.start + end,
+            )
+        )
+        pieces.append(value)
+        output_position = following
+
+    while position < len(source):
+        if source[position] != "%":
+            following = source.find("%", position)
+            if following < 0:
+                following = len(source)
+            append(source[position:following], position, following)
+            position = following
+            continue
+        start = position
+        octets = bytearray()
+        while position < len(source) and source[position] == "%":
+            digits = source[position + 1 : position + 3]
+            if len(digits) != 2 or any(digit not in _HEX_DIGITS for digit in digits):
+                return None
+            octets.append(int(digits, 16))
+            position += 3
+        try:
+            decoded = octets.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        previous = start
+        for character in decoded:
+            following = previous + 3 * len(character.encode("utf-8"))
+            append(character, previous, following)
+            previous = following
+    return _DecodedText("".join(pieces), tuple(runs))
+
+
+def _decode_json_string(candidate: _Candidate) -> _DecodedText | None:
+    """Strict JSON string decoding with a compressed original-source map."""
+    source = candidate.text
+    if len(source) < 2 or source[0] != '"' or source[-1] != '"':
+        return None
+    pieces = []
+    runs = []
+    output_position = 0
+    position = 1
+    limit = len(source) - 1
+    escapes = {
+        '"': '"',
+        "\\": "\\",
+        "/": "/",
+        "b": "\b",
+        "f": "\f",
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+    }
+
+    def append(value: str, start: int, end: int) -> None:
+        nonlocal output_position
+        following = output_position + len(value)
+        runs.append(
+            _SourceRun(
+                output_position,
+                following,
+                candidate.start + start,
+                candidate.start + end,
+            )
+        )
+        pieces.append(value)
+        output_position = following
+
+    while position < limit:
+        start = position
+        character = source[position]
+        if character != "\\":
+            while position < limit and source[position] != "\\":
+                number = ord(source[position])
+                if source[position] == '"' or number < 32 or 0xD800 <= number <= 0xDFFF:
+                    return None
+                position += 1
+            append(source[start:position], start, position)
+            continue
+        if position + 1 >= limit:
+            return None
+        marker = source[position + 1]
+        if marker in escapes:
+            position += 2
+            append(escapes[marker], start, position)
+            continue
+        if marker != "u" or position + 6 > limit:
+            return None
+        digits = source[position + 2 : position + 6]
+        if any(character not in _HEX_DIGITS for character in digits):
+            return None
+        number = int(digits, 16)
+        position += 6
+        if 0xD800 <= number <= 0xDBFF:
+            if position + 6 > limit or source[position : position + 2] != "\\u":
+                return None
+            digits = source[position + 2 : position + 6]
+            if any(character not in _HEX_DIGITS for character in digits):
+                return None
+            low = int(digits, 16)
+            if not 0xDC00 <= low <= 0xDFFF:
+                return None
+            number = 0x10000 + ((number - 0xD800) << 10) + low - 0xDC00
+            position += 6
+        elif 0xDC00 <= number <= 0xDFFF:
+            return None
+        append(chr(number), start, position)
+    return _DecodedText("".join(pieces), tuple(runs))
+
+
+def _base64_text_encoding(data: bytes) -> tuple[str, str | None]:
+    """Only an explicit byte-order mark selects UTF-16 interpretation."""
+    if data.startswith(codecs.BOM_UTF16_LE):
+        return "utf-16", "utf16le"
+    if data.startswith(codecs.BOM_UTF16_BE):
+        return "utf-16", "utf16be"
+    return "utf-8", None
+
+
 def _decode(candidate: _Candidate) -> _DecodedText | None:
     if candidate.encoding in {"base64", "base64url"}:
         encoded = candidate.text
@@ -220,8 +415,21 @@ def _decode(candidate: _Candidate) -> _DecodedText | None:
             # Reject unused pad bits and other noncanonical representations.
             if base64.b64encode(data).decode().rstrip("=") != normalized.rstrip("="):
                 return None
-            result = _DecodedText(data.decode("utf-8"))
+            codec, extra_encoding = _base64_text_encoding(data)
+            result = _DecodedText(
+                data.decode(codec),
+                extra_encodings=(extra_encoding,) if extra_encoding else (),
+                intermediate_bytes=len(data) if extra_encoding else 0,
+            )
         except (binascii.Error, UnicodeDecodeError):
+            return None
+    elif candidate.encoding == "percent":
+        result = _decode_percent(candidate)
+        if result is None:
+            return None
+    elif candidate.encoding == "json":
+        result = _decode_json_string(candidate)
+        if result is None:
             return None
     else:
         result = _decode_escapes(candidate)
@@ -239,6 +447,7 @@ def _may_have_another_layer(text: str) -> bool:
     return bool(
         _UNICODE_ESCAPE.search(text)
         or _HTML_ENTITY.search(text)
+        or _PERCENT_ESCAPE.search(text)
         or any(
             _base64_candidate(match.group()) is not None
             for match in _BASE64_BLOCK.finditer(text)
@@ -280,6 +489,7 @@ def decode_provider_views(
     max_candidates: int = 128,
     max_decoded_bytes: int = 65_536,
     max_candidate_chars: int = 65_536,
+    include_record_escapes: bool = False,
 ) -> SecretDecodeResult:
     """Return decoded views that may contain a known provider signature.
 
@@ -289,8 +499,9 @@ def decode_provider_views(
     encodings retain the same original container span. ``complete_value=False``
     means a nested step selected only part of a
     larger decoded container; its text cannot prove what that whole container
-    contains. Input is one physical source line; binary/UTF-16 files and archive
-    extraction are outside this helper's scope.
+    contains. Input is one physical source line. Base64-wrapped UTF-16 with an
+    explicit BOM uses two transformations; raw binary files and archives are
+    outside this helper's scope.
 
     Retained candidate views are bounded across the whole call. Reaching a
     plausible encoded candidate beyond a budget returns ``complete=False`` with
@@ -310,6 +521,9 @@ def decode_provider_views(
         raise ValueError("provider prefixes must be nonempty strings")
     if not prefixes:
         return SecretDecodeResult((), True, (), 0, 0)
+    # Hints only route text to provider validators. Scheme/authority casing
+    # must not lose a candidate; exact credential syntax remains their job.
+    prefixes = tuple(dict.fromkeys(prefix.casefold() for prefix in prefixes))
 
     queue = deque([DecodedSecretView(text, 0, len(text), (), _source_map=_SourceMap())])
     seen = {((), (0, len(text)), text, True)}
@@ -324,7 +538,9 @@ def decode_provider_views(
 
     while queue and not exhausted:
         current = queue.popleft()
-        for candidate in _candidates(current.text):
+        for candidate in _candidates(
+            current.text, include_record_escapes=include_record_escapes
+        ):
             if len(candidate.text) > max_candidate_chars:
                 if candidate.encoding in {"base64", "base64url"} and not (
                     _has_printable_base64_prefix(candidate, max_candidate_chars)
@@ -336,8 +552,17 @@ def decode_provider_views(
             if decoded_text is None:
                 continue
             decoded = decoded_text.text
-            has_provider = any(prefix in decoded for prefix in prefixes)
-            if not has_provider and not _may_have_another_layer(decoded):
+            hint_text = decoded.casefold()
+            has_provider = any(prefix in hint_text for prefix in prefixes)
+            has_json_layer = (
+                include_record_escapes
+                and next(_json_string_candidates(decoded), None) is not None
+            )
+            if (
+                not has_provider
+                and not _may_have_another_layer(decoded)
+                and not has_json_layer
+            ):
                 # Many ordinary HTML strings contain entities. Their direct
                 # decoded prose has no credential signature or remaining
                 # encoding, so it need not enter the recursive work queue.
@@ -347,7 +572,7 @@ def decode_provider_views(
                 exhausted = True
                 break
             checked += 1
-            size = len(decoded.encode("utf-8"))
+            size = len(decoded.encode("utf-8")) + decoded_text.intermediate_bytes
             if size > max_decoded_bytes - decoded_bytes:
                 incomplete("secret_decode_byte_limit")
                 continue
@@ -383,14 +608,27 @@ def decode_provider_views(
             if identity in seen:
                 continue
             seen.add(identity)
-            if len(current.encodings) >= max_depth:
+            transformations = (candidate.encoding, *decoded_text.extra_encodings)
+            if len(current.encodings) + len(transformations) > max_depth:
+                if (
+                    "json" in (*current.encodings, *transformations)
+                    and decoded.strip().casefold()
+                    in {prefix.strip() for prefix in prefixes}
+                    and not _may_have_another_layer(decoded)
+                    and next(_json_string_candidates(decoded), None) is None
+                ):
+                    # A decoded marker with no payload cannot hold a provider
+                    # credential. Source fragments often concatenate a prefix
+                    # with a runtime value; the extra JSON representation of
+                    # that prefix alone must not add incomplete-analysis noise.
+                    continue
                 incomplete("secret_decode_depth_limit")
                 continue
             view = DecodedSecretView(
                 decoded,
                 start,
                 end,
-                (*current.encodings, candidate.encoding),
+                (*current.encodings, *transformations),
                 complete_value,
                 frame,
                 source_map,

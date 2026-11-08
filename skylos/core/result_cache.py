@@ -73,6 +73,7 @@ SOURCE_EXTENSIONS = {
     ".engine",
     ".rs",
     ".rb",
+    ".swift",
     ".tf",
     ".dart",
     ".kt",

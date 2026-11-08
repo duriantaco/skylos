@@ -1,0 +1,1110 @@
+{
+  "schema_version": 1,
+  "generated_utc": "2026-11-07T12:39:20.274201+00:00",
+  "detector_revision": "a01233ddfa2ea1ffd18565bac6db53f1c13caad4",
+  "baseline_revision": "3cbc86af764f4e022e0ffdb9822f5b80052e5c0b",
+  "detector_package_files_verified_against_commit": 991,
+  "go_engine_sha256": "84db2f265be88cfc85a4c941c52662366b25f4962a2fd4c17a85155d0583e5b4",
+  "method": {
+    "new_repositories": 8,
+    "frozen_before_output": [
+      "repository revisions",
+      "source inventory",
+      "scan scope",
+      "82 real used controls"
+    ],
+    "ground_truth": "Every manageable natural candidate union adjudicated against source; native type/index evidence and omission counterfactuals where needed. All unions fully reviewed; no sampling cap reached.",
+    "scores": "TP/FP/FN/TN only for explicit finite reviewed label domains. No whole-repository accuracy/recall estimate. Zero denominators null, never100%.",
+    "no_findings": "Quiet output alone is not positive-recall evidence. Used controls require actual extracted matching definitions and live evidence.",
+    "incomplete": "Skylos SwiftSoup is UNSCORED;7 partial findings and4 additional absent private labels are diagnostics, never a confusion matrix.",
+    "scope_differences": "Tool categories, entry handling, targetcfg and absent dev dependencies differ and are recorded; no blanket best-tool ranking.",
+    "target_execution": false,
+    "detector_changes": false,
+    "model_uploads": false,
+    "controls": {
+      "frozen": 82,
+      "definition_present_alive": 75,
+      "extraction_gaps": 5,
+      "blocked_by_incomplete_analysis": 2
+    },
+    "raw_receipts": "Retained in local maintainer audit archive; public file records pinned inputs, settings, adjudication and scores without local paths or copied target source.",
+    "setup_corrections": [
+      "Mitt test import .. initially resolved toward absent dist; a trusted source-map correction uses declared package source before final repeat. Same original labels/scope, zero findings unchanged; original and corrected receipts retained.",
+      "Initial passive definition capture serialization failed; canonical uninstrumented CLI outputs and corrected capture are retained.",
+      "Optional independent TypeScript parser check used missing tool module; not passed and not required for source/Knip adjudication."
+    ],
+    "grep_verify": true,
+    "host": "macOS arm64; target conditions documented per language",
+    "scope_frozen_before_output": "Intended input scopes, revisions and source-used controls frozen; recorded Mitt resolver configuration correction after initial diagnostic run."
+  },
+  "repositories": [
+    {
+      "id": "p-queue",
+      "language": "TS/JS",
+      "repository": "https://github.com/sindresorhus/p-queue",
+      "commit": "7f272ab5ff2254c0dc2537b7977e88ede1cd55e8",
+      "source_inventory_sha256": "1be21c6c9e3277ea2a5f1dbe0802c0020225c01d0be764330a3318440a838582",
+      "scope": "Repository production/test/type-test source; declared public/test entries supplied explicitly to trusted Knip JSON; all222 executable Knip plugins disabled. No target dependencies installed. Dependency/binary reports outside this source comparison.",
+      "skylos_status": "complete",
+      "skylos_confidence": 60,
+      "skylos_raw_findings": 1,
+      "competitor": "Knip6.44.1",
+      "competitor_source_findings": 0,
+      "symbol_scores": {
+        "skylos": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 2,
+          "reviewed_labels": 2,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "knip": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 2,
+          "reviewed_labels": 2,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "baseline_skylos": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 2,
+          "reviewed_labels": 2,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        }
+      },
+      "file_scores": {
+        "skylos": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 0,
+          "tn": 0,
+          "reviewed_labels": 1,
+          "precision": 0.0,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "knip": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 1,
+          "reviewed_labels": 1,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "baseline_skylos": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 0,
+          "tn": 0,
+          "reviewed_labels": 1,
+          "precision": 0.0,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        }
+      },
+      "used_controls": {
+        "frozen": 12,
+        "definition_present_alive": 8,
+        "extraction_gaps": [
+          "source/priority-queue.ts:18:method:PriorityQueue.#compact",
+          "source/priority-queue.ts:29:method:PriorityQueue.#findIndex",
+          "source/priority-queue.ts:40:method:PriorityQueue.#removeFirst",
+          "source/index.ts:97:class:PQueue"
+        ]
+      },
+      "baseline_delta": {
+        "introduced": [],
+        "fixed": [],
+        "preexisting": [
+          "test-d/index.test-d.ts:1:file:test-d/index.test-d.ts"
+        ],
+        "analysis_error_delta": 0,
+        "parser_improvement_observed": false
+      },
+      "finding_review": [
+        {
+          "file": "test-d/index.test-d.ts",
+          "line": 1,
+          "rule": "SKY-E003",
+          "label": "used",
+          "result": "false_positive",
+          "evidence": "package.json invokes nz; nz type-test glob includes test-d/**/*.ts. This is a declared test entry, not an orphan. Same false positive on baseline."
+        }
+      ],
+      "timings_seconds": {
+        "skylos-plain-cli": 1.5635534999892116,
+        "skylos-baseline-cli": 1.1777363749861252,
+        "knip-common": 0.6092184169974644,
+        "knip-production": 0.3686434580013156
+      },
+      "timing_claim": "Observations only; no controlled speed ranking.",
+      "invocation": "actual CLI; passive definition capture/diagnostics recorded separately"
+    },
+    {
+      "id": "mitt",
+      "language": "TS/JS",
+      "repository": "https://github.com/developit/mitt",
+      "commit": "6b41670516ed8e8b738612f60491995470aa63b3",
+      "source_inventory_sha256": "80da843e2c009bca6ff45f24432490c4e210ede37df56bca38d056b0febb6ce6",
+      "scope": "Repository production/test/type-test source; declared public/test entries supplied explicitly to trusted Knip JSON; all222 executable Knip plugins disabled. No target dependencies installed. Dependency/binary reports outside this source comparison.",
+      "skylos_status": "complete",
+      "skylos_confidence": 60,
+      "skylos_raw_findings": 0,
+      "competitor": "Knip6.44.1",
+      "competitor_source_findings": 0,
+      "symbol_scores": {
+        "skylos": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 8,
+          "reviewed_labels": 8,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "knip": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 8,
+          "reviewed_labels": 8,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "baseline_skylos": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 8,
+          "reviewed_labels": 8,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        }
+      },
+      "file_scores": {
+        "skylos": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 0,
+          "reviewed_labels": 0,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "knip": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 0,
+          "reviewed_labels": 0,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "baseline_skylos": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 0,
+          "reviewed_labels": 0,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        }
+      },
+      "used_controls": {
+        "frozen": 8,
+        "definition_present_alive": 8,
+        "extraction_gaps": []
+      },
+      "baseline_delta": {
+        "introduced": [],
+        "fixed": [],
+        "preexisting": [],
+        "analysis_error_delta": 0,
+        "parser_improvement_observed": false
+      },
+      "finding_review": [],
+      "timings_seconds": {
+        "skylos-plain-cli": 1.0341276249964722,
+        "skylos-baseline-cli": 0.6034761249902658,
+        "knip-common": 0.7060266670014244,
+        "knip-production": 0.5802318330097478
+      },
+      "timing_claim": "Observations only; no controlled speed ranking.",
+      "invocation": "actual CLI; passive definition capture/diagnostics recorded separately"
+    },
+    {
+      "id": "xid",
+      "language": "Go",
+      "repository": "https://github.com/rs/xid",
+      "commit": "34d39051ca0d70f40a8cd8c5491ef835e624b71d",
+      "scope": "darwin/arm64,CGO=0,tests included; score only native-active common source. Skylos also parses inactive variants; those are excluded from common scores. No module downloads.",
+      "skylos_status": "complete",
+      "skylos_confidence": 60,
+      "skylos_raw_findings": 0,
+      "competitor": "Staticcheck2026.2.2 U1000",
+      "competitor_source_findings": 0,
+      "scores": {
+        "skylos": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 10,
+          "reviewed_labels": 10,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "staticcheck": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 10,
+          "reviewed_labels": 10,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        }
+      },
+      "used_controls": {
+        "frozen": 10,
+        "definition_present_alive": 10,
+        "extraction_gaps": []
+      },
+      "finding_review": [],
+      "timings_seconds": {
+        "skylos": 1.5115063750126865,
+        "staticcheck": 1.0620127079891972
+      },
+      "timing_claim": "Observations only; no controlled speed ranking.",
+      "invocation": "actual CLI; passive definition capture/diagnostics recorded separately"
+    },
+    {
+      "id": "uuid",
+      "language": "Go",
+      "repository": "https://github.com/google/uuid",
+      "commit": "2d3c2a9cc518326daf99a383f07c4d3c44317e4d",
+      "scope": "darwin/arm64,CGO=0,tests included; score only native-active common source. Skylos also parses inactive variants; those are excluded from common scores. No module downloads.",
+      "skylos_status": "complete",
+      "skylos_confidence": 60,
+      "skylos_raw_findings": 0,
+      "competitor": "Staticcheck2026.2.2 U1000",
+      "competitor_source_findings": 0,
+      "scores": {
+        "skylos": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 10,
+          "reviewed_labels": 10,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "staticcheck": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 10,
+          "reviewed_labels": 10,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        }
+      },
+      "used_controls": {
+        "frozen": 10,
+        "definition_present_alive": 10,
+        "extraction_gaps": []
+      },
+      "finding_review": [],
+      "timings_seconds": {
+        "skylos": 1.5970695830183104,
+        "staticcheck": 1.082346042006975
+      },
+      "timing_claim": "Observations only; no controlled speed ranking.",
+      "invocation": "actual CLI; passive definition capture/diagnostics recorded separately"
+    },
+    {
+      "id": "arrayvec",
+      "language": "Rust",
+      "repository": "https://github.com/bluss/arrayvec",
+      "commit": "0aede877fe0bfb1ba5e3c2024df8c0958d503a83",
+      "tag": "0.7.6",
+      "scope": "portable production source liveness, preserving public API; native host metadata source overlap; cfg-disabled source and target-only portability warnings excluded explicitly",
+      "skylos_status": "complete",
+      "skylos_confidence": [
+        60,
+        40
+      ],
+      "skylos_raw_findings": {
+        "default60": 0,
+        "experimental40": 3
+      },
+      "competitor": "rustc1.94.0 dead_code+unused_imports",
+      "competitor_source_findings": 0,
+      "scores": {
+        "skylos_default60": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 12,
+          "reviewed_labels": 12,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "skylos_experimental40": {
+          "tp": 0,
+          "fp": 3,
+          "fn": 0,
+          "tn": 9,
+          "reviewed_labels": 12,
+          "precision": 0.0,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "rustc_native": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 12,
+          "reviewed_labels": 12,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "baseline_default60": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 12,
+          "reviewed_labels": 12,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "baseline_experimental40": {
+          "tp": 0,
+          "fp": 3,
+          "fn": 0,
+          "tn": 9,
+          "reviewed_labels": 12,
+          "precision": 0.0,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        }
+      },
+      "used_controls": {
+        "frozen": 10,
+        "definition_present_alive": 9,
+        "extraction_gaps": 1
+      },
+      "candidate_labels": {
+        "confirmed_used_common_scope": 3,
+        "confirmed_dead_common_scope": 0,
+        "outside_native_target_source": 0,
+        "compiler_target_only_portability_diagnostics": 0,
+        "unresolved": 0
+      },
+      "finding_review": [
+        {
+          "file": "src/errors.rs",
+          "line": 3,
+          "symbol": "Any",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/errors.rs:36 impl<T: Any> Error for CapacityError<T>; feature std active. Any is required by generic impl bound.",
+            "src/lib.rs:61 exports CapacityError; error implementation is production API."
+          ]
+        },
+        {
+          "file": "src/utils.rs",
+          "line": 1,
+          "symbol": "PhantomData",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/utils.rs:4 tuple struct MakeMaybeUninit<T,N>(PhantomData<fn() -> T>) uses imported type.",
+            "src/arrayvec.rs:101 and src/array_string.rs:83 use MakeMaybeUninit::ARRAY."
+          ]
+        },
+        {
+          "file": "src/utils.rs",
+          "line": 2,
+          "symbol": "MaybeUninit",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/utils.rs:7 VALUE has type MaybeUninit<T> and initializer MaybeUninit::uninit().",
+            "src/utils.rs:9 ARRAY has [MaybeUninit<T>;N] type; public vector/string constructors consume ARRAY."
+          ]
+        }
+      ],
+      "baseline_delta": "All finding identities/confidences and exact ArrayVec.len extraction limitation match main3cbc86af. All18 active-source false positives preexist;6 inactive-target alerts and2 target-only compiler diagnostics explicitly outside portable score.",
+      "invocation": "Initial analyzer API plus four current actual CLI cross-checks; findings/definitions/completeness match. Baseline uses analyzer API.",
+      "actual_cli_matches_api": true
+    },
+    {
+      "id": "memchr",
+      "language": "Rust",
+      "repository": "https://github.com/BurntSushi/memchr",
+      "commit": "9ba486e4ba7e865c0510305c5dacba73988d9f31",
+      "tag": "2.7.6",
+      "scope": "portable production source liveness, preserving public API; native host metadata source overlap; cfg-disabled source and target-only portability warnings excluded explicitly",
+      "skylos_status": "complete",
+      "skylos_confidence": [
+        60,
+        40
+      ],
+      "skylos_raw_findings": {
+        "default60": 0,
+        "experimental40": 21
+      },
+      "competitor": "rustc1.94.0 dead_code+unused_imports",
+      "competitor_source_findings": 2,
+      "scores": {
+        "skylos_default60": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 25,
+          "reviewed_labels": 25,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "skylos_experimental40": {
+          "tp": 0,
+          "fp": 15,
+          "fn": 0,
+          "tn": 10,
+          "reviewed_labels": 25,
+          "precision": 0.0,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "rustc_native": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 25,
+          "reviewed_labels": 25,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "baseline_default60": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 25,
+          "reviewed_labels": 25,
+          "precision": null,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        },
+        "baseline_experimental40": {
+          "tp": 0,
+          "fp": 15,
+          "fn": 0,
+          "tn": 10,
+          "reviewed_labels": 25,
+          "precision": 0.0,
+          "reviewed_set_recall": null,
+          "whole_repository_recall": null
+        }
+      },
+      "used_controls": {
+        "frozen": 10,
+        "definition_present_alive": 10,
+        "extraction_gaps": 0
+      },
+      "candidate_labels": {
+        "confirmed_used_common_scope": 15,
+        "confirmed_dead_common_scope": 0,
+        "outside_native_target_source": 6,
+        "compiler_target_only_portability_diagnostics": 2,
+        "unresolved": 0
+      },
+      "finding_review": [
+        {
+          "file": "src/arch/aarch64/neon/memchr.rs",
+          "line": 25,
+          "symbol": "Pointer",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/arch/aarch64/neon/memchr.rs:164 end.distance(start) resolves imported crate::ext::Pointer extension trait; repeated at208/245/512/556/798/844."
+          ]
+        },
+        {
+          "file": "src/arch/aarch64/neon/memchr.rs",
+          "line": 25,
+          "symbol": "Vector",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/arch/aarch64/neon/memchr.rs:164 uint8x16_t::BYTES requires crate::vector::Vector associated const; Vector impl for aarch64 type is src/vector.rs:298 onward."
+          ]
+        },
+        {
+          "file": "src/arch/all/memchr.rs",
+          "line": 26,
+          "symbol": "Pointer",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/arch/all/memchr.rs:136 end.distance(start),154 start.as_usize(); methods supplied by src/ext.rs Pointer impl."
+          ]
+        },
+        {
+          "file": "src/arch/all/rabinkarp.rs",
+          "line": 56,
+          "symbol": "Pointer",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/arch/all/rabinkarp.rs:118 found.distance(hstart),157 hend.distance(hstart),158 nend.distance(nstart); src/ext.rs extension trait."
+          ]
+        },
+        {
+          "file": "src/arch/generic/memchr.rs",
+          "line": 93,
+          "symbol": "MoveMask",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/arch/generic/memchr.rs:154 V::Mask::first_offset and generic mask operations require MoveMask in scope; vector.rs declares Vector::Mask:MoveMask."
+          ]
+        },
+        {
+          "file": "src/arch/generic/memchr.rs",
+          "line": 93,
+          "symbol": "Pointer",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/arch/generic/memchr.rs:169 start.as_usize() and213 end.distance(cur); crate::ext::Pointer."
+          ]
+        },
+        {
+          "file": "src/arch/generic/memchr.rs",
+          "line": 93,
+          "symbol": "Vector",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/arch/generic/memchr.rs:105 impl<V: Vector> One<V>,107 V::BYTES,112 V::splat(needle); generic trait bound and associated members."
+          ]
+        },
+        {
+          "file": "src/arch/generic/memchr.rs",
+          "line": 111,
+          "symbol": "One.new",
+          "category": "unused_functions",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/arch/aarch64/neon/memchr.rs:64 One(generic::One::new(needle)); this source is included by host native dep-info."
+          ]
+        },
+        {
+          "file": "src/arch/generic/memchr.rs",
+          "line": 450,
+          "symbol": "Two.new",
+          "category": "unused_functions",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/arch/aarch64/neon/memchr.rs:424 Two(generic::Two::new(needle1,needle2)); active host source."
+          ]
+        },
+        {
+          "file": "src/arch/generic/memchr.rs",
+          "line": 710,
+          "symbol": "Three.new",
+          "category": "unused_functions",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/arch/aarch64/neon/memchr.rs:710 Three(generic::Three::new(needle1,needle2,needle3)); active host source."
+          ]
+        },
+        {
+          "file": "src/arch/generic/packedpair.rs",
+          "line": 11,
+          "symbol": "MoveMask",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/arch/generic/packedpair.rs:92 and142 V::Mask::all_zeros_except_least_significant,245 offsets.first_offset(); MoveMask associated operations."
+          ]
+        },
+        {
+          "file": "src/arch/generic/packedpair.rs",
+          "line": 11,
+          "symbol": "Pointer",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/arch/generic/packedpair.rs:111 end.distance(cur),126 cur.distance(max),313 cur.distance(start); Pointer extension trait."
+          ]
+        },
+        {
+          "file": "src/arch/generic/packedpair.rs",
+          "line": 11,
+          "symbol": "Vector",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/arch/generic/packedpair.rs:42 impl<V: Vector> Finder<V>,58 V::splat and238 V::load_unaligned; bound and associated operations."
+          ]
+        },
+        {
+          "file": "src/arch/generic/packedpair.rs",
+          "line": 54,
+          "symbol": "Finder.new",
+          "category": "unused_functions",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/arch/aarch64/neon/packedpair.rs:73 packedpair::Finder::<uint8x16_t>::new(needle,pair); active host source."
+          ]
+        },
+        {
+          "file": "src/arch/wasm32/simd128/memchr.rs",
+          "line": 25,
+          "symbol": "Pointer",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "outside_common_scope",
+          "scored": false,
+          "reason": "Entire module is cfg-disabled on host aarch64-apple-darwin, verified by src/arch/mod.rs and absence from rustc dep-info. This is not counted as either a native miss or Skylos TP/FP.",
+          "evidence": [
+            "src/arch/mod.rs:12-16 controls target modules.",
+            "memchr.d lists native production source files."
+          ]
+        },
+        {
+          "file": "src/arch/wasm32/simd128/memchr.rs",
+          "line": 25,
+          "symbol": "Vector",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "outside_common_scope",
+          "scored": false,
+          "reason": "Entire module is cfg-disabled on host aarch64-apple-darwin, verified by src/arch/mod.rs and absence from rustc dep-info. This is not counted as either a native miss or Skylos TP/FP.",
+          "evidence": [
+            "src/arch/mod.rs:12-16 controls target modules.",
+            "memchr.d lists native production source files."
+          ]
+        },
+        {
+          "file": "src/arch/x86_64/avx2/memchr.rs",
+          "line": 25,
+          "symbol": "Pointer",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "outside_common_scope",
+          "scored": false,
+          "reason": "Entire module is cfg-disabled on host aarch64-apple-darwin, verified by src/arch/mod.rs and absence from rustc dep-info. This is not counted as either a native miss or Skylos TP/FP.",
+          "evidence": [
+            "src/arch/mod.rs:12-16 controls target modules.",
+            "memchr.d lists native production source files."
+          ]
+        },
+        {
+          "file": "src/arch/x86_64/avx2/memchr.rs",
+          "line": 25,
+          "symbol": "Vector",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "outside_common_scope",
+          "scored": false,
+          "reason": "Entire module is cfg-disabled on host aarch64-apple-darwin, verified by src/arch/mod.rs and absence from rustc dep-info. This is not counted as either a native miss or Skylos TP/FP.",
+          "evidence": [
+            "src/arch/mod.rs:12-16 controls target modules.",
+            "memchr.d lists native production source files."
+          ]
+        },
+        {
+          "file": "src/arch/x86_64/sse2/memchr.rs",
+          "line": 25,
+          "symbol": "Pointer",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "outside_common_scope",
+          "scored": false,
+          "reason": "Entire module is cfg-disabled on host aarch64-apple-darwin, verified by src/arch/mod.rs and absence from rustc dep-info. This is not counted as either a native miss or Skylos TP/FP.",
+          "evidence": [
+            "src/arch/mod.rs:12-16 controls target modules.",
+            "memchr.d lists native production source files."
+          ]
+        },
+        {
+          "file": "src/arch/x86_64/sse2/memchr.rs",
+          "line": 25,
+          "symbol": "Vector",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "outside_common_scope",
+          "scored": false,
+          "reason": "Entire module is cfg-disabled on host aarch64-apple-darwin, verified by src/arch/mod.rs and absence from rustc dep-info. This is not counted as either a native miss or Skylos TP/FP.",
+          "evidence": [
+            "src/arch/mod.rs:12-16 controls target modules.",
+            "memchr.d lists native production source files."
+          ]
+        },
+        {
+          "file": "src/memmem/mod.rs",
+          "line": 76,
+          "symbol": "Pre",
+          "category": "unused_imports",
+          "reported_by": {
+            "skylos_default60": false,
+            "skylos_experimental40": true,
+            "rustc_native": false
+          },
+          "label": "used",
+          "scored": true,
+          "reason": "Concrete production source uses this binding/constructor; native selected default-feature library compilation succeeds without unused_imports warning.",
+          "evidence": [
+            "src/memmem/mod.rs:76 pub(crate) use searcher::Pre is consumed via memmem::Pre in src/arch/all/twoway.rs:32; signatures use Pre at153/176/228."
+          ]
+        }
+      ],
+      "baseline_delta": "All finding identities/confidences and exact ArrayVec.len extraction limitation match main3cbc86af. All18 active-source false positives preexist;6 inactive-target alerts and2 target-only compiler diagnostics explicitly outside portable score.",
+      "invocation": "Initial analyzer API plus four current actual CLI cross-checks; findings/definitions/completeness match. Baseline uses analyzer API.",
+      "actual_cli_matches_api": true
+    },
+    {
+      "id": "lrucache",
+      "language": "Swift",
+      "repository": "https://github.com/nicklockwood/LRUCache",
+      "commit": "cb5b2bd0da83ad29c0bec762d39f41c8ad0eaf3e",
+      "tag": "1.2.1",
+      "scope": "Full production Sources Swift module; public API retained; direct compiler-index metadata, no SwiftPM/target execution. Tags selected before outputs for Swift5.9.2 compatibility, not claimed latest.",
+      "skylos_status": "complete",
+      "skylos_confidence": 60,
+      "skylos_raw_findings": 0,
+      "competitor": "Periphery2.21.2 with Swift5.9.2",
+      "competitor_source_findings": 1,
+      "scores": {
+        "skylos": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "tn": 10,
+          "reviewed_labels": 11,
+          "precision": null,
+          "reviewed_set_recall": 0.0,
+          "whole_repository_recall": null
+        },
+        "periphery": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "tn": 10,
+          "reviewed_labels": 11,
+          "precision": 1.0,
+          "reviewed_set_recall": 1.0,
+          "whole_repository_recall": null
+        }
+      },
+      "used_controls": {
+        "frozen": 10,
+        "definition_present_alive": 10,
+        "blocked_by_incomplete_analysis": 0,
+        "normalization": null
+      },
+      "analysis_errors": [],
+      "native_compile_complete": true,
+      "timings_seconds": {
+        "skylos_seconds": 0.4256597089988645,
+        "swiftc_seconds": 4.353802458994323,
+        "periphery_seconds": 0.46695820800960064,
+        "claim": "Recorded measurements, not controlled performance comparison."
+      },
+      "finding_review": [
+        {
+          "symbol": "LRUCache.clearsOnMemoryPressure",
+          "file": "Sources/LRUCache.swift",
+          "line": 48,
+          "label": "unused",
+          "reason": "Assigned field; native AST proves both apparent reads resolve to initializer parameter, not field. No source/test field consumer; neutral read-property and true-unused controls retained."
+        }
+      ],
+      "invocation": "actual CLI; passive definition capture/diagnostics recorded separately"
+    },
+    {
+      "id": "swiftsoup",
+      "language": "Swift",
+      "repository": "https://github.com/scinfu/SwiftSoup",
+      "commit": "0e96a20ffd37a515c5c963952d4335c89bed50a6",
+      "tag": "2.6.0",
+      "scope": "Full production Sources Swift module; public API retained; direct compiler-index metadata, no SwiftPM/target execution. Tags selected before outputs for Swift5.9.2 compatibility, not claimed latest.",
+      "skylos_status": "UNSCORED",
+      "skylos_confidence": 60,
+      "skylos_raw_findings": 7,
+      "competitor": "Periphery2.21.2 with Swift5.9.2",
+      "competitor_source_findings": 51,
+      "scores": {
+        "skylos": null
+      },
+      "used_controls": {
+        "frozen": 12,
+        "definition_present_alive": 10,
+        "blocked_by_incomplete_analysis": 2,
+        "normalization": "Cleaner.copySafeNodes attribute node starts59; same function source declaration60. Original frozen identity retained."
+      },
+      "analysis_errors": [
+        {
+          "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+          "severity": "HIGH",
+          "kind": "source_complexity",
+          "error_type": "RecursionError",
+          "message": "maximum recursion depth exceeded",
+          "file": "Sources/CssSelector.swift",
+          "line": 1,
+          "column": 1,
+          "python_version": "3.14.4"
+        },
+        {
+          "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+          "severity": "HIGH",
+          "kind": "source_complexity",
+          "error_type": "SwiftScanError",
+          "message": "Swift name resolution work limit exceeded",
+          "file": "Sources/Whitelist.swift",
+          "line": 1,
+          "column": 1,
+          "python_version": "3.14.4"
+        }
+      ],
+      "native_compile_complete": true,
+      "timings_seconds": {
+        "skylos_seconds": 2.7434755410067737,
+        "swiftc_seconds": 9.832895833009388,
+        "periphery_seconds": 0.43506741599412635,
+        "claim": "Recorded measurements, not controlled performance comparison."
+      },
+      "score_reason": "Incomplete58-file scan: constructor rebinding recursion and fluent-chain resolution budget. Partial findings must not receive a repository accuracy score.",
+      "partial_diagnostics_only": {
+        "confirmed_unused_findings": 7,
+        "false_positive_findings": 0,
+        "additional_private_unused_not_reported": 4,
+        "not_a_confusion_matrix": true
+      },
+      "periphery_warning_audit": {
+        "total_warnings": 51,
+        "confirmed_unused_declaration_warnings": 34,
+        "confirmed_unused_parameter_binding_warnings": 12,
+        "native_valid_unused_warnings": 46,
+        "confirmed_used_false_positive_warnings": 1,
+        "different_non_unused_rule_warnings": 4,
+        "unresolved": 0,
+        "reviewed_unused_warning_denominator": 47,
+        "periphery_only_reviewed_warning_precision": 0.9787234042553191,
+        "skylos_score": null,
+        "skylos_status": "UNSCORED_INCOMPLETE"
+      },
+      "competitor_false_positive": {
+        "file": "Sources/HtmlTreeBuilder.swift",
+        "line": 776,
+        "symbol": "~=",
+        "reason": "Implicit switch pattern matches at81/83 bind to this operator in native typedAST; deleting only operator in privatecopy makes matching fail to compile."
+      },
+      "reviewed_warning_categories": {
+        "private_unused": 11,
+        "private_used_operator": 1,
+        "internal_declarations_outside_initial_Skylos_scope": 23,
+        "parameter_bindings_outside_Skylos_scope": 12,
+        "non_unused_protocol_diagnostics": 4
+      },
+      "periphery_warning_precision": {
+        "tp": 46,
+        "fp": 1,
+        "ratio": 0.9787234042553191,
+        "denominator": 47,
+        "scope": "All manually reviewed unused warnings, including12 parameter bindings;4 other-rule diagnostics excluded. Not whole-repository accuracy/recall."
+      },
+      "invocation": "actual CLI; passive definition capture/diagnostics recorded separately"
+    }
+  ],
+  "neutral_reproductions_excluded_from_scores": [
+    "TS declared custom type-test runner plus genuinely orphaned-file control",
+    "Rust generic trait bound and associated-constant import uses with unused-import control",
+    "Swift assign-only field plus read-property and unused-method controls",
+    "Swift same-name initializer rebinding recursion versus distinct binding",
+    "Swift fluent-chain20 work-cap failure versus chains3/12"
+  ],
+  "remaining_gaps": [
+    "Preexisting nz type-test file orphan false positive",
+    "Preexisting TS private-method and merged class/interface identity extraction limits",
+    "Preexisting Rust18 active-source false positives at experimental40; default60 hides them",
+    "Preexisting ArrayVec.len source identity overwritten by trait method",
+    "Swift assigned-only private field is missed",
+    "Swift constructor rebinding recursion and fluent-chain work exhaustion on native-valid source",
+    "Swift internal declarations/parameter bindings remain outside initial private-code support"
+  ],
+  "raw_receipt_inventory_sha256": "17ca220df7219777b32826c0d8957bea6aa76093772358dab8426125253c052a",
+  "raw_receipt_count": 341
+}

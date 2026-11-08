@@ -276,6 +276,65 @@ def test_codex_prompt_output_is_unchanged(configured_repo):
     assert "told_checks" not in session
 
 
+@pytest.mark.parametrize("client", ["claude", "codex", "cursor"])
+def test_prompt_keeps_agent_checks_after_done_instructions(
+    configured_repo, monkeypatch, capsys, client
+):
+    from skylos.commands import hook_agent_guard
+
+    calls = []
+
+    def check_agent(payload, root, deps, record):
+        calls.append(payload["session_id"])
+        return f"Agent config warning {len(calls)}."
+
+    monkeypatch.setattr(hook_agent_guard, "session_agent_check", check_agent)
+
+    for prompt in (1, 2):
+        code, output = _hook(configured_repo, "session-start", client=client)
+        stderr = capsys.readouterr().err
+        notice = f"Agent config warning {prompt}."
+        assert code == 0
+        assert calls == ["session-1"] * prompt
+        if client == "cursor":
+            assert output == {"continue": True}
+            assert notice in stderr
+        elif client == "codex":
+            assert output == {"systemMessage": notice}
+        else:
+            assert output["systemMessage"] == notice
+            specific = output["hookSpecificOutput"]
+            assert specific["hookEventName"] == "UserPromptSubmit"
+            context = specific["additionalContext"]
+            if prompt == 1:
+                assert context.startswith("Skylos Done runs at Stop and blocks on:")
+                assert "Before you finish, run: skylos done --base" in context
+                assert context.endswith(notice)
+            else:
+                assert context == notice
+
+
+def test_prompt_rules_error_keeps_agent_warning(configured_repo, monkeypatch):
+    from skylos.commands import hook_agent_guard
+
+    notice = "Configured MCP server needs review."
+    monkeypatch.setattr(hook_agent_guard, "session_agent_check", lambda *args: notice)
+
+    def broken_rules(*args):
+        raise ValueError("private config details")
+
+    monkeypatch.setattr(hook_cmd, "_session_rules_text", broken_rules)
+
+    code, output = _hook(configured_repo, "session-start")
+
+    assert code == 0
+    assert output["systemMessage"] == notice
+    assert output["hookSpecificOutput"]["additionalContext"] == notice
+    assert "private config details" not in json.dumps(output)
+    session = hook_cmd._load_session_state(configured_repo)["sessions"]["session-1"]
+    assert "told_checks" not in session
+
+
 def test_schema1_migration_preserves_existing_findings(configured_repo):
     legacy = {
         "files": {"app.py": {"introduced": ["old-finding"]}},

@@ -845,6 +845,9 @@ def generate_workflow(
     if analysis_flags:
         analysis_flags = " " + analysis_flags
     baseline_flag = " --baseline" if use_baseline else ""
+    upgrade_flag = ""
+    if "--sca" in analysis_flags.split():
+        upgrade_flag = " --review-upgrades"
     # Pull requests compare with the target branch; merge groups with the
     # queue's base commit. Either way the scan is diff-scoped and its policy
     # comes from that base, never from the change.
@@ -871,7 +874,7 @@ def generate_workflow(
             '          if [ -n "$pr_base_ref" ]; then',
             '            export SKYLOS_POLICY_BASE="$(git merge-base "$pr_base_ref" HEAD)"',
             (
-                f"            skylos {scan_target}{analysis_flags}{baseline_flag} "
+                f"            skylos {scan_target}{analysis_flags}{upgrade_flag}{baseline_flag} "
                 '--diff-base "$pr_base_ref" --diff "$pr_base_ref" '
                 "--json -o skylos-results.json"
             ),
@@ -1071,7 +1074,7 @@ jobs:
             python_version=python_version,
             skylos_version=skylos_version,
             scan_target=scan_target,
-            analysis_flags=analysis_flags,
+            analysis_flags=analysis_flags + upgrade_flag,
             project_root=project_root,
             use_dart=use_dart,
         )

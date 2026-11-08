@@ -2,12 +2,40 @@
 
 This benchmark suite measures Skylos dead-code detection against labeled fixtures and optional external targets.
 
+The [7 November 2026 fresh-repository comparison](real_repo_scores/2026-11-07.md)
+logs eight pinned targets, competitor results, verified false positives, missed
+findings and incomplete scans. Its reviewed-set scores are separate from the
+synthetic fixture scores below.
+
 The benchmark framework lives in the Skylos repo because it must version with analyzer output and CI. Larger realistic targets, such as `/Users/oha/skylos-demo`, stay external and are referenced by config.
 
-The default manifest contains **58 cases and 315 symbol labels**: 108 unused and
-207 used. The first 50 cases and their 260 labels retain their expectations.
-Eight additional cases follow source-reviewed comparisons against native tools
-on pinned real repositories.
+The default manifest contains **98 cases and 466 symbol labels**: 149 unused and
+317 used. The first 65 cases and their 351 labels retain their expectations.
+Five new cases cover nested namespace exports, contained Go workspaces and Rust
+source-module trait identity. Twenty-eight Swift cases cover private declarations,
+lexical and owner identity, callbacks, overloads, call cycles and runtime consumers.
+
+| Current depth contracts | Cases / labels |
+|---|---:|
+| TS namespace forwarding and public/opaque controls | 2 / 8 |
+| Go workspace private cycles and live callbacks | 2 / 12 |
+| Rust ordinary source-module trait imports | 1 / 5 |
+| Swift private declaration and runtime-use controls | 28 / 90 |
+
+The preceding seven cases cover export forwarding, local Go module replacements,
+and Rust trait, writer-macro and conditional-attribute imports.
+
+| Latest source contracts | Cases / labels |
+|---|---:|
+| TS named export demand, public/escaping namespaces and enumerated aliases | 3 / 13 |
+| Go local replacement modules and live callback cycles | 2 / 12 |
+| Rust local receiver identity and macro/attribute import evidence | 2 / 11 |
+
+The enumerated-alias fixture already passed on the baseline with grep enabled;
+it protects live API bindings rather than measuring an incremental detection
+gain. Separate AST contracts reproduce the missing export propagation.
+
+The eight cases from the preceding real-repository audit are also retained:
 
 | New cases from the real-repository audit | Cases / labels |
 |---|---:|
@@ -39,11 +67,29 @@ The implementations adapt approaches studied in
 (ISC), [Staticcheck U1000](https://github.com/dominikh/go-tools/blob/8371db75e9daf10073dc2ba684c2a24a1d6ead95/unused/unused.go)
 (MIT), and [rustc's dead-code pass](https://github.com/rust-lang/rust/blob/c6ac6ea53f6c8234fd06ddf0b88d89fe8b46edf5/compiler/rustc_passes/src/dead.rs)
 (MIT OR Apache-2.0). No upstream implementation code was copied. These are
-bounded Skylos checks, not compiler parity: named TS re-export barrels can still
-retain unused exports; Go packages with unresolved dependencies do not gain an
-unreachability proof; Rust macros, Cargo features and type resolution remain
-outside this change. The named re-export limitation has an explicit strict
-expected-failure regression test. Separate paired probes also retain existing
+bounded Skylos checks, not compiler parity. Named TS re-export chains follow
+selected bindings through aliases and wildcard hops. Unknown local export
+bindings, competing star providers and opaque namespaces retain conservative
+handling. Direct namespace exports (`export * as tools`) now preserve selected
+member identity through named, default, wildcard and nested forwarding. Native-valid
+tagged templates and generic import-type queries retain correct syntax structure.
+Go workspace proof requires contained modules, the exact admitted source inventory
+and supported module language metadata. Unresolved dependencies do not gain an
+unreachability proof. Rust ordinary source-module closures can supply selected
+trait identity; macro expansion, Cargo feature evaluation and general compiler
+type resolution remain outside this change. Swift analysis retains public/internal
+APIs and uncertain runtime/compiler contexts; it does not infer unused imports
+from textual module names or provide Swift security-flow and quality rules.
+Swift cases were checked with Swift 5.9.2 and Periphery 2.21.2 before scoring.
+Additional compiler-backed probes cover reflection-provider shadowing, separate
+modules, lazy initialization, capture binding order and source-limit failures.
+Production-source scans of Rainbow 4.1.0, Files 4.2.0, Path 1.4.0 and
+swift-log 1.5.4 completed without unused-private findings. These are preservation
+checks, not evidence of whole-program recall: public/internal declarations stay
+roots. In swift-log, two unreferenced internal lock-wrapper methods remain
+outside that scope. Other competitor warnings had test/build-configuration
+consumers or described redundant conformances rather than unused private code.
+Separate paired probes also retain existing
 false positives for escaped exports behind wildcard barrels and cross-file
 classic JS globals; those cases are not counted as passing coverage.
 
@@ -214,10 +260,10 @@ First inspect the request plan. This does not use the network or require a key:
 python3 scripts/jev_dead_code_benchmark.py
 ```
 
-The default checked-in manifest contains 315 ground-truth symbols: 108 unused
-and 207 used. It is useful for request validation and regression testing, but
-Skylos already scores every labeled symbol correctly there. A Jev tie on this
-suite does not demonstrate incremental value. The runner always asks the
+The default checked-in manifest contains 466 ground-truth symbols: 149 unused
+and 317 used. It is useful for request validation and regression testing.
+A Jev tie on an already-correct static result does not demonstrate incremental
+value. The runner always asks the
 `original` question, and adds a second arm only when safe:
 
 1. `original` uses the checked-in fixture.

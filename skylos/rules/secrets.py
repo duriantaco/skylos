@@ -19,6 +19,18 @@ from urllib.parse import unquote
 
 from skylos.rules import secret_shapes
 from skylos.rules.secret_decoding import decode_provider_views
+from skylos.rules.secret_providers import (
+    DEPTH_PROVIDER_PATTERNS,
+    DEPTH_PROVIDER_PREFIXES,
+    GITLAB_LEGACY_PATTERN,
+    is_provider_marker_placeholder,
+)
+from skylos.rules.secret_records import (
+    component_locations,
+    scan_secret_records,
+    source_location,
+    source_text_and_starts,
+)
 
 try:
     import yaml
@@ -199,6 +211,7 @@ ALLOWED_FILE_SUFFIXES = (
     ".php",
     ".rs",
     ".rb",
+    ".swift",
     ".dart",
     ".cs",
     ".kt",
@@ -232,6 +245,7 @@ def is_secret_scan_name(name: str) -> bool:
         or name.startswith(".env.")
         or lowered in SECRET_FILE_NAMES
         or lowered.startswith("dockerfile.")
+        or is_aws_credential_path(name)
         or is_provider_only_secret_name(name)
     )
 
@@ -242,6 +256,16 @@ def is_provider_only_secret_name(name: str) -> bool:
     return (
         lowered.endswith(PROVIDER_ONLY_FILE_SUFFIXES)
         or lowered in _PRIVATE_KEY_FILE_NAMES
+        or is_aws_credential_path(name)
+    )
+
+
+def is_aws_credential_path(path: str) -> bool:
+    """Recognize repository-local AWS profiles without widening generic scans."""
+    normalized = PurePosixPath(str(path).replace("\\", "/"))
+    return (
+        normalized.name in {"credentials", "config"}
+        and normalized.parent.name == ".aws"
     )
 
 
@@ -287,12 +311,12 @@ PROVIDER_PATTERNS = [
             r"|(?<!\w)github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59}(?!\w)"
         ),
     ),
-    ("gitlab", re.compile(r"glpat-[A-Za-z0-9_-]{20,}")),
+    ("gitlab", GITLAB_LEGACY_PATTERN),
     ("slack", re.compile(r"xox[abprs]-[A-Za-z0-9-]{10,48}")),
     ("stripe", re.compile(r"sk_(live|test)_[A-Za-z0-9]{16,}")),
     (
         "aws_access_key_id",
-        re.compile(r"\b(AKIA|ASIA|AGPA|AIDA|AROA|AIPA)[0-9A-Z]{16}\b"),
+        re.compile(r"\b(AKIA|ASIA)[0-9A-Z]{16}\b"),
     ),
     ("google_api_key", re.compile(r"\bAIza[0-9A-Za-z\-_]{35}\b")),
     ("sendgrid", re.compile(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b")),
@@ -301,6 +325,7 @@ PROVIDER_PATTERNS = [
         "private_key_block",
         re.compile(r"-----BEGIN (?:RSA|DSA|EC|OPENSSH|PGP) PRIVATE KEY-----"),
     ),
+    *DEPTH_PROVIDER_PATTERNS,
 ]
 
 # These providers normally require word boundaries to avoid matching inside
@@ -309,12 +334,29 @@ PROVIDER_PATTERNS = [
 CHECKSUM_PROVIDER_PATTERNS = [
     (
         "aws_access_key_id",
-        re.compile(r"(?:AKIA|ASIA|AGPA|AIDA|AROA|AIPA)[0-9A-Z]{16}"),
+        re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}"),
     ),
     ("google_api_key", re.compile(r"AIza[0-9A-Za-z\-_]{35}")),
     ("twilio", re.compile(r"SK[0-9a-fA-F]{32}")),
 ]
-PROVIDER_PATTERN_BY_NAME = dict(PROVIDER_PATTERNS)
+
+
+def _provider_pattern_lookup(patterns):
+    combined = {}
+    for name, pattern in patterns:
+        previous = combined.get(name)
+        if previous is None:
+            combined[name] = pattern
+            continue
+        if previous.flags != pattern.flags:
+            raise ValueError("Provider patterns require compatible expression flags")
+        combined[name] = re.compile(
+            f"(?:{previous.pattern})|(?:{pattern.pattern})", previous.flags
+        )
+    return combined
+
+
+PROVIDER_PATTERN_BY_NAME = _provider_pattern_lookup(PROVIDER_PATTERNS)
 _DECODE_PROVIDER_PREFIXES = (
     "ghp_",
     "gho_",
@@ -333,17 +375,26 @@ _DECODE_PROVIDER_PREFIXES = (
     "sk_test_",
     "AKIA",
     "ASIA",
-    "AGPA",
-    "AIDA",
-    "AROA",
-    "AIPA",
     "AIza",
     "SG.",
     "SK",
     "-----BEGIN ",
+    '"kty"',
+    '"AccountKey"',
+    "AccountKey=",
+    '"secretAccessKey"',
+    '"aws_secret_access_key"',
+    '"private_key"',
+    *DEPTH_PROVIDER_PREFIXES,
 )
 _MAX_SECRET_DECODE_CANDIDATES = 4_096
 _MAX_SECRET_DECODE_BYTES = 2 * 1024 * 1024
+_AWS_SECRET_LITERAL = re.compile(
+    r"(?<![A-Za-z0-9_])(?P<key_quote>['\"]?)"
+    r"(?i:aws_secret_access_key)(?P=key_quote)\s*[:=]\s*"
+    r"(?P<value_quote>['\"]?)(?P<value>[A-Za-z0-9/+=]{40})"
+    r"(?P=value_quote)(?![A-Za-z0-9/+=])"
+)
 
 _SEGMENTED_SECRET_KEY_RE = (
     r"(?i:(?:[A-Za-z0-9]+[_-])*(?:(?:api|private)[_-]key|token|secret|"
@@ -454,6 +505,8 @@ _DOCUMENTED_EXAMPLE_CREDENTIALS = frozenset(
     {
         "AKIA" + "IOSFODNN7EXAMPLE",
         "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        "https://hooks.slack.com/services/T00000000/B00000000/" + "X" * 24,
+        "https://hooks.slack-gov.com/services/T00000000/B00000000/" + "X" * 24,
     }
 )
 
@@ -462,6 +515,12 @@ def _is_obvious_placeholder(token: str) -> bool:
     if token.strip("'\"") in _DOCUMENTED_EXAMPLE_CREDENTIALS:
         return True
     return bool(_PLACEHOLDER_MARKER_RE.search(token))
+
+
+def _provider_value_is_placeholder(provider: str, token: str) -> bool:
+    return _is_obvious_placeholder(token) or is_provider_marker_placeholder(
+        provider, token
+    )
 
 
 _PARAMETER_EXPANSION_REFERENCE_RE = re.compile(
@@ -4372,7 +4431,7 @@ def _decoded_provider_findings(
             for provider_name, pattern in patterns:
                 for match in pattern.finditer(line):
                     token = match.group(0)
-                    if _is_obvious_placeholder(token):
+                    if _provider_value_is_placeholder(provider_name, token):
                         continue
                     if provider_name == "private_key_block":
                         material = _private_key_material(decoded_lines, number, match)
@@ -4470,6 +4529,162 @@ def _append_secret_decode_incomplete(findings, *, rel_path, line, diagnostics):
     )
 
 
+def _append_secret_record_incomplete(findings, *, rel_path, diagnostics):
+    findings.append(
+        {
+            "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+            "severity": "HIGH",
+            "kind": "processing_error",
+            "message": (
+                "Structured-secret analysis reached its safety limit; "
+                "ordinary secret checks still ran."
+            ),
+            "file": rel_path,
+            "line": 1,
+            "col": 0,
+            "metadata": {
+                "analysis_complete": False,
+                "analysis_diagnostics": sorted(diagnostics),
+            },
+        }
+    )
+
+
+def _secret_record_finding(match, *, line, col, end_col, rel_path, evidence):
+    return {
+        "rule_id": "SKY-S101",
+        "severity": "CRITICAL",
+        "provider": match.provider,
+        "message": f"Potential {match.provider} secret detected in a structured record",
+        "file": rel_path,
+        "line": line,
+        "col": col,
+        "end_col": end_col,
+        "preview": "[redacted]",
+        "structured_credential": evidence,
+    }
+
+
+def _secret_finding_span(finding):
+    path = finding.get("decoding", {}).get("source_path")
+    if path:
+        return tuple(tuple(part) for part in path[:-1]), tuple(path[-1])
+    return (), (finding.get("col"), finding.get("end_col"))
+
+
+def _merge_secret_record(finding, existing):
+    """Enrich a proven existing component instead of emitting it twice."""
+    current_frame, current_span = _secret_finding_span(finding)
+    for previous in existing:
+        if previous.get("line") != finding["line"]:
+            continue
+        previous_frame, previous_span = _secret_finding_span(previous)
+        if (
+            previous.get("provider") == finding["provider"]
+            and previous_frame == current_frame
+            and previous_span == current_span
+        ):
+            previous["structured_credential"] = finding["structured_credential"]
+            return False
+        if (
+            finding["provider"] == "google_service_account"
+            and previous.get("provider") == "private_key_block"
+            and previous_frame == current_frame
+            and current_span[0]
+            <= previous_span[0]
+            < previous_span[1]
+            <= current_span[1]
+        ):
+            previous["structured_credential"] = finding["structured_credential"]
+            return False
+    return True
+
+
+def _prepare_secret_records(
+    file_lines, *, rel_name, rel_path, ctx, scan_comments, docstring_lines, allowlists
+):
+    text, starts = source_text_and_starts(file_lines)
+    result = scan_secret_records(text, file_kind=rel_name)
+    by_line = {}
+    component_values = {}
+    for match in result.matches:
+        number, col = source_location(starts, match.start)
+        content = file_lines[number - 1].rstrip("\n")
+        if (
+            (ctx.get("honor_inline_ignores", True) and IGNORE_DIRECTIVE in content)
+            or (not scan_comments and content.lstrip().startswith("#"))
+            or number in docstring_lines
+            or any(pattern.search(content) for pattern in allowlists)
+        ):
+            continue
+        evidence = {
+            **match.evidence,
+            "components": component_locations(match, starts),
+        }
+        end_line, end_col = source_location(starts, match.end - 1)
+        finding = _secret_record_finding(
+            match,
+            line=number,
+            col=col,
+            end_col=end_col + 1 if end_line == number else len(content),
+            rel_path=rel_path,
+            evidence=evidence,
+        )
+        by_line.setdefault(number, []).append(finding)
+        spans = [(match.start, match.end)]
+        spans.extend((part.start, part.end) for part in match.related_spans)
+        for start, end in spans:
+            line, beginning = source_location(starts, start)
+            last_line, last = source_location(starts, end - 1)
+            if line != last_line:
+                continue
+            token = text[start:end]
+            values = component_values.setdefault(line, set())
+            values.add((token, beginning, last + 1))
+            if "\\" in token:
+                try:
+                    decoded = json.loads('"' + token + '"')
+                except ValueError:
+                    continue
+                values.add((decoded, beginning, last + 1))
+    return by_line, component_values, result.issues
+
+
+def _decoded_secret_record_findings(views, *, line_number, rel_path, existing):
+    findings = []
+    issues = set()
+    seen = set()
+    for view in views:
+        result = scan_secret_records(view.text)
+        issues.update(result.issues)
+        for match in result.matches:
+            start, end = view.source_range(match.start, match.end)
+            identity = (match.provider, view.frame, start, end)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            finding = _secret_record_finding(
+                match,
+                line=line_number,
+                col=start if not view.frame else view.start,
+                end_col=end if not view.frame else view.end,
+                rel_path=rel_path,
+                evidence=match.evidence,
+            )
+            finding["decoding"] = {
+                "encodings": list(view.encodings),
+                "decoded_start": match.start,
+                "decoded_end": match.end,
+                "source_path": [
+                    *(list(segment) for segment in view.frame),
+                    [start, end],
+                ],
+            }
+            if _merge_secret_record(finding, (*existing, *findings)):
+                findings.append(finding)
+    return findings, issues
+
+
 def scan_ctx(
     ctx,
     *,
@@ -4482,8 +4697,13 @@ def scan_ctx(
 ):
     rel_path = ctx.get("relpath", "")
     rel_name = rel_path.replace("\\", "/").rsplit("/", 1)[-1]
-    if not is_secret_scan_name(rel_name) and not _is_shell_script_file(
-        rel_name, ctx.get("lines")
+    aws_profile = (
+        is_aws_credential_path(rel_path) or ctx.get("aws_credential_file") is True
+    )
+    if (
+        not aws_profile
+        and not is_secret_scan_name(rel_name)
+        and not _is_shell_script_file(rel_name, ctx.get("lines"))
     ):
         return []
 
@@ -4497,10 +4717,16 @@ def scan_ctx(
         or _TEST_FIXTURE_DIR.search(normalized_path)
         or rel_path.endswith("_test.go")
     )
+    legacy_shell_profile = aws_profile and _is_shell_script_file(
+        rel_name, ctx.get("lines")
+    )
     provider_only = (
         in_tests
         or is_provider_only_secret_name(rel_name)
-        or ctx.get("provider_only") is True
+        or (
+            (ctx.get("provider_only") is True or aws_profile)
+            and not legacy_shell_profile
+        )
     )
 
     if ignore_path_substrings:
@@ -4568,6 +4794,17 @@ def scan_ctx(
         else {}
     )
 
+    structured_by_line, structured_values, record_issues = _prepare_secret_records(
+        file_lines,
+        rel_name=rel_name,
+        rel_path=rel_path,
+        ctx=ctx,
+        scan_comments=scan_comments,
+        docstring_lines=docstring_lines,
+        allowlists=allowlist_regexes,
+    )
+    record_diagnostics = set(record_issues)
+
     findings = []
     decode_candidates_left = _MAX_SECRET_DECODE_CANDIDATES
     decode_bytes_left = _MAX_SECRET_DECODE_BYTES
@@ -4620,7 +4857,7 @@ def scan_ctx(
             for regex_match in pattern_matches:
                 potential_secret = regex_match.group(0)
 
-                if _is_obvious_placeholder(potential_secret):
+                if _provider_value_is_placeholder(provider_name, potential_secret):
                     continue
                 if (
                     provider_name == "private_key_block"
@@ -4652,6 +4889,7 @@ def scan_ctx(
         decoded = decode_provider_views(
             line_content,
             provider_prefixes=_DECODE_PROVIDER_PREFIXES,
+            include_record_escapes=True,
             max_candidates=min(128, decode_candidates_left),
             max_decoded_bytes=min(65_536, decode_bytes_left),
         )
@@ -4674,6 +4912,14 @@ def scan_ctx(
                     raw_findings=findings[line_finding_start:],
                 )
             )
+            structured_decoded, issues = _decoded_secret_record_findings(
+                decoded.views,
+                line_number=line_number,
+                rel_path=rel_path,
+                existing=findings[line_finding_start:],
+            )
+            findings.extend(structured_decoded)
+            record_diagnostics.update(issues)
 
         decoded_provider_matches = set()
         decoded_contexts = decoded_context_spans.get(line_number, ())
@@ -4700,7 +4946,9 @@ def scan_ctx(
                             context_end,
                         ) in provider_values:
                             continue
-                        if _is_obvious_placeholder(potential_secret):
+                        if _provider_value_is_placeholder(
+                            provider_name, potential_secret
+                        ):
                             continue
                         match_key = (
                             provider_name,
@@ -4741,8 +4989,11 @@ def scan_ctx(
                 }
                 for regex_match in pattern_regex.finditer(decoded_value):
                     potential_secret = regex_match.group(0)
-                    if potential_secret in standard_tokens or _is_obvious_placeholder(
-                        potential_secret
+                    if (
+                        potential_secret in standard_tokens
+                        or _provider_value_is_placeholder(
+                            provider_name, potential_secret
+                        )
                     ):
                         continue
                     findings.append(
@@ -4760,23 +5011,12 @@ def scan_ctx(
                     )
                     provider_values.add((potential_secret, context_start, context_end))
 
-        aws_key_indicators = ["AWS_SECRET_ACCESS_KEY", "aws_secret_access_key"]
-        line_has_aws_key = False
-
-        for indicator in aws_key_indicators:
-            if indicator in line_content or indicator in line_content.lower():
-                line_has_aws_key = True
-                break
-
-        if line_has_aws_key:
-            aws_secret_pattern = r"['\"]?([A-Za-z0-9/+=]{40})['\"]?"
-            aws_match = re.search(aws_secret_pattern, line_content)
-
-            if aws_match and aws_match.group(1) not in _DOCUMENTED_EXAMPLE_CREDENTIALS:
-                aws_token = aws_match.group(1)
+        for aws_match in _AWS_SECRET_LITERAL.finditer(line_content):
+            if aws_match.group("value") not in _DOCUMENTED_EXAMPLE_CREDENTIALS:
+                aws_token = aws_match.group("value")
                 tok_entropy = _entropy(aws_token)
                 if tok_entropy >= min_entropy:
-                    col_pos = aws_match.start(1)
+                    col_pos = aws_match.start("value")
 
                     aws_finding = {
                         "rule_id": "SKY-S101",
@@ -4792,6 +5032,11 @@ def scan_ctx(
                     }
                     findings.append(aws_finding)
                     provider_values.add((aws_token, col_pos, col_pos + len(aws_token)))
+
+        for finding in structured_by_line.get(line_number, ()):
+            if _merge_secret_record(finding, findings[line_finding_start:]):
+                findings.append(finding)
+        provider_values.update(structured_values.get(line_number, ()))
 
         if provider_only:
             generic_values = ()
@@ -4940,6 +5185,11 @@ def scan_ctx(
                             "preview": _mask_credential(_value),
                         }
                     )
+
+    if record_diagnostics:
+        _append_secret_record_incomplete(
+            findings, rel_path=rel_path, diagnostics=record_diagnostics
+        )
 
     if decode_incomplete_line is not None:
         _append_secret_decode_incomplete(

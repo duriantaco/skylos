@@ -408,3 +408,18 @@ def pytest_unconfigure(config):
         print(
             f"\nSkylos trace: {stats['unique_functions']} functions across {stats['files_traced']} files"
         )
+
+
+@pytest.fixture(autouse=True)
+def _ca9_supply_chain_engine_off(monkeypatch):
+    """Keep dependency tests independent of the installed ca9 version.
+
+    Dependency tests check OSV handling on minimal lockfiles that record no
+    integrity hashes; with ``ca9.api`` installed every such entry is also a
+    correct SKY-SCA-INT001 finding, and whether it appears would depend on the
+    ca9 release in the environment. ``test_sca_supply_chain.py`` installs the
+    engine it needs (a contract fake or the real ``ca9.api``) per test.
+    """
+    from skylos.rules.sca import supply_chain
+
+    monkeypatch.setattr(supply_chain, "load_ca9_api", lambda: None)

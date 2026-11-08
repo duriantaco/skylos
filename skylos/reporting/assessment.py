@@ -38,6 +38,7 @@ _LANGUAGES = {
     ".php": "PHP",
     ".rs": "Rust",
     ".rb": "Ruby",
+    ".swift": "Swift",
     ".dart": "Dart",
 }
 

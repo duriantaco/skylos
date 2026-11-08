@@ -415,8 +415,10 @@ def _scan_typescript_like_file(
     )
 
 
-def _scan_go_file(file, cfg, **_options):
-    return scan_go_file(file, cfg)
+def _scan_go_file(file, cfg, *, go_scan_scope=None, **_options):
+    if go_scan_scope is None:
+        return scan_go_file(file, cfg)
+    return scan_go_file(file, cfg, go_scan_scope=go_scan_scope)
 
 
 def _scan_java_like_file(
@@ -470,6 +472,12 @@ def _scan_ruby_file(file, cfg, *, enable_danger_rules: bool, **_options):
         enable_danger_rules=enable_danger_rules,
         _include_analysis_metadata=True,
     )
+
+
+def _scan_swift_file(file, cfg, **_options):
+    from skylos.visitors.languages.swift import scan_swift_file
+
+    return scan_swift_file(file, cfg, _include_analysis_metadata=True)
 
 
 def _scan_dart_file(file, cfg, *, enable_danger_rules: bool, **_options):
@@ -544,6 +552,7 @@ NON_PYTHON_SCANNERS = (
     (PHP_SOURCE_EXTS, _scan_php_file),
     ((".rs",), _scan_rust_file),
     ((".rb",), _scan_ruby_file),
+    ((".swift",), _scan_swift_file),
     (CPP_ANALYSIS_EXTS, _scan_cpp_file),
     ((".dart",), _scan_dart_file),
     ((".cs",), _scan_csharp_file),
@@ -640,15 +649,22 @@ def scan_non_python_file(
     enable_quality_rules: bool = True,
     enable_danger_rules: bool = True,
     project_root=None,
+    go_scan_scope=None,
 ):
     file_name = str(file)
     for suffixes, scanner in NON_PYTHON_SCANNERS:
         if file_name.endswith(suffixes):
+            scope_options = (
+                {"go_scan_scope": go_scan_scope}
+                if scanner is _scan_go_file and go_scan_scope is not None
+                else {}
+            )
             out = scanner(
                 file,
                 cfg,
                 enable_quality_rules=enable_quality_rules,
                 enable_danger_rules=enable_danger_rules,
+                **scope_options,
             )
             out = _normalize_language_scan_output(out)
             if scanner in _COMMENT_DIRECTIVE_SCANNERS:

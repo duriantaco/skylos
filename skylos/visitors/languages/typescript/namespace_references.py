@@ -109,11 +109,16 @@ def namespace_member_reads(
     *,
     shadowed_properties: set[int] | None = None,
     local_value_reads: set[int] | None = None,
-) -> dict[str, set[str] | None]:
+    include_named_imports: bool = False,
+    member_paths: bool = False,
+) -> dict[str, set[str | tuple[str, ...]] | None]:
     """Map namespace locals to read export names; ``None`` means opaque use.
 
     This is deliberately independent of security-flow facts: graph construction
     needs declaration identity even in functions that are not security routes.
+    ``include_named_imports`` also records imported values that may resolve to
+    namespace exports. ``member_paths`` returns tuples for their nested member
+    demand; resolving a value's actual namespace provider belongs to the graph.
     """
     namespace_nodes = []
     nodes = []
@@ -125,12 +130,23 @@ def namespace_member_reads(
             namespace_nodes.extend(
                 c for c in node.named_children if c.type == "identifier"
             )
+        elif include_named_imports and node.type == "import_clause":
+            for child in node.named_children:
+                if child.type == "identifier":
+                    namespace_nodes.append(child)
+                elif child.type == "named_imports":
+                    namespace_nodes.extend(
+                        spec.child_by_field_name("alias")
+                        or spec.child_by_field_name("name")
+                        for spec in child.named_children
+                        if spec.type == "import_specifier"
+                    )
         if len(nodes) > _MAX_NODES:
             return {node_text(source, n): None for n in namespace_nodes}
         stack.extend(reversed(node.named_children))
     if not namespace_nodes and local_value_reads is None:
         return {}
-    result: dict[str, set[str] | None] = {
+    result: dict[str, set[str | tuple[str, ...]] | None] = {
         node_text(source, n): set() for n in namespace_nodes
     }
     if root.has_error:
@@ -242,14 +258,25 @@ def namespace_member_reads(
         elif node.type == "import_clause":
             for child in node.named_children:
                 if child.type == "identifier":
-                    bind(scope, child)
+                    bind(
+                        scope,
+                        child,
+                        namespace=node_text(source, child)
+                        if include_named_imports
+                        else None,
+                    )
                 elif child.type == "named_imports":
                     for spec in child.named_children:
                         if spec.type == "import_specifier":
+                            name = spec.child_by_field_name(
+                                "alias"
+                            ) or spec.child_by_field_name("name")
                             bind(
                                 scope,
-                                spec.child_by_field_name("alias")
-                                or spec.child_by_field_name("name"),
+                                name,
+                                namespace=node_text(source, name)
+                                if include_named_imports
+                                else None,
                             )
         stack.extend((child, scope) for child in reversed(node.named_children))
 
@@ -396,12 +423,62 @@ def namespace_member_reads(
             if pattern.type == "object_pattern":
                 keys = _destructured_keys(pattern, source)
                 if keys is not None:
-                    members.update(keys)
+                    members.update(
+                        (key,) for key in keys
+                    ) if member_paths else members.update(keys)
                     continue
         # Named default declarations have their own identity in the graph;
         # leave that surface opaque until default-member mapping is proven.
         if member and member != "default":
-            members.add(member)
+            if member_paths:
+                parts = [member]
+                expression = parent
+                while len(parts) < 32 and expression is not None:
+                    while (
+                        expression.parent is not None
+                        and expression.parent.type in _WRAPPERS
+                    ):
+                        expression = expression.parent
+                    outer = expression.parent
+                    if (
+                        outer is None
+                        or outer.type
+                        not in {"member_expression", "subscript_expression"}
+                        or outer.child_by_field_name("object") != expression
+                    ):
+                        break
+                    key = outer.child_by_field_name(
+                        "property"
+                    ) or outer.child_by_field_name("index")
+                    value = (
+                        node_text(source, key)
+                        if key is not None and key.type == "property_identifier"
+                        else _plain_string(source, key)
+                    )
+                    if not value:
+                        break
+                    owner = outer.parent
+                    if owner is not None and (
+                        (
+                            owner.type
+                            in {
+                                "assignment_expression",
+                                "augmented_assignment_expression",
+                            }
+                            and owner.child_by_field_name("left") == outer
+                        )
+                        or owner.type == "update_expression"
+                        or (
+                            owner.type == "unary_expression"
+                            and any(child.type == "delete" for child in owner.children)
+                        )
+                    ):
+                        break
+                    parts.append(value)
+                    expression = outer
+                members.add(tuple(parts))
+            else:
+                members.add(member)
         else:
             result[namespace] = None
     if shadowed_properties is not None:

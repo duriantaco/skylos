@@ -25,6 +25,13 @@ from skylos.rules.sca.lockfile_types import (
     LockfileLimitError,
     LockfileParseError,
 )
+from skylos.rules.sca.package_sources import (
+    MAX_SOURCE_RECORDS,
+    PYPI_REGISTRY_HOST,
+    SOURCE_GIT,
+    SOURCE_URL,
+    source_record,
+)
 
 MAX_UV_LOCK_BYTES = 10_000_000
 MAX_GRAPH_STATES = 100_000
@@ -140,6 +147,50 @@ def _public_registry(source: dict) -> bool:
         )
     except (ValueError, TypeError):
         return False
+
+
+_SOURCE_KINDS = {"git": SOURCE_GIT, "url": SOURCE_URL}
+
+
+def _text_or_none(value: object) -> str | None:
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _artifact_hash(package: dict) -> str | None:
+    """The first artifact hash uv recorded (sdist, then wheels)."""
+    artifacts = [package.get("sdist"), *(package.get("wheels") or [])]
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            continue
+        value = artifact.get("hash")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _add_source_record(inventory, package, name, version, kind, path, line):
+    source = package.get("source")
+    url = None
+    ref = None
+    if isinstance(source, dict):
+        url = source.get(kind)
+    if kind == "git" and isinstance(url, str) and "#" in url:
+        ref = url.rpartition("#")[2]
+    record = source_record(
+        ecosystem="PyPI",
+        name=name,
+        version=_text_or_none(version),
+        kind=_SOURCE_KINDS[kind],
+        url=url,
+        file=str(path),
+        line=line,
+        ref=ref,
+        integrity=_artifact_hash(package),
+    )
+    if record is not None and len(inventory.source_records) < MAX_SOURCE_RECORDS:
+        inventory.source_records.append(record)
 
 
 def _package_lines(text: str) -> list[int]:
@@ -519,6 +570,8 @@ def parse_uv_lock(
                 inventory.non_registry_names.append(name)
             else:
                 inventory.unresolved.append(issue)
+            if kind in {"git", "url"}:
+                _add_source_record(inventory, package, name, version, kind, path, line)
             continue
         node["record"] = {
             "name": name,
@@ -538,6 +591,8 @@ def parse_uv_lock(
             "lockfile_supported_markers": supported,
             "lockfile_required_markers": required,
             "requires_python": requires_python,
+            "integrity": _artifact_hash(package),
+            "registry": PYPI_REGISTRY_HOST,
         }
     manifest_edges = _manifest_edges(manifest)
     if edge_count + len(manifest_edges) > MAX_DEPENDENCY_EDGES:
