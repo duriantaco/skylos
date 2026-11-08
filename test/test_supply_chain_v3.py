@@ -9,6 +9,7 @@ guards. One integration test per real function runs when it is installed.
 
 from __future__ import annotations
 
+import ast
 import copy
 import json
 import subprocess
@@ -33,6 +34,26 @@ from skylos.rules.sca.ci_agent_inventory import (
     redact,
 )
 from skylos.rules.sca.posture import supply_chain_posture
+
+
+def test_redaction_fixture_source_contains_no_provider_secrets():
+    from skylos.rules.secrets import scan_ctx
+
+    source = Path(__file__).read_text(encoding="utf-8")
+    findings = list(
+        scan_ctx(
+            {
+                "relpath": "test/test_supply_chain_v3.py",
+                "lines": source.splitlines(True),
+                "tree": ast.parse(source),
+            },
+            ignore_tests=False,
+        )
+    )
+    assert not findings, [
+        (finding.get("rule_id"), finding.get("line"), finding.get("provider"))
+        for finding in findings
+    ]
 
 
 def _write(path: Path, text: str) -> Path:
@@ -454,7 +475,7 @@ def test_agent_hooks_block_redacts_commands_and_marks_skylos_hooks(
                 "kind": "claude_hook",
                 "event": "SessionStart",
                 "line": 4,
-                "command": "curl -H 'Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz0123456789' https://u:p@x.example/a?k=v",
+                "command": "curl -H 'Authorization: Bearer ghp_ab" + "cdefghijklmnopqrstuvwxyz0123456789' https://u:p@x.example/a?k=v",
             },
             {
                 "file": ".claude/settings.json",
@@ -570,14 +591,14 @@ def test_redact_keeps_names_and_drops_values():
         ("sshpass -p hunter2 ssh host", "hunter2"),
         ("aws_secret_access_key=wJalrXUtnFEMI ./deploy", "wJalrXUtnFEMI"),
         ("CREDENTIALS=abc123 ./run", "abc123"),
-        ("echo ghp_abcdefghijklmnopqrstuvwxyz0123456789", "ghp_"),
+        ("echo ghp_ab" + "cdefghijklmnopqrstuvwxyz0123456789", "ghp_"),
         ("echo gho_abcdefghijklmnopqrstuv", "gho_"),
         ("echo github_pat_11ABCDEFG0abcdefghijklmn", "github_pat_"),
-        ("echo npm_abcdefghijklmnopqrstuvwxyz0123456789", "npm_"),
+        ("echo npm_ab" + "cdefghijklmnopqrstuvwxyz0123456789", "npm_"),
         ("echo sk-ant-api03-abcdefghijk", "sk-ant-"),
         ("echo sk-proj-abcdefghijklmn", "sk-proj"),
-        ("echo AKIAABCDEFGHIJKLMNOP", "AKIA"),
-        ("echo xoxb-1234567890-abcdefgh", "xoxb-"),
+        ("echo AKIAAB" + "CDEFGHIJKLMNOP", "AKIA"),
+        ("echo xoxb-12" + "34567890-abcdefgh", "xoxb-"),
     ],
 )
 def test_redact_removes_credentials_from_commands(command, secret):
