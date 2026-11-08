@@ -44,9 +44,11 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlsplit
 
 from skylos.core.git_context import GitContext
 from skylos.core.safe_cache_io import read_project_text_no_symlink
+from skylos.rules.sca.lockfile_types import NON_REGISTRY_REASONS
 from skylos.rules.config.agent_files import (
     agent_path,
     contained,
@@ -58,9 +60,16 @@ logger = logging.getLogger(__name__)
 RULE_HARDENING = "SKY-SCA-HRD001"
 RULE_UPGRADE_BLOCK = "SKY-SCA-UPG001"
 RULE_UPGRADE_WARN = "SKY-SCA-UPG002"
+RULE_NEW_SOURCE = "SKY-SCA-SRC004"
 RULE_PUBLISH_JOB_CHANGED = "SKY-D375"
 DIFF_RULES = frozenset(
-    {RULE_HARDENING, RULE_UPGRADE_BLOCK, RULE_UPGRADE_WARN, RULE_PUBLISH_JOB_CHANGED}
+    {
+        RULE_HARDENING,
+        RULE_UPGRADE_BLOCK,
+        RULE_UPGRADE_WARN,
+        RULE_NEW_SOURCE,
+        RULE_PUBLISH_JOB_CHANGED,
+    }
 )
 FINDING_KIND = "supply_chain_diff"
 ERROR_KIND = "supply_chain_check_unavailable"
@@ -120,6 +129,13 @@ _UPGRADE_PARSERS = {
     "uv.lock": ("pypi", "skylos.rules.sca.uv_lockfile", "parse_uv_lock"),
     "poetry.lock": ("pypi", "skylos.rules.sca.poetry_lockfile", "parse_poetry_lock"),
     "Pipfile.lock": ("pypi", "skylos.rules.sca.pipfile_lockfile", "parse_pipfile_lock"),
+}
+_SOURCE_PARSERS = {
+    **{name: entry[1:] for name, entry in _UPGRADE_PARSERS.items()},
+    "Cargo.lock": ("skylos.rules.sca.cargo_lockfile", "parse_cargo_lock"),
+    "composer.lock": ("skylos.rules.sca.composer_lockfile", "parse_composer_lock"),
+    "Gemfile.lock": ("skylos.rules.sca.gemfile_lockfile", "parse_gemfile_lock"),
+    "pubspec.lock": ("skylos.rules.sca.pubspec_lockfile", "parse_pubspec_lock"),
 }
 _PUBLIC_REGISTRIES = {
     "npm": frozenset({"registry.npmjs.org", "registry.yarnpkg.com"}),
@@ -1380,6 +1396,121 @@ def _without_lines(value):
     return value
 
 
+def _source_lockfile_path(path: str) -> bool:
+    pure = PurePosixPath(path)
+    if any(part in _SKIP_PARTS for part in pure.parts[:-1]):
+        return False
+    return pure.name in _SOURCE_PARSERS
+
+
+def _non_public_sources(path: str, text: str) -> tuple[list[dict], dict]:
+    import importlib
+
+    module_name, function_name = _SOURCE_PARSERS[PurePosixPath(path).name]
+    parser = getattr(importlib.import_module(module_name), function_name)
+    try:
+        inventory = parser(Path(path), text=text, max_packages=MAX_REVIEW_PACKAGES)
+    except Exception as exc:  # noqa: BLE001 - reported in the check's receipt
+        raise LockfileUnreadable(
+            f"could not be parsed ({type(exc).__name__})"
+        ) from None
+    entries = [
+        entry
+        for entry in inventory.not_checked
+        if entry.get("reason") in NON_REGISTRY_REASONS
+    ]
+    hosts: dict[str, set] = {}
+    for record in inventory.source_records:
+        host = urlsplit(str(record.get("source_url") or "")).hostname
+        if host:
+            hosts.setdefault(str(record.get("name")).lower(), set()).add(host.lower())
+    return entries, hosts
+
+
+def _source_entry_name(entry: dict) -> str:
+    return str(entry.get("name") or entry.get("package") or "")
+
+
+def _is_internal_package(name: str, patterns: list) -> bool:
+    return any(fnmatch.fnmatchcase(name, str(item).lower()) for item in patterns)
+
+
+def new_source_findings(sides: GitSides, _api, receipt: dict, _errors: list) -> list[dict]:
+    """SKY-SCA-SRC004: a change points a package at a source this repository
+    did not use for it. Such packages have no advisory coverage, so an existing
+    private dependency stays quiet and a newly introduced one is reviewed."""
+    base, head = sides.files(_source_lockfile_path)
+    changed = sorted(path for path, text in head.items() if base.get(path) != text)
+    receipt["changed"] = len(changed)
+    receipt["status"] = "unchanged"
+    if not changed:
+        return []
+    receipt["status"] = "checked"
+    known_names: set = set()
+    known_hosts: dict[str, set] = {}
+    unreadable = []
+    for path, text in base.items():
+        try:
+            entries, hosts = _non_public_sources(path, text)
+        except LockfileUnreadable:
+            unreadable.append(path)
+            continue
+        known_names.update(_source_entry_name(entry).lower() for entry in entries)
+        for name, values in hosts.items():
+            known_hosts.setdefault(name, set()).update(values)
+    internal = _review_options(sides.root).get("internal_packages", [])
+    findings = []
+    for path in changed:
+        try:
+            entries, hosts = _non_public_sources(path, head[path])
+        except LockfileUnreadable:
+            unreadable.append(path)
+            continue
+        seen = set()
+        for entry in entries:
+            name = _source_entry_name(entry)
+            key = name.lower()
+            if not key or key in seen or _is_internal_package(key, internal):
+                continue
+            new_hosts = hosts.get(key, set()) - known_hosts.get(key, set())
+            if key in known_names and not new_hosts:
+                continue
+            seen.add(key)
+            findings.append(_new_source_finding(sides, path, entry, name, new_hosts))
+    if unreadable:
+        receipt["unreadable"] = sorted(set(unreadable))[:10]
+    return findings
+
+
+def _new_source_finding(sides, path, entry, name, new_hosts) -> dict:
+    where = f"a {entry.get('source_type')} source"
+    if new_hosts:
+        where = ", ".join(sorted(new_hosts))
+    message = (
+        f"{name} in {path} now comes from {where}, which this repository did not "
+        "use for it. Advisory databases do not cover it, so Skylos cannot check "
+        "it. If it is yours, list it in internal_packages under "
+        "[tool.skylos.supply_chain] on the target branch."
+    )
+    metadata = {
+        "package_name": name,
+        "package_version": entry.get("version"),
+        "source_type": entry.get("source_type"),
+        "source_hosts": sorted(new_hosts),
+        "basis": "new_source",
+        "base_commit": sides.commit,
+    }
+    return _finding(
+        RULE_NEW_SOURCE,
+        "HIGH",
+        message,
+        sides.root / path,
+        entry.get("line") or 1,
+        metadata,
+        category="DEPENDENCY",
+    )
+
+
 def _publish_jobs(inventory) -> dict[tuple, tuple]:
     jobs = {}
     for workflow in _as_list(_get(inventory, "workflows")):
@@ -1555,6 +1686,8 @@ def supply_chain_diff_findings(
         )
     if dependencies:
         checks.append(("dependency_files", dependency_coverage, set()))
+    if dependencies and RULE_NEW_SOURCE not in ignore:
+        checks.append(("package_sources", new_source_findings, {RULE_NEW_SOURCE}))
     if dependencies and RULE_HARDENING not in ignore:
         checks.append(("hardening", hardening_findings, {RULE_HARDENING}))
     if dependencies and review_upgrades:
@@ -1586,6 +1719,7 @@ __all__ = [
     "ERROR_KIND",
     "FINDING_KIND",
     "RULE_HARDENING",
+    "RULE_NEW_SOURCE",
     "RULE_PUBLISH_JOB_CHANGED",
     "RULE_UPGRADE_BLOCK",
     "RULE_UPGRADE_WARN",

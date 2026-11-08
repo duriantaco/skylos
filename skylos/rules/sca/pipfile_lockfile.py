@@ -16,6 +16,8 @@ from skylos.rules.sca.lockfile_types import (
     LockfileInventory,
     LockfileLimitError,
     LockfileParseError,
+    NON_REGISTRY_REASONS,
+    not_checked_source,
 )
 from skylos.rules.sca.npm_lockfile import (
     _invalid_constant,
@@ -177,8 +179,13 @@ def parse_pipfile_lock(
             continue
         if reason:
             issue.update(reason=reason, source_type=source_type)
-            inventory.unresolved.append(issue)
             non_registry_names.add(name)
+            if reason in NON_REGISTRY_REASONS:
+                inventory.not_checked.append(
+                    not_checked_source(issue, reason, source_type)
+                )
+            else:
+                inventory.unresolved.append(issue)
             continue
         version_spec = entry.get("version")
         version = (

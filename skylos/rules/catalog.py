@@ -202,6 +202,13 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-SCA-SRC004",
+        "Package moved to a source this repository did not use",
+        "dependency",
+        "HIGH",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-SCA-INT001",
         "Lockfile entry without integrity hash",
         "dependency",

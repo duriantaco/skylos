@@ -326,7 +326,8 @@ def test_private_sources_suppress_conflicting_pin_only_inside_recorded_project(
     result = sca.scan_dependencies(project)
     assert result.receipt["complete"] is False
     assert result.receipt["manifest_source_conflict_count"] == 1
-    assert result.receipt["unresolved_lockfile_dependency_count"] == 1
+    assert result.receipt["unresolved_lockfile_dependency_count"] == 0
+    assert result.receipt["non_registry_lockfile_dependency_count"] == 1
     assert len(osv.queries) == len(result) == 1
     assert result[0]["file"] == str(public_manifest)
     assert "TOPSECRET" not in json.dumps(result.receipt)

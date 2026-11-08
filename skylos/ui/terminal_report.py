@@ -249,16 +249,20 @@ def render_pretty_results(
 
 
 def _print_sca_packages(console: Console, groups, *, root_path=None, limit=None):
-    from skylos.reporting.sca_summary import summary_footer
+    from skylos.reporting.sca_summary import has_use_data, summary_footer
 
     if not groups:
         return
+    show_use = has_use_data(groups)
     console.print(Text("  Dependency vulnerabilities, by package", style="bold"))
     shown = groups if limit is None else groups[:limit]
     for group in shown:
         location = _sanitize_terminal_text(
             f"{_shorten_path(group.file, root_path)}:{group.line}"
         )
+        use = ""
+        if show_use:
+            use = _sanitize_terminal_text(f"  {group.use_text()}")
         console.print(
             Text.assemble(
                 ("  ", ""),
@@ -269,6 +273,7 @@ def _print_sca_packages(console: Console, groups, *, root_path=None, limit=None)
                 (" ", ""),
                 (_sanitize_terminal_text(f"{group.name}@{group.version}"), "bold"),
                 (_sanitize_terminal_text(f"  upgrade to {group.fix_text()}"), ""),
+                (use, "bold"),
                 (
                     _sanitize_terminal_text(f"  {group.count}: {group.ids_text()}"),
                     "dim",

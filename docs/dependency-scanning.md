@@ -51,12 +51,13 @@ lockfiles, the project's own local code (`link:` and `file:` directories, local
 `file:` tarballs, peers satisfied by a workspace project, and pnpm `runtime:`
 entries such as `node@runtime:26.11.1`) is listed as **not checked** instead of
 making the scan incomplete: it has no public registry identity to look up.
-For `uv.lock`, `Cargo.lock`, `composer.lock`, `Gemfile.lock` and
-`pubspec.lock`, validated Git, URL, path and private-registry sources are also
-listed as **not checked**; see [uv source coverage](#uv-source-coverage), which
-applies to all five. In the npm lockfile formats, explicit private registries,
-Git dependencies and external archives retain their existing unresolved-source
-behavior. Known local/non-registry
+For every lockfile format except `gradle.lockfile` and `packages.lock.json`,
+validated Git, URL, path and private-registry sources are also listed as
+**not checked**; see [uv source coverage](#uv-source-coverage), which applies to
+all of them. A pull request that introduces such a source is reported as
+`SKY-SCA-SRC004`. Contradictory records still stop the scan: a tarball on the
+public registry that does not match its package, an alternate package `id`, or
+an unrecorded Yarn `virtual:` peer. Known local/non-registry
 identities also prevent matching direct manifest pins in the lockfile's project
 and recorded workspace directories from being reinterpreted as public packages.
 Unrelated nested projects retain their own manifest inventory.
@@ -105,7 +106,7 @@ dependency edges, so Skylos does not invent those classifications or SBOM graph
 links.
 
 Only packages associated with a supported public PyPI source are sent to OSV.
-Private indexes and Git or archive sources remain explicit inventory gaps;
+Private indexes and Git or archive sources are listed as not checked;
 local path packages are counted separately and never queried as public
 packages. Source URLs and credentials are not included in findings or the SBOM.
 Skylos does not validate artifact hashes or verify that `Pipfile.lock` is fresh
@@ -160,7 +161,8 @@ provenance. References are resolved the way pnpm writes them:
 | `link:packages/x` from a package snapshot (a peer resolved to a workspace project) | Workspace edge, not a gap |
 | A bare version for a name that an importer links to a workspace project (`zod: 4.6.6` with no `zod@4.6.6` record) | Not checked (`workspace_package`) |
 | `node`/`deno`/`bun@runtime:<version>` | Not checked (`runtime`) |
-| Git, private-registry, and non-canonical archive sources | Unresolved; the scan is incomplete |
+| Git, private-registry, and external archive sources | Not checked (`non_registry_source`) |
+| A public-registry tarball that does not match its package, or an alternate `id` | Unresolved; the scan is incomplete |
 
 OS/CPU/libc constraints may be a single string (`libc: glibc`) or a list.
 Missing package/snapshot records for names that are not workspace projects, and
@@ -188,7 +190,7 @@ rewriting, or artifact download is performed.
 
 Poetry's default PyPI entries omit their source. Explicit custom indexes must
 identify a supported public PyPI endpoint; private indexes, Git, and archive
-sources stay explicit gaps. Directory dependencies are counted as local and
+sources are listed as not checked. Directory dependencies are counted as local and
 are never queried as public packages.
 
 Skylos retains legacy categories, dependency groups, optional flags, extras,
@@ -211,8 +213,9 @@ do not separate development from production usage, and Berry does not record
 all virtual peer installations. Skylos does not invent those classifications
 or installed peer-provider relationships.
 
-Patched, Git, archive, private-registry, and unsupported local-source records
-remain gaps. Manifest `resolutions` overrides can prevent matching a recorded
+Patched, Git, archive and private-registry records are listed as not checked,
+and local-source records as local packages. Unrecorded `virtual:` peers stay
+unresolved. Manifest `resolutions` overrides can prevent matching a recorded
 dependency descriptor to a lock entry; these are explicit incomplete-graph
 issues even when all package versions are present. No Yarn commands, package
 scripts, or dependency installation are run.
@@ -466,7 +469,7 @@ depth, item, text, and node budgets. CLI JSON and SARIF both include dependency
 findings, including retained findings from an incomplete detail lookup.
 
 OSV's batch endpoint returns advisory IDs. Skylos fetches each distinct full
-advisory once per scan, with no project-owned or persistent cache. Findings now
+advisory once per scan, with no project-owned cache. Findings now
 include available summaries, CVE aliases, references, severity information,
 affected ranges, and package-specific reported fixes. `advisory_status` records
 whether a full matching advisory was available; `advisory_error` explains a
@@ -509,9 +512,10 @@ details does not erase a batch-confirmed finding: the finding stays visible,
 the scan becomes incomplete, and CLI exit code 2 applies. An advisory that was
 retrieved successfully may still legitimately omit optional severity/fix data.
 
-- Malformed/unreadable locks, unsupported schema versions, unresolved external
-  lock entries, inventory limits, or failed OSV requests produce incomplete
-  operational results. CLI exit code **2** signals this failure, even with
+- Malformed/unreadable locks, unsupported schema versions, contradictory lock
+  entries, inventory limits, or failed OSV requests with no usable
+  [saved answers](#when-osv-cannot-be-reached) produce incomplete operational
+  results. CLI exit code **2** signals this failure, even with
   `--force` or an advisory gate. JSON is emitted before exit; upload is skipped.
   The run ends with a reason that names the cause and its count (unresolved
   lock entries with file and line, unreadable files, failed OSV.dev batches);
@@ -585,6 +589,7 @@ read before it is reported:
 |:---|:---|:---|
 | `SKY-SCA-SRC001` | CRITICAL direct, HIGH transitive | A package matching `internal_packages` resolves from a public or merged index (`--extra-index-url`, a lockfile entry from `registry.npmjs.org` or `pypi.org`): dependency confusion. Never without configured internal patterns or registry evidence |
 | `SKY-SCA-SRC003` | MEDIUM | A Git dependency not pinned to a full 40-character commit, or a URL dependency without a hash (`requirements.txt`, `pyproject.toml`, `package.json` without a lockfile, or a lockfile Git/URL entry). Local paths are not reported |
+| `SKY-SCA-SRC004` | HIGH | In a pull request, a lockfile points a package at a private, Git or URL source this repository did not use for it, or at a new host. Advisory databases do not cover it, so it blocks until reviewed. Packages matching `internal_packages` on the target branch are exempt; the pull request cannot add its own exemption |
 | `SKY-SCA-INT001` | MEDIUM | A registry entry in `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock` or `poetry.lock` without an integrity hash (an empty value counts as missing). Never for `requirements.txt`, and not for npm `inBundle` entries, which ship inside their parent's verified tarball |
 | `SKY-SCA-AGE001` | HIGH | The locked version is younger than `min_release_age_hours`. Scans check this only when the policy sets it |
 
@@ -758,6 +763,50 @@ When ca9 provides `hardening_settings`, the committed values it reads are used
 first and Skylos's own readers fill the gaps; a value from a file Git does not
 track is ignored. The rich report prints one line when checks fail; JSON has
 the details.
+
+### When OSV cannot be reached
+
+A failed batch request is retried twice, within a 20-second budget for the scan.
+If OSV still does not answer, Skylos uses the last good answer for that exact
+package version, up to 7 days old, from `osv-answers.json` in the user cache
+(`$XDG_CACHE_HOME/skylos`, or `~/.cache/skylos`). Every successful scan updates
+that file. Live answers always win.
+
+A scan that used saved answers reports `status: "complete_with_saved_answers"`
+and `complete: false`, with `query.saved_answers` giving the package count and
+the age of the oldest answer. Known vulnerabilities still fail the gate. Advisories
+published since then are missing, so the scan prints a warning, a baseline refuses
+it, an upload cannot use it to resolve earlier findings, and
+`coverage.required = ["dependencies"]` fails on it.
+
+A package with no saved answer, or an answer older than 7 days, leaves the scan
+incomplete with exit code **2**. So does a store inside the scanned repository,
+which is never read or written: a repository cannot supply its own answers. The
+GitHub workflow `skylos cicd init` writes keeps this file between runs with
+`actions/cache`. Other CI systems need their own cache of that path, otherwise a
+fresh runner has nothing saved.
+
+### Reachability
+
+For PyPI advisories, findings carry `metadata.reachability_tier`, what the code
+shows about use of the package:
+
+| Tier | Shown as | Meaning |
+| --- | --- | --- |
+| `used` | `called at app.py:4` | A listed vulnerable API is called (`reachability_call_sites`), or coverage shows the code ran |
+| `imported` | `imported` | The package is imported, directly or through a dependency you import; no vulnerable call was found |
+| `unknown` | `unknown` | Nothing proves either way: a transitive package, a command-line tool or plugin, a guessed import name, or an incomplete dependency graph |
+| `not_imported` | `no import found` | A declared direct dependency, with a complete dependency graph, no import and no sign of indirect use |
+| `unreachable` | `not reached` | The version is outside the affected range, or the code was proved not to run |
+
+Terminal output sorts packages by severity and, within a severity, what the code
+uses first. `no import found` and `not reached` sort last. Nothing is hidden and
+the gate counts every advisory: "no import found" is not proof of safety. Other
+ecosystems show `not analyzed`.
+
+`reachability_verdict` keeps ca9's own verdict. It can change with GitHub
+availability, because ca9 reads fix commits; the tier does not, because a call to
+a listed API counts as use either way.
 
 ## CI
 

@@ -857,6 +857,9 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-SCA-SRC003": {
         "default": "Pin the Git dependency to a full commit SHA, or add a hash to the URL dependency."
     },
+    "SKY-SCA-SRC004": {
+        "default": "Confirm the new source. If the package is yours, list it in internal_packages on the target branch; otherwise restore the original source."
+    },
     "SKY-SCA-UPG001": {"default": "Read the new install/import-time code before merging; pin the old version if it cannot be explained."},
     "SKY-SCA-UPG002": {"default": "Review the new code the upgrade adds before merging."},
     "SKY-T101": {"default": "Add type annotations to the parameters."},
