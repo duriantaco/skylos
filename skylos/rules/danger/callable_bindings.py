@@ -12,6 +12,11 @@ _LOCAL = "!local"
 _MEMBER = "$member:"
 _ROOTS = frozenset({"pickle", "cloudpickle", "os", "subprocess", "asyncio"})
 _BUILTINS = frozenset({"eval", "exec"})
+_UNPICKLER_BASES = {
+    "pickle.Unpickler": "pickle.Unpickler",
+    "_pickle.Unpickler": "pickle.Unpickler",
+    "dill.Unpickler": "dill.Unpickler",
+}
 _SCOPES = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
 
@@ -107,13 +112,30 @@ class _CallableFlow(ValueFlow):
                 self._bind(local, {_canonical(target)})
             return True
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            constructors = set()
+            if isinstance(node, ast.ClassDef) and not any(
+                isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and member.name == "find_class"
+                for member in node.body
+            ):
+                # Resolve bases before binding the new class name. An inherited
+                # native load remains native; a replaced provider stays local.
+                constructors = {
+                    _UNPICKLER_BASES[label]
+                    for base in node.bases
+                    for label in self.value(base)
+                    if label in _UNPICKLER_BASES
+                    and self.owner.provider_available(
+                        label, *(self.owner.provider_context or (None, None))
+                    )
+                }
             self.snapshots[id(node)] = {
                 name: self._current(name)
                 for name in self.owner.free_names(node) | self.member_keys
             }
             super()._statement(node)
             if not node.decorator_list:
-                self._bind(node.name, {_LOCAL})
+                self._bind(node.name, constructors or {_LOCAL})
             return True
         return super()._statement(node)
 
@@ -131,6 +153,7 @@ class _CallableIndex:
         self.dynamic = False
         self.complete = True
         self.provider_checks = {}
+        self.provider_context = None
         nodes = []
         for node in ast.walk(module):
             nodes.append(node)
@@ -251,6 +274,12 @@ class _CallableIndex:
         return self.flows[key]
 
     def names(self, node, legacy, filename, project_root):
+        context = filename, project_root
+        if self.provider_context != context:
+            # A shared AST may be checked with a wider project inventory by
+            # another scanner. Its constructor proofs must use that inventory.
+            self.provider_context = context
+            self.flows.clear()
         if not self.complete:
             return (legacy,) if legacy else ()
         flow = self.flow(self.scope(node))
