@@ -173,19 +173,22 @@ def _file_limit(path: str) -> int:
     return MAX_FILE_BYTES
 
 
-def _blob_id(path: Path, length: int) -> str | None:
-    """Git's object id of a working-tree file, read in chunks."""
+def _blob_id(root: Path, path: Path, length: int) -> str | None:
+    """Git's object id of an in-repository working-tree file, read in chunks."""
     algorithm = "sha1"
     if length == 64:
         algorithm = "sha256"
     digest = hashlib.new(algorithm)
     try:
+        root = root.resolve(strict=True)
+        path = path.resolve(strict=True)
+        path.relative_to(root)
         size = path.stat().st_size
         digest.update(f"blob {size}\0".encode())
         with open(path, "rb") as handle:
             for chunk in iter(lambda: handle.read(1 << 20), b""):
                 digest.update(chunk)
-    except OSError:
+    except (OSError, RuntimeError, ValueError):
         return None
     return digest.hexdigest()
 
@@ -312,7 +315,7 @@ class GitSides:
             return blob.returncode == 0 and blob.stdout == written
         if mode not in REGULAR_MODES or target.is_symlink() or not target.is_file():
             return False
-        return _blob_id(target, len(object_id)) == object_id
+        return _blob_id(self.root, target, len(object_id)) == object_id
 
     def _base_link_target(self, link: str) -> tuple[str | None, str, str]:
         """(target path, problem, written target) of a link at the base."""
