@@ -437,6 +437,9 @@ GENERIC_KEYED_VALUE = re.compile(
 BARE_GENERIC_VALUE = re.compile(
     r"(?P<bare>(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-]))"
 )
+_BARE_TOKEN_UPPER_RE = re.compile(r"[A-Z]")
+_BARE_TOKEN_LOWER_RE = re.compile(r"[a-z]")
+_BARE_TOKEN_DIGIT_RE = re.compile(r"[0-9]")
 _TIMESTAMPED_DIRECTORY_ID = re.compile(
     r"^[A-Za-z][A-Za-z0-9_-]*[-_]\d{8}T\d{6}Z[-_][0-9a-f]{12,}$"
 )
@@ -793,6 +796,12 @@ def _looks_like_identifier(s):
 
 
 def _has_bare_token_charset_mix(s):
+    if s.isascii():
+        return bool(
+            _BARE_TOKEN_UPPER_RE.search(s)
+            and _BARE_TOKEN_LOWER_RE.search(s)
+            and _BARE_TOKEN_DIGIT_RE.search(s)
+        )
     has_upper = False
     has_lower = False
     has_digit = False
