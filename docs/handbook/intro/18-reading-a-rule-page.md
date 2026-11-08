@@ -4,11 +4,12 @@ Every rule page has the same parts, in the same order.
 
 | Part | What it tells you |
 |:--|:--|
-| Header | The rule ID, a plain title and the severity. Below them: the languages the rule covers, its CWE weakness ID when the catalog has one, the command that turns the rule on, and the finding type (defect, review or advice). When the catalog uses a different name, it is shown as **Catalog name**. |
+| Header | The rule ID, a plain title and the severity. Below them: the languages the rule covers, its CWE weakness ID when the catalog has one, the command that turns the rule on, the finding type (defect, review or advice) and what the quality gate does with a finding (**Gate**; **Needs** names any setting the rule waits for). When the catalog uses a different name, it is shown as **Catalog name**. |
 | What it is | The problem in two or three sentences. |
 | Why it matters | What can go wrong in a real project. |
 | Flagged | Code Skylos reports. The line Skylos reports is shaded. |
 | Not flagged | Code that looks similar but is safe, and why Skylos leaves it alone. |
+| More languages | For rules that cover several languages, more flagged and not-flagged pairs. |
 | How Skylos decides | The steps the detector really follows: what it looks for, what makes it skip, and what proof it needs. |
 | Fix | What to change. When the fix edits a file of the flagged example, it is shown as a change against that file. |
 | False alarms and suppression | When the rule can be wrong, and how to silence one finding or all of them. |
@@ -26,7 +27,15 @@ It means the handbook build wrote that example to an empty folder, ran the
 real `skylos` command shown (with JSON output added), and got the expected
 result: the rule reported on the flagged example, and not reported on the
 lookalike or on a fix given as a whole file. The line only appears when the
-example has not changed since that run.
+example has not changed since that run. Under a way to silence a finding, a
+"Checked" line means the build applied that marker or setting to the flagged
+example and the finding went away (or, where the page says a method does not
+work, that it stayed).
+
+Some rules cannot be reproduced by one offline scan: rules that only
+`skylos done` runs, or that need a package registry or a vulnerability
+database. Their examples carry the line **Example not machine-checked** with
+the reason instead.
 
 ## Examples that need a change
 

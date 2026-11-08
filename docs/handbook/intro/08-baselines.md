@@ -39,7 +39,7 @@ SRC001 and AGE001 always show.
 
 Because of the absolute paths, a baseline only helps for code findings when
 it is made in the same folder it is used in. On pull requests, a diff scan
-(chapter 6) is usually the simpler way to see only new findings.
+(see "Full scans and diff scans") is usually the simpler way to see only new findings.
 
 For dependency findings, `--baseline-ref REF` reads the baseline from a Git
 commit instead of the checkout, so a pull request cannot add its own

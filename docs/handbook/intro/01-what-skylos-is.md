@@ -19,11 +19,16 @@ imports. Other checks are added with flags:
 | `--sca` | Dependencies with known vulnerabilities and supply-chain risks |
 | `-a` (or `--all`) | All of the above |
 
+Two extras are opt-in: `--type-check` runs the project's own type checker
+and `--profile` shows where the scan spends its time (see "Type checking"
+and "Analysis profiling").
+
 Skylos reads Python, TypeScript and JavaScript, Java, Go, PHP, Rust, Ruby,
-Dart, C#, C++, Kotlin and Shell, plus configuration such as GitHub Actions
+Dart, C#, C++, Kotlin, Swift and Shell, plus configuration such as GitHub Actions
 workflows, GitLab CI files, Dockerfiles, Kubernetes manifests, Terraform and
-lockfiles. Coverage is deepest in Python, TypeScript/JavaScript and Java; a
-rule page lists the languages that rule covers.
+lockfiles. Coverage is deepest in Python, TypeScript/JavaScript and Java
+(see "Languages Skylos reads"); a rule page lists the languages that rule
+covers.
 
 ## What leaves your machine
 
@@ -34,16 +39,19 @@ offline. Two checks look things up on public services. They send package
 names and versions, never your source code:
 
 - `--sca` asks OSV.dev about dependency versions. It also asks the GitHub
-  API about advisory fix commits (with `GITHUB_TOKEN`, if set), downloads
-  the `ca9` suspicious-package feed, and asks npm and PyPI for release dates
-  when a release-age policy is set.
+  API about advisory fix commits (with `GITHUB_TOKEN`, if set), and asks npm
+  and PyPI for release dates when a release-age policy is set. When the OSV
+  lookup does not complete, it checks the malware feed that ships with the
+  installed `ca9` library instead; nothing is downloaded for that.
+  `--scan-publisher-changes` also asks the npm registry for the publisher
+  history of direct dependencies.
 - `--ai-defects` asks PyPI, npm, the Go proxy and JSR whether imported
   packages and pinned versions exist, and reads parts of public wheel files
   from PyPI.
 
 When a Skylos Cloud token is present, every scan also downloads your Cloud
 custom rules, sending the token (`SKYLOS_CUSTOM_RULES='[]'` turns that off).
-The optional AI review (chapter 9) sends code to the model provider you
+The optional AI review (see "The optional AI review") sends code to the model provider you
 configure, and to Jev when `TYPESAFE_API_KEY` is set.
 
 ## Where findings go

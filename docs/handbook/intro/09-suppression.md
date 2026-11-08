@@ -28,7 +28,7 @@ a multi-line import covers the whole import.
 
 Use `#` in Python, Shell, Ruby and YAML, `#` or `//` in PHP, and `//` (or a
 one-line `/* … */`) in TypeScript, JavaScript, Go, Java, Kotlin, C#, Rust,
-Dart and C++. Outside Python the marker must be in a real comment that starts
+Swift, Dart and C++. Outside Python the marker must be in a real comment that starts
 with it; the same text inside a string does not count. Dead-code findings
 take their rule ID too: SKY-U001 for functions, SKY-U002 for imports,
 SKY-U003 for variables, SKY-U004 for classes and SKY-U006 for parameters.

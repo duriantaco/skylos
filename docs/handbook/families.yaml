@@ -25,8 +25,9 @@ families:
       Passwords, API keys and tokens written into source or configuration
       files, and server-only values exposed to code that runs in the
       browser. They run with `--secrets` or `-a`. Any reported secret fails
-      the quality gate, whatever the configured limits. Python test folders
-      are not scanned for secrets in a normal scan.
+      the quality gate, whatever the configured limits. In test files and
+      folders only known token formats, such as GitHub or AWS keys, are
+      reported; generic random-looking values there are not.
 
   - id: supply-chain
     title: Supply chain and agent configuration

@@ -33,7 +33,7 @@ whether to continue anyway.
 | `max_quality` | 10 | quality findings |
 | `max_ai_defects` | same as `max_quality` | AI-code findings |
 | `max_reliability` | 0 | reliability findings |
-| `max_dependency_vulnerabilities` | 0 | dependency findings, except SKY-SCA-SRC003, UPG002 and SUS001 |
+| `max_dependency_vulnerabilities` | 0 | dependency findings, except SKY-SCA-SRC003 and UPG002 |
 | `max_dead_code` | no limit | unused code |
 
 ## What always fails
@@ -66,12 +66,12 @@ Setting `fail_on_critical = false`, or `max_critical` or `max_secrets` above
 | Code | When |
 |:--|:--|
 | 0 | The scan finished. With `--gate`, the gate passed. |
-| 1 | `--gate` failed, `--strict` found something, or `--format concise` listed findings. |
+| 1 | `--gate` failed, `--strict` found something, `--format concise` listed findings, or `--type-check` found type errors. |
 | 2 | A usage error (a missing path, a mistyped command) or incomplete analysis. |
 
 ## Incomplete analysis
 
-A file that cannot be analysed (see chapter 2), or a language engine that is
+A file that cannot be analysed (see "How Skylos reads code"), or a language engine that is
 missing, is a coverage warning: the scan and the gate are decided on the
 code that was analysed, and the report ends with `Coverage: INCOMPLETE —
 some code was not analysed`. It becomes exit 2 when:
@@ -81,4 +81,6 @@ some code was not analysed`. It becomes exit 2 when:
 - more than half of the source files could not be analysed;
 - a `--diff` or `--diff-base` scan could not analyse a changed file;
 - a whole requested check failed, such as an interrupted `--sca` lookup or
-  GitHub Actions YAML that cannot be read.
+  GitHub Actions YAML that cannot be read;
+- a requested `--type-check` could not finish (the checker is missing, timed
+  out, or printed output Skylos could not read).

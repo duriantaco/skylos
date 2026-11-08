@@ -29,7 +29,10 @@ reference that does not exist exits 2.
   lines. A few change-level findings are kept even off the changed lines: a
   removed security control (SKY-L021), changed AI-reviewer settings
   (SKY-A122), added scanner markers (SKY-A125), a changed publish job
-  (SKY-D375), and dependency upgrade and hardening findings.
+  (SKY-D375), and dependency upgrade and hardening findings. Agent
+  configuration and publish-job findings (SKY-D365 to SKY-D377) are kept
+  when they are new against the base, whichever line changed, and dropped
+  when the base already had them.
 - `--diff-base` still parses unchanged files, so facts that span files, such
   as who calls a function, stay correct, but it runs the security, secret
   and quality rules only on changed files.
