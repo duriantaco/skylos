@@ -109,6 +109,8 @@ class RemediationAgent:
                 if batch.status == "fixed":
                     fixed_files.append(batch.file)
                     log("    ✓ Fixed successfully")
+                elif batch.status == "applied_unverified":
+                    log("    Applied; verification incomplete (see receipt)")
                 else:
                     log(f"    ✗ Status: {batch.status} — {batch.fix_description}")
         finally:
@@ -242,23 +244,39 @@ class RemediationAgent:
             batch.fix_description = "Fix confidence too low"
             return
 
+        try:
+            before_report = executor.capture_static_report(file_path)
+        except Exception as exc:
+            batch.status = "skipped"
+            batch.fix_description = f"Static baseline unavailable: {exc}"
+            batch.verification = {"static": {"status": "skipped", "error": str(exc)}}
+            return
+
         if not executor.apply_fix(file_path, fix.fixed_code):
             batch.status = "failed"
             batch.fix_description = "Could not write fixed file"
             return
 
         test_result = executor.run_tests()
-        if not test_result.passed:
-            executor.revert_fix(file_path)
-            batch.status = "test_failed"
+        batch.verification = {"tests": test_result.to_receipt()}
+        if test_result.passed is False:
+            restored = executor.revert_fix(file_path) is True
+            batch.verification["rollback"] = {
+                "status": "passed" if restored else "failed"
+            }
+            batch.status = "test_failed" if restored else "rollback_failed"
             batch.fix_description = f"Tests failed after fix ({test_result.command})"
             return
 
         rule_ids = [f.rule_id for f in batch.findings]
-        verify = executor.verify_fix(file_path, rule_ids)
-        if not verify.finding_resolved:
-            executor.revert_fix(file_path)
-            batch.status = "not_resolved"
+        verify = executor.verify_fix(file_path, rule_ids, before_report=before_report)
+        batch.verification["static"] = verify.to_receipt()
+        if verify.static_status != "passed":
+            restored = executor.revert_fix(file_path) is True
+            batch.verification["rollback"] = {
+                "status": "passed" if restored else "failed"
+            }
+            batch.status = "not_resolved" if restored else "rollback_failed"
             if verify.verification_error:
                 batch.fix_description = f"Could not verify fix after remediation: {verify.verification_error}"
             else:
@@ -269,7 +287,11 @@ class RemediationAgent:
 
         self._attach_regression_test(batch, executor)
 
-        batch.status = "fixed"
+        batch.status = (
+            "fixed"
+            if verify.finding_resolved and test_result.passed is True
+            else "applied_unverified"
+        )
         desc = getattr(fix, "description", "")
         if desc:
             batch.fix_description = desc[:200]
@@ -347,7 +369,9 @@ class RemediationAgent:
         s = plan.summary()
         log(f"\n  Total findings: {s['total_findings']}")
         log(f"  Planned: {s['planned']}")
-        log(f"  Fixed: {s['fixed']}")
+        log(f"  Applied: {s['fixed']}")
+        log(f"  Verified: {s['verified']}")
+        log(f"  Unverified: {s['unverified']}")
         log(f"  Failed: {s['failed']}")
         log(f"  Skipped: {s['skipped']}")
 

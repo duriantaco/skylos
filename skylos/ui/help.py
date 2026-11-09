@@ -91,6 +91,18 @@ COMMANDS = [
         "group": "Core Analysis",
     },
     {
+        "name": "skylos cleanup [path] [--from-report REPORT]",
+        "desc": "Turn static findings into a prioritized cleanup queue for agents",
+        "details": [
+            "Default scan saves local history; --task ID previews a supported patch",
+            "--apply edits and rescans; --test-cmd explicitly authorizes tests",
+            "--format json: structured tasks with original evidence and coverage",
+            "--top N: bound each queue; --all-advice: include optional advice",
+            "Exit 0 means a queue was built; exit 2 means incomplete analysis or invalid input",
+        ],
+        "group": "AI Agent",
+    },
+    {
         "name": "skylos verify [path]",
         "desc": "Check source code and Python working changes for AI-code mistakes",
         "details": [

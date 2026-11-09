@@ -58,6 +58,7 @@ class FixBatch:
     source: str = ""
     fix_description: str = ""
     regression_tests: list[RegressionTestCandidate] = field(default_factory=list)
+    verification: dict = field(default_factory=dict)
 
     @property
     def top_severity(self) -> str:
@@ -78,14 +79,20 @@ class RemediationPlan:
 
     @property
     def fixed_count(self) -> int:
-        return sum(len(b.findings) for b in self.batches if b.status == "fixed")
+        # Retain the historical applied-finding aggregate; receipts distinguish
+        # successful verification from changes retained without running tests.
+        return sum(
+            len(b.findings)
+            for b in self.batches
+            if b.status in ("fixed", "applied_unverified")
+        )
 
     @property
     def failed_count(self) -> int:
         return sum(
             len(b.findings)
             for b in self.batches
-            if b.status in ("failed", "test_failed", "not_resolved")
+            if b.status in ("failed", "test_failed", "not_resolved", "rollback_failed")
         )
 
     @property
@@ -110,12 +117,22 @@ class RemediationPlan:
                 for regression_test in batch.regression_tests:
                     regression_tests.append(regression_test.to_summary())
                 batch_summary["regression_tests"] = regression_tests
+            if batch.verification:
+                batch_summary["verification"] = batch.verification
             batch_summaries.append(batch_summary)
 
         return {
             "total_findings": self.total_findings,
             "planned": sum(len(b.findings) for b in self.batches),
             "fixed": self.fixed_count,
+            "verified": sum(
+                len(b.findings) for b in self.batches if b.status == "fixed"
+            ),
+            "unverified": sum(
+                len(b.findings)
+                for b in self.batches
+                if b.status == "applied_unverified"
+            ),
             "failed": self.failed_count,
             "skipped": self.skipped_count,
             "batches": batch_summaries,

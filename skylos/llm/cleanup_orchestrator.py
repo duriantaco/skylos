@@ -126,8 +126,11 @@ class CleanupItem:
     description: str
     suggestion: str
     severity: str = "medium"
-    status: str = "pending"  # pending | applied | reverted | skipped
+    status: str = (
+        "pending"  # pending | applied | applied_unverified | reverted | skipped
+    )
     skip_reason: str = ""
+    verification: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -145,6 +148,9 @@ class CleanupResult:
             "reverted": self.reverted,
             "skipped": self.skipped,
             "total_analyzed_files": self.total_analyzed_files,
+            "verified": sum(it.status == "applied" for it in self.items),
+            "unverified": sum(it.status == "applied_unverified" for it in self.items),
+            "rollback_failed": sum(it.status == "rollback_failed" for it in self.items),
             "items": [
                 {
                     "file": it.file,
@@ -154,6 +160,7 @@ class CleanupResult:
                     "severity": it.severity,
                     "status": it.status,
                     "skip_reason": it.skip_reason,
+                    "verification": it.verification,
                 }
                 for it in self.items
             ],
@@ -391,7 +398,7 @@ class CleanupOrchestrator:
             )
             try:
                 self._apply_single_fix(item, executor, log)
-                if item.status == "applied":
+                if item.status in {"applied", "applied_unverified"}:
                     result.applied += 1
                 elif item.status == "reverted":
                     result.reverted += 1
@@ -555,18 +562,51 @@ class CleanupOrchestrator:
             log("    [dim]Skipped (no change)[/dim]")
             return
 
+        try:
+            before_report = executor.capture_static_report(str(fp))
+        except Exception as exc:
+            item.status = "skipped"
+            item.skip_reason = f"static baseline unavailable: {exc}"
+            item.verification = {"static": {"status": "skipped", "error": str(exc)}}
+            return
+
         if not executor.apply_fix(str(fp), fixed_code):
             item.status = "skipped"
             item.skip_reason = "failed to write file"
             return
 
+        verify = executor.verify_fix(str(fp), [], before_report=before_report)
+        item.verification = {"static": verify.to_receipt()}
+        if verify.static_status != "passed":
+            restored = executor.revert_fix(str(fp)) is True
+            item.verification["rollback"] = {
+                "status": "passed" if restored else "failed"
+            }
+            item.verification["tests"] = {
+                "status": "skipped",
+                "reason": "static_verification_failed",
+            }
+            item.status = "reverted" if restored else "rollback_failed"
+            item.skip_reason = (
+                f"static verification failed: {verify.verification_error}"
+            )
+            log(f"    [red]{item.status}[/red] — static verification failed")
+            return
+
         test_result = executor.run_tests()
-        if test_result.passed:
-            item.status = "applied"
-            desc = data.get("change_description", "")
-            log(f"    [green]Applied[/green] — {desc}")
-        else:
-            executor.revert_fix(str(fp))
-            item.status = "reverted"
+        item.verification["tests"] = test_result.to_receipt()
+        if test_result.passed is False:
+            restored = executor.revert_fix(str(fp)) is True
+            item.verification["rollback"] = {
+                "status": "passed" if restored else "failed"
+            }
+            item.status = "reverted" if restored else "rollback_failed"
             item.skip_reason = f"tests failed: {test_result.output[:200]}"
-            log("    [red]Reverted[/red] — tests failed")
+            log(f"    [red]{item.status}[/red] — tests failed")
+            return
+
+        # This workflow starts from an LLM standards observation, not a static
+        # rule identity. Tests and no-new-findings checks cannot prove it resolved.
+        item.status = "applied_unverified"
+        desc = data.get("change_description", "")
+        log(f"    [yellow]Applied, finding resolution unverified[/yellow] — {desc}")

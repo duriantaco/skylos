@@ -2255,6 +2255,12 @@ def _run_clean_command(argv):
     return run_clean_command(argv)
 
 
+def _run_cleanup_command(argv):
+    from skylos.commands.cleanup_cmd import run_cleanup_command
+
+    return run_cleanup_command(argv)
+
+
 def _run_lint_command(argv):
     from skylos.commands.lint_cmd import run_lint_command
 
