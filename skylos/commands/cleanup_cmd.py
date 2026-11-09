@@ -266,13 +266,10 @@ def _run_workflow(args, target, root, report, result, analyze_func):
             if receipt["status"] == "incomplete":
                 report["status"] = "incomplete"
     selected = sorted(
-        all_tasks,
-        key=lambda task: (
-            task.get("state") == "deferred",
-            0 if task["finding_type"] == "defect" else 1,
-        ),
+        (task for task in all_tasks if task.get("state") != "deferred"),
+        key=lambda task: 0 if task["finding_type"] == "defect" else 1,
     )
-    if args.context or args.review:
+    if (args.context or args.review) and selected:
         from skylos.cleanup_context import build_cleanup_context, review_cleanup_context
 
         from skylos.constants import parse_exclude_folders
@@ -296,6 +293,13 @@ def _run_workflow(args, target, root, report, result, analyze_func):
             )
             if report["context_review"]["status"] == "incomplete":
                 report["status"] = "incomplete"
+    elif args.review:
+        report["context_review"] = {
+            "status": "skipped",
+            "kind": "subjective_advice",
+            "advice": [],
+            "reason": "No open cleanup tasks are available for model review.",
+        }
     limit = 1 if args.next else args.top
     for section in ("tasks", "advisories"):
         rows = [

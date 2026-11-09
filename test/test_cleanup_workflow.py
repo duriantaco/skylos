@@ -356,3 +356,101 @@ def test_execution_requires_explicit_valid_live_action(args):
     with pytest.raises(SystemExit) as error:
         run_cleanup_command(args)
     assert error.value.code == 2
+
+
+def _review_queue(root):
+    (root / "app.py").write_text("import math\ndeferred_marker = 'separate work'\n")
+    (root / "open.py").write_text("import json\nopen_marker = 'current work'\n")
+    report = raw(root)
+    report["unused_imports"].append(
+        {
+            "name": "json",
+            "file": str(root / "open.py"),
+            "line": 1,
+            "confidence": 100,
+        }
+    )
+
+    def scanner(*_args, **_kwargs):
+        return deepcopy(report)
+
+    _, plan = run([str(root)], scanner)
+    tasks = {task["file"]: task["id"] for task in plan["tasks"]}
+    code, _ = run(
+        [str(root), "--defer", tasks["app.py"], "--reason", "Separate review"], scanner
+    )
+    assert code == 0
+    return scanner, tasks
+
+
+@pytest.mark.parametrize("flag", ["--context", "--review"])
+def test_context_and_model_review_exclude_deferred_tasks(tmp_path, monkeypatch, flag):
+    import skylos.cleanup_context as context_module
+    import skylos.commands.cleanup_cmd as command
+
+    scanner, tasks = _review_queue(tmp_path)
+    selected = []
+    prompts = []
+    original_context = context_module.build_cleanup_context
+
+    def context_for_open_tasks(items, *args, **kwargs):
+        selected.extend(task["id"] for task in items)
+        return original_context(items, *args, **kwargs)
+
+    class Model:
+        def complete(self, _system, prompt, **_kwargs):
+            prompts.append(json.loads(prompt))
+            return '{"advice": []}'
+
+    monkeypatch.setattr(context_module, "build_cleanup_context", context_for_open_tasks)
+    monkeypatch.setattr(command, "_review_adapter", lambda _args: Model())
+    code, report = run([str(tmp_path), flag], scanner)
+
+    assert code == 0
+    assert selected == [tasks["open.py"]]
+    assert {row["file"] for row in report["context"]["files"]} == {"open.py"}
+    assert "deferred_marker" not in json.dumps(report["context"])
+    if flag == "--review":
+        assert len(prompts) == 1
+        assert [task["id"] for task in prompts[0]["tasks"]] == [tasks["open.py"]]
+        assert "deferred_marker" not in json.dumps(prompts[0])
+    else:
+        assert prompts == []
+
+
+def test_all_deferred_review_skips_context_and_model_initialization(
+    tmp_path, monkeypatch
+):
+    import skylos.cleanup_context as context_module
+    import skylos.commands.cleanup_cmd as command
+
+    scanner, tasks = _review_queue(tmp_path)
+    code, _ = run(
+        [str(tmp_path), "--defer", tasks["open.py"], "--reason", "Later"], scanner
+    )
+    assert code == 0
+    calls = []
+
+    def forbidden(*_args, **_kwargs):
+        calls.append(True)
+        raise AssertionError("deferred work must not initialize context or a model")
+
+    monkeypatch.setattr(context_module, "build_cleanup_context", forbidden)
+    monkeypatch.setattr(command, "_review_adapter", forbidden)
+    code, report = run([str(tmp_path), "--review"], scanner)
+
+    assert code == 0
+    assert calls == []
+    assert report["tasks"] == []
+    assert report["context_review"]["status"] == "skipped"
+    assert report["context_review"]["advice"] == []
+
+
+def test_explicit_task_preview_still_accepts_deferred_task(tmp_path):
+    scanner, tasks = _review_queue(tmp_path)
+    original = (tmp_path / "app.py").read_bytes()
+    code, report = run([str(tmp_path), "--task", tasks["app.py"]], scanner)
+    assert code == 0
+    assert report["edit"]["task_id"] == tasks["app.py"]
+    assert "-import math" in report["edit"]["patch"]
+    assert (tmp_path / "app.py").read_bytes() == original
