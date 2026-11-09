@@ -1,5 +1,6 @@
 import os  # skylos: ignore[SKY-Q502] package facade is being split incrementally
 import contextlib
+import contextvars
 import logging
 import requests
 import signal
@@ -86,6 +87,10 @@ from skylos.api._upload_contract import (
 )
 from skylos.api._upload_paths import upload_location_uri
 from skylos.api._upload_preflight import apply_upload_contract, strip_secret_snippets
+from skylos.reporting.metadata_paths import (
+    relativize_definitions,
+    relativize_upload_finding,
+)
 from skylos.api._upload_transport import (
     SAVED_HINT as _SAVED_HINT,
     RetryPolicy,
@@ -128,6 +133,7 @@ from skylos.core.safe_cache_io import read_text_no_symlink
 logger = logging.getLogger(__name__)
 
 LINK_FILE = ".skylos/link.json"
+LOCAL_ONLY_UPLOAD_RULES = frozenset({"SKY-SCA-API001"})
 GLOBAL_CREDS_FILE = Path.home() / ".skylos" / "credentials.json"
 
 __all__ = [
@@ -524,6 +530,17 @@ def get_credit_balance(token=None) -> dict | None:
     return None
 
 
+LOW_CREDIT_THRESHOLD = 10
+
+
+def is_low_credit_balance(balance) -> bool:
+    return (
+        isinstance(balance, (int, float))
+        and not isinstance(balance, bool)
+        and balance <= LOW_CREDIT_THRESHOLD
+    )
+
+
 def print_credit_status(token=None, quiet=False):
     data = get_credit_balance(token)
     if not data or quiet:
@@ -534,7 +551,7 @@ def print_credit_status(token=None, quiet=False):
     # Every plan has a credit balance, Enterprise included (no unlimited
     # credits since 14 Oct 2026).
     print(f"Credits: {balance:,}")
-    if balance < 10:
+    if is_low_credit_balance(balance):
         print(f"Low credits! Buy more: {BASE_URL}/dashboard/billing")
 
     return data
@@ -841,6 +858,38 @@ def _parse_blame_line_number(raw: str) -> int | None:
         return None
 
 
+def _upload_scan_root(base_dir, project_root):
+    """The scanned project folder that nested evidence paths are relative to."""
+    if project_root in (None, "", "."):
+        return base_dir
+    return os.path.join(base_dir, project_root)
+
+
+SCA_COVERAGE_PATH_LISTS = (
+    "lockfile_not_checked",
+    "lockfile_issues",
+    "unsupported_inputs",
+    "skipped_inputs",
+)
+
+
+def sca_coverage_for_upload(coverage: dict[str, Any]) -> dict[str, Any]:
+    """Dependency receipts name files by absolute local path; only the file
+    name leaves the machine."""
+    cleaned = dict(coverage)
+    for key in SCA_COVERAGE_PATH_LISTS:
+        entries = cleaned.get(key)
+        if not isinstance(entries, list):
+            continue
+        kept = []
+        for entry in entries:
+            if isinstance(entry, dict) and isinstance(entry.get("file"), str):
+                entry = {**entry, "file": entry["file"].replace("\\", "/").rsplit("/", 1)[-1]}
+            kept.append(entry)
+        cleaned[key] = kept
+    return cleaned
+
+
 def _prepare_report_upload(
     result_json,
     *,
@@ -874,6 +923,11 @@ def _prepare_report_upload(
         extract_metadata=True,
         analyzer_owned=analyzer_owned,
     )
+    all_findings = [
+        finding
+        for finding in all_findings
+        if finding.get("rule_id") not in LOCAL_ONLY_UPLOAD_RULES
+    ]
     reviewed_findings = (
         normalization_input.get("reviewed_findings", []) if analyzer_owned else []
     )
@@ -894,6 +948,9 @@ def _prepare_report_upload(
     _annotate_findings_with_blame(all_findings, git_root)
     # Managed GitLab uploads keep their existing, stricter path handling.
     base_dir = git_root or os.getcwd()
+    scan_root = _upload_scan_root(base_dir, project_root)
+    for finding in all_findings:
+        relativize_upload_finding(finding, scan_root)
     preflight = (
         None
         if gitlab_managed
@@ -927,7 +984,7 @@ def _prepare_report_upload(
     else:
         provenance_data = _detect_report_provenance_data(git_root)
 
-    definitions = result_json.get("definitions")
+    definitions = relativize_definitions(result_json.get("definitions"), scan_root)
     grade_data = result_json.get("grade") if isinstance(result_json, dict) else None
     assessment_data = result_json.get("assessment") if isinstance(result_json, dict) else None
     workspace_data = _extract_workspace_upload_metadata(result_json)
@@ -997,24 +1054,37 @@ def _prepare_report_upload(
     if isinstance(analysis_summary, dict):
         # Preserve completion and scope alongside the findings in every
         # supported upload transport, including native SARIF ingestion.
+        from skylos.rules.sca.posture import INVENTORY_KEYS, UPLOAD_SUMMARY_KEYS
+
         coverage = {
             key: json.loads(json.dumps(analysis_summary[key]))
-            for key in ("sca_coverage", "custom_rules_coverage")
+            for key in UPLOAD_SUMMARY_KEYS
             if isinstance(analysis_summary.get(key), dict)
         }
+        if "sca_coverage" in coverage:
+            coverage["sca_coverage"] = sca_coverage_for_upload(coverage["sca_coverage"])
         if coverage:
-            scan_summary.update(coverage)
+            scan_summary.update(
+                {
+                    key: value
+                    for key, value in coverage.items()
+                    if key not in INVENTORY_KEYS
+                }
+            )
             core_payload["runs"][0].setdefault("properties", {}).setdefault(
                 "summary", {}
             ).update(coverage)
             legacy_payload["summary"] = dict(scan_summary)
             compatibility_payload["summary"] = dict(scan_summary)
+            for key in INVENTORY_KEYS:
+                if key in coverage:
+                    compatibility_payload["summary"][key] = coverage[key]
 
     return PreparedReportUpload(
         legacy_payload=legacy_payload,
         core_payload=core_payload,
         compatibility_payload=compatibility_payload,
-        definitions_payload={"definitions": definitions} if definitions else None,
+        definitions_payload=None,
         metadata=metadata,
         scan_summary=scan_summary,
         grade_data=grade_data,
@@ -1359,6 +1429,17 @@ def _done_receipt_for_upload(
     return receipt
 
 
+def _without_local_only_receipts(summary: dict[str, Any]) -> dict[str, Any]:
+    diff = summary.get("supply_chain_diff")
+    checks = None
+    if isinstance(diff, dict):
+        checks = diff.get("checks")
+    if not isinstance(checks, dict) or "upgrade_api" not in checks:
+        return summary
+    kept = {key: value for key, value in checks.items() if key != "upgrade_api"}
+    return {**summary, "supply_chain_diff": {**diff, "checks": kept}}
+
+
 def _build_compatibility_inline_payload(
     all_findings: list[dict[str, Any]],
     result_json: Any,
@@ -1368,6 +1449,7 @@ def _build_compatibility_inline_payload(
     summary = result.get("analysis_summary")
     if not isinstance(summary, dict):
         summary = {}
+    summary = _without_local_only_receipts(summary)
 
     payload = {
         **metadata,
@@ -1430,8 +1512,11 @@ def _finalize_report_upload(
     new_violations = quality_gate.get("new_violations", 0)
     plan = data.get("plan", "free")
     replayed = (not gitlab_managed) and _is_idempotent_replay(response, data)
+    result = _report_upload_success_result(data, scan_id, passed, plan)
 
     if not quiet:
+        from skylos.cloud.gate_status import gate_context
+
         _print_report_upload_success(
             grade_data=grade_data,
             assessment_data=assessment_data,
@@ -1444,8 +1529,8 @@ def _finalize_report_upload(
             finding_warnings=data.get("finding_warnings"),
             gate_message=quality_gate.get("message"),
             trust_notice=data.get("upload_trust_notice"),
+            gate_context=gate_context(result, BASE_URL),
         )
-    result = _report_upload_success_result(data, scan_id, passed, plan)
     if replayed:
         result["replayed"] = True
     if gitlab_managed:
@@ -1488,6 +1573,7 @@ def _print_report_upload_success(
     finding_warnings=None,
     gate_message=None,
     trust_notice=None,
+    gate_context=None,
 ) -> None:
     if replayed:
         print(
@@ -1511,9 +1597,11 @@ def _print_report_upload_success(
         print(assessment_coverage_text(assessment_data))
     else:
         _print_report_grade(grade_data)
-    _print_quality_gate_result(passed, new_violations, plan, gate_message)
+    _print_quality_gate_result(passed, new_violations, plan, gate_message, gate_context)
     _print_upload_trust_notice(trust_notice)
-    if scan_id:
+    if gate_context is not None:
+        print(f"\n🔗 View details: {gate_context.details_url}")
+    elif scan_id:
         print(f"\n🔗 View the scan: {BASE_URL}/dashboard/scans/{scan_id}")
     _print_credit_balance_after_upload(credits_left)
 
@@ -1538,6 +1626,7 @@ def _print_report_grade(grade_data) -> None:
 
 
 _GATE_FAILED_PREFIX = "Quality Gate Failed!"
+_FAILED_GATE_NOTE = contextvars.ContextVar("skylos_failed_gate_note", default=True)
 
 
 def _quality_gate_reasons(message) -> list[str]:
@@ -1565,29 +1654,39 @@ def _quality_gate_reasons(message) -> list[str]:
 
 
 def _print_quality_gate_result(
-    passed: bool, new_violations: int, plan: str, message=None
+    passed: bool, new_violations: int, plan: str, message=None, context=None
 ) -> None:
+    subject = "Quality gate"
+    history = None
+    if context is not None:
+        subject = context.subject
+        history = context.history
+    history_suffix = ""
+    if history:
+        history_suffix = f" ({history})"
     if passed:
-        print("✅ PASS Quality gate: PASSED")
+        print(f"✅ PASS {subject}: PASSED{history_suffix}")
         return
     reasons = _quality_gate_reasons(message)
     if reasons:
-        print("❌ FAIL Quality gate: FAILED because of")
+        print(f"❌ FAIL {subject}: FAILED{history_suffix} because of")
         for reason in reasons:
             print(f"   - {reason}")
     else:
         suffix = "" if new_violations == 1 else "s"
-        print(f"❌ FAIL Quality gate: FAILED ({new_violations} new violation{suffix})")
+        detail = f"{new_violations} new issue{suffix}"
+        if history:
+            detail = f"{detail}; {history}"
+        print(f"❌ FAIL {subject}: FAILED ({detail})")
     if plan == "free":
-        print("\n⚠️  Quality gate failed but continuing (Free plan)")
-        print("💡 The Workspace plan blocks commits and CI on a failed gate")
-        print(f"   Learn more: {BASE_URL}/dashboard/settings?upgrade=true")
+        print("\n💡 The PR check and merge gate are free on every plan.")
+        print("   Run skylos cicd init to block pull requests on a failed gate.")
 
 
 def _print_credit_balance_after_upload(credits_left) -> None:
     if credits_left is None:
         return
-    if credits_left < 50:
+    if is_low_credit_balance(credits_left):
         print(
             f"\n⚠️  Credits remaining: {credits_left}. Top up at skylos.dev/dashboard/billing"
         )
@@ -1608,8 +1707,12 @@ def _enforce_report_quality_gate(
         if not quiet:
             print("\n Commit blocked by quality gate")
         sys.exit(1)
-    if not quiet:
-        print("\n⚠️ Quality gate failed, but not enforcing in local mode.")
+    if quiet or not _FAILED_GATE_NOTE.get():
+        return
+    if strict:
+        print("\n⚠️ Quality gate failed; --force stops it from failing this command.")
+        return
+    print("\n⚠️ Quality gate failed, but this command does not fail because of it.")
 
 
 def _report_upload_success_result(
@@ -1618,6 +1721,12 @@ def _report_upload_success_result(
     passed: bool,
     plan: str,
 ) -> dict:
+    from skylos.cloud.gate_status import (
+        clean_new_issue_baseline,
+        clean_pr_number,
+        clean_previous_gate,
+    )
+
     result = {
         "success": True,
         "scan_id": scan_id,
@@ -1641,6 +1750,21 @@ def _report_upload_success_result(
     # Older servers do not report it; only verified uploads publish checks.
     if isinstance(data.get("upload_trust"), str):
         result["upload_trust"] = data["upload_trust"]
+    destination = data.get("destination")
+    if isinstance(destination, dict):
+        result["destination"] = {
+            key: destination[key]
+            for key in ("project_id", "branch", "default_branch", "default_branch_source")
+            if isinstance(destination.get(key), str)
+        }
+        pr_number = clean_pr_number(destination.get("pr_number"))
+        if pr_number is not None:
+            result["destination"]["pr_number"] = pr_number
+    if "previous_gate" in data:
+        result["previous_gate"] = clean_previous_gate(data["previous_gate"])
+    new_issue_baseline = clean_new_issue_baseline(data.get("explain"))
+    if new_issue_baseline is not None:
+        result["new_issue_baseline"] = new_issue_baseline
     return result
 
 
@@ -2380,7 +2504,7 @@ def _complete_report_artifact_upload(
 
 
 _NO_TOKEN_ERROR = (
-    "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN."
+    "No token found. Run 'skylos login', or set SKYLOS_TOKEN."
 )
 
 
@@ -2393,6 +2517,7 @@ def upload_report(
     scan_bundle_id=None,
     analyzer_owned=False,
     gitlab_full_scan=False,
+    failed_gate_note=True,
 ) -> dict:
     token = get_project_token()
     if not token:
@@ -2432,14 +2557,18 @@ def upload_report(
     else:
         _print_preflight_notice(prepared, quiet=quiet)
 
-    return _send_prepared_upload(
-        token,
-        prepared,
-        kind="report",
-        quiet=quiet,
-        strict=strict,
-        is_forced=is_forced,
-    )
+    note = _FAILED_GATE_NOTE.set(bool(failed_gate_note))
+    try:
+        return _send_prepared_upload(
+            token,
+            prepared,
+            kind="report",
+            quiet=quiet,
+            strict=strict,
+            is_forced=is_forced,
+        )
+    finally:
+        _FAILED_GATE_NOTE.reset(note)
 
 
 def upload_debt_report(
@@ -3038,7 +3167,7 @@ def upload_defense_report(defense_json_str, quiet=False, scan_bundle_id=None) ->
     if not token:
         return {
             "success": False,
-            "error": "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN.",
+            "error": "No token found. Run 'skylos login', or set SKYLOS_TOKEN.",
         }
 
     defense_data, error = _parse_defense_upload_data(defense_json_str)
@@ -3133,13 +3262,9 @@ def _defense_upload_error_result(response, quiet: bool) -> dict | None:
     if response.status_code == 401:
         return {
             "success": False,
-            "error": "Invalid API token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
+            "error": "Invalid Skylos token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
         }
-    return {
-        "success": False,
-        "error": "No credits remaining. Buy more at skylos.dev/dashboard/credits",
-        "code": "NO_CREDITS",
-    }
+    return _describe_http_failure(response).as_result()
 
 
 def _print_defense_upload_success(defense_data: dict, response) -> None:
@@ -3149,12 +3274,12 @@ def _print_defense_upload_success(defense_data: dict, response) -> None:
     print(" done!")
     print("✓ Defense scan uploaded")
     print(
-        f"  Defense Score: {score.get('score_pct', 0)}% ({score.get('risk_rating', 'UNKNOWN')})"
+        f"  Defense score: {score.get('score_pct', 0)}% ({score.get('risk_rating', 'UNKNOWN')})"
     )
     if scan_id:
         print(f"\n🔗 View: {BASE_URL}/dashboard/scans/{scan_id}")
     credits_left = data.get("credits_remaining")
-    if credits_left is not None and credits_left < 50:
+    if is_low_credit_balance(credits_left):
         print(
             f"\n⚠️  Credits remaining: {credits_left}. Top up at skylos.dev/dashboard/billing"
         )
@@ -3224,13 +3349,6 @@ def verify_report(result_json, quiet=False) -> dict:
             "error": "Verification requires a valid Skylos token. Run 'skylos login' or set SKYLOS_TOKEN.",
         }
 
-    if not _token_allows_verification(token):
-        return {
-            "success": False,
-            "error": "Verification requires the Workspace plan. "
-            "Buying any credit pack turns it on.",
-        }
-
     commit, branch, actor, ci = get_git_info()
     git_root = get_git_root()
 
@@ -3258,12 +3376,6 @@ def verify_report(result_json, quiet=False) -> dict:
         _print_verification_counts(verdict_counts)
 
     return {"success": True, "counts": verdict_counts}
-
-
-def _token_allows_verification(token: str) -> bool:
-    info = get_project_info(token) or {}
-    plan = (info.get("plan") or "free").lower()
-    return plan in ["pro", "enterprise", "beta"]
 
 
 def _post_verification_request(
@@ -3301,19 +3413,41 @@ def _verification_error_response(response) -> dict | None:
     if response.status_code in (401, 403):
         return {
             "success": False,
-            "error": "Verification denied (token invalid or not paid).",
+            "error": "Verification denied: Skylos Cloud did not accept this token. "
+            "Run 'skylos login' or check SKYLOS_TOKEN.",
         }
     if response.status_code == 402:
         return {
             "success": False,
             "error": "Verification requires the Workspace plan (payment required).",
         }
+    if response.status_code == 429:
+        return {"success": False, "error": _verification_limit_message(response)}
     if response.status_code != 200:
         return {
             "success": False,
             "error": f"Verifier error {response.status_code}: {response.text[:2000]}",
         }
     return None
+
+
+def _verification_limit_message(response) -> str:
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    limit = None
+    if isinstance(body, dict):
+        limit = body.get("limit_per_day")
+    if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0:
+        used = f"all {limit} of today's verification checks"
+    else:
+        used = "today's verification checks"
+    return (
+        f"Verification limit reached: this Free workspace used {used}. "
+        "Try again tomorrow, or buy any credit pack on Billing to turn on "
+        "Workspace, which has no daily limit."
+    )
 
 
 def _merge_verification_results(result_json: dict, results: list[dict]) -> None:

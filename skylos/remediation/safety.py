@@ -2,6 +2,32 @@ from __future__ import annotations
 
 from pathlib import Path
 
+PYTHON_SOURCE_SUFFIXES = (".py", ".pyi", ".pyw")
+
+
+def python_rewrite_blocker(
+    file_path: str | Path, *, root_path: str | Path | None = None
+) -> str | None:
+    """Why the Python dead-code rewriter cannot edit this file, or None."""
+    if Path(file_path).suffix.lower() not in PYTHON_SOURCE_SUFFIXES:
+        return "not a Python file; only Python files are edited"
+    try:
+        path = resolve_remediation_path(file_path, root_path=root_path)
+        source = path.read_text(encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        return str(exc)
+
+    import libcst as cst
+
+    try:
+        cst.parse_module(source)
+    except cst.ParserSyntaxError as exc:
+        summary = str(exc).strip().splitlines()
+        if summary:
+            return f"the Python rewriter cannot parse it ({summary[0]})"
+        return "the Python rewriter cannot parse it"
+    return None
+
 
 def resolve_remediation_path(
     file_path: str | Path, *, root_path: str | Path | None = None

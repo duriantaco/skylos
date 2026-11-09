@@ -177,7 +177,12 @@ def _masked_tree(tree: ast.AST, file, cfg) -> tuple[ast.AST, int]:
 
 
 def _quality_findings(
-    file, prepared: _PreparedPython, cfg, options: _WorkerOptions, *, annotation_coverage=None
+    file,
+    prepared: _PreparedPython,
+    cfg,
+    options: _WorkerOptions,
+    *,
+    annotation_coverage=None,
 ) -> tuple[list, dict | None]:
     if not options.full_scan or not options.enable_quality_rules:
         return [], None
@@ -223,13 +228,19 @@ def _danger_findings(
     danger_rules = [DangerousCallsRule()]
     set_linter_node_types(danger_rules)
     danger_linter = LinterVisitor(danger_rules, str(file))
+    danger_linter.context["project_root"] = getattr(options, "project_root", None)
     danger_linter.visit(prepared.tree)
     findings = danger_linter.findings
 
-    from skylos.rules.danger.danger import dedupe_findings, scan_file_with_tree
+    from skylos.rules.danger.danger import (
+        dedupe_findings,
+        scan_file_with_tree,
+        scan_trojan_source_text,
+    )
 
     taint_findings = []
     analysis_error = None
+    scan_trojan_source_text(prepared.source, Path(file), taint_findings)
     try:
         scan_file_with_tree(
             prepared.tree,
@@ -247,6 +258,25 @@ def _danger_findings(
         )
     findings.extend(taint_findings)
     return dedupe_findings(findings), analysis_error
+
+
+def _without_superseded_route_reviews(quality: list, danger: list) -> list:
+    """A route reported as SKY-D283 drops its SKY-F102 review of the same
+    handler; the security finding carries the same claim with its evidence."""
+    lines = {
+        finding.get("line")
+        for finding in danger
+        if finding.get("rule_id") == "SKY-D283"
+    }
+    if not lines:
+        return quality
+    return [
+        finding
+        for finding in quality
+        if finding.get("rule_id") != "SKY-F102"
+        or finding.get("value") == "defeated_owner_guard"
+        or finding.get("line") not in lines
+    ]
 
 
 def _custom_findings(tree, file, extra_visitors: Iterable[type] | None) -> list:
@@ -293,6 +323,7 @@ def _copy_framework_metadata(framework_visitor, visitor) -> None:
         ("orm_model_classes", set()),
         ("orm_declarative_fields", set()),
         ("type_alias_names", set()),
+        ("dynamic_local_functions", set()),
         ("abc_classes", set()),
         ("abstract_methods", {}),
         ("abc_implementers", {}),
@@ -314,6 +345,7 @@ def _run_visitors(
     test_visitor.visit(prepared.tree)
     test_visitor.ignore_lines = prepared.ignore_lines
     test_visitor.noqa_codes_by_line = prepared.noqa_codes_by_line
+    test_visitor.ignore_rules_by_line = prepared.ignore_rules_by_line
 
     # The already parsed tree supplies all framework import evidence. Avoid a
     # second path-based read after the worker's bounded no-follow read.
@@ -433,6 +465,14 @@ def _success_result(
         prepared.ignore_rules_by_line,
         bool(getattr(visitor, "has_explicit_all", False)),
         annotation_coverage or {},
+        {
+            "receivers": getattr(visitor, "_attr_receivers", set()),
+            "module_objects": getattr(visitor, "_module_object_refs", set()),
+            "star_sources": getattr(visitor, "_star_import_sources", set()),
+            "module_strings": getattr(visitor, "_module_name_strings", set()),
+            "dynamic": bool(getattr(visitor, "_dynamic_module_access", False)),
+            "nested_classes": getattr(visitor, "_nested_class_names", set()),
+        },
     )
 
 
@@ -479,6 +519,7 @@ def _error_result(file, cfg, error, options: _WorkerOptions) -> tuple:
         {},
         False,
         {},
+        {},
     )
 
 
@@ -515,6 +556,8 @@ def _process_python_file(file, mod, cfg, source, options: _WorkerOptions) -> tup
         file, prepared, cfg, options, annotation_coverage=annotation_coverage
     )
     danger, danger_error = _danger_findings(file, prepared, options)
+    if options.full_scan and options.enable_danger_rules:
+        quality = _without_superseded_route_reviews(quality, danger)
     errors = [error for error in (quality_error, danger_error) if error]
     analysis_error = errors[0] if len(errors) == 1 else errors or None
     custom = _custom_findings(prepared.tree, file, options.extra_visitors)
@@ -585,6 +628,7 @@ def process_file(
     *,
     project_root: str | Path | None = None,
     credential_source_locations: tuple | list = (),
+    go_scan_scope: tuple | None = None,
     visitor_class: type = Visitor,
     test_aware_visitor_class: type = TestAwareVisitor,
     framework_aware_visitor_class: type = FrameworkAwareVisitor,
@@ -614,4 +658,6 @@ def process_file(
         cfg,
         enable_quality_rules=enable_quality_rules,
         enable_danger_rules=enable_danger_rules,
+        project_root=project_root,
+        go_scan_scope=go_scan_scope,
     )

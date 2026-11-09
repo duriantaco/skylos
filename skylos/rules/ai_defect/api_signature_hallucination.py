@@ -628,8 +628,13 @@ def scan_python_api_signature_hallucinations(
     cache_session = None
     loader = surface_loader
     resolver = submodule_resolver
-    local_modules = None
-    foreign_roots = None
+    if loader is None:
+        cache_session = PythonApiSurfaceCacheSession(root)
+        loader = cache_session.load_surface
+        if resolver is None:
+            resolver = installed_submodule_exists
+    local_modules = _local_module_roots(root, py_files)
+    foreign_roots = _unverifiable_roots(root, allowed_roots)
     surfaces: dict[str, dict[str, Any] | None] = {}
     inspected = 0
     reasons: Counter[str] = Counter()
@@ -639,20 +644,8 @@ def scan_python_api_signature_hallucinations(
     try:
         for file_path in py_files:
             tree = _parse_python_file(root, file_path, allowed_roots)
-            if tree is None or not _has_allowed_import(tree, allowed_roots):
+            if tree is None:
                 continue
-
-            # Prose mentioning a package cannot establish a tracked import.
-            # Defer project/environment metadata until a parsed file can
-            # actually consult it, then share it across the scan's files.
-            if local_modules is None:
-                local_modules = _local_module_roots(root, py_files)
-                foreign_roots = _unverifiable_roots(root, allowed_roots)
-                if loader is None:
-                    cache_session = PythonApiSurfaceCacheSession(root)
-                    loader = cache_session.load_surface
-                    if resolver is None:
-                        resolver = installed_submodule_exists
 
             checker = _ApiSignatureChecker(
                 root,
@@ -1013,20 +1006,6 @@ def _allowed_roots(allowed_modules: tuple[str, ...] | None) -> set[str]:
             continue
         roots.add(_module_root(safe_name))
     return roots
-
-
-def _has_allowed_import(tree: ast.AST, allowed_roots: set[str]) -> bool:
-    """Only actual absolute imports can populate the checker's API aliases."""
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            names = (alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and not node.level:
-            names = (node.module or "",)
-        else:
-            continue
-        if any(_module_root(name) in allowed_roots for name in names):
-            return True
-    return False
 
 
 def _parse_python_file(

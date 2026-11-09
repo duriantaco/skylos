@@ -14,6 +14,7 @@ from rich.text import Text
 
 logger = logging.getLogger(__name__)
 
+CODEX_MARKERS = ("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_SANDBOX")
 EXIT_PASS = 0
 EXIT_BLOCKED = 1
 EXIT_ERROR = 2
@@ -26,6 +27,15 @@ _STATUS_STYLES = {
     "SKIP": "dim",
     "OFF": "dim",
 }
+
+
+
+def detect_agent(env) -> str:
+    if any(env.get(name) for name in CODEX_MARKERS):
+        return "codex"
+    if env.get("CLAUDECODE"):
+        return "claude-code"
+    return "unknown"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -72,9 +82,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--agent",
-        default="unknown",
+        default=None,
         metavar="CLIENT",
-        help="Agent that made the change, e.g. claude-code, codex, cursor (default: unknown)",
+        help="Agent that made the change, e.g. claude-code, codex, cursor (default: detected when Claude Code or Codex runs skylos done, else unknown)",
+    )
+    parser.add_argument(
+        "--map",
+        action="store_true",
+        help=(
+            "Also print the change map (what the change touches, riskiest first) after the "
+            "verdict, in text or markdown. It never changes the verdict, receipt or exit code. "
+            "For JSON use `skylos done map --format json`."
+        ),
     )
     parser.add_argument(
         "--type-check",
@@ -85,6 +104,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--type-checker",
         choices=("auto", "mypy", "pyright", "pyrefly", "tsc"),
         help="Checker to use with --type-check (default: trusted policy, otherwise auto).",
+    )
+    return parser
+
+
+def build_map_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="skylos done map",
+        description=(
+            "Show what a change touches: every changed Python or TypeScript/JavaScript function "
+            "with its old and new code, calls added and removed, who calls it, removed security "
+            "checks, and what to read first. Computed from the code, not by a model. "
+            "Exit 0 shown, 2 could not run."
+        ),
+    )
+    parser.add_argument("path", nargs="?", default=".", help="Repository (default: .)")
+    parser.add_argument(
+        "--base",
+        metavar="REF",
+        default="HEAD",
+        help="Compare with the merge base of REF, e.g. origin/main (default: HEAD, uncommitted changes only)",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("text", "json", "markdown"),
+        default="text",
+        help="Output format (default: text)",
     )
     return parser
 
@@ -107,6 +152,8 @@ def build_receipt_parser() -> argparse.ArgumentParser:
 def run_done_command(argv: list[str], *, console: Console | None = None) -> int:
     if argv and argv[0] == "receipt":
         return _run_receipt_command(argv[1:], console=console)
+    if argv and argv[0] == "map":
+        return _run_map_command(argv[1:], console=console)
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.type_checker is not None and not args.type_check:
@@ -137,7 +184,7 @@ def run_done_command(argv: list[str], *, console: Console | None = None) -> int:
             **type_check_options,
         )
         receipt = build_receipt(
-            result, agent_client=args.agent, session_id=args.session
+            result, agent_client=args.agent or detect_agent(os.environ), session_id=args.session
         )
         problems = validate_receipt(receipt)
         if problems:  # a bug in Skylos, never the user's change
@@ -192,9 +239,86 @@ def run_done_command(argv: list[str], *, console: Console | None = None) -> int:
                     style="dim",
                 )
             )
+        if args.map:
+            _print_change_map(out, args.path, args.base, "text")
+        elif not args.session:
+            out.print(Text(f"See what to read and what is proven unchanged: {_map_command(args.path, args.base)}", style="dim"))
+        if not args.session:
+            out.print(Text("See every run stage by stage: skylos open, then the Pipeline tab", style="dim"))
+    if args.map and args.format == "markdown":
+        _print_change_map(out, args.path, args.base, "markdown")
 
     _write_step_summary(lambda: render_markdown(receipt))
     return EXIT_PASS if receipt["verdict"] == "pass" else EXIT_BLOCKED
+
+
+def _map_command(path: str, base: str | None) -> str:
+    import shlex
+
+    parts = ["skylos", "done", "map"]
+    if path and path != ".":
+        parts.append(shlex.quote(path))
+    if base:
+        parts.extend(["--base", shlex.quote(base)])
+    return " ".join(parts)
+
+
+def _change_map_text(path: str, base: str | None, fmt: str) -> str:
+    from skylos import changemap
+
+    change_map = changemap.build_change_map(path, base or "HEAD")
+    _remember_review(path, change_map)
+    if fmt == "markdown":
+        return changemap.render_markdown(change_map)
+    return changemap.render_text(change_map)
+
+
+def _print_change_map(out: Console, path: str, base: str | None, fmt: str) -> None:
+    try:
+        text = _change_map_text(path, base, fmt)
+    except Exception as exc:
+        logger.debug("change map failed", exc_info=True)
+        out.print(Text(f"Change map unavailable: {exc}", style="yellow"))
+        return
+    if fmt == "markdown":
+        print(text)
+        return
+    out.print()
+    out.print(Text(text.rstrip("\n")), soft_wrap=True)
+
+
+def _remember_review(path: str, change_map: dict) -> None:
+    try:
+        from skylos.graph.pipeline import save_review
+
+        save_review(path, change_map)
+    except Exception:
+        logger.debug("could not save the review summary", exc_info=True)
+
+
+def _run_map_command(argv: list[str], *, console: Console | None) -> int:
+    from skylos import changemap
+
+    args = build_map_parser().parse_args(argv)
+    out = console or Console(highlight=False)
+    err = Console(stderr=True, highlight=False)
+    try:
+        change_map = changemap.build_change_map(args.path, args.base)
+    except ValueError as exc:
+        err.print(Text(f"skylos done map: {exc}", style="red"))
+        return EXIT_ERROR
+    except Exception:
+        logger.debug("change map failed", exc_info=True)
+        err.print(Text("skylos done map: the change map could not be built", style="red"))
+        return EXIT_ERROR
+    _remember_review(args.path, change_map)
+    if args.format == "json":
+        print(json.dumps(change_map, indent=2))
+    elif args.format == "markdown":
+        print(changemap.render_markdown(change_map))
+    else:
+        out.print(Text(changemap.render_text(change_map).rstrip("\n")), soft_wrap=True)
+    return EXIT_PASS
 
 
 def _invalidate_latest_receipt(path: str | Path, err: Console) -> None:

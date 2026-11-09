@@ -12,7 +12,9 @@ permissions:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Self-scans still build project-wide liveness and dependency graphs.
+    # The published analyzer can exceed 20 minutes on hosted runners.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:

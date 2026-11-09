@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import platform
 from pathlib import Path
 
@@ -25,12 +26,9 @@ def _rust_available() -> bool:
 
 
 def _llm_available() -> bool:
-    try:
-        from skylos.llm.analyzer import AnalyzerConfig, SkylosLLM  # noqa: F401
+    from skylos.llm.runtime import llm_extra_installed
 
-        return True
-    except ImportError:
-        return False
+    return llm_extra_installed()
 
 
 def _interactive_available() -> bool:
@@ -70,8 +68,16 @@ def _agent_hooks_report() -> dict:
 
 
 def _doctor_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="skylos doctor", add_help=False)
-    parser.add_argument("--format", choices=("text", "json"), default="text")
+    parser = argparse.ArgumentParser(
+        prog="skylos doctor",
+        description="Check installation health and language-engine availability",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="Print human-readable (default) or machine-readable health",
+    )
     return parser
 
 
@@ -92,7 +98,7 @@ def _doctor_json_report(py_ver: str, py_ok: bool, go_status: dict) -> dict:
             "python": {
                 "status": "ok" if py_ok else "fail",
                 "version": py_ver,
-                "minimum_version": "3.10",
+                "minimum_version": "3.11",
             },
             "skylos": {"status": "ok", "version": str(skylos.__version__)},
             "go_engine": _go_engine_json(go_status),
@@ -102,7 +108,11 @@ def _doctor_json_report(py_ver: str, py_ok: bool, go_status: dict) -> dict:
                 "optional": True,
                 "build_url": RUST_ACCELERATION_BUILD_URL,
             },
-            "llm_support": {"status": "available" if llm_available else "unavailable"},
+            "llm_support": (
+                {"status": "available"}
+                if llm_available
+                else {"status": "unavailable", "install": 'pip install "skylos[llm]"'}
+            ),
             "dart_support": (
                 {"status": "available"}
                 if _dart_available()
@@ -118,6 +128,7 @@ def _doctor_json_report(py_ver: str, py_ok: bool, go_status: dict) -> dict:
             ),
             "agent_hooks": agent_hooks,
             "config": _config_sources_report(Path.cwd()),
+            "ci": _ci_report(Path.cwd()),
         },
     }
 
@@ -176,7 +187,7 @@ def _print_runtime_status(
 ) -> None:
     console.print(
         f"  {'[green]OK[/green]' if py_ok else '[red]FAIL[/red]'}  Python {py_ver}"
-        + ("" if py_ok else " [red](requires 3.10+)[/red]")
+        + ("" if py_ok else " [red](requires 3.11+)[/red]")
     )
     console.print(f"  [green]OK[/green]  Skylos {skylos.__version__}")
     _print_availability(
@@ -238,9 +249,9 @@ def _print_optional_status(console: Console) -> None:
     _print_availability(
         console,
         _llm_available(),
-        "  [green]OK[/green]  LLM support available",
-        "  [yellow]--[/yellow]  LLM support not available "
-        "[dim](optional: pip install litellm)[/dim]",
+        "  [green]OK[/green]  LLM support installed",
+        "  [yellow]--[/yellow]  LLM support not installed "
+        '[dim](optional, for skylos agent: pip install "skylos\\[llm]")[/dim]',
     )
     _print_availability(
         console,
@@ -292,7 +303,10 @@ def _print_cloud_status(console: Console) -> None:
             "  [yellow]--[/yellow]  Cloud not connected [dim](optional: skylos login)[/dim]"
         )
         return
-    console.print("  [green]OK[/green]  Cloud connected (SKYLOS_TOKEN set)")
+    source = "saved login"
+    if os.environ.get("SKYLOS_TOKEN"):
+        source = "SKYLOS_TOKEN set"
+    console.print(f"  [green]OK[/green]  Cloud connected ({source})")
     _print_credit_status(console, token)
 
 
@@ -349,13 +363,102 @@ def _print_project_config(console: Console, cwd: Path) -> None:
 
 
 def _print_workflow_status(console: Console, cwd: Path) -> None:
+    from skylos.cicd.platforms import detect_repo_platforms
+
     workflow = cwd / ".github" / "workflows" / "skylos.yml"
-    _print_availability(
-        console,
-        workflow.exists(),
-        "  [green]OK[/green]  GitHub Actions workflow found",
-        "  [yellow]--[/yellow]  No CI/CD workflow [dim](run: skylos cicd init)[/dim]",
-    )
+    found = []
+    if not workflow.exists():
+        found = detect_repo_platforms(cwd)
+    if workflow.exists() or not found:
+        _print_availability(
+            console,
+            workflow.exists(),
+            "  [green]OK[/green]  GitHub Actions workflow found",
+            "  [yellow]--[/yellow]  No CI/CD workflow [dim](run: skylos cicd init)[/dim]",
+        )
+    for item in found:
+        name = escape(item.platform.name)
+        if item.runs_skylos:
+            shown = escape(_relative_label(item.runs_skylos, cwd))
+            console.print(f"  [green]OK[/green]  {name} runs Skylos ({shown})")
+            continue
+        key = item.platform.key
+        if not item.platform.config:
+            key = "other"
+        shown = escape(_relative_label(item.path, cwd))
+        console.print(
+            f"  [yellow]--[/yellow]  {name} ({shown}) does not run Skylos "
+            f"[dim](run: skylos cicd init --ci {key})[/dim]"
+        )
+    _print_ci_runtime(console, cwd)
+
+
+def _relative_label(path: Path, cwd: Path) -> str:
+    try:
+        return str(path.relative_to(cwd))
+    except ValueError:
+        return str(path)
+
+
+def _ci_runtime_report(cwd: Path) -> dict | None:
+    """What `--diff` compares with in the CI running this, or None outside CI."""
+    from skylos.cicd.platforms import missing_base_hint
+    from skylos.core.ci_env import auto_diff_base_ref, ci_name, github_or_ci_base_ref
+
+    name = ci_name()
+    if not name:
+        return None
+    base = auto_diff_base_ref()
+    try:
+        fetch = missing_base_hint(base, cwd)
+    except Exception:
+        fetch = None
+    report = {
+        "name": name,
+        "pull_request": bool(github_or_ci_base_ref()),
+        "diff_base": base,
+    }
+    if fetch:
+        report["fetch"] = fetch
+    return report
+
+
+def _print_ci_runtime(console: Console, cwd: Path) -> None:
+    runtime = _ci_runtime_report(cwd)
+    if runtime is None:
+        return
+    name = escape(runtime["name"])
+    base = escape(runtime["diff_base"] or "")
+    if runtime["pull_request"]:
+        console.print(f"  [green]OK[/green]  {name} pull request: --diff compares with {base}")
+    else:
+        console.print(
+            f"  [dim]--[/dim]  {name} build, not a pull request: --diff compares with {base}"
+        )
+    if runtime.get("fetch"):
+        console.print(
+            f"  [yellow]--[/yellow]  {base} is not usable here. "
+            f"{escape(runtime['fetch'])}",
+            soft_wrap=True,
+        )
+
+
+def _ci_report(cwd: Path) -> dict:
+    from skylos.cicd.platforms import detect_repo_platforms
+
+    platforms = [
+        {
+            "key": item.platform.key,
+            "name": item.platform.name,
+            "path": _relative_label(item.path, cwd),
+            "runs_skylos": item.runs_skylos is not None,
+        }
+        for item in detect_repo_platforms(cwd)
+    ]
+    status = "missing"
+    if any(p["runs_skylos"] for p in platforms):
+        status = "ok"
+    return {"status": status, "platforms": platforms, "runtime": _ci_runtime_report(cwd)}
 
 
 def _print_rule_status(console: Console) -> None:
@@ -389,7 +492,7 @@ def _print_agent_hooks(console: Console) -> None:
 def run_doctor_command(argv: list[str] | None = None) -> int:
     args = _doctor_parser().parse_args(argv or [])
     py_ver = platform.python_version()
-    py_ok = tuple(int(x) for x in py_ver.split(".")[:2]) >= (3, 10)
+    py_ok = tuple(int(x) for x in py_ver.split(".")[:2]) >= (3, 11)
     go_status = _go_engine_status()
     if args.format == "json":
         print(json.dumps(_doctor_json_report(py_ver, py_ok, go_status), indent=2))

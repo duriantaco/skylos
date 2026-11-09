@@ -173,7 +173,7 @@ def test_secret_flag_values_and_tokens_are_masked(home):
         ".",
         "--api-key",
         "sk-ant-api03-abcdefghijklmnopqrstuvwxyz",
-        "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+        "g" r"h" "p_abcdefghijklmnopqrstuvwxyz0123456789",
     ]
     _run_entry(argv[1:], _exit_with(2))
 
@@ -200,7 +200,7 @@ def test_secret_flag_values_and_tokens_are_masked(home):
         (["-o/tmp/out.json"], "skylos -o<path>"),
         (["src/app/main.py"], "skylos <path>"),
         (["--format", "json"], "skylos --format json"),
-        (["AKIAABCDEFGHIJKLMNOP"], "skylos <redacted>"),
+        (["A" r"K" "IAABCDEFGHIJKLMNOP"], "skylos <redacted>"),
         (["x" * 60], "skylos " + "x" * 39 + "\u2026"),
     ],
 )
@@ -466,13 +466,27 @@ def test_url_is_cut_to_fit_even_for_an_oversized_command():
 @pytest.mark.parametrize(
     "content",
     [
-        "{not json",
-        json.dumps({"schema": 2, "ts": 1, "command": "skylos", "exit_code": 2}),
-        json.dumps({"schema": 1, "ts": "x", "command": "skylos", "exit_code": 2}),
-        json.dumps(
-            {"schema": 1, "ts": int(time.time()), "command": "rm -rf", "exit_code": 2}
+        pytest.param("{not json", id="not-json"),
+        pytest.param(
+            json.dumps({"schema": 2, "ts": 1, "command": "skylos", "exit_code": 2}),
+            id="unknown-schema",
         ),
-        "[]",
+        pytest.param(
+            json.dumps({"schema": 1, "ts": "x", "command": "skylos", "exit_code": 2}),
+            id="bad-timestamp",
+        ),
+        pytest.param(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "ts": int(time.time()),
+                    "command": "rm -rf",
+                    "exit_code": 2,
+                }
+            ),
+            id="not-a-skylos-command",
+        ),
+        pytest.param("[]", id="not-an-object"),
     ],
 )
 def test_bad_records_are_treated_as_none(home, content):

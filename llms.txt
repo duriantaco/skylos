@@ -4,12 +4,12 @@
 
 ## Key facts
 - Skylos is an open-source (Apache-2.0), local-first static analysis CLI and pull-request gate. It finds dead code, security issues, secrets, vulnerable dependencies, quality regressions and AI-code mistakes. The CLI runs without an account.
-- Install: `pip install skylos` (Python 3.10+), then `skylos .` for dead code or `skylos . -a` for every analyzer. Container: `ghcr.io/duriantaco/skylos`.
-- Languages: dead code in 10 languages and security checks in 9, deepest in Python, TypeScript/JavaScript and Java. Go dead-code and security checks need the `skylos-go` engine, which the PyPI package does not include; the Docker image and GitHub Action do.
+- Install: `pip install skylos` (Python 3.11+), then `skylos .` for dead code or `skylos . -a` for every analyzer. Container: `ghcr.io/duriantaco/skylos`.
+- Languages: 12 supported (Python, TypeScript/JavaScript, Java, Go, PHP, Rust, Ruby, Dart, C#, C++, Kotlin, Shell); dead code in 11 of them and security checks in 11, deepest in Python, TypeScript/JavaScript and Java. Go dead-code and security checks need the `skylos-go` engine, which the PyPI wheels for Linux, macOS and Windows include from 4.50, as do the Docker image and GitHub Action.
 - AI coding agents: `skylos done --base main` flags deleted or skipped tests, loosened CI test steps, silenced lint or type checks, and test-only special cases, and advises on code the branch left without callers. It runs pytest itself; other runners need a `test_command`. `skylos agent install-hooks` checks Claude Code, Codex and Cursor edits locally.
 - CI: `skylos cicd init` writes a GitHub Actions pull-request gate; add `--no-upload` without Skylos Cloud.
-- MCP: `skylos mcp`. Without `SKYLOS_API_KEY` only the dead-code `analyze` tool works (five calls per rolling 24 hours); every other tool needs a free Skylos API key. Unauthenticated `analyze` calls are free. Authenticated analyze, security, quality, secrets and provenance scans can use credits; Skylos Cloud sets the current cost. `remediate` currently costs 10 credits per call.
-- Pricing: the CLI is free. Skylos Cloud has a Free plan for one project and a Workspace plan; buying any one-time credit pack turns Workspace on for good, with no seats or subscriptions.
+- MCP: `skylos mcp`. Without `SKYLOS_API_KEY` only the dead-code `analyze` tool works (five calls per rolling 24 hours); every other tool needs a free Skylos API key. MCP scans (analyze, security, quality, secrets, provenance) cost no credits. `remediate` costs 10 credits per real run, charged when it starts generating fixes; dry runs (the default), refused calls and runs with nothing to fix are free.
+- Pricing: the CLI is free. Skylos Cloud has a Free plan for one project and a Workspace plan. Your first workspace gets a 14-day Workspace trial with 50 credits, no card needed. Any credit pack (from $9 for 50 credits) turns on Workspace for 12 months for up to 3 people. The Workspace pass ($990 once) has unlimited members. Prices are in USD, plus sales tax or VAT. Payments are one-time: nothing renews, and there are no seats or subscriptions. Credits never expire.
 - Interfaces: CLI, GitHub Action, MCP server, VS Code extension.
 
 ## Start here
@@ -54,3 +54,5 @@
 - Python security in GitHub Actions: https://skylos.dev/use-cases/python-security-github-actions
 - GitHub Actions security scanner: https://skylos.dev/use-cases/github-actions-security-scanner
 - Merged cleanup PRs (all outcomes): https://github.com/duriantaco/skylos/blob/main/REAL_WORLD_RESULTS.md
+
+Ruby support is bounded to private helpers, exact owner calls, literal Rails controller callbacks and explicit Kernel command flow. Terraform/AWS declaration checks cover worldwide administrative ingress and explicit disabled encryption on a new RDS database; unresolved inputs remain unknown. These are separate from deployed-state security checks.

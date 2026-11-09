@@ -17,6 +17,17 @@ from skylos.discover.graph import (
     NodeType,
 )
 from skylos.discover.semantics.python_output_flow import attach_python_output_flow
+from skylos.discover.semantics.python_prompt_inputs import (
+    PromptParamInput,
+    find_prompt_param_inputs,
+    link_prompt_input_sources,
+)
+from skylos.discover.semantics.python_tool_flow import (
+    assigned_names,
+    attach_python_tool_flow,
+    function_params,
+    module_sanitizers,
+)
 
 KNOWN_LLM_SDKS: dict[str, str] = {
     "openai": "OpenAI",
@@ -247,6 +258,14 @@ DANGEROUS_SINKS = {
 
 SQL_SINKS = {"execute", "executemany", "raw", "execute_sql"}
 
+_FLASK_REQUEST_ATTRIBUTE_SOURCES: dict[str, str] = {
+    "json": "Flask JSON body",
+    "form": "Flask form",
+    "args": "Flask query params",
+    "data": "Flask raw data",
+    "files": "Flask file upload",
+}
+
 INPUT_SOURCE_PATTERNS: dict[str, str] = {
     "request.form": "Flask form",
     "request.args": "Flask query params",
@@ -311,7 +330,9 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
         self.detected_sdks: dict[str, str] = {}  # module -> provider
         self.detected_frameworks: dict[str, str] = {}  # module -> framework
 
+        self.tree: ast.Module | None = None
         self.integrations: list[LLMIntegration] = []
+        self.prompt_param_inputs: list[PromptParamInput] = []
         self.tool_defs: list[ToolDef] = []
         self.input_sources: list[str] = []
         self.output_sinks: list[str] = []
@@ -354,10 +375,16 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
         self._current_assign_target: str | None = None
 
         self._current_func: Optional[str] = None
+        self._current_func_node: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+        self._local_names_cache: dict[int, set[str]] = {}
         self._current_func_line: int = 0
         self._current_func_decorators: list[str] = []
         self._current_func_dangerous_calls: list[str] = []
         self._current_func_has_schema: bool = False
+
+    def visit_Module(self, node: ast.Module) -> None:
+        self.tree = node
+        self.generic_visit(node)
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
@@ -415,12 +442,14 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
 
     def _visit_funcdef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         prev_func = self._current_func
+        prev_func_node = self._current_func_node
         prev_line = self._current_func_line
         prev_decorators = self._current_func_decorators
         prev_dangerous = self._current_func_dangerous_calls
         prev_schema = self._current_func_has_schema
 
         self._current_func = node.name
+        self._current_func_node = node
         self._current_func_line = node.lineno
         self._current_func_decorators = [
             self._decorator_name(d) for d in node.decorator_list
@@ -456,6 +485,7 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
             self._func_tool_defs.setdefault(enclosing, []).append(tool)
 
         self._current_func = prev_func
+        self._current_func_node = prev_func_node
         self._current_func_line = prev_line
         self._current_func_decorators = prev_decorators
         self._current_func_dangerous_calls = prev_dangerous
@@ -589,6 +619,7 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
                 "has_tools": False,
                 "tool_names": [],
                 "func_scope": self._func_scope(),
+                "func_node": self._current_func_node,
                 "has_max_tokens": has_max_tokens,
                 "ast_node": node,
             }
@@ -716,6 +747,7 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
                 "has_tools": tools_in_call,
                 "tool_names": tool_names,
                 "func_scope": self._func_scope(),
+                "func_node": self._current_func_node,
                 "has_max_tokens": has_max_tokens,
                 "ast_node": node,
             }
@@ -1011,6 +1043,33 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
 
         if chain.endswith(".parse_args"):
             self._add_input_source(f"CLI arguments (L{node.lineno})")
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if isinstance(node.ctx, ast.Load) and isinstance(node.value, ast.Name):
+            label = _FLASK_REQUEST_ATTRIBUTE_SOURCES.get(node.attr)
+            origin = self.from_imports.get(node.value.id, "")
+            if (
+                label
+                and origin in ("flask.request", "quart.request")
+                and node.value.id not in self._current_local_names()
+            ):
+                self._add_input_source(f"{label} (L{node.lineno})")
+        self.generic_visit(node)
+
+    def _current_local_names(self) -> set[str]:
+        func_node = self._current_func_node
+        if func_node is None:
+            return set()
+        cached = self._local_names_cache.get(id(func_node))
+        if cached is not None:
+            return cached
+        positional, keyword_only, vararg, kwarg = function_params(func_node)
+        names = assigned_names(func_node.body)
+        names.update(positional)
+        names.update(keyword_only)
+        names.update({vararg, kwarg})
+        self._local_names_cache[id(func_node)] = names
+        return names
 
     def _add_output_sink(self, loc: str) -> None:
         if loc not in self.output_sinks:
@@ -1337,12 +1396,16 @@ def detect_integrations(
     integrations: list[LLMIntegration] = []
     graph = AIIntegrationGraph()
 
+    scanned_files: list[tuple[str, _LLMDetectorVisitor]] = []
     for py_file in _collect_python_files(root, exclude_folders):
         scanned = _scan_python_file(root, py_file)
         if scanned is None:
             continue
+        scanned_files.append(scanned)
 
-        rel, visitor = scanned
+    _link_prompt_inputs(scanned_files)
+
+    for rel, visitor in scanned_files:
         integrations.extend(visitor.integrations)
         _build_graph_from_integrations(graph, visitor.integrations, rel)
 
@@ -1394,7 +1457,59 @@ def _scan_python_file(
     attach_python_output_flow(
         tree, visitor._raw_llm_calls, visitor.integrations, rel, root, py_file
     )
+    attach_python_tool_flow(
+        tree, visitor._raw_llm_calls, visitor.integrations, rel, visitor.tool_defs
+    )
+    _collect_prompt_param_inputs(visitor, rel)
     return rel, visitor
+
+
+def _collect_prompt_param_inputs(visitor: _LLMDetectorVisitor, rel: str) -> None:
+    if visitor.tree is None:
+        return
+    if not visitor._raw_llm_calls:
+        return
+    module_body = visitor.tree.body
+    top_level = {id(item) for item in module_body}
+    sanitizers = module_sanitizers(visitor.tree)
+    for index, call in enumerate(visitor._raw_llm_calls):
+        if index >= len(visitor.integrations):
+            break
+        func_node = call.get("func_node")
+        found = find_prompt_param_inputs(
+            call["ast_node"], func_node, visitor.tree, sanitizers
+        )
+        for param, position, line, delimited in found:
+            visitor.prompt_param_inputs.append(
+                PromptParamInput(
+                    integration=visitor.integrations[index],
+                    filepath=rel,
+                    function=func_node.name,
+                    param=param,
+                    index=position,
+                    prompt_line=line,
+                    delimited=delimited,
+                    linkable=id(func_node) in top_level,
+                )
+            )
+
+
+def _link_prompt_inputs(scanned_files: list[tuple[str, _LLMDetectorVisitor]]) -> None:
+    trees = []
+    records: list[PromptParamInput] = []
+    for rel, visitor in scanned_files:
+        if visitor.tree is not None:
+            trees.append((rel, visitor.tree))
+        records.extend(visitor.prompt_param_inputs)
+    if not records:
+        return
+    link_prompt_input_sources(trees, records)
+    for _rel, visitor in scanned_files:
+        for integration in visitor.integrations:
+            if integration.prompt_inputs:
+                integration.has_prompt_delimiter = all(
+                    item.delimited for item in integration.prompt_inputs
+                )
 
 
 def _collect_python_files(root: Path, exclude_folders: set[str]) -> list[Path]:
@@ -1468,7 +1583,9 @@ def _add_input_source_nodes(
     integration: LLMIntegration,
     call_id: str,
 ) -> None:
-    for src in integration.input_sources:
+    labels = list(integration.input_sources)
+    labels.extend(item.label for item in integration.prompt_inputs)
+    for src in labels:
         src_id = f"input:{filepath}:{src}"
         graph.add_node(
             GraphNode(
@@ -1517,7 +1634,7 @@ def _add_output_sink_nodes(
     integration: LLMIntegration,
     call_id: str,
 ) -> None:
-    for sink in integration.output_sinks:
+    for sink in list(integration.output_sinks) + list(integration.output_sink_flows):
         sink_id = f"sink:{filepath}:{sink}"
         graph.add_node(
             GraphNode(

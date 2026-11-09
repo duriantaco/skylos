@@ -722,6 +722,42 @@ def test_cli_configured_url_through_helper_is_not_ssrf(tmp_path):
     assert _ssrf_findings(out) == []
 
 
+@pytest.mark.parametrize(
+    ("factory_extra", "main_extra", "parse_arguments", "expect_ssrf"),
+    [
+        ("", "", "", False),
+        ("", "", "request.args", True),
+        ("", "    customize(parser)\n", "", True),
+        ("", "    parser.parse_args = request.parse_args\n", "", True),
+        ("if remote_enabled:\n    def build_parser():\n        return RemoteParser()\n", "", "", True),
+        ("from remote_plugin import *\n", "", "", True),
+        ("exec(plugin_source)\n", "", "", True),
+        ("configure_parser(argparse)\n", "", "", True),
+        ("configure_parser(argparse.ArgumentParser)\n", "", "", True),
+        ("configure_factory(build_parser)\n", "", "", True),
+        ("configure_namespace(globals())\n", "", "", True),
+    ],
+)
+def test_proved_argparse_factory_keeps_remote_and_rebound_cases(
+    tmp_path, factory_extra, main_extra, parse_arguments, expect_ssrf
+):
+    source = (
+        "import argparse, requests\n"
+        "def build_parser():\n"
+        "    parser = argparse.ArgumentParser()\n"
+        "    parser.add_argument('--url')\n"
+        "    return parser\n"
+        + factory_extra
+        + "def main():\n"
+        "    parser = build_parser()\n"
+        + main_extra
+        + f"    args = parser.parse_args({parse_arguments})\n"
+        "    return requests.get(args.url)\n"
+    )
+    findings = _scan_one(tmp_path, "parser_factory.py", source)
+    assert bool(_ssrf_findings(findings)) is expect_ssrf
+
+
 def test_direct_argv_url_is_operator_input(tmp_path):
     code = (
         "import sys, requests\n"
@@ -2106,3 +2142,35 @@ def test_orm_session_methods_are_not_ssrf(tmp_path, code):
 def test_http_sessions_stay_ssrf_sinks(tmp_path, code):
     out = _scan_one(tmp_path, "http_route.py", code)
     assert len(_ssrf_findings(out)) == 1
+
+
+_REQUEST_URL_ROUTES = (
+    "import http.client, httpx, requests, urllib3\n"
+    "from flask import Flask, request\n"
+    "app = Flask(__name__)\n"
+    "@app.route('/a')\n"
+    "def a():\n"
+    "    return requests.request('GET', request.args['u'], timeout=5)\n"
+    "@app.route('/b')\n"
+    "def b():\n"
+    "    return requests.get(url=request.args['u'], timeout=5)\n"
+    "@app.route('/c')\n"
+    "def c():\n"
+    "    return urllib3.PoolManager().request('GET', request.args['u'])\n"
+    "@app.route('/d')\n"
+    "def d():\n"
+    "    with httpx.Client() as client:\n"
+    "        return client.request('GET', url=request.args['u'])\n"
+    "@app.route('/e')\n"
+    "def e():\n"
+    "    return requests.request(request.args['m'], 'https://api.example.com/', timeout=5)\n"
+    "@app.route('/f')\n"
+    "def f():\n"
+    "    conn = http.client.HTTPSConnection('api.example.com')\n"
+    "    conn.request('GET', request.args['path'])\n"
+)
+
+
+def test_request_method_url_is_the_second_argument_or_url_keyword(tmp_path):
+    out = _scan_one(tmp_path, "request_url.py", _REQUEST_URL_ROUTES)
+    assert sorted(f["line"] for f in _ssrf_findings(out)) == [6, 9, 12, 16]

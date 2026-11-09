@@ -147,20 +147,47 @@ def decode_base64_blobs(
 
 
 def detect_homoglyphs(text: str) -> list[tuple[str, str, int]]:
+    """Lookalike letters that disguise a word, judged per run of letters.
+
+    A word that mixes Latin letters with a non-Latin lookalike (Cyrillic
+    U+0430 in place of Latin 'a') is a disguise. So is a word made only of
+    lookalikes in a line of otherwise Latin words. A word written wholly in
+    another script, as in translated documentation, is ordinary text.
+    """
     if not _CONFUSABLE_RE.search(text):
         return []
 
     results: list[tuple[str, str, int]] = []
 
     for line_no, line in enumerate(text.splitlines(), 1):
-        for word_match in re.finditer(r"\S+", line):
-            word = word_match.group()
-            has_ascii = bool(re.search(r"[a-zA-Z]", word))
+        words = [match.group() for match in _LETTER_RUN_RE.finditer(line)]
+        latin_only_line = all(
+            _is_latin_word(word) or _is_whole_confusable(word) for word in words
+        )
+        for word in words:
             has_confusable = bool(_CONFUSABLE_RE.search(word))
-            if not (has_ascii and has_confusable):
+            if not has_confusable:
+                continue
+            mixed = bool(re.search(r"[a-zA-Z]", word))
+            disguised = latin_only_line and _is_whole_confusable(word)
+            if not (mixed or disguised):
                 continue
             for char_match in _CONFUSABLE_RE.finditer(word):
                 char = char_match.group()
                 results.append((char, _CONFUSABLES[char], line_no))
 
     return results
+
+
+_LETTER_RUN_RE = re.compile(r"[^\W\d_]+")
+
+
+def _is_latin_word(word: str) -> bool:
+    return bool(re.fullmatch(r"[a-zA-Z]+", word))
+
+
+def _is_whole_confusable(word: str) -> bool:
+    """Every letter is a non-Latin lookalike of a Latin letter (``ехес``
+    written in Cyrillic). Natural words such as ``Русский`` contain letters
+    with no Latin twin."""
+    return len(word) >= 2 and all(char in _CONFUSABLES for char in word)

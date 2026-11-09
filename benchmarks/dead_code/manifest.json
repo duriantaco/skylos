@@ -652,6 +652,4251 @@
           {"kind": "function", "file": "src/service.ts", "symbol": "formatJob"}
         ]
       }
+    },
+    {
+      "id": "robot-programmatic-library",
+      "path": "fixtures/robot_programmatic_library",
+      "description": "A native Robot library decorator applied as a function retains its keyword and leaves an unregistered helper unused.",
+      "taxonomy": [
+        "framework_precision",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "keywords.py",
+            "symbol": "_reserve"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "keywords.py",
+            "symbol": "measure"
+          }
+        ]
+      }
+    },
+    {
+      "id": "robot-variable-object-methods",
+      "path": "fixtures/robot_variable_methods",
+      "description": "Robot variable expressions call the exact exported object method while unused helpers and another object remain reported.",
+      "taxonomy": [
+        "framework_precision",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "values.py",
+            "symbol": "reserve"
+          },
+          {
+            "kind": "function",
+            "file": "other.py",
+            "symbol": "render"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "values.py",
+            "symbol": "render"
+          }
+        ]
+      }
+    },
+    {
+      "id": "robot-variable-literal-control",
+      "path": "fixtures/robot_variable_literal",
+      "description": "Escaped Robot variable text, comments and a constant-false branch do not call an exported object method.",
+      "taxonomy": [
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "values.py",
+            "symbol": "render"
+          }
+        ],
+        "used": []
+      }
+    },
+    {
+      "id": "wildcard-provider-binding",
+      "path": "fixtures/wildcard_provider_binding",
+      "description": "A package consumer reads the exact wildcard-exported import binding without retaining an unrelated import of the same module.",
+      "taxonomy": [
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "unrelated.py",
+            "symbol": "settings"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "storage/_implementation.py",
+            "symbol": "settings"
+          }
+        ]
+      }
+    },
+    {
+      "id": "finite-globals-dispatch",
+      "path": "fixtures/finite_globals_dispatch",
+      "description": "A reachable caller selects a literal callback name through globals without retaining an unselected callback.",
+      "taxonomy": [
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "scale_b"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "scale_a"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "transform"
+          }
+        ]
+      }
+    },
+    {
+      "id": "finite-inherited-method-registry",
+      "path": "fixtures/finite_method_registry",
+      "description": "An inherited receiver dispatches through a finite tuple-valued method registry and leaves unrelated or unselected methods unused.",
+      "taxonomy": [
+        "dynamic_dispatch",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Synthetic source-only regression distilled from a source-verified corpus finding; target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "render_c"
+          },
+          {
+            "kind": "function",
+            "file": "peers.py",
+            "symbol": "render_a"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "render_a"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "render_b"
+          },
+          {
+            "kind": "class",
+            "file": "app.py",
+            "symbol": "Formatter"
+          },
+          {
+            "kind": "class",
+            "file": "peers.py",
+            "symbol": "Peer"
+          }
+        ]
+      }
+    },
+    {
+      "id": "php-direct-calls",
+      "path": "fixtures/php_direct_calls",
+      "description": "Native PHP source-owned calls and unreferenced siblings.",
+      "languages": [
+        "php"
+      ],
+      "taxonomy": [
+        "php",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only PHP corpus fixture."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "format_value"
+          },
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "normalize_value"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "parse_value"
+          }
+        ]
+      }
+    },
+    {
+      "id": "php-member-calls",
+      "path": "fixtures/php_member_calls",
+      "description": "Native PHP source-owned calls and unreferenced siblings.",
+      "languages": [
+        "php"
+      ],
+      "taxonomy": [
+        "php",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only PHP corpus fixture."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "app.php",
+            "symbol": "Formatter"
+          },
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "format"
+          },
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "summarize"
+          }
+        ]
+      }
+    },
+    {
+      "id": "csharp-private-call-chain",
+      "path": "fixtures/csharp_private_call_chain",
+      "description": "Main constructs Pipeline and calls Emit→Normalize; Parse has no call, registration, reflection or exported API in this executable.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "csharp",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original local static-only language corpus control; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Program.cs",
+            "symbol": "Ledger.Pipeline.Parse"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Program.cs",
+            "symbol": "Ledger.Pipeline"
+          },
+          {
+            "kind": "function",
+            "file": "Program.cs",
+            "symbol": "Ledger.Pipeline.Main"
+          },
+          {
+            "kind": "function",
+            "file": "Program.cs",
+            "symbol": "Ledger.Pipeline.Emit"
+          },
+          {
+            "kind": "function",
+            "file": "Program.cs",
+            "symbol": "Ledger.Pipeline.Normalize"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "kotlin-private-call-chain",
+      "path": "fixtures/kotlin_private_call_chain",
+      "description": "main calls displayRecord→formatRecord; private parseRecord has no caller or exposed entrypoint.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original local static-only language corpus control; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "parseRecord"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "displayRecord"
+          },
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "formatRecord"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "kotlin-owner-call-identity",
+      "path": "fixtures/kotlin_owner_call_identity",
+      "description": "main constructs both classes, but only Primary.run calls its private process. Same-spelled Secondary.process remains uncalled; constructing the owner prevents dead-parent aggregation.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original local static-only language corpus control; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "SecondaryProcessor.process"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Main.kt",
+            "symbol": "PrimaryProcessor"
+          },
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "PrimaryProcessor.run"
+          },
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "PrimaryProcessor.process"
+          },
+          {
+            "kind": "class",
+            "file": "Main.kt",
+            "symbol": "SecondaryProcessor"
+          },
+          {
+            "kind": "function",
+            "file": "Main.kt",
+            "symbol": "main"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "csharp-top-level-owner-identity",
+      "path": "fixtures/csharp_top_level_owner_identity",
+      "description": "Top-level application statements construct both namespace-specific workers; only the Primary owner calls its private Process method.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "csharp",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original local static-only language corpus control; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Secondary.Worker.Process"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker"
+          },
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker.Run"
+          },
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker.Process"
+          },
+          {
+            "kind": "class",
+            "file": "Workers.cs",
+            "symbol": "Secondary.Worker"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "rust-direct-calls",
+      "path": "fixtures/rust_direct_calls",
+      "description": "Closed source calls retain the selected implementation and report unreferenced siblings.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only corpus fixture; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "render"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "summarize"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "rust-member-owners",
+      "path": "fixtures/rust_member_owners",
+      "description": "Concrete receiver calls retain only the selected member owner.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only corpus fixture; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          },
+          {
+            "kind": "class",
+            "file": "main.rs",
+            "symbol": "TextCodec"
+          },
+          {
+            "kind": "class",
+            "file": "main.rs",
+            "symbol": "BinaryCodec"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "TextCodec.process"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "TextCodec.measure"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "TextCodec.snapshot"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "BinaryCodec.process"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "dart-direct-calls",
+      "path": "fixtures/dart_direct_calls",
+      "description": "Closed source calls retain the selected implementation and report unreferenced siblings.",
+      "languages": [
+        "dart"
+      ],
+      "taxonomy": [
+        "dart",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only corpus fixture; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "_render"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "_normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "_summarize"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "dart-member-owners",
+      "path": "fixtures/dart_member_owners",
+      "description": "Concrete receiver calls retain only the selected member owner.",
+      "languages": [
+        "dart"
+      ],
+      "taxonomy": [
+        "dart",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only corpus fixture; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "main"
+          },
+          {
+            "kind": "class",
+            "file": "main.dart",
+            "symbol": "TextCodec"
+          },
+          {
+            "kind": "class",
+            "file": "main.dart",
+            "symbol": "BinaryCodec"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "TextCodec.run"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "TextCodec._process"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "TextCodec._measure"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "TextCodec._snapshot"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "BinaryCodec._process"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "cpp-direct-call-chain",
+      "path": "fixtures/cpp_direct_call_chain",
+      "description": "Main calls render, which calls normalize; file-local summarize has no caller, address reference, macro or exported contract.",
+      "languages": [
+        "cpp"
+      ],
+      "taxonomy": [
+        "cpp",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only C++ free-function corpus control; no compiler or target program is executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "render"
+          },
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "summarize"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cpp-address-taken-callback",
+      "path": "fixtures/cpp_address_taken_callback",
+      "description": "The address of parse_record flows into the called function pointer; serialize_record has no reference. This is file-local free-function coverage, not C++ linking/template/class analysis.",
+      "languages": [
+        "cpp"
+      ],
+      "taxonomy": [
+        "cpp",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only C++ free-function corpus control; no compiler or target program is executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "parse_record"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "serialize_record"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ruby-private-chain",
+      "languages": ["ruby"],
+      "symbol_identity": "qualified",
+      "path": "fixtures/ruby_private_chain",
+      "description": "Ruby private chain; bounded native Ruby source contract.",
+      "taxonomy": [
+        "ruby",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic Ruby source contract, never executed. Expected source/labels frozen before implementation."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "main.rb",
+            "symbol": "Formatter"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Formatter#publish"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Formatter#render"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Formatter#normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Formatter#snapshot"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ruby-member-owners",
+      "languages": ["ruby"],
+      "symbol_identity": "qualified",
+      "path": "fixtures/ruby_member_owners",
+      "description": "Ruby member owners; bounded native Ruby source contract.",
+      "taxonomy": [
+        "ruby",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic Ruby source contract, never executed. Expected source/labels frozen before implementation."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "main.rb",
+            "symbol": "TextCodec"
+          },
+          {
+            "kind": "class",
+            "file": "main.rb",
+            "symbol": "BinaryCodec"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "TextCodec#publish"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "TextCodec#process"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "BinaryCodec#process"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ruby-callback-owner",
+      "languages": ["ruby"],
+      "symbol_identity": "qualified",
+      "path": "fixtures/ruby_callback_owner",
+      "description": "Ruby callback owner; bounded native Ruby source contract.",
+      "taxonomy": [
+        "ruby",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic Ruby source contract, never executed. Expected source/labels frozen before implementation."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "main.rb",
+            "symbol": "PageController"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PageController#show"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PageController#authorize"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PageController#render_text"
+          },
+          {
+            "kind": "class",
+            "file": "main.rb",
+            "symbol": "PlainHandler"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PlainHandler.before_action"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PageController#preview"
+          },
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "PlainHandler#prepare"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ruby-block-scope",
+      "languages": [
+        "ruby"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/ruby_block_scope",
+      "description": "Ruby closure parameter scope and outer method identity.",
+      "taxonomy": [
+        "ruby",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; expected used/unused labels frozen before detector correction. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Worker#normalize"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "Worker#unused"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ruby-inherited-callback",
+      "languages": [
+        "ruby"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/ruby_inherited_callback",
+      "description": "Ruby Rails callbacks through source-visible ApplicationController ancestry.",
+      "taxonomy": [
+        "ruby",
+        "precision_guard",
+        "framework_precision"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only semantic control; expected used/unused labels frozen before detector correction. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "ReportsController#authenticate"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rb",
+            "symbol": "ReportsController#unused"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-javascript-namespace-members",
+      "path": "fixtures/typescript_namespace_members",
+      "description": "Static namespace member reads and stable aliases retain selected exports without crediting unrelated or shadowed members.",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "javascript",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only fixture. Selective namespace/opaque-use approach studied in Knip at 2305dad9b0d76e5f603cd353a1820c24ae0e720d (ISC); no upstream code copied."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "retired"
+          },
+          {
+            "kind": "function",
+            "file": "worker.js",
+            "symbol": "legacy"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "format"
+          },
+          {
+            "kind": "function",
+            "file": "worker.js",
+            "symbol": "run"
+          },
+          {
+            "kind": "function",
+            "file": "index.ts",
+            "symbol": "inspect"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-namespace-escape-boundaries",
+      "path": "fixtures/typescript_namespace_escape",
+      "description": "Escaped namespaces and dynamic member keys keep all their exports while an unrelated internal helper remains unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "dynamic_dispatch",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only namespace escape and dynamic-key controls; target code is never executed."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "index.ts",
+            "symbol": "staleHelper"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "format"
+          },
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "retired"
+          },
+          {
+            "kind": "function",
+            "file": "dynamic.ts",
+            "symbol": "first"
+          },
+          {
+            "kind": "function",
+            "file": "dynamic.ts",
+            "symbol": "second"
+          }
+        ]
+      }
+    },
+    {
+      "id": "go-dead-call-graph",
+      "path": "fixtures/go_dead_call_graph",
+      "description": "Private Go declaration-use roots and object identity, with genuine used and unused controls.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source; target programs and tests are never executed. Approach informed by Staticcheck U1000; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "Public"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "rooted"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "callback"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "init"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "initialized"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "startupHook"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "testOnly"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "generatedOnly"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "staleA"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "staleB"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "self"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "unusedOwner"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "deadValue"
+          },
+          {
+            "kind": "variable",
+            "file": "main.go",
+            "symbol": "startup"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "go-scope-identity",
+      "path": "fixtures/go_scope_identity",
+      "description": "Private Go declaration-use roots and object identity, with genuine used and unused controls.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source; target programs and tests are never executed. Approach informed by Staticcheck U1000; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "selected"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "stale"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "retired"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "parameterOnly"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "rust-value-bindings",
+      "path": "fixtures/rust_value_bindings",
+      "description": "Real callback initializer references remain live while shadowed parameter and local reads do not rescue an unrelated function.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only corpus fixture; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "render"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "invoke"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "callback"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "rust-callback-scopes",
+      "path": "fixtures/rust_callback_scopes",
+      "description": "Lexical callback scopes preserve outer function calls and report callbacks referenced only from dead initializers.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only corpus fixture; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "chosen"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "target"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "fallback"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "choice"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "callback"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "abandoned"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "typescript-lexical-value-identity",
+      "path": "fixtures/typescript_lexical_value_identity",
+      "description": "Lexical value and selected-program module reachability with used and unused controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source. Derived from manually confirmed language gaps in pinned repositories; no target execution or repository-specific exemptions."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "measure"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "format"
+          },
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "callback"
+          },
+          {
+            "kind": "function",
+            "file": "index.ts",
+            "symbol": "start"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-dead-import-consumers",
+      "path": "fixtures/typescript_dead_import_consumers",
+      "description": "Lexical value and selected-program module reachability with used and unused controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source. Derived from manually confirmed language gaps in pinned repositories; no target execution or repository-specific exemptions."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "calculate"
+          },
+          {
+            "kind": "variable",
+            "file": "helpers.ts",
+            "symbol": "modes"
+          },
+          {
+            "kind": "function",
+            "file": "orphan.ts",
+            "symbol": "prepare"
+          },
+          {
+            "kind": "file",
+            "file": "orphan.ts",
+            "symbol": "orphan.ts"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "format"
+          },
+          {
+            "kind": "import",
+            "file": "index.ts",
+            "symbol": "format"
+          },
+          {
+            "kind": "import",
+            "file": "orphan.ts",
+            "symbol": "calculate"
+          },
+          {
+            "kind": "import",
+            "file": "orphan.ts",
+            "symbol": "modes"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-loaded-import-consumers",
+      "path": "fixtures/typescript_loaded_import_consumers",
+      "description": "Lexical value and selected-program module reachability with used and unused controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source. Derived from manually confirmed language gaps in pinned repositories; no target execution or repository-specific exemptions."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "calculate"
+          },
+          {
+            "kind": "variable",
+            "file": "helpers.ts",
+            "symbol": "modes"
+          },
+          {
+            "kind": "function",
+            "file": "consumer.ts",
+            "symbol": "prepare"
+          },
+          {
+            "kind": "import",
+            "file": "consumer.ts",
+            "symbol": "calculate"
+          },
+          {
+            "kind": "import",
+            "file": "consumer.ts",
+            "symbol": "modes"
+          }
+        ]
+      }
+    },
+    {
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source distilled from independently reviewed own-module import and private test-helper gaps in pinned go-chi/chi comparison against Staticcheck U1000. No upstream source copied; target code never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "id": "go-project-import-graph",
+      "path": "fixtures/go_project_import_graph",
+      "description": "Visible same-module package imports retain complete object reachability so private dead cycles are reported and returned callbacks remain used.",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "worker/worker.go",
+            "symbol": "worker.alpha"
+          },
+          {
+            "kind": "function",
+            "file": "worker/worker.go",
+            "symbol": "worker.beta"
+          },
+          {
+            "kind": "function",
+            "file": "worker/worker.go",
+            "symbol": "worker.orphan"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "provider/api.go",
+            "symbol": "provider.Touch"
+          },
+          {
+            "kind": "function",
+            "file": "worker/worker.go",
+            "symbol": "worker.Factory"
+          },
+          {
+            "kind": "function",
+            "file": "worker/worker.go",
+            "symbol": "worker.callback"
+          }
+        ]
+      }
+    },
+    {
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source distilled from independently reviewed own-module import and private test-helper gaps in pinned go-chi/chi comparison against Staticcheck U1000. No upstream source copied; target code never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "id": "go-private-test-helpers",
+      "path": "fixtures/go_private_test_helpers",
+      "description": "Full native proof reports unused private internal test helpers while test entries and their live helper chains remain used.",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "core.go",
+            "symbol": "unusedProduction"
+          },
+          {
+            "kind": "function",
+            "file": "core_test.go",
+            "symbol": "alpha"
+          },
+          {
+            "kind": "function",
+            "file": "core_test.go",
+            "symbol": "beta"
+          },
+          {
+            "kind": "function",
+            "file": "core_test.go",
+            "symbol": "stale"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "core.go",
+            "symbol": "core"
+          },
+          {
+            "kind": "function",
+            "file": "core_test.go",
+            "symbol": "TestRun"
+          },
+          {
+            "kind": "function",
+            "file": "core_test.go",
+            "symbol": "liveTestHelper"
+          },
+          {
+            "kind": "function",
+            "file": "core_test.go",
+            "symbol": "testLeaf"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rust-import-expression-uses",
+      "path": "fixtures/rust_import_expression_uses",
+      "description": "Enum payload types, trait extension calls and derive-attribute expressions keep their actual imports; an unrelated import remains unused.",
+      "languages": [
+        "rust"
+      ],
+      "symbol_identity": "qualified",
+      "taxonomy": [
+        "rust",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract distilled from native-compiler-verified real repository patterns, with semantic labels frozen before scanner output; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "fs"
+          },
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "Context"
+          },
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "ArgAction"
+          },
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "Parser"
+          },
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "formatcp"
+          },
+          {
+            "kind": "class",
+            "file": "src/main.rs",
+            "symbol": "Options"
+          },
+          {
+            "kind": "class",
+            "file": "src/main.rs",
+            "symbol": "Input"
+          },
+          {
+            "kind": "function",
+            "file": "src/main.rs",
+            "symbol": "contextualize"
+          },
+          {
+            "kind": "function",
+            "file": "src/main.rs",
+            "symbol": "main"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "HashMap"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rust-private-function-cycles",
+      "path": "fixtures/rust_private_function_cycles",
+      "description": "Unrooted private cycles are unused; a called cycle and callback returned by a public factory stay live.",
+      "languages": [
+        "rust"
+      ],
+      "symbol_identity": "qualified",
+      "taxonomy": [
+        "rust",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract distilled from native-compiler-verified real repository patterns, with semantic labels frozen before scanner output; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "run_first"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "run_second"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "callback"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "factory"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "alpha"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "beta"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "unused_leaf"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rust-cross-file-cycle-roots",
+      "path": "fixtures/rust_cross_file_cycle_roots",
+      "description": "A child module can call a private parent function and thereby keep its whole cycle live.",
+      "languages": [
+        "rust"
+      ],
+      "symbol_identity": "qualified",
+      "taxonomy": [
+        "rust",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract distilled from native-compiler-verified real repository patterns, with semantic labels frozen before scanner output; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "alpha"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "beta"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "child.rs",
+            "symbol": "child.start"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "unused_leaf"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-reexport-demand-chain",
+      "path": "fixtures/typescript_reexport_demand_chain",
+      "description": "Resolved named and wildcard export forwarding with exact unused and used source controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static source contracts for per-export forwarding; labels fixed from source before analysis. No upstream implementation copied."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "obsolete"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "render"
+          },
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "validate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-reexport-public-and-escape",
+      "path": "fixtures/typescript_reexport_public_and_escape",
+      "description": "Resolved named and wildcard export forwarding with exact unused and used source controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static source contracts for per-export forwarding; labels fixed from source before analysis. No upstream implementation copied."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "retiredPrivate"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "announce"
+          },
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "prepare"
+          },
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "cancel"
+          },
+          {
+            "kind": "function",
+            "file": "dynamic_service.ts",
+            "symbol": "action"
+          },
+          {
+            "kind": "function",
+            "file": "dynamic_service.ts",
+            "symbol": "alternative"
+          }
+        ]
+      }
+    },
+    {
+      "id": "go-local-module-replacement",
+      "path": "fixtures/go_local_module_replacement",
+      "description": "A required module replaced by already scanned local source supplies type identity for private cycles while callbacks and its public API remain used.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static source contract for a declared local Go module replacement. Labels frozen before analyzer output; compiler and Staticcheck U1000 confirm unused cycle/leaf and used callback controls. No upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "alpha"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "beta"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "orphan"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "callback"
+          },
+          {
+            "kind": "function",
+            "file": "local/provider/api.go",
+            "symbol": "Invoke"
+          }
+        ]
+      }
+    },
+    {
+      "id": "go-local-replacement-live-callback-cycle",
+      "path": "fixtures/go_local_replacement_live_callback_cycle",
+      "description": "A callback sent through a declared local module replacement retains the private cycle it calls; an unused sibling is still reported.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static source contract for a declared local Go module replacement. Labels frozen before analyzer output; compiler and Staticcheck U1000 confirm unused cycle/leaf and used callback controls. No upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "orphan"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "callback"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "alpha"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "beta"
+          },
+          {
+            "kind": "function",
+            "file": "local/provider/api.go",
+            "symbol": "Invoke"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rust-local-trait-receiver-identity",
+      "path": "fixtures/rust_local_trait_receiver_identity",
+      "description": "Local trait declarations and concrete receiver types preserve the required alias import while unused imports and private siblings remain reportable.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "scan": {
+        "confidence": 40,
+        "grep_verify": true
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "main.rs",
+            "symbol": "Inactive"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "orphan"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "main.rs",
+            "symbol": "Active"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          },
+          {
+            "kind": "class",
+            "file": "main.rs",
+            "symbol": "Card"
+          }
+        ]
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only contract for local trait imports and concrete receiver identity. Alias0 source from the frozen native program plus a separately frozen private unused sibling; compiler verifies required/unused alias identities. No upstream implementation copied."
+      }
+    },
+    {
+      "id": "typescript-reexport-enumerated-aliases",
+      "path": "fixtures/typescript_reexport_enumerated_aliases",
+      "description": "Literal module namespace key enumeration follows resolved wildcard bindings even when generated package outputs are unavailable; private helpers remain unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract distilled from native source snapshot evidence; no upstream code copied. Key enumeration reads exported compatibility binding identities."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "bindings.ts",
+            "symbol": "privateOld"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "bindings.ts",
+            "symbol": "build"
+          },
+          {
+            "kind": "variable",
+            "file": "bindings.ts",
+            "symbol": "legacy"
+          },
+          {
+            "kind": "variable",
+            "file": "bindings.ts",
+            "symbol": "compatibility"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rust-macro-import-evidence",
+      "path": "fixtures/rust_macro_import_evidence",
+      "description": "Standard writer macro receiver types and feature-matched wrapped attribute names preserve required imports while unused trait and attribute siblings remain reportable.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static contract for io writer macros and wrapped cfg_attr import identity. Static labels cover possible checked-feature source; native feature-on and feature-off checks are separate and do not imply Cargo feature evaluation by the scanner."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "main.rs",
+            "symbol": "SpareRead"
+          },
+          {
+            "kind": "import",
+            "file": "main.rs",
+            "symbol": "SpareAttribute"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "main.rs",
+            "symbol": "Output"
+          },
+          {
+            "kind": "import",
+            "file": "main.rs",
+            "symbol": "Applied"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "value"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-nested-namespace-export",
+      "path": "fixtures/typescript_nested_namespace_export",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "format.ts",
+            "symbol": "expanded"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "format.ts",
+            "symbol": "compact"
+          }
+        ]
+      },
+      "description": "A closed application reads compact through two namespace exports; expanded has no consumer. A native-valid tagged template must not make the source scope incomplete or disable exact export demand.",
+      "importance": "high",
+      "symbol_identity": "simple",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract. Literal namespace forwarding and native-valid TypeScript grammar are verified with independent compiler/source controls."
+      }
+    },
+    {
+      "id": "typescript-namespace-export-public-and-opaque",
+      "path": "fixtures/typescript_namespace_export_public_and_opaque",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "helper"
+          },
+          {
+            "kind": "function",
+            "file": "renderer.ts",
+            "symbol": "inspect"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "dispatch"
+          },
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "cancel"
+          },
+          {
+            "kind": "function",
+            "file": "renderer.ts",
+            "symbol": "render"
+          },
+          {
+            "kind": "function",
+            "file": "renderer.ts",
+            "symbol": "prepare"
+          }
+        ]
+      },
+      "description": "Escaping namespace preserves exported service functions; declared package API preserves renderer functions; private uncalled helpers remain dead in both providers.",
+      "importance": "high",
+      "symbol_identity": "simple",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract. Literal namespace forwarding and native-valid TypeScript grammar are verified with independent compiler/source controls."
+      }
+    },
+    {
+      "id": "go-workspace-private-cycle",
+      "path": "fixtures/go_workspace_private_cycle",
+      "description": "An active contained Go workspace supplies indexed module type identity while used callbacks and public APIs remain roots.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract with frozen liveness labels; actual Go compiler and Staticcheck U1000 independently confirm. Workspace selected with GOWORK unset/empty; no target application executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.alpha",
+            "aliases": [
+              "alpha"
+            ]
+          },
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.beta",
+            "aliases": [
+              "beta"
+            ]
+          },
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.orphan",
+            "aliases": [
+              "orphan"
+            ]
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.main",
+            "aliases": [
+              "main"
+            ]
+          },
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.callback",
+            "aliases": [
+              "callback"
+            ]
+          },
+          {
+            "kind": "function",
+            "file": "provider/bridge/api.go",
+            "symbol": "provider/bridge.Invoke",
+            "aliases": [
+              "bridge.Invoke"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "go-workspace-live-callback",
+      "path": "fixtures/go_workspace_live_callback",
+      "description": "An active contained Go workspace supplies indexed module type identity while used callbacks and public APIs remain roots.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract with frozen liveness labels; actual Go compiler and Staticcheck U1000 independently confirm. Workspace selected with GOWORK unset/empty; no target application executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.orphan",
+            "aliases": [
+              "orphan"
+            ]
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.main",
+            "aliases": [
+              "main"
+            ]
+          },
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.callback",
+            "aliases": [
+              "callback"
+            ]
+          },
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.alpha",
+            "aliases": [
+              "alpha"
+            ]
+          },
+          {
+            "kind": "function",
+            "file": "application/main.go",
+            "symbol": "application.beta",
+            "aliases": [
+              "beta"
+            ]
+          },
+          {
+            "kind": "function",
+            "file": "provider/bridge/api.go",
+            "symbol": "provider/bridge.Box.Invoke",
+            "aliases": [
+              "bridge.Box.Invoke"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "rust-source-module-trait",
+      "path": "fixtures/rust_source_module_trait",
+      "description": "Ordinary local Rust modules supply exact trait receiver evidence while unused sibling imports and private functions remain visible.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "precision_guard",
+        "basic_detection",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source fixture; expected import usage independently confirmed by rustc metadata compilation. This is source-module evidence, not Cargo feature evaluation."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "simple",
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "main.rs",
+            "symbol": "Inactive"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "orphan"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "main.rs",
+            "symbol": "Active"
+          },
+          {
+            "kind": "class",
+            "file": "model.rs",
+            "symbol": "Card"
+          },
+          {
+            "kind": "function",
+            "file": "main.rs",
+            "symbol": "main"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-private-functions",
+      "path": "fixtures/swift_private_functions",
+      "description": "Swift source-defined private reachability: private functions.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "retired"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "format"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-callback",
+      "path": "fixtures/swift_callback",
+      "description": "Swift source-defined private reachability: callback.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "handler"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "register"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-dead-cycle",
+      "path": "fixtures/swift_dead_cycle",
+      "description": "Swift source-defined private reachability: dead cycle.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "first"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "second"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "leaf"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-live-cycle",
+      "path": "fixtures/swift_live_cycle",
+      "description": "Swift source-defined private reachability: live cycle.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "first"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "second"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-parameter-shadow",
+      "path": "fixtures/swift_parameter_shadow",
+      "description": "Swift source-defined private reachability: parameter shadow.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "action"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-local-shadow",
+      "path": "fixtures/swift_local_shadow",
+      "description": "Swift source-defined private reachability: local shadow.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "action"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-initializer-before-binding",
+      "path": "fixtures/swift_initializer_before_binding",
+      "description": "Swift source-defined private reachability: initializer before binding.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "action"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-owner-identity",
+      "path": "fixtures/swift_owner_identity",
+      "description": "Swift source-defined private reachability: owner identity.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "First.render"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "First"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "First.entry"
+          },
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Second"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Second.render"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Second.entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-extension",
+      "path": "fixtures/swift_extension",
+      "description": "Swift source-defined private reachability: extension.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Worker"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.work"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-fileprivate",
+      "path": "fixtures/swift_fileprivate",
+      "description": "Swift source-defined private reachability: fileprivate.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "work"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-function-value",
+      "path": "fixtures/swift_function_value",
+      "description": "Swift source-defined private reachability: function value.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "work"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-keypath",
+      "path": "fixtures/swift_keypath",
+      "description": "Swift source-defined private reachability: keypath.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Worker"
+          },
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Worker.value"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-property-read",
+      "path": "fixtures/swift_property_read",
+      "description": "Swift source-defined private reachability: property read.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Worker.spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Worker"
+          },
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Worker.value"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-string-not-use",
+      "path": "fixtures/swift_string_not_use",
+      "description": "Swift source-defined private reachability: string not use.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "retired"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-comment-not-use",
+      "path": "fixtures/swift_comment_not_use",
+      "description": "Swift source-defined private reachability: comment not use.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "retired"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-overload-labels",
+      "path": "fixtures/swift_overload_labels",
+      "description": "Swift source-defined private reachability: overload labels.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "convert(number:)"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "convert(text:)"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-default-argument",
+      "path": "fixtures/swift_default_argument",
+      "description": "Swift source-defined private reachability: default argument.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "helper"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "run"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-raw-identifiers",
+      "path": "fixtures/swift_raw_identifiers",
+      "description": "Swift source-defined private reachability: raw identifiers.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "repeat"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-protocol-witness",
+      "path": "fixtures/swift_protocol_witness",
+      "description": "Swift source-defined private reachability: protocol witness.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Render"
+          },
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Worker"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.render"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-codable",
+      "path": "fixtures/swift_codable",
+      "description": "Swift source-defined private reachability: codable.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Payload"
+          },
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Payload.secret"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-equatable",
+      "path": "fixtures/swift_equatable",
+      "description": "Swift source-defined private reachability: equatable.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Payload"
+          },
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Payload.value"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-reflection",
+      "path": "fixtures/swift_reflection",
+      "description": "Swift source-defined private reachability: reflection.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Payload"
+          },
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Payload.value"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-objc-selector",
+      "path": "fixtures/swift_objc_selector",
+      "description": "Swift source-defined private reachability: objc selector.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Window"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Window.clicked"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Window.entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-conditional",
+      "path": "fixtures/swift_conditional",
+      "description": "Swift source-defined private reachability: conditional.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "hook"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "debugEntry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-closure-capture",
+      "path": "fixtures/swift_closure_capture",
+      "description": "Swift source-defined private reachability: closure capture.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "work"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-private-type",
+      "path": "fixtures/swift_private_type",
+      "description": "Swift source-defined private reachability: private type.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Retired"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Worker"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.run"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-member-cycle",
+      "path": "fixtures/swift_member_cycle",
+      "description": "Swift source-defined private reachability: member cycle.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.first"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.second"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Worker"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-property-wrapper",
+      "path": "fixtures/swift_property_wrapper",
+      "description": "Swift source-defined private reachability: property wrapper.",
+      "languages": [
+        "swift"
+      ],
+      "taxonomy": [
+        "swift",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract frozen before detector output; Swift 5.9 compiler checks and Periphery 2.21.2 comparisons recorded separately. Public APIs, synthesized/runtime uses and negative controls are explicit."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Box"
+          },
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Box.wrappedValue"
+          },
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Worker"
+          },
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Worker.value"
+          },
+          {
+            "kind": "function",
+            "file": "Probe.swift",
+            "symbol": "Worker.entry"
+          }
+        ]
+      }
     }
   ]
 }

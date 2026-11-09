@@ -112,6 +112,43 @@ def test_fixed_shared_tmp_directory(tmp_path):
     assert len([f for f in findings if f["rule_id"] == "SKY-D348"]) == 1
 
 
+@pytest.mark.parametrize("source_present", [False, True])
+@pytest.mark.parametrize(
+    "code, expected",
+    [
+        ("import os\nos.makedirs('/' + 'tmp/' + 'shared', exist_ok=True)\n", True),
+        (
+            "from pathlib import Path\nPath('/' + 'tmp/' + 'shared').mkdir(exist_ok=True)\n",
+            True,
+        ),
+        ("import os\nos.makedirs('/var/' + 'lib/shared', exist_ok=True)\n", False),
+        (
+            "class OS:\n    def makedirs(self, *args, **kwargs): pass\n"
+            "os=OS()\nos.makedirs('/' + 'tmp/' + 'shared', exist_ok=True)\n",
+            False,
+        ),
+    ],
+)
+def test_shared_tmp_detection_survives_source_prefilter(
+    tmp_path, source_present, code, expected
+):
+    import ast
+    from skylos.rules.danger.danger import scan_file_with_tree
+
+    path = tmp_path / "server.py"
+    path.write_text(code)
+    findings = []
+    scan_file_with_tree(
+        ast.parse(code),
+        path,
+        findings,
+        source=code if source_present else None,
+        project_root=tmp_path,
+    )
+    rows = [row for row in findings if row["rule_id"] == "SKY-D348"]
+    assert len(rows) == int(expected)
+
+
 @pytest.mark.parametrize(
     "code",
     [

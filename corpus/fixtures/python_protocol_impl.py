@@ -8,3 +8,11 @@ class Runner(Protocol):
 class Service:
     def run(self) -> None:
         return None
+
+
+class ExtraService:
+    def stop(self):
+        return None
+
+
+ExtraService()

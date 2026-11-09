@@ -10,7 +10,24 @@ try:
 except ImportError:
     tsdart = None
 
-from skylos.visitors.base import Definition
+from skylos.visitors.base import Definition as BaseDefinition
+
+
+class Definition(BaseDefinition):
+    __slots__ = (
+        "dart_import",
+        "dart_constructor_owner",
+        "dart_constructor_name",
+        "dart_extension_target",
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.dart_import = None
+        self.dart_constructor_owner = None
+        self.dart_constructor_name = None
+        self.dart_extension_target = None
+
 
 try:
     DART_LANG: Language | None = (
@@ -78,8 +95,19 @@ class DartCore:
         self.is_test_file = _is_test_path(file_path)
         self._seen_refs: set[tuple[str, int]] = set()
         self._call_sites: dict[tuple[int, str | None], tuple] = {}
+        self._resolved_calls: dict[int, str] = {}
         self._callable_signatures: dict[str, object] = {}
         self._ambiguous_calls: set[tuple[str | None, str]] = set()
+        self._body_contexts: list[tuple[int, int, str | None, str | None]] = []
+        self._extension_names: set[str] = set()
+        self._variable_receiver_types: dict[tuple[str | None, str], str] = {}
+        self.binding_metadata: dict[str, object] = {
+            "imports": [],
+            "exports": [],
+            "parts": [],
+            "part_of": None,
+            "uses": [],
+        }
 
         if self.lang:
             self.parser = _get_parser(self.lang)
@@ -170,7 +198,11 @@ class DartCore:
         if not self.root_node:
             return
         self._scan_block(self.root_node, current_class=None, current_callable=None)
+        self._collect_variable_receiver_types()
         self._resolve_call_sites()
+        from .references import collect_value_references
+
+        collect_value_references(self)
         self._build_call_graph()
 
     def _scan_block(
@@ -190,7 +222,11 @@ class DartCore:
                 index += 1
                 continue
 
-            if child.type == "class_definition":
+            if child.type in {
+                "class_definition",
+                "mixin_declaration",
+                "extension_declaration",
+            }:
                 self._scan_class(child)
                 index += 1
                 continue
@@ -224,6 +260,7 @@ class DartCore:
 
     def _scan_import_or_export(self, node) -> None:
         text = self._get_text(node).strip()
+        start = len(self.defs)
         uri_node = self._first_descendant_of_type(node, "string_literal")
         source = self._get_text(uri_node).strip("\"'") if uri_node is not None else ""
         names: list[str] = []
@@ -263,9 +300,21 @@ class DartCore:
         self.raw_imports.append(
             {"source": source, "names": names, "line": node.start_point[0] + 1}
         )
+        from .references import directive_metadata
+
+        metadata = directive_metadata(self, node)
+        key = "exports" if text.startswith("export ") else "imports"
+        self.binding_metadata[key].append(metadata)
+        for definition in self.defs[start:]:
+            definition.dart_import = dict(metadata)
 
     def _scan_class(self, node) -> None:
-        name_node = self._name_node(node)
+        is_extension = node.type == "extension_declaration"
+        name_node = (
+            self._child_by_type(node, "identifier")
+            if is_extension
+            else self._name_node(node)
+        )
         class_name = self._node_name_text(name_node)
         if not class_name:
             return
@@ -285,15 +334,26 @@ class DartCore:
                 self._add_ref(base_name, base_node.start_byte, current_callable=None)
 
         d = Definition(
-            class_name, "class", self.file_path, name_node.start_point[0] + 1
+            class_name,
+            "extension" if is_extension else "class",
+            self.file_path,
+            name_node.start_point[0] + 1,
         )
         d.base_classes = bases
+        if is_extension:
+            self._extension_names.add(class_name)
+            d.dart_extension_target = self._node_name_text(
+                self._child_by_type(node, "type_identifier")
+            )
         d.is_exported = not _is_private_name(class_name) and any(
             base in _FLUTTER_BASES for base in bases
         )
         self.defs.append(d)
+        self._body_contexts.append((node.start_byte, node.end_byte, class_name, None))
 
-        body = self._child_by_type(node, "class_body")
+        body = self._child_by_type(node, "class_body") or self._child_by_type(
+            node, "extension_body"
+        )
         if body is None:
             return
 
@@ -303,8 +363,28 @@ class DartCore:
             child = children[index]
 
             if child.type == "declaration":
-                self._scan_class_declaration(child, current_class=class_name)
-                index += 1
+                constructor = self._scan_class_declaration(
+                    child, current_class=class_name
+                )
+                body_node = self._next_body(children, index)
+                if constructor and body_node is not None:
+                    self._body_contexts.append(
+                        (
+                            body_node.start_byte,
+                            body_node.end_byte,
+                            class_name,
+                            constructor,
+                        )
+                    )
+                    self._scan_refs_in_node(body_node, current_callable=constructor)
+                    self._scan_block(
+                        body_node,
+                        current_class=class_name,
+                        current_callable=constructor,
+                    )
+                    index += 2
+                else:
+                    index += 1
                 continue
 
             if child.type == "method_signature":
@@ -323,15 +403,19 @@ class DartCore:
 
             index += 1
 
-    def _scan_class_declaration(self, node, *, current_class: str) -> None:
+    def _scan_class_declaration(self, node, *, current_class: str) -> str | None:
         constructor = self._first_descendant_of_type(node, "constructor_signature")
         if constructor is None:
             constructor = self._first_descendant_of_type(
                 node, "constant_constructor_signature"
             )
         if constructor is not None:
-            name_node = self._name_node(constructor)
-            constructor_name = self._node_name_text(name_node) or current_class
+            identifiers = [
+                child for child in constructor.children if child.type == "identifier"
+            ]
+            constructor_name = (
+                self._node_name_text(identifiers[-1]) if identifiers else current_class
+            )
             qualified = f"{current_class}.{constructor_name}"
             d = Definition(
                 qualified,
@@ -339,8 +423,19 @@ class DartCore:
                 self.file_path,
                 constructor.start_point[0] + 1,
             )
-            d.is_exported = not _is_private_name(constructor_name)
+            d.is_exported = not _is_private_name(
+                current_class
+            ) and not _is_private_name(constructor_name)
+            d.dart_constructor_owner = current_class
+            d.dart_constructor_name = (
+                "" if constructor_name == current_class else constructor_name
+            )
             self.defs.append(d)
+            self._callable_signatures[qualified] = constructor
+            self._body_contexts.append(
+                (node.start_byte, node.end_byte, current_class, qualified)
+            )
+            self._scan_refs_in_node(node, current_callable=qualified)
 
             params = self._first_descendant_of_type(
                 constructor, "formal_parameter_list"
@@ -364,11 +459,20 @@ class DartCore:
                             ident.start_byte,
                             current_callable=qualified,
                         )
-            return
+            return qualified
+
+        if self._first_descendant_of_type(node, "function_signature") is not None:
+            self._scan_method(node, None, current_class=current_class, class_bases=[])
+            return None
 
         field_list = self._first_descendant_of_type(node, "initialized_identifier_list")
         if field_list is not None:
-            for ident in self._descendants_of_type(field_list, "identifier"):
+            for initialized in field_list.named_children:
+                ident = self._child_by_type(initialized, "identifier")
+                if ident is None and initialized.type == "identifier":
+                    ident = initialized
+                if ident is None:
+                    continue
                 field_name = self._node_name_text(ident)
                 if not field_name:
                     continue
@@ -380,6 +484,8 @@ class DartCore:
                 )
                 d.is_exported = not _is_private_name(field_name)
                 self.defs.append(d)
+
+        self._scan_refs_in_node(node, current_callable=None)
 
         static_final = self._first_descendant_of_type(
             node, "static_final_declaration_list"
@@ -401,6 +507,10 @@ class DartCore:
     ) -> None:
         signature = self._first_descendant_of_type(node, "function_signature")
         if signature is None:
+            signature = self._first_descendant_of_type(node, "getter_signature")
+        if signature is None:
+            signature = self._first_descendant_of_type(node, "setter_signature")
+        if signature is None:
             return
         name_node = self._function_signature_name_node(signature)
         method_name = self._node_name_text(name_node)
@@ -413,12 +523,18 @@ class DartCore:
             qualified, "method", self.file_path, name_node.start_point[0] + 1
         )
         implicit = self._is_implicit_method(method_name, class_bases, node)
-        d.is_exported = implicit or not _is_private_name(method_name)
+        d.is_exported = implicit or (
+            current_class not in self._extension_names
+            and not _is_private_name(method_name)
+        )
         if implicit:
             self.test_decorated_lines.add(name_node.start_point[0] + 1)
         self.defs.append(d)
 
         if body is not None:
+            self._body_contexts.append(
+                (body.start_byte, body.end_byte, current_class, qualified)
+            )
             self._scan_refs_in_node(body, current_callable=qualified)
             self._scan_block(
                 body,
@@ -452,6 +568,9 @@ class DartCore:
         self.defs.append(d)
 
         if body is not None:
+            self._body_contexts.append(
+                (body.start_byte, body.end_byte, None, func_name)
+            )
             self._scan_refs_in_node(body, current_callable=func_name)
             self._scan_block(body, current_class=None, current_callable=func_name)
 
@@ -557,6 +676,16 @@ class DartCore:
     def _receiver_class(self, receiver, node, current_callable, classes):
         if receiver is None:
             return None
+        if receiver.type == "selector" and self._get_text(receiver).strip() == "!":
+            siblings = list(receiver.parent.named_children)
+            position = siblings.index(receiver)
+            return (
+                self._receiver_class(
+                    siblings[position - 1], node, current_callable, classes
+                )
+                if position
+                else None
+            )
         text = self._get_text(receiver).strip()
         current_class = (
             current_callable.rsplit(".", 1)[0]
@@ -579,7 +708,84 @@ class DartCore:
         found, owner = self._local_receiver_class(text, node, current_callable, classes)
         if found:
             return owner
+        declared = self._variable_receiver_types.get(
+            (current_class, text)
+        ) or self._variable_receiver_types.get((None, text))
+        if declared in classes:
+            return declared
         return text if text in classes else None
+
+    def _collect_variable_receiver_types(self):
+        from .references import _context
+
+        for node in self._descendants_of_type(
+            self.root_node, "initialized_identifier_list"
+        ):
+            owner, caller = _context(self, node)
+            if caller is not None:
+                continue
+            siblings = list(node.parent.named_children)
+            position = siblings.index(node)
+            declared = None
+            for child in reversed(siblings[:position]):
+                if child.type == "type_identifier":
+                    declared = child
+                    break
+                if child.type not in {"nullable_type", "type_arguments"}:
+                    break
+            if declared is None:
+                continue
+            for binding in node.named_children:
+                ident = self._child_by_type(binding, "identifier")
+                if ident is not None:
+                    self._variable_receiver_types[(owner, self._get_text(ident))] = (
+                        self._get_text(declared)
+                    )
+
+    def _iterable_element_class(self, name, node, current_callable, classes):
+        child, parent = node, node.parent
+        while parent is not None:
+            if parent.type == "block":
+                for sibling in reversed(parent.named_children):
+                    if sibling.start_byte >= child.start_byte:
+                        continue
+                    if sibling.type != "local_variable_declaration":
+                        continue
+                    binding = self._child_by_type(
+                        sibling, "initialized_variable_definition"
+                    )
+                    if binding is None:
+                        continue
+                    ident = self._child_by_type(binding, "identifier")
+                    if self._node_name_text(ident) != name:
+                        continue
+                    container = binding
+                    declared = self._child_by_type(container, "type_identifier")
+                    if (
+                        declared is None
+                        and self._child_by_type(binding, "final_builtin") is not None
+                    ):
+                        container = self._first_descendant_of_type(
+                            binding, "constructor_invocation"
+                        )
+                        if container is not None:
+                            declared = self._child_by_type(container, "type_identifier")
+                    if self._node_name_text(declared) not in {
+                        "List",
+                        "Set",
+                        "Iterable",
+                    }:
+                        return None
+                    arguments = self._child_by_type(container, "type_arguments")
+                    element = (
+                        self._first_descendant_of_type(arguments, "type_identifier")
+                        if arguments is not None
+                        else None
+                    )
+                    value = self._node_name_text(element)
+                    return value if value in classes else None
+            child, parent = parent, parent.parent
+        return None
 
     def _local_receiver_class(self, name, node, current_callable, classes):
         # Search enclosing blocks, so a nearer unknown binding also shadows a
@@ -588,6 +794,29 @@ class DartCore:
         child = node
         parent = node.parent
         while parent is not None:
+            if parent.type == "for_statement":
+                parts = self._child_by_type(parent, "for_loop_parts")
+                identifiers = (
+                    [c for c in parts.named_children if c.type == "identifier"]
+                    if parts is not None
+                    else []
+                )
+                if (
+                    len(identifiers) >= 2
+                    and self._node_name_text(identifiers[0]) == name
+                    and node.start_byte >= parts.end_byte
+                ):
+                    declared = self._node_name_text(
+                        self._child_by_type(parts, "type_identifier")
+                    )
+                    if declared in classes:
+                        return True, declared
+                    return True, self._iterable_element_class(
+                        self._node_name_text(identifiers[-1]),
+                        parent,
+                        current_callable,
+                        classes,
+                    )
             if parent.type == "block":
                 for sibling in reversed(parent.named_children):
                     if sibling.start_byte >= child.start_byte:
@@ -645,15 +874,22 @@ class DartCore:
         return None
 
     def _resolve_call_sites(self) -> None:
+        from .references import _shadowed
+
         definitions = {d.name: d for d in self.defs}
         classes = {d.name: d for d in self.defs if d.type == "class"}
         for called, node, receiver, current_callable in self._call_sites.values():
             name = self._node_name_text(called)
+            if receiver is None and _shadowed(
+                self, name, node, current_callable, classes
+            ):
+                continue
             target = name
             owner = self._receiver_class(receiver, node, current_callable, classes)
             if receiver is None and name in classes:
                 # Constructor calls reference the type, even inside that type.
                 owner = None
+                self._credit_constructor(name, "", current_callable)
             elif receiver is None and current_callable and "." in current_callable:
                 owner = current_callable.rsplit(".", 1)[0]
                 member = self._member_target(owner, name, classes, definitions)
@@ -672,8 +908,16 @@ class DartCore:
                     owner = None
             elif owner is not None:
                 target = self._member_target(owner, name, classes, definitions) or name
+                self._credit_constructor(owner, name, current_callable)
             if receiver is not None and owner is None:
                 self._ambiguous_calls.add((current_callable, name))
+                receiver_name = self._get_text(receiver).strip()
+                if any(
+                    item.get("prefix") == receiver_name
+                    for item in self.binding_metadata["imports"]
+                ):
+                    target = f"{receiver_name}.{name}"
+            self._resolved_calls[called.start_byte] = target
             if (
                 owner
                 and receiver is not None
@@ -711,6 +955,15 @@ class DartCore:
                         if base in classes and base not in seen:
                             seen.add(base)
                             pending.extend(classes[base].base_classes)
+
+    def _credit_constructor(self, owner, name, caller):
+        for definition in self.defs:
+            if (
+                getattr(definition, "dart_constructor_owner", None) == owner
+                and getattr(definition, "dart_constructor_name", None) == name
+                and definition.name != caller
+            ):
+                definition.references += 1
 
     def _selector_is_call(self, node) -> bool:
         if node is None or node.type != "selector":

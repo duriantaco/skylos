@@ -20,7 +20,10 @@ def assessment_rows(assessment, *, gate=None) -> list[tuple[str, str]]:
     risk_count = risk.get("finding_count", 0)
     if risk_status in {"critical", "high", "medium", "low"}:
         noun = "finding" if risk_count == 1 else "findings"
-        risk_text = f"{risk_status.upper()} · {risk_count} unresolved {noun}"
+        risk_text = (
+            f"{risk_status.upper()} · {risk_count} risk {noun} "
+            "(all issues except dead code and advice)"
+        )
         unknown = _mapping(risk.get("severity_counts")).get("UNKNOWN", 0)
         if unknown:
             risk_text += f" · {unknown} with unknown severity"
@@ -40,8 +43,8 @@ def assessment_rows(assessment, *, gate=None) -> list[tuple[str, str]]:
         finding_noun = "finding" if advice_count == 1 else "findings"
         file_noun = "file" if affected_files == 1 else "files"
         maintenance_text = (
-            f"{advice_count} total advice {finding_noun} · "
-            f"{rule_count} {rule_noun} · "
+            f"{advice_count} advice {finding_noun} · "
+            f"{rule_count} {rule_noun} checked · "
             f"{affected_files} affected {file_noun}"
         )
     else:
@@ -157,14 +160,82 @@ def assessment_coverage_text(assessment) -> str:
     if missing:
         parts.append("not assessed: " + ", ".join(map(str, missing)))
     if incomplete:
-        parts.append("incomplete: " + ", ".join(map(str, incomplete)))
+        parts.append("not fully checked: " + ", ".join(map(str, incomplete)))
     if status != "complete":
-        parts.append("absence of findings does not establish a clean repository")
+        parts.append("some issues may not be reported")
     return "; ".join(parts)
 
 
 def _count(value):
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
+_ISSUE_CATEGORIES = (
+    ("security", "security"),
+    ("secrets", "secrets"),
+    ("dependencies", "dependencies"),
+    ("ai_defects", "AI defects"),
+    ("reliability", "reliability"),
+    ("quality", "quality"),
+    ("custom_rules", "custom rules"),
+    ("dead_code", "dead code"),
+)
+
+
+def listed_issue_counts(result) -> dict[str, int]:
+    """Listed findings by category: the records Skylos Cloud and the gate count."""
+    from skylos.reporting.finding_types import iter_result_findings
+    from skylos.reporting.listing import is_listed
+
+    counts = {}
+    for category, finding in iter_result_findings(result):
+        if is_listed(finding, category):
+            counts[category] = counts.get(category, 0) + 1
+    return counts
+
+
+def _plural(count, singular, plural):
+    if count == 1:
+        return singular
+    return plural
+
+
+def hidden_advice_text(result) -> str:
+    visibility = _mapping(_mapping(result).get("advice_visibility"))
+    hidden = _count(visibility.get("omitted_checks"))
+    if not hidden:
+        return ""
+    finding = _plural(hidden, "finding", "findings")
+    verb = _plural(hidden, "is", "are")
+    them = _plural(hidden, "it", "them")
+    return (
+        f"{hidden} more advice {finding} {verb} hidden by default; "
+        f"--all-advice lists and counts {them}."
+    )
+
+
+def closing_summary(result, *, uncertainty_count=0) -> str:
+    """One headline count of listed issues; hidden advice is never added to it."""
+    counts = listed_issue_counts(result)
+    total = sum(counts.values())
+    parts = [
+        f"{label} {counts[key]}" for key, label in _ISSUE_CATEGORIES if counts.get(key)
+    ]
+    other = total - sum(counts.get(key, 0) for key, _label in _ISSUE_CATEGORIES)
+    if other:
+        parts.append(f"other {other}")
+    text = f"Found {total} {_plural(total, 'issue', 'issues')}"
+    if parts:
+        text = f"{text}: {', '.join(parts)}"
+    text = f"{text}."
+    uncertain = _count(uncertainty_count)
+    if not total and uncertain:
+        symbol = _plural(uncertain, "symbol", "symbols")
+        text = f"{text} Usage remains uncertain for {uncertain} {symbol}."
+    hidden = hidden_advice_text(result)
+    if hidden:
+        text = f"{text} {hidden}"
+    return text
 
 
 def dependency_coverage_lines(analysis_summary) -> list[str]:
@@ -263,7 +334,10 @@ def _non_registry_examples(entries) -> list[str]:
         if not isinstance(name, str):
             continue
         name = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", name).strip()
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", name):
+        if not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}(?:/[A-Za-z0-9][A-Za-z0-9._-]{0,79})?",
+            name,
+        ):
             continue
         source_type = entry.get("source_type")
         kind = (

@@ -149,11 +149,65 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
     ],
     "SKY-Q406": [{"id": "CWE-252", "name": "Unchecked Return Value"}],
     "SKY-Q407": [{"id": "CWE-252", "name": "Unchecked Return Value"}],
+    "SKY-D349": [
+        {"id": "CWE-1336", "name": "Improper Neutralization of Special Elements Used in a Template Engine"},
+        {"id": "CWE-94", "name": "Improper Control of Generation of Code ('Code Injection')"},
+    ],
     "SKY-U005": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     # Unreachable
     "SKY-UC001": [{"id": "CWE-561", "name": "Dead Code"}],
     "SKY-UC002": [{"id": "CWE-561", "name": "Dead Code"}],
 }
+
+CWE_NAMES: dict[str, str] = {
+    "CWE-15": "External Control of System or Configuration Setting",
+    "CWE-22": "Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')",
+    "CWE-59": "Improper Link Resolution Before File Access ('Link Following')",
+    "CWE-78": "Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')",
+    "CWE-79": "Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')",
+    "CWE-89": "Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')",
+    "CWE-94": "Improper Control of Generation of Code ('Code Injection')",
+    "CWE-95": "Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')",
+    "CWE-200": "Exposure of Sensitive Information to an Unauthorized Actor",
+    "CWE-208": "Observable Timing Discrepancy",
+    "CWE-250": "Execution with Unnecessary Privileges",
+    "CWE-295": "Improper Certificate Validation",
+    "CWE-306": "Missing Authentication for Critical Function",
+    "CWE-328": "Use of Weak Hash",
+    "CWE-330": "Use of Insufficiently Random Values",
+    "CWE-347": "Improper Verification of Cryptographic Signature",
+    "CWE-359": "Exposure of Private Personal Information to an Unauthorized Actor",
+    "CWE-377": "Insecure Temporary File",
+    "CWE-489": "Active Debug Code",
+    "CWE-494": "Download of Code Without Integrity Check",
+    "CWE-502": "Deserialization of Untrusted Data",
+    "CWE-532": "Insertion of Sensitive Information into Log File",
+    "CWE-601": "URL Redirection to Untrusted Site ('Open Redirect')",
+    "CWE-614": "Sensitive Cookie in HTTPS Session Without 'Secure' Attribute",
+    "CWE-770": "Allocation of Resources Without Limits or Throttling",
+    "CWE-798": "Use of Hard-coded Credentials",
+    "CWE-829": "Inclusion of Functionality from Untrusted Control Sphere",
+    "CWE-862": "Missing Authorization",
+    "CWE-915": "Improperly Controlled Modification of Dynamically-Determined Object Attributes",
+    "CWE-918": "Server-Side Request Forgery (SSRF)",
+    "CWE-942": "Permissive Cross-domain Policy with Untrusted Domains",
+    "CWE-1327": "Binding to an Unrestricted IP Address",
+    "CWE-1336": "Improper Neutralization of Special Elements Used in a Template Engine",
+    "CWE-1426": "Improper Validation of Generative AI Output",
+    "CWE-1427": "Improper Neutralization of Input Used for LLM Prompting",
+}
+
+
+def security_cwe_entries(rule_id: str) -> list[dict[str, str]]:
+    """``[{"id": "CWE-89", "name": ...}]`` for a security rule in the
+    catalog."""
+    from skylos.rules.catalog import get_rule_cwes
+
+    return [
+        {"id": cwe_id, "name": CWE_NAMES.get(cwe_id, cwe_id)}
+        for cwe_id in get_rule_cwes(rule_id)
+    ]
+
 
 STANDARD_REFS: dict[str, list[str]] = {
     "SKY-Q301": ["ISO/IEC 5055:2021 §6.3.4", "McCabe Cyclomatic Complexity"],
@@ -210,15 +264,16 @@ def get_cwe_taxa() -> list[dict]:
     """Return unique CWE entries formatted for SARIF taxonomies."""
     seen: set[str] = set()
     taxa: list[dict] = []
-    for entries in CWE_MAP.values():
-        for entry in entries:
-            if entry["id"] not in seen:
-                seen.add(entry["id"])
-                taxa.append(
-                    {
-                        "id": entry["id"],
-                        "name": entry["name"],
-                        "shortDescription": {"text": entry["name"]},
-                    }
-                )
+    entries = [entry for listed in CWE_MAP.values() for entry in listed]
+    entries.extend({"id": cwe_id, "name": name} for cwe_id, name in CWE_NAMES.items())
+    for entry in entries:
+        if entry["id"] not in seen:
+            seen.add(entry["id"])
+            taxa.append(
+                {
+                    "id": entry["id"],
+                    "name": entry["name"],
+                    "shortDescription": {"text": entry["name"]},
+                }
+            )
     return taxa

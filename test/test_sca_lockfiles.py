@@ -232,12 +232,10 @@ def test_private_lock_source_prevents_manifest_public_registry_guess(
         (tmp_path / "requirements.txt").write_text("example==1.2.3\n", encoding="utf-8")
     result = sca.scan_dependencies(tmp_path)
     assert osv.queries == []
-    assert result.receipt["status"] == (
-        "incomplete" if ecosystem == "npm" else "complete_with_non_registry_sources"
-    )
+    assert result.receipt["status"] == "complete_with_non_registry_sources"
     assert result.receipt["manifest_source_conflict_count"] == 1
-    assert result.receipt["unresolved_lockfile_dependency_count"] == (1 if ecosystem == "npm" else 0)
-    assert result.receipt["non_registry_lockfile_dependency_count"] == (0 if ecosystem == "npm" else 1)
+    assert result.receipt["unresolved_lockfile_dependency_count"] == 0
+    assert result.receipt["non_registry_lockfile_dependency_count"] == 1
     assert "private.invalid" not in json.dumps(result.receipt)
 
 
@@ -293,7 +291,7 @@ def test_lockfile_inventory_bound_prevents_network_queries(
     tmp_path, osv, monkeypatch, filename, writer
 ):
     writer(tmp_path / filename)
-    monkeypatch.setattr(sca, "MAX_UNIQUE_DEPENDENCIES", 1)
+    monkeypatch.setattr(sca, "MAX_UNIQUE_DEPENDENCIES", 0)
     result = sca.scan_dependencies(tmp_path)
     assert result.receipt["status"] == "incomplete"
     assert result.receipt["limit_reasons"] == ["dependency_limit_exceeded"]

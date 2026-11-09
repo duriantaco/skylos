@@ -9,6 +9,7 @@ from pathlib import Path
 
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.reporting.sbom import cyclonedx_bom
+from skylos.reporting.spdx import ROOT_ID as SPDX_ROOT_ID
 from skylos.reporting.spdx import spdx_document
 from skylos.rules.sca.licenses import collect_licenses
 from skylos.rules.sca.vulnerability_scanner import collect_dependencies
@@ -21,6 +22,12 @@ def run_sbom_command(argv: list[str]) -> int:
             "Export supported dependencies as CycloneDX or SPDX 2.3 JSON, "
             "offline by default. Declared licenses come from lockfiles and "
             "installed package metadata; unknown licenses are NOASSERTION."
+        ),
+        epilog=(
+            "Exit codes: 0 the SBOM was written, also when the inventory is "
+            "incomplete (an 'SBOM incomplete' warning goes to stderr); 2 a bad "
+            "path, a refused or unwritable output file, or an incomplete "
+            "inventory with --strict."
         ),
     )
     parser.add_argument("path", nargs="?", default=".", help="Project directory")
@@ -78,6 +85,19 @@ def run_sbom_command(argv: list[str]) -> int:
             "yarn.lock",
             "pipfile.lock",
             "npm-shrinkwrap.json",
+            "bun.lock",
+            "cargo.lock",
+            "cargo.toml",
+            "composer.lock",
+            "composer.json",
+            "gemfile.lock",
+            "pubspec.lock",
+            "pubspec.yaml",
+            "gradle.lockfile",
+            "packages.lock.json",
+            "pom.xml",
+            "setup.py",
+            "setup.cfg",
         }
         or Path(args.output).suffix.casefold() == ".csproj"
     ):
@@ -98,6 +118,28 @@ def run_sbom_command(argv: list[str]) -> int:
     elif not write_text_no_symlink(args.output, text):
         print("SBOM error: could not safely write output file.", file=sys.stderr)
         return 2
+    else:
+        extra = ""
+        if args.format == "spdx-json":
+            label = "SPDX 2.3"
+            count = len(
+                [
+                    package
+                    for package in document.get("packages", [])
+                    if package.get("SPDXID") != SPDX_ROOT_ID
+                ]
+            )
+            extra = " (plus the project package)"
+        else:
+            label = "CycloneDX 1.6"
+            count = len(document.get("components", []))
+        noun = "package"
+        if count != 1:
+            noun = "packages"
+        print(
+            f"Wrote {label} SBOM with {count} {noun}{extra} to {args.output}",
+            file=sys.stderr,
+        )
 
     if not document.receipt["complete"]:
         where = (

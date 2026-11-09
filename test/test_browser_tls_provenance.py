@@ -61,8 +61,10 @@ async def fetch(firefox):
         "p.chromium.launch = replacement",
     ],
 )
-def test_replaced_browser_providers_are_not_asserted_native(tmp_path, change):
-    assert not _scan(
+def test_replaced_or_uncertain_browser_still_reviews_disabled_verification(
+    tmp_path, change
+):
+    assert _scan(
         tmp_path,
         f"""
 from playwright.async_api import async_playwright
@@ -81,6 +83,78 @@ def test_unrelated_new_context_keyword_does_not_claim_browser_tls(tmp_path):
         """
 class Local:
     def new_context(self, **kwargs): return kwargs
+Local().new_context(ignore_https_errors=True)
+""",
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "Local.new_context = replacement",
+        "alias = Local\nalias.new_context = replacement",
+        "forward(Local)",
+    ],
+)
+def test_replaced_or_escaped_local_method_does_not_prove_inert(tmp_path, change):
+    assert _scan(
+        tmp_path,
+        f"""
+class Local:
+    def new_context(self, **kwargs): return kwargs
+{change}
+Local().new_context(ignore_https_errors=True)
+""",
+    )
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "def new_context(self, **kwargs): return callback(**kwargs)",
+        "def __init__(self): callback()\n    def new_context(self, **kwargs): return kwargs",
+        "def __getattribute__(self, name): return callback\n    def new_context(self, **kwargs): return kwargs",
+    ],
+)
+def test_effectful_or_protocol_local_object_does_not_prove_inert(tmp_path, method):
+    assert _scan(
+        tmp_path,
+        f"""
+class Local:
+    {method}
+Local().new_context(ignore_https_errors=True)
+""",
+    )
+
+
+def test_used_local_method_return_does_not_prove_inert(tmp_path):
+    assert _scan(
+        tmp_path,
+        """
+class Local:
+    def new_context(self, **kwargs): return kwargs
+def build():
+    return Local().new_context(ignore_https_errors=True)
+""",
+    )
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        "browser.Local.new_context = replacement",
+        "browser.Local.__new__ = replacement",
+        "vars(browser.Local)['new_context'] = replacement",
+    ],
+)
+def test_imported_project_mutation_refutes_local_method_proof(tmp_path, patch):
+    (tmp_path / "mutator.py").write_text(f"import browser\n{patch}\n")
+    assert _scan(
+        tmp_path,
+        """
+class Local:
+    def new_context(self, **kwargs): return kwargs
+import mutator
 Local().new_context(ignore_https_errors=True)
 """,
     )

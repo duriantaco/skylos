@@ -10,6 +10,7 @@ import subprocess
 from collections.abc import Sequence
 from typing import Any
 from urllib.parse import urlparse
+from skylos.ui.paths import shown_path
 from skylos.cloud.plan_names import (
     PAID_PLAN_NAME,
     PRICING_URL,
@@ -38,6 +39,11 @@ except ImportError as e:
 SKYLOS_DIR = ".skylos"
 CONFIG_FILE = "config.yaml"
 SUPPRESSIONS_FILE = "suppressions.json"
+NO_REMOTE_MESSAGE = (
+    "skylos sync pull needs a git repository with a remote, because reviewed "
+    "findings are tied to the repository's remote URL. Add one with: "
+    "git remote add origin <url>"
+)
 DEFAULT_API_URL = "https://skylos.dev"
 WHOAMI_ENDPOINT = "/api/sync/whoami"
 UNKNOWN_LABEL = "Unknown"
@@ -391,6 +397,15 @@ def save_token(
     data["token"] = token
     data["saved_at"] = now
     data["plan"] = (plan or data.get("plan") or "free").lower()
+    for key, value in (
+        ("project_id", project_id),
+        ("project_name", project_name),
+        ("org_name", org_name),
+    ):
+        if value:
+            data[key] = str(value)
+        else:
+            data.pop(key, None)
 
     if project_id:
         tokens = data.get("tokens") or {}
@@ -471,13 +486,19 @@ def _auth_headers(token: str | None) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def api_get(endpoint: str, token: str | None) -> dict[str, Any]:
+def api_get(
+    endpoint: str,
+    token: str | None,
+    *,
+    extra_headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
     url = _safe_sync_url(endpoint)
+    headers = {**(extra_headers or {}), **_auth_headers(token)}
 
     try:
         resp = requests.get(
             url,
-            headers=_auth_headers(token),
+            headers=headers,
             timeout=30,
         )
     except requests.exceptions.ConnectionError:
@@ -488,8 +509,11 @@ def api_get(endpoint: str, token: str | None) -> dict[str, Any]:
     if resp.status_code == 401:
         reason = _cloud_reason(resp)
         if token and str(token).startswith(("oidc:", "gitlab_oidc:")):
-            raise AuthError(reason or "Skylos Cloud rejected this CI identity token")
-        raise AuthError(reason or "Invalid API token")
+            raise AuthError(
+                reason
+                or "Skylos Cloud rejected this GitHub Actions or GitLab CI identity"
+            )
+        raise AuthError(reason or "Invalid Skylos token")
 
     if resp.status_code >= 400:
         raise AuthError(
@@ -563,11 +587,11 @@ def cmd_connect(token_arg: str | None = None) -> None:
         token = token_arg or env_token
 
     if not token:
-        print("API token required. To get one:")
+        print("Project token required. To get one:")
         print("  1. Get one at: https://skylos.dev/settings/api-keys")
-        print("  2. Create a project and copy the API key")
+        print("  2. Create a project and copy its project token")
         print()
-        print("Enter your API token:")
+        print("Enter your project token:")
         try:
             token = input("> ").strip()
         except (KeyboardInterrupt, EOFError):
@@ -608,12 +632,12 @@ def cmd_connect(token_arg: str | None = None) -> None:
         print(f"\n✗ {e}")
         sys.exit(1)
 
-    print(f"\nLinked repo: {repo_root}")
-    print(f"Link file:   {link_path}")
-    print(f"\nToken saved to {creds_path}")
+    print(f"\nLinked repo: {shown_path(repo_root)}")
+    print(f"Link file:   {shown_path(link_path)}")
+    print(f"\nToken saved to {shown_path(creds_path)}")
     print("\nYou can now run:")
-    print("  skylos .           # Scan locally")
-    print("  skylos . --upload  # Scan and upload")
+    print("  skylos .      # Scan locally; findings stay on your machine")
+    print("  skylos cloud  # Scan with every check and upload to Skylos Cloud")
 
 
 def cmd_status() -> None:
@@ -686,7 +710,7 @@ def cmd_project_status() -> None:
             active = None
 
     print("\nSkylos Project Status\n")
-    print(f"  Repo:         {repo_root}")
+    print(f"  Repo:         {shown_path(repo_root)}")
 
     if linked_project_id:
         print(f"  Linked ID:    {linked_project_id}")
@@ -711,12 +735,12 @@ def cmd_project_status() -> None:
         org = active.get("organization", {})
         print(f"  Active Name:  {project.get('name', UNKNOWN_LABEL)}")
         print(f"  Active Org:   {org.get('name', 'My Workspace')}")
-        print(f"  Plan:         {active.get('plan', 'free').capitalize()}")
+        print(f"  Plan:         {plan_display_name(active.get('plan'))}")
     else:
         print("  Active Name:  not connected")
 
     if not linked_project_id:
-        print("\nUse 'skylos project use' to select or create a project for this repo.")
+        print("\nRun 'skylos login' to select or create a project for this repo.")
 
 
 def cmd_project_list() -> None:
@@ -726,7 +750,7 @@ def cmd_project_list() -> None:
 
     if not items:
         print("\nNo saved Skylos projects found.")
-        print("Run 'skylos login' or 'skylos project use' first.\n")
+        print("Run 'skylos login' first.\n")
         return
 
     print("\nKnown Skylos Projects\n")
@@ -735,12 +759,12 @@ def cmd_project_list() -> None:
         if item["project_id"] == linked_project_id:
             marker = "*"
         print(f"{marker} {item['project_name']}  [{item['project_id']}]")
-        print(f"    Org: {item['org_name']}   Plan: {str(item['plan']).capitalize()}")
+        print(f"    Org: {item['org_name']}   Plan: {plan_display_name(item['plan'])}")
 
     if linked_project_id:
         print("\n* active for this repo")
     else:
-        print("\nNo active repo link. Use 'skylos project use' to select one.")
+        print("\nNo active repo link. Run 'skylos login' to select one.")
 
 
 def cmd_project_use() -> None:
@@ -774,10 +798,22 @@ def cmd_project_unlink() -> None:
         print("No repo link found.")
 
 
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(Path.cwd()))
+    except ValueError:
+        return str(path)
+
+
 def cmd_pull(*, dry_run: bool = False, output_format: str = "text") -> None:
-    from skylos.cloud.sync_state import activate_sync_files, validate_sync_paths
+    from skylos.cloud.sync_state import (
+        SYNC_RECORD_DIR,
+        activate_sync_files,
+        validate_sync_paths,
+    )
     from skylos.core.review_decisions import (
         invalidate_trusted_bundle,
+        repository_scope,
         write_trusted_bundle,
     )
 
@@ -797,6 +833,8 @@ def cmd_pull(*, dry_run: bool = False, output_format: str = "text") -> None:
         repo_root = _find_repo_root()
         sync_subpath = _current_repo_subpath(repo_root)
         sync_project_root = repo_root / sync_subpath if sync_subpath else repo_root
+        if repository_scope(sync_project_root) is None:
+            raise AuthError(NO_REMOTE_MESSAGE)
         if not dry_run:
             trust_invalidated = invalidate_trusted_bundle(
                 sync_project_root, cache_root=cache_root
@@ -847,7 +885,9 @@ def cmd_pull(*, dry_run: bool = False, output_format: str = "text") -> None:
             filename: {"path": str(skylos_dir / filename)} for filename in files
         }
         if not dry_run:
-            with activate_sync_files(repo_root, files):
+            with activate_sync_files(
+                repo_root, files, record_root=GLOBAL_CREDS_DIR / SYNC_RECORD_DIR
+            ):
                 trusted_path = write_trusted_bundle(
                     sync_project_root,
                     supp_data,
@@ -871,7 +911,7 @@ def cmd_pull(*, dry_run: bool = False, output_format: str = "text") -> None:
             ))
         else:
             for filename in files:
-                progress(f"  {'Would write' if dry_run else '✓'} {skylos_dir / filename}")
+                progress(f"  {'Would write' if dry_run else '✓'} {_display_path(skylos_dir / filename)}")
             progress(
                 "\n✓ Dry run complete; no files or trust state changed."
                 if dry_run else "\n✓ Sync complete!"
@@ -934,23 +974,27 @@ def _validate_sync_suppressions(supp_data) -> None:
 
 
 def _write_sync_config(skylos_dir: Path, config_data):
-    from skylos.cloud.sync_state import activate_sync_files
+    from skylos.cloud.sync_state import SYNC_RECORD_DIR, activate_sync_files
 
     config_payload = _sync_config_payload(config_data)
     config_path = skylos_dir / CONFIG_FILE
     files = {CONFIG_FILE: yaml.safe_dump(config_payload, default_flow_style=False)}
-    with activate_sync_files(skylos_dir.parent, files):
+    with activate_sync_files(
+        skylos_dir.parent, files, record_root=GLOBAL_CREDS_DIR / SYNC_RECORD_DIR
+    ):
         pass
     print(f"  ✓ {config_path}")
 
 
 def _write_sync_suppressions(skylos_dir: Path, supp_data):
-    from skylos.cloud.sync_state import activate_sync_files
+    from skylos.cloud.sync_state import SYNC_RECORD_DIR, activate_sync_files
 
     _validate_sync_suppressions(supp_data)
     supp_path = skylos_dir / SUPPRESSIONS_FILE
     files = {SUPPRESSIONS_FILE: json.dumps(supp_data, indent=2, allow_nan=False) + "\n"}
-    with activate_sync_files(skylos_dir.parent, files):
+    with activate_sync_files(
+        skylos_dir.parent, files, record_root=GLOBAL_CREDS_DIR / SYNC_RECORD_DIR
+    ):
         pass
     print(f"  ✓ {supp_path} ({supp_data.get('count', 0)} suppressions)")
 
@@ -1074,7 +1118,12 @@ def cmd_upgrade() -> None:
     if plan not in PRO_PLANS:
         print(f"\nCurrent plan: {plan_display_name(plan)}")
         print(
-            f"This needs the {PAID_PLAN_NAME} plan. Buying any credit pack turns it on."
+            f"This needs the {PAID_PLAN_NAME} plan. Any credit pack turns it on "
+            "for 12 months for up to 3 people. Larger teams need the "
+            f"{PAID_PLAN_NAME} pass."
+        )
+        print(
+            "The PR check and merge gate are free on every plan: run skylos cicd init."
         )
         print(f"See: {PRICING_URL}\n")
         return
@@ -1104,20 +1153,27 @@ def cmd_upgrade() -> None:
     print("✅ Upgrade complete!")
 
 
+HELP_FLAGS = frozenset({"-h", "--help"})
+
+
+def _print_sync_usage() -> None:
+    print("Usage: skylos sync <command>")
+    print("")
+    print("Commands:")
+    print("  connect [token]  Connect to Skylos Cloud")
+    print("  status           Show connection status")
+    print("  disconnect       Remove saved credentials")
+    print("  pull             Pull config and suppressions (skylos sync pull --help)")
+    print("  setup [token]    One-command setup")
+    print(f"  upgrade          Add {PAID_PLAN_NAME} plan features after upgrading")
+
+
 def main(args: Sequence[str] | None = None) -> None:
     if args is None:
         args = sys.argv[1:]
 
-    if not args:
-        print("Usage: skylos sync <command>")
-        print("")
-        print("Commands:")
-        print("  connect [token]  Connect to Skylos Cloud")
-        print("  status           Show connection status")
-        print("  disconnect       Remove saved credentials")
-        print("  pull             Pull config and suppressions")
-        print("  setup [token]    One-command setup")
-        print(f"  upgrade          Add {PAID_PLAN_NAME} plan features after upgrading")
+    if not args or args[0] in HELP_FLAGS:
+        _print_sync_usage()
         return
 
     cmd = args[0].lower()
@@ -1135,6 +1191,9 @@ def main(args: Sequence[str] | None = None) -> None:
         options = parser.parse_args(list(args[1:]))
         cmd_pull(dry_run=options.dry_run, output_format=options.format)
         return
+    if HELP_FLAGS.intersection(args[1:]):
+        _print_sync_usage()
+        return
     handlers = {
         "connect": lambda: cmd_connect(_optional_arg(args, 1)),
         "status": cmd_status,
@@ -1149,19 +1208,23 @@ def main(args: Sequence[str] | None = None) -> None:
     handler()
 
 
+def _print_project_usage() -> None:
+    print("Usage: skylos project <command>")
+    print("")
+    print("Commands:")
+    print("  status    Show the active project for this repo")
+    print("  list      Show locally known projects")
+    print("  use       Select or create a project for this repo")
+    print("  create    Open the browser flow and create a new project")
+    print("  unlink    Remove the local repo-to-project link")
+
+
 def project_main(args: Sequence[str] | None = None) -> None:
     if args is None:
         args = sys.argv[1:]
 
-    if not args:
-        print("Usage: skylos project <command>")
-        print("")
-        print("Commands:")
-        print("  status    Show the active project for this repo")
-        print("  list      Show locally known projects")
-        print("  use       Select or create a project for this repo")
-        print("  create    Open the browser flow and create a new project")
-        print("  unlink    Remove the local repo-to-project link")
+    if not args or HELP_FLAGS.intersection(args):
+        _print_project_usage()
         return
 
     cmd = args[0].lower()

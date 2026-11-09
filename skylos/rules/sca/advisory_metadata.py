@@ -13,6 +13,21 @@ import re
 
 _SEVERITY_ORDER = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
 _CVSS_TYPES = {"CVSS_V2", "CVSS_V3", "CVSS_V4"}
+_CASE_INSENSITIVE_ECOSYSTEMS = frozenset({"NuGet", "Packagist"})
+_SEMVER_RELEASE = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+_RELEASE_PATTERNS = {
+    "PyPI": r"[0-9]+(?:\.[0-9]+)*",
+    "NuGet": r"(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){0,3}",
+    "npm": _SEMVER_RELEASE,
+    "Go": _SEMVER_RELEASE,
+    "crates.io": _SEMVER_RELEASE,
+    "Pub": _SEMVER_RELEASE,
+    "Maven": r"[0-9]+(?:\.[0-9]+){0,3}",
+    "RubyGems": r"[0-9]+(?:\.[0-9]+){0,4}",
+    "Packagist": r"[0-9]+(?:\.[0-9]+){0,3}",
+}
+_TRAILING_ZERO_ECOSYSTEMS = frozenset({"PyPI", "Maven", "RubyGems", "Packagist"})
+_RANGE_TYPES = {"npm": "SEMVER", "Go": "SEMVER", "crates.io": "SEMVER"}
 
 
 def _objects(value):
@@ -38,7 +53,7 @@ def _matching_affected(vuln: dict, dep: dict) -> list[dict]:
         return []
     if ecosystem == "PyPI":
         name = re.sub(r"[-_.]+", "-", name).lower()
-    elif ecosystem == "NuGet":
+    elif ecosystem in _CASE_INSENSITIVE_ECOSYSTEMS:
         name = name.casefold()
     matching = []
     for affected in _objects(vuln.get("affected")):
@@ -48,7 +63,7 @@ def _matching_affected(vuln: dict, dep: dict) -> list[dict]:
         candidate = package.get("name")
         if ecosystem == "PyPI" and isinstance(candidate, str):
             candidate = re.sub(r"[-_.]+", "-", candidate).lower()
-        elif ecosystem == "NuGet" and isinstance(candidate, str):
+        elif ecosystem in _CASE_INSENSITIVE_ECOSYSTEMS and isinstance(candidate, str):
             candidate = candidate.casefold()
         if candidate == name:
             matching.append(affected)
@@ -142,20 +157,12 @@ def _release_version(value, ecosystem: str) -> tuple[int, ...] | None:
         return None
     if ecosystem == "Go" and value.startswith("v"):
         value = value[1:]
-    pattern = (
-        r"[0-9]+(?:\.[0-9]+)*"
-        if ecosystem == "PyPI"
-        else r"(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){0,3}"
-        if ecosystem == "NuGet"
-        else r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
-    )
-    if ecosystem not in {"PyPI", "npm", "Go", "NuGet"} or not re.fullmatch(
-        pattern, value
-    ):
+    pattern = _RELEASE_PATTERNS.get(ecosystem)
+    if pattern is None or not re.fullmatch(pattern, value):
         return None
     parts = tuple(int(part) for part in value.split("."))
     # PEP 440 pads stable release segments with zero during comparison.
-    if ecosystem == "PyPI":
+    if ecosystem in _TRAILING_ZERO_ECOSYSTEMS:
         while len(parts) > 1 and parts[-1] == 0:
             parts = parts[:-1]
     elif ecosystem == "NuGet":
@@ -190,7 +197,7 @@ def _fix_metadata(matching: list[dict], dep: dict) -> dict:
     fixes, display, intervals, explicit_versions = [], [], [], []
     understood = bool(matching)
     ecosystem = dep.get("ecosystem", "")
-    expected_type = "ECOSYSTEM" if ecosystem in {"PyPI", "NuGet"} else "SEMVER"
+    expected_type = _RANGE_TYPES.get(ecosystem, "ECOSYSTEM")
     for affected in matching:
         versions = affected.get("versions", [])
         if not isinstance(versions, list) or any(
@@ -275,9 +282,81 @@ def _fix_metadata(matching: list[dict], dep: dict) -> dict:
     }
 
 
+def _informational(matching: list[dict]) -> str | None:
+    """RustSec's ``informational`` kind when every matching entry has one."""
+    kinds = set()
+    for affected in matching:
+        database = affected.get("database_specific")
+        kind = None
+        if isinstance(database, dict):
+            kind = database.get("informational")
+        if not isinstance(kind, str) or not kind:
+            return None
+        kinds.add(kind)
+    if len(kinds) == 1:
+        return kinds.pop()
+    return None
+
+
+MALICIOUS_CWE = "CWE-506"
+MALICIOUS_ID_PREFIX = "MAL-"
+MALICIOUS_ORIGINS_KEY = "malicious-packages-origins"
+
+
+def malicious_package_message(name: str, version: str, advisory_id: str) -> str:
+    return (
+        f"{name}@{version} is a known malicious package ({advisory_id}). "
+        "Remove it, reinstall from a clean lockfile, and rotate every credential "
+        "an install could read (CI secrets, registry and cloud tokens, SSH keys)."
+    )
+
+
+def _cwe_ids(database) -> set[str]:
+    if not isinstance(database, dict):
+        return set()
+    found = {str(item).upper() for item in _strings(database.get("cwe_ids"))}
+    for entry in _objects(database.get("cwes")):
+        cwe = entry.get("cweId")
+        if isinstance(cwe, str):
+            found.add(cwe.upper())
+    return found
+
+
+def malicious_evidence(vuln: dict, matching: list[dict] | None = None) -> list[str]:
+    """Why an OSV record describes malicious code, or an empty list.
+
+    An ``MAL-*`` id or alias (the OpenSSF malicious-packages database), a
+    ``malicious-packages-origins`` import record, or CWE-506 (Embedded
+    Malicious Code) on the record or on the queried package's entry.
+    """
+    if not isinstance(vuln, dict):
+        return []
+    evidence = []
+    vuln_id = vuln.get("id")
+    ids = []
+    if isinstance(vuln_id, str):
+        ids.append(vuln_id)
+    ids.extend(_strings(vuln.get("aliases")))
+    if any(item.upper().startswith(MALICIOUS_ID_PREFIX) for item in ids):
+        evidence.append("osv_malicious_package_id")
+    sources = [vuln.get("database_specific")]
+    sources.extend(
+        affected.get("database_specific") for affected in (matching or [])
+    )
+    if any(
+        isinstance(database, dict) and database.get(MALICIOUS_ORIGINS_KEY)
+        for database in sources
+    ):
+        evidence.append("malicious_packages_origin")
+    if any(MALICIOUS_CWE in _cwe_ids(database) for database in sources):
+        evidence.append("cwe_506_embedded_malicious_code")
+    return evidence
+
+
 def extract_advisory_metadata(vuln: dict, dep: dict) -> dict:
     """Extract report data without implying that omitted details are known."""
     matching = _matching_affected(vuln, dep)
+    informational = _informational(matching)
     aliases = _strings(vuln.get("aliases"))
     vuln_id = vuln.get("id") if isinstance(vuln.get("id"), str) else "UNKNOWN"
     summary = next(
@@ -297,7 +376,7 @@ def extract_advisory_metadata(vuln: dict, dep: dict) -> dict:
             and entry["url"].startswith(("https://", "http://"))
         )
     )[:5]
-    return {
+    metadata = {
         "vuln_id": vuln_id,
         "summary": summary[:300],
         "aliases": aliases,
@@ -308,3 +387,11 @@ def extract_advisory_metadata(vuln: dict, dep: dict) -> dict:
         **_severity_metadata(vuln, matching),
         **_fix_metadata(matching, dep),
     }
+    if informational is not None:
+        metadata["informational"] = informational
+    malicious = []
+    if metadata["withdrawn"] is None:
+        malicious = malicious_evidence(vuln, matching)
+    if malicious:
+        metadata["malicious_evidence"] = malicious
+    return metadata

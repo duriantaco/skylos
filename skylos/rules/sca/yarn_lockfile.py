@@ -21,8 +21,16 @@ from skylos.rules.sca.lockfile_types import (
     LockfileInventory,
     LockfileLimitError,
     LockfileParseError,
+    not_checked_source,
 )
 from skylos.rules.sca.npm_lockfile import _exact_version, _name, _source
+from skylos.rules.sca.package_sources import (
+    MAX_SOURCE_RECORDS,
+    SOURCE_GIT,
+    SOURCE_URL,
+    npm_registry_for,
+    source_record,
+)
 from skylos.rules.sca.pnpm_lockfile import _LockLoader, _MarkedDict, _line, _root_path
 
 _MAX_BYTES = 10_000_000
@@ -368,8 +376,24 @@ def parse_yarn_lock(
             locator = _descriptor(entry.get("resolution"))
             if locator:
                 non_registry.add(locator[0])
-        if error:
+        named_problem = dict(problem, name=grouped[0][0])
+        if error == "non_registry_source" and "@virtual:" in str(
+            entry.get("resolution")
+        ):
             inventory.unresolved.append(dict(problem, reason=error, source_type=source))
+        elif error == "non_registry_source":
+            inventory.not_checked.append(
+                not_checked_source(named_problem, error, source)
+            )
+        elif error == "unsupported_package_source" and source == "local":
+            inventory.not_checked.append(
+                not_checked_source(named_problem, error, source)
+            )
+        elif error:
+            inventory.unresolved.append(dict(problem, reason=error, source_type=source))
+        if error:
+            if error == "non_registry_source":
+                _add_source_record(inventory, entry, grouped, version, path, problem["line"])
         markers = _metadata(entry, problem, inventory)
         information[key] = (identity, source, grouped, markers)
     inventory.workspace_paths = sorted(set(roots.values()))
@@ -497,6 +521,53 @@ def parse_yarn_lock(
                 "environment_scope": "all_recorded",
                 "source_type": source,
                 "dependencies": edges[key],
+                "integrity": _integrity(records[key], version),
+                "registry": npm_registry_for(source),
             }
         )
     return inventory
+
+
+def _integrity(entry, version):
+    if not isinstance(entry, dict):
+        return None
+    field = "checksum"
+    if version == 1:
+        field = "integrity"
+    value = entry.get(field)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _add_source_record(inventory, entry, grouped, version, path, line):
+    url = entry.get("resolved")
+    if version != 1:
+        url = None
+        locator = _descriptor(entry.get("resolution"))
+        if locator:
+            url = locator[1]
+    if not grouped or not isinstance(url, str):
+        return
+    if url.startswith(("git", "github:", "gitlab:", "bitbucket:")) or ".git#" in url:
+        kind = SOURCE_GIT
+        ref = None
+        if "#commit=" in url:
+            ref = url.split("#commit=", 1)[1].split("&", 1)[0]
+    elif url.startswith(("http://", "https://")):
+        kind, ref = SOURCE_URL, None
+    else:
+        return
+    record = source_record(
+        ecosystem="npm",
+        name=grouped[0][0],
+        version=_exact_version(entry.get("version")),
+        kind=kind,
+        url=url,
+        file=str(path),
+        line=line,
+        ref=ref,
+        integrity=_integrity(entry, version),
+    )
+    if record is not None and len(inventory.source_records) < MAX_SOURCE_RECORDS:
+        inventory.source_records.append(record)

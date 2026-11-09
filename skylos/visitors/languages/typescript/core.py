@@ -119,6 +119,7 @@ _REFS_PATTERN = """
 (subscript_expression object: (identifier) @ref)
 (subscript_expression index: (identifier) @ref)
 (pair value: (identifier) @ref)
+(instantiation_expression (identifier) @ref)
 (unary_expression (identifier) @ref)
 (await_expression (identifier) @ref)
 (template_substitution (identifier) @ref)
@@ -175,9 +176,7 @@ _JSDOC_TYPE_TAG_RE = re.compile(
     r"@(?:arg|argument|enum|exception|param|prop|property|return|returns|"
     r"satisfies|template|this|throws|type|typedef)\b"
 )
-_JSDOC_TAG_RE = re.compile(
-    r"(?:(?<=/\*\*)|(?<=\s))(?P<tag>@[A-Za-z][\w-]*)"
-)
+_JSDOC_TAG_RE = re.compile(r"(?:(?<=/\*\*)|(?<=\s))(?P<tag>@[A-Za-z][\w-]*)")
 _JSDOC_LINK_TAG_RE = re.compile(r"\{@(?:link|linkcode|linkplain)\b")
 _JSDOC_IMPORT_TYPE_RE = re.compile(
     r"(?:[\s({\[<>|&,:?!]|(?<=\.\.\.)|^)"
@@ -332,7 +331,9 @@ def parse_typescript_source(
         tree, parsed = _parse_tsx_masking_raw_ampersands(parser, source)
     else:
         tree, parsed = parser.parse(source), source
-    if tree.root_node.has_error:
+    if tree.root_node.has_error or (
+        is_typescript_path(file_path) and b"typeof" in parsed and b"import" in parsed
+    ):
         tree = repair_typescript_grammar_gaps(
             parser,
             parsed,
@@ -350,6 +351,9 @@ class TypeScriptCore:
         self.defs: list[Definition] = []
         self.refs: list[tuple[str, str]] = []
         self.imports: list[dict[str, str | int]] = []
+        self._namespace_reads = None
+        self._shadowed_namespace_properties: set[int] = set()
+        self._local_value_reads: set[int] = set()
         self._self_ref_index: (
             dict[str, tuple[tuple[int, ...], tuple[int, ...]]] | None
         ) = None
@@ -435,7 +439,11 @@ class TypeScriptCore:
         position = bisect_right(starts, node.start_byte) - 1
         return position >= 0 and prefix_max_ends[position] >= node.end_byte
 
-    def _add_ref(self, node) -> None:
+    def _add_ref(self, node, *, value_reference: bool = True) -> None:
+        if value_reference and node.id in self._local_value_reads:
+            parent = node.parent
+            if parent is None or parent.type != "nested_type_identifier":
+                return
         name = self._get_text(node)
         if self._is_self_ref(node, name):
             return
@@ -573,6 +581,9 @@ class TypeScriptCore:
     def _scan_refs(self) -> None:
         c = self._refs_captures
 
+        if c.get("ref") or c.get("prop_ref"):
+            self._namespace_import_reads()
+
         for node in c.get("ref", []):
             self._add_ref(node)
 
@@ -584,8 +595,11 @@ class TypeScriptCore:
             name = self._get_text(node)
             if self._is_self_ref(node, name):
                 continue
-            self.refs.append((name, self.file_path))
-            self.refs.append((f"~.{name}", self.file_path))
+            if node.id in self._shadowed_namespace_properties:
+                self.refs.append((f"~method.{name}", self.file_path))
+            else:
+                self.refs.append((name, self.file_path))
+                self.refs.append((f"~.{name}", self.file_path))
 
         for node in c.get("type_ref", []):
             parent = node.parent
@@ -596,7 +610,7 @@ class TypeScriptCore:
             ):
                 # The declared name, not a use. ``type A = B`` still uses ``B``.
                 continue
-            self._add_ref(node)
+            self._add_ref(node, value_reference=False)
 
         self._scan_default_parameter_refs()
 
@@ -903,7 +917,29 @@ class TypeScriptCore:
     def _scan_raw_imports(self) -> None:
         self.raw_imports: list[dict] = []
         self._raw_import_seen: set[tuple] = set()
+        from .namespace_references import namespace_member_reads
+
         c = self._defs_captures
+        import_reads = (
+            namespace_member_reads(
+                self.root_node,
+                self.source,
+                include_named_imports=True,
+                member_paths=True,
+            )
+            if c.get("import_src")
+            else {}
+        )
+        reexport_refs: dict[int, list[str]] = {}
+        for node in self._refs_captures.get("ref", ()):
+            parent = node.parent
+            if parent is not None and parent.type == "export_specifier":
+                clause = parent.parent
+                statement = clause.parent if clause is not None else None
+                if statement is not None and statement.type == "export_statement":
+                    reexport_refs.setdefault(statement.id, []).append(
+                        self._get_text(node)
+                    )
 
         for src_node in c.get("import_src", []):
             source_path = self._get_text(src_node).strip("'\"")
@@ -915,8 +951,66 @@ class TypeScriptCore:
                     "names": names,
                     "line": src_node.start_point[0] + 1,
                 }
-                if any(name.startswith("* as ") for name in names):
-                    raw_import["consume_all_exports"] = True
+                clause = next(
+                    (
+                        child
+                        for child in import_stmt.named_children
+                        if child.type == "import_clause"
+                    ),
+                    None,
+                )
+                if clause is not None:
+                    default = next(
+                        (
+                            child
+                            for child in clause.named_children
+                            if child.type == "identifier"
+                        ),
+                        None,
+                    )
+                    if default is not None:
+                        raw_import["default_import"] = self._get_text(default)
+                namespace_names = [name for name in names if name.startswith("* as ")]
+                if namespace_names:
+                    raw_import["namespace_members"] = True
+                    namespace_reads = self._namespace_import_reads()
+                    selected_names = [
+                        name for name in names if name not in namespace_names
+                    ]
+                    # A mixed default + namespace import also consumes the
+                    # default declaration, whose local name may differ.
+                    if selected_names:
+                        raw_import["consume_all_exports"] = True
+                    for namespace_name in namespace_names:
+                        local = namespace_name.split(" as ", 1)[1]
+                        members = namespace_reads.get(local)
+                        if members is None:
+                            raw_import["consume_all_exports"] = True
+                        else:
+                            selected_names.extend(sorted(members))
+                    raw_import["names"] = selected_names
+                paths = []
+                for name in names:
+                    original, _, alias = name.partition(" as ")
+                    local = alias or original
+                    members = import_reads.get(local)
+                    if original == "*":
+                        if members is not None:
+                            paths.extend(sorted(members))
+                    else:
+                        exported = (
+                            "default"
+                            if local == raw_import.get("default_import")
+                            else original
+                        )
+                        if members:
+                            paths.extend(
+                                (exported, *member) for member in sorted(members)
+                            )
+                        else:
+                            paths.append((exported,))
+                if paths:
+                    raw_import["export_paths"] = paths
                 self.raw_imports.append(raw_import)
 
         for src_node in c.get("export_src", []):
@@ -929,11 +1023,39 @@ class TypeScriptCore:
                         "source": source_path,
                         "names": names,
                         "line": src_node.start_point[0] + 1,
+                        "is_reexport": True,
+                        "reexport_reference_names": reexport_refs.get(
+                            export_stmt.id, []
+                        ),
                     }
                 )
 
         self._scan_dynamic_raw_imports()
         self._scan_jsdoc_raw_imports()
+        if any(
+            statement.type == "export_statement"
+            and statement.child_by_field_name("source") is None
+            and any(child.type == "export_clause" for child in statement.named_children)
+            for statement in self.root_node.named_children
+        ):
+            # Local export bindings may shadow same-named star exports. Their
+            # identities are not represented by source re-export records.
+            if not self.raw_imports:
+                self.raw_imports.append({"source": "", "names": [], "line": 1})
+            for raw_import in self.raw_imports:
+                raw_import["opaque_local_exports"] = True
+
+    def _namespace_import_reads(self):
+        if self._namespace_reads is None:
+            from .namespace_references import namespace_member_reads
+
+            self._namespace_reads = namespace_member_reads(
+                self.root_node,
+                self.source,
+                shadowed_properties=self._shadowed_namespace_properties,
+                local_value_reads=self._local_value_reads,
+            )
+        return self._namespace_reads
 
     def _extract_import_names_from_stmt(self, import_stmt) -> list[str]:
         names = []
@@ -972,7 +1094,18 @@ class TypeScriptCore:
     def _extract_export_names_from_stmt(self, export_stmt) -> list[str]:
         names = []
         for child in export_stmt.children:
-            if child.type == "export_clause":
+            if child.type == "namespace_export":
+                alias = next(
+                    (
+                        node
+                        for node in child.named_children
+                        if node.type == "identifier"
+                    ),
+                    None,
+                )
+                if alias is not None:
+                    names.append(f"* as {self._get_text(alias)}")
+            elif child.type == "export_clause":
                 for spec in child.children:
                     if spec.type == "export_specifier":
                         name_node = spec.child_by_field_name("name")
@@ -1128,9 +1261,7 @@ class TypeScriptCore:
         search_position = 0
         seen_typedef = False
         original_comment = original_comment or comment
-        newline_offsets = [
-            match.start() for match in re.finditer("\n", comment)
-        ]
+        newline_offsets = [match.start() for match in re.finditer("\n", comment)]
         all_tags = list(_JSDOC_TAG_RE.finditer(comment))
         links = list(_JSDOC_LINK_TAG_RE.finditer(comment))
         tag_index = 0
@@ -1143,15 +1274,12 @@ class TypeScriptCore:
             ):
                 tag_index += 1
             while (
-                link_index < len(links)
-                and links[link_index].start() < search_position
+                link_index < len(links) and links[link_index].start() < search_position
             ):
                 link_index += 1
             tag = all_tags[tag_index] if tag_index < len(all_tags) else None
             link = links[link_index] if link_index < len(links) else None
-            if link is not None and (
-                tag is None or link.start() < tag.start("tag")
-            ):
+            if link is not None and (tag is None or link.start() < tag.start("tag")):
                 balanced_link = cls._jsdoc_balanced_ranges(comment, link.start())
                 if balanced_link is None:
                     break
@@ -1247,17 +1375,16 @@ class TypeScriptCore:
             remainder_start = clause.index(",") + 1
             while remainder_start < len(clause) and clause[remainder_start].isspace():
                 remainder_start += 1
-            if original_clause is not None and "*" in original_clause[
-                default_identifier.end() : remainder_start
-            ]:
+            if (
+                original_clause is not None
+                and "*" in original_clause[default_identifier.end() : remainder_start]
+            ):
                 return None
             names.append("default")
             clause = remainder.strip()
 
         if clause.startswith("*"):
-            namespace = re.fullmatch(
-                r"\*\s+as\s+[A-Za-z_$][\w$]*", clause
-            )
+            namespace = re.fullmatch(r"\*\s+as\s+[A-Za-z_$][\w$]*", clause)
             return (names, True) if namespace is not None else None
         if not (clause.startswith("{") and clause.endswith("}")):
             return None
@@ -1302,9 +1429,7 @@ class TypeScriptCore:
                 normalized_comment, original_comment=comment
             )
             range_index = 0
-            newline_offsets = [
-                match.start() for match in re.finditer("\n", comment)
-            ]
+            newline_offsets = [match.start() for match in re.finditer("\n", comment)]
             for match in _JSDOC_IMPORT_TYPE_RE.finditer(normalized_comment):
                 while (
                     range_index < len(type_ranges)
@@ -1406,6 +1531,30 @@ class TypeScriptCore:
             return
 
         for node in self._iter_nodes(self.root_node):
+            if node.type == "lookup_type" and len(node.named_children) == 2:
+                query, literal = node.named_children
+                if (
+                    query.type == "type_query"
+                    and len(query.named_children) == 1
+                    and query.named_children[0].type == "identifier"
+                    and self._get_text(query.named_children[0]) == "import"
+                    and literal.type == "literal_type"
+                    and len(literal.named_children) == 1
+                    and literal.named_children[0].type == "string"
+                    and self.source[
+                        query.named_children[0].end_byte : literal.start_byte
+                    ].strip()
+                    == b"("
+                    and self.source[literal.end_byte : node.end_byte].strip() == b")"
+                ):
+                    path = self._string_literal_value(literal.named_children[0])
+                    if path:
+                        self._append_raw_import(
+                            path,
+                            node.start_point[0] + 1,
+                            consume_all_exports=True,
+                            type_only=True,
+                        )
             if node.type != "call_expression":
                 continue
 
@@ -1420,8 +1569,20 @@ class TypeScriptCore:
             line = node.start_point[0] + 1
 
             if function_node.type == "import":
+                parent = node.parent
+                type_only = False
+                while parent is not None and parent.type not in {
+                    "program",
+                    "statement_block",
+                }:
+                    if parent.type == "type_query":
+                        type_only = True
+                        break
+                    parent = parent.parent
                 for source_path in self._string_sources_from_node(first_arg):
-                    self._append_raw_import(source_path, line, consume_all_exports=True)
+                    self._append_raw_import(
+                        source_path, line, consume_all_exports=True, type_only=type_only
+                    )
                 continue
 
             if (

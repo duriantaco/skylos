@@ -1,0 +1,240 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "kotlin-command-argv",
+      "path": "fixtures/kotlin_command_argv",
+      "description": "The executable and printf format are fixed; request data occupies an argv data element and no shell runs.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "command_injection",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only Kotlin corpus fixture; source contracts grounded in existing Kotlin security regressions."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": [
+            "SKY-D212"
+          ]
+        }
+      }
+    },
+      {
+        "id": "go-ssrf-function-alias",
+        "path": "fixtures/security_depth_go_ssrf_function_alias",
+        "description": "Same get function invoked via local value; known unresolved native detector miss.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "ssrf",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D216"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-ssrf-method-alias",
+        "path": "fixtures/security_depth_go_ssrf_method_alias",
+        "description": "Bound http client method value; known unresolved native detector miss.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "ssrf",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D216"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-command-function-alias",
+        "path": "fixtures/security_depth_go_command_function_alias",
+        "description": "Same command function via local value; known unresolved native detector miss.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D212"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-path-function-alias",
+        "path": "fixtures/security_depth_go_path_function_alias",
+        "description": "Same filesystem sink via value; known unresolved native detector miss.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "path_traversal",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D215"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-ssrf-request-alias",
+        "path": "fixtures/security_depth_go_ssrf_request_alias",
+        "description": "Go type alias preserves exact http.request identity; known unresolved native detector miss.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "ssrf",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D216"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "go-tls-field-assignment",
+        "path": "fixtures/security_depth_go_tls_field_assignment",
+        "description": "Typed tls config field assignment disables validation; known unresolved native detector miss.",
+        "languages": [
+          "go"
+        ],
+        "taxonomy": [
+          "tls_verification",
+          "go"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D210"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "dart-process-fake-canonicalize",
+        "path": "fixtures/security_depth_dart_process_fake_canonicalize",
+        "description": "A local identity helper named canonicalize does not make an environment-controlled executable safe.",
+        "languages": [
+          "dart"
+        ],
+        "taxonomy": [
+          "command_injection",
+          "dart"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D212"
+            ]
+          },
+          "absent": {}
+        }
+      },
+      {
+        "id": "dart-http-fake-canonicalize",
+        "path": "fixtures/security_depth_dart_http_fake_canonicalize",
+        "description": "A local identity helper named canonicalize does not restrict an environment-controlled URL destination.",
+        "languages": [
+          "dart"
+        ],
+        "taxonomy": [
+          "ssrf",
+          "dart"
+        ],
+        "importance": "high",
+        "source": {
+          "repo": "https://github.com/duriantaco/skylos",
+          "license": "Apache-2.0",
+          "notes": "Original source contract, labelled before implementation. Static analysis only; not a runtime exploit or independent application."
+        },
+        "expect": {
+          "present": {
+            "danger": [
+              "SKY-D216"
+            ]
+          },
+          "absent": {}
+        }
+      }
+  ]
+}

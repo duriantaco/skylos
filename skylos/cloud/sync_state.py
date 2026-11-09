@@ -3,14 +3,20 @@
 This is not a crash-atomic multi-file transaction. Operations stay anchored to
 opened directories, using no-follow descriptors or native Windows handles.
 There is no path-checked fallback: checking a path cannot prevent a rename race.
+
+A successful activation can also record the SHA-256 of each file it wrote, in
+a private folder outside the repository, so ``skylos done`` can tell the files
+``skylos sync pull`` left untracked from later edits to them.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import stat
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -20,6 +26,10 @@ SYNC_FILE_NAMES = frozenset({"config.yaml", "suppressions.json"})
 _TEMPORARY_NAME = re.compile(
     r"\.(?:config\.yaml|suppressions\.json)\.[0-9a-f]{32}\.tmp\Z"
 )
+SYNC_RECORD_DIR = "synced-files"
+SYNC_RECORD_SCHEMA = "skylos.synced-files/v1"
+MAX_SYNC_RECORD_BYTES = 64 * 1024
+_FILE_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
 class UnsafeSyncPath(OSError):
@@ -237,16 +247,133 @@ def validate_sync_paths(repo_root: Path, names: tuple[str, ...]) -> None:
         directory.close()
 
 
+def default_sync_record_root() -> Path:
+    return Path.home() / ".skylos" / SYNC_RECORD_DIR
+
+
+def _file_digest(contents: bytes) -> str:
+    return "sha256:" + hashlib.sha256(contents).hexdigest()
+
+
+def _record_location(repo_root: Path, record_root: Path) -> tuple[str, Path]:
+    repository = Path(repo_root).resolve(strict=True)
+    key = hashlib.sha256(os.fsencode(repository)).hexdigest()
+    return str(repository), Path(record_root) / f"{key}.json"
+
+
+def _read_record(repository: str, path: Path) -> dict[str, str]:
+    from skylos.core.safe_cache_io import read_text_no_symlink
+
+    raw = read_text_no_symlink(path, max_bytes=MAX_SYNC_RECORD_BYTES)
+    if raw is None:
+        return {}
+    try:
+        record = json.loads(raw)
+    except (RecursionError, ValueError):
+        return {}
+    if (
+        not isinstance(record, dict)
+        or record.get("schema") != SYNC_RECORD_SCHEMA
+        or record.get("repository") != repository
+        or not isinstance(record.get("files"), dict)
+    ):
+        return {}
+    return {
+        name: digest
+        for name, digest in record["files"].items()
+        if name in SYNC_FILE_NAMES
+        and isinstance(digest, str)
+        and _FILE_DIGEST.fullmatch(digest)
+    }
+
+
+def _forget_synced_files(
+    repo_root: Path, names: Iterable[str], record_root: Path
+) -> dict[str, str]:
+    """Drop ``names`` from the record before they change; return the rest."""
+    repository, path = _record_location(repo_root, record_root)
+    kept = {
+        name: digest
+        for name, digest in _read_record(repository, path).items()
+        if name not in names
+    }
+    if kept:
+        _remember_synced_files(repo_root, kept, record_root)
+        return kept
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        raise UnsafeSyncPath(
+            f"Could not reset the synced file record: {error}"
+        ) from error
+    return kept
+
+
+def _remember_synced_files(
+    repo_root: Path, digests: dict[str, str], record_root: Path
+) -> None:
+    from skylos.core.review_decisions import _ensure_private_cache_root
+    from skylos.core.safe_cache_io import write_text_no_symlink
+
+    repository, path = _record_location(repo_root, record_root)
+    record = {
+        "schema": SYNC_RECORD_SCHEMA,
+        "repository": repository,
+        "files": dict(sorted(digests.items())),
+    }
+    if not _ensure_private_cache_root(path.parent) or not write_text_no_symlink(
+        path, json.dumps(record, indent=2) + "\n"
+    ):
+        raise UnsafeSyncPath("Could not record the synced files")
+
+
+def synced_file_matches(
+    repo_root: Path, name: str, *, record_root: Path | None = None
+) -> bool:
+    """Whether ``.skylos/<name>`` holds exactly the bytes sync last wrote here."""
+    if name not in SYNC_FILE_NAMES:
+        return False
+    if record_root is None:
+        record_root = default_sync_record_root()
+    try:
+        repository, path = _record_location(repo_root, record_root)
+        expected = _read_record(repository, path).get(name)
+        if expected is None:
+            return False
+        directory = _SyncDirectory(repo_root, create=False)
+        try:
+            if not directory.present:
+                return False
+            contents = directory.read(name)
+        finally:
+            directory.close()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return contents is not None and _file_digest(contents) == expected
+
+
 @contextmanager
-def activate_sync_files(repo_root: Path, files: dict[str, str]) -> Iterator[None]:
-    """Activate prepared files, rolling back if activation or the caller fails."""
+def activate_sync_files(
+    repo_root: Path, files: dict[str, str], *, record_root: Path | None = None
+) -> Iterator[None]:
+    """Activate prepared files, rolling back if activation or the caller fails.
+
+    With ``record_root``, the digests of the activated files replace their
+    previous record only after every file is verified; a failure leaves them
+    unrecorded.
+    """
     for name in files:
         _sync_name(name)
     directory = _SyncDirectory(repo_root, create=True)
     staged: dict[str, str] = {}
     backups: dict[str, str | None] = {}
     activated: list[str] = []
+    kept: dict[str, str] | None = None
     try:
+        if record_root is not None:
+            kept = _forget_synced_files(directory.root, files, record_root)
         for name, content in files.items():
             previous = directory.read(name)
             backups[name] = (
@@ -265,6 +392,12 @@ def activate_sync_files(repo_root: Path, files: dict[str, str]) -> Iterator[None
         for name, content in files.items():
             if directory.read(name) != content.encode("utf-8"):
                 raise UnsafeSyncPath("Activated sync file changed during trust storage")
+        if kept is not None:
+            written = {
+                name: _file_digest(content.encode("utf-8"))
+                for name, content in files.items()
+            }
+            _remember_synced_files(directory.root, {**kept, **written}, record_root)
     except BaseException as error:
         rollback_errors: list[str] = []
         for name in reversed(activated):

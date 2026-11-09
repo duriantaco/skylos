@@ -7,7 +7,10 @@ import os
 import traceback
 from pathlib import Path
 
+from skylos.analysis.finding_filter import partition_inline_ignored_findings
+from skylos.core.inline_directives import inline_ignores
 from skylos.core.linter import LinterVisitor
+from skylos.core.safe_cache_io import read_project_text_no_symlink, read_text_no_symlink
 from skylos.rules.custom import load_community_rules, load_custom_rules
 from skylos.rules.danger.calls import DangerousCallsRule
 from skylos.rules.quality._readability import OpaqueIdentifierRule
@@ -73,8 +76,9 @@ from skylos.visitors.languages.dart import scan_dart_file
 from skylos.visitors.languages.go import scan_go_file
 from skylos.visitors.languages.java import scan_java_file
 from skylos.visitors.languages.kotlin import scan_kotlin_file
-from skylos.visitors.languages.php import scan_php_file
+from skylos.visitors.languages.php import PHP_SOURCE_EXTS, scan_php_file
 from skylos.visitors.languages.rust import scan_rust_file
+from skylos.visitors.languages.ruby import scan_ruby_file
 from skylos.visitors.languages.shell import SHELL_SOURCE_EXTS, scan_shell_file
 from skylos.visitors.languages.typescript import scan_typescript_file
 
@@ -278,7 +282,7 @@ def _build_structural_quality_rules(cfg: dict) -> list:
         ("SKY-Q701", CBORule),
         ("SKY-Q702", LCOMRule),
         ("SKY-Q806", OpaqueIdentifierRule),
-        ("SKY-U001", UnreachableCodeRule),
+        ("SKY-UC001", UnreachableCodeRule),
     ]
     q_rules.extend(factory() for rule_id, factory in specs if _enabled(cfg, rule_id))
     if _enabled(cfg, "SKY-T101") or _enabled(cfg, "SKY-T102"):
@@ -333,6 +337,14 @@ def _extend_community_quality_rules(q_rules: list, file) -> None:
         pass
 
 
+def _extend_project_quality_rules(q_rules: list, file) -> None:
+    from skylos.rules.project_rules import load_project_rules
+
+    project_rules_data = load_project_rules(file)
+    if project_rules_data:
+        q_rules.extend(load_custom_rules(project_rules_data))
+
+
 def scan_python_quality(
     tree: ast.AST,
     source: str,
@@ -348,6 +360,7 @@ def scan_python_quality(
     q_rules = _build_builtin_quality_rules(cfg)
     _extend_env_custom_quality_rules(q_rules, file)
     _extend_community_quality_rules(q_rules, file)
+    _extend_project_quality_rules(q_rules, file)
     set_linter_node_types(q_rules)
     linter_q = LinterVisitor(q_rules, str(file))
     linter_q.context["source"] = source
@@ -402,8 +415,10 @@ def _scan_typescript_like_file(
     )
 
 
-def _scan_go_file(file, cfg, **_options):
-    return scan_go_file(file, cfg)
+def _scan_go_file(file, cfg, *, go_scan_scope=None, **_options):
+    if go_scan_scope is None:
+        return scan_go_file(file, cfg)
+    return scan_go_file(file, cfg, go_scan_scope=go_scan_scope)
 
 
 def _scan_java_like_file(
@@ -426,14 +441,19 @@ def _scan_php_file(file, cfg, *, enable_danger_rules: bool, **_options):
         file,
         cfg,
         enable_danger_rules=enable_danger_rules,
+        _reuse_framework_cache=True,
     )
 
 
-def _scan_rust_file(file, cfg, *, enable_danger_rules: bool, **_options):
+def _scan_rust_file(
+    file, cfg, *, enable_danger_rules: bool, enable_quality_rules: bool, **_options
+):
     return scan_rust_file(
         file,
         cfg,
         enable_danger_rules=enable_danger_rules,
+        enable_quality_rules=enable_quality_rules,
+        _include_analysis_metadata=True,
     )
 
 
@@ -443,6 +463,21 @@ def _scan_cpp_file(file, cfg, *, enable_danger_rules: bool, **_options):
         cfg,
         enable_danger_rules=enable_danger_rules,
     )
+
+
+def _scan_ruby_file(file, cfg, *, enable_danger_rules: bool, **_options):
+    return scan_ruby_file(
+        file,
+        cfg,
+        enable_danger_rules=enable_danger_rules,
+        _include_analysis_metadata=True,
+    )
+
+
+def _scan_swift_file(file, cfg, **_options):
+    from skylos.visitors.languages.swift import scan_swift_file
+
+    return scan_swift_file(file, cfg, _include_analysis_metadata=True)
 
 
 def _scan_dart_file(file, cfg, *, enable_danger_rules: bool, **_options):
@@ -514,8 +549,10 @@ NON_PYTHON_SCANNERS = (
     (TS_JS_SOURCE_EXTS, _scan_typescript_like_file),
     ((".go",), _scan_go_file),
     ((".java",), _scan_java_like_file),
-    ((".php",), _scan_php_file),
+    (PHP_SOURCE_EXTS, _scan_php_file),
     ((".rs",), _scan_rust_file),
+    ((".rb",), _scan_ruby_file),
+    ((".swift",), _scan_swift_file),
     (CPP_ANALYSIS_EXTS, _scan_cpp_file),
     ((".dart",), _scan_dart_file),
     ((".cs",), _scan_csharp_file),
@@ -524,6 +561,86 @@ NON_PYTHON_SCANNERS = (
     (SECRET_CONFIG_SUFFIXES, _scan_config_only_file),
 )
 
+_COMMENT_DIRECTIVE_SCANNERS = frozenset(
+    {
+        _scan_go_file,
+        _scan_java_like_file,
+        _scan_php_file,
+        _scan_rust_file,
+        _scan_cpp_file,
+        _scan_dart_file,
+        _scan_csharp_file,
+        _scan_kotlin_file,
+        _scan_shell_file,
+    }
+)
+_ANALYSIS_TUPLE_DEFAULTS = (
+    set,
+    list,
+    dict,
+    dict,
+    set,
+    set,
+    list,
+    dict,
+    dict,
+    list,
+    lambda: None,
+    set,
+    lambda: None,
+    dict,
+    lambda: False,
+)
+_MAX_DIRECTIVE_SOURCE_BYTES = 4_000_000
+
+
+def _read_directive_source(file, *, project_root=None) -> str | None:
+    read_kwargs = {
+        "max_bytes": _MAX_DIRECTIVE_SOURCE_BYTES,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "newline": "",
+    }
+    if project_root is None:
+        return read_text_no_symlink(file, **read_kwargs)
+    return read_project_text_no_symlink(project_root, file, **read_kwargs)
+
+
+def _with_comment_directives(file, out, *, project_root=None):
+    """Apply ``skylos: ignore`` comments to every finding category of a file.
+
+    Quality and security findings on an ignored line move to the suppressed
+    list here. Dead-code definitions and secrets read the same lines from the
+    returned tuple (slots 13 and 26) and the dead-code visitor.
+    """
+    if not isinstance(out, tuple) or len(out) < 13:
+        return out
+    source = _read_directive_source(file, project_root=project_root)
+    if source is None:
+        return out
+    ignore_lines, ignore_rules_by_line = inline_ignores(file, source)
+    if not ignore_lines and not ignore_rules_by_line:
+        return out
+    quality, suppressed_quality = partition_inline_ignored_findings(
+        list(out[6] or []), "quality", ignore_lines, ignore_rules_by_line
+    )
+    danger, suppressed_danger = partition_inline_ignored_findings(
+        list(out[7] or []), "security", ignore_lines, ignore_rules_by_line
+    )
+    test_visitor = out[4]
+    if test_visitor is not None:
+        test_visitor.ignore_lines = ignore_lines
+        test_visitor.ignore_rules_by_line = ignore_rules_by_line
+    extended = list(out)
+    for factory in _ANALYSIS_TUPLE_DEFAULTS[len(extended) - 13 :]:
+        extended.append(factory())
+    extended[6] = quality
+    extended[7] = danger
+    extended[13] = set(extended[13] or ()) | ignore_lines
+    extended[14] = [*(extended[14] or ()), *suppressed_quality, *suppressed_danger]
+    extended[26] = ignore_rules_by_line
+    return tuple(extended)
+
 
 def scan_non_python_file(
     file,
@@ -531,17 +648,28 @@ def scan_non_python_file(
     *,
     enable_quality_rules: bool = True,
     enable_danger_rules: bool = True,
+    project_root=None,
+    go_scan_scope=None,
 ):
     file_name = str(file)
     for suffixes, scanner in NON_PYTHON_SCANNERS:
         if file_name.endswith(suffixes):
+            scope_options = (
+                {"go_scan_scope": go_scan_scope}
+                if scanner is _scan_go_file and go_scan_scope is not None
+                else {}
+            )
             out = scanner(
                 file,
                 cfg,
                 enable_quality_rules=enable_quality_rules,
                 enable_danger_rules=enable_danger_rules,
+                **scope_options,
             )
-            return _normalize_language_scan_output(out)
+            out = _normalize_language_scan_output(out)
+            if scanner in _COMMENT_DIRECTIVE_SCANNERS:
+                return _with_comment_directives(file, out, project_root=project_root)
+            return out
     return None
 
 

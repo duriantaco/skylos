@@ -12,10 +12,10 @@ from skylos.rules.ai_defect import dependency_hallucination as dep
 def offline_registry(monkeypatch):
     monkeypatch.setattr(dep, "_get_stdlib_modules", lambda: {"os", "sys"})
     monkeypatch.setattr(dep, "_load_private_allowlist", lambda: set())
-    monkeypatch.setattr(dep, "_build_installed_module_mapping", dict)
-    monkeypatch.setattr(dep, "_build_installed_requirements", dict)
+    monkeypatch.setattr(dep, "_build_installed_module_mapping", lambda: {})
+    monkeypatch.setattr(dep, "_build_installed_requirements", lambda: {})
     monkeypatch.setattr(dep, "installed_module_mapping", lambda builder: {})
-    monkeypatch.setattr(dep, "_load_import_to_dist_mapping", dict)
+    monkeypatch.setattr(dep, "_load_import_to_dist_mapping", lambda: {})
     monkeypatch.setattr(dep, "_fetch_dist_modules", lambda *args, **kwargs: None)
 
     def status(name, cache):
@@ -72,18 +72,16 @@ def test_file_analysis_pass_count_does_not_grow_with_import_roots(
         operations = Counter()
         trees = set()
 
-        def counted_parse(
-            value, *args, _source=source, _ops=operations, _trees=trees, **kwargs
-        ):
+        def counted_parse(value, *args, **kwargs):
             tree = original_parse(value, *args, **kwargs)
-            if value == _source:
-                _ops["parse"] += 1
-                _trees.add(tree)
+            if value == source:
+                operations["parse"] += 1
+                trees.add(tree)
             return tree
 
-        def counted_walk(tree, *, _trees=trees, _ops=operations):
-            if tree in _trees:
-                _ops["whole_tree_walk"] += 1
+        def counted_walk(tree):
+            if tree in trees:
+                operations["whole_tree_walk"] += 1
             return original_walk(tree)
 
         with monkeypatch.context() as instrumentation:
@@ -352,18 +350,16 @@ def test_optional_root_proofs_do_not_repeat_whole_source_walks(
         operations = Counter()
         trees = set()
 
-        def counted_parse(
-            value, *args, _source=source, _ops=operations, _trees=trees, **kwargs
-        ):
+        def counted_parse(value, *args, **kwargs):
             tree = original_parse(value, *args, **kwargs)
-            if value == _source:
-                _ops["parse"] += 1
-                _trees.add(tree)
+            if value == source:
+                operations["parse"] += 1
+                trees.add(tree)
             return tree
 
-        def counted_walk(tree, *, _trees=trees, _ops=operations):
-            if tree in _trees:
-                _ops["whole_tree_walk"] += 1
+        def counted_walk(tree):
+            if tree in trees:
+                operations["whole_tree_walk"] += 1
             return original_walk(tree)
 
         with monkeypatch.context() as instrumentation:
@@ -389,3 +385,119 @@ def test_optional_root_proofs_do_not_repeat_whole_source_walks(
     assert counts[1] == counts[0]
     assert counts[0]["parse"] <= 2
     assert counts[0]["whole_tree_walk"] <= 4
+
+
+def test_import_text_in_strings_and_docstrings_is_not_an_import():
+    source = (
+        '"""Usage:\n'
+        "\n"
+        "    from example_pkg import Thing\n"
+        '"""\n'
+        'PROMPT = """\n'
+        "import prompt_pkg\n"
+        "import real_pkg\n"
+        '"""\n'
+        "import real_pkg.part\n"
+    )
+    analysis = dep._SourceImportAnalysis(source)
+
+    assert analysis.modules == {"real_pkg"}
+    assert analysis.submodules == {"real_pkg": frozenset({"part"})}
+    assert analysis.lines == {"real_pkg": 9}
+
+
+@pytest.fixture
+def typing_in_stdlib(monkeypatch, offline_registry):
+    monkeypatch.setattr(dep, "_get_stdlib_modules", lambda: {"os", "sys", "typing"})
+
+
+def test_type_checking_only_imports_are_not_runtime_dependencies(
+    tmp_path, typing_in_stdlib
+):
+    _write(tmp_path / "requirements.txt", "")
+    path = _write(
+        tmp_path / "app.py",
+        "import typing\n"
+        "from typing import TYPE_CHECKING as CHECKING\n"
+        "if CHECKING:\n"
+        "    import known_package\n"
+        "if typing.TYPE_CHECKING:\n"
+        "    from unreachable_package import Thing\n",
+    )
+
+    assert list(dep.scan_python_dependency_hallucinations(tmp_path, [path])) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "TYPE_CHECKING = True\nif TYPE_CHECKING:\n    import known_package\n",
+        (
+            "from typing import TYPE_CHECKING\nTYPE_CHECKING = True\n"
+            "if TYPE_CHECKING:\n    import known_package\n"
+        ),
+        (
+            "from typing import TYPE_CHECKING\ndef load(TYPE_CHECKING=True):\n"
+            "    if TYPE_CHECKING:\n        import known_package\n"
+        ),
+        (
+            "from typing import TYPE_CHECKING\nif not TYPE_CHECKING:\n"
+            "    import known_package\n"
+        ),
+        (
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    pass\n"
+            "else:\n    import known_package\n"
+        ),
+        (
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n"
+            "    import known_package\nimport known_package\n"
+        ),
+        "import os as typing\nif typing.TYPE_CHECKING:\n    import known_package\n",
+    ],
+)
+def test_imports_that_can_run_are_still_runtime_dependencies(
+    tmp_path, typing_in_stdlib, source
+):
+    _write(tmp_path / "requirements.txt", "")
+    path = _write(tmp_path / "app.py", source)
+    findings = dep.scan_python_dependency_hallucinations(tmp_path, [path])
+
+    assert {(row["symbol"], row["rule_id"]) for row in findings} == {
+        ("known_package", "SKY-D223")
+    }
+
+
+def test_type_checking_import_of_a_missing_package_is_still_a_hallucination(
+    tmp_path, typing_in_stdlib
+):
+    _write(tmp_path / "requirements.txt", "")
+    path = _write(
+        tmp_path / "app.py",
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import absent_package\n",
+    )
+    findings = dep.scan_python_dependency_hallucinations(tmp_path, [path])
+
+    assert {(row["symbol"], row["rule_id"]) for row in findings} == {
+        ("absent_package", "SKY-D222")
+    }
+
+
+@pytest.mark.parametrize(
+    ("requires_python", "expected"),
+    [
+        ('requires-python = ">=3.11,<3.13"\n', set()),
+        ("", set()),
+        ('requires-python = ">=3.13"\n', {"cgi"}),
+    ],
+)
+def test_modules_removed_from_the_stdlib_follow_requires_python(
+    tmp_path, offline_registry, requires_python, expected
+):
+    _write(
+        tmp_path / "pyproject.toml",
+        f'[project]\nname = "app"\n{requires_python}dependencies = []\n',
+    )
+    path = _write(tmp_path / "app.py", "import cgi\nimport os\n")
+    findings = dep.scan_python_dependency_hallucinations(tmp_path, [path])
+
+    assert {row["symbol"] for row in findings} == expected

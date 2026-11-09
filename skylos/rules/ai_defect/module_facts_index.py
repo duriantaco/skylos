@@ -9,8 +9,9 @@ made ``skylos hook post-edit`` take seconds on large repos.
 This index stores, per source file, the facts the scan derives from it
 (members, re-exported local modules, dynamic ``__getattr__``), so later
 runs only rebuild files that changed. It is opt-in: nothing uses it unless
-a caller enters :func:`module_facts_index_session` (verification, agent hooks
-and ``skylos agent warm-cache`` do); ordinary scans behave exactly as before.
+a caller enters :func:`module_facts_index_session` (agent hooks and
+``skylos agent warm-cache`` do); every other scan behaves exactly as
+before.
 
 Correctness: an entry is reused only when all of these still hold, so a
 cached run returns the same facts as an uncached one:
@@ -116,8 +117,6 @@ class ModuleFactsIndex:
         self.loaded_entries = 0
         self.hits = 0
         self.misses = 0
-        self.rebuilt = 0
-        self.reference_targets: set[str] = set()
         self._touched: set[str] = set()
         self._load()
 
@@ -247,6 +246,4 @@ def describe(index: ModuleFactsIndex | None) -> dict[str, Any]:
         "entries": len(index.entries),
         "hits": index.hits,
         "misses": index.misses,
-        "rebuilt": index.rebuilt,
-        "reference_targets": len(index.reference_targets),
     }

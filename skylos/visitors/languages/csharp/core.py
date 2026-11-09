@@ -8,6 +8,12 @@ from skylos.visitors.languages.csharp._lex import (
     mask_comments_and_strings,
     matching_brace,
 )
+from skylos.visitors.languages.csharp.bindings import (
+    ReferenceContext,
+    collect_binding_references,
+    non_field_ranges,
+    reference_expression_mask,
+)
 
 _DECL_START = r"(?m)(?:^|(?<=[;{}]))\s*"
 _ATTRIBUTES = r"(?:\[[^\]\n]*\]\s*)*"
@@ -28,7 +34,7 @@ _METHOD_RE = re.compile(
     + r")"
     + r"(?P<mods>(?:(?:public|private|protected|internal|static|async|virtual|"
     r"override|sealed|abstract|extern|partial|readonly|unsafe|new)\s+)*)"
-    r"(?P<rtype>[A-Za-z_][\w.<>\[\],?]*\s+)+"
+    r"(?P<rtype>(?:\([^;{}()]+\)|[A-Za-z_][\w.<>\[\],?]*)\s+)+"
     r"(?P<name>[A-Za-z_]\w*)\s*(?P<generic><[^;{}()]+>)?\s*"
     r"\((?P<params>[^;{}]*)\)\s*"
     r"(?:where\s+[^{=>]+)?(?:\{|=>)"
@@ -49,14 +55,24 @@ _PROPERTY_RE = re.compile(
     + r"(?:(?:public|private|protected|internal|static|virtual|override|"
     r"abstract|sealed|new|required|readonly)\s+)*"
     r"(?P<type>[A-Za-z_][\w.<>\[\],?]*)\s+"
-    r"[A-Za-z_]\w*\s*(?:\{|=>)"
+    r"(?P<name>[A-Za-z_]\w*)\s*(?:\{|=>)"
 )
 _CONSTRUCTOR_RE = re.compile(
     _DECL_START
+    + r"(?P<attrs>"
     + _ATTRIBUTES
-    + r"(?:(?:public|private|protected|internal|static|extern|unsafe)\s+)*"
-    r"(?P<name>[A-Za-z_]\w*)\s*\((?P<params>[^;{}]*)\)\s*"
-    r"(?:\:[^{;]+)?\{"
+    + r")"
+    + r"(?P<mods>(?:(?:public|private|protected|internal|static|extern|unsafe)\s+)*)"
+    r"(?P<name>[A-Za-z_]\w*)\s*\((?P<params>(?:[^;{}()]|\([^;{}()]*\))*)\)\s*"
+    r"(?:\:[^{;]+)?(?:\{|=>)"
+)
+_CONSTRUCTOR_CALL_RE = re.compile(
+    r"\bnew\s+(?:[A-Za-z_][\w.]*\.)?(?P<name>[A-Za-z_]\w*)\s*(?:<[^;{}()]+>)?\s*\("
+    r"|\bnew\s*\("
+    r"|:\s*this\s*\("
+)
+_SERIALIZATION_CONSTRUCTOR_RE = re.compile(
+    r"^\s*(?:[\w.]+\.)?SerializationInfo\s+\w+\s*,\s*(?:[\w.]+\.)?StreamingContext\s+\w+\s*$"
 )
 _CALL_RE = re.compile(
     r"\b(?P<name>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*(?:<[^;{}()]+>)?\s*\("
@@ -114,6 +130,7 @@ class CSharpDefinition(Definition):
         "csharp_base_types",
         "csharp_interface_methods",
         "csharp_is_extension",
+        "csharp_entrypoint_owner",
     )
 
     def __init__(self, name: str, kind: str, file_path: str, line: int) -> None:
@@ -128,6 +145,7 @@ class CSharpDefinition(Definition):
         self.csharp_base_types: tuple[str, ...] = ()
         self.csharp_interface_methods: frozenset[str] = frozenset()
         self.csharp_is_extension = False
+        self.csharp_entrypoint_owner = False
 
 
 @dataclass
@@ -135,18 +153,39 @@ class _RefState:
     file_path: str
     refs: list[tuple[str, str]] = field(default_factory=list)
     seen: set[tuple[str, int]] = field(default_factory=set)
+    context: ReferenceContext | None = None
 
 
 def scan_symbols(
-    file_path: str, source: str
+    file_path: str,
+    source: str,
+    *,
+    reference_context: dict[str, list[dict]] | None = None,
 ) -> tuple[list[Definition], list[tuple[str, str]], list[dict]]:
     masked = mask_comments_and_strings(source)
     namespace_ranges = _namespace_ranges(masked)
     type_ranges = _type_ranges(masked, namespace_ranges)
     defs = _type_defs(file_path, source, masked, type_ranges, namespace_ranges)
     methods, method_decl_offsets = _method_defs(file_path, source, masked, type_ranges)
-    fields = _field_defs(file_path, source, masked, type_ranges)
-    refs = _refs(file_path, masked, type_ranges, namespace_ranges, method_decl_offsets)
+    reference_mask = reference_expression_mask(source, masked)
+    fields = _field_defs(file_path, source, masked, type_ranges, reference_mask)
+    entrypoint_owners = {
+        method.name.rsplit(".", 1)[0]
+        for method in methods
+        if method.simple_name == "Main" and "static" in method.csharp_modifiers
+    }
+    for definition in defs:
+        if definition.name in entrypoint_owners:
+            definition.csharp_entrypoint_owner = True
+            definition.references = max(1, definition.references)
+    refs = _refs(
+        file_path,
+        reference_mask,
+        type_ranges,
+        namespace_ranges,
+        method_decl_offsets,
+        reference_context,
+    )
     return defs + methods + fields, refs, []
 
 
@@ -193,6 +232,8 @@ def _method_defs(
         if owner_range and not _is_direct_member(masked, owner_range, match.start()):
             continue
         method_decl_offsets.add(match.start("name"))
+        if owner_range and name == owner_range[2].rsplit(".", 1)[-1]:
+            continue
         line = _line_for_offset(source, match.start("name"))
         owner = owner_range[2] if owner_range else None
         definition = CSharpDefinition(
@@ -215,7 +256,85 @@ def _method_defs(
         if definition.is_exported:
             definition.references = 1
         defs.append(definition)
+    defs.extend(_constructor_defs(file_path, source, masked, type_ranges))
     return defs, method_decl_offsets
+
+
+def _constructor_defs(
+    file_path: str,
+    source: str,
+    masked: str,
+    type_ranges: list[_TypeRange],
+) -> list[Definition]:
+    """Private constructors with parameters, the only ones Roslyn IDE0051 reports.
+
+    Other constructors are the instantiation surface for ``new``, dependency
+    injection, model binding and serializers; the type is the dead-code unit.
+    """
+    defs: list[Definition] = []
+    for match in _CONSTRUCTOR_RE.finditer(masked):
+        owner_range = _containing_type_range(type_ranges, match.start())
+        if owner_range is None:
+            continue
+        simple_owner = owner_range[2].rsplit(".", 1)[-1]
+        params = match.group("params")
+        mods = match.group("mods").split()
+        if (
+            match.group("name") != simple_owner
+            or not _is_direct_member(masked, owner_range, match.start())
+            or owner_range[3]
+            or match.group("attrs").strip()
+            or set(mods) & {"public", "protected", "internal", "static", "extern"}
+            or not params.strip()
+            or _SERIALIZATION_CONSTRUCTOR_RE.match(params)
+            or re.fullmatch(rf"\s*{re.escape(simple_owner)}\s+\w+\s*", params)
+        ):
+            continue
+        definition = CSharpDefinition(
+            f"{owner_range[2]}.{simple_owner}",
+            "method",
+            file_path,
+            _line_for_offset(source, match.start("name")),
+        )
+        definition.csharp_modifiers = frozenset(mods)
+        definition.csharp_signature = _parameter_signature(params)
+        definition.csharp_arity = _parameter_arity(params)
+        (
+            definition.csharp_min_arity,
+            definition.csharp_max_arity,
+        ) = _parameter_arity_range(params)
+        if _private_constructor_called(
+            masked,
+            owner_range,
+            simple_owner,
+            definition.csharp_min_arity,
+            definition.csharp_max_arity,
+        ):
+            definition.references = 1
+        defs.append(definition)
+    return defs
+
+
+def _private_constructor_called(
+    masked: str,
+    owner_range: _TypeRange,
+    name: str,
+    minimum: int,
+    maximum: int | None,
+) -> bool:
+    if re.search(rf"\btypeof\s*\(\s*(?:[\w.]+\.)?{re.escape(name)}\s*\)", masked):
+        return True
+    for call in _CONSTRUCTOR_CALL_RE.finditer(masked, owner_range[0], owner_range[1]):
+        called = call.group("name")
+        if called is not None and called != name:
+            continue
+        close_paren = _matching_paren(masked, call.end() - 1)
+        if close_paren is None:
+            continue
+        arity = _argument_arity(masked[call.end() : close_paren])
+        if minimum <= arity and (maximum is None or arity <= maximum):
+            return True
+    return False
 
 
 def _field_defs(
@@ -223,8 +342,10 @@ def _field_defs(
     source: str,
     masked: str,
     type_ranges: list[_TypeRange],
+    reference_mask: str | None = None,
 ) -> list[Definition]:
     defs: list[Definition] = []
+    excluded = non_field_ranges(masked)
     for match in _FIELD_RE.finditer(masked):
         owner_range = _containing_type_range(type_ranges, match.start())
         if (
@@ -232,6 +353,7 @@ def _field_defs(
             or owner_range[3]
             or match.group("attrs").strip()
             or not _is_direct_member(masked, owner_range, match.start())
+            or any(start <= match.start("name") < end for start, end in excluded)
         ):
             continue
         for name, offset in _field_declarators(masked, match):
@@ -245,7 +367,10 @@ def _field_defs(
                 re.search(r"\b(public|protected|internal)\b", match.group("mods"))
             )
             if definition.is_exported or _has_field_use(
-                masked, owner_range, name, offset
+                reference_mask if reference_mask is not None else masked,
+                owner_range,
+                name,
+                offset,
             ):
                 definition.references = 1
             defs.append(definition)
@@ -454,8 +579,14 @@ def _refs(
     type_ranges: list[_TypeRange],
     namespace_ranges: list[_NamespaceRange],
     method_decl_offsets: set[int],
+    reference_context: dict[str, list[dict]] | None = None,
 ) -> list[tuple[str, str]]:
-    state = _RefState(file_path=file_path)
+    state = _RefState(
+        file_path=file_path,
+        context=ReferenceContext(
+            masked, type_ranges, namespace_ranges, reference_context
+        ),
+    )
     type_names = {item[2].split(".")[-1] for item in type_ranges}
     _collect_call_refs(
         masked,
@@ -467,6 +598,9 @@ def _refs(
     )
     _collect_new_refs(masked, namespace_ranges, state)
     _collect_type_refs(masked, type_ranges, namespace_ranges, state)
+    collect_binding_references(
+        masked, type_ranges, method_decl_offsets, state, _append_ref
+    )
     return state.refs
 
 
@@ -505,7 +639,7 @@ def _collect_call_refs(
         if close_paren is not None:
             params = masked[match.end() : close_paren]
             name = f"{name}#{_argument_arity(params)}"
-        _append_ref(name, match.start("name"), state)
+        _append_ref(name, match.start("name"), state, spelling=match.group("name"))
 
 
 def _collect_new_refs(
@@ -518,7 +652,7 @@ def _collect_new_refs(
         namespace = _namespace_at(namespace_ranges, match.start())
         if namespace and "." not in name:
             name = f"{namespace}.{name}"
-        _append_ref(name, match.start("name"), state)
+        _append_ref(name, match.start("name"), state, spelling=match.group("name"))
 
 
 def _collect_type_refs(
@@ -642,11 +776,20 @@ def _append_type_tokens(
         owner = _containing_type_range(type_ranges, offset)
         namespace = _namespace_at(namespace_ranges, offset)
         qualified = f"{namespace}.{name}" if namespace and "." not in name else name
+        if owner is not None and "." not in name:
+            known = {item[2] for item in type_ranges}
+            scope = owner[2]
+            while scope:
+                nested = f"{scope}.{name}"
+                if nested in known:
+                    qualified = nested
+                    break
+                scope = scope.rpartition(".")[0]
         if owner is not None and (
             qualified == owner[2] or name == owner[2].rsplit(".", 1)[-1]
         ):
             continue
-        _append_ref(f"@type:{qualified}", offset, state)
+        _append_ref(f"@type:{qualified}", offset, state, spelling=name)
 
 
 def _skip_call_ref(
@@ -666,11 +809,15 @@ def _append_ref(
     name: str,
     offset: int,
     state: _RefState,
+    *,
+    spelling: str | None = None,
 ) -> None:
     key = (name, offset)
     if key not in state.seen:
         state.seen.add(key)
         state.refs.append((name, state.file_path))
+        if state.context is not None:
+            state.context.record(name, offset, spelling=spelling)
 
 
 def _matching_paren(masked: str, open_paren: int) -> int | None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
 
 @dataclass(frozen=True)
@@ -12,10 +12,12 @@ class RuleCatalogEntry:
     severity: str | None = None
     source: str = "builtin"
     aliases: tuple[str, ...] = field(default_factory=tuple)
+    cwe: tuple[str, ...] = field(default_factory=tuple, kw_only=True)
 
     def to_dict(self) -> dict:
         data = asdict(self)
         data["aliases"] = list(self.aliases)
+        data.pop("cwe")
         return data
 
 
@@ -186,6 +188,69 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-SCA-SRC001",
+        "Possible dependency confusion",
+        "dependency",
+        "CRITICAL",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-SCA-SRC003",
+        "Mutable dependency source",
+        "dependency",
+        "MEDIUM",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-SCA-SRC004",
+        "Package moved to a source this repository did not use",
+        "dependency",
+        "HIGH",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-SCA-INT001",
+        "Lockfile entry without integrity hash",
+        "dependency",
+        "MEDIUM",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-SCA-AGE001",
+        "Dependency version younger than the release-age window",
+        "dependency",
+        "HIGH",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-SCA-UPG001",
+        "Dependency upgrade adds install-time or import-time code",
+        "dependency",
+        "CRITICAL",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-SCA-UPG002",
+        "Dependency upgrade adds code worth reviewing",
+        "dependency",
+        "MEDIUM",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-SCA-API001",
+        "Your line uses API a dependency upgrade removed",
+        "dependency",
+        "MEDIUM",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-SCA-HRD001",
+        "Change weakens install hardening",
+        "dependency",
+        "HIGH",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-C401", "Duplicated code clone", "quality", finding_type="advice"
     ),
     RuleCatalogEntry(
@@ -250,10 +315,10 @@ _RULES = (
         "SKY-Q801", "High instability", "quality", "MEDIUM", finding_type="advice"
     ),
     RuleCatalogEntry(
-        "SKY-Q802", "High distance from main sequence", "quality", finding_type="advice"
+        "SKY-Q802", "Unbalanced module design", "quality", finding_type="advice"
     ),
     RuleCatalogEntry(
-        "SKY-Q803", "Architecture zone warning", "quality", finding_type="advice"
+        "SKY-Q803", "Module hard to change or unused", "quality", finding_type="advice"
     ),
     RuleCatalogEntry(
         "SKY-Q804", "Dependency inversion violation", "quality", finding_type="advice"
@@ -275,7 +340,7 @@ _RULES = (
         "SKY-L003", "Dangerous comparison", "quality", finding_type="review"
     ),
     RuleCatalogEntry(
-        "SKY-L004", "Anti-pattern try block", "quality", finding_type="advice"
+        "SKY-L004", "Try block too broad", "quality", finding_type="advice"
     ),
     RuleCatalogEntry(
         "SKY-L005", "Unused exception variable", "quality", finding_type="advice"
@@ -329,7 +394,7 @@ _RULES = (
         "SKY-L027", "Duplicate string literal", "quality", finding_type="advice"
     ),
     RuleCatalogEntry("SKY-L028", "Too many returns", "quality", finding_type="advice"),
-    RuleCatalogEntry("SKY-L029", "Boolean trap", "quality", finding_type="advice"),
+    RuleCatalogEntry("SKY-L029", "Unclear boolean argument", "quality", finding_type="advice"),
     RuleCatalogEntry(
         "SKY-L030",
         "Broad exception with trivial handler",
@@ -541,6 +606,14 @@ _RULES = (
         "SKY-D212", "Command injection", "security", "CRITICAL", finding_type="review"
     ),
     RuleCatalogEntry(
+        "SKY-D213",
+        "Hugging Face trust_remote_code runs repository code",
+        "security",
+        "HIGH",
+        aliases=("trust_remote_code",),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-D215",
         "Path traversal",
         "security",
@@ -560,7 +633,11 @@ _RULES = (
         "SKY-D217", "Raw SQL execution", "security", "CRITICAL", finding_type="review"
     ),
     RuleCatalogEntry(
-        "SKY-D218", "URL scheme audit", "security", "MEDIUM", finding_type="review"
+        "SKY-D218",
+        "Dynamic urllib URL scheme audit",
+        "security",
+        "MEDIUM",
+        finding_type="review",
     ),
     RuleCatalogEntry(
         "SKY-D222",
@@ -615,6 +692,14 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-D229",
+        "XPath injection",
+        "security",
+        "CRITICAL",
+        aliases=("xpath injection",),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-D230",
         "Open redirect",
         "security",
@@ -652,6 +737,38 @@ _RULES = (
         "Remote command execution sink",
         "security",
         "HIGH",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D236",
+        "XML external entity (XXE)",
+        "security",
+        "HIGH",
+        aliases=("xxe", "xml external entity"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D237",
+        "Expression, JNDI or script injection",
+        "security",
+        "CRITICAL",
+        aliases=("spel injection", "jndi injection", "ognl injection", "el injection"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D238",
+        "NoSQL injection",
+        "security",
+        "HIGH",
+        aliases=("nosql", "nosqli", "mongodb injection"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D239",
+        "LDAP injection",
+        "security",
+        "CRITICAL",
+        aliases=("ldap injection",),
         finding_type="review",
     ),
     RuleCatalogEntry(
@@ -730,6 +847,30 @@ _RULES = (
         "HTTP session trust boundary violation",
         "security",
         "HIGH",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D255",
+        "File inclusion",
+        "security",
+        "CRITICAL",
+        aliases=("file inclusion", "remote file inclusion", "rfi"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D257",
+        "Android WebView JavaScript bridge",
+        "security",
+        "HIGH",
+        aliases=("addjavascriptinterface", "webview javascript interface"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D258",
+        "Android WebView file URL access",
+        "security",
+        "MEDIUM",
+        aliases=("allowuniversalaccessfromfileurls", "webview file access"),
         finding_type="review",
     ),
     RuleCatalogEntry(
@@ -829,6 +970,14 @@ _RULES = (
         "Webhook signature verification issue",
         "security",
         "HIGH",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D283",
+        "Unauthenticated control, destructive or admin route",
+        "security",
+        "HIGH",
+        aliases=("missing authentication", "unauthenticated route"),
         finding_type="review",
     ),
     RuleCatalogEntry(
@@ -1004,7 +1153,12 @@ _RULES = (
         "GitHub Actions AI agent on untrusted trigger without actor gate",
         "security",
         "CRITICAL",
-        aliases=("ai agent", "claude-code-action", "run-gemini-cli", "prompt injection"),
+        aliases=(
+            "ai agent",
+            "claude-code-action",
+            "run-gemini-cli",
+            "prompt injection",
+        ),
         finding_type="review",
     ),
     RuleCatalogEntry(
@@ -1111,7 +1265,116 @@ _RULES = (
         "GitHub Actions long-lived publish token where trusted publishing exists",
         "security",
         "MEDIUM",
-        aliases=("trusted publishing", "use-trusted-publishing", "PyPI token", "NPM_TOKEN"),
+        aliases=(
+            "trusted publishing",
+            "use-trusted-publishing",
+            "PyPI token",
+            "NPM_TOKEN",
+        ),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D365",
+        "Agent hook command committed in the repository",
+        "security",
+        "HIGH",
+        aliases=("agent hook", "SessionStart hook", ".claude/settings.json hooks"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D366",
+        "Editor task that runs when the folder opens",
+        "security",
+        "HIGH",
+        aliases=("folderOpen", "runOn folderOpen", ".vscode/tasks.json"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D367",
+        "MCP server launched without an exact version",
+        "security",
+        "MEDIUM",
+        aliases=("unpinned MCP server", "npx -y", "mcp pin"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D368",
+        "MCP server launched from a hidden home-directory path",
+        "security",
+        "HIGH",
+        aliases=("hidden MCP server path",),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D369",
+        "MCP server package imitating a vendor",
+        "security",
+        "MEDIUM",
+        aliases=("MCP impersonation",),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D370",
+        "Agent API base URL overridden in repository settings",
+        "security",
+        "HIGH",
+        aliases=("ANTHROPIC_BASE_URL", "OPENAI_BASE_URL", "base URL override"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D371",
+        "Unpinned tool installed in a job holding publish credentials",
+        "security",
+        "HIGH",
+        aliases=("unpinned tool publish job",),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D372",
+        "Unverified download reaching the publish step",
+        "security",
+        "HIGH",
+        aliases=("unverified download publish",),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D373",
+        "OIDC publish job without an environment",
+        "security",
+        "HIGH",
+        aliases=("id-token publish without environment",),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D374",
+        "Publish workflow started by workflow_dispatch or any-branch push",
+        "security",
+        "HIGH",
+        aliases=("publish on workflow_dispatch",),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D375",
+        "Pull request changes a job that publishes packages",
+        "security",
+        "MEDIUM",
+        aliases=("publish job changed",),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D376",
+        "Secrets passed to a reusable workflow from another repository",
+        "security",
+        "MEDIUM",
+        aliases=("secrets to remote reusable workflow",),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D377",
+        "Agent config with duplicated keys that hide what runs",
+        "security",
+        "MEDIUM",
+        aliases=("ambiguous agent config", "duplicate keys"),
         finding_type="review",
     ),
     RuleCatalogEntry(
@@ -1377,6 +1640,20 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-D400",
+        "Terraform AWS worldwide administrative ingress",
+        "security",
+        "HIGH",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D401",
+        "Terraform AWS new database storage encryption disabled",
+        "security",
+        "HIGH",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-DEP001",
         "Externally deployed route is missing a required auth guard",
         "security",
@@ -1512,6 +1789,90 @@ _RULES = (
     ),
 )
 
+_SECURITY_RULE_CWES = {
+    "SKY-D201": ("CWE-95",),
+    "SKY-D202": ("CWE-95",),
+    "SKY-D203": ("CWE-78",),
+    "SKY-D204": ("CWE-502",),
+    "SKY-D205": ("CWE-502",),
+    "SKY-D206": ("CWE-502",),
+    "SKY-D207": ("CWE-328",),
+    "SKY-D208": ("CWE-328",),
+    "SKY-D209": ("CWE-78",),
+    "SKY-D210": ("CWE-295",),
+    "SKY-D211": ("CWE-89",),
+    "SKY-D212": ("CWE-78",),
+    "SKY-D213": ("CWE-94", "CWE-829"),
+    "SKY-D215": ("CWE-22",),
+    "SKY-D216": ("CWE-918",),
+    "SKY-D217": ("CWE-89",),
+    "SKY-D218": ("CWE-918",),
+    "SKY-D226": ("CWE-79",),
+    "SKY-D227": ("CWE-79",),
+    "SKY-D228": ("CWE-79",),
+    "SKY-D230": ("CWE-601",),
+    "SKY-D231": ("CWE-942",),
+    "SKY-D232": ("CWE-347",),
+    "SKY-D233": ("CWE-502",),
+    "SKY-D234": ("CWE-915",),
+    "SKY-D235": ("CWE-78",),
+    "SKY-D240": ("CWE-1427",),
+    "SKY-D241": ("CWE-306",),
+    "SKY-D242": ("CWE-22",),
+    "SKY-D243": ("CWE-1327",),
+    "SKY-D244": ("CWE-798",),
+    "SKY-D250": ("CWE-330",),
+    "SKY-D251": ("CWE-532",),
+    "SKY-D252": ("CWE-614",),
+    "SKY-D253": ("CWE-208",),
+    "SKY-D255": ("CWE-98",),
+    "SKY-D257": ("CWE-749",),
+    "SKY-D258": ("CWE-200",),
+    "SKY-D260": ("CWE-1427",),
+    "SKY-D261": ("CWE-1427",),
+    "SKY-D262": ("CWE-1426",),
+    "SKY-D263": ("CWE-359",),
+    "SKY-D264": ("CWE-250",),
+    "SKY-D265": ("CWE-502",),
+    "SKY-D266": ("CWE-1427",),
+    "SKY-D267": ("CWE-770",),
+    "SKY-D282": ("CWE-347",),
+    "SKY-D283": ("CWE-306", "CWE-862"),
+    "SKY-D324": ("CWE-59",),
+    "SKY-D325": ("CWE-59",),
+    "SKY-D326": ("CWE-22",),
+    "SKY-D327": ("CWE-200",),
+    "SKY-D328": ("CWE-494",),
+    "SKY-D337": ("CWE-829",),
+    "SKY-D338": ("CWE-200",),
+    "SKY-D339": ("CWE-15",),
+    "SKY-D341": ("CWE-829",),
+    "SKY-D345": ("CWE-494",),
+    "SKY-D346": ("CWE-489",),
+    "SKY-D347": ("CWE-306",),
+    "SKY-D348": ("CWE-377",),
+    "SKY-D349": ("CWE-1336",),
+    "SKY-SC001": ("CWE-862",),
+}
+
+
+def _with_cwes(entries):
+    """CWE ids of the security rules Skylos raises on Python code. Findings
+    from Python files carry them (``finding["cwe"]``) so SARIF and
+    compliance consumers get CWE taxa. Shell-guard rules without a clear
+    weakness class (broad destructive command, unapproved publish) have
+    none."""
+    result = []
+    for entry in entries:
+        cwes = _SECURITY_RULE_CWES.get(entry.id)
+        if cwes:
+            entry = replace(entry, cwe=cwes)
+        result.append(entry)
+    return tuple(result)
+
+
+_RULES = _with_cwes(_RULES)
+
 _BY_ID = {}
 for entry in _RULES:
     if entry.id in _BY_ID:
@@ -1563,6 +1924,13 @@ def get_rule_name(rule_id: str, default: str = "Security issue") -> str:
         return entry.name
     else:
         return default
+
+
+def get_rule_cwes(rule_id) -> tuple[str, ...]:
+    entry = _BY_ID.get(str(rule_id or "").strip().upper())
+    if entry is None:
+        return ()
+    return entry.cwe
 
 
 def get_rule_finding_type(rule_id) -> str:

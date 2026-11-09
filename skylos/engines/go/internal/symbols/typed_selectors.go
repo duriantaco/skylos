@@ -2,8 +2,6 @@ package symbols
 
 import (
 	"go/ast"
-	"go/build"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -26,13 +24,33 @@ func collectTypedSelectorRefs(
 	modulePath string,
 	pkgDirs map[string]string,
 	defNames map[string]bool,
+	typeImporter types.Importer,
 ) ([]Ref, []CallPair) {
-	packages := collectParsedPackages(root, resolvedRoot, modulePath)
+	var sourceFiles map[string]bool
+	if project, ok := typeImporter.(*projectSourceImporter); ok {
+		sourceFiles = project.sourceFiles
+	}
+	packages := collectParsedPackages(root, resolvedRoot, modulePath, sourceFiles)
+	if project, ok := typeImporter.(*projectSourceImporter); ok {
+		for index := range packages {
+			pkg := &packages[index]
+			if project.incompleteDirs[filepath.Dir(pkg.fset.Position(pkg.files[0].Pos()).Filename)] {
+				pkg.files = nil
+				continue
+			}
+			if importPath, known := project.packagePath(pkg.pkgDir, pkg.files[0].Name.Name); known {
+				pkg.importPath = importPath
+			}
+		}
+	}
 	refs := []Ref{}
 	calls := []CallPair{}
 
 	for _, pkg := range packages {
-		pkgRefs, pkgCalls := resolveTypedSelectors(pkg, modulePath, root, pkgDirs, defNames)
+		if len(pkg.files) == 0 {
+			continue
+		}
+		pkgRefs, pkgCalls := resolveTypedSelectors(pkg, modulePath, root, pkgDirs, defNames, typeImporter)
 		refs = append(refs, pkgRefs...)
 		calls = append(calls, pkgCalls...)
 	}
@@ -40,7 +58,7 @@ func collectTypedSelectorRefs(
 	return refs, calls
 }
 
-func collectParsedPackages(root, resolvedRoot, modulePath string) []parsedPackage {
+func collectParsedPackages(root, resolvedRoot, modulePath string, sourceFiles map[string]bool) []parsedPackage {
 	fset := token.NewFileSet()
 	packagesByKey := map[string]*parsedPackage{}
 
@@ -56,6 +74,9 @@ func collectParsedPackages(root, resolvedRoot, modulePath string) []parsedPackag
 			return nil
 		}
 		if !strings.HasSuffix(path, ".go") || info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if sourceFiles != nil && !sourceFiles[path] {
 			return nil
 		}
 
@@ -102,7 +123,7 @@ func collectParsedPackages(root, resolvedRoot, modulePath string) []parsedPackag
 }
 
 func matchesCurrentBuild(path string) bool {
-	ok, err := build.Default.MatchFile(filepath.Dir(path), filepath.Base(path))
+	ok, err := targetBuildContext.MatchFile(filepath.Dir(path), filepath.Base(path))
 	if err != nil {
 		return true
 	}
@@ -128,15 +149,19 @@ func resolveTypedSelectors(
 	root string,
 	pkgDirs map[string]string,
 	defNames map[string]bool,
+	typeImporter types.Importer,
 ) ([]Ref, []CallPair) {
 	info := &types.Info{
 		Selections: map[*ast.SelectorExpr]*types.Selection{},
 		Uses:       map[*ast.Ident]types.Object{},
 	}
 	conf := types.Config{
-		Importer: importer.Default(),
+		Importer: typeImporter,
 		Error: func(error) {
 		},
+	}
+	if project, ok := typeImporter.(*projectSourceImporter); ok {
+		conf.GoVersion = project.languageVersionForDirectory(filepath.Join(root, pkg.pkgDir))
 	}
 	_, _ = conf.Check(pkg.importPath, pkg.fset, pkg.files, info)
 	if len(info.Selections) == 0 {

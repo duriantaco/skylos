@@ -36,6 +36,16 @@ Prefer evidence in this order:
 Do not treat absence of a simple text reference as proof of dead code when the
 framework commonly resolves names dynamically.
 
+A same-named attribute read is not always a use. A Python module or class
+variable stays alive through `x.NAME` only when `x` could be its owner (the
+module or class, a related class's `self`, Django `settings`, or an unknown
+receiver the module object can reach). `self.NAME` on an unrelated class and
+`other_module.NAME` do not keep it, so `RETRY_LIMIT = 3` read only as
+`self.RETRY_LIMIT` elsewhere is reported. Java, Kotlin, Rust and Dart symbols
+with the same name in different files are separate findings; a reference
+reaches the ones in its file, package, imports or crate. Overloads in one file
+share liveness.
+
 ## Framework Areas
 
 Skylos has framework-aware behavior for patterns such as:
@@ -63,9 +73,26 @@ Skylos has framework-aware behavior for patterns such as:
   and policies), plus Livewire and Blade components, migrations,
   `DatabaseSeeder` and `laravel-vite-plugin` inputs.
 - PHP type-position and PHPDoc references to imported classes.
+- Kotlin (lexical, private declarations and imports only): any identifier in
+  code is a use, including type positions, `::foo`, trailing-lambda and infix
+  calls, string templates, KDoc links to imports and import paths of private
+  enums; named-argument labels and text in comments or string literals are not.
+  `private operator fun`, operator-convention imports (`getValue`, `plus`,
+  `component1`), companion objects, and functions annotated `@JvmStatic`,
+  `@Preview`, `@Composable`, Spring/JUnit lifecycle or Hilt `@Provides` are live.
+- C# constructors: only a private constructor with parameters that nothing
+  calls is an unused-function finding (Roslyn IDE0051); controller and
+  dependency-injection constructors are framework-called, and the class itself
+  is the dead-code unit.
 - package entrypoints and plugin hooks.
+- Python library public API (`skylos/deadcode/public_api.py`): attribute
+  docstrings and `#:` comments, Sphinx/MyST directives and roles, mkdocstrings
+  `:::`, `.pyi` stubs and PEP 562/`lazy_loader` export tables. `__all__`
+  always wins; private, test and script code is never rescued, and a
+  documented class does not rescue its undocumented methods.
 
-The full convention table is in `dictionary.md` under "Framework entrypoints".
+The full convention table is in `dictionary.md` under "Framework entrypoints"
+and "Library public API (Python)".
 
 When adding support, include a minimal positive fixture and a negative fixture
 so the analyzer does not simply whitelist too much.
@@ -79,15 +106,24 @@ evidence. Do not use trace mode as the default answer for untrusted PR review.
 ## Suppression Options
 
 - `# skylos: ignore`: suppress a finding on one line;
-  `# skylos: ignore[SKY-D211] reason` suppresses only that rule.
+  `# skylos: ignore[SKY-D211] reason` suppresses only that rule. Dead code
+  uses its own IDs: `SKY-U001` functions/methods, `SKY-U002` imports,
+  `SKY-U003` variables, `SKY-U004` classes, `SKY-U006` parameters. The same
+  markers work in a `//` (or one-line `/* */`) comment in Go, Java, Kotlin,
+  C#, PHP, Dart, Rust, C/C++ and TS/JS, and in a `#` comment in Shell and PHP;
+  a marker inside a string literal never counts.
 - A bare `# noqa` hides dead-code, quality and LOW/MEDIUM findings, but
   not HIGH/CRITICAL security findings (`SKY-D*`, `SKY-S*`); those stay
   reported with `bare_noqa_ignored: true`. `# noqa: <ruff code>` never
   hides Skylos security/quality findings (F401/F841 only mark the
   matching unused import/variable).
 - `# skylos: ignore-start` / `# skylos: ignore-end`: suppress a block.
-- `ignore = ["SKY-XXX"]` in `[tool.skylos]`: suppress a rule project-wide.
+- `ignore = ["SKY-XXX"]` in `[tool.skylos]`: suppress a rule project-wide
+  (`SKY-U001` hides unused functions only; unreachable code is `SKY-UC001`).
 - `skylos whitelist <pattern>`: manage whitelisted symbols.
+  `[tool.skylos.whitelist.temporary]` entries take `expires = "YYYY-MM-DD"`
+  (a TOML date works too); once expired, or with an unreadable date, they
+  hide nothing and the scan prints a warning naming the entry.
 - `skylos baseline .`: store current findings as accepted baseline.
 
 Prefer analyzer improvements or precise suppressions over broad project-wide

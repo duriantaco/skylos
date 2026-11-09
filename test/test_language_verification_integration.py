@@ -28,6 +28,7 @@ def _write(root: Path, relative: str, source: str) -> Path:
             "php_workspace_api_surface",
         ),
         ("main.rs", "fn main() {}\n", "rust", "rust_workspace_api_surface"),
+        ("main.rb", "puts 'ok'\n", "ruby", "ruby_workspace_api_surface"),
         ("main.dart", "void main() {}\n", "dart", "dart_workspace_api_surface"),
         ("Program.cs", "class Program {}\n", "csharp", "csharp_workspace_api_surface"),
         (

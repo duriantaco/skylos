@@ -23,6 +23,7 @@ from skylos.cicd.evidence import (
     sanitize_markdown_text,
     sanitize_untrusted_text,
 )
+from skylos.cicd.pr_summary import SummaryInputs, brief_lines, verdict_line
 from skylos.cicd.risk_passport import (
     build_risk_passport,
     format_risk_passport_markdown,
@@ -57,6 +58,7 @@ def run_pr_review(
     llm_findings: list[dict] | None = None,
     defense_report: dict | None = None,
     evidence_cards: bool = False,
+    summary_inputs: SummaryInputs | None = None,
 ) -> None:
     pr_number = pr_number or _detect_pr_number()
     repo = repo or os.environ.get("GITHUB_REPOSITORY")
@@ -121,17 +123,13 @@ def run_pr_review(
             if regression_findings and not summary_only
             else changed_ranges
         )
-    except ValueError as exc:
-        console.print(f"[red]Skylos PR review unavailable: {exc}[/red]")
-        raise SystemExit(2) from None
-
-    if not summary_only:
         findings = filter_findings_to_diff(
             all_findings, changed_ranges, project_root=review_root
         )
         findings.extend(regression_findings)
-    else:
-        findings = all_findings + regression_findings
+    except ValueError as exc:
+        console.print(f"[red]Skylos PR review unavailable: {exc}[/red]")
+        raise SystemExit(2) from None
 
     all_findings.extend(regression_findings)
     provenance = _resolve_review_provenance(
@@ -176,6 +174,7 @@ def run_pr_review(
         risk_passport=risk_passport,
         identity=identity,
         left_unused=left_unused,
+        summary_inputs=summary_inputs,
     )
 
     console.print(
@@ -287,14 +286,14 @@ def get_untracked_files(cwd=None) -> list[str]:
             ),
             cwd=cwd,
             capture_output=True,
-            text=True,
             env=read_only_git_environment(),
         )
     except FileNotFoundError:
         return []
     if result.returncode != 0:
         return []
-    return [path for path in result.stdout.split("\0") if path]
+    output = os.fsdecode(result.stdout)
+    return [path for path in output.split("\0") if path]
 
 
 def get_changed_line_ranges(
@@ -344,9 +343,8 @@ def get_changed_line_ranges(
             env=read_only_git_environment(),
             # Only file names and hunk headers are read: a changed file in
             # another encoding (or a binary git treats as text) must not
-            # stop the scan.
-            encoding="utf-8",
-            errors="replace",
+            # stop the scan. Decode explicitly below: universal-newline
+            # conversion could turn bare CR inside source into fake headers.
         )
         if result.returncode != 0:
             if raise_on_error:
@@ -360,8 +358,11 @@ def get_changed_line_ranges(
             raise ValueError("Cannot compare changes: git is not installed") from exc
         return []
 
+    diff_output = result.stdout
+    if isinstance(diff_output, bytes):
+        diff_output = diff_output.decode("utf-8", errors="replace")
     ranges = _parse_unified_diff(
-        result.stdout, include_deletion_anchors=include_deletion_anchors
+        diff_output, include_deletion_anchors=include_deletion_anchors
     )
     if include_working_tree:
         for path in get_untracked_files(cwd):
@@ -374,14 +375,22 @@ def _parse_unified_diff(
 ) -> list[dict]:
     entries = []
     current_file = None
+    in_hunk = False
 
-    for line in diff_output.splitlines():
-        if line.startswith("+++ b/"):
-            current_file = line[6:]
+    for line in diff_output.split("\n"):
+        if line.startswith("diff --git "):
+            current_file = None
+            in_hunk = False
+            continue
+        if line.startswith("+++ ") and not in_hunk:
+            current_file = _new_diff_header_path(line[4:])
             continue
 
         hunk_match = re.match(r"^@@ .+ \+(\d+)(?:,(\d+))? @@", line)
-        if hunk_match and current_file:
+        if hunk_match:
+            in_hunk = True
+            if current_file is None:
+                continue
             start = int(hunk_match.group(1))
             count = int(hunk_match.group(2) or 1)
             if count == 0 and not include_deletion_anchors:
@@ -396,6 +405,23 @@ def _parse_unified_diff(
             )
 
     return entries
+
+
+def _new_diff_header_path(raw: str) -> str | None:
+    from skylos.done.base import _unquote_c_style
+
+    # Git appends a TAB after an unquoted name containing spaces. Literal
+    # filename tabs, newlines and quotes use Git's C-style quoted form.
+    path = raw.partition("\t")[0]
+    if path.startswith('"'):
+        if len(path) < 2 or not path.endswith('"'):
+            raise ValueError("Cannot compare changes: malformed quoted Git path")
+        path = _unquote_c_style(path[1:-1])
+    if path == "/dev/null":
+        return None
+    if not path.startswith("b/"):
+        raise ValueError("Cannot compare changes: unsupported Git path header")
+    return path[2:]
 
 
 def _get_per_file_diffs(
@@ -420,8 +446,10 @@ def _get_per_file_diffs(
             diff_cmd,
             cwd=cwd,
             capture_output=True,
-            text=True,
             env=read_only_git_environment(),
+            # Read bytes and decode explicitly, like get_changed_line_ranges:
+            # universal-newline conversion could turn bare CR inside source
+            # into fake headers.
         )
         if result.returncode != 0:
             if raise_on_error:
@@ -438,17 +466,29 @@ def _get_per_file_diffs(
     file_diffs: dict[str, str] = {}
     current_file = None
     current_lines: list[str] = []
+    in_hunk = False
 
-    for line in result.stdout.splitlines():
+    diff_output = result.stdout
+    if isinstance(diff_output, bytes):
+        diff_output = diff_output.decode("utf-8", errors="replace")
+
+    for line in diff_output.split("\n"):
         if line.startswith("diff --git"):
             if current_file and current_lines:
                 file_diffs[current_file] = "\n".join(current_lines)
             current_file = None
             current_lines = [line]
-        elif line.startswith("+++ b/"):
-            current_file = line[6:]
+            in_hunk = False
+        elif line.startswith("+++ ") and not in_hunk:
+            # Reuse the shared header parser: Git quotes paths with non-ASCII
+            # bytes, quotes or control characters, and appends a TAB after an
+            # unquoted name containing spaces. A line inside a hunk that
+            # happens to start with "+++ " is source text, not a new file.
+            current_file = _new_diff_header_path(line[4:])
             current_lines.append(line)
         else:
+            if line.startswith("@@"):
+                in_hunk = True
             current_lines.append(line)
 
     if current_file and current_lines:
@@ -505,14 +545,24 @@ def filter_findings_to_diff(
         if file is not None:
             ranges_by_file.setdefault(file, []).append((r["start"], r["end"]))
 
+    checked_python_files = set()
+
+    def overlaps(file, start, end):
+        if project_root is not None and _validated_location_span(file, start, end):
+            relative = _project_relative_file(file, project_root)
+            if relative in ranges_by_file and relative not in checked_python_files:
+                _require_python_diff_line_integrity(file, project_root)
+                checked_python_files.add(relative)
+        return _location_overlaps_diff(
+            file, start, end, ranges_by_file, project_root=project_root
+        )
+
     filtered = []
     for finding in findings:
-        if _location_overlaps_diff(
+        if overlaps(
             finding.get("file", ""),
             finding.get("line", 0),
             finding.get("line", 0),
-            ranges_by_file,
-            project_root=project_root,
         ):
             filtered.append(finding)
             continue
@@ -524,17 +574,51 @@ def filter_findings_to_diff(
         for location in related_locations:
             if not isinstance(location, dict):
                 continue
-            if _location_overlaps_diff(
+            if overlaps(
                 location.get("file", ""),
                 location.get("start_line", 0),
                 location.get("end_line", location.get("start_line", 0)),
-                ranges_by_file,
-                project_root=project_root,
             ):
                 filtered.append(finding)
                 break
 
     return filtered
+
+
+def _require_python_diff_line_integrity(file, project_root):
+    from skylos.core.safe_cache_io import read_project_text_no_symlink
+    from skylos.security.regression_diff import _lexical_repository_path
+
+    if Path(file).suffix.lower() not in {".py", ".pyi", ".pyw"}:
+        return
+    root = Path(project_root).resolve()
+    source = _lexical_repository_path(root, file)
+    if not source.is_relative_to(root):
+        return
+    try:
+        source.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ValueError(
+            "Cannot compare changes: Python source line endings unavailable"
+        ) from exc
+    text = read_project_text_no_symlink(
+        root,
+        source,
+        max_bytes=2 * 1024 * 1024,
+        encoding="latin-1",
+        newline="",
+    )
+    if text is None:
+        raise ValueError(
+            "Cannot compare changes: Python source line endings unavailable"
+        )
+    if re.search(r"\r(?!\n)", text):
+        raise ValueError(
+            "Cannot compare changes: changed Python source contains lone carriage "
+            "returns; use LF or CRLF line endings"
+        )
 
 
 def _validated_location_span(
@@ -1570,6 +1654,7 @@ def _post_summary_comment(
     risk_passport: dict | None = None,
     identity: _TokenIdentity | None = None,
     left_unused: list[tuple[str, str]] | None = None,
+    summary_inputs: SummaryInputs | None = None,
 ) -> _CommentOutcome:
     left_unused = left_unused or []
     existing_comments, list_error = _gh_list(
@@ -1598,9 +1683,13 @@ def _post_summary_comment(
         if previous_changed is not None and previous_changed != changed_now
         else ""
     )
-    lines = [SUMMARY_MARKER, _SUMMARY_HEADING, ""]
+    head = [SUMMARY_MARKER, _SUMMARY_HEADING, ""]
+    if summary_inputs is not None:
+        verdict = verdict_line(summary_inputs)
+        if verdict:
+            head.extend([verdict, ""])
     if changed_now == 0 and previous_max > 0:
-        lines.extend(
+        head.extend(
             [
                 "✅ **All issues Skylos reported on this PR's changed lines are "
                 f"fixed.** Earlier runs reported up to {previous_max}.",
@@ -1610,10 +1699,16 @@ def _post_summary_comment(
     left_unused_count = (
         f" | **{len(left_unused)}** left unused by this change" if left_unused else ""
     )
-    lines.append(
+    head.append(
         f"**{changed_now}** issue(s) on changed lines{was} | "
         f"**{len(all_findings)}** total{left_unused_count}"
     )
+    if summary_inputs is not None:
+        brief = brief_lines(summary_inputs)
+        if brief:
+            head.append("")
+            head.extend(brief)
+    lines: list[str] = []
     lines.extend(format_risk_passport_markdown(risk_passport))
     lines.extend(
         [
@@ -1814,8 +1909,14 @@ def _post_summary_comment(
             )
         lines.extend(["", "Historical result; this score is not a current risk assessment."])
 
-    lines.extend(
+    body = "\n".join(
         [
+            *head,
+            "",
+            "<details><summary>Details</summary>",
+            *lines,
+            "",
+            "</details>",
             "",
             "---",
             "_Skylos edits this comment on each push instead of adding a new "
@@ -1824,7 +1925,6 @@ def _post_summary_comment(
             f"changed={changed_now} max={max(previous_max, changed_now)} -->",
         ]
     )
-    body = "\n".join(lines)
 
     note = (
         f"could not read existing comments ({list_error})"

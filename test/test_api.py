@@ -1,5 +1,6 @@
 import os
 import json
+import dataclasses
 import importlib
 import builtins
 import subprocess
@@ -21,6 +22,16 @@ from skylos.api import (
     _extract_pr_number,
     _normalize_branch,
 )
+
+
+def _upload_prepared_with_definitions(result):
+    prepared = dataclasses.replace(
+        api._prepare_report_upload(result),
+        definitions_payload={"definitions": result["definitions"]},
+    )
+    return api._send_prepared_upload(
+        "token", prepared, kind="report", quiet=True, strict=False, is_forced=False
+    )
 
 
 class TestSkylosApi(unittest.TestCase):
@@ -346,7 +357,7 @@ class TestSkylosApi(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertEqual(
             result["error"],
-            "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN.",
+            "No token found. Run 'skylos login', or set SKYLOS_TOKEN.",
         )
 
     def test_get_project_token_uses_repo_subpath_link(self):
@@ -809,7 +820,7 @@ class TestSkylosApi(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertEqual(
             result["error"],
-            "Invalid API token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
+            "Invalid Skylos token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
         )
         self.assertEqual(mock_post.call_count, 1)
 
@@ -1258,14 +1269,6 @@ class TestSkylosApi(unittest.TestCase):
                         "headers": {"x-test": "1"},
                     },
                 },
-                "definitions": {
-                    "artifact_id": "artifact-defs",
-                    "key": "definitions-key",
-                    "upload": {
-                        "method": "PUT",
-                        "url": "https://uploads.skylos.dev/definitions",
-                    },
-                },
             },
         }
         complete_resp = MagicMock()
@@ -1300,7 +1303,7 @@ class TestSkylosApi(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertEqual(result["scan_id"], "scan_artifact")
         self.assertEqual(mock_post.call_count, 2)
-        self.assertEqual(mock_put.call_count, 2)
+        self.assertEqual(mock_put.call_count, 1)
         self.assertEqual(
             # Contract client_read_timeout_seconds for the report endpoints.
             mock_post.call_args_list[0].kwargs["timeout"],
@@ -1318,20 +1321,14 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(init_payload["summary"]["definitions_count"], 1)
         self.assertTrue(init_payload["idempotency_key"].startswith("report-upload:"))
         self.assertNotIn("definitions", init_payload)
-        self.assertIn("definitions", init_payload["artifacts"])
-        self.assertIn("scan_report", init_payload["artifacts"])
+        self.assertEqual(list(init_payload["artifacts"]), ["scan_report"])
 
-        report_payload, definitions_payload = uploaded_payloads
+        (report_payload,) = uploaded_payloads
         self.assertNotIn("definitions", report_payload)
-        self.assertEqual(
-            definitions_payload,
-            {"definitions": {"app.func": {"file": "app.py", "line": 5}}},
-        )
 
         complete_payload = mock_post.call_args_list[1].kwargs["json"]
         self.assertEqual(complete_payload["scan_id"], "scan_artifact")
-        self.assertIn("scan_report", complete_payload["artifacts"])
-        self.assertIn("definitions", complete_payload["artifacts"])
+        self.assertEqual(list(complete_payload["artifacts"]), ["scan_report"])
         self.assertEqual(
             complete_payload["artifacts"]["scan_report"]["artifact_id"],
             "artifact-scan",
@@ -1339,14 +1336,6 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(
             complete_payload["artifacts"]["scan_report"]["key"],
             "scan-key",
-        )
-        self.assertEqual(
-            complete_payload["artifacts"]["definitions"]["artifact_id"],
-            "artifact-defs",
-        )
-        self.assertEqual(
-            complete_payload["artifacts"]["definitions"]["key"],
-            "definitions-key",
         )
 
     @patch("skylos.api.get_project_token")
@@ -1456,12 +1445,11 @@ class TestSkylosApi(unittest.TestCase):
         mock_put.side_effect = [ok_upload, fail_upload, fail_upload, fail_upload]
 
         with patch("skylos.api._legacy_inline_upload_limit_bytes", return_value=10):
-            result = upload_report(
+            result = _upload_prepared_with_definitions(
                 {
                     "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
                     "definitions": {"app.func": {"file": "app.py", "line": 5}},
-                },
-                quiet=True,
+                }
             )
 
         self.assertTrue(result["success"])
@@ -1518,12 +1506,11 @@ class TestSkylosApi(unittest.TestCase):
         mock_put.return_value = ok_upload
 
         with patch("skylos.api._legacy_inline_upload_limit_bytes", return_value=10):
-            result = upload_report(
+            result = _upload_prepared_with_definitions(
                 {
                     "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
                     "definitions": {"app.func": {"file": "app.py", "line": 5}},
-                },
-                quiet=True,
+                }
             )
 
         self.assertTrue(result["success"])
@@ -1594,12 +1581,11 @@ class TestSkylosApi(unittest.TestCase):
         mock_put.return_value = ok_upload
 
         with patch("skylos.api._legacy_inline_upload_limit_bytes", return_value=10):
-            result = upload_report(
+            result = _upload_prepared_with_definitions(
                 {
                     "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
                     "definitions": {"app.func": {"file": "app.py", "line": 5}},
-                },
-                quiet=True,
+                }
             )
 
         self.assertTrue(result["success"])
@@ -2493,17 +2479,66 @@ class TestVerifyReport(unittest.TestCase):
 
     @patch("skylos.api.get_project_token")
     @patch("skylos.api.get_project_info")
-    def test_verify_report_free_plan_rejected(self, mock_info, mock_token):
+    @patch("skylos.api.get_git_info", return_value=("sha", "branch", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value=None)
+    @patch("requests.post")
+    def test_verify_report_lets_skylos_cloud_decide_the_plan(
+        self, mock_post, _, _git, mock_info, mock_token
+    ):
         mock_token.return_value = "token"
         mock_info.return_value = {"plan": "free"}
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"results": []}
+        mock_post.return_value = resp
 
         from skylos.api import verify_report
 
-        result = verify_report({})
+        result = verify_report(
+            {"danger": [{"file": "app.py", "line": 5, "message": "oops"}]},
+            quiet=True,
+        )
+
+        self.assertTrue(result["success"])
+        mock_post.assert_called_once()
+        mock_info.assert_not_called()
+
+    @patch("skylos.api.get_project_token")
+    @patch("skylos.api.get_git_info", return_value=("sha", "branch", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value=None)
+    @patch("requests.post")
+    def test_verify_report_free_daily_limit_names_the_limit(
+        self, mock_post, _, _git, mock_token
+    ):
+        mock_token.return_value = "token"
+        resp = MagicMock()
+        resp.status_code = 429
+        resp.json.return_value = {
+            "error": "Verify daily limit reached for Free plan",
+            "code": "RATE_LIMITED",
+            "plan": "free",
+            "limit_per_day": 20,
+        }
+        mock_post.return_value = resp
+
+        from skylos.api import verify_report
+
+        result = verify_report(
+            {"danger": [{"file": "app.py", "line": 5, "message": "oops"}]},
+            quiet=True,
+        )
 
         self.assertFalse(result["success"])
-        self.assertIn("Workspace plan", result["error"])
+        self.assertIn("all 20 of today's verification checks", result["error"])
+        self.assertIn("Workspace", result["error"])
         self.assertNotIn("Pro", result["error"])
+
+        resp.json.side_effect = ValueError("not json")
+        result = verify_report(
+            {"danger": [{"file": "app.py", "line": 5, "message": "oops"}]},
+            quiet=True,
+        )
+        self.assertIn("today's verification checks", result["error"])
 
     @patch("skylos.api.get_project_token")
     @patch("skylos.api.get_project_info")
@@ -2644,15 +2679,13 @@ def test_failed_gate_prints_the_reasons_from_skylos_cloud(capsys):
     assert "❌ FAIL Quality gate: FAILED because of" in out
     assert "   - 3 critical security issues\n" in out
     assert "   - 1 new exposed secret (the policy always blocks secrets)\n" in out
-    assert "0 new violations" not in out
+    assert "0 new issues" not in out
 
 
 def test_failed_gate_without_reasons_falls_back_to_the_new_violation_count(capsys):
     for message in (None, "Quality Gate Failed.", "", 42):
         api._print_quality_gate_result(False, 2, "pro", message)
-        assert (
-            "❌ FAIL Quality gate: FAILED (2 new violations)" in capsys.readouterr().out
-        )
+        assert "❌ FAIL Quality gate: FAILED (2 new issues)" in capsys.readouterr().out
 
 
 def test_passed_gate_ignores_the_message(capsys):

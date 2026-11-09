@@ -198,6 +198,7 @@ def _demote_project_symbols(definitions, config_type_names: set[str]) -> None:
         name
         for name, definition in types.items()
         if name in config_type_names
+        or getattr(definition, "csharp_entrypoint_owner", False)
         or name in extension_owners
         or getattr(definition, "csharp_has_attributes", False)
         or "partial" in getattr(definition, "csharp_modifiers", ())

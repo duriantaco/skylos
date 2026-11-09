@@ -174,6 +174,7 @@ def scan_receipt(result, *, analyzer_owned=False, full_scan=False) -> dict[str, 
                     "complete_with_unresolved_versions": True,
                     "no_supported_manifests": False,
                     "complete_with_non_registry_sources": False,
+                    "complete_with_saved_answers": False,
                 }
                 complete = complete and isinstance(status, str) and status in expected
                 if status == "complete_with_non_registry_sources":
@@ -328,7 +329,7 @@ def delivery_receipt(value) -> dict:
     summary = f"{counts['created']} created, {counts['updated']} updated, {counts['resolved']} resolved"
     exit_code = 2
     if safe_reason == "plan_required":
-        message = "Scan saved. GitLab comments require an eligible Cloud plan; upgrade and check the project integration setup."
+        message = "Scan saved. GitLab comments need the Workspace plan."
     elif status in ("published", "noop"):
         if safe_reason not in ("complete", "partial_scope_no_resolution"):
             return invalid

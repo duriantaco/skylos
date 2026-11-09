@@ -38,6 +38,7 @@ exports.cancelScan = cancelScan;
 exports.scanWorkspace = scanWorkspace;
 exports.scanFile = scanFile;
 exports.doctorSkylos = doctorSkylos;
+exports.runSkylosCommand = runSkylosCommand;
 exports.normalizeReport = normalizeReport;
 const vscode = __importStar(require("vscode"));
 const child_process_1 = require("child_process");
@@ -122,6 +123,31 @@ async function doctorSkylos() {
                 stderr,
                 error,
             });
+        });
+    });
+}
+async function runSkylosCommand(args, cwd) {
+    const bin = (0, config_1.getSkylosBin)();
+    exports.out.appendLine(`Running: ${(0, scanCore_1.formatCommand)(bin, args)}`);
+    return new Promise((resolve) => {
+        const proc = (0, child_process_1.spawn)(bin, args, { cwd });
+        let stdout = "";
+        let stderr = "";
+        proc.stdout.on("data", (data) => {
+            stdout += data.toString();
+        });
+        proc.stderr.on("data", (data) => {
+            stderr += data.toString();
+        });
+        proc.on("close", (code) => {
+            if (stdout.trim())
+                exports.out.appendLine(stdout.trim());
+            if (stderr.trim())
+                exports.out.appendLine(stderr.trim());
+            resolve({ code, stdout, stderr });
+        });
+        proc.on("error", (err) => {
+            resolve({ code: null, stdout, stderr, error: err.message });
         });
     });
 }

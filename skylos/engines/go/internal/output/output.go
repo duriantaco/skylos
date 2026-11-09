@@ -14,12 +14,13 @@ type Finding struct {
 }
 
 type SymbolDef struct {
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	File       string `json:"file"`
-	Line       int    `json:"line"`
-	IsExported bool   `json:"is_exported"`
-	Receiver   string `json:"receiver,omitempty"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	File         string `json:"file"`
+	Line         int    `json:"line"`
+	IsExported   bool   `json:"is_exported"`
+	Receiver     string `json:"receiver,omitempty"`
+	Reachability string `json:"reachability,omitempty"`
 }
 
 type SymbolRef struct {
@@ -46,9 +47,29 @@ type EngineOutput struct {
 }
 
 func Marshal(out EngineOutput) ([]byte, error) {
-	return json.Marshal(out)
+	return json.Marshal(withSymbolArrays(out))
 }
 
 func MarshalPretty(out EngineOutput) ([]byte, error) {
-	return json.MarshalIndent(out, "", "  ")
+	return json.MarshalIndent(withSymbolArrays(out), "", "  ")
+}
+
+// Symbol arrays are required by the Python engine contract even when a valid
+// package has no declarations or no references to project declarations.
+func withSymbolArrays(out EngineOutput) EngineOutput {
+	if out.Symbols == nil {
+		return out
+	}
+	symbols := *out.Symbols
+	if symbols.Defs == nil {
+		symbols.Defs = []SymbolDef{}
+	}
+	if symbols.Refs == nil {
+		symbols.Refs = []SymbolRef{}
+	}
+	if symbols.CallPairs == nil {
+		symbols.CallPairs = []SymbolCallPair{}
+	}
+	out.Symbols = &symbols
+	return out
 }

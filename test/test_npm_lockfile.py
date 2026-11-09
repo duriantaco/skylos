@@ -171,13 +171,13 @@ def test_npm_alias_uses_real_registry_identity(version):
 @pytest.mark.parametrize(
     "resolved,source_type",
     [
-        ("https://packages.example.org/pkg/-/pkg-1.0.0.tgz", "external"),
+        ("https://packages.example.org/pkg/-/pkg-1.0.0.tgz", "url"),
         ("git+https://example.org/pkg.git#revision", "git"),
         ("file:vendor/pkg.tgz", "local"),
-        ("https://example.org/pkg.tar.gz", "external"),
+        ("https://example.org/pkg.tar.gz", "url"),
     ],
 )
-def test_non_registry_sources_are_explicit_unresolved_entries(resolved, source_type):
+def test_non_registry_sources_are_listed_as_not_checked(resolved, source_type):
     result = parse(
         {
             "lockfileVersion": 3,
@@ -188,11 +188,13 @@ def test_non_registry_sources_are_explicit_unresolved_entries(resolved, source_t
     )
     assert result.dependencies == []
     assert result.package_count == 1
-    assert result.unresolved[0]["reason"] == "non_registry_source"
-    assert result.unresolved[0]["source_type"] == source_type
-    assert result.unresolved[0]["name"] == "pkg"
-    assert result.unresolved[0]["installed_name"] == "pkg"
-    assert result.unresolved[0]["version"] == "1.0.0"
+    assert result.unresolved == []
+    entry = result.not_checked[0]
+    assert entry["source_type"] == source_type
+    assert entry["name"] == "pkg"
+    assert entry["installed_name"] == "pkg"
+    assert entry["version"] == "1.0.0"
+    assert "pkg" in result.non_registry_names
 
 
 @pytest.mark.parametrize(
@@ -201,7 +203,8 @@ def test_non_registry_sources_are_explicit_unresolved_entries(resolved, source_t
 def test_legacy_non_registry_version_spec_is_not_queried(source):
     result = parse({"lockfileVersion": 1, "dependencies": {"pkg": {"version": source}}})
     assert not result.dependencies
-    assert result.unresolved[0]["reason"] == "non_registry_source"
+    assert result.unresolved == []
+    assert result.not_checked[0]["name"] == "pkg"
 
 
 def test_unspecified_registry_and_legacy_relative_tarball_are_recorded():

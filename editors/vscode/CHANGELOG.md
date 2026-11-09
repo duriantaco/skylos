@@ -8,6 +8,11 @@
 - Packaging: README images resolve from `editors/vscode` on GitHub (the 0.5.0 listing's demo GIF was a broken link), and the demo GIF is no longer bundled in the `.vsix`
 - Listing: clarified manual AI requests, CLI edit-time verification, and VSIX installation for editors using Open VSX
 
+### Fixed
+- "Ignore on this line" writes `# skylos: ignore[RULE]` (Python) or `// skylos: ignore[RULE]` (TS/JS), which the CLI honours; dead-code findings get the blanket `skylos: ignore`. It used to write `// skylos-ignore`, which the CLI ignored. Go offers it only for secrets (`skylos: ignore[SKY-S101]`); the CLI has no other Go marker
+- "Ignore entire file" writes `skylos: ignore-start` after any shebang or encoding line instead of `skylos-ignore-file`, which the CLI ignored. Not offered for Go
+- "Add to whitelist" (and the dead-code CodeLens, now titled "Add to whitelist") runs `skylos whitelist <name>`, which adds the name to `[tool.skylos.whitelist]` in `pyproject.toml`, instead of writing a `.skylosignore` file the CLI never read. It needs a trusted workspace
+
 ## [0.6.0] - 2026-05-06
 
 ### Added

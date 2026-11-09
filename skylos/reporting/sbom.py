@@ -24,17 +24,39 @@ from skylos.rules.sca.licenses import (
     collect_licenses,
 )
 from skylos.rules.sca.npm_lockfile import _exact_version, _name as _npm_name
+from skylos.rules.sca.nuget_lockfile import (
+    NUGET_NAME_RE as _NUGET_NAME_RE,
+    NUGET_VERSION_RE as _NUGET_VERSION_RE,
+)
 from skylos.rules.sca.poetry_lockfile import _version as _pypi_version
 from skylos.rules.sca.uv_lockfile import _name as _pypi_name
 from skylos.rules.sca.vulnerability_scanner import (
     DependencyInventory,
     _DEPENDENCY_CONTEXT_KEYS,
-    _NUGET_NAME_RE,
-    _NUGET_VERSION_RE,
     _nuget_is_queryable,
 )
 
-_PURL_TYPES = {"PyPI": "pypi", "npm": "npm", "Go": "golang", "NuGet": "nuget"}
+_PURL_TYPES = {
+    "PyPI": "pypi",
+    "npm": "npm",
+    "Go": "golang",
+    "NuGet": "nuget",
+    "Maven": "maven",
+    "crates.io": "cargo",
+    "Packagist": "composer",
+    "RubyGems": "gem",
+    "Pub": "pub",
+}
+_REGISTRY_NAMES = {
+    "maven": re.compile(
+        r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,255}:[A-Za-z0-9_][A-Za-z0-9_.-]{0,255}\Z"
+    ),
+    "cargo": re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z"),
+    "composer": re.compile(r"[a-z0-9][a-z0-9_.-]{0,126}/[a-z0-9][a-z0-9_.-]{0,126}\Z"),
+    "gem": re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z"),
+    "pub": re.compile(r"[a-z_][a-z0-9_]{0,127}\Z"),
+}
+_REGISTRY_VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}\Z")
 _SOURCE_REFERENCE = re.compile(r"://|\b(?:git@|git\+|file:|link:|portal:)")
 _GO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~+/-]{0,511}\Z")
 
@@ -119,6 +141,15 @@ def _identity(dependency: dict) -> tuple[str, str, str] | None:
         ):
             return None
         name = name.lower()
+    elif kind in _REGISTRY_NAMES:
+        if (
+            not isinstance(name, str)
+            or not _REGISTRY_NAMES[kind].fullmatch(name)
+            or not isinstance(version, str)
+            or not _REGISTRY_VERSION.fullmatch(version)
+        ):
+            return None
+        name = name.replace(":", "/")
     else:
         return None
     # Scope separators remain separators; an npm scope's @ is percent encoded.
@@ -241,6 +272,8 @@ def cyclonedx_bom(
             )
         if ecosystem == "npm" and name.startswith("@") and "/" in name:
             component["group"], component["name"] = name.split("/", 1)
+        if ecosystem in {"Maven", "Packagist"} and "/" in name:
+            component["group"], component["name"] = name.split("/", 1)
         components.append(component)
 
     receipt = dict(inventory.receipt)
@@ -257,6 +290,10 @@ def cyclonedx_bom(
             {**entry, "file": _relative_file(entry["file"], root)}
             for entry in receipt["lockfile_not_checked"]
         ]
+    receipt["parse_errors"] = [
+        {**entry, "file": _relative_file(entry["file"], root)}
+        for entry in receipt.get("parse_errors", [])
+    ]
     receipt["ignored_lockfiles"] = [
         {
             **item,

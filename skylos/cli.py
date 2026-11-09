@@ -952,6 +952,12 @@ def _ensure_llm_support() -> bool:
         LLM_AVAILABLE = True
         return True
 
+    from skylos.llm.runtime import llm_extra_importable
+
+    if not llm_extra_importable():
+        LLM_AVAILABLE = False
+        return False
+
     try:
         from skylos.llm.analyzer import (
             SkylosLLM as skylos_llm_impl,
@@ -965,6 +971,15 @@ def _ensure_llm_support() -> bool:
     AnalyzerConfig = analyzer_config_impl
     LLM_AVAILABLE = True
     return True
+
+
+def _exit_without_llm_extra() -> None:
+    from skylos.llm.runtime import LLM_EXTRA_MISSING_MESSAGE
+
+    Console(stderr=True).print(
+        f"[bold red]{_escape_markup(LLM_EXTRA_MISSING_MESSAGE)}[/bold red]"
+    )
+    sys.exit(2)
 
 
 def _build_analyzer_config(**kwargs):
@@ -1354,10 +1369,58 @@ def _detect_link_file(project_root: Path) -> Path | None:
         return None
 
 
-def _print_upload_destination(console: Console, project_root: Path):
+def _resolve_upload_destination(project_root: Path):
+    from skylos.cloud.upload_destination import resolve_upload_destination
+
+    try:
+        return resolve_upload_destination(project_root)
+    except Exception:
+        logger.debug("Could not resolve the Cloud upload destination", exc_info=True)
+        return None
+
+
+def _print_upload_receipt(console: Console, destination, upload_resp) -> None:
+    if destination is None or not isinstance(upload_resp, dict):
+        return
+    if not upload_resp.get("success"):
+        return
+    from skylos.api import BASE_URL
+    from skylos.cloud.upload_destination import receipt_lines
+
+    for line in receipt_lines(destination, upload_resp, BASE_URL):
+        console.print(_escape_markup(line), soft_wrap=True)
+
+
+def _refuse_mismatched_upload(console: Console | None, destination) -> bool:
+    from skylos.cloud.upload_destination import (
+        mismatch_refusal_lines,
+        should_refuse_upload,
+    )
+
+    if destination is None or not should_refuse_upload(destination):
+        return False
+    for line in mismatch_refusal_lines(destination):
+        if console is None:
+            print(line, file=sys.stderr)
+        else:
+            console.print(f"[bad]{_escape_markup(line)}[/bad]", soft_wrap=True)
+    return True
+
+
+def _print_upload_destination(console: Console, project_root: Path, destination=None):
     using_env = bool(os.getenv("SKYLOS_TOKEN"))
     link_path = _detect_link_file(project_root)
     has_link = link_path is not None
+
+    from skylos.cloud.upload_destination import UPLOAD_CONTENTS_LINE
+
+    if destination is not None and destination.key_source != "none":
+        from skylos.cloud.upload_destination import destination_lines
+
+        for line in destination_lines(destination):
+            console.print(f"[brand]{_escape_markup(line)}[/brand]", soft_wrap=True)
+        console.print(f"[muted]{_escape_markup(UPLOAD_CONTENTS_LINE)}[/muted]", soft_wrap=True)
+        return has_link, using_env
 
     if using_env:
         console.print("[brand]Auto-uploading:[/brand] SKYLOS_TOKEN")
@@ -1369,6 +1432,7 @@ def _print_upload_destination(console: Console, project_root: Path):
         console.print(
             "[warn]Upload destination:[/warn] default token (no repo link found)"
         )
+    console.print(f"[muted]{_escape_markup(UPLOAD_CONTENTS_LINE)}[/muted]", soft_wrap=True)
 
     return has_link, using_env
 
@@ -1420,7 +1484,7 @@ def _render_upload_failure(console: Console, upload_resp: dict[str, object]) -> 
         return
 
     if err and err != (
-        "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN."
+        "No token found. Run 'skylos login', or set SKYLOS_TOKEN."
     ):
         # Server wording is plain text; never let it act as Rich markup.
         from rich.markup import escape as _escape_markup
@@ -1443,52 +1507,6 @@ def _is_ci():
             "TF_BUILD",
         )
     )
-
-
-def _print_upload_cta(console: Console, project_root: Path):
-    if _is_ci():
-        return
-
-    has_link = _detect_link_file(project_root) is not None
-    has_env = bool(os.getenv("SKYLOS_TOKEN"))
-    connected = has_link or has_env
-
-    console.print()
-    if connected:
-        console.print(
-            Panel(
-                "\n".join(
-                    [
-                        "[bold]Upload to Skylos Cloud for trend tracking and PR blocking[/bold]",
-                        "",
-                        "  [bold cyan]skylos . --upload[/bold cyan]",
-                        "",
-                        "  [dim]Dashboard:[/dim] https://skylos.dev/dashboard",
-                    ]
-                ),
-                title="[bold]☁️  Skylos Cloud[/bold]",
-                border_style="blue",
-                padding=(1, 2),
-            )
-        )
-    else:
-        console.print(
-            Panel(
-                "\n".join(
-                    [
-                        "[bold]Upload to Skylos Cloud in one command[/bold]",
-                        "",
-                        "  [bold cyan]skylos . --upload[/bold cyan]",
-                        "",
-                        "  [dim]Browser opens → pick project → done![/dim]",
-                        "  [dim]Dashboard:[/dim] https://skylos.dev",
-                    ]
-                ),
-                title="[bold]☁️  Skylos Cloud[/bold]",
-                border_style="blue",
-                padding=(1, 2),
-            )
-        )
 
 
 def interactive_selection(
@@ -1561,6 +1579,8 @@ def print_badge(
     quality_count=0,
     show_badge=True,
     uncertainty_count=0,
+    summary=None,
+    ai_review_line=None,
 ):
     """Print the closing count line, plus a README badge unless one was shown.
 
@@ -1580,6 +1600,10 @@ def print_badge(
         if uncertainty_count:
             noun = "symbol" if uncertainty_count == 1 else "symbols"
             headline += f" Usage remains uncertain for {uncertainty_count} {noun}."
+        if summary:
+            headline = summary
+        if ai_review_line:
+            headline = f"{headline}\n{ai_review_line}"
         if not show_badge:
             console.print(headline)
             return
@@ -1612,6 +1636,10 @@ def print_badge(
         headline = f"Found {', '.join(counts[:-1])} and {counts[-1]}."
     else:
         headline = f"Found {counts[0]}."
+    if summary:
+        headline = summary
+    if ai_review_line:
+        headline = f"{headline}\n{ai_review_line}"
 
     if not show_badge:
         console.print(headline)
@@ -1674,6 +1702,7 @@ _RULE_SELECTION_DEFAULT_IDS = {
     "ai_defects": "SKY-AI000",
     "quality": "SKY-Q000",
     "secrets": "SKY-S000",
+    "unused_exports": "SKY-E004",
     "custom_rules": "CUSTOM",
     "circular_dependencies": "SKY-CIRC",
     "dependency_vulnerabilities": "SKY-SCA-000",
@@ -1761,34 +1790,58 @@ def _display_filter_allowed_categories(category):
     return None
 
 
+def _validate_display_category(args) -> None:
+    category = getattr(args, "category", None)
+    if not category:
+        return
+    import difflib
+
+    valid = sorted(set(_DISPLAY_FILTER_CATEGORY_MAP.values()))
+    unknown = []
+    for raw_value in str(category).split(","):
+        value = raw_value.strip().lower()
+        if value and value not in valid and value not in unknown:
+            unknown.append(value)
+    if not unknown:
+        return
+    described = []
+    for value in unknown:
+        matches = difflib.get_close_matches(value, valid, n=1, cutoff=0.6)
+        if matches:
+            described.append(f"{value} (did you mean '{matches[0]}'?)")
+        else:
+            described.append(value)
+    raise ConfigError(
+        f"Unknown --category value(s): {', '.join(described)}. "
+        f"Valid categories: {', '.join(valid)}."
+    )
+
+
 def _display_filter_matches_file(item, file_filter):
     if not file_filter:
         return True
     return file_filter in (item.get("file") or item.get("file_path") or "")
 
 
-def _display_filter_has_severity(items):
-    for item in items:
-        if "severity" in item:
-            return True
-    return False
+def _display_filter_passes_severity(item, min_rank, section):
+    from skylos.reporting.advice_display import default_display_severity
 
-
-def _display_filter_passes_severity(item, min_rank):
-    sev = (item.get("severity") or "").lower()
+    sev = str(item.get("severity") or default_display_severity(section)).lower()
     return _DISPLAY_FILTER_SEVERITY_RANK.get(sev, 0) >= min_rank
 
 
-def _display_filter_items(items, file_filter, min_rank):
+def _display_filter_items(items, file_filter, min_rank, section):
     kept = items
     if file_filter:
         kept = [
             item for item in kept if _display_filter_matches_file(item, file_filter)
         ]
 
-    if min_rank > 0 and kept and _display_filter_has_severity(kept):
+    if min_rank > 0 and kept:
         kept = [
-            item for item in kept if _display_filter_passes_severity(item, min_rank)
+            item
+            for item in kept
+            if _display_filter_passes_severity(item, min_rank, section)
         ]
 
     return kept
@@ -1849,14 +1902,14 @@ def _apply_display_filters(
             filtered[key] = []
             continue
 
-        filtered[key] = _display_filter_items(items, file_filter, min_rank)
+        filtered[key] = _display_filter_items(items, file_filter, min_rank, key)
 
     _filter_architecture_advisories(
         result,
         filtered,
         lambda signal: (
             (not allowed_cats or "quality" in allowed_cats)
-            and bool(_display_filter_items([signal], file_filter, min_rank))
+            and bool(_display_filter_items([signal], file_filter, min_rank, "quality"))
         ),
     )
 
@@ -1873,7 +1926,9 @@ def _apply_display_filters(
                 reviewed_category = str(item.get("category") or "").lower()
             if allowed_cats and reviewed_category not in allowed_cats:
                 continue
-            if not _display_filter_items([item], file_filter, min_rank):
+            if not _display_filter_items(
+                [item], file_filter, min_rank, str(item.get("section") or "")
+            ):
                 continue
             reviewed_kept.append(item)
         filtered["reviewed_findings"] = reviewed_kept
@@ -2081,6 +2136,7 @@ def render_pretty_results(
     limit=None,
     expand_advice=False,
     all_advice=False,
+    config=None,
 ):
     from skylos.ui.terminal_report import render_pretty_results as render_impl
 
@@ -2091,6 +2147,7 @@ def render_pretty_results(
         limit=limit,
         **({"expand_advice": True} if expand_advice else {}),
         **({"all_advice": True} if all_advice else {}),
+        config=config,
     )
 
 
@@ -2103,6 +2160,8 @@ def _write_rich_report_output(
     limit=None,
     expand_advice=False,
     all_advice=False,
+    config=None,
+    verbose=False,
 ):
     buffer = StringIO()
     file_console = Console(
@@ -2119,6 +2178,8 @@ def _write_rich_report_output(
         copy_badge=False,
         **({"expand_advice": True} if expand_advice else {}),
         **({"all_advice": True} if all_advice else {}),
+        config=config,
+        verbose=verbose,
     )
     if not write_text_no_symlink(output_file, buffer.getvalue(), encoding="utf-8"):
         raise OSError(f"could not safely write output file: {output_file}")
@@ -2424,6 +2485,18 @@ def _run_login_command(_argv):
     return run_login_command()
 
 
+def _run_cloud_command(argv):
+    from skylos.commands.cloud_cmd import run_cloud_command
+
+    return run_cloud_command(argv, cli_module=sys.modules[__name__])
+
+
+def _run_report_command(argv):
+    from skylos.commands.report_cmd import run_report_command
+
+    return run_report_command(argv, cli_module=sys.modules[__name__])
+
+
 def _run_sync_command(argv):
     from skylos.commands.sync_cmd import run_sync_command
 
@@ -2470,6 +2543,24 @@ def _run_done_command(argv):
     from skylos.commands.done_cmd import run_done_command
 
     return run_done_command(argv)
+
+
+def _run_graph_command(argv):
+    from skylos.commands.graph_cmd import run_graph_command
+
+    return run_graph_command(argv)
+
+
+def _run_setup_command(argv):
+    from skylos.commands.setup_cmd import run_setup_command
+
+    return run_setup_command(argv)
+
+
+def _run_open_command(argv):
+    from skylos.commands.open_cmd import run_open_command
+
+    return run_open_command(argv)
 
 
 def _run_mcp_command(argv):
@@ -2647,8 +2738,11 @@ def _build_main_scan_context(args):
         args.quality = True
         args.ai_defects = True
         args.sca = True
+    if getattr(args, "review_upgrades", False):
+        args.sca = True
 
     _apply_selected_rule_analysis_flags(args)
+    _validate_display_category(args)
 
     project_root = _resolve_main_project_root(args.path)
     if getattr(args, "format", "rich") == "gitlab":
@@ -2675,6 +2769,7 @@ def _build_main_scan_context(args):
         include_folders=args.include_folders,
     )
     _apply_config_driven_analysis_flags(args, project_cfg, console)
+    _print_config_warnings(args, console, project_cfg, project_root)
 
     return SimpleNamespace(
         project_root=project_root,
@@ -2684,6 +2779,28 @@ def _build_main_scan_context(args):
         config=project_cfg,
         config_file=config_file,
     )
+
+
+def _print_config_warnings(args, console, project_cfg, project_root) -> None:
+    """Say which configured settings hide nothing or have no effect."""
+    from skylos.config import whitelist_warnings
+    from skylos.core.gatekeeper import gate_config_notes
+
+    warnings = whitelist_warnings(project_cfg)
+    if getattr(args, "gate", False):
+        warnings.extend(gate_config_notes(project_cfg))
+    if getattr(args, "quality", False):
+        from skylos.rules.project_rules import project_rule_warnings
+
+        try:
+            warnings.extend(project_rule_warnings(project_root))
+        except ConfigError:
+            pass
+    for warning in warnings:
+        if _is_main_machine_output(args):
+            print(f"Warning: {warning}", file=sys.stderr)
+        else:
+            console.print(f"[warn]{_escape_markup(warning)}[/warn]", soft_wrap=True)
 
 
 def _gate_outcome(result: dict, config: dict, args, *, provenance=None):
@@ -3065,7 +3182,9 @@ def _gate_requested(args) -> bool:
     return bool(getattr(args, "gate", False) or getattr(args, "strict", False))
 
 
-def _announce_gate_stop(console, args, reason: str, *, exit_code: int, hint=None):
+def _announce_gate_stop(
+    console, args, reason: str, *, exit_code: int, hint=None, fetch_hint=None
+):
     """A --gate/--strict run that stopped early still ends with a verdict.
 
     Rich and pretty output print on the console; every other format prints on
@@ -3077,6 +3196,8 @@ def _announce_gate_stop(console, args, reason: str, *, exit_code: int, hint=None
     lines = [verdict, f"   • {reason}"]
     if hint:
         lines.append(f"       {hint}")
+    if fetch_hint:
+        lines.append(f"       {fetch_hint}")
     if console is None or _is_main_machine_output(args):
         sys.stdout.flush()
         print("\n".join(lines), file=sys.stderr)
@@ -3101,17 +3222,47 @@ def _exit_config_error(parser, args, message: str):
     parser.print_usage(sys.stderr)
     print(f"{parser.prog}: error: {message}", file=sys.stderr)
     hint = POLICY_BASE_HINT if "PR policy base" in message else None
-    _announce_gate_stop(None, args, message, exit_code=2, hint=hint)
+    fetch_hint = None
+    if hint:
+        fetch_hint = _base_fetch_hint(args)
+    _announce_gate_stop(
+        None, args, message, exit_code=2, hint=hint, fetch_hint=fetch_hint
+    )
     raise SystemExit(2)
+
+
+def _base_fetch_hint(args):
+    """The git command that fetches a missing `--diff` base, or None."""
+    base = getattr(args, "diff_base", None) or getattr(args, "diff", None)
+    if base == "auto":
+        base = auto_diff_base_ref()
+    try:
+        from skylos.cicd.platforms import missing_base_hint
+
+        return missing_base_hint(
+            base, _resolve_main_project_root(getattr(args, "path", None) or ["."])
+        )
+    except Exception:
+        return None
 
 
 def _exit_diff_unavailable(args, message: str):
     """Stop with exit 2 when the diff base cannot be read; gates say so."""
     reason = f"Skylos diff unavailable: {message}"
+    fetch_hint = _base_fetch_hint(args)
     if _gate_requested(args):
-        _announce_gate_stop(None, args, reason, exit_code=2, hint=DIFF_UNAVAILABLE_HINT)
+        _announce_gate_stop(
+            None,
+            args,
+            reason,
+            exit_code=2,
+            hint=DIFF_UNAVAILABLE_HINT,
+            fetch_hint=fetch_hint,
+        )
     else:
         print(reason, file=sys.stderr)
+        if fetch_hint:
+            print(fetch_hint, file=sys.stderr)
     raise SystemExit(2)
 
 
@@ -3595,7 +3746,8 @@ def _run_pre_analysis_steps(args, project_root, console):
                 # A worktree diff runs the repository's clean filters: route it
                 # through the filter-neutralizing builder, or refuse.
                 diff_cmd = worktree_safe_git_command(
-                    ["diff", "--name-only", merge_base], diff_root
+                    ["diff", "--name-only", "--no-relative", "-z", merge_base],
+                    diff_root,
                 )
                 if diff_cmd is None:
                     _exit_diff_unavailable(
@@ -3607,7 +3759,6 @@ def _run_pre_analysis_steps(args, project_root, console):
                     diff_cmd,
                     cwd=diff_root,
                     capture_output=True,
-                    text=True,
                     env=read_only_git_environment(),
                 )
             else:
@@ -3616,10 +3767,11 @@ def _run_pre_analysis_steps(args, project_root, console):
                 from skylos.cicd.review import get_untracked_files
 
                 changed_files = set()
-                for line in diff_result.stdout.strip().splitlines():
-                    changed_files.add(str((diff_root / line).resolve()))
+                for line in os.fsdecode(diff_result.stdout).split("\0"):
+                    if line:
+                        changed_files.add(str(diff_root / line))
                 for line in get_untracked_files(diff_root):
-                    changed_files.add(str((diff_root / line).resolve()))
+                    changed_files.add(str(diff_root / line))
                 if not quiet_output:
                     console.print(
                         f"[brand]--diff-base:[/brand] {len(changed_files)} changed files "
@@ -4234,6 +4386,10 @@ def _build_agent_parser():
 
     add_install_hooks_parser(agent_sub)
 
+    from skylos.commands.agent_harden_cmd import add_agent_harden_parser
+
+    add_agent_harden_parser(agent_sub)
+
     from skylos.commands.install_standards_cmd import add_install_standards_parser
 
     add_install_standards_parser(agent_sub)
@@ -4479,6 +4635,11 @@ def main() -> None:
 
             sys.exit(run_install_hooks_command(agent_args))
 
+        if cmd == "harden":
+            from skylos.commands.agent_harden_cmd import run_agent_harden_command
+
+            sys.exit(run_agent_harden_command(agent_args))
+
         if cmd == "install-standards":
             from skylos.commands.install_standards_cmd import (
                 run_install_standards_command,
@@ -4629,6 +4790,12 @@ def main() -> None:
                     ".hh",
                     ".hxx",
                     ".php",
+                    ".module",
+                    ".install",
+                    ".inc",
+                    ".theme",
+                    ".profile",
+                    ".engine",
                     ".rs",
                     ".dart",
                     ".kt",
@@ -5334,8 +5501,7 @@ def main() -> None:
 
             if not getattr(agent_args, "scan_only", False):
                 if not _ensure_llm_support():
-                    Console().print("[bold red]Agent module not available[/bold red]")
-                    sys.exit(1)
+                    _exit_without_llm_extra()
 
                 model = agent_args.model
                 provider_override = getattr(agent_args, "provider", None)
@@ -5612,12 +5778,18 @@ def main() -> None:
             model = JEV_MODEL
             provider, api_key, base_url = "typesafe", None, None
         else:
-            if not _ensure_llm_support():
-                Console().print("[bold red]Agent module not available[/bold red]")
-                sys.exit(1)
+            remediation_plan_only = (
+                cmd == "remediate"
+                and getattr(agent_args, "dry_run", False)
+                and not getattr(agent_args, "standards", None)
+            )
+            if not remediation_plan_only and not _ensure_llm_support():
+                _exit_without_llm_extra()
 
             model = agent_args.model
-
+        if not jev_only_verify and remediation_plan_only:
+            provider, api_key, base_url = None, None, None
+        elif not jev_only_verify:
             _provider_override = getattr(agent_args, "provider", None)
             if _provider_override and model == "gpt-4.1":
                 _provider_default_models = {
@@ -5651,6 +5823,11 @@ def main() -> None:
                     console.print(
                         f"[bad]No {env_var} configured. Run `skylos key` or set the environment variable.[/bad]"
                     )
+                    if cmd == "remediate":
+                        console.print(
+                            "[muted]To see the plan without a model or key: "
+                            "skylos agent remediate PATH --dry-run[/muted]"
+                        )
                     sys.exit(1)
 
         agent_project_cfg = load_config(getattr(agent_args, "path", Path.cwd()))
@@ -5692,6 +5869,13 @@ def main() -> None:
                     if prompt is None:
                         console.print(
                             "[bad]Interactive mode requires 'inquirer'. Install with: pip install inquirer[/bad]"
+                        )
+                        sys.exit(2)
+                    if not _is_tty():
+                        console.print(
+                            "[bad]--interactive file selection requires an "
+                            "interactive terminal; run without --interactive to "
+                            "audit every file under the path.[/bad]"
                         )
                         sys.exit(2)
                     choices = [
@@ -5826,7 +6010,7 @@ def main() -> None:
                     static_only += 1
                 elif source == "llm":
                     llm_only += 1
-                elif source == "static+llm":
+                elif source in ("static+llm", "static+jev"):
                     both += 1
 
             console.print("\n[brand]Results:[/brand]")
@@ -5907,6 +6091,7 @@ def main() -> None:
                     strict=getattr(agent_args, "strict", False),
                     analysis_mode="hybrid",
                     analyzer_owned=True,
+                    failed_gate_note=bool(getattr(agent_args, "force", False)),
                 )
                 if not isinstance(upload_response, dict) or not upload_response.get(
                     "success"
@@ -6066,12 +6251,14 @@ def main() -> None:
                     duration_seconds=summary.get("elapsed_seconds"),
                 )
 
-                sys.exit(
-                    0
-                    if summary.get("fixed", 0) > 0
+                remediation_exit = 1
+                if (
+                    getattr(agent_args, "dry_run", False)
+                    or summary.get("fixed", 0) > 0
                     or summary.get("total_findings", 0) == 0
-                    else 1
-                )
+                ):
+                    remediation_exit = 0
+                sys.exit(remediation_exit)
 
     if len(sys.argv) > 1 and sys.argv[1] == "run":
         _run_removed_run_command(sys.argv[2:])

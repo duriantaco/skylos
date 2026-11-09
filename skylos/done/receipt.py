@@ -31,6 +31,8 @@ from skylos.done.engine import WAITING_SUMMARY, DoneResult
 SCHEMA = "skylos.done-receipt/v1"
 RECEIPTS_DIR = Path(".skylos") / "receipts"
 LATEST_NAME = "latest.json"
+HISTORY_NAME = "history"
+HISTORY_LIMIT = 50
 
 MAX_CHECKS = 20
 MAX_FINDINGS = 500
@@ -730,7 +732,33 @@ def write_receipt(root: Path, receipt: dict[str, Any]) -> Path | None:
         return None
     if not save_project_json_cache(root, RECEIPTS_DIR / LATEST_NAME, json.loads(text)):
         return None
+    _keep_history(directory, name, text)
     return path
+
+
+def _keep_history(directory: Path, name: str, text: str) -> None:
+    from datetime import datetime, timezone
+
+    history = directory / HISTORY_NAME
+    try:
+        if history.is_symlink():
+            return
+        history.mkdir(mode=0o700, exist_ok=True)
+        if history.is_symlink() or not history.is_dir():
+            return
+    except OSError:
+        return
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    write_text_no_symlink(history / f"{stamp}-{name}", text)
+    try:
+        entries = sorted(entry for entry in history.iterdir() if entry.suffix == ".json" and not entry.is_symlink() and entry.is_file())
+    except OSError:
+        return
+    for old in entries[:-HISTORY_LIMIT]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
 
 
 def read_receipt(path: Path) -> dict[str, Any] | None:
@@ -905,7 +933,10 @@ def render_markdown(receipt: dict[str, Any], *, max_findings: int = 10) -> str:
         )
     for check in _visible(receipt):
         findings = check.get("findings", [])
-        if not findings:
+        fix = None
+        if check.get("status") == "fail":
+            fix = FIXES.get(check["id"])
+        if not findings and not fix:
             continue
         out += ["", f"**{_md(LABELS.get(check['id'], check['id']))}**", ""]
         origins_line = _origins_line(receipt) if check["id"] == "tests_pass" else None
@@ -921,6 +952,8 @@ def render_markdown(receipt: dict[str, Any], *, max_findings: int = 10) -> str:
         hidden = len(findings) - max_findings
         if hidden > 0:
             out.append(f"- … and {hidden} more")
+        if fix:
+            out.append(f"- Fix: {_md(fix)}")
     out += ["", f"**{_verdict_line(receipt)}**", ""]
     return "\n".join(out)
 

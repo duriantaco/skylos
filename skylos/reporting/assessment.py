@@ -37,6 +37,8 @@ _LANGUAGES = {
     ".java": "Java",
     ".php": "PHP",
     ".rs": "Rust",
+    ".rb": "Ruby",
+    ".swift": "Swift",
     ".dart": "Dart",
 }
 
@@ -104,6 +106,33 @@ def _coverage(result, scanned_checks):
     ):
         reasons.append("language_engine_incomplete")
         incomplete_checks.extend(scanned_checks)
+    configurations = summary.get("configuration_coverage")
+    terraform = (
+        configurations.get("terraform") if isinstance(configurations, Mapping) else None
+    )
+    if (
+        "security" in scanned_checks
+        and isinstance(terraform, Mapping)
+        and (
+            terraform.get("status") == "incomplete"
+            or terraform.get("evaluation_status") == "partial"
+        )
+    ):
+        reasons.append("terraform_policy_coverage_incomplete")
+        incomplete_checks.append("security")
+        limited_checks.append("security")
+    ruby = summary.get("ruby_security_coverage")
+    if (
+        "security" in scanned_checks
+        and isinstance(ruby, list)
+        and any(
+            isinstance(item, Mapping) and item.get("status") == "partial"
+            for item in ruby
+        )
+    ):
+        reasons.append("ruby_command_evaluation_incomplete")
+        incomplete_checks.append("security")
+        limited_checks.append("security")
     sca = summary.get("sca_coverage")
     if "dependencies" in scanned_checks and (
         not isinstance(sca, Mapping)

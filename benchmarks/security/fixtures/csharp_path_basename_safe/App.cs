@@ -1,10 +1,11 @@
 using System.IO;
+using Microsoft.AspNetCore.Mvc;
 
-public class Files
+public class FilesController : Controller
 {
     public string Read(string path)
     {
         var name = Path.GetFileName(path);
-        return File.ReadAllText(Path.Combine("uploads", name));
+        return System.IO.File.ReadAllText(Path.Combine("uploads", name));
     }
 }

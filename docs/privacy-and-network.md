@@ -8,7 +8,7 @@ heartbeat.
 ## The rule
 
 **Skylos sends nothing to Skylos Cloud unless the command or flag you ran says
-it talks to Skylos Cloud.** Those are `--upload`, `skylos login`,
+it talks to Skylos Cloud.** Those are `skylos cloud`, `--upload`, `skylos login`,
 `skylos whoami`, `skylos project`, `skylos sync`, `skylos credits`,
 `skylos upload`, `skylos ingest claude-security`, `skylos verify-verdict`,
 `skylos feedback` (a form it opens in your browser), and the `--verify` scan
@@ -24,7 +24,7 @@ of them sends source code, file paths or findings:
 |:---|:---|:---|:---|
 | A scan (`skylos .`, `skylos agent scan --changed`, `skylos agent audit`) while a token can be found | `GET /api/sync/rules`: downloads your project's Cloud custom rules | your token | set `SKYLOS_CUSTOM_RULES='[]'` (or to your rules as JSON), or remove the token (see below). `--no-upload` does not stop it |
 | `skylos doctor` in text mode while a token can be found | `GET /api/credits/balance` | your token | `skylos doctor --format json` |
-| The MCP server started with `SKYLOS_API_KEY` | `GET /api/sync/whoami` at start and every 15 minutes; `POST /api/credits/deduct` with the tool's credit key for each paid tool call | your API key, the credit key | start the server without `SKYLOS_API_KEY` (local-only mode). It uses `SKYLOS_CLOUD_URL`, not `SKYLOS_API_URL` |
+| The MCP server started with `SKYLOS_API_KEY` | `GET /api/sync/whoami` at start and every 15 minutes; `POST /api/credits/deduct` with the tool's credit key for each call of the scan tools (`analyze`, `security_scan`, `quality_check`, `architecture_check`, `health_score`, `secrets_scan`, `provenance_scan`), which cost 0 credits, and for each `remediate` run right before its first model call (10 credits; not for dry runs, refused calls or runs with nothing to fix) | your API key, the credit key | start the server without `SKYLOS_API_KEY` (local-only mode). It uses `SKYLOS_CLOUD_URL`, not `SKYLOS_API_URL` |
 
 "A token can be found" means `SKYLOS_TOKEN`, a saved login in
 `~/.skylos/credentials.json`, or, in a CI job that grants an OIDC token (for
@@ -79,23 +79,27 @@ server uses `SKYLOS_CLOUD_URL`).
 | `skylos whoami`, `skylos project use`, `skylos project status` | `GET /api/sync/whoami` | your token |
 | `skylos sync connect`, `status`, `pull`, `setup`, `upgrade` | `GET /api/sync/whoami`, `/api/sync/config`, `/api/sync/suppressions` | your token |
 | `skylos credits` | `GET /api/credits/balance` | your token |
-| `skylos . --upload`, `skylos upload --retry`, `skylos debt --upload`, `skylos suite --upload`, `skylos defend --upload` | `GET /api/sync/whoami`; `GET /api/report/contract` (no token; `SKYLOS_UPLOAD_CONTRACT_CHECK=0` skips it); `POST /api/report`, or `/api/report/init`, an upload to the signed storage URL Cloud returns, and `/api/report/complete` | the scan report. `--no-upload` overrides `--upload` |
+| `skylos . --upload`, `skylos upload --retry`, `skylos debt --upload`, `skylos suite --upload`, `skylos defend --upload` | `GET /api/sync/whoami`; `GET /api/report/contract` (no token; `SKYLOS_UPLOAD_CONTRACT_CHECK=0` skips it); `POST /api/report`, or `/api/report/init`, an upload to the signed storage URL Cloud returns, and `/api/report/complete` | the scan report. With `--sca` (or `-a`) the report also carries the dependency inventory (ecosystem, package name, version, direct/dev, repository-relative manifest path; at most 10,000 packages) and the supply-chain posture (check ids, pass/fail status, short details, repository-relative paths), which Skylos Cloud uses to alert you when a package you use is later reported as malware. `--no-upload` overrides `--upload` |
 | `skylos . --upload` with no token in an interactive terminal | starts `skylos login` first | as `skylos login` |
+| `skylos cloud` | as `skylos . -a --upload`. With no token it starts `skylos login` before the scan in an interactive terminal, and outside CI without a terminal it stops before the scan | the scan report; `-a` also makes the OSV dependency lookups below |
 | `skylos compare --upload` | `POST /api/shadow/reports` | the comparison report |
 | `skylos agent scan --upload` | the report upload above (when there are findings), then `POST /api/agent-runs` | the scan report; the run summary above |
 | `skylos agent verify --upload`, `skylos agent remediate --upload`, `skylos agent remediate --standards --upload` | `POST /api/agent-runs` | the run summary above |
-| `skylos . --verify` | `GET /api/sync/whoami`, `POST /api/verify` | the scan findings to verify |
+| `skylos . --verify` | `POST /api/verify` (Skylos Cloud decides what your plan allows; Free has a daily limit) | the scan findings to verify |
 | `skylos ingest claude-security` | `POST /api/report` **by default** | the normalized Claude Code Security findings. `--no-upload` keeps them local |
 | `skylos verify-verdict` without `--keys` | `GET https://skylos.dev/.well-known/skylos-verdict-keys.json` | nothing (public keys, no token). `--keys <file>` works offline |
-| The workflow from `skylos cicd init` | its upload job runs `skylos sync pull` and `skylos . --upload` on pushes to the default branch | the scan report. `skylos cicd init --no-upload` leaves the job out |
+| The workflow from `skylos cicd init` | its upload job runs `skylos sync pull` and `skylos cloud` (`skylos . --upload` when only dead code is checked) on pushes to the default branch. On pull requests to the default branch, `skylos cicd pr-policy` reads `GET /api/sync/config` and `/api/sync/rules`, and `skylos cicd pr-publish` makes the report upload above | the scan report. `skylos cicd init --no-upload` leaves these jobs out |
 
 ## Other hosts
 
 | Host | When | Sends | Turn it off |
 |:---|:---|:---|:---|
 | OSV (`api.osv.dev`) | dependency checks: `--sca`, `-a`, `--select SKY-SCA-*`, `--scan-publisher-changes`, config `sca_enabled` or required `sca` coverage, `skylos suite`, `skylos baseline --sca`, `skylos compare --sca` | package names and versions from your lockfiles and manifests | don't enable dependency checks |
+| OSV (`api.osv.dev`), npm registry, PyPI, through Skylos and the `ca9` engine | the agent hook on package-install and lockfile-install commands (malware, release age, npm provenance); never for packages from a trusted or private registry or in `hooks_allow_packages` | the names and versions the command would install, or the public packages in the lockfile it reads | `SKYLOS_HOOKS_DISABLE=pre-bash`, or remove the hook |
+| OSV (`api.osv.dev`), npm registry, PyPI, through Skylos and the `ca9` engine | the agent hook when the agent adds an MCP server (`claude`/`codex`/`gemini mcp add`, edits to MCP config files); `session-start` re-checking the MCP servers in this project's and your user agent configs, at most once per session or hour; `skylos agent harden` without `--offline` | the package name and version (or range) each server launches | `SKYLOS_HOOKS_DISABLE=pre-bash,pre-edit,session-start`; `skylos agent harden --offline` |
 | GitHub API (`api.github.com`), through the `ca9` reachability library | during dependency checks, when a Python vulnerability names a GitHub fix commit | the commit URL, and your `GITHUB_TOKEN` if that variable is set. Responses are cached in `~/.cache/ca9` | don't enable dependency checks, or unset `GITHUB_TOKEN` for the scan |
 | npm registry | `--scan-publisher-changes`, `--select SKY-SCA-NPM-PUB001` | package names | don't use those options |
+| None: a local file | dependency checks save OSV's last good answers to `osv-answers.json` in `$XDG_CACHE_HOME/skylos` or `~/.cache/skylos`, used only when OSV cannot be reached | nothing leaves the machine; the file lists package names, versions and public advisories | delete the file, or run without `--sca` |
 | deps.dev | `skylos sbom --license-lookup` | package names and versions | leave out `--license-lookup` |
 | PyPI (`pypi.org`, `files.pythonhosted.org`), npm registry, Go module proxy, JSR | checks for packages that don't exist and made-up package APIs: `--ai-defects`, `-a`, config `ai_defects_enabled`; always in `skylos agent scan`, `skylos agent pre-commit`, `skylos baseline`, `skylos suite`, `skylos review` and `skylos verify` on a path; `skylos done` (the `unknown_imports` check, on by default as advice); the agent hook on package-install commands; MCP `validate_code_change` | package names (and ranged reads of public wheel files) | `skylos verify --no-dependency-hallucinations`; `unknown_imports = "off"` under `[tool.skylos.done.checks]`; MCP `check_dependencies=false`; remove the hook |
 | The model provider you configure (default OpenAI) | `skylos agent ...` commands, `skylos . --verify-security`, `skylos debt --with-agent`, MCP remediation and verification tools | code excerpts and prompts | don't run LLM commands; `--base-url` on `skylos agent` commands points them at a local model |
@@ -103,4 +107,4 @@ server uses `SKYLOS_CLOUD_URL`).
 | Your agent endpoint | `skylos agent test` | test scenarios. Only loopback addresses unless `--allow-remote` | — |
 | `raw.githubusercontent.com` or the URL you give | `skylos rules install <pack or URL>` | nothing | — |
 | Your container registry and the Trivy database | `skylos image scan` | registry credentials Trivy already has | — |
-| GitHub, through `gh` and `git` | `skylos cicd review` (lists, creates and edits PR comments; reads `/user`); `skylos cicd risk-review` in a GitHub pull request job (reads PR reviews); `skylos agent remediate --auto-pr` (`git push`, `gh pr create`); the gate's push prompt after two confirmations | PR comments with findings; your branch | don't run those commands |
+| GitHub, through `gh` and `git` | `skylos cicd review` (lists, creates and edits PR comments; reads `/user`); `skylos cicd risk-review` in a GitHub pull request job (reads PR reviews; adds or removes the `skylos:needs-human` label on the PR, creating that label in the repository once); `skylos agent remediate --auto-pr` (`git push`, `gh pr create`); the gate's push prompt after two confirmations | PR comments with findings; your branch | don't run those commands |

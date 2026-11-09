@@ -119,9 +119,22 @@ def _callee(func: ast.AST) -> str | None:
 
 
 class _Analysis:
-    def __init__(self, tree: ast.AST, module_name: str | None, parents=None):
+    def __init__(
+        self,
+        tree: ast.AST,
+        module_name: str | None,
+        parents=None,
+        isolated_code_calls: frozenset[int] = frozenset(),
+        isolated_namespace_reads: frozenset[int] = frozenset(),
+        rebound_events: dict[str, list[ast.AST]] | None = None,
+        module_reads: list[tuple[ast.Call, ast.AST]] | None = None,
+    ):
         self.tree = tree
         self.module_name = module_name
+        self.isolated_code_calls = isolated_code_calls
+        self.isolated_namespace_reads = isolated_namespace_reads
+        self.rebound_events = rebound_events
+        self.module_reads = module_reads
         self.parents = (
             parents
             if parents is not None
@@ -342,6 +355,8 @@ class _Analysis:
                 return True
             if isinstance(parent.ctx, (ast.Store, ast.Del)):
                 rebound.add(parent.attr)
+                if self.rebound_events is not None:
+                    self.rebound_events.setdefault(parent.attr, []).append(parent)
                 return False
             grandparent = self.parents.get(id(parent))
             if (
@@ -365,8 +380,12 @@ class _Analysis:
                 attr = parent.args[1] if len(parent.args) > 1 else None
                 if isinstance(attr, ast.Constant) and isinstance(attr.value, str):
                     rebound.add(attr.value)
+                    if self.rebound_events is not None:
+                        self.rebound_events.setdefault(attr.value, []).append(parent)
                     return False
                 return True
+            if callee in _READ_ONLY_CALLS and self.module_reads is not None:
+                self.module_reads.append((parent, node))
             return callee not in _READ_ONLY_CALLS
         return True
 
@@ -379,7 +398,12 @@ class _Analysis:
                 return True, frozenset()
             if isinstance(node, ast.Call):
                 callee = _callee(node.func)
-                if callee in self.reloaders or _dotted(node.func) in _CODE_RUNNERS:
+                if callee in self.reloaders:
+                    return True, frozenset()
+                if (
+                    _dotted(node.func) in _CODE_RUNNERS
+                    and id(node) not in self.isolated_code_calls
+                ):
                     return True, frozenset()
                 if callee == "getattr" and len(node.args) >= 2:
                     attr = node.args[1]
@@ -394,7 +418,11 @@ class _Analysis:
                     isinstance(arg, ast.Starred) for arg in node.args[:2]
                 ):
                     return True, frozenset()
-                if self._is_namespace(node) and not self._is_read(node):
+                if (
+                    self._is_namespace(node)
+                    and id(node) not in self.isolated_namespace_reads
+                    and not self._is_read(node)
+                ):
                     return True, frozenset()
             elif isinstance(node, ast.Name):
                 if node.id in {"exec", "eval"}:
@@ -426,6 +454,8 @@ class _Analysis:
                     node.value
                 ):
                     rebound.add(node.attr)
+                    if self.rebound_events is not None:
+                        self.rebound_events.setdefault(node.attr, []).append(node)
             if (
                 isinstance(node, (ast.Name, ast.Attribute, ast.Subscript, ast.Call))
                 and isinstance(getattr(node, "ctx", ast.Load()), ast.Load)
@@ -437,7 +467,14 @@ class _Analysis:
 
 
 def module_rebinding(
-    tree: ast.AST | None, module_name: str | None = None, parents=None
+    tree: ast.AST | None,
+    module_name: str | None = None,
+    parents=None,
+    *,
+    isolated_code_calls: frozenset[int] = frozenset(),
+    isolated_namespace_reads: frozenset[int] = frozenset(),
+    rebound_events: dict[str, list[ast.AST]] | None = None,
+    module_reads: list[tuple[ast.Call, ast.AST]] | None = None,
 ) -> tuple[bool, frozenset[str]]:
     """``(dynamic, rebound)`` for the module ``tree``.
 
@@ -450,21 +487,49 @@ def module_rebinding(
     (``setattr(sys.modules[__name__], "NAME", ...)``, ``me.NAME = ...``).
     ``module_name`` (see ``module_name_for``) recognises self-imports; without
     it every import counts as one. ``parents`` (child id -> parent node) may
-    be passed to reuse a map the caller already built."""
+    be passed to reuse a map the caller already built.
+    ``isolated_code_calls`` (ids of ``exec``/``eval`` calls) are calls the
+    caller proved run in a fresh namespace dict, so they cannot write this
+    module's globals; every other code runner still counts as dynamic.
+    ``isolated_namespace_reads`` contains only calls a consumer proved copy a
+    native mapping into an isolated receiver without exposing that mapping.
+    Neither optional proof changes the default handling of namespace writes.
+    ``rebound_events`` optionally collects the literal write sites responsible
+    for each rebound name; a dynamic result does not establish complete sites.
+    ``module_reads`` collects ``(call, module expression)`` pairs exempted as
+    read-only by spelling. A stronger consumer can check lexical receiver,
+    callable identity and effects without changing this helper's defaults."""
     if tree is None:
         return False, frozenset()
-    return _Analysis(tree, module_name, parents).run()
+    return _Analysis(
+        tree,
+        module_name,
+        parents,
+        isolated_code_calls,
+        isolated_namespace_reads,
+        rebound_events,
+        module_reads,
+    ).run()
 
 
-def attribute_write_names(tree: ast.AST | None) -> tuple[frozenset[str], bool]:
+def attribute_write_names(
+    tree: ast.AST | None,
+    *,
+    isolated_writes: frozenset[int] = frozenset(),
+    resolved_attribute_names: dict[int, str] | None = None,
+) -> tuple[frozenset[str], bool]:
     """Attribute names the module writes on any object (``x.basename = ...``,
     ``del x.basename``, ``setattr(x, "basename", ...)``), and whether it
     writes one with a computed name (``setattr(x, name, ...)`` on anything
     but ``self``/``cls``). A function imported by name is not the library's
-    own if the module may have replaced it on the library module first."""
+    own if the module may have replaced it on the library module first.
+    ``resolved_attribute_names`` optionally supplies source-proven literal keys,
+    keyed by the key expression's AST identity; names alone prove nothing."""
     names: set[str] = set()
     computed = False
     for node in ast.walk(tree) if tree is not None else ():
+        if id(node) in isolated_writes:
+            continue
         if isinstance(node, ast.Attribute) and isinstance(
             node.ctx, (ast.Store, ast.Del)
         ):
@@ -476,6 +541,8 @@ def attribute_write_names(tree: ast.AST | None) -> tuple[frozenset[str], bool]:
             attr = node.args[1] if len(node.args) > 1 else None
             if isinstance(attr, ast.Constant) and isinstance(attr.value, str):
                 names.add(attr.value)
+            elif resolved_attribute_names and id(attr) in resolved_attribute_names:
+                names.add(resolved_attribute_names[id(attr)])
             elif not (
                 node.args
                 and isinstance(node.args[0], ast.Name)
@@ -483,3 +550,75 @@ def attribute_write_names(tree: ast.AST | None) -> tuple[frozenset[str], bool]:
             ):
                 computed = True
     return frozenset(names), computed
+
+
+def has_mock_api_patching(tree: ast.AST | None) -> bool:
+    """A mock patcher may replace an imported API without an attribute store.
+
+    This is an uncertainty check for optional safety proofs, not a claim that
+    the patch targets a particular API. Aliases are overapproximated across
+    scopes so rebinding a patch name cannot accidentally establish safety.
+    """
+    if tree is None:
+        return False
+    nodes = list(ast.walk(tree))
+    bindings: dict[str, set[str]] = {}
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                name = alias.asname or alias.name.split(".")[0]
+                qualified = alias.name if alias.asname else name
+                bindings.setdefault(name, set()).add(qualified)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for alias in node.names:
+                bindings.setdefault(alias.asname or alias.name, set()).add(
+                    f"{node.module}.{alias.name}"
+                )
+
+    patch_paths = {
+        "unittest", "unittest.mock", "mock",
+        "unittest.mock.patch", "mock.patch",
+        "unittest.mock.patch.object", "mock.patch.object",
+        "unittest.mock.patch.dict", "mock.patch.dict",
+        "unittest.mock.patch.multiple", "mock.patch.multiple",
+    }
+    bindings = {
+        name: values & patch_paths for name, values in bindings.items()
+        if values & patch_paths
+    }
+    if not bindings:
+        return False
+
+    def qualified(expr):
+        dotted = _dotted(expr)
+        if not dotted:
+            return set()
+        root, separator, tail = dotted.partition(".")
+        return {
+            f"{value}.{tail}" if separator else value
+            for value in bindings.get(root, ())
+        }
+
+    assignments = [node for node in nodes if isinstance(node, (ast.Assign, ast.AnnAssign))]
+    for _ in range(len(assignments) + 1):
+        changed = False
+        for node in assignments:
+            values = qualified(node.value) & patch_paths
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, ast.Name) and values:
+                    existing = bindings.setdefault(target.id, set())
+                    before = len(existing)
+                    existing.update(values)
+                    changed |= len(existing) != before
+        if not changed:
+            break
+    for node in nodes:
+        if isinstance(node, ast.Call):
+            if any(
+                name == prefix or name.startswith(prefix + ".")
+                for name in qualified(node.func)
+                for prefix in ("unittest.mock.patch", "mock.patch")
+            ):
+                return True
+    return False

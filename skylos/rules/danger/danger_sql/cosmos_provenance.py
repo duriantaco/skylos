@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
-
-from skylos.security.receiver_resolution import ReceiverResolver
-
 from pathlib import Path
 
-from ..project_source import project_source_snapshot
+from skylos.security.receiver_resolution import ReceiverResolver
 from ..untrusted_sources import UntrustedSourceIndex
+
+from ..import_proof import (
+    _provider_effects,
+    provider_is_unshadowed,
+)
+from ..project_imports import ProjectImports, project_import_context
 from ..module_namespace import attribute_write_names, module_name_for, module_rebinding
 
 _MODULES = {"azure", "azure.cosmos", "azure.cosmos.aio"}
@@ -24,123 +27,108 @@ _CONTRACT_NAMES = _TYPES | {
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 _MAGIC = {"__getattribute__", "__getattr__", "__setattr__", "__delattr__"}
 
-_snapshot_cache = {}
 
-
-def _dotted(node):
-    parts = []
-    while isinstance(node, ast.Attribute):
-        parts.append(node.attr)
-        node = node.value
-    if not isinstance(node, ast.Name):
+def _private_import_context(tree, filename, root):
+    attested = project_import_context(tree, filename, root)
+    if attested is None:
         return None
-    return ".".join(reversed([*parts, node.id]))
+    private = ProjectImports(tree, attested.source, attested.root, attested.snapshot)
+    return private if private.complete else None
 
 
-def _snapshot_providers_stable(trees, root):
-    key = str(root)
-    cached = _snapshot_cache.get(key)
-    if cached is not None and cached[0] is trees:
-        return cached[1]
-    result = True
-    for path, tree in trees.items():
-        relative = path.relative_to(root)
-        if path.stem == "azure" or "azure" in relative.parts[:-1]:
-            result = False
-            break
-        if not _module_providers_stable(tree, path):
-            result = False
-            break
-    if len(_snapshot_cache) >= 16:
-        _snapshot_cache.pop(next(iter(_snapshot_cache)))
-    _snapshot_cache[key] = (trees, result)
-    return result
-
-
-def _module_providers_stable(tree, path):
-    dynamic, rebound = module_rebinding(tree, module_name_for(path))
-    writes, computed = attribute_write_names(tree)
-    contracts = _CONTRACT_NAMES | {"ABC"}
-    if contracts.intersection(writes | rebound):
-        return False
-    imports = UntrustedSourceIndex(tree)
-    parents = {
-        child: parent
-        for parent in ast.walk(tree)
-        for child in ast.iter_child_nodes(parent)
-    }
-    capabilities = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name.startswith(("azure.cosmos", "abc")):
-                    capabilities.add(alias.asname or alias.name.split(".")[0])
-        elif isinstance(node, ast.ImportFrom) and node.module in {
-            "azure.cosmos",
-            "azure.cosmos.aio",
-            "abc",
-        }:
-            capabilities.update(alias.asname or alias.name for alias in node.names)
-    if capabilities and (dynamic or computed):
-        return False
-    changed = True
-    alias_rounds = 0
-    while changed:
-        alias_rounds += 1
-        if alias_rounds > 24:
+def _private_provider_effects(context, names, *, project_sdk=False):
+    # The original trees attest source identity. Fresh Module roots own the
+    # mutable effect budgets, so this optional model cannot exhaust other rules.
+    closure = {path for path, _ in context.entries}
+    for path, parsed in context.entries:
+        if not _provider_effects(
+            names,
+            ast.Module(body=list(parsed.body), type_ignores=parsed.type_ignores),
+            context.local_symbols(path, names),
+        ):
             return False
-        changed = False
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                value = node.value
-                while isinstance(value, ast.Attribute):
-                    value = value.value
-                if isinstance(value, ast.Name) and value.id in capabilities:
-                    for target in node.targets:
-                        if (
-                            isinstance(target, ast.Name)
-                            and target.id not in capabilities
-                        ):
-                            capabilities.add(target.id)
-                            changed = True
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        scope = parents.get(node)
-        while scope is not None and not isinstance(scope, _FUNCTIONS):
-            scope = parents.get(scope)
-        name = _dotted(node.func)
-        provider = imports.resolved_import(scope, name) if name else None
-        leaf = name.rsplit(".", 1)[-1] if name else None
-        if leaf in {"setattr", "delattr", "__setattr__", "__delattr__"} or provider in {
-            "builtins.setattr",
-            "builtins.delattr",
-        }:
-            attribute = node.args[1] if len(node.args) > 1 else None
-            if isinstance(attribute, ast.Constant) and attribute.value in contracts:
-                return False
-            if not isinstance(attribute, ast.Constant):
-                if (
-                    capabilities
-                    or provider in {"builtins.setattr", "builtins.delattr"}
-                    or isinstance(node.func, ast.Name)
-                    or leaf.startswith("__")
-                ):
-                    return False
-                target = node.args[0] if node.args else None
-                if (
-                    isinstance(target, ast.Constant)
-                    and isinstance(target.value, str)
-                    and target.value.rsplit(".", 1)[-1] in contracts
-                ):
-                    return False
-        for argument in [*node.args, *(keyword.value for keyword in node.keywords)]:
-            root = argument
-            while isinstance(root, ast.Attribute):
-                root = root.value
-            if isinstance(root, ast.Name) and root.id in capabilities:
-                return False
+    if not project_sdk:
+        return True
+    for path, parsed in context.trees.items():
+        if path not in closure and not _provider_effects(
+            names, _annotation_effect_tree(parsed), context.local_symbols(path, names)
+        ):
+            return False
     return True
+
+
+def _annotation_effect_tree(tree):
+    """Ignore only inert SDK ``Type | None`` annotations in other modules.
+
+    These types use Python's ordinary type union operation. The main import
+    closure keeps its original strict effect proof. Calls, subscriptions,
+    arbitrary type expressions and all provider mutations remain visible.
+    """
+    imports = UntrustedSourceIndex(tree)
+    native_types = {
+        f"{module}.{kind}"
+        for module in ("azure.cosmos", "azure.cosmos.aio")
+        for kind in _TYPES
+    }
+    annotations = set()
+
+    def inert_union(node, scope):
+        values = []
+        pending = [node]
+        while pending:
+            value = pending.pop()
+            if isinstance(value, ast.BinOp) and isinstance(value.op, ast.BitOr):
+                pending.extend((value.left, value.right))
+            elif isinstance(value, ast.Constant) and value.value is None:
+                values.append(None)
+            else:
+                parts = []
+                current = value
+                while isinstance(current, ast.Attribute):
+                    parts.append(current.attr)
+                    current = current.value
+                if not isinstance(current, ast.Name):
+                    return False
+                name = ".".join(reversed([*parts, current.id]))
+                if imports.resolved_import(scope, name) not in native_types:
+                    return False
+                values.append(name)
+        return None in values and any(value is not None for value in values)
+
+    def collect(node, scope=None):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            scope = node
+        for field_name, value in ast.iter_fields(node):
+            if field_name in {"annotation", "returns"} and isinstance(value, ast.BinOp):
+                if inert_union(value, scope):
+                    annotations.add(id(value))
+            if isinstance(value, ast.AST):
+                collect(value, scope)
+            elif isinstance(value, list):
+                for child in value:
+                    if isinstance(child, ast.AST):
+                        collect(child, scope)
+
+    collect(tree)
+    if not annotations:
+        return ast.Module(body=list(tree.body), type_ignores=tree.type_ignores)
+
+    def clone(value):
+        if isinstance(value, ast.AST):
+            if id(value) in annotations:
+                return ast.copy_location(ast.Constant(value=None), value)
+            copied = type(value)(
+                **{key: clone(item) for key, item in ast.iter_fields(value)}
+            )
+            for key in value._attributes:
+                if hasattr(value, key):
+                    setattr(copied, key, getattr(value, key))
+            return copied
+        if isinstance(value, list):
+            return [clone(item) for item in value]
+        return value
+
+    return clone(tree)
 
 
 @dataclass(eq=False)
@@ -178,6 +166,10 @@ class CosmosQueryProvenance:
         self.resolver = None
         try:
             self.resolver = ReceiverResolver(tree, filename)
+            if project_root and not self.resolver.root.resolve().is_relative_to(
+                Path(project_root).resolve()
+            ):
+                self.resolver = ReceiverResolver(tree, filename, project_root)
         except (OSError, RuntimeError, ValueError, RecursionError):
             pass
         self._plain_classes = {}
@@ -191,6 +183,8 @@ class CosmosQueryProvenance:
         dynamic, rebound = module_rebinding(tree, module_name_for(filename))
         names, computed = attribute_write_names(tree)
         if dynamic or computed or names & (_CONTRACT_NAMES | _MAGIC):
+            return
+        if not provider_is_unshadowed("azure.cosmos", filename, project_root):
             return
         if any(
             isinstance(node, ast.Attribute) and node.attr in {"__dict__", "__class__"}
@@ -210,19 +204,25 @@ class CosmosQueryProvenance:
         self.enabled = not self._has_escaping_receiver()
 
     def _sdk_imports_stable(self, tree, filename, root):
-        if root is None:
-            root = getattr(self.resolver, "root", None)
-        if root is None:
+        contracts = set()
+        for namespace in ("azure.cosmos", "azure.cosmos.aio"):
+            contracts.update(f"{namespace}.{name}" for name in _TYPES)
+            contracts.update(
+                f"{namespace}.{name}"
+                for name in (
+                    "CosmosClient.from_connection_string",
+                    "CosmosClient.get_database_client",
+                    "DatabaseProxy.get_container_client",
+                    "ContainerProxy.query_items",
+                )
+            )
+        context = _private_import_context(tree, filename, root)
+        if context is None:
             return False
-        trees, complete = project_source_snapshot(root)
-        if not complete or not trees:
-            return False
-        captured = trees.get(Path(filename).resolve())
-        if captured is None or ast.dump(captured) != ast.dump(tree):
-            return False
-        self.snapshot = trees
-        self.snapshot_root = Path(root).resolve()
-        return _snapshot_providers_stable(trees, self.snapshot_root)
+        names = set()
+        for contract in contracts:
+            names.update(context.qualified_names(contract))
+        return _private_provider_effects(context, names, project_sdk=True)
 
     def _has_escaping_receiver(self):
         for node in ast.walk(self.tree):
@@ -521,11 +521,12 @@ class CosmosQueryProvenance:
             for alias in statement.names
         ):
             return False
-        return not any(
-            path.stem == "abc"
-            or "abc" in path.relative_to(self.snapshot_root).parts[:-1]
-            for path in self.snapshot
-        )
+        if not provider_is_unshadowed("abc.ABC", module.path, self.root):
+            return False
+        context = _private_import_context(module.tree, module.path, self.root)
+        if context is None or "abc" in context.modules:
+            return False
+        return _private_provider_effects(context, context.qualified_names("abc.ABC"))
 
     def _value(self, node, scope, active=frozenset(), depth=0):
         if node is None or depth > 24:

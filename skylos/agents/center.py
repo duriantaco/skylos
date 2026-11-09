@@ -649,6 +649,7 @@ def _run_refresh_analysis(
     changed_files: list[str],
     exclude_folders: list[str] | set[str] | None = None,
 ) -> list[dict[str, Any]]:
+    from skylos.core.cli_shared import quiet_analyzer_logs
     from skylos.core.review_decisions import (
         apply_trusted_review_decisions,
         review_scan_requirements,
@@ -672,7 +673,8 @@ def _run_refresh_analysis(
         options["include_review_context"] = True
     if include_review_proofs:
         options["include_review_proofs"] = True
-    raw = run_analyze(str(project_root), **options)
+    with quiet_analyzer_logs():
+        raw = run_analyze(str(project_root), **options)
     result = json.loads(raw) if isinstance(raw, str) else raw
     result = apply_trusted_review_decisions(result, project_root)
     return normalize_findings(

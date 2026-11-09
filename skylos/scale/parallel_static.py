@@ -415,6 +415,9 @@ def _run_proc_files_serial(
 ):
     outs = []
     total = len(files)
+    admitted_go_files = tuple(
+        str(Path(file).absolute()) for file in files if str(file).endswith(".go")
+    )
     for i, f in enumerate(files, 1):
         if progress_callback:
             progress_callback(i, total or 1, f)
@@ -426,6 +429,11 @@ def _run_proc_files_serial(
         if credential_source_locations is not None:
             credential_kwargs["credential_source_locations"] = (
                 credential_source_locations.get(str(Path(f).absolute()), ())
+            )
+        if str(f).endswith(".go") and project_root is not None:
+            credential_kwargs["go_scan_scope"] = (
+                str(Path(project_root).absolute()),
+                admitted_go_files,
             )
         out = proc_file(
             f,

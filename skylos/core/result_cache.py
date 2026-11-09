@@ -65,7 +65,16 @@ SOURCE_EXTENSIONS = {
     ".hh",
     ".hxx",
     ".php",
+    ".module",
+    ".install",
+    ".inc",
+    ".theme",
+    ".profile",
+    ".engine",
     ".rs",
+    ".rb",
+    ".swift",
+    ".tf",
     ".dart",
     ".kt",
     ".kts",
@@ -106,6 +115,7 @@ RELEVANT_FILENAMES = {
 }
 
 RELEVANT_GLOBS = (
+    "*.tf.json",
     "requirements*.txt",
     "constraints*.txt",
 )

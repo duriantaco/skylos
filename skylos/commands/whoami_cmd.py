@@ -1,6 +1,7 @@
 from rich.console import Console
 
 from skylos.api import get_project_info, get_project_token
+from skylos.cloud.plan_names import plan_display_name
 
 
 def run_whoami_command() -> int:
@@ -20,6 +21,6 @@ def run_whoami_command() -> int:
     console.print()
     console.print(f"[bold]{org.get('name', 'Unknown')}[/bold]")
     console.print(f"  Project:  {project.get('name', 'Unknown')}")
-    console.print(f"  Plan:     {info.get('plan', 'free')}")
+    console.print(f"  Plan:     {plan_display_name(info.get('plan'))}")
     console.print()
     return 0

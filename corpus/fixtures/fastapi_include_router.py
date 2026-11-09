@@ -10,3 +10,7 @@ def ping():
 
 
 app.include_router(router)
+
+
+def status_payload():
+    return {"ok": True}

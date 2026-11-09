@@ -47,6 +47,8 @@ _LANGUAGE_SUFFIXES = {
     ".java": "java",
     ".php": "php",
     ".rs": "rust",
+    ".rb": "ruby",
+    ".swift": "swift",
     ".cpp": "cpp",
     ".cc": "cpp",
     ".cxx": "cpp",
@@ -76,6 +78,8 @@ _CHECK_ORDER = {
     "cpp_workspace_api_surface": 8,
     "kotlin_workspace_api_surface": 9,
     "shell_workspace_api_surface": 10,
+    "ruby_workspace_api_surface": 11,
+    "swift_workspace_api_surface": 12,
 }
 
 _UNSUPPORTED_REASON = "local_api_verification_not_implemented"
@@ -108,7 +112,17 @@ def expected_ai_verification_checks(
         check_id="java_workspace_api_surface",
         supported=True,
     )
-    for language in ("php", "rust", "dart", "csharp", "cpp", "kotlin", "shell"):
+    for language in (
+        "php",
+        "rust",
+        "dart",
+        "csharp",
+        "cpp",
+        "kotlin",
+        "shell",
+        "ruby",
+        "swift",
+    ):
         _append_single_language_expectation(
             expectations,
             counts,

@@ -4,8 +4,14 @@ import re
 import sys
 from string import Formatter
 from skylos.rules.danger.taint import TaintVisitor, PATH_SANITIZERS
-from skylos.rules.danger.module_namespace import attribute_write_names
+from skylos.rules.danger.module_namespace import (
+    attribute_write_names,
+    has_mock_api_patching,
+    module_name_for,
+    module_rebinding,
+)
 from skylos.rules.danger.builtin_bindings import builtin_references
+from skylos.rules.danger.import_proof import provider_binding_is_stable
 from skylos.rules.danger.danger_fs.closed_world import HELPER_PARAMETER_SOURCE
 from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
 from skylos.security.receiver_resolution import ReceiverResolver
@@ -21,6 +27,13 @@ from skylos.rules.danger.untrusted_sources import (
 SYMLINK_WRITE_RULE = "SKY-D324"
 SYMLINK_READ_RULE = "SKY-D325"
 ARCHIVE_EXTRACTION_RULE = "SKY-D326"
+ARCHIVE_CONSTRUCTORS = {
+    "zipfile.ZipFile": "zip",
+    "zipfile.PyZipFile": "zip",
+    "tarfile.open": "tar",
+    "tarfile.TarFile": "tar",
+    "tarfile.TarFile.open": "tar",
+}
 OS_OPEN_WRITE_FLAGS = {"O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND"}
 OS_OPEN_EXCLUSIVE_FLAGS = {"O_CREAT", "O_EXCL"}
 PYTEST_TMP_FIXTURE_NAMES = {"tmp_path", "tmpdir"}
@@ -315,15 +328,45 @@ def _allowlist_names(compare):
     return set()
 
 
-def _test_is_negative(test):
-    """True when the branch body runs if the check *failed*."""
+def polarity_names(test, holds, call_names, compare_names=None):
+    """Names checked by ``test`` when it evaluates to ``holds``: membership
+    (``in``/``not in``) through ``compare_names``, true calls through
+    ``call_names`` (also as a side of a holding ``==``, as in
+    ``commonpath([p, base]) == base``), combined by the logic of ``not``,
+    ``and`` and ``or``."""
+    if compare_names is None:
+        compare_names = _allowlist_names
     if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
-        return True
-    if isinstance(test, ast.Compare) and len(test.ops) == 1:
-        return isinstance(test.ops[0], (ast.NotEq, ast.NotIn, ast.IsNot))
-    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.Or):
-        return all(_test_is_negative(value) for value in test.values)
-    return False
+        return polarity_names(test.operand, not holds, call_names, compare_names)
+    if isinstance(test, ast.BoolOp):
+        parts = [
+            polarity_names(value, holds, call_names, compare_names)
+            for value in test.values
+        ]
+        if not parts:
+            return set()
+        if isinstance(test.op, ast.And) == holds:
+            return set().union(*parts)
+        return set.intersection(*parts)
+    if isinstance(test, ast.Compare):
+        names = compare_names(test)
+        if names:
+            if isinstance(test.ops[0], ast.NotIn) == holds:
+                return set()
+            return set(names)
+        if len(test.ops) != 1 or not isinstance(test.ops[0], (ast.Eq, ast.NotEq)):
+            return set()
+        if isinstance(test.ops[0], ast.Eq) != holds:
+            return set()
+        found = set()
+        for side in (test.left, test.comparators[0]):
+            for part in ast.walk(side):
+                if isinstance(part, ast.Call):
+                    found |= set(call_names(part))
+        return found
+    if isinstance(test, ast.Call) and holds:
+        return set(call_names(test))
+    return set()
 
 
 def _body_terminates(body):
@@ -439,6 +482,21 @@ def _exclusive_create_modes(modes):
     return bool(modes) and all("x" in mode for mode in modes)
 
 
+def _class_method_spans(module):
+    spans = []
+    for node in ast.walk(module):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        methods = {
+            item.name
+            for item in node.body
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        bases = tuple(_expr_name(base) or "" for base in node.bases)
+        spans.append((node.lineno, getattr(node, "end_lineno", node.lineno), methods, bases))
+    return tuple(spans)
+
+
 def _archive_call_name(node):
     """``extract`` or ``extractall`` of an archive. ``ZipFile.extract`` and
     ``TarFile.extract`` require a member, so a call that cannot pass one
@@ -545,6 +603,7 @@ class _PathFlowChecker(TaintVisitor):
     def __init__(self, file_path, findings, sanitizers=None):
         super().__init__(file_path, findings, sanitizers=sanitizers)
         self.path_like_stack = [{}]
+        self.archive_kind_stack = [{}]
         self.basename_sanitized_stack = [{}]
         self.symlink_sensitive_stack = [{}]
         self.os_open_write_flags_stack = [{}]
@@ -575,13 +634,24 @@ class _PathFlowChecker(TaintVisitor):
         self.path_open_modes = None
         self.update_handle_reads = None
         self._attribute_writes = (frozenset(), True)
+        self._class_methods = ()
+        self._non_archive_imports_uncertain = True
+        self._import_parents = {}
         self._builtin_string_refs = frozenset()
         self._path_parents = {}
 
     def visit_Module(self, node):
         self.untrusted_sources = UntrustedSourceIndex(node, follow_local_calls=True)
         self._builtin_string_refs = builtin_references(node, {"str"})
-        self._path_parents = {id(child): parent for parent in ast.walk(node) for child in ast.iter_child_nodes(parent)}
+        self._import_parents = {
+            id(child): parent
+            for parent in ast.walk(node)
+            for child in ast.iter_child_nodes(parent)
+        }
+        self._path_parents = self._import_parents
+        self._non_archive_imports_uncertain = module_rebinding(
+            node, module_name_for(self.file_path)
+        )[0] or has_mock_api_patching(node)
         try:
             self._attribute_writes = attribute_write_names(node)
         except RecursionError:
@@ -596,6 +666,7 @@ class _PathFlowChecker(TaintVisitor):
         except Exception:
             self.path_open_modes = None
         self._constant_sizes = _module_constant_sizes(node)
+        self._class_methods = _class_method_spans(node)
         try:
             self.update_handle_reads = UpdateHandleReads(node, self.receiver_resolver)
         except Exception:
@@ -639,6 +710,7 @@ class _PathFlowChecker(TaintVisitor):
         self.validated_stack.append(set())
         self.file_object_stack.append(set())
         self.path_like_stack.append({})
+        self.archive_kind_stack.append({})
         self.basename_sanitized_stack.append({})
         self.symlink_sensitive_stack.append({})
         self.os_open_write_flags_stack.append({})
@@ -665,6 +737,8 @@ class _PathFlowChecker(TaintVisitor):
                 stack.pop()
         if self.path_like_stack:
             self.path_like_stack.pop()
+        if self.archive_kind_stack:
+            self.archive_kind_stack.pop()
         if self.basename_sanitized_stack:
             self.basename_sanitized_stack.pop()
         if self.symlink_sensitive_stack:
@@ -675,6 +749,97 @@ class _PathFlowChecker(TaintVisitor):
             self.os_open_exclusive_stack.pop()
         if self.safety_stack:
             self.safety_stack.pop()
+
+    def _set_archive_kind(self, name, kind):
+        if not self.archive_kind_stack:
+            self.archive_kind_stack.append({})
+        self.archive_kind_stack[-1][name] = kind
+
+    def _archive_kind(self, expr):
+        """``zip`` or ``tar`` when ``expr`` is built by the standard archive
+        constructors, directly or through a local binding; otherwise None."""
+        if isinstance(expr, ast.Name):
+            for env in reversed(self.archive_kind_stack):
+                if expr.id in env:
+                    return env[expr.id]
+            return None
+        if not isinstance(expr, ast.Call):
+            return None
+        return ARCHIVE_CONSTRUCTORS.get(self._canonical_call_name(expr) or "")
+
+    def _non_archive_import_scope_supported(self, node):
+        child = node
+        current = self._import_parents.get(id(child))
+        while current is not None:
+            if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return child in current.body
+            if isinstance(
+                current,
+                (
+                    ast.ClassDef,
+                    ast.Lambda,
+                    ast.ListComp,
+                    ast.SetComp,
+                    ast.DictComp,
+                    ast.GeneratorExp,
+                ),
+            ):
+                return False
+            child, current = current, self._import_parents.get(id(current))
+        return True
+
+    def _archive_call_target(self, node):
+        """Whose ``extract``/``extractall`` this is: ``zip``, ``tar``,
+        ``project`` (a method the project defines) or ``unknown``."""
+        # OpenTelemetry extracts a tracing context, not archive members. The
+        # exemption needs the imported API and rejects rebinding/monkeypatching.
+        writes, computed = self._attribute_writes
+        if (
+            node.func.attr == "extract"
+            and self._non_archive_import_scope_supported(node)
+            and not self._non_archive_imports_uncertain
+            and not computed
+            and "extract" not in writes
+            and self.untrusted_sources.resolved_import(
+                self._current_function(), _qualified_name(node) or ""
+            )
+            == "opentelemetry.propagate.extract"
+        ):
+            return "project"
+        kind = self._archive_kind(node.func.value)
+        if kind:
+            return kind
+        if self._calls_own_class_method(node):
+            return "project"
+        proof = self._receiver_proof(node)
+        if proof.get("status") == "resolved" and proof.get("file"):
+            return "project"
+        return "unknown"
+
+    def _calls_own_class_method(self, node):
+        """``self.extract(...)`` inside a class that defines ``extract`` and
+        does not inherit from an archive class."""
+        receiver = node.func.value
+        if not (isinstance(receiver, ast.Name) and receiver.id in ("self", "cls")):
+            return False
+        line = getattr(node, "lineno", 0)
+        owner = None
+        for start, end, methods, bases in self._class_methods:
+            if start <= line <= end and (owner is None or start > owner[0]):
+                owner = (start, end, methods, bases)
+        if owner is None or node.func.attr not in owner[2]:
+            return False
+        return not any(base.endswith(("TarFile", "ZipFile")) for base in owner[3])
+
+    def _archive_extraction_is_reportable(self, node):
+        """``zipfile`` strips absolute paths and ``..`` from member names and
+        never creates links, and a project's own ``extract`` method is not
+        archive extraction. A tar archive or an unresolved receiver without
+        a safe ``filter`` can write outside the destination."""
+        target = self._archive_call_target(node)
+        if target in ("zip", "project"):
+            return False
+        return not _unpack_filter_is_safe(node)
 
     def _set_path_like(self, name, path_like):
         if not self.path_like_stack:
@@ -826,6 +991,21 @@ class _PathFlowChecker(TaintVisitor):
             return self._get_basename_sanitized(node.id)
         return False
 
+    def _is_sanitizer_call(self, node):
+        if not super()._is_sanitizer_call(node):
+            return False
+        name = self.untrusted_sources.resolved_import(
+            self._current_function(), _qualified_name(node)
+        )
+        if name and name.endswith(".safe_join"):
+            # safe_join constrains the suffix to its directory. It cannot
+            # make a request-selected base directory safe.
+            if any(kw.arg is None for kw in node.keywords):
+                return False
+            base = _bound_argument(node, 0, "directory")
+            return base is not None and not self.is_tainted(base)
+        return True
+
     def is_tainted(self, node):
         if _is_path_name_projection(node) or is_traversal_safe_value(node):
             return False
@@ -854,10 +1034,12 @@ class _PathFlowChecker(TaintVisitor):
         self._record_safety_tokens(node)
         t = self.is_tainted(node.value)
         path_like = self._is_path_like_expr(node.value)
+        archive_kind = self._archive_kind(node.value)
         for tgt in node.targets:
             if isinstance(tgt, ast.Name):
                 self._set(tgt.id, t)
                 self._set_path_like(tgt.id, path_like)
+                self._set_archive_kind(tgt.id, archive_kind)
                 self._set_basename_sanitized(
                     tgt.id, self._is_basename_sanitized_expr(node.value)
                 )
@@ -904,24 +1086,21 @@ class _PathFlowChecker(TaintVisitor):
 
     def visit_If(self, node):
         self._record_safety_tokens(node.test)
-        names = self._validation_names(node.test)
-        if not names:
+        when_true = self._validation_names(node.test, True)
+        when_false = self._validation_names(node.test, False)
+        if not when_true and not when_false:
             self.generic_visit(node)
             return
         self.visit(node.test)
-        if _test_is_negative(node.test):
-            self._visit_block(node.body)
-            self._visit_block(node.orelse, names)
-            if _body_terminates(node.body):
-                self._current_validated().update(names)
-        else:
-            self._visit_block(node.body, names)
-            self._visit_block(node.orelse)
+        self._visit_block(node.body, when_true)
+        self._visit_block(node.orelse, when_false)
+        if when_false and _body_terminates(node.body):
+            self._current_validated().update(when_false)
 
     def visit_Assert(self, node):
-        names = self._validation_names(node.test)
+        names = self._validation_names(node.test, True)
         self.generic_visit(node)
-        if names and not _test_is_negative(node.test):
+        if names:
             self._current_validated().update(names)
 
     def _visit_block(self, statements, validated=None):
@@ -969,15 +1148,11 @@ class _PathFlowChecker(TaintVisitor):
         else:
             self.file_object_stack[-1].discard(name)
 
-    def _validation_names(self, test):
-        """Names a containment or allowlist check in ``test`` vouches for."""
-        names = set()
-        for sub in ast.walk(test):
-            if isinstance(sub, ast.Call):
-                names |= self._containment_call_names(sub)
-            elif isinstance(sub, ast.Compare):
-                names |= _allowlist_names(sub)
-        return names
+    def _validation_names(self, test, holds):
+        """Names a containment or allowlist check vouches for when ``test``
+        evaluates to ``holds``. ``a or b`` holding proves only what both
+        prove; ``a and b`` failing likewise."""
+        return polarity_names(test, holds, self._containment_call_names)
 
     def _containment_call_names(self, call):
         if _callee_last(call) == "commonpath":
@@ -1212,12 +1387,7 @@ class _PathFlowChecker(TaintVisitor):
         if proof is not None:
             finding.setdefault("metadata", {})["receiver_resolution"] = proof
 
-    def _method_path_operand(self, node):
-        """A proven wrapper's file argument differs from a Path receiver.
-
-        Unknown implementations retain the old conservative check. Only a
-        resolved non-Path implementation with no filesystem effect is skipped.
-        """
+    def _receiver_proof(self, node):
         proof = self._receiver_proofs.get(id(node))
         if self.receiver_resolver is not None:
             try:
@@ -1231,6 +1401,15 @@ class _PathFlowChecker(TaintVisitor):
                 "limitations": ["Receiver resolution unavailable."],
             }
         self._receiver_proofs[id(node)] = proof
+        return proof
+
+    def _method_path_operand(self, node):
+        """A proven wrapper's file argument differs from a Path receiver.
+
+        Unknown implementations retain the old conservative check. Only a
+        resolved non-Path implementation with no filesystem effect is skipped.
+        """
+        proof = self._receiver_proof(node)
         if proof.get("status") != "resolved" or not proof.get("receiver_is_non_path"):
             return node.func.value, True
         effect = proof.get("effects", {}).get("filesystem")
@@ -1461,6 +1640,11 @@ class _PathFlowChecker(TaintVisitor):
             and part.format_spec is None
             and (removed(part.value) or set()) >= separators
             for part in formatted
+        ) and provider_binding_is_stable(
+            "builtins.str.replace",
+            self.untrusted_sources.module,
+            self.file_path,
+            getattr(self, "project_root", None),
         )
 
     def _posix_filename_branch(self, expr):
@@ -1488,6 +1672,12 @@ class _PathFlowChecker(TaintVisitor):
                         resolved == "os.name"
                         and self._import_names_are_stable(name)
                         and self._sanitizer_is_unpatched("os.name")
+                        and provider_binding_is_stable(
+                            "os.name",
+                            self.untrusted_sources.module,
+                            self.file_path,
+                            getattr(self, "project_root", None),
+                        )
                     ):
                         return True
             current = parent
@@ -1520,6 +1710,10 @@ class _PathFlowChecker(TaintVisitor):
 
     def _record_bounded_handles(self, node):
         for item in node.items:
+            if isinstance(item.optional_vars, ast.Name):
+                self._set_archive_kind(
+                    item.optional_vars.id, self._archive_kind(item.context_expr)
+                )
             if isinstance(item.context_expr, ast.Call) and _handle_reads_bounded(
                 item.optional_vars, node.body, self._constant_sizes
             ):
@@ -1604,7 +1798,7 @@ class _PathFlowChecker(TaintVisitor):
         if qn in FIRST_PATH_PARAMETERS:
             first_path = _bound_argument(node, 0, FIRST_PATH_PARAMETERS[qn])
 
-        if archive_method:
+        if archive_method and self._archive_extraction_is_reportable(node):
             self._flag_archive_extract_if_unsafe(node)
 
         if (
@@ -1665,9 +1859,10 @@ class _PathFlowChecker(TaintVisitor):
         self.generic_visit(node)
 
 
-def scan(tree, file_path, findings):
+def scan(tree, file_path, findings, *, project_root=None):
     try:
         checker = _PathFlowChecker(file_path, findings, sanitizers=PATH_SANITIZERS)
+        checker.project_root = project_root
         checker.visit(tree)
     except Exception as e:
         print(f"Path traversal analysis failed for {file_path}: {e}", file=sys.stderr)

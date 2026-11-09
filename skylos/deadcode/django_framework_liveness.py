@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from skylos.deadcode.django_setting_bindings import selected_setting_views
 from skylos.deadcode.django_template_liveness import (
     _configured_template_directories,
     _template_members,
@@ -66,6 +67,50 @@ _MODEL_OVERRIDES = {
     "get_template_names",
 }
 _ADMIN_CONFIGS = {"django.contrib.admin", "django.contrib.admin.apps.AdminConfig"}
+# Django dispatches these methods on the instances in AUTHENTICATION_BACKENDS.
+# Merely looking like a backend, or appearing in another setting, is not proof.
+_AUTH_BACKEND_METHODS = {
+    "authenticate",
+    "aauthenticate",
+    "get_user",
+    "aget_user",
+    "get_user_permissions",
+    "aget_user_permissions",
+    "get_group_permissions",
+    "aget_group_permissions",
+    "get_all_permissions",
+    "aget_all_permissions",
+    "has_perm",
+    "ahas_perm",
+    "has_module_perms",
+    "ahas_module_perms",
+    "with_perm",
+}
+# Django storage backends loaded from STORAGES / DEFAULT_FILE_STORAGE.
+_STORAGE_BACKEND_METHODS = {
+    "save",
+    "delete",
+    "exists",
+    "open",
+    "listdir",
+    "path",
+    "size",
+    "url",
+    "generate_filename",
+    "get_valid_name",
+    "get_available_name",
+    "get_accessed_time",
+    "get_created_time",
+    "get_modified_time",
+}
+# Classes constructed from LOGGING \"()\" / \"class\" paths.
+_LOGGING_FACTORY_METHODS = {
+    "filter",
+    "format",
+    "formatTime",
+    "formatException",
+    "formatStack",
+}
 
 
 @dataclass
@@ -76,6 +121,7 @@ class _Activation:
     url_roots: set = field(default_factory=set)
     routed: set = field(default_factory=set)
     loaded: set = field(default_factory=set)
+    setting_views: list = field(default_factory=list)
 
 
 @dataclass
@@ -102,7 +148,11 @@ _DOTTED_PATH = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$")
 
 
 def _setting_names(scanner):
-    names = set(scanner.values) | set(getattr(scanner, "module_settings", {}))
+    names = (
+        set(scanner.values)
+        | set(getattr(scanner, "module_settings", {}))
+        | set(getattr(scanner, "setting_bindings", {}))
+    )
     return {name for name in names if name.isupper()}
 
 
@@ -110,14 +160,14 @@ def _setting_targets(scanner):
     """Django reads every UPPER_CASE setting by name via django.conf.settings."""
     targets = []
     for setting in sorted(_setting_names(scanner)):
-        definition = scanner.definition(scanner.module + "." + setting, kind="variable")
+        source_name = getattr(scanner, "setting_source_names", {}).get(setting, setting)
+        qualified = scanner.module + "." + source_name
+        definition = scanner.definition(qualified, kind="variable")
         if definition is not None:
             targets.append((definition, "django_web_setting"))
         else:
             # Assigned more than once (e.g. under ``if DEBUG:``): mark each.
-            for candidate in scanner.index.all_by_name.get(
-                scanner.module + "." + setting, ()
-            ):
+            for candidate in scanner.index.all_by_name.get(qualified, ()):
                 if candidate.type == "variable":
                     targets.append((candidate, "django_web_setting"))
     return targets
@@ -161,8 +211,7 @@ def _looks_like_settings(scanner):
 
 
 def _settings_closure(roots, scanners):
-    """Settings modules plus the modules they star-import, and settings
-    variants (``settings/production.py``) that star-import them."""
+    """Whole-settings imports retain their existing star-import closure."""
     settings = set(roots)
     pending = list(roots)
     while pending:
@@ -193,12 +242,16 @@ def _settings_activation(scanners, classes):
         name for name, scanner in scanners.items() if _looks_like_settings(scanner)
     }
     settings = _settings_closure(settings, scanners)
-    activation = _Activation(settings)
+    activation = _Activation(
+        settings, setting_views=selected_setting_views(settings, scanners)
+    )
     targets = []
     for name in settings:
         scanner = scanners.get(name)
         if scanner is None:
             continue
+        targets.extend(_setting_targets(scanner))
+    for scanner in activation.setting_views:
         targets.extend(_setting_targets(scanner))
         targets.extend(_setting_reference_targets(scanner))
         urlconf = _literal(scanner.values.get("ROOT_URLCONF"))
@@ -209,6 +262,280 @@ def _settings_activation(scanners, classes):
         apps = {_app_name(app, classes) for app in configured}
         activation.apps.update(app for app in apps if isinstance(app, str))
     return activation, targets
+
+
+def _auth_backend_names(scanner):
+    """Literal backend entries, excluding superseded straight-line settings."""
+    final = scanner.values.get("AUTHENTICATION_BACKENDS")
+    boundary = (getattr(final, "lineno", 0), getattr(final, "col_offset", 0))
+    if any(
+        position >= boundary
+        for position in scanner.authentication_backend_invalidations
+    ):
+        return set()
+    names = set()
+    for value in scanner.authentication_backend_assignments:
+        if (value.lineno, value.col_offset) >= boundary:
+            names.update(_member_names(value))
+    for value, position in scanner.authentication_backend_mutations:
+        if position < boundary:
+            continue
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            names.add(value.value)
+        else:
+            names.update(_member_names(value))
+    return {name for name in names if len(name) <= 300 and _DOTTED_PATH.fullmatch(name)}
+
+
+def _auth_class_binding(name, scanners, classes):
+    """Resolve import/assignment aliases to a module's surviving class object."""
+    seen = set()
+    while name not in seen and len(seen) < 32:
+        seen.add(name)
+        module, _, local = name.rpartition(".")
+        scanner = scanners.get(module)
+        if scanner is None:
+            return None
+        binding = scanner.bindings.get(local)
+        if binding == name:
+            if name in classes:
+                definition = scanner.definition(name, kind="class")
+                if definition is not None and _auth_plain_class(definition):
+                    return name
+            return None
+        if binding is None:
+            return None
+        name = binding
+    return None
+
+
+def _auth_plain_class(definition):
+    node = getattr(definition, "node", None)
+    return (
+        isinstance(node, ast.ClassDef) and not node.decorator_list and not node.keywords
+    )
+
+
+def _auth_class_mro(name, scanners, classes, trail=(), cache=None):
+    """C3 preserves which implementation Django actually obtains by getattr."""
+    if cache is None:
+        cache = {}
+    if name in cache:
+        cached = cache[name]
+        if cached is None:
+            return None
+        return list(cached)
+    if name in trail or len(trail) >= 32:
+        return None
+    if name not in classes:
+        return [name]
+    definition, bases, _, _ = classes[name]
+    if not _auth_plain_class(definition):
+        return None
+    module = definition.name.rpartition(".")[0]
+    scanner = scanners.get(module)
+    if scanner is None or scanner.definition(name, kind="class") is None:
+        return None
+    parents = []
+    sequences = []
+    for base in bases:
+        if base is None:
+            return None
+        if base not in classes:
+            resolved = _auth_class_binding(base, scanners, classes)
+            if resolved is not None:
+                base = resolved
+        parent_mro = _auth_class_mro(base, scanners, classes, (*trail, name), cache)
+        if parent_mro is None:
+            cache[name] = None
+            return None
+        parents.append(base)
+        sequences.append(parent_mro)
+    sequences.append(parents)
+    result = [name]
+    while any(sequences):
+        sequences = [sequence for sequence in sequences if sequence]
+        candidate = None
+        for sequence in sequences:
+            head = sequence[0]
+            if not any(head in other[1:] for other in sequences):
+                candidate = head
+                break
+        if candidate is None:
+            cache[name] = None
+            return None
+        result.append(candidate)
+        for sequence in sequences:
+            if sequence[0] == candidate:
+                sequence.pop(0)
+    cache[name] = tuple(result)
+    return result
+
+
+def _effective_setting_values(scanner, name):
+    """Possible values since the last unconditional replacement of a setting."""
+    final = scanner.values.get(name)
+    boundary = (getattr(final, "lineno", 0), getattr(final, "col_offset", 0))
+    values = (
+        *getattr(scanner, "module_settings", {}).get(name, ()),
+        *getattr(scanner, "setting_mutations", {}).get(name, ()),
+    )
+    return tuple(
+        value
+        for value in values
+        if any(
+            position >= boundary
+            for position in getattr(scanner, "setting_mutation_positions", {}).get(
+                id(value), ((value.lineno, value.col_offset),)
+            )
+        )
+    )
+
+
+def _storage_backend_names(scanner):
+    """Literal storage backend class paths from STORAGES / DEFAULT_FILE_STORAGE."""
+    names = set()
+    for setting in ("DEFAULT_FILE_STORAGE", "STATICFILES_STORAGE"):
+        value = scanner.values.get(setting)
+        literal = _literal(value)
+        if isinstance(literal, str):
+            names.add(literal)
+    for values in _effective_setting_values(scanner, "STORAGES"):
+        for node in ast.walk(values):
+            if not isinstance(node, ast.Dict):
+                continue
+            for key, value in zip(node.keys, node.values):
+                if (
+                    isinstance(key, ast.Constant)
+                    and key.value == "BACKEND"
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, str)
+                ):
+                    names.add(value.value)
+    return {name for name in names if len(name) <= 300 and _DOTTED_PATH.fullmatch(name)}
+
+
+def _protocol_method_targets(configured, scanners, classes, methods, reason, loaded):
+    """Mark bounded protocol methods on settings-wired plain classes."""
+    bindings = {}
+    for configured_name in configured:
+        name = _auth_class_binding(configured_name, scanners, classes)
+        if name is not None:
+            bindings[configured_name] = name
+    if not bindings:
+        return []
+    loaded = _loaded_modules(
+        loaded | {name.rpartition(".")[0] for name in (*bindings, *bindings.values())},
+        scanners,
+    )
+    overrides = {
+        member
+        for module in loaded
+        if module in scanners
+        for member in scanners[module].class_member_overrides
+    }
+    names = {
+        name
+        for configured_name, name in bindings.items()
+        if configured_name not in overrides and name not in overrides
+    }
+    targets = []
+    mros = {}
+    for name in names:
+        definition = classes[name][0]
+        targets.append((definition, "django_web_setting_reference"))
+        mro = _auth_class_mro(name, scanners, classes, cache=mros)
+        if mro is None:
+            continue
+        for method in methods:
+            for owner in mro:
+                if owner == "builtins.object":
+                    continue
+                if owner not in classes:
+                    break
+                if owner + "." + method in overrides:
+                    break
+                node = classes[owner][2].get(method)
+                if node is None:
+                    continue
+                module = owner.rpartition(".")[0]
+                if (
+                    isinstance(node, _FUNCTIONS)
+                    and node in scanners[module].protocol_methods
+                ):
+                    target = scanners[module].definition(
+                        owner + "." + method, line=node.lineno, kind="method"
+                    )
+                    if target is not None:
+                        targets.append((target, reason))
+                break
+    return targets
+
+
+def _auth_backend_targets(activation, scanners, classes):
+    configured = {
+        backend
+        for scanner in activation.setting_views
+        for backend in _auth_backend_names(scanner)
+    }
+    return _protocol_method_targets(
+        configured,
+        scanners,
+        classes,
+        _AUTH_BACKEND_METHODS,
+        "django_web_auth_backend",
+        activation.loaded,
+    )
+
+
+def _storage_backend_targets(activation, scanners, classes):
+    configured = {
+        backend
+        for scanner in activation.setting_views
+        for backend in _storage_backend_names(scanner)
+    }
+    return _protocol_method_targets(
+        configured,
+        scanners,
+        classes,
+        _STORAGE_BACKEND_METHODS,
+        "django_web_storage_backend",
+        activation.loaded,
+    )
+
+
+def _logging_factory_names(scanner):
+    """Dotted class paths from LOGGING dict ``()`` / ``class`` entries."""
+    names = set()
+    for values in _effective_setting_values(scanner, "LOGGING"):
+        for node in ast.walk(values):
+            if not isinstance(node, ast.Dict):
+                continue
+            for key, value in zip(node.keys, node.values):
+                if (
+                    isinstance(key, ast.Constant)
+                    and key.value in {"()", "class"}
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, str)
+                ):
+                    names.add(value.value)
+    return {name for name in names if len(name) <= 300 and _DOTTED_PATH.fullmatch(name)}
+
+
+def _logging_factory_targets(activation, scanners, classes):
+    configured = {
+        factory
+        for scanner in activation.setting_views
+        for factory in _logging_factory_names(scanner)
+    }
+    return _protocol_method_targets(
+        configured,
+        scanners,
+        classes,
+        _LOGGING_FACTORY_METHODS,
+        "django_web_logging_factory",
+        activation.loaded,
+    )
 
 
 def _route_modules(activation, scanners):
@@ -284,13 +611,10 @@ def _admin_targets(activation, scanners, classes):
 
 def _template_directories(activation, scanners):
     directories = set()
-    for name in activation.settings:
-        if name in scanners:
-            directories.update(
-                _configured_template_directories(
-                    scanners[name], activation.apps, scanners
-                )
-            )
+    for scanner in activation.setting_views:
+        directories.update(
+            _configured_template_directories(scanner, activation.apps, scanners)
+        )
     return directories
 
 
@@ -400,6 +724,149 @@ def _view_targets(name, project):
     return targets
 
 
+def _function_view_targets(activation, scanners, index):
+    """Read only the active source URL tables and their captured callbacks."""
+    if not activation.url_roots:
+        return []
+    from skylos.deadcode.provider_method_liveness import _ProofLimit
+    from skylos.deadcode.provider_source_dispatch import _DispatchValue, _SourceDispatch
+
+    definitions = {
+        id(item): item for items in index.all_by_name.values() for item in items
+    }
+    source = _SourceDispatch(definitions, index._backend_modules)
+    changed = {
+        name
+        for module in activation.loaded
+        if module in scanners
+        for name in scanners[module].callback_mutations
+    }
+
+    def intact(name):
+        return not any(
+            name == item or name.startswith(item + ".") or item.startswith(name + ".")
+            for item in changed
+        )
+
+    def module_tree(name):
+        scanner = scanners.get(name)
+        return (
+            source.files[str(scanner.path.resolve())].tree
+            if scanner is not None
+            else None
+        )
+
+    found = {}
+    visited = set()
+
+    def visit_table(tree):
+        if (
+            tree in visited
+            or tree in source.invalid_modules
+            or not source.initialize(tree)
+        ):
+            return
+        visited.add(tree)
+        for value in source.environments.get(tree, {}).get("urlpatterns", []):
+            visit_value(value)
+
+    def visit_value(value):
+        if not isinstance(value, _DispatchValue) or not source.usable(value):
+            return
+        if value.kind == "sequence":
+            for members in value.fields.values():
+                for item in members:
+                    visit_value(item)
+        elif value.kind == "urlinclude":
+            visit_table(value.node)
+        elif value.kind == "urlpattern":
+            if not all(
+                intact(guard.node)
+                for guard in value.guards
+                if isinstance(guard, _DispatchValue)
+                and guard.kind == "django_registration"
+            ):
+                return
+            for callback in value.fields.get("callback", []):
+                if not isinstance(callback, _DispatchValue) or not source.usable(
+                    callback
+                ):
+                    continue
+                if callback.kind == "urlinclude":
+                    visit_table(callback.node)
+                    continue
+                if callback.kind != "function":
+                    continue
+                node = callback.node
+                if (
+                    not isinstance(node, ast.FunctionDef)
+                    or node.decorator_list
+                    or source.deferred_body(node)
+                ):
+                    continue
+                arguments = node.args
+                if (
+                    len([*arguments.posonlyargs, *arguments.args]) != 1
+                    or arguments.defaults
+                    or arguments.kwonlyargs
+                    or arguments.vararg
+                    or arguments.kwarg
+                ):
+                    # This proof models a request-only callback. It must not
+                    # replace URL/default argument bindings with unknown data.
+                    continue
+                options = value.fields.get("kwargs", [])
+                if (
+                    len(options) != 1
+                    or not isinstance(options[0], _DispatchValue)
+                    or options[0].kind != "registry"
+                    or options[0].fields
+                    or not source.usable(options[0])
+                ):
+                    continue
+                tree = source.context(node)
+                if (
+                    not isinstance(tree, ast.Module)
+                    or tree in source.invalid_modules
+                    or not source.initialize(tree)
+                ):
+                    continue
+                location = (Path(source.file_for_node[node]), node.lineno)
+                candidates = [
+                    item
+                    for item in index.all_by_location.get(location, ())
+                    if item.type == "function"
+                ]
+                if len(candidates) == 1:
+                    definition = candidates[0]
+                    if (
+                        intact(definition.name)
+                        and index.class_or_function(definition.name) is definition
+                    ):
+                        found[id(definition)] = definition
+
+    try:
+        roots = [
+            tree
+            for name in activation.url_roots
+            if (tree := module_tree(name)) is not None
+        ]
+        for tree in roots:
+            source.initialize(tree)
+        changed.update(
+            name
+            for scanner in scanners.values()
+            if str(scanner.path.resolve()) in source.files
+            and source.files[str(scanner.path.resolve())].tree in source.module_states
+            for name in scanner.callback_mutations
+        )
+        for tree in roots:
+            visit_table(tree)
+    except (_ProofLimit, RecursionError):
+        return []
+    return [(item, "django_web_function_view") for item in found.values()]
+
+
 def find_django_targets(
     index: Any,
     scanners: dict,
@@ -414,7 +881,11 @@ def find_django_targets(
     activation.loaded = _loaded_modules(
         activation.settings | routes | launchers, scanners
     )
+    targets.extend(_auth_backend_targets(activation, scanners, classes))
+    targets.extend(_storage_backend_targets(activation, scanners, classes))
+    targets.extend(_logging_factory_targets(activation, scanners, classes))
     targets.extend(_admin_targets(activation, scanners, classes))
+    targets.extend(_function_view_targets(activation, scanners, index))
     project = _DjangoProject(
         index,
         scanners,

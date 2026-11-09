@@ -28,8 +28,17 @@ ANALYSIS_FLAG_MAP: dict[str, str] = {
 
 SKYLOS_DEFENSE_RESULTS_SHELL_PATH = '"$RUNNER_TEMP/defense-results.json"'
 PINNED_ACTIONS_CHECKOUT = "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5"
+PINNED_ACTIONS_CHECKOUT_PR_HEAD = (
+    "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+)
 PINNED_ACTIONS_SETUP_PYTHON = (
     "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
+)
+PINNED_ACTIONS_CACHE_RESTORE = (
+    "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+)
+PINNED_ACTIONS_CACHE_SAVE = (
+    "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
 )
 PINNED_ACTIONS_UPLOAD_ARTIFACT = (
     "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
@@ -48,7 +57,18 @@ GATE_JOB_NAME = "Skylos Quality Gate"
 DONE_JOB_NAME = "Skylos Done"
 RISK_REVIEW_JOB_NAME = "Skylos risk review"
 RISK_REVIEW_RECHECK_JOB_NAME = "Skylos risk review (re-check after review)"
+SUMMARY_JOB_NAME = "Skylos PR summary"
 UPLOAD_JOB_NAME = "Skylos Cloud upload"
+RESULTS_ARTIFACT = "skylos-results"
+DONE_ARTIFACT = "skylos-done"
+RISK_REVIEW_ARTIFACT = "skylos-risk-review"
+DEFENSE_ARTIFACT = "skylos-defense"
+SUMMARY_DIR = "skylos-summary"
+PR_POLICY_JOB_NAME = "Skylos Cloud PR policy"
+PR_SCAN_JOB_NAME = "Skylos Cloud PR scan"
+PR_PUBLISH_JOB_NAME = "Skylos Cloud PR upload"
+PR_UPLOAD_WORKFLOW_PATH = ".github/workflows/skylos.yml"
+PR_UPLOAD_EVENT_TYPES = ("opened", "synchronize", "reopened")
 # Used when the repository's default branch cannot be read from Git.
 FALLBACK_DEFAULT_BRANCHES = ("main", "master")
 DEFAULT_DONE_INSTALL_COMMANDS = ("python -I -m pip install pytest",)
@@ -67,14 +87,53 @@ def _installed_skylos_version() -> str | None:
     return version or None
 
 
-def _skylos_install_command(version: str | None = None) -> str:
+def skylos_requirement(
+    version: str | None = None, *, dart: bool = True, llm: bool = False
+) -> str:
+    """The shell-quoted pip requirement generated CI configs install.
+
+    The Dart grammar ships only as source, so ``dart`` needs a C compiler
+    wherever the config runs.
+    """
+    resolved = version if version is not None else _installed_skylos_version()
+    extras = []
+    if dart:
+        extras.append("dart")
+    if llm:
+        extras.append("llm")
+    package = "skylos"
+    if extras:
+        package = f"skylos[{','.join(extras)}]"
+    if resolved and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.!+~-]*", resolved):
+        return shlex.quote(f"{package}=={resolved}")
+    return shlex.quote(package)
+
+
+def has_dart_files(path: str | Path) -> bool:
+    """Whether a scan of ``path`` would read Dart files.
+
+    Uses the scanner's file discovery, so .gitignore and the default excluded
+    folders (build output, node_modules, virtualenvs, ...) apply.
+    """
+    from skylos.constants import parse_exclude_folders
+    from skylos.core.file_discovery import discover_source_files
+
+    return bool(
+        discover_source_files(
+            path,
+            [".dart"],
+            exclude_folders=sorted(parse_exclude_folders(use_defaults=True)),
+        )
+    )
+
+
+def _skylos_install_command(
+    version: str | None = None, *, dart: bool = True, llm: bool = False
+) -> str:
     # -I keeps a pull request's own files (e.g. a top-level pip/ directory)
     # off sys.path while pip runs after checkout. [dart] keeps Dart files
     # scanned; hosted runners have the C compiler its parser builds with.
-    resolved = version if version is not None else _installed_skylos_version()
-    if resolved and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.!+~-]*", resolved):
-        return f"python -I -m pip install {shlex.quote(f'skylos[dart]=={resolved}')}"
-    return f"python -I -m pip install {shlex.quote('skylos[dart]')}"
+    return f"python -I -m pip install {skylos_requirement(version, dart=dart, llm=llm)}"
 
 
 def _shell_path(path: str | Path | None) -> str:
@@ -101,10 +160,57 @@ def _push_branches(default_branch: str | None) -> tuple[str, ...]:
     return (default_branch,)
 
 
-def _upload_env_block() -> str:
-    return """        env:
-          SKYLOS_COMMIT: ${{ github.sha }}
-          SKYLOS_BRANCH: ${{ github.ref_name }}"""
+def upload_project_root(scan_path: str | Path | None) -> str:
+    """The Skylos Cloud project folder (repo-relative) that ``scan_path`` uploads to."""
+    from skylos.cloud.project_context import normalize_repo_subpath
+
+    raw = str(scan_path or ".").strip().replace("\\", "/")
+    while raw.startswith("./"):
+        raw = raw[2:]
+    root = normalize_repo_subpath(raw)
+    if root is None or Path(raw).is_absolute():
+        raise ValueError(
+            "scan_path must be a folder inside the repository for pull request uploads"
+        )
+    return root
+
+
+AI_REVIEW_KEY_ENVS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "TYPESAFE_API_KEY")
+
+
+def _upload_env_block(*, ai_review: bool = False) -> str:
+    lines = [
+        "        env:",
+        "          SKYLOS_COMMIT: ${{ github.sha }}",
+        "          SKYLOS_BRANCH: ${{ github.ref_name }}",
+    ]
+    if ai_review:
+        lines += [
+            "          SKYLOS_AI_REVIEW: ${{ vars.SKYLOS_AI_REVIEW }}",
+            "          SKYLOS_AI_REVIEW_MODEL: ${{ vars.SKYLOS_AI_REVIEW_MODEL }}",
+        ]
+        lines += [
+            f"          {name}: ${{{{ vars.SKYLOS_AI_REVIEW == 'true' && secrets.{name} || '' }}}}"
+            for name in AI_REVIEW_KEY_ENVS
+        ]
+    return "\n".join(lines)
+
+
+def _ai_review_upload_run(upload_command: str) -> str:
+    return (
+        f"""|
+          ai_review=()
+          if [ "$SKYLOS_AI_REVIEW" = "true" ]; then
+            ai_review=(--ai-review)
+            case "$SKYLOS_AI_REVIEW_MODEL" in
+              "") ;;
+              [!A-Za-z0-9]* | *[!A-Za-z0-9._/:-]*) echo "Ignoring SKYLOS_AI_REVIEW_MODEL: use a model name such as gpt-4.1" ;;
+              *) ai_review+=(--model "$SKYLOS_AI_REVIEW_MODEL") ;;
+            esac
+          fi
+          {upload_command} """
+        + '"${ai_review[@]}"'
+    )
 
 
 def _header_comment(
@@ -115,15 +221,20 @@ def _header_comment(
     push_branches: Sequence[str],
     risk_review_job: bool = False,
     merge_queue: bool = False,
+    pr_upload_jobs: bool = False,
+    llm_key_env: str | None = None,
 ) -> str:
     lines = [
         "# Skylos pull request gate, generated by `skylos cicd init`.",
         f"# Guide: {FIRST_GATED_PR_GUIDE_URL}",
     ]
     if gate_on_pr:
+        secrets_note = "no secrets needed"
+        if llm_key_env:
+            secrets_note = f"the LLM review step needs the {llm_key_env} secret"
         lines += [
             "#",
-            "# Pull requests (no secrets needed):",
+            f"# Pull requests ({secrets_note}):",
             f'#   "{GATE_JOB_NAME}" scans the changed lines and fails when the gate fails.',
         ]
         if done_job:
@@ -140,6 +251,10 @@ def _header_comment(
         lines.append(
             "#   Make these required checks on your default branch to block failing PRs."
         )
+        lines += [
+            f'#   "{SUMMARY_JOB_NAME}" posts the one pull request comment: the verdicts,',
+            "#   what blocks, what to read first. It is not a required check.",
+        ]
         if merge_queue:
             lines += [
                 "#",
@@ -153,6 +268,20 @@ def _header_comment(
             f"# Pushes to {' or '.join(push_branches)}: the full scan uploads to Skylos Cloud with",
             "# GitHub OIDC (no API key secret). Cloud accepts it once the Skylos GitHub",
             "# App is installed on this repository. Without Cloud: skylos cicd init --no-upload",
+            "# Optional AI review of that scan: set the repository variable SKYLOS_AI_REVIEW",
+            "# to true and add an OPENAI_API_KEY, ANTHROPIC_API_KEY or TYPESAFE_API_KEY secret.",
+        ]
+    if pr_upload_jobs:
+        lines += [
+            "#",
+            f"# Pull requests to {' or '.join(push_branches)} upload to Skylos Cloud too. They use",
+            "# pull_request_target, so GitHub runs this file as it is on the base branch:",
+            "# PR uploads start once this file is merged.",
+            f'#   "{PR_POLICY_JOB_NAME}" reads the Cloud policy with GitHub OIDC; no checkout.',
+            f'#   "{PR_SCAN_JOB_NAME}" reads the PR head as data: read-only token, no OIDC,',
+            "#   no secrets, and Skylos is installed before any PR file is read.",
+            f'#   "{PR_PUBLISH_JOB_NAME}" uploads that scan with GitHub OIDC; no checkout.',
+            f"#   Skylos Cloud accepts PR uploads only from {PR_UPLOAD_WORKFLOW_PATH}.",
         ]
     return "\n".join(lines)
 
@@ -181,15 +310,31 @@ def _build_done_job(
     project_install = "\n".join(
         f"          {command}" for command in done_install_commands
     )
-    done_run = 'skylos done --base "origin/$GITHUB_BASE_REF"'
+    base_arg = '"origin/$GITHUB_BASE_REF"'
+    queue_env = ""
     if merge_queue:
         # On merge_group the base is the queue's base commit, from the event
         # through the environment (GITHUB_BASE_REF is empty there).
-        done_run = (
-            'skylos done --base "${MERGE_GROUP_BASE_SHA:-origin/$GITHUB_BASE_REF}"\n'
-            "        env:\n"
+        base_arg = '"${MERGE_GROUP_BASE_SHA:-origin/$GITHUB_BASE_REF}"'
+        queue_env = (
+            "\n        env:\n"
             "          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}"
         )
+    done_run = f"skylos done --base {base_arg}" + queue_env
+    saved = f"$RUNNER_TEMP/{DONE_ARTIFACT}"
+    map_run = (
+        "\n".join(
+            [
+                "|",
+                f'          mkdir -p "{saved}"',
+                "          if [ -f .skylos/receipts/latest.json ]; then "
+                f'cp .skylos/receipts/latest.json "{saved}/receipt.json"; fi',
+                f'          skylos done map --base {base_arg} --format markdown >> "$GITHUB_STEP_SUMMARY"',
+                f'          skylos done map --base {base_arg} --format json > "{saved}/change-map.json"',
+            ]
+        )
+        + queue_env
+    )
     return f"""
   done:
     if: {_pr_or_queue_condition(merge_queue)}
@@ -221,6 +366,21 @@ def _build_done_job(
 
       - name: Check the change is finished
         run: {done_run}
+
+      - name: Show what to review
+        if: ${{{{ !cancelled() }}}}
+        continue-on-error: true
+        run: {map_run}
+
+      - name: Save the receipt and change map for the summary job
+        if: ${{{{ !cancelled() }}}}
+        uses: {PINNED_ACTIONS_UPLOAD_ARTIFACT}
+        with:
+          name: {DONE_ARTIFACT}
+          path: ${{{{ runner.temp }}}}/{DONE_ARTIFACT}
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 """
 
 
@@ -260,7 +420,7 @@ def _build_risk_review_job(
       cancel-in-progress: false
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
     steps:
       - name: Checkout pull request head
         uses: {PINNED_ACTIONS_CHECKOUT}
@@ -277,11 +437,24 @@ def _build_risk_review_job(
       - name: Install Skylos
         run: {install_command}
 
+      # The JSON goes to the summary job; this job's step summary has the text.
       - name: List risks that need a human approval
-        run: skylos cicd risk-review --base {base_arg}
+        run: |
+          mkdir -p "$RUNNER_TEMP/{RISK_REVIEW_ARTIFACT}"
+          skylos cicd risk-review --base {base_arg} --format json > "$RUNNER_TEMP/{RISK_REVIEW_ARTIFACT}/risk-review.json"
         env:
           PR_BASE_REF: ${{{{ github.event.pull_request.base.ref }}}}{merge_group_env}
           GITHUB_TOKEN: ${{{{ github.token }}}}
+
+      - name: Save the risk review for the summary job
+        if: ${{{{ !cancelled() }}}}
+        uses: {PINNED_ACTIONS_UPLOAD_ARTIFACT}
+        with:
+          name: {RISK_REVIEW_ARTIFACT}
+          path: ${{{{ runner.temp }}}}/{RISK_REVIEW_ARTIFACT}
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
   risk-review-recheck:
     # A review was submitted or dismissed: re-run "{RISK_REVIEW_JOB_NAME}" in the
@@ -327,6 +500,82 @@ def _build_risk_review_job(
 """
 
 
+def _build_summary_job(
+    *,
+    python_version: str,
+    install_command: str,
+    scan_target: str,
+    needs: Sequence[str],
+    use_llm: bool,
+    use_defend: bool,
+    done_job: bool,
+    risk_review_job: bool,
+) -> str:
+    saved = f"$RUNNER_TEMP/{SUMMARY_DIR}"
+    review_args = [f'--input "{saved}/skylos-results.json"']
+    if use_llm:
+        review_args.append(f'--llm-input "{saved}/skylos-llm-results.json"')
+    if use_defend:
+        review_args.append(f'--defense-input "{saved}/defense-results.json"')
+    review_args += [
+        '--diff-base "$pr_base_ref"',
+        "--evidence-cards",
+        '--gate-result "$SKYLOS_GATE_RESULT"',
+    ]
+    if done_job:
+        review_args += [
+            f'--done-receipt "{saved}/receipt.json"',
+            f'--change-map "{saved}/change-map.json"',
+        ]
+    if risk_review_job:
+        review_args.append(f'--risk-review "{saved}/risk-review.json"')
+    review_command = f"skylos cicd review {scan_target} " + " ".join(review_args)
+    return f"""
+  summary:
+    # One comment per pull request, from what the jobs above saved. It runs
+    # after them whatever their result and never blocks a merge.
+    if: always() && github.event_name == 'pull_request'
+    needs: [{", ".join(needs)}]
+    name: {SUMMARY_JOB_NAME}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: {PINNED_ACTIONS_CHECKOUT}
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: {PINNED_ACTIONS_SETUP_PYTHON}
+        with:
+          python-version: '{python_version}'
+
+      - name: Install Skylos
+        run: {install_command}
+
+      # A job that failed early saved nothing; the comment says so.
+      - name: Download what the pull request jobs saved
+        continue-on-error: true
+        uses: {PINNED_ACTIONS_DOWNLOAD_ARTIFACT}
+        with:
+          pattern: skylos-*
+          merge-multiple: true
+          path: ${{{{ runner.temp }}}}/{SUMMARY_DIR}
+
+      - name: Post the pull request summary
+        run: |
+          pr_base_ref="origin/${{GITHUB_BASE_REF:-main}}"
+          {review_command}
+        env:
+          GH_TOKEN: ${{{{ github.token }}}}
+          SKYLOS_GATE_RESULT: ${{{{ needs.skylos.result }}}}
+"""
+
+
 def _build_upload_job(
     *,
     python_version: str,
@@ -336,10 +585,13 @@ def _build_upload_job(
     baseline_flag: str,
     use_defend: bool,
 ) -> str:
+    upload_command = f"skylos cloud {scan_target}{analysis_flags}{baseline_flag}"
+    if not analysis_flags:
+        upload_command = f"skylos {scan_target}{baseline_flag} --upload"
     defend_step = ""
     if use_defend:
         defend_step = f"""
-      - name: AI Defense Check and Upload
+      - name: AI app safety check and upload
         run: skylos defend {scan_target} --fail-on critical --min-score 70 --json -o {SKYLOS_DEFENSE_RESULTS_SHELL_PATH} --upload
 {_upload_env_block()}
 """
@@ -375,9 +627,135 @@ def _build_upload_job(
           fi
 
       - name: Scan and Upload to Skylos Cloud
-        run: skylos {scan_target}{analysis_flags}{baseline_flag} --upload
-{_upload_env_block()}
+        run: {_ai_review_upload_run(upload_command)}
+{_upload_env_block(ai_review=True)}
 {defend_step}"""
+
+
+def _build_pr_upload_jobs(
+    *,
+    python_version: str,
+    skylos_version: str | None,
+    scan_target: str,
+    analysis_flags: str,
+    project_root: str,
+    use_dart: bool = True,
+) -> str:
+    root_arg = ""
+    if project_root:
+        root_arg = f" --project-root {shlex.quote(project_root)}"
+    scan_install = _skylos_install_command(skylos_version, dart=use_dart)
+    plain_install = _skylos_install_command(skylos_version, dart=False)
+    return f"""
+  pr-policy:
+    if: github.event_name == 'pull_request_target'
+    name: {PR_POLICY_JOB_NAME}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      - name: Setup Python
+        uses: {PINNED_ACTIONS_SETUP_PYTHON}
+        with:
+          python-version: '{python_version}'
+
+      - name: Install Skylos
+        run: {plain_install}
+
+      - name: Read the Skylos Cloud policy without pull request files
+        run: skylos cicd pr-policy --output "$RUNNER_TEMP/skylos-pr-policy"{root_arg}
+
+      - name: Save the policy for the scan job
+        uses: {PINNED_ACTIONS_UPLOAD_ARTIFACT}
+        with:
+          name: skylos-pr-policy
+          path: ${{{{ runner.temp }}}}/skylos-pr-policy
+          if-no-files-found: error
+          retention-days: 1
+
+  pr-scan:
+    if: github.event_name == 'pull_request_target'
+    needs: pr-policy
+    name: {PR_SCAN_JOB_NAME}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      SKYLOS_COMMIT: ${{{{ github.event.pull_request.head.sha }}}}
+      SKYLOS_BRANCH: ${{{{ github.event.pull_request.head.ref }}}}
+      SKYLOS_PR_NUMBER: ${{{{ github.event.pull_request.number }}}}
+      SKYLOS_PR_BASE_SHA: ${{{{ github.event.pull_request.base.sha }}}}
+    steps:
+      - name: Setup Python
+        uses: {PINNED_ACTIONS_SETUP_PYTHON}
+        with:
+          python-version: '{python_version}'
+
+      - name: Install Skylos before reading pull request files
+        run: {scan_install}
+
+      - name: Checkout the pull request head without credentials
+        uses: {PINNED_ACTIONS_CHECKOUT_PR_HEAD}
+        with:
+          ref: refs/pull/${{{{ github.event.pull_request.number }}}}/head
+          path: pr-source
+          fetch-depth: 0
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - name: Verify the fetched pull request head
+        working-directory: pr-source
+        run: test "$(git rev-parse HEAD)" = "$SKYLOS_COMMIT"
+
+      - name: Download the Skylos Cloud policy
+        uses: {PINNED_ACTIONS_DOWNLOAD_ARTIFACT}
+        with:
+          name: skylos-pr-policy
+          path: ${{{{ runner.temp }}}}/skylos-pr-policy
+
+      - name: Scan the pull request as untrusted data
+        working-directory: pr-source
+        run: skylos cicd pr-scan {scan_target}{analysis_flags} --policy "$RUNNER_TEMP/skylos-pr-policy" --output "$RUNNER_TEMP/skylos-pr-report/report.json.gz"{root_arg}
+
+      - name: Save the scan for the upload job
+        uses: {PINNED_ACTIONS_UPLOAD_ARTIFACT}
+        with:
+          name: skylos-pr-report
+          path: ${{{{ runner.temp }}}}/skylos-pr-report
+          if-no-files-found: error
+          retention-days: 1
+
+  pr-publish:
+    if: github.event_name == 'pull_request_target'
+    needs: pr-scan
+    name: {PR_PUBLISH_JOB_NAME}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      id-token: write
+    env:
+      SKYLOS_COMMIT: ${{{{ github.event.pull_request.head.sha }}}}
+      SKYLOS_PR_NUMBER: ${{{{ github.event.pull_request.number }}}}
+    steps:
+      - name: Setup Python
+        uses: {PINNED_ACTIONS_SETUP_PYTHON}
+        with:
+          python-version: '{python_version}'
+
+      - name: Install Skylos
+        run: {plain_install}
+
+      - name: Download the pull request scan
+        uses: {PINNED_ACTIONS_DOWNLOAD_ARTIFACT}
+        with:
+          name: skylos-pr-report
+          path: ${{{{ runner.temp }}}}/skylos-pr-report
+
+      - name: Upload the scan to Skylos Cloud
+        run: skylos cicd pr-publish --input "$RUNNER_TEMP/skylos-pr-report/report.json.gz"{root_arg}
+"""
 
 
 def generate_workflow(
@@ -398,20 +776,31 @@ def generate_workflow(
     done_install_commands: Optional[Sequence[str]] = None,
     default_branch: str | None = None,
     use_risk_review: bool = False,
+    use_pr_upload: bool = True,
+    use_dart: bool = True,
 ) -> str:
     """
     Generate the GitHub Actions workflow YAML for Skylos scans.
 
     Pull requests get the "Skylos Quality Gate" job (diff-aware scan, gate,
-    annotations, review comments) and, with use_done, the "Skylos Done" job.
+    annotations), with use_done the "Skylos Done" job, and the "Skylos PR
+    summary" job, which posts the one pull request comment (summary and inline
+    review comments) from what the other pull request jobs saved as artifacts.
     With use_upload, pushes to the default branch upload a full scan through
-    GitHub OIDC from a separate job, the only one granted id-token: write.
+    GitHub OIDC from a separate job. With use_pr_upload as well, pull requests
+    to the default branch upload through pull_request_target: a read-only job
+    scans the pull request head as data, and only the jobs that never check
+    out pull request files get id-token: write. With use_dart, the jobs that
+    scan install the skylos[dart] extra, which builds the Dart parser with a
+    C compiler; leave it off for repositories without Dart files.
 
     Calls: skylos/cicd/workflow.py _build_trigger_block;
         skylos/cicd/workflow.py _skylos_install_command;
         skylos/cicd/workflow.py _shell_path;
         skylos/cicd/workflow.py _build_done_job;
+        skylos/cicd/workflow.py _build_summary_job;
         skylos/cicd/workflow.py _build_upload_job;
+        skylos/cicd/workflow.py _build_pr_upload_jobs;
         skylos/cicd/workflow.py _build_claude_security_jobs.
 
     Called from: skylos/commands/cicd_cmd.py run_cicd_command.
@@ -428,6 +817,15 @@ def generate_workflow(
 
     push_branches = _push_branches(default_branch)
     upload_job = use_upload and "push" in triggers
+    pr_upload_jobs = (
+        upload_job
+        and use_pr_upload
+        and "pull_request" in triggers
+        and "pull_request_target" not in triggers
+    )
+    project_root = ""
+    if pr_upload_jobs:
+        project_root = upload_project_root(scan_path)
     done_job = use_done and "pull_request" in triggers
     risk_review_job = use_risk_review and "pull_request" in triggers
     # Required checks must also report on merge_group events, or a merge
@@ -438,8 +836,12 @@ def generate_workflow(
         push_branches=push_branches,
         review_events=risk_review_job,
         merge_queue=merge_queue,
+        pr_upload=pr_upload_jobs,
     )
-    install_command = _skylos_install_command(skylos_version)
+    install_command = _skylos_install_command(skylos_version, dart=use_dart)
+    gate_install_command = _skylos_install_command(
+        skylos_version, dart=use_dart, llm=use_llm
+    )
     scan_target = _shell_path(scan_path)
     analysis_flags = " ".join(
         ANALYSIS_FLAG_MAP[t]
@@ -449,6 +851,29 @@ def generate_workflow(
     if analysis_flags:
         analysis_flags = " " + analysis_flags
     baseline_flag = " --baseline" if use_baseline else ""
+    upgrade_flag = ""
+    answers_restore_step = ""
+    answers_save_step = ""
+    if "--sca" in analysis_flags.split():
+        upgrade_flag = " --review-upgrades"
+        answers_restore_step = f"""      - name: Restore saved OSV answers
+        continue-on-error: true
+        uses: {PINNED_ACTIONS_CACHE_RESTORE}
+        with:
+          path: ~/.cache/skylos/osv-answers.json
+          key: skylos-osv-answers-${{{{ github.run_id }}}}
+          restore-keys: skylos-osv-answers-
+
+"""
+        answers_save_step = f"""      - name: Save OSV answers
+        if: always()
+        continue-on-error: true
+        uses: {PINNED_ACTIONS_CACHE_SAVE}
+        with:
+          path: ~/.cache/skylos/osv-answers.json
+          key: skylos-osv-answers-${{{{ github.run_id }}}}
+
+"""
     # Pull requests compare with the target branch; merge groups with the
     # queue's base commit. Either way the scan is diff-scoped and its policy
     # comes from that base, never from the change.
@@ -475,7 +900,7 @@ def generate_workflow(
             '          if [ -n "$pr_base_ref" ]; then',
             '            export SKYLOS_POLICY_BASE="$(git merge-base "$pr_base_ref" HEAD)"',
             (
-                f"            skylos {scan_target}{analysis_flags}{baseline_flag} "
+                f"            skylos {scan_target}{analysis_flags}{upgrade_flag}{baseline_flag} "
                 '--diff-base "$pr_base_ref" --diff "$pr_base_ref" '
                 "--json -o skylos-results.json"
             ),
@@ -486,55 +911,63 @@ def generate_workflow(
     )
 
     llm_step = ""
+    llm_key_env = None
     if use_llm:
+        from skylos.llm.runtime import provider_key_env_var
+
         model_str = model or "gpt-4.1"
-        api_key_env = ""
-        if model_str and "claude" in model_str.lower():
-            api_key_env = (
-                "\n          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}"
-            )
-        llm_step = "\n".join(
-            [
-                "",
-                "      - name: Skylos Agent Review (LLM)",
-                "        if: github.event_name == 'pull_request'",
-                (
-                    f"        run: skylos agent scan {scan_target} "
-                    f"--model {shlex.quote(model_str)} --changed --format json "
-                    "-o skylos-llm-results.json"
-                ),
+        llm_key_env = provider_key_env_var(model_str)
+        llm_lines = [
+            "",
+            "      - name: Skylos Agent Review (LLM)",
+            "        if: github.event_name == 'pull_request'",
+            (
+                f"        run: skylos agent scan {scan_target} "
+                f"--model {shlex.quote(model_str)} --changed --format json "
+                "-o skylos-llm-results.json"
+            ),
+        ]
+        if llm_key_env:
+            llm_lines += [
                 "        env:",
-                "          SKYLOS_API_KEY: ${{ secrets.SKYLOS_API_KEY }}" + api_key_env,
+                f"          {llm_key_env}: ${{{{ secrets.{llm_key_env} }}}}",
             ]
-        )
+        llm_step = "\n".join(llm_lines)
     defend_step = ""
     if use_defend:
         defend_step = "\n".join(
             [
                 "",
-                "      - name: AI Defense Check",
+                "      - name: AI app safety check",
                 f"        run: skylos defend {scan_target} --fail-on critical --min-score 70 --json -o {SKYLOS_DEFENSE_RESULTS_SHELL_PATH}",
             ]
         )
 
-    review_args = ["--input skylos-results.json"]
+    results_paths = "skylos-results.json"
     if use_llm:
-        review_args.append("--llm-input skylos-llm-results.json")
+        results_paths = "|\n            skylos-results.json\n            skylos-llm-results.json"
+    defense_save = ""
     if use_defend:
-        review_args.append(f"--defense-input {SKYLOS_DEFENSE_RESULTS_SHELL_PATH}")
-    review_args.extend(['--diff-base "$pr_base_ref"', "--evidence-cards"])
-    review_command = "skylos cicd review " + " ".join(review_args)
-    review_run = "\n".join(
-        [
-            '          pr_base_ref="origin/${GITHUB_BASE_REF:-main}"',
-            f"          {review_command}",
-        ]
-    )
+        defense_save = f"""
+      - name: Save the AI app safety check for the summary job
+        if: always()
+        uses: {PINNED_ACTIONS_UPLOAD_ARTIFACT}
+        with:
+          name: {DEFENSE_ARTIFACT}
+          path: ${{{{ runner.temp }}}}/defense-results.json
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+"""
     skylos_environment = "\n    environment: skylos-security" if use_llm else ""
     # The upload job owns default-branch pushes; the gate job covers the rest.
-    skipped_events = (["push"] if upload_job else []) + (
-        ["pull_request_review"] if risk_review_job else []
-    )
+    skipped_events = []
+    if upload_job:
+        skipped_events.append("push")
+    if pr_upload_jobs:
+        skipped_events.append("pull_request_target")
+    if risk_review_job:
+        skipped_events.append("pull_request_review")
     gate_condition = (
         "\n    if: "
         + " && ".join(f"github.event_name != '{event}'" for event in skipped_events)
@@ -560,6 +993,8 @@ def generate_workflow(
         push_branches=push_branches,
         risk_review_job=risk_review_job,
         merge_queue=merge_queue,
+        pr_upload_jobs=pr_upload_jobs,
+        llm_key_env=llm_key_env,
     )
 
     workflow = f"""{header}
@@ -577,7 +1012,6 @@ jobs:
     timeout-minutes: 15{skylos_environment}
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - name: Checkout
         uses: {PINNED_ACTIONS_CHECKOUT}
@@ -591,13 +1025,13 @@ jobs:
           python-version: '{python_version}'
 
       - name: Install Skylos
-        run: {install_command}
+        run: {gate_install_command}
 
-      - name: Run Skylos Analysis
+{answers_restore_step}      - name: Run Skylos Analysis
         run: |
 {analysis_run}{merge_group_step_env}
 {llm_step}{defend_step}
-      - name: Quality Gate
+{answers_save_step}      - name: Quality Gate
         if: always()
         run: |
 {gate_run}{merge_group_step_env}
@@ -606,25 +1040,16 @@ jobs:
         if: always()
         run: skylos cicd annotate --input skylos-results.json
 
-      - name: PR Review Comments
-        if: github.event_name == 'pull_request' && always()
-        run: |
-{review_run}
-        env:
-          GH_TOKEN: ${{{{ github.token }}}}
-{
-        ""
-        if not use_claude_security
-        else f'''
-      - name: Upload Skylos Results for Cross-Reference
+      - name: Save the scan for the summary job
         if: always()
         uses: {PINNED_ACTIONS_UPLOAD_ARTIFACT}
         with:
-          name: skylos-results
-          path: skylos-results.json
+          name: {RESULTS_ARTIFACT}
+          path: {results_paths}
           if-no-files-found: error
-'''
-    }"""
+          retention-days: 1
+          overwrite: true
+{defense_save}"""
 
     if done_job:
         workflow += _build_done_job(
@@ -643,6 +1068,23 @@ jobs:
             merge_queue=merge_queue,
         )
 
+    if "pull_request" in triggers:
+        needs = ["skylos"]
+        if done_job:
+            needs.append("done")
+        if risk_review_job:
+            needs.append("risk-review")
+        workflow += _build_summary_job(
+            python_version=python_version,
+            install_command=_skylos_install_command(skylos_version, dart=False),
+            scan_target=scan_target,
+            needs=needs,
+            use_llm=use_llm,
+            use_defend=use_defend,
+            done_job=done_job,
+            risk_review_job=risk_review_job,
+        )
+
     if upload_job:
         workflow += _build_upload_job(
             python_version=python_version,
@@ -653,12 +1095,23 @@ jobs:
             use_defend=use_defend,
         )
 
+    if pr_upload_jobs:
+        workflow += _build_pr_upload_jobs(
+            python_version=python_version,
+            skylos_version=skylos_version,
+            scan_target=scan_target,
+            analysis_flags=analysis_flags + upgrade_flag,
+            project_root=project_root,
+            use_dart=use_dart,
+        )
+
     if use_claude_security:
         workflow += _build_claude_security_jobs(
             python_version,
             install_command,
             skip_reviews=risk_review_job,
             skip_merge_groups=merge_queue,
+            skip_pr_target=pr_upload_jobs,
         )
 
     return workflow
@@ -670,21 +1123,28 @@ def _build_claude_security_jobs(
     *,
     skip_reviews: bool = False,
     skip_merge_groups: bool = False,
+    skip_pr_target: bool = False,
 ) -> str:
     # Not a required check: it stays off review events and merge groups,
     # where it would only spend the API key again on reviewed code.
-    skipped = (["pull_request_review"] if skip_reviews else []) + (
-        ["merge_group"] if skip_merge_groups else []
-    )
+    skipped = []
+    if skip_reviews:
+        skipped.append("pull_request_review")
+    if skip_merge_groups:
+        skipped.append("merge_group")
+    if skip_pr_target:
+        skipped.append("pull_request_target")
     review_condition = (
         "\n    if: "
         + " && ".join(f"github.event_name != '{event}'" for event in skipped)
         if skipped
         else ""
     )
-    upload_condition = "always() && needs.skylos.result != 'skipped'" + (
-        " && github.event_name != 'merge_group'" if skip_merge_groups else ""
-    )
+    upload_condition = "always() && needs.skylos.result != 'skipped'"
+    if skip_merge_groups:
+        upload_condition += " && github.event_name != 'merge_group'"
+    if skip_pr_target:
+        upload_condition += " && github.event_name != 'pull_request_target'"
     return f"""
   claude-security:{review_condition}
     runs-on: ubuntu-latest
@@ -749,12 +1209,18 @@ def _build_trigger_block(
     push_branches: Sequence[str] = FALLBACK_DEFAULT_BRANCHES,
     review_events: bool = False,
     merge_queue: bool = False,
+    pr_upload: bool = False,
 ) -> str:
     lines = ['"on":']
     for trigger in triggers:
         if trigger == "pull_request":
             # Every pull request, whatever its base branch.
             lines.append("  pull_request:")
+            if pr_upload:
+                branches = ", ".join(json.dumps(branch) for branch in push_branches)
+                lines.append("  pull_request_target:")
+                lines.append(f"    types: [{', '.join(PR_UPLOAD_EVENT_TYPES)}]")
+                lines.append(f"    branches: [{branches}]")
             if review_events and "pull_request_review" not in triggers:
                 # Only the risk review job runs on these.
                 lines.append("  pull_request_review:")

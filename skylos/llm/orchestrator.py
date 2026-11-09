@@ -31,6 +31,7 @@ class RemediationAgent:
         self.allow_test_execution = allow_test_execution
         self.auto_detect_tests = auto_detect_tests
         self.planner = RemediationPlanner(severity_filter=severity_filter)
+        self._pending_model_start = None
 
     def run(
         self,
@@ -41,6 +42,7 @@ class RemediationAgent:
         auto_pr: bool = False,
         branch_prefix: str = "skylos/fix",
         quiet: bool = False,
+        before_model_call=None,
     ) -> dict:
         path = Path(path).resolve()
         log = _logger(quiet)
@@ -98,15 +100,19 @@ class RemediationAgent:
         fixer = self._create_fixer()
         fixed_files: list[str] = []
 
-        for batch in plan.batches:
-            log(f"\n  Fixing {batch.file} ({len(batch.findings)} findings)...")
-            self._process_batch(batch, fixer, executor, log)
+        self._pending_model_start = before_model_call
+        try:
+            for batch in plan.batches:
+                log(f"\n  Fixing {batch.file} ({len(batch.findings)} findings)...")
+                self._process_batch(batch, fixer, executor, log)
 
-            if batch.status == "fixed":
-                fixed_files.append(batch.file)
-                log("    ✓ Fixed successfully")
-            else:
-                log(f"    ✗ Status: {batch.status} — {batch.fix_description}")
+                if batch.status == "fixed":
+                    fixed_files.append(batch.file)
+                    log("    ✓ Fixed successfully")
+                else:
+                    log(f"    ✗ Status: {batch.status} — {batch.fix_description}")
+        finally:
+            self._pending_model_start = None
 
         fixed_count = sum(1 for b in plan.batches if b.status == "fixed")
         log(f"\n  Results: {fixed_count}/{len(plan.batches)} files fixed")
@@ -183,6 +189,12 @@ class RemediationAgent:
             config.base_url = self.base_url
         return FixerAgent(config)
 
+    def _start_model_work(self) -> None:
+        start = self._pending_model_start
+        self._pending_model_start = None
+        if start is not None:
+            start()
+
     def _process_batch(
         self,
         batch: FixBatch,
@@ -196,12 +208,17 @@ class RemediationAgent:
             batch.status = "failed"
             batch.fix_description = "File not found"
             return
+        if not p.is_file():
+            batch.status = "skipped"
+            batch.fix_description = "Repository-level finding; no file to edit"
+            return
 
         source = p.read_text(encoding="utf-8")
         batch.source = source
 
         primary = batch.findings[0]
 
+        self._start_model_work()
         try:
             fix = fixer.fix(
                 source,

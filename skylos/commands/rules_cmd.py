@@ -10,6 +10,7 @@ from rich.table import Table
 from rich.text import Text
 
 from skylos.rules.catalog import get_rule_catalog
+from skylos.ui.paths import shown_path
 
 MAX_RULE_PACK_BYTES = 1_000_000
 
@@ -115,7 +116,7 @@ def init_rules(console, path_str, *, force=False):
 
     if dest.exists() and not force:
         console.print(
-            f"[red]Rule pack already exists: {dest}. Use --force to overwrite.[/red]"
+            f"[red]Rule pack already exists: {shown_path(dest)}. Use --force to overwrite.[/red]"
         )
         return 1
 
@@ -124,8 +125,22 @@ def init_rules(console, path_str, *, force=False):
         _starter_rule_pack().strip() + "\n",
         encoding="utf-8",
     )
-    console.print(f"[green]Created starter rule pack: {dest}[/green]")
-    console.print(f"[dim]Validate it with: skylos rules validate {dest}[/dim]")
+    console.print(f"[green]Created starter rule pack: {shown_path(dest)}[/green]")
+    console.print(f"[dim]Validate it with: skylos rules validate {shown_path(dest)}[/dim]")
+    if (
+        dest.parent.name == "rules"
+        and dest.parent.parent.name == ".skylos"
+        and dest.suffix.lower() in (".yml", ".yaml")
+    ):
+        console.print(
+            "[dim]Scans with --quality or -a apply it to this folder and below; "
+            "in PR CI, the copy committed on the base branch applies.[/dim]"
+        )
+    else:
+        console.print(
+            "[yellow]Scans only load .yml/.yaml packs directly in a "
+            ".skylos/rules/ folder; move it there to apply it.[/yellow]"
+        )
     return 0
 
 

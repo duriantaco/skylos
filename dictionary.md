@@ -43,31 +43,38 @@ Rule IDs use a stable public prefix:
 | Quality | Maintainability, complexity, architecture, resilience, typing, framework practice, and repo policy issues. |
 | AI defects | Evidence-backed AI-code failure modes such as hallucinated APIs, impossible dependencies, phantom references, and weakened tests. Run with `--ai-defects`; full audits include it. Output uses the `ai_defects` bucket; individual findings use category `ai_defect`. |
 | AI code mistakes | Hallucinated security calls, phantom decorators, unfinished stubs, disabled controls, placeholder data, stale mocks, and missing timeouts. |
+| AI review | `skylos . -a --ai-review`; an AI model (and Jev, when `TYPESAFE_API_KEY` is set) double-checks unused-code issues (every language) and security issues in Python files, and records `metadata.ai_review` with one verdict per reviewer (`real`, `false_positive`, `unsure`). Display only: nothing is hidden and blocking never changes. Skylos Cloud shows it as Confirmed by AI, AI disagrees, AI unsure or Found by AI only. |
+| Coding agents | Skylos features for code written by AI coding agents: `skylos done`, agent-loop hooks, project standards, `skylos verify`, and in Skylos Cloud the Coding agents page, Agent checks, agent rules and Bot approvals. |
+| AI app safety | Checks on the AI features of your own application: `skylos discover`, `skylos defend` and `skylos agent test`. Skylos Cloud shows `skylos defend` results under AI app safety. |
+| Jev | An outside dead-code model (TypeSafe `jev-1.13.0`) that `--ai-review` and `skylos agent verify` can use as a second reviewer. Needs `TYPESAFE_API_KEY`. |
 | Security quick | `skylos agent security-quick .`; one-shot LLM security audit, equivalent to `skylos agent scan . --security`. |
 | Security deep | `skylos agent security-deep .`; three-stage security workflow for threat-model context, static threat tracing, discovery/validation, and remediation handoff, equivalent to `skylos agent audit . --deep`. |
 | Threat trace | Static source-to-sink evidence showing how user-controlled input reaches a sensitive sink, recorded on security-deep findings and run artifacts. |
-| Agent verification (pre-deployment) | `skylos defend .`; deterministic static verification of AI-agent guardrails before deployment — tool safety, output validation, prompt-injection exposure, PII filtering, model pinning, and ops checks — scored and gateable in CI. Formerly described as "LLM app defense". Check ids are kebab-case plugin ids (e.g. `no-dangerous-sink`), distinct from the SKY-D260–D267 static rules. |
+| Agent verification (pre-deployment) | Part of AI app safety. `skylos defend .`; deterministic static verification of AI-agent guardrails before deployment — tool safety, output validation, prompt-injection exposure, PII filtering, model pinning, and ops checks — scored and gateable in CI. Formerly described as "LLM app defense". Check ids are kebab-case plugin ids (e.g. `no-dangerous-sink`), distinct from the SKY-D260–D267 static rules. |
 | LLM integration inventory | `skylos discover .`; maps every LLM call, agent tool, prompt site, input source, and output sink in the codebase — SDK calls, agent frameworks (incl. OpenAI Agents SDK, Claude Agent SDK, Google ADK), MCP servers and their tools, and direct HTTP calls to LLM APIs or OpenAI-compatible gateways. Feeds `skylos defend`. |
 | Evidence report | `skylos defend . --format md`; auditor-facing markdown artifact with integration inventory, per-check results, OWASP LLM + Agentic coverage, regulatory framework evidence, remediation appendix, and attestation. |
 | Attestation digest | Reproducible SHA-256 over scanned file contents, policy hash, plugin set, OWASP selection, filters, integration inventory, scores, and full check evidence; emitted in defend JSON/md/SARIF output. Identical trees, flags, policy, plugin set, and Skylos version reproduce identical digests; timestamps are excluded. |
 | Framework evidence | Defend check results mapped to EU AI Act, NIST AI RMF, and ISO/IEC 42001 controls with strict "evidence toward" semantics — never a compliance determination. |
-| Prompt templates | Maintainer-provided files under `[tool.skylos.templates]` that extend built-in LLM prompts without replacing safety and JSON-output contracts. |
-| Vibe dictionary | Project-specific keyword extensions under `[tool.skylos.vibe]` for phantom security names, credential names, sensitive files, and timeout-required calls. |
+| Prompt templates | Trusted files passed with `--prompt-template KIND=PATH` to `skylos agent` commands that extend built-in LLM prompts without replacing safety and JSON-output contracts. Repository config cannot set them; `[tool.skylos.templates]` is not read. |
+| Vibe dictionary | Project-specific keyword extensions under `[tool.skylos.vibe]` for phantom security names, credential names, sensitive files, timeout-required calls, and extra `random.*` functions that SKY-L013 treats as insecure for security values (`extra_insecure_random_funcs`). |
 | Quality gate | A threshold-based pass/fail decision used locally or in CI. Critical security issues, secrets, and AI-code issues at `block_ai_defect_severities` (default `["CRITICAL"]`) fail it regardless of counts. Every run ends with a verdict line and its reasons: `PASSED`, `FAILED`, or `INCOMPLETE — could not decide (exit 2)` when required analysis did not finish; `--format json` carries it as the top-level `gate` object. Files that were not analysed (a parse error, a missing language engine) are a coverage warning under a PASSED or FAILED verdict, not exit 2, unless `--strict` or `require_complete = true` asks for complete coverage or most of the code was not analysed. |
-| Risk review | `skylos cicd risk-review --base REF`; the GitHub check "Skylos risk review" (`skylos cicd init --risk-review`). Lists the risk classes a pull request contains. With risks, the check fails until a person with write access approves the head commit; approvals from bot accounts and approvals of older commits do not count. Exit 0 pass, 1 needs a human approval, 2 could not decide. Settings: `[tool.skylos.approval]` at the base. See [docs/risk-review.md](./docs/risk-review.md). |
+| Risk review | `skylos cicd risk-review --base REF`; the GitHub check "Skylos risk review" (`skylos cicd init --risk-review`). Lists the risk classes a pull request contains. With risks, the check fails until a person with write access approves the head commit; approvals from bot accounts and approvals of older commits do not count. While it fails on a pull request, the job keeps the label `skylos:needs-human` on it and removes it when the check passes. Exit 0 pass, 1 needs a human approval, 2 could not decide. Settings: `[tool.skylos.approval]` at the base. See [docs/risk-review.md](./docs/risk-review.md). |
 | Risk class | One of the nine facts the risk review reports, each needing a human approval: `tests_weakened`, `auth_removed`, `dependency_changed`, `ci_weakened`, `checks_silenced`, `secret_added`, `guardrail_config_changed`, `migration_changed`, `large_diff`. Rule findings map to classes by rule ID; findings `skylos done` reports only as advice are listed and need no approval. The names are shared with Skylos Cloud. |
 | Eligible (risk review) | No risk class found and every class checked: an approval from anyone, a review bot included, is enough. An incomplete analysis is never eligible. |
+| Needs-human label | `skylos:needs-human`, the GitHub label the risk review job adds to a pull request that exits 1 and removes when it exits 0 (exit 2 leaves it alone; merge-group and local runs never touch it). The job creates the label in the repository the first time. `is:pr is:open label:skylos:needs-human` lists every pull request waiting on a person. A failed label update prints `Could not update the skylos:needs-human label: <reason>` and never changes the exit code. |
+| Change map | `skylos done map --base REF`; the MCP tool `change_map`. Lists each changed Python or TypeScript/JavaScript function, method and class with its old and new code, calls added and removed, callers (and whether they were updated), removed security checks, breaking or compatible signature changes and changed values. Computed from the code, not by a model; it has no verdict and never changes the done gate. See [docs/change-map.md](./docs/change-map.md). |
+| Read first (change map) | The three highest-risk production changes in a change map plus every flagged change. |
+| Flagged (change map) | A change a person should read before merging: a removed security check, a risky new call, deleted code still called, calls that now resolve elsewhere with unchanged text, a signature change that breaks or silently defaults a caller outside the change, a changed security setting, or a removed validation rejection. |
 | Diff-aware scan | `--diff <base>` limits reporting to changed work so old debt does not drown out the current PR. |
 | Baseline | A saved set of accepted existing findings so only new or changed findings fail a gate. |
 | Failure origin | `skylos done` reruns each failing test on the base commit, in a temporary Git worktree, and labels it `preexisting` (the same test ran there and failed the same way), `introduced` (it passes there), `new_test` (it does not exist there; counts as introduced) or `undetermined` (the base run could not tell: a setup or import error, a different kind of failure, a timeout, changed dependencies). Shown on the receipt as `failure_origins` and in the Stop-hook message. |
-| Suppression | An inline or config-level exception for an intentional finding, usually using `skylos: ignore[SKY-...]`. Skylos-specific markers (`# skylos: ignore[SKY-D211] reason`, `# skylos: ignore`, `# noqa: skylos`, `# pragma: no skylos`, `ignore-start`/`ignore-end`) suppress any finding on their line. A bare `# noqa` (no codes) is a generic linter marker: it still hides dead-code, quality and LOW/MEDIUM findings, but not a HIGH or CRITICAL security finding (`SKY-D*`, `SKY-S*`), which stays reported with `bare_noqa_ignored: true` and an advice line. `# noqa: <code>` with Ruff/flake8 codes never suppresses a Skylos security, secret or quality finding; F401/F841 only mark the matching unused import/variable. |
+| Suppression | An inline or config-level exception for an intentional finding, usually using `skylos: ignore[SKY-...]`. Skylos-specific markers (`# skylos: ignore[SKY-D211] reason`, `# skylos: ignore`, `# noqa: skylos`, `# pragma: no skylos`, `ignore-start`/`ignore-end`) suppress findings on their line: the bracketed form only the listed rules (dead code by its ID: `SKY-U001` functions and methods, `SKY-U002` imports, `SKY-U003` variables, `SKY-U004` classes, `SKY-U006` parameters), the bare form every rule. `skylos: ignore`, `skylos: ignore[...]` and `ignore-start`/`ignore-end` work in every analysed language for dead code, security, quality and secrets. In Go, Java, Kotlin, C#, PHP, Dart, Rust, C/C++, Shell and TS/JS they are read only from real comments (`#` in Shell and PHP; `//` or a one-line `/* */` in the others; the directive must open the comment): text inside a string literal never counts, and a file whose strings or comments cannot be followed to the end honours no directive. Python matches `# skylos: ignore` on the line. Other tools' markers (`#nosec`, `//nolint`, `NOSONAR`, `@SuppressWarnings`, `#pragma warning disable`) do not hide Skylos findings. `ignore = ["SKY-U001"]` in `[tool.skylos]` turns off exactly that rule project-wide (unused functions; `SKY-UC001` is unreachable code). A bare `# noqa` (no codes) is a generic linter marker: it still hides dead-code, quality and LOW/MEDIUM findings, but not a HIGH or CRITICAL security finding (`SKY-D*`, `SKY-S*`), which stays reported with `bare_noqa_ignored: true` and an advice line. `# noqa: <code>` with Ruff/flake8 codes never suppresses a Skylos security, secret or quality finding; F401/F841 only mark the matching unused import/variable. |
 | Smart tracing | `--trace`; runtime-assisted dead-code verification used to reduce false positives in dynamic Python code. |
 | Technical debt | `skylos debt .`; ranks maintainability hotspots and debt trends. |
 | TUI | `--tui`; screen-only selectable terminal interface with category list, finding list, and detail pane. |
 | Pretty output | `--format pretty`; compact file-grouped terminal output with severity rails, snippets, and copyable `file:line` locations. |
 | Concise output | `--format concise`; untruncated `file:line  RULE_ID  message` output for editors, scripts, and agents. |
 | Rule selection | `--select SKY-...`; exact, case-insensitive rule filtering across scan output formats with automatic analyzer-family enablement. |
-| Compiler escape | A net-new way of telling the type checker to look away, in production code: a suppression comment, an unchecked assertion (`as any`, `as unknown as T`, `typing.cast`) an explicit TypeScript `any` or a removed Python annotation. Blocks when `type_check = "block"`. A new bare Python `Any` is a warning. A reviewed exception lives in the base commit's `[[tool.skylos.done.type_escape_allow]]`. See [docs/type-checking.md](./docs/type-checking.md#escapes-the-guard-blocks). |
 | Finding type | Every built-in rule declares `finding_type`: `defect`, `review`, or `advice`. Type describes the purpose of a check; severity remains separate. Terminal reports group Advice by rule and `--expand-advice` shows every record. JSON retains complete records for the selected scan scope. Display grouping does not change the assessment or gate limits. See [docs/cli-output.md](./docs/cli-output.md#finding-types-and-advice). |
 | Scan assessment | Four readouts: Risk, Maintainability, Dead code and Gate, with explicit coverage and scope. New source scans emit `assessment` version 1 instead of an overall numeric or A–F `grade`. Independent `debt` and `defend` scores are unchanged. See [scan assessment](./docs/cli-output.md#scan-assessment). |
 | Risk readout | Highest unresolved severity and counts for Defect and Review findings outside dead-code candidate lists. Clean categories and repository size do not dilute it. A risk finding still needs contextual review. |
@@ -88,10 +95,23 @@ Rule IDs use a stable public prefix:
 | `skylos verify-verdict` | Verifies a signed check verdict offline against the published keys (`https://skylos.dev/.well-known/skylos-verdict-keys.json` or a local `--keys` file). `--commit`, `--repository`, `--project`, and `--workspace` bind it to what is being deployed; `--require-repository-verified` requires a GitHub OIDC upload bound to the repository; `--max-age` rejects old verdicts; `--require-passed` exits 1 unless the level is `SKYLOS_POLICY_PASSED` (`--allow-override` also accepts `SKYLOS_GATE_OVERRIDDEN`; `SKYLOS_GATE_DISABLED` never passes). Exit 2 means not verified. Needs `skylos[verdict]` (`cryptography`). |
 | MCP server | Integration surface for AI agents and coding assistants. |
 | SCA | Software composition analysis for dependency vulnerabilities and opt-in npm publisher review signals. |
-| Not checked (SCA) | A lockfile entry that is the project's own local code, so no advisory database can describe it: pnpm `link:`/`file:` directories, local tarballs, peers satisfied by a workspace project, and `runtime:` entries. Listed in `sca_coverage.lockfile_not_checked` (count `not_checked_lockfile_dependency_count`); it does not make the dependency scan incomplete or stop the gate. Git, private-registry and non-canonical archive sources stay unresolved and do. |
+| Not checked (SCA) | A lockfile entry that is the project's own local code, so no advisory database can describe it: pnpm `link:`/`file:` directories, local tarballs, peers satisfied by a workspace project, `runtime:` entries, Cargo workspace members and path crates, Composer path repositories, Bundler `PATH` gems, pub `path` and `sdk` packages, and NuGet `Project` entries. Listed in `sca_coverage.lockfile_not_checked` (count `not_checked_lockfile_dependency_count`); it does not make the dependency scan incomplete or stop the gate. In every lockfile format except `gradle.lockfile` and `packages.lock.json`, validated Git, URL, private-registry and Composer branch (`dev-*`) entries are also not checked and give `complete_with_non_registry_sources`; contradictory records (a public-registry tarball that does not match its package, an alternate pnpm `id`, an unrecorded Yarn `virtual:` peer) stay unresolved and make the scan incomplete. |
+| SCA dependency files | Files `--sca` reads: lockfiles `uv.lock`, `poetry.lock`, `Pipfile.lock`, `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `Cargo.lock`, `composer.lock`, `Gemfile.lock`, `pubspec.lock`, `gradle.lockfile`, `packages.lock.json`; manifests (exact pins only) `requirements.txt`, `pyproject.toml`, `setup.cfg`, `setup.py`, `package.json`, `go.mod`, `*.csproj`, `pom.xml`, `Cargo.toml`, `composer.json`, `pubspec.yaml`. `Gemfile` and `build.gradle(.kts)` are code and are not read. A file that cannot be parsed is named in `sca_coverage.parse_errors`. |
+| Informational advisory (SCA) | A RustSec notice (`unmaintained`, `notice`, `unsound`) served by OSV, recorded as `metadata.advisory_informational`. `unmaintained` and `notice` get `low_risk_context.reason = "informational-advisory"`: kept in JSON and gates, left out of the default listing. |
 | npm publisher review | Opt-in `--scan-publisher-changes` checks direct npm dependencies in a lockfile for a newly observed publisher after a long release gap. `publisher_change_findings` are WARN review signals, not evidence of compromise or known vulnerabilities; they do not affect the vulnerability count or gate. |
 | SBOM | `skylos sbom .`; offline dependency inventory as CycloneDX 1.6 (default) or SPDX 2.3 (`--format spdx-json`) JSON, including declared licenses. |
 | License policy | `[tool.skylos] license_deny` / `license_allow` / `license_exceptions` / `license_severity`; flags dependencies whose declared SPDX license violates policy as `SKY-SCA-LIC001`. Unknown licenses are `NOASSERTION` and never fire. |
+| Malicious package (SCA) | An OSV advisory with an `MAL-*` ID or alias, a `malicious-packages-origins` record, or CWE-506. Reported `CRITICAL` under its `SKY-SCA-<id>` rule with `metadata.malicious: true`; never demoted as dev-only and never given a reachability verdict. When OSV is unreachable, the installed ca9 malware feed is checked (`metadata.malware_source: "ca9_feed"`). |
+| Supply-chain policy | `[tool.skylos.supply_chain]` (`internal_packages`, `private_registries`, `trusted_registries`, `min_release_age_hours`, `block_malware`, `check_provenance`), merged with the synced Skylos Cloud `supply_chain` block, which can only tighten it. Read by `--sca` scans (SKY-SCA-SRC001/AGE001) and the install hook. |
+| Dependency inventory | `analysis_summary.dependency_inventory` (`skylos.dependency_inventory.v1`): up to 10,000 sorted, de-duplicated packages (`ecosystem`, `name`, `version`, `direct`, `dev`, `file`) with `total`, `truncated` and `complete`; uploaded so Skylos Cloud can match new malware advisories after the scan. |
+| Supply-chain posture | `analysis_summary.supply_chain_posture` (`skylos.supply_chain_posture.v1`): checks `lockfile_committed`, `frozen_install_ci`, `install_scripts_disabled`, `release_age_cooldown`, `actions_pinned` (from SKY-D292) and `no_pr_target_checkout` (from SKY-D290), each `pass`, `fail`, `not_applicable` or `unknown`; `pass` needs evidence in the repository. Committed values from `ca9.api.hardening_settings` are read first. Knows npm 12 and pnpm 10+ script blocking, pnpm 11 `allowBuilds`/`strictDepBuilds` and its one-day default cooldown, Yarn 4.15's one-day default, Bun `minimumReleaseAge` in seconds and pip `--uploaded-prior-to`; Dependabot's cooldown is named but does not pass it. |
+| CI inventory | `analysis_summary.ci_inventory` (`ca9.ci_inventory.v1`, from `ca9.api.ci_inventory`): per GitHub Actions / GitLab CI job its triggers, runner, environment, token write scopes, `id-token`, secret names, installs, actions, tools, download hosts and publish steps; bounded (200 workflows, 500 jobs) and names only. Uploaded so Skylos Cloud can tell which jobs could have installed a package and what they could reach. |
+| Agent hooks inventory | `analysis_summary.agent_hooks` (`ca9.agent_hooks.v1`, from `ca9.api.agent_config`): committed agent/editor hooks, MCP servers and base-URL overrides with redacted commands; `skylos_hook: true` marks hooks `skylos agent install-hooks` wrote. Uploaded next to the dependency inventory. |
+| Saved OSV answers | The last good OSV answer per exact package version, kept in the user cache and used only when OSV cannot be reached, up to 7 days old. Status `complete_with_saved_answers`, `complete: false`. Never read from inside a scanned repository. |
+| Reachability tier | `metadata.reachability_tier` on PyPI advisories: `used`, `imported`, `unknown`, `not_imported` or `unreachable`. It orders terminal output and never changes what the gate counts. |
+| Upgrade review | `--review-upgrades` (implies `--sca`; on in pull request scans from `skylos cicd init` when dependency checks are selected): with `--diff`/`--diff-base`, each npm/PyPI lockfile version change is downloaded old and new by ca9 and compared as data, and a newly added package is reviewed on its own (SKY-SCA-UPG001/UPG002). Never installs or runs the packages. |
+| Upgrade API comparison | Part of `--review-upgrades`: compares the public API of the old and new release of each Python package whose locked version changed, and names your lines that use what was removed (`SKY-SCA-API001`). The pull request comment says `Review these N call sites` or `No API-level impact found in N call sites (behaviour changes not checked)`, and `Could not check` with a reason for anything it could not read. Receipt: `analysis_summary.supply_chain_diff.checks.upgrade_api`. |
+| Hardening exception | `[tool.skylos.supply_chain.hardening_exceptions]` `package = "reason"`, read from the diff base commit only: SKY-SCA-HRD001 regressions that name that package are skipped and listed in `analysis_summary.supply_chain_diff`. |
 | Symlink safety | Checks for file operations that follow repository-controlled symbolic links across the intended scan or output boundary. |
 
 ## CLI Output Modes
@@ -115,35 +135,41 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | ID | Severity | Name | Languages / Scope | CWE / OWASP |
 |:---|:---|:---|:---|:---|
 | D200 | varies | Dangerous function call family | Python | wrapper for D201-D210, D233, D235, D250 |
-| D201 | HIGH-CRITICAL | Dynamic code execution: `eval` | Python, TS/JS, Java, audit | CWE-95 / A03 |
+| D201 | HIGH-CRITICAL | Dynamic code execution: `eval` (PHP: `eval`, `create_function`, `preg_replace` with the `/e` modifier, and `assert()` of request data; CRITICAL with request data, HIGH for other non-constant code) | Python, TS/JS, PHP, audit | CWE-95 / A03 |
 | D202 | HIGH-CRITICAL | Dynamic code execution: `exec`, `new Function`, string timers | Python, TS/JS | CWE-95 / A03 |
-| D203 | CRITICAL | OS command execution: `os.system` / process sinks | Python, Java | CWE-78 / A03 |
-| D204 | CRITICAL | Unsafe deserialization: `pickle.load` and language equivalents | Python, Java, PHP, audit | A08 |
-| D205 | CRITICAL | Unsafe deserialization: `pickle.loads` | Python | A08 |
-| D206 | HIGH | `yaml.load` without SafeLoader | Python | A08 |
+| D203 | CRITICAL | OS command execution: `os.system`, `os.popen` / process sinks; Java/Kotlin `Runtime.getRuntime().exec(...)` (HIGH; LOW and hidden by default for a fixed command string or array); PHP `exec`, `system`, `shell_exec`, `passthru`, `popen`, `proc_open`, backticks and `pcntl_exec` with a command that is not request data but not constant either (HIGH; LOW and hidden by default when the command is fixed and every inserted value is a number or an `escapeshellarg()` argument outside quotes) | Python, Java, Kotlin, PHP | CWE-78 / A03 |
+| D204 | CRITICAL | Unsafe deserialization: `pickle.load`, `pickle.Unpickler(...).load()` (also through a subclass that does not define `find_class`), `cloudpickle.load`, `pandas.read_pickle` and language equivalents | Python, Java, Kotlin, PHP, audit | CWE-502 / A08 |
+| D205 | CRITICAL | Unsafe deserialization: `pickle.loads`, `cloudpickle.loads` | Python | CWE-502 / A08 |
+| D206 | HIGH | Unsafe YAML load: `yaml.load`/`load_all` without a data-only loader (`SafeLoader`, `CSafeLoader`, `BaseLoader`, `CBaseLoader`), `yaml.unsafe_load(_all)`, `yaml.full_load(_all)`, ruamel `YAML(typ="unsafe")` | Python | CWE-502 / A08 |
 | D207 | MEDIUM | Weak hash: MD5 | Python, TS/JS, Go, Java | CWE-328 |
 | D208 | MEDIUM | Weak hash: SHA1 | Python, TS/JS, Go, Java | CWE-328 |
-| D209 | HIGH | `subprocess` with `shell=True` | Python | CWE-78 / A03 |
+| D209 | HIGH | Shell execution: `subprocess` with `shell=True`, `subprocess.getoutput`/`getstatusoutput`, `asyncio.create_subprocess_shell` | Python | CWE-78 / A03 |
 | D210 | HIGH | TLS verification disabled (`requests` `verify=False`, `ssl._create_unverified_context()`, TS/JS `rejectUnauthorized: false` and `NODE_TLS_REJECT_UNAUTHORIZED=0`, Go `InsecureSkipVerify: true`). Like D346, not reported in test code: Python test modules (`test_*`, `*_test.py`, `conftest.py`, under `tests/` or `test/`), TS/JS test files (`.test.`/`.spec.`, `test`/`tests`/`__tests__` directories), Go `_test.go` files and test-support files (import `testing` and take a `testing.TB`/`*testing.T`) | Python, TS/JS, Go | A02 |
-| D211 | CRITICAL | SQL injection | Python, TS/JS, Go, Java, PHP, audit | CWE-89 / A03 |
-| D212 | CRITICAL | Command injection. In TS/JS, `X.exec(...)` is a command sink only when the file loads a command-execution module: `child_process`, `node:child_process`, `shelljs`, or remote/container exec (`ssh2`, `node-ssh`, `dockerode`; there `conn`/`connection` are not treated as database handles unless a database driver is also loaded). Without one it is `RegExp.prototype.exec` or another library method; a proven RegExp receiver is never a command sink | Python, TS/JS, Go, Java, Rust, Dart, Shell, audit | CWE-78 / A03 |
-| D215 | HIGH | Path traversal and archive extraction traversal | Python, TS/JS, Go, Java, PHP, Rust, Dart, Shell | CWE-22 / A01 |
-| D216 | CRITICAL | Server-side request forgery | Python, TS/JS, Go, Java, Dart, Shell, audit | CWE-918 / A10 |
-| D217 | CRITICAL | Raw SQL / ORM SQL injection | Python | CWE-89 / A03 |
+| D211 | CRITICAL | SQL injection | Python, TS/JS, Go, Java, Kotlin, C#, PHP, audit | CWE-89 / A03 |
+| D212 | CRITICAL | Command injection. In TS/JS, `X.exec(...)` is a command sink only when the file loads a command-execution module: `child_process`, `node:child_process`, `shelljs`, or remote/container exec (`ssh2`, `node-ssh`, `dockerode`; there `conn`/`connection` are not treated as database handles unless a database driver is also loaded). Without one it is `RegExp.prototype.exec` or another library method; a proven RegExp receiver is never a command sink | Python, TS/JS, Go, Java, Kotlin, C#, PHP, Rust, Ruby (explicit Kernel calls), Dart, Shell, audit | CWE-78 / A03 |
+| D215 | HIGH | Path traversal and archive extraction traversal | Python, TS/JS, Go, Java, Kotlin, C#, PHP, Rust, Dart, Shell | CWE-22 / A01 |
+| D216 | CRITICAL | Server-side request forgery | Python, TS/JS, Go, Java, Kotlin, C#, PHP, Dart, Shell, audit | CWE-918 / A10 |
+| D213 | HIGH | Hugging Face `trust_remote_code=True`: loading the model or dataset imports and runs Python files from its repository. MEDIUM when `revision=` pins a commit SHA or the path is a local directory; a non-literal value is the caller's choice and is not reported | Python | CWE-94, CWE-829 / A08 |
+| D217 | CRITICAL | Raw SQL / ORM SQL injection: Django `.objects.raw()`, `QuerySet.extra()` (`select` values, `where`/`tables`/`order_by` entries) and `RawSQL()`, peewee `Model.raw()`. SQLAlchemy `text()` and pandas `read_sql` are reported once, as D211 | Python | CWE-89 / A03 |
 | D218 | MEDIUM | Conditional URL scheme audit; unresolved cases are diagnostics | Python | CWE-918 |
 | D220 | CRITICAL | SQL injection in added code / diff validation | MCP code-change validator | CWE-89 / A03 |
 | D223 | MEDIUM | Undeclared third-party dependency | Python | supply-chain |
-| D226 | CRITICAL | XSS: unsafe DOM or HTML rendering | Python, TS/JS, Java, audit | CWE-79 / A03 |
+| D226 | CRITICAL | XSS: unsafe DOM or HTML rendering (Go: request input converted to an `html/template` safe type such as `template.HTML`; Java/Kotlin: request data written to a servlet response writer (HIGH), Kotlin also Ktor `respondText(..., ContentType.Text.Html)`; C#: request input in `HtmlString`, `Html.Raw` or `MarkupString`, HIGH; PHP: Drupal `Markup::create()` and Blade `{!! !!}` of request data, HIGH) | Python, TS/JS, Go, Java, Kotlin, C#, PHP, audit | CWE-79 / A03 |
 | D227 | HIGH | XSS: unsafe template rendering | Python | CWE-79 / A03 |
-| D228 | HIGH | XSS: unescaped HTML output | Python | CWE-79 / A03 |
-| D230 | HIGH | Open redirect | Python, TS/JS, Go, Java, audit | CWE-601 / A01 |
-| D231 | HIGH | CORS misconfiguration | Python | A05 |
+| D228 | HIGH | XSS: unescaped HTML output (Go: request input written to an HTML HTTP response; PHP: request data printed by `echo`, `print`, `<?= ?>`, `printf`, `die`/`exit`, `print_r`/`var_export`/`var_dump`) | Python, TS/JS, Go, C#, PHP | CWE-79 / A03 |
+| D229 | CRITICAL | XPath injection: request data in a `javax.xml.xpath.XPath` `compile`/`evaluate` expression or dom4j `DocumentHelper.createXPath` | Java | CWE-643 / A03 |
+| D230 | HIGH | Open redirect (Java/Kotlin: Spring `"redirect:"` views, `RedirectView`, servlet `sendRedirect`; Kotlin also Ktor `respondRedirect`) | Python, TS/JS, Go, Java, Kotlin, C#, audit | CWE-601 / A01 |
+| D231 | HIGH | CORS misconfiguration: wildcard origin with credentials; wildcard origin (`CORSMiddleware`, flask-cors) in a module whose app has state-changing routes without an auth guard (reported on the origin setting; HIGH when one of those routes is a SKY-D283 privileged route, MEDIUM otherwise; open means the SKY-D283 test without the action word); a literal `Access-Control-Allow-Origin: *` key in a response dict (any module); a header (dict, subscript or `set`/`add`/`setdefault`, including an f-string) echoing the request's `Origin` without a membership, equality or `fullmatch` allowlist check that guards the header, an early reject or a reset to a fixed origin, or a same-module helper returning such a check. A substring test against a string, a prefix check, an ignored result, the wrong branch, a `fullmatch` pattern with a `.*`/`.+` run, or an allowlist containing `*` or `null` does not count. A wildcard middleware in a module that only serves reads, or whose routes something may authenticate, is not reported | Python | CWE-942 / A05 |
 | D232 | CRITICAL | JWT verification disabled or unsafe algorithm | Python | A02 |
-| D233 | HIGH-CRITICAL | Unsafe deserialization: marshal, shelve, jsonpickle, dill | Python | A08 |
+| D233 | MEDIUM-CRITICAL | Unsafe deserialization: `marshal.load(s)`, `shelve.open`, `jsonpickle.decode`, `dill.load(s)`, `dill.Unpickler`; Java `XMLDecoder`, XStream `fromXML` with `AnyTypePermission` (HIGH, CRITICAL with request data) or without explicit type permissions (MEDIUM, HIGH with request data: XStream has an allowlist by default from 1.4.18), SnakeYAML `load` without `SafeConstructor` (MEDIUM, HIGH with request data: safe by default from SnakeYAML 2.0), Jackson `enableDefaultTyping` or `activateDefaultTyping` with `LaissezFaireSubTypeValidator`, `@JsonTypeInfo(use = Id.CLASS/MINIMAL_CLASS)` (MEDIUM), Kryo `setRegistrationRequired(false)`; C# `BinaryFormatter`, `SoapFormatter`, `NetDataContractSerializer`, `LosFormatter` and `ObjectStateFormatter` deserialization (HIGH, CRITICAL with request data), Json.NET `TypeNameHandling` other than `None` (HIGH, MEDIUM with a `SerializationBinder`), `new JavaScriptSerializer(new SimpleTypeResolver())` (HIGH) | Python, Java, Kotlin, C# | CWE-502 / A08 |
 | D234 | HIGH | Mass assignment | Python | A01 |
 | D235 | HIGH | Remote command execution via `exec_command` | Python | CWE-78 |
-| D240 | CRITICAL | MCP tool description poisoning | Python, Java | A03 |
-| D241 | HIGH | MCP unauthenticated transport | Python, Java | A07 |
+| D236 | HIGH-CRITICAL | XML external entity (XXE): an XML parser created and used without disabling DTDs or external entities | Java, Kotlin | CWE-611 / A05 |
+| D237 | CRITICAL | Expression, JNDI or script injection: request data evaluated as SpEL, OGNL, MVEL, EL or JEXL, looked up through JNDI, or run by a script engine or Groovy | Java, Kotlin | CWE-917 / CWE-94 / CWE-74 / A03 |
+| D238 | HIGH | NoSQL injection: request data as a MongoDB/Mongoose query object or `$where` | TS/JS | CWE-943 / A03 |
+| D239 | CRITICAL | LDAP injection: request data in the base DN or filter of a JNDI `DirContext`, Spring `LdapTemplate` or UnboundID `LDAPConnection` search | Java | CWE-90 / A03 |
+| D240 | CRITICAL | MCP tool description poisoning | Python | A03 |
+| D241 | HIGH | MCP unauthenticated transport | Python | A07 |
 | D242 | HIGH | MCP permissive URI / path traversal | Python | A01 |
 | D243 | CRITICAL | MCP server bound to `0.0.0.0` | Python | exposure |
 | D244 | CRITICAL | MCP hardcoded secrets in tool params | Python | CWE-798 |
@@ -156,6 +182,9 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D252 | MEDIUM | Insecure cookie flags | TS/JS, Go, Java | CWE-614 |
 | D253 | MEDIUM | Timing-unsafe comparison | TS/JS | CWE-208 |
 | D254 | HIGH | HTTP session trust boundary violation | Java | CWE-501 |
+| D255 | CRITICAL | File inclusion: request data chooses the path of PHP `include`/`require`/`include_once`/`require_once` (reported as D215 before this release) | PHP | CWE-98 / A03 |
+| D257 | HIGH | Android WebView JavaScript bridge: `addJavascriptInterface` in a class (or file, for top-level code) that sets `javaScriptEnabled = true` / `setJavaScriptEnabled(true)`; every page the WebView loads can call the bridge's `@JavascriptInterface` methods | Kotlin | CWE-749 / A05 |
+| D258 | MEDIUM | Android WebView file URL access: `allowFileAccessFromFileURLs` or `allowUniversalAccessFromFileURLs` set to `true` (property or setter form), so a `file://` page can read other local files or any origin | Kotlin | CWE-200 / A05 |
 | D260 | HIGH-CRITICAL | Prompt injection scanner | Text, config, prompt, and source files | AI supply-chain |
 | D261 | HIGH | Untrusted input to LLM prompt | Python | OWASP LLM01 |
 | D262 | CRITICAL | Unsafe LLM output handling | Python | OWASP LLM05 |
@@ -169,17 +198,108 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D280 | HIGH | Next.js mutating API route missing auth checks | TS/JS | A01 |
 | D281 | CRITICAL | Untrusted server action input reaching raw SQL text | TS/JS | CWE-89 |
 | D282 | HIGH | Webhook handler missing signature verification | Python, TS/JS | CWE-347 |
-| D510 | HIGH | Prototype pollution via `__proto__` | TS/JS | CWE-1321 |
+| D283 | HIGH-CRITICAL | Unauthenticated route that controls a device or the host, deletes data, administers or runs commands (see the SKY-F102 notes) | Python (FastAPI, Flask, Quart, Starlette, Sanic) | CWE-306, CWE-862 / A01 |
+| D510 | HIGH | Prototype pollution: request data chooses the key of a nested write or reaches an unguarded recursive merge | TS/JS | CWE-1321 |
 
 For D251, a bare `sessionId` name is not treated as credential evidence by
 itself. Explicit authentication-qualified names (such as `authSessionId`) and
 direct member expressions with authentication or cookie-qualified paths remain
 findings. D270 storage checks are unchanged.
 
-For Python D203, `os.system` with a fixed command string (no dynamic formatting
-or Python/shell variables) is LOW: there is no input to inject. It stays
-CRITICAL when the fixed command itself deletes broadly, exfiltrates data,
-pipes a remote script into a shell, or reads host credentials.
+Python D251 follows credential environment reads, credential prompts and
+`getpass` results through local containers, assigned object fields, aliases and
+string formatting into `print` and logging calls. It requires source evidence;
+a variable name alone does not
+prove that its value contains a credential. Literal replacements are safe;
+unknown helpers named `redact` are not automatically trusted.
+
+D218 requests review of the intended URL schemes because urllib also supports
+local-file and other non-HTTP resources. It does not establish attacker control
+or an exploitable file read. Explicit literal URLs and proven HTTP/HTTPS prefixes
+or dominating scheme guards do not produce this audit. D216 independently checks
+whether untrusted input can choose the request host.
+
+For Python D203, `os.system` or `os.popen` with a fixed command string (no
+dynamic formatting or Python/shell variables) is LOW: there is no input to
+inject. It stays CRITICAL when the fixed command itself deletes broadly,
+exfiltrates data, pipes a remote script into a shell, or reads host
+credentials. D209 uses the same rule for its shell-string sinks.
+
+Python D212 reports untrusted data reaching a shell command string
+(`os.system`, `os.popen`, `subprocess.getoutput`/`getstatusoutput`,
+`asyncio.create_subprocess_shell`, `subprocess.*` with `shell=True`), the
+program of `os.exec*`, `os.spawn*`, `os.posix_spawn*` and `pty.spawn`, and
+the script after `-c` when the program is a shell (`["bash", "-c", script]`,
+`os.execl("/bin/sh", "sh", "-c", script)`). Import aliases are resolved
+(`import subprocess as sp`, `from os import system`); a local function with
+the same name is not a sink. A `shell=` value that is not a literal `False`,
+`None` or `0` may enable the shell, so a tainted command is reported there
+too. An untrusted argument to a fixed program (`["git", "fetch", ref]`) is not
+command injection and is not reported. `shlex.quote`/`shlex.join` clear taint.
+
+Python D201/D202, D205 and command-call rules also follow captured function
+values within the module's bounded flow analysis. Capturing `pickle.loads`,
+the builtin `eval`, or `subprocess.run` retains that callable's identity even
+if its original module name is later rebound. A known data-only replacement
+or source-owned function with the same name does not retain the obsolete
+library identity. Unknown bindings keep the existing conservative warnings;
+this does not add arbitrary cross-file callable tracing.
+
+Python D205 suppresses only proven local `pickle.dumps` / `pickle.loads`
+round-trips over built-in data. Unknown objects can define reduction hooks;
+attributes and cross-function state therefore remain review candidates. The
+warning describes pickle's execution capability without asserting that an
+unknown input is definitely attacker-controlled.
+
+Python D206 trusts a loader only when it is a data-only PyYAML loader. A name
+such as `SafeLoader` counts only if the module never rebinds it to something
+else (`SafeLoader = yaml.UnsafeLoader` is still reported); an assignment of
+`yaml.SafeLoader` or `getattr(yaml, "CSafeLoader", yaml.SafeLoader)` is safe.
+
+Python D204 treats a module class that subclasses `pickle.Unpickler` without
+defining `find_class` like `pickle.Unpickler`; a subclass that overrides
+`find_class` follows the documented way to restrict loadable globals and is
+not reported.
+
+Python D230 preserves tainted redirect targets across conditional assignments.
+An unrelated `urlparse` check or a leading slash alone does not prove safety.
+An enforced literal destination allowlist or an unconditional internal route
+assignment remains safe. Django's `url_has_allowed_host_and_scheme(url, ...)`
+(or `is_safe_url`), imported from `django.utils.http`, clears the checked name
+on the branch where it returned true; a redirect on the failing branch, after
+the result is ignored, of a different value, or through a local function with
+the same name is still reported. `redirect` and
+`HttpResponseRedirect`/`HttpResponsePermanentRedirect` with a positional target
+keep the rule above: any tainted target, including a plain function parameter.
+
+The other sinks need request data proven to reach the target: Starlette/FastAPI
+`RedirectResponse`, aiohttp/Pyramid `HTTPFound`, `HTTPSeeOther`,
+`HTTPMovedPermanently`, `HTTPTemporaryRedirect`, `HTTPPermanentRedirect`, the
+legacy sinks given only a keyword target (`to`/`redirect_to`/`location`/`url`),
+and a `Location` header set on `.headers[...]`, a response built in the same
+function, a `headers={"Location": ...}` argument of a `*Response` call, or
+`.headers.set/add(...)` (a response class setting its own `self.headers`
+defines a sink and is not reported). Request data is a read from the request,
+a route parameter or a Tornado argument. It flows through locals, f-strings,
+`%`, string methods, `str()`, `urljoin` and other `urllib.parse` helpers, and
+functions defined in the same file. A call into another module (a project
+helper such as `get_next_url(request)`) or any other library ends the flow.
+Request data appended after a value (`url += "&q=" + q`) does not choose the
+target, as with CodeQL's string-concatenation sanitizer; after a literal that
+does not fix the origin (`"https://" + host`) it does. The root path's query
+or fragment (`f"/?next={target}"`, `"/#" + target`) and the absolute URL of the
+request being served (Flask/Quart `request.url`/`base_url`/`url_root`/
+`host_url`, the same attributes of a parameter annotated as a
+Starlette/FastAPI `Request`, Starlette `URL(scope=...)`, also after
+`.replace(...)` with values that carry no request data) keep the origin. A
+bare path such as `request.url.path` is still request data (`//evil.example`
+is a path).
+
+Proven Tornado `RequestHandler` argument reads also count as redirect sources,
+including values assigned with `:=`. Local overrides and unrelated methods with
+the same name do not establish a request source. A fixed local path segment
+such as `"/entry/" + slug` cannot change the redirect origin; `"/" + target`
+alone is insufficient.
 
 For Python D207/D208, `hashlib.md5` / `hashlib.sha1` remain findings when
 their purpose is unclear; names such as `cache_key` do not prove the digest
@@ -280,6 +400,41 @@ Python D211, D215, D217, D324 and D325 findings reached by such a source carry
 `metadata.security_evidence` (`source`, `sink`, `path`), which SARIF output
 renders as `codeFlows`.
 
+Python D211 also checks the query argument of asyncpg `fetch`/`fetchrow`/
+`fetchval`, `databases` `fetch_all`/`fetch_one`/`fetch_val` and peewee
+`execute_sql` on a database-like or pool receiver. These need data from a
+parameter or another untrusted source in the query text: SQL built only from
+the module's own values (identifiers it quotes, counts, rows of a constant
+table) is not reported there. Because HTTP and cache clients share these
+names, a string-built query must also read as SQL, and a plain tainted query
+counts only in a module that imports asyncpg, `databases` or peewee. A
+SQLAlchemy `text()` or pandas `read_sql` call is reported once, as D211 (no
+second D217 finding).
+
+On every D211 sink, a quoted identifier may fill the query text where no
+quoted literal is open: psycopg2 `quote_ident`, or a function in the same
+module whose whole body returns its argument wrapped in `"` with every `"`
+doubled. A psycopg `sql.SQL("...")` literal composed with `sql.Identifier`,
+`sql.Literal` or `sql.Placeholder` is also safe. Calling the quoting function
+without using its result, quoting a value placed inside `'...'`, or a lookalike
+helper that does not double `"` is still reported. Numeric values do not carry
+SQL: `int()`, `float()`, `len()`, `round()`, `abs()`, `bool()`,
+`random.randint/randrange/getrandbits` and `math.floor/ceil/trunc/isqrt`.
+
+Python D215 treats `werkzeug.utils.secure_filename(...)` (imported from
+werkzeug, not a local function of that name) as a sanitizer for its return
+value; calling it and then using the raw filename is still reported.
+
+Every Python security finding carries its rule's CWE ids in `cwe`
+(`[{"id": "CWE-89", "name": ...}]`), which SARIF output turns into rule
+relationships, `external/cwe/...` tags and CWE taxa.
+
+Python D216 reads the URL from the `url=` keyword, the first argument of a
+verb method (`get(url)`), or the second argument of `request(method, url)`
+(requests, httpx, aiohttp, urllib3 `PoolManager`), also on a client created in
+the same expression (`urllib3.PoolManager().request(...)`). An untrusted HTTP
+method with a fixed URL is not SSRF, and `http.client` connections, whose host
+is fixed by the constructor, are not checked through `request(method, path)`.
 Python D216 needs a real untrusted source (route, CLI or MCP-tool argument,
 request data, `input()`, stdin) that can choose the request host. Not SSRF:
 calls through in-process test clients (Django `Client`/`RequestFactory`, DRF
@@ -345,7 +500,144 @@ reported; a bound call, member, `||`/`??` or `new URL(...)` value is dynamic. A 
 by a parameter, loop or `catch` variable, destructured, imported, hoisted by a
 `var` next to other bindings, or in a file using `eval`/`with` is not resolved.
 
-Go D216 and D212 (Go engine) also need untrusted input: an incoming `*http.Request` (URL, form, headers, decoded body; not `r.Context()`), a gin, echo or fiber request context, or network input (`net.Conn`, `Accept()`, `Read`/`Decode`/`Unmarshal` from such a reader), followed through locals, concatenation, `fmt.Sprintf`, calls and same-file helper parameters. Literals, loopback URLs, config structs, flags, `os.Args` and `os.Executable()` are the program's own inputs. D216 also needs the host to be choosable: a leading literal `scheme://host/` fixes it. D212 is CRITICAL for an untrusted program path or shell command string, HIGH for a shell (`sh -c`, `cmd /c`, PowerShell `-Command`) running a non-constant command that is not proven untrusted, and not reported for a constant or own program with argv elements (`exec.Command(os.Args[0], "run")`). Go D215 (file paths in `os.Open`/`ReadFile`/`WriteFile`/`Create`/`Remove`/`MkdirAll`..., `http.ServeFile`) uses the same sources and is not reported after a containment check on the path: `strings.HasPrefix` on a cleaned path (`filepath.Clean`/`Join`/`Abs`/`EvalSymlinks`), `filepath.Rel` with a `..` check, or `filepath.IsLocal`; `filepath.Base` and `securejoin.SecureJoin` sanitise. The Go engine's reliability checks follow their Python equivalent: unclosed resource (SKY-G260) and defer in a loop (SKY-G203) are MEDIUM like SKY-L008, and `unsafe` use (SKY-G206) is LOW like gosec G103; a defer followed by an unconditional `return` (or a `break` in an outermost loop) runs once and is not reported, and a handle that is closed explicitly, returned or stored in a field is not unclosed. Go D230 (open redirect) needs untrusted input that can choose where the redirect goes: data after a literal `?` or `#` cannot, and a same-origin check (`strings.HasPrefix(v, "/")` with a `"//"` check, `url.Parse` with a `.Host`/`IsAbs()` check, or an allowlist lookup) clears it. Go D211 is CRITICAL when request or network input reaches the query text, HIGH when the query is string-built from a non-constant value with no proven source (Python D211 reports that case too), and not reported for placeholders or constants; `QueryContext`/`ExecContext` are checked on their query argument. Go D210 (`InsecureSkipVerify: true`) is not reported in Go test-support code (a file that imports `testing` and takes a `testing.TB`/`*testing.T`/`B`/`F`/`M`), like D346 in Python test modules; `_test.go` files are not scanned by the Go engine. For L012, an external test file (`package pkg_test`) sees the exports of its own directory's internal test files (`package pkg`, the `export_test.go` convention), because `go test` compiles them into the package.
+TS/JS request taint (D211, D212, D215, D216, D228, D230, D238, D510) follows
+request data inside one handler of one file. Handlers: Express, Fastify, Hapi
+and Next.js pages-API functions (`(req, res)`, `(request, reply)`,
+`(request, h)`, or a first parameter typed `Request`, `FastifyRequest`,
+`NextApiRequest`, `NextRequest`; a function whose only parameter is an untyped
+or `any` `req`/`request` is read only through `query`, `body`, `params`,
+`headers`, `cookies` and `get()`/`header()`/`param()`, so a helper's
+`req.path` or `request.url` is not request data), Koa and `getServerSideProps` functions (first
+parameter `ctx`/`context`), NestJS methods with `@Body()`, `@Query()`,
+`@Param()`, `@Headers()`, `@HostParam()`, `@UploadedFile()` or `@Req()`
+parameters (routing-controllers equivalents too), exported `GET`/`POST`/...
+functions in a Next.js App Router `route` file, and exported Remix
+`loader`/`action` functions. Sources: `req.body/query/params/headers/cookies/
+files/url/originalUrl/path/hostname`, `req.get()/header()/param()`, Hapi
+`payload`/`state`, Koa `ctx.request.body`, `ctx.query`, `ctx.params`,
+`ctx.headers`, `ctx.cookies.get()`, Next.js `await request.json()/formData()/
+text()`, `request.nextUrl.searchParams.get()`, `request.headers`, and the route
+`params` argument. A NestJS parameter piped through `ParseIntPipe`,
+`ParseFloatPipe`, `ParseBoolPipe`, `ParseUUIDPipe` or `ParseEnumPipe` is not a
+source; a TypeScript annotation such as `id: number` is not proof. Sinks:
+SQL text in `query`/`execute`/`raw`/`prepare`/`all`/`get`/`run` calls whose
+literal text is SQL, `$queryRawUnsafe`, knex `whereRaw`-style calls and
+TypeORM query-builder `where`/`orderBy` conditions (D211, CRITICAL);
+`child_process.exec` (D212, CRITICAL); `fs`/`fs/promises`/`fs-extra` paths
+and `res.sendFile`/`download` without `root` (D215, HIGH); the URL or
+`host`/`url` option of `fetch`, axios (also `axios.create()` instances and
+NestJS `HttpService`), got, undici, superagent, needle, request and
+`http(s).get/request` (D216, HIGH); Express `res.send(text)` (Express answers
+strings as `text/html`) and HTML literals sent with `res.send/write/end`, and
+Koa `ctx.body` text that can start with request data or `<` (D228, HIGH);
+`res.redirect(url)`, `res.redirect(302, url)`, `ctx.redirect`,
+`reply.redirect`, `h.redirect`, `NextResponse.redirect`, `Response.redirect`,
+`redirect()` from `next/navigation` or Remix, `res.location` and `Location`
+headers (D230, HIGH); MongoDB/Mongoose filters (D238, HIGH); nested writes and
+same-file recursive merges (D510, HIGH). Taint follows local bindings in
+source order (a plain reassignment in the same block replaces the old value;
+one inside a branch adds to it), destructuring, `+`, templates, string
+methods, `||`/`??`, ternaries, `path.join/resolve/normalize`, `new URL`,
+`JSON.parse` (an object), `Object.keys/values/entries/assign`, `qs.parse`,
+same-file helper functions and methods of same-file `const` objects. Calls into
+other modules stop taint, so a validator such as zod `.parse()`,
+`mongo-sanitize` or `escape-html` ends it, and so does any unmodelled library
+call. Sanitizers are proved, never named: `Number`/`parseInt`/`parseFloat`/
+`Boolean` (global, not rebound), `path.basename` with `path` imported from
+`path`, `encodeURIComponent` (XSS, path, command, redirect, SSRF), and a
+same-file helper whose result replaces `<` with `&lt;` globally (a later
+replace that writes `<` back cancels it); a local function named `escapeHtml`,
+`quote` or `basename` that returns its input is followed, not trusted. Guards
+count only when the failing branch returns, throws, breaks or continues before
+the sink (or the sink sits inside the passing branch), and only for the value
+that reaches the sink, unless it is reassigned after the guard: a
+`startsWith(root)` check on a `path.resolve`/`normalize`/`join` result,
+`path.relative(root, p).startsWith('..')`, or rejecting `..` when the value is
+joined under a prefix and not `path.resolve`d (D215); an allowlist of string
+literals (`['a.com'].includes(u.hostname)`, `new Set([...]).has()`, `===`)
+on the hostname, host or origin of the URL, or a `startsWith` with a fixed
+`scheme://host/` (D216, D230); `startsWith('/')` together with a `//` check, or
+a literal allowlist (D230); `typeof x === 'string'` or an ObjectId check
+(D238); an anchored character-class regex such as `/^[a-z_]+$/.test(x)`
+without the `m` flag (any rule). An allowlist read from the environment, a
+mutated array, or a check that only logs is not a guard. A literal
+`scheme://host/` or relative-path prefix (`/users/` + id, not `/` alone) keeps
+D216 and D230 quiet; `new URL('/path', request.url)` stays on the site.
+
+TS/JS D238 (NoSQL injection, CWE-943) needs a file that imports `mongoose`,
+`mongodb`, `@nestjs/mongoose`, `@typegoose/typegoose`, `mongojs` or `monk`.
+It reports a `find`, `findOne`, `findOneAndUpdate/Delete/Replace`,
+`updateOne/Many`, `deleteOne/Many`, `replaceOne`, `countDocuments`, `exists`,
+`where`, `distinct` (its filter) or `aggregate` `$match` filter that is the
+request object itself (`find(req.body)`, `find(filter)` with
+`filter = req.query`) or holds a request value that can be an object (`{
+password: req.body.password }`, a spread of `req.body`), and any `$where` built
+from request data. Objects come from Express `req.body`, `req.query` (the `qs`
+parser) and `req.cookies` (JSON cookies), Fastify/Hapi/Next bodies,
+`request.json()`, `JSON.parse` and `qs.parse`; route params, headers,
+`searchParams.get()`, Koa/Fastify/Next query strings, `String(x)`, templates
+and `.toString()` are text and are not reported. A NestJS `@Body()` typed with a
+DTO class counts as validated text (Skylos assumes the usual global
+`ValidationPipe`, which it cannot see from the controller file); an untyped,
+`any`, inline-object or primitive-typed parameter is not. Option objects with a
+`where`/`select`/`include` key (Sequelize, TypeORM, Prisma) are not Mongo
+filters. `app.use(mongoSanitize())` from `express-mongo-sanitize` or
+`sanitizeFilter: true` in the same file clears the file.
+
+TS/JS D212 also checks `spawn`, `spawnSync`, `execFile` and `execFileSync`
+from Node's `child_process` modules when their effective `shell` option is
+literal `true` or a nonempty shell path. Request data in either the command
+or its arguments can then become shell syntax. Import aliases, captured
+callables and source-visible option objects are resolved, including spread
+property order and visible reassignment. Fixed commands and separate arguments
+with the shell absent or disabled stay quiet for this rule. Arbitrary
+executable argument injection, unknown dynamic options and cross-file wrappers
+are not general supported proofs.
+
+For TS/JS D230, an intact operator environment lookup with a fixed key,
+literal suffix or default, including a proven `const` alias, is not HTTP
+request input. Request-dependent keys/suffixes, visible provider replacement,
+environment writes or exposed aliases do not qualify for that proof. This
+does not certify operator configuration itself or trace arbitrary writes
+across files.
+
+TS/JS D510 reports `obj[a][b] = v` when request data chooses `a` (`a =
+'__proto__'` makes the write change `Object.prototype`), unless a dominating
+guard rejects `'__proto__'`, allowlists `a`, checks `hasOwnProperty`, or the
+base is `Object.create(null)`/a `Map`; and a call that passes request data to a
+same-file function that copies keys recursively (`for (k in src)` with
+`dst[k] = ...` and a recursive call) without a `'__proto__'`/`'constructor'`
+check, `hasOwnProperty` or `Object.create(null)`. Reading `__proto__` is not
+reported, and neither is a single-level `obj[key] = value`. Library merges
+(lodash `merge`/`defaultsDeep`/`set`) are not reported: current releases
+reject `__proto__`.
+
+TS/JS D226 also covers `insertAdjacentHTML`, `document.writeln`,
+`createContextualFragment`, `setHTMLUnsafe`, `innerHTML`/`outerHTML +=`,
+jQuery `.html(x)` and `.append/.prepend/.after/.before/.replaceWith/.wrap*`
+of a template or `+` string that contains markup, on a `$(...)`/`jQuery(...)`
+chain or a `$name` variable. `dangerouslySetInnerHTML={{ __html: x }}`, like
+`innerHTML`, is quiet only for inert literal markup or an import-proven
+DOMPurify/`isomorphic-dompurify`/`sanitize-html` call (directly or through a
+`const`); a sanitizer imported from a local `./dompurify` file, or a sanitized
+copy that is never rendered, does not count. DOM `element.append(text)` inserts
+text and is not reported.
+
+TS/JS D327 reports a POST, PUT or PATCH (`fetch` with a literal `method`,
+`axios.post/put/patch`, `axios({method, url, data})`, `axios.request`) whose
+body carries `process.env` data to a URL that is not local (like Python, which
+checks `data`/`json`). Environment values in headers, such as
+`Authorization: Bearer ${process.env.TOKEN}`, are how an API key reaches its
+own API and are not reported; neither is `process.env` used as the URL, or
+only `NEXT_PUBLIC_` names.
+
+Java security findings (`--danger`) come from an intra-procedural taint engine. Request data is: servlet `HttpServletRequest` getters (parameters, headers, cookies, query string, path info, `getInputStream`/`getReader`/`getPart(s)`); Spring parameters annotated `@RequestParam`, `@PathVariable`, `@RequestHeader`, `@CookieValue`, `@RequestBody`, `@RequestPart`, `@ModelAttribute` or `@MatrixVariable`; JAX-RS `@QueryParam`, `@PathParam`, `@FormParam`, `@HeaderParam`, `@CookieParam`, `@MatrixParam` and `@BeanParam`; `MultipartFile`/`Part` parameters; Spring `WebUtils.getCookie(request, ...)`-style accessors; same-file or imported helpers, including static `Util.read(request)` calls, that return request data; and, as in CodeQL, every other parameter of a `@*Mapping` method in a `@Controller`/`@RestController` class or of a JAX-RS `@GET`/`@POST`/... method, except framework objects (`Model`, `BindingResult`, `Principal`, `HttpSession`, `Pageable`, `Locale`, `@AuthenticationPrincipal`, `@Context`, ...). Primitive, boxed-number, boolean, `UUID` and date parameters never carry injection text. Getters on a request-bound object (a `@RequestBody` DTO) return request data. Sinks with an ambiguous name need the receiver's type (a local, parameter or field declaration, or a known factory call): SQL `execute`/`query`/`update`/`batchUpdate`/`createQuery` need a JDBC `Statement`/`Connection`, `JdbcTemplate`, `NamedParameterJdbcTemplate`, JPA `EntityManager` or Hibernate `Session`; LDAP `search` needs `DirContext` (SKY-D239) and is not reported for values escaped by `LdapEncoder.filterEncode`/`nameEncode`, `Rdn.escapeValue`, UnboundID `Filter.encodeValue`/`createEqualityFilter`, Spring LDAP filter objects other than `HardcodedFilter`, `LdapQueryBuilder.query().where(...).is(...)`, or passed as `{0}` filter arguments, XPath `compile`/`evaluate` needs `XPath` (SKY-D229), so `Pattern.compile(input)` and `service.search(input)` are not reported; D237 `lookup` needs a JNDI `Context`, `JndiTemplate` or `LdapTemplate`; SpEL `parseExpression` is not reported when every evaluation of the result passes a `SimpleEvaluationContext` (CodeQL's barrier). Until this release Java reported LDAP and XPath injection as SKY-D240 and SKY-D241, which are MCP rules. D216 and D230 use CodeQL's fixed-host barrier: input after a constant prefix that already chooses the host (`"https://api.example.com/users/" + id`, `"redirect:/owners/" + id`, anything after `?` or `#`) is not reported, while `"redirect:" + next` and `"redirect:/" + next` are. Spring `return "redirect:" + x`, `new ModelAndView("redirect:" + x)`, `new RedirectView(x)`, `ResponseEntity...location(...)`, `HttpHeaders.setLocation`, a `Location` header and JAX-RS `Response.seeOther`/`temporaryRedirect` are D230 sinks. D216 also covers WebClient/RestClient `uri`/`baseUrl`/`create` (not URI templates or builder lambdas), OkHttp `Request.Builder.url`, Apache HttpClient request constructors and `Jsoup.connect`. D236 (XXE) follows CodeQL's per-parser rules on the same factory variable, in statement order: `DocumentBuilderFactory` is safe with `disallow-doctype-decl` true, both external entity features false, or `ACCESS_EXTERNAL_DTD` and `ACCESS_EXTERNAL_SCHEMA` set to `""`; SAX, `XMLReader`, Commons `Digester`, JDOM `SAXBuilder` and dom4j `SAXReader` need `disallow-doctype-decl` true or both entity features plus `load-external-dtd` false (SAX, `XMLReader` and JDOM also accept the `ACCESS_EXTERNAL_*` pair); StAX needs `SUPPORT_DTD` or `IS_SUPPORTING_EXTERNAL_ENTITIES` false (FindSecBugs); `TransformerFactory` needs `ACCESS_EXTERNAL_DTD` and `ACCESS_EXTERNAL_STYLESHEET` set to `""`; `SchemaFactory` needs `ACCESS_EXTERNAL_DTD` and `ACCESS_EXTERNAL_SCHEMA` set to `""`. `FEATURE_SECURE_PROCESSING` alone does not count, a setting applied after `newDocumentBuilder()` does not protect that builder, and hardening in only one branch does not count. A factory passed to a helper in the same file takes that helper's settings; one passed elsewhere, or given a custom entity resolver, is not judged. DOM serialization (`transform(new DOMSource(...))`), `newDocument()` and parsing a classpath resource or literal path are not reported. D236 is CRITICAL when request data is parsed, HIGH otherwise; dom4j `DocumentHelper.parseText` (a plain `SAXReader` before dom4j 2.1.3, `SAXReader.createDefault()` since) is MEDIUM, HIGH with request data, and `SAXReader.createDefault()` counts as hardened. D204 (`ObjectInputStream`) is CRITICAL for request or socket input, HIGH for an unproven source and MEDIUM with an `ObjectInputFilter` (`setObjectInputFilter`, `ObjectInputFilter.Config.setSerialFilter`) or a `resolveClass` override.
+
+C# security findings (`--danger`) come from a lexical taint scan of each method, with one level of same-file call flow. Request data is: parameters of public, non-static, non-override actions of a controller (a class with `[ApiController]`/`[Controller]`, a base named `Controller`, `ControllerBase`, `ApiController` or ending in `Controller`/`ControllerBase`, also through a class in the same file, or a public class whose own name ends in `Controller` and whose bases are only interfaces or controller-named types, so a Unity `PlayerController : MonoBehaviour` is not one; never `[NonController]` or `[NonAction]`); Razor Page `On*` handler parameters and `[BindProperty]`/`[BindProperties]` properties; SignalR `Hub` methods; Blazor `[SupplyParameterFromQuery]`/`[SupplyParameterFromForm]` properties; minimal API handlers (`MapGet`/`MapPost`/`MapPut`/`MapDelete`/`MapPatch`/`MapMethods`/`MapFallback` lambdas and same-file method groups); any parameter marked `[FromQuery]`, `[FromBody]`, `[FromRoute]`, `[FromForm]`, `[FromHeader]`, `[AsParameters]` or Azure Functions `[HttpTrigger]`; and `Query`, `Form`, `Headers`, `Cookies`, `Body`, `RouteValues`, `Path`, `QueryString`, `Params`, `RawUrl`, `Url`, `Files`, `InputStream` or `[...]` on `Request`, `HttpContext.Request` or a parameter typed `HttpRequest`/`HttpRequestData`/`HttpRequestBase`. Command-line `args[...]`, `Console.ReadLine()` and `Environment.GetEnvironmentVariable(...)` also count. Constructor parameters (dependency injection), `[FromServices]`/`[FromKeyedServices]` parameters, framework and service types (`CancellationToken`, `HttpContext`, `ILogger<T>`, interfaces other than `IFormFile` and collections, `HttpClient`, `*Service`, `*Repository`, `*DbContext`), scalar values (numbers, `bool`, `Guid`, dates, and `int.Parse`/`Convert.ToInt32` results) and plain helper or service parameters are not request data. A method in the same file that is called with request data (unqualified, `this.`, `Type.Method`, or through a field, local or parameter whose declared type is a class in that file) is checked with those parameters as request data. Sinks whose names ordinary methods share need the receiver's declared type: D216 `GetAsync`/`PostAsync`/`PutAsync`/`PatchAsync`/`DeleteAsync`/`GetStringAsync`/`GetStreamAsync`/`GetByteArrayAsync`/`GetFromJsonAsync`/`PostAsJsonAsync` count only on an `HttpClient` (field, property, parameter, local, `new HttpClient()` or `IHttpClientFactory.CreateClient()`), as do `WebClient` `Download*`/`Upload*`/`OpenRead`; `WebRequest.Create(Http)`, `new HttpRequestMessage(method, url)`, `.BaseAddress =` and RestSharp `new RestClient/RestClientOptions/RestRequest(url)` are sinks too. A repository's `GetAsync(id)` is therefore not SSRF, while an `HttpClient` field named `_repo` is. D211 is CRITICAL with request data in `SqlCommand`-family and `*DataAdapter` constructors, `.CommandText =`, EF `FromSqlRaw`/`ExecuteSqlRaw(Async)`/`SqlQueryRaw`, EF6 or EF Core 2 string `SqlQuery`/`ExecuteSqlCommand`/`FromSql`, and Dapper `Query*`/`Execute*` on an `IDbConnection`-typed receiver; `FromSqlInterpolated`, `ExecuteSqlInterpolated`, an interpolated string passed straight to EF Core `FromSql`/`SqlQuery`/`ExecuteSql`, and values passed as parameters are safe. SQL text built by concatenation, interpolation, `string.Format` or `StringBuilder` from a non-scalar method parameter with no proven request source is D211 HIGH (as in Java and Roslyn CA2100); a parameter that is only an argument of another call (`ClauseFor(option)`, `Encode(password)`) does not count. D212 (CRITICAL) covers `Process.Start`, `new ProcessStartInfo` and `FileName`/`Arguments` of a `ProcessStartInfo` or `.StartInfo`. D215 covers `File.*`, `Directory.*`, `new FileStream/FileInfo/DirectoryInfo`, `new StreamReader/StreamWriter` with a path (not a stream) and `PhysicalFile`; `Path.GetFileName(x)` as the last `Path.Combine` part is contained under a fixed or configured directory, but not under `/`, `.`, the working directory or the content root alone. D230 covers `Redirect`, `RedirectPermanent`, `RedirectPreserveMethod`, `Response.Redirect`, `Results.Redirect`, `new RedirectResult` and the `Location` header. `LocalRedirect*`, `Results.LocalRedirect` and `RedirectToAction`/`RedirectToRoute`/`RedirectToPage` are not reported, nor is a redirect of a variable on a path where the framework `Url.IsLocalUrl(x)` (the controller or page `Url`, `this.Url`, or an `IUrlHelper`/`UrlHelper` receiver) returned true: inside `if (Url.IsLocalUrl(x))` (also `== true`, `is true`, an `&&` conjunct or a ternary), or after `if (!Url.IsLocalUrl(x))` (also `== false`, `is false`, or an `||` disjunct) whose branch returns or throws on every path, up to the end of that block or switch section. A check of another variable, inside an `||` condition, a negated check whose branch can fall through, an `else if` or a nested `if` without braces, and an `IsLocalUrl` helper of the controller or another type do not count. C# D216 and D230 use the fixed-host barrier described for Java. D233: `Deserialize`/`UnsafeDeserialize`/`ReadObject` on `BinaryFormatter`, `SoapFormatter`, `NetDataContractSerializer`, `LosFormatter` or `ObjectStateFormatter` (CRITICAL with request data, HIGH otherwise; Roslyn CA2300-CA2315), Json.NET `TypeNameHandling` other than `None` (HIGH, MEDIUM when a `SerializationBinder` is set in the same initializer or block; CA2326-CA2330), and `new JavaScriptSerializer(new SimpleTypeResolver())` (HIGH; CA2321). D226 (HIGH) reports request data in `new HtmlString(...)`, `Html.Raw(...)`, `new MarkupString(...)` or a `(MarkupString)` cast; `HtmlEncoder`/`WebUtility`/`HttpUtility` encoding and HTML sanitizers clear it. D228 (HIGH) reports request data in `Content(x, "text/html")`, `Results.Content(x, "text/html")` or `Response.Write(x)` unless every path to the write last set the response content type to a literal other than HTML. Every C# security finding carries its CWE. `.cshtml` and `.razor` markup is not read, and flow across files is not followed.
+
+PHP security findings (`--danger`) come from an intra-procedural, flow-sensitive taint engine (one function or file; branches, loops, `switch`, `try`, early `return`/`exit`/`die`). Request data is: `$_GET`, `$_POST`, `$_REQUEST`, `$_COOKIE`; `$_FILES[...]['name'|'type'|'full_path']` (not `tmp_name`, `size` or `error`); the `$_SERVER` keys the client sends (Psalm's list: `HTTP_*`, `REQUEST_URI`, `QUERY_STRING`, `PHP_SELF`, `PATH_INFO`, `REQUEST_METHOD`, `CONTENT_TYPE`, `PHP_AUTH_*`, ... and any non-literal key; not `REQUEST_TIME`, `REMOTE_ADDR`, `DOCUMENT_ROOT` or `SERVER_NAME`); `file_get_contents('php://input')`; `getallheaders()`; `filter_input()` unless it validates an int, float or boolean; Laravel `$request->input/query/get/post/all/only/except/route/header/cookie/string/json/validated/getContent`, `request('x')`, `request()->...`, `Request::input(...)` and `old('x')`; Symfony request bags (`query`, `request`, `cookies`, and `headers`/`attributes`/`files` on a request object); PSR-7 `getQueryParams`/`getParsedBody`/`getCookieParams`/`getHeader*`/`getBody`; CodeIgniter `$this->input->get/post/...` and `$this->request->getGet/getPost/...`; Drupal Form API input and `getClientOriginalName()`. A request object is a `$request`/`$req` variable, a `->request` property or a parameter typed `*Request`/`*RequestInterface`. Function and method parameters are never request data by themselves (a Laravel route parameter `show($id)` is not reported). Typed getters (`$request->integer()`, `boolean()`, `has()`), numeric casts and builtins that return numbers, booleans or hashes, and lookups (`User::find(...)`, `mysqli_fetch_*`, `->fetch*()`, `get_userdata()`) carry no request text. Sanitisers count only for the sink they protect: `escapeshellarg()` for commands, only as a whole unquoted argument (not inside quotes in the command, not as the program, and not as the code of `sh -c`/`bash -c`, `cmd /c`, `powershell -Command`, `eval` or an interpreter's `-c`/`-e`/`-r`, also behind `sudo`/`env`/`timeout`), where the command stays SKY-D212 (`escapeshellcmd()` is not one: it still lets input add arguments); `htmlspecialchars()`/`htmlentities()` (text and quoted attributes; `ENT_NOQUOTES` only text), `esc_html`, `esc_attr`, `e()`, `esc_url()`/`urlencode()` (also links) and `strip_tags()` (element text only) for HTML; `PDO::quote()`, `$wpdb->prepare()` and `pg_escape_literal()` for SQL anywhere, and SQL escaping (`mysqli_real_escape_string`, `addslashes`, `esc_sql`, ...) only inside a quoted SQL literal; `basename()` for paths and includes. Allow-list checks clean a variable or array element in the guarded branch and after an early exit: `in_array(...)`, `array_key_exists(...)`, `ctype_digit`/`ctype_alnum`, `is_numeric`, `filter_var(..., FILTER_VALIDATE_INT)`, `=== 'literal'` (also through `strtolower`/`trim`) and `preg_match()` with a pattern anchored at both ends that only allows letters, digits, `_` and `-` (not with `/m`). Each echo is checked against the HTML context it lands in, following the page's literal HTML and `<?= ?>` tags: `htmlspecialchars()` inside `href` or a `<script>` block is still reported. Output after `header('Content-Type: application/json')` (or a `*content_type*` helper with a non-HTML type) on every path is not HTML and not reported. SQL sinks: `mysqli_query`/`mysql_query`/`pg_query`/`sqlsrv_query`/..., any `->query/prepare/multi_query/real_query/executeQuery/executeStatement/createQuery/whereRaw/orWhereRaw/havingRaw/orderByRaw/groupByRaw/selectRaw/fromRaw`, `->exec()` on a database-named receiver, `$wpdb->get_results/get_row/get_var/get_col`, and Laravel `DB::raw/select/statement/unprepared/insert/update/delete`; `->where()` only for an SQL string, not an array of conditions. Bound parameters (`DB::select($sql, [$v])`, `$stmt->execute([$v])`) are not reported. D216 covers `curl_init`, `curl_setopt(CURLOPT_URL)`, `curl_setopt_array`, `get_headers`, `fsockopen` and Laravel `Http::`, with the same fixed-host barrier as Java. D204 `unserialize()` is not reported with `['allowed_classes' => false]` or a class list. Values passed through other functions keep their taint, so an application's own sanitiser (for example `yourls_sanitize_version()`) is not recognised; mark such a line with `// skylos: ignore[SKY-D228] reason`. Not covered: taint across functions, files, properties (`$this->x`) or into Blade variables set by a controller, Twig `|raw`, Guzzle, `call_user_func`/variable functions, `extract()`, mass assignment, open redirect and XXE.
+
+Go D216 and D212 (Go engine) also need untrusted input: an incoming `*http.Request` (URL, form, headers, decoded body; not `r.Context()`), a gin, echo or fiber request context and the structs they bind (gin `ShouldBind*`/`Bind*` including `ShouldBindQuery`/`ShouldBindUri`, echo `Bind`, fiber `BodyParser`/`QueryParser`/`ParamsParser`), or network input (`net.Conn`, `Accept()`, `Read`/`Decode`/`Unmarshal` from such a reader), followed through locals, concatenation, `fmt.Sprintf`, calls and same-file helper parameters. Literals, loopback URLs, config structs, flags, `os.Args` and `os.Executable()` are the program's own inputs. Numbers and booleans carry no taint: the results of `strconv.Atoi`/`ParseInt`/`ParseUint`/`ParseFloat`/`ParseBool` and `uuid.Parse`, and values whose declared type is numeric (an `int` field of a bound struct). D216 also needs the host to be choosable: a leading literal `scheme://host/` fixes it. Go D216 sinks are `http.Get`/`Post`/`Head`/`PostForm`, `http.NewRequest(WithContext)`, the same methods on an `*http.Client` (package variable, struct field or `http.DefaultClient`), `client.Do(req)` after `req.URL` or `req.URL.Host` is set from input, and `httputil.NewSingleHostReverseProxy`. D212 is CRITICAL for an untrusted program path or shell command string, HIGH for a shell (`sh -c`, `cmd /c`, PowerShell `-Command`) running a non-constant command that is not proven untrusted, and not reported for a constant or own program with argv elements (`exec.Command(os.Args[0], "run")`); Go D212 also covers `syscall.Exec` and `golang.org/x/crypto/ssh` `Session.Run`/`Start`/`Output`/`CombinedOutput` with an untrusted command. Go D215 (file paths in `os.Open`/`ReadFile`/`WriteFile`/`Create`/`Remove`/`MkdirAll`/`ReadDir`/`Rename`/`Chmod`/`Stat`..., `http.ServeFile`, gin `c.File`/`FileAttachment`, echo `c.File`/`Attachment`/`Inline`, fiber `c.SendFile`/`Download`) uses the same sources. A containment check protects only the accepted branch or code after a rejecting return, and only until the checked value changes. A `strings.HasPrefix` boundary must be fixed, end with a path separator and check the actual cleaned value; `filepath.Rel` needs its error and parent traversal checked. `filepath.IsLocal` also supports a rejecting guard. Existing `filepath.Base` and `securejoin.SecureJoin` path policies remain specific to filesystem sinks: they do not sanitize SQL, command text or network destinations. The Go engine's reliability checks follow their Python equivalent: unclosed resource (SKY-G260) and defer in a loop (SKY-G203) are MEDIUM like SKY-L008, and `unsafe` use (SKY-G206) is LOW like gosec G103; a defer followed by an unconditional `return` (or a `break` in an outermost loop) runs once and is not reported, and a handle that is closed explicitly, returned or stored in a field is not unclosed. Go D230 (open redirect: `http.Redirect`, gin and echo `c.Redirect(code, url)`, fiber `c.Redirect(url)`) needs untrusted input that can choose where the redirect goes: data after a literal `?` or `#` cannot, and a dominating same-origin check can clear it. This requires both the leading `/` and rejected `//`, or successful `url.Parse` with empty `Host` and `Scheme`, or a proven literal allowlist. A comparison that only logs, a later check, or an unrelated value does not protect the redirect. Mutable package state is not a fixed boundary or allowlist merely because its initializer is literal. Go D211 is CRITICAL when request or network input reaches the query text, HIGH when the query is string-built from a non-constant value with no proven source (Python D211 reports that case too), directly in the call or in a variable built with `+` or `fmt.Sprintf` in the same function (like gosec G201/G202), and not reported for placeholders, constants, or values of numeric type or placed with a numeric verb (`%d`) that are not request input (request text formatted with `%d` stays CRITICAL). The receiver is resolved from declarations (parameters, struct fields of the package, package variables, constructor calls such as `sql.Open`, `sqlx.Connect`, `pgxpool.New`, `gorm.Open`): `database/sql` `DB`/`Tx`/`Conn`; `jmoiron/sqlx` (also `Select`/`Get` after the destination, `NamedExec`, `Queryx`, `MustExec` and their `Context` forms, and the package functions); `jackc/pgx` and `pgxpool` (the query is the argument after the context); GORM `Where`/`Raw`/`Exec`/`Order`/`Group`/`Having`/`Select`/`Joins`/`Table`/`Not`/`Or`/`Distinct`/`Pluck` and the inline condition of `First`/`Find`/`Take`/`Last`/`Delete` (a struct, map, slice or pointer argument is bound as parameters and not reported); a local struct embedding one of these, or a local interface with query methods (sqlc's `DBTX`). `*sql.Stmt` arguments are parameters, not query text. When the receiver cannot be resolved, a database-like name is accepted: a plain variable (`db`, `tx`, `conn`, `sqldb`, `database`) always, a field (`s.db`, `r.DB`) only when the package imports a SQL library; a package of the scanned module named `sqlx` is not `jmoiron/sqlx`. Go D226 reports request input converted to `html/template`'s `HTML`, `JS`, `URL`, `HTMLAttr`, `CSS`, `JSStr` or `Srcset` (CRITICAL). Go D228 reports request input written to an HTML response: `fmt.Fprint`/`Fprintf`/`Fprintln`, `io.WriteString` or `Write`/`WriteString` on an `http.ResponseWriter` (also gin `c.Writer`, echo `c.Response()`), gin `c.Data` and echo `c.Blob` with an HTML content type, echo `c.HTML`/`HTMLBlob`, and gin `c.String` or fiber `SendString`/`Send`/`Write` after an HTML content type was set on that context. Following CodeQL `go/reflected-xss`, a write is not reported after a non-HTML `Content-Type` was set on the same writer (a value taken from the request counts as HTML), or when every write to that response up to this one starts with constant text whose first character is not `<` (net/http then sniffs `text/plain`); `html.EscapeString`, the `html/template` escapers, `url.QueryEscape`/`PathEscape`, `json.Marshal` and a `bluemonday` policy's `Sanitize` clear the value, request cookies are not reflected input, and gin `c.String`/`c.JSON`, echo `c.String`/`c.JSON` and fiber's default `text/plain` responses are not HTML. Not covered: `text/template` used for HTML, and taint across files or packages. Go D210 (`InsecureSkipVerify: true`) is not reported in Go test-support code (a file that imports `testing` and takes a `testing.TB`/`*testing.T`/`B`/`F`/`M`), like D346 in Python test modules; `_test.go` files are not scanned by the Go engine. For L012, an external test file (`package pkg_test`) sees the exports of its own directory's internal test files (`package pkg`, the `export_test.go` convention), because `go test` compiles them into the package.
 
 `bleach.linkify` (it only adds links) and `cgi.escape` (it leaves quotes alone)
 are not XSS sanitizers. Path traversal (D215) also accepts a sanitizer imported by name
@@ -389,7 +681,7 @@ D339, and redundant `//`, `/./` and `..` segments do not hide one.
 
 | ID | Severity | Name | File Types | Details |
 |:---|:---|:---|:---|:---|
-| D260 | HIGH-CRITICAL | Prompt injection scanner | `.py`, `.md`, `.rst`, `.txt`, `.yaml`, `.yml`, `.json`, `.toml`, `.env` | Multi-file scanner with text canonicalization. In YAML and TOML, comments document settings and are not scanned. YAML comment boundaries come from PyYAML's scanner (a `#` inside any scalar, quoted, block or flow, is value text); TOML ones from a string-aware lexer checked by `tomllib`. A file that does not parse keeps every line except whole-line comments. Terminology about generated LLM response text is distinguished from credential disclosure. Access tokens, environment credentials and API keys remain covered by the disclosure patterns |
+| D260 | HIGH-CRITICAL | Prompt injection scanner | `.py`, `.md`, `.rst`, `.txt`, `.yaml`, `.yml`, `.json`, `.toml`, `.env` | Multi-file scanner with text canonicalization. Bidirectional control characters in Python source are reported once, as D344; D260 keeps them in other files. In YAML and TOML, comments document settings and are not scanned. YAML comment boundaries come from PyYAML's scanner (a `#` inside any scalar, quoted, block or flow, is value text); TOML ones from a string-aware lexer checked by `tomllib`. A file that does not parse keeps every line except whole-line comments. Terminology about generated LLM response text is distinguished from credential disclosure. Access tokens, environment credentials and API keys remain covered by the disclosure patterns |
 
 Finding types:
 
@@ -398,6 +690,17 @@ Finding types:
 - `obfuscated_payload`: encoded string that decodes to injection content.
 - `mixed_script`: Cyrillic or Greek homoglyphs mixed with Latin text.
 - `risky_placement`: injection in a high-risk README, prompt field, YAML, or JSON field.
+
+Literal-pattern messages quote the matching clause. Their JSON
+`metadata.instruction_pattern` records up to 16 matching signals, their base
+severity and line offsets in the extracted, normalized text. Those offsets are
+not source line numbers; `segment_start_line` identifies the extracted segment's
+source location. `complete: false` means additional signals were omitted from
+the evidence. Each match and its context are limited to 240 characters;
+`matched_text_truncated` marks a shortened match. The strongest matched signal
+determines severity, including when multiple strings begin on the same source
+line. Application prompts still
+require review; their names or message roles do not establish safety.
 
 ### AI Application Security
 
@@ -415,8 +718,8 @@ Finding types:
 
 | ID | Severity | Name | Languages |
 |:---|:---|:---|:---|
-| D240 | CRITICAL | MCP tool description poisoning | Python, Java |
-| D241 | HIGH | MCP unauthenticated transport | Python, Java |
+| D240 | CRITICAL | MCP tool description poisoning | Python |
+| D241 | HIGH | MCP unauthenticated transport | Python |
 | D242 | HIGH | MCP permissive URI / path traversal | Python |
 | D243 | CRITICAL | MCP server bound to `0.0.0.0` | Python |
 | D244 | CRITICAL | MCP hardcoded secrets in tool params | Python |
@@ -472,12 +775,12 @@ Skylos does not execute pytest or load `conftest.py` to resolve these values.
 | D341 | HIGH | Untrusted package-managed tool execution | Shell, Python, TS/JS, GitHub Actions, GitLab CI, Dockerfile |
 | D342 | HIGH | Dockerfile remote ADD without checksum | Dockerfile |
 | D343 | HIGH | Dockerfile literal secret build value | Dockerfile |
-| D344 | HIGH | Trojan Source bidirectional Unicode | Python |
+| D344 | HIGH | Trojan Source bidirectional Unicode (U+202A-U+202E, U+2066-U+2069), one finding per line, test files included | Python |
 | D345 | HIGH | Mutable Hugging Face artifact revision | Python |
 | D346 | HIGH | Flask debug mode enabled | Python |
 | D347 | MEDIUM | Unsafe logging config listener | Python |
 | D348 | HIGH | Insecure temporary filename | Python |
-| D349 | CRITICAL | Server-side template injection (request data compiled as Jinja template source) | Python |
+| D349 | CRITICAL | Server-side template injection (request data compiled as Jinja template source; Java Velocity `evaluate`, FreeMarker `new Template(...)` source, `StringTemplateLoader.putTemplate`, Groovy `TemplateEngine.createTemplate`; PHP Drupal `inline_template` render arrays) | Python, Java, PHP |
 | D355 | HIGH | Jinja environment with omitted or explicitly disabled autoescape | Python |
 | D356 | MEDIUM | Cleartext outbound HTTP request | Python |
 | D357 | HIGH | Untrusted input used as a dynamic Python import name | Python |
@@ -503,11 +806,24 @@ that directory.
 
 ### Config And Deployment Security
 
+Terraform checks read `.tf` and `.tf.json` without running Terraform or contacting
+cloud accounts. `SKY-D400` reports a declaration allowing worldwide TCP SSH/RDP
+ingress; `SKY-D401` reports explicit disabled storage encryption for a directly
+created AWS RDS DB instance. These are declaration policies, not evidence of
+live Internet reachability or deployed state. Literal locals can be resolved;
+runtime variables, external modules and unsupported expressions stay unknown.
+Snapshot and replica encryption stays unknown. File/resource coverage and
+safe/unsafe/unknown/not-applicable checks are recorded under
+`analysis_summary.configuration_coverage.terraform`. Unknown is never a safe
+policy result. See [the cloud corpus](benchmarks/cloud/README.md).
+
 | ID | Severity | Name | Provider |
 |:---|:---|:---|:---|
+| D400 | HIGH | Terraform AWS worldwide administrative ingress (TCP 22/3389, IPv4/IPv6, inline and standalone security-group rules) | Terraform / AWS |
+| D401 | HIGH | Terraform AWS new database storage encryption explicitly disabled (direct `aws_db_instance`; restores and replicas unresolved) | Terraform / AWS |
 | D290 | HIGH | Dangerous trigger (`pull_request_target`, `workflow_run`). `issue_comment` counts only when a job that accounts without write access can start checks out pull request code (a `refs/pull/` ref, a step output assigned the pull request's head ref or SHA, `gh pr checkout`, a `git fetch` of a pull ref) and then runs it (a later command, `run:` step or local action) while holding a write or undeclared token, secrets, a write-capable `cache-mode` or a possibly self-hosted runner. Reach follows the job's `if:` and `needs`. Only a verified permission check stops outsiders: a known check action (actions-cool/check-user-permission with `error-if-missing: true`, prince-chrismc/check-actor-permissions-action, sushichop/action-repository-permission without `relax`, xt0rted/slash-command-action, lannonbr/repo-permission-check-action, skjnldsv/check-actor-permission, TheModdingInquisition/actions-team-membership, as their sources fail) that demands more than read access of the triggering account, or a script that looks the permission or association up and exits non-zero, with no `continue-on-error` and a later step that runs only on success; or a known check whose 'allowed' output the later step's `if:` requires. An action or step whose name or text only mentions permissions does not count, and a needed job gates only through such a failing check. `github.event.pull_request` and `github.head_ref` are empty on comment runs, so a checkout of them gets the default branch. | GitHub Actions |
 | D291 | MEDIUM-HIGH | Missing or excessive permissions. A job's own `permissions` replaces the workflow's, so workflow-level values are judged by the jobs that inherit them: missing permissions are one finding per workflow naming those jobs (none when every job declares its own), `read-all`/`write-all` need an inheriting job, and a workflow-level `X: write` needs two (with one it is already job-scoped). A job's own `read-all`/`write-all` is reported on that job | GitHub Actions |
-| D292 | HIGH (LOW for GitHub-owned) | Unpinned action or reusable workflow (not a full commit SHA). GitHub-owned `actions/*` and `github/*` at a tag or branch are LOW (GitHub runs the workflow and owns them); a path with `.`, `..` or empty segments gets no such discount. Every other owner, dynamic `${{ }}` refs and refs with no `@` are HIGH | GitHub Actions |
+| D292 | HIGH (LOW for GitHub-owned) | Unpinned action or reusable workflow (not a full commit SHA). Valid same-repository job calls using `./.github/workflows/...` or `$/.github/workflows/...` already select the caller's commit and need no additional SHA pin. GitHub-owned `actions/*` and `github/*` at a tag or branch are LOW (GitHub runs the workflow and owns them); a path with `.`, `..` or empty segments gets no such discount. Every other owner, dynamic `${{ }}` refs and refs with no `@` are HIGH | GitHub Actions |
 | D293 | MEDIUM | Checkout persists credentials where they can reach someone new: a later `actions/upload-artifact` of the checkout (`.git` included: before v4.4, or with `include-hidden-files: true`, or a SHA pin), a pull request's code checked out in a job accounts without write access can start, or an explicitly write-scoped token beside a later third-party action. GitHub-owned and local actions already hold the token; an undeclared token scope is D291's finding | GitHub Actions |
 | D294 | HIGH-LOW | Template injection: a `${{ }}` expression in code (`run:`, container and service `options`, code inputs of known actions such as `actions/github-script` `script`) whose value an attacker can shape. Each expression is parsed (`format()`, `toJSON()`, `fromJSON()`, `join()`, `case()` values, `a && b || c`, `github['event']`); a comparison or `contains()` result is not a value. What a context can hold comes from GitHub's webhook payload schemas (PR number or SHA: fixed, not reported). `env` and `matrix` values are followed to the expressions that set them; step outputs to the `$GITHUB_OUTPUT` line that writes them (a direct `${{ }}` or a `$VAR` from `env`), job outputs through `needs`, and reusable-workflow inputs to the local callers that pass them. A payload field counts only for the events that carry it (`github.event.inputs` exists on `workflow_dispatch`, `head_commit` on `push`); base-repository, organization and installation fields are set by maintainers. Severity is who can make the job run: HIGH (MEDIUM for structured text) when an account without write access can, after `if:`/`needs` gates; MEDIUM when it is not known (composite actions, reusable workflows without a local caller); LOW when only writers can or a fork's own sandboxed `pull_request` run sets it. Writer-set values not listed as untrusted by GitHub (`github.ref`, `ref_name`, `base_ref`, `vars.*`) and step/job outputs are not reported | GitHub Actions |
 | D295 | HIGH | Self-hosted runner exposure | GitHub Actions |
@@ -566,6 +882,54 @@ D295 reports at HIGH severity. Runner-label order does not affect the check.
 Simple literal matrices are exempt only when every possible runner value can be
 proved to be a known GitHub-hosted label. Runner groups, unknown expressions and
 matrix combinations that cannot be resolved conservatively still produce a warning.
+
+### Agent, Editor And Publish-Job Configuration (D365-D377)
+
+Decided by the ca9 engine (`ca9.api.agent_config`, `audit_workflows`,
+`ci_inventory`); Skylos keeps only rows naming a file inside the scanned folder
+that Git lists (a diff scan: files Git tracks; a full scan: files Git tracks or
+does not ignore). Links to agent folders or configs that stay inside the
+repository are followed and reported under the path the client opens, once per
+real file; a new or changed link that leaves the repository or points nowhere
+is an analysis error in a diff (exit 2). A subfolder scan also reports the
+repository-level workflows and agent configs at the Git top. See
+[docs/agent-config-and-publish-rules.md](./docs/agent-config-and-publish-rules.md).
+
+| ID | Severity | Name | Files |
+|:---|:---|:---|:---|
+| D365 | HIGH-CRITICAL | Agent hook command committed in the repository. CRITICAL when the command downloads remote code, decodes and runs a payload, or runs a script disguised as a font or image. Hooks `skylos agent install-hooks` wrote are not reported: the whole command must be `skylos hook <event> --client claude\|codex\|cursor` with one of Skylos's fixed `\|\|` fallbacks and nothing else, the program `skylos` on PATH or an absolute `/…/skylos` outside the repository and temp folders, and the settings file's `env` must not set PATH or loader variables; `python -m skylos.entry` is reported | `.claude/settings(.local).json`, `.gemini/settings.json`, `.cursor/hooks.json`, `.codex/hooks.json`, `.codex/config.toml` |
+| D366 | HIGH-CRITICAL | Editor task that runs when the folder opens (`runOptions.runOn: "folderOpen"`); severities as D365 | `.vscode/tasks.json`, `*.code-workspace` |
+| D367 | MEDIUM | MCP server launched without an exact version (`npx -y pkg`, `@latest`, `uvx pkg`, an image without a digest) | `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.kiro/settings/mcp.json`, `mcpServers` blocks |
+| D368 | HIGH | MCP server launched from a hidden home-directory or temp path outside the repository | MCP configs |
+| D369 | MEDIUM | MCP server package whose name imitates a vendor it is not published by | MCP configs |
+| D370 | HIGH | Agent API base URL (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`) overridden in committed settings | agent settings |
+| D371 | HIGH | Tool installed without a pinned version or hash in a job holding publish credentials or `id-token: write` | GitHub Actions, GitLab CI |
+| D372 | HIGH | Download without a checksum or signature check reaching the publish step | GitHub Actions, GitLab CI |
+| D373 | HIGH | OIDC publish job without a deployment `environment:` | GitHub Actions (`id-token: write`), GitLab CI (`id_tokens`) |
+| D374 | HIGH | Publishing workflow startable by `workflow_dispatch` or a push to any branch | GitHub Actions |
+| D375 | MEDIUM | `--diff` only: the change adds or modifies a CI job that publishes packages (base `ci_inventory` against head, line numbers ignored) | GitHub Actions, GitLab CI |
+| D376 | MEDIUM | Secrets (`secrets: inherit` or named) passed to a reusable workflow from another repository | GitHub Actions |
+| D377 | MEDIUM | Agent or editor config with duplicated keys, so what you read is not what runs | agent and editor settings, MCP configs |
+
+Built-in gate: in a whole-repository scan D365-D374, D376 and D377 are listed
+and not counted, except a CRITICAL D365/D366. In a diff scan D365, D366, D368
+and D370 fail the gate on their own; D367, D369 and D371-D377 count under the
+normal limits. With `--diff` a finding is new when its rule, path and identity
+(event, task, server or job name plus the whole unredacted command) are not
+among the merge base's findings, not by changed lines, so a `folderOpen`
+trigger added to an existing task or a hook moved to `SessionStart` is new;
+without a comparable base every such finding in a changed file counts
+(`analysis_summary.config_diff_basis`). A baseline scan does the same only for
+the rules its baseline covered (`rule_coverage`, recorded by `skylos baseline`
+from the installed ca9); with an older baseline these findings are listed, not
+new. They match the baseline by rule, file and a SHA-256 digest of that
+identity (kept local, never uploaded), not by line or the redacted shown value.
+Under `SKYLOS_POLICY_BASE` (pull-request CI and gated diffs) a baseline entry
+for D365-D377, malware, UPG001, HRD001 or AGE001 counts only when the base
+commit's baseline has it too. A diff that changes agent/editor configs,
+workflows or lockfiles without a usable ca9 (missing, too old, or lacking the
+function) is an analysis error ("upgrade ca9"), never a pass. Commands in
+findings and uploads are redacted.
 
 ### AI Agents In GitHub Actions (D350-D354)
 
@@ -662,7 +1026,7 @@ not reported by D350 to D353.
   event, MEDIUM otherwise; LOW for the medium advisory without one.
 
 Suppress with `# skylos: ignore[SKY-D35x]` on the reported line or the line
-above it. SKY-D355 to SKY-D359 are reserved.
+above it. SKY-D355 to SKY-D359 cover the Python checks described above.
 
 ## Kubernetes Deployment Exposure (SKY-DEP)
 
@@ -810,7 +1174,7 @@ across different operating-system/CPU platforms.
 
 | ID | Severity | Name | Languages / Scope | CWE |
 |:---|:---|:---|:---|:---|
-| S101 | HIGH-CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Go, config files | CWE-798 |
+| S101 | HIGH-CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Kotlin, Go, PHP, Rust, Swift, Dart, C#, C/C++, shell scripts (including extensionless files with a shell `#!` line), Dockerfiles, Terraform (`.tf`, `.tfvars`, `.hcl`), `.properties`, XML, Gradle, `.npmrc`, `.pypirc` and config files | CWE-798 |
 | S102 | HIGH* | Secret material or server-only environment variable exposed to client-accessible code | TS/JS, HTML, client bundles | CWE-200 |
 
 `SKY-S101` is `CRITICAL` for provider tokens and for high-entropy values
@@ -829,8 +1193,10 @@ counts it under `max_secrets`. Two other lower-certainty shapes are `HIGH`:
 a password embedded in a connection URL
 (`provider: url_credentials`, e.g. `postgres://app:<pw>@db/app`) and a
 non-placeholder literal under a password/secret/token/api-key field in YAML,
-JSON, TOML, INI or `.env` files (`provider: config_credential`). Env-var and
-template references (`${DB_PASSWORD}`, `{{ .Values.x }}`), placeholders
+JSON, TOML, INI, `.env`, `.properties`, `.tfvars`, `.npmrc` or `.pypirc` files
+(`provider: config_credential`). Env-var and template references
+(`${DB_PASSWORD}`, `{{ .Values.x }}`, shell `${TOKEN:?message}` and
+`$(command)`; a `${TOKEN:-literal}` default is still checked), placeholders
 (`changeme`, `<password>`, `your_password_here`) and secret *names*
 (`existingSecret`, `secretName`, `password_file`) are not reported, and
 previews are always fully masked.
@@ -914,6 +1280,8 @@ The Go engine may emit `SKY-G` IDs. Cross-language equivalents are remapped to
 | SKY-G216 | SKY-D216 | SSRF |
 | SKY-G220 | SKY-D230 | Open redirect |
 | SKY-G221 | SKY-D252 | Insecure cookie flags |
+| SKY-G226 | SKY-D226 | XSS: request input marked safe for `html/template` |
+| SKY-G228 | SKY-D228 | XSS: request input written to an HTML response |
 | SKY-G260 | SKY-G260 | Unclosed resource |
 | SKY-G280 | SKY-G280 | Weak TLS version |
 | SKY-G305 | SKY-D215 | Archive extraction path traversal |
@@ -1007,6 +1375,18 @@ ambiguous build stages do not establish that an import is provided. These files
 are read as bounded text, never executed or installed; unsupported shapes
 retain the normal import check.
 
+A single unambiguous Compose configuration can also declare packages for the
+exact Python file named by a service's command. The supported shape uses a
+literal read-only repository mount, a selected official Python Dockerfile stage
+and straight-line `python -m pip install` commands, optionally with literal
+versions sourced from a copied `.env` file. This evidence applies only to that
+entry file, not its siblings or imports. Overrides, interpreter changes and
+unsupported build or runtime configuration retain the warning. Sourced shell
+settings that change word splitting and alternate service launchers whose
+environment cannot be resolved also retain it. This affects
+undeclared-import checks (SKY-D223); it does not clear SKY-D222 hallucinations,
+verify an installed image or change dependency vulnerability checks.
+
 A distribution that a declared one requires unconditionally also provides its
 imports (SKY-D223 only, never a hallucination): an edge recorded in the nearest
 `uv.lock`, `poetry.lock` or `pdm.lock` (with the extras the lockfile's project
@@ -1059,7 +1439,7 @@ uses project ignores, not inline comments, consistently across supported files.
 | L005 | LOW | Unused exception variable | Python |
 | L006 | MEDIUM | Inconsistent return paths | Python |
 | L007 | MEDIUM-HIGH | Empty error handler | Python, TS/JS |
-| L008 | MEDIUM | Missing resource cleanup | Python |
+| L008 | MEDIUM | Missing resource cleanup: an `open`/connection/socket/session not in a `with`, including inside `if`/`for`/`while`/`try`/`except`/`finally`/`match` blocks. Not reported when closed on the next statement or in a `finally` that encloses the open or runs after it (a `finally` before the open closes an earlier handle), entered by the next `with`, returned or yielded (also inside a wrapper such as `return Reader(f)` or `ctx.wrap_socket(s)`; a `Reader` class defined in the same module must store, close or pass on `f` in its `__init__`), stored on an attribute or container, registered with `enter_context`/`callback`/`addCleanup`, or assigned to `self.x` when the same class, a base or a subclass closes `self.x`, or any code closes `x` on another receiver such as `conn.x.close()` (also after taking it off the object, as in Flask's `g.pop("db").close()` teardown); statements inside another `with` block are not checked | Python |
 | L009 | LOW-HIGH | Debug leftover | Python |
 | L010 | MEDIUM | Security TODO/FIXME marker left in code | Python |
 | L011 | MEDIUM-HIGH | Disabled security control | Python |
@@ -1222,7 +1602,7 @@ is `except*`, nor clauses with a comment in them (a documented placeholder).
 | T105 | MEDIUM | Unvalidated JSON result asserted as a domain type | TypeScript |
 | T106 | MEDIUM | Unsafe exported API type | TypeScript |
 | F101 | MEDIUM | FastAPI response model / return typing practice | Python |
-| F102 | MEDIUM/HIGH | Framework route auth guard or defeated ownership check | Python |
+| F102 | MEDIUM/HIGH | Framework route auth guard or defeated ownership check; privileged action routes are SKY-D283 | Python |
 | R101 | MEDIUM | Repository missing Python type-check command | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
 | R102 | MEDIUM | Repository missing Python lint command | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
 | R103 | MEDIUM | Repository missing Skylos quality gate | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
@@ -1603,6 +1983,50 @@ this additional review. Arbitrary permission helpers, ORM query scoping,
 Django/Flask ownership flows, and unsupported control flow remain outside
 this narrow check; absence of F102 is not proof of authorization.
 
+SKY-D283 is the security finding for a route SKY-F102 would review when its
+function name, path (path parameters excluded) or HTTP method names a
+privileged action: device or host control (`arm`, `disarm`, `takeoff`,
+`fire`, `power`, `poweroff`, `reboot`, `shutdown`, `restart`, `halt`,
+`control`), destruction (`delete`, `drop`, `destroy`, `purge`, `wipe`, `erase`,
+`truncate`, or the DELETE method), administration (`admin`, `superuser`,
+`sudo`, `impersonate`) or commands (`exec`, `execute`, `shell`, `command`,
+`cmd`). Words are whole words, and letters with trailing digits stay one word
+(`farm`, `alarms` and `arm64` are not `arm`). `launch` and `eval` are left out:
+LTI launches, campaign launches and model evaluation are ordinary routes.
+It is reported only when nothing can authenticate the caller, otherwise the
+route keeps its SKY-F102 review:
+- the route is registered on an app object the same module creates
+  (`FastAPI()`, `Flask()`, `Quart()`, `Starlette()`, `Sanic()`), or on an
+  `APIRouter`/`Blueprint` the module creates and mounts on that app with no
+  guard options; routers mounted from another module are not judged, since
+  the mounting site can add a guard;
+- the route has no decorator besides its route decorators, no decorator
+  option other than routing metadata (`auth=`, `guards=`, `dependencies=` and
+  unknown options count as guards), and no `Depends`/`Security`/`Header`/
+  `Cookie`/security-scheme parameter, including through a module alias such
+  as `CurrentUser = Annotated[User, Depends(...)]`;
+- the handler does not read request (or Flask `g`) headers, cookies,
+  session, user or client, name authentication in an identifier or string
+  (`url_for("login")`), reject with 401/403 (including `return body, 401`), or
+  pass the request to other code;
+- the module has no middleware other than CORS/GZip/TrustedHost/HTTPS
+  redirect (including `app.wsgi_app = ...` wrapping), no app/router guard
+  options, no hook registered by call, and no request hook
+  (`@app.middleware`, `before_request`) that may authenticate. A hook another
+  module registers on the same app object is not visible here.
+It is CRITICAL when the module also starts the server on every interface
+(`0.0.0.0` or `::`, literally or as the default of an `os.environ.get`/
+`os.getenv` lookup bound once), shows no authentication anywhere (no name
+reading as auth, including `session`), and the handler performs the action
+(a call named for a specific action word, not `control`/`command`/`admin`,
+or a process, signal or file-removal call). Unlike SKY-D280 (any Next.js
+mutating route without auth), SKY-D283 needs the privileged action evidence;
+other open mutating routes stay SKY-F102. `--diff` reports SKY-D283 only when
+the route itself changed. A scan with
+security checks reports SKY-D283 and drops the SKY-F102 review of the same
+handler; a `--quality`-only scan keeps SKY-F102. `ignore[SKY-F102]` and a bare
+`# noqa` do not hide SKY-D283. Plain reads (GET) are never reported.
+
 P401 reports `read()`/`readlines()` calls that request everything: no size,
 `None`, a negative size or `readlines(0)`, including sizes resolved from simple
 local constants. A caller-chosen size is a bound by construction, so chunked
@@ -1684,6 +2108,157 @@ report/gate policy remain unchanged.
 
 ## Dead Code and Reachability
 
+TS/JS namespace imports keep only the exports selected by static member reads
+such as `api.render()` and `api["render"]`, including stable `const` aliases and
+literal destructuring. A parameter, block variable or other local binding with
+the same name does not count as a read of the imported namespace. Unknown keys,
+namespace escapes, reflection and mutation preserve the whole export surface.
+This follows resolved module edges, including wildcard barrels. In a closed
+source scope, named re-export chains propagate the selected original binding
+through aliases and wildcard hops. Package APIs and escaping namespaces retain
+their export surfaces. Competing wildcard providers, unmodeled local export
+bindings and opaque source decline that narrowing. Enumerating a literal
+module namespace also supplies positive reads through resolved export paths,
+respecting explicit shadows and the exclusion of default from star exports.
+Direct namespace exports (`export * as tools`) preserve member identity through
+named, default, wildcard and nested forwarding. Selected literal member paths
+leave unused exported siblings reportable; public APIs, mutation, dynamic keys
+and escapes retain the possible exported surface. Escaped export spellings
+behind wildcard barrels and cross-file classic JS globals remain limited.
+Position-preserving parser repairs cover native-valid tagged template escapes
+and generic import-type queries, including queries the grammar otherwise reads
+as relational runtime expressions. Other syntax errors remain incomplete.
+
+TS/JS local parameter and value reads do not reference unrelated module
+functions with the same name. Function values passed or captured still count.
+Imports from a proven disconnected ESM consumer do not keep its providers
+alive. This requires resolved imports in the selected source scope and known
+entry points; runtime loader capabilities such as computed imports, eval,
+Function and createRequire prevent that negative proof. Test-inclusive scopes
+retain consumers called by tests. Ordinary unused-import reporting still follows
+lexical reads inside a disconnected file, alongside its unused-file finding.
+
+Go uses a declaration-use graph for packages that can be fully type-checked.
+Standard-library types are read from an installed host Go toolchain without
+building export caches or running cgo.
+Visible imports within the scanned Go module use the same static type proof.
+Nested modules, external dependencies, opaque providers, excluded or unreadable
+source and incomplete types retain conservative references. Private free helper
+functions in internal `_test.go` packages are reportable only with complete
+native unreachability evidence; test entries, callbacks, hooks, public APIs and
+live helper chains remain roots. External test packages keep their prior policy.
+An explicitly required dependency with a unique unversioned local replacement
+can also supply type identity when its matching module and package sources are
+already inside the native scan. Unsupported metadata, workspace overrides,
+version-specific or remote replacements, excluded providers and paths outside
+the scan retain conservative handling. This does not fetch dependencies or add
+general external dependency resolution. An active contained `go.work` can supply
+source identity for its ordinary `use` modules when the exact admitted file
+inventory is available. Omitted package members, excluded or outside providers,
+unsupported workspace metadata, invalid module requirements, unsupported Go
+versions and type errors decline that additional proof. The module's declared
+Go language version is honored; target commands and dependency fetching remain
+disabled. This does not implement general workspace replacement or build-variant
+resolution.
+Private functions that only recurse or call one another are reported when no
+entry point reaches them. Local variables and parameters with matching names
+do not keep unrelated package functions alive. Exported APIs, interface methods,
+`main`, `init`, test and generated consumers, package initializers and reachable
+function values remain roots. Assembly, unresolved imports, conflicting build
+variants and type errors retain the earlier conservative reference handling;
+they do not establish that a function is unreachable.
+
+Python liveness follows literal logging factory paths into a proven
+`logging.config.dictConfig` consumer and callbacks on registered Flask
+blueprints imported through project modules. A dotted string or an unregistered
+blueprint alone is insufficient. Analysis is static and bounded; unresolved
+dynamic configuration remains a limitation.
+
+C# constructors are not reported as unused functions, except a `private`
+constructor with at least one parameter that no `new T(...)`, target-typed
+`new(...)`, `: this(...)` with a matching argument count or `typeof(T)`
+reaches, and that is not the `(SerializationInfo, StreamingContext)`
+deserialization constructor, has no attributes and is not in a `partial` type
+(Roslyn IDE0051's rule). Controller, dependency-injection, model-binding and
+serializer constructors are called by the framework; a class that nothing
+references, instantiates or registers is still reported as an unused class.
+
+Rust references include qualified function values passed as callbacks. Exact
+matching `cfg` predicates can preserve imported filesystem providers inside the
+same feature condition; this does not evaluate Cargo features or macros. Rust
+also follows function values in `let` initializers. Reads of local variables and
+parameters do not keep unrelated module functions with the same name alive.
+Bindings apply within their lexical scope, including closures, match arms and
+loop patterns; an initializer is read before its new binding applies. Rust
+dead-code candidates retain their experimental confidence cap of 40.
+
+Rust enum variant payloads and attribute expressions contribute import reads.
+Scoped API contracts recognize imported extension traits and associated
+constants, including calls inside macro arguments; strings and unrelated
+inherent methods do not supply those uses. Unique root-module private free
+functions can be reported as an unrooted group, including recursion cycles,
+after project references are collected. Cross-file calls, function values,
+static initializers, conditional entries and unknown macro expansion preserve
+roots. These bounded checks do not add Cargo feature or macro expansion.
+
+Within a closed Rust source file, local trait declarations and concrete receiver
+types can establish which import supplies a method, including aliases and
+borrowed receivers. Unknown or competing implementations, conditional items,
+unexpanded macros and out-of-line modules decline that proof. Standard writer
+macros can establish a `std::io::Write` import use for a proven writer receiver;
+local `write_fmt` traits, inherent methods and shadowed macros/providers remain
+separate controls. A feature-matched `cfg_attr` wrapper can read its attribute
+import without treating predicate strings or inactive wrappers as uses. These
+checks preserve Rust's experimental confidence cap of 40 and do not evaluate
+Cargo's active feature set.
+
+Ordinary `mod name;` source closures rooted at a fully scanned `main.rs` or
+`lib.rs` can also establish local trait import use across files. Every module
+must be admitted, readable and unambiguous; attributed, excluded, missing,
+macro-generated or over-budget closures add no proof. Repeated import aliases
+retain their own source-bound identities, so an inner read cannot hide an unused
+outer import. Attributed repeated bindings keep conservative grouping without
+guessing the active Cargo configuration.
+
+Swift dead-code checks parse `.swift` sources and follow `private`/`fileprivate`
+declarations, owner and lexical bindings, function values, callbacks and private
+call cycles. Public/internal APIs and runtime or compiler-generated consumers
+remain roots. Import usage is not inferred from textual module-name matches:
+imports may supply extensions and operators. SwiftPM `.build` source products
+are excluded from directory scans; an explicit file target is still inspectable.
+Missing grammar, unreadable source and syntax errors report incomplete analysis.
+Swift security-flow analysis, quality rules and local API verification are not
+implemented; existing secret scanning also reads Swift sources.
+
+A Python module or class variable is kept alive by an attribute read `x.NAME`
+elsewhere only when `x` could be its owner. For a module variable that is the
+module itself (import alias or dotted path), a module that star-imports it,
+Django's `settings` object, or an unknown receiver (parameter, local, call
+result) once the module object can reach one: it is imported as a module,
+named by a dotted string such as `config_from_object("app.celeryconfig")`, or
+the project loads modules dynamically (`import_module` with a computed name,
+`sys.modules`, `runpy.run_path`). For a class variable it is `self`/`cls` of
+the class, a subclass or a base, the class or a subclass by name, or an unknown
+receiver. `self.NAME` in an unrelated class without `__getattr__`,
+`other_module.NAME` and literals are proof of another object, so
+`RETRY_LIMIT = 3` in `settings.py` is reported when the only `RETRY_LIMIT`
+reads are `self.RETRY_LIMIT` on another class and `policy.RETRY_LIMIT` on a
+parameter while `settings` is never imported as a module. Grep verification
+then ignores those attribute-only lines in analysed `.py`/`.pyi` files.
+Classes with a base outside the project, a decorator, a metaclass or an
+enclosing scope keep name-only liveness, because code Skylos cannot see may
+read their attributes.
+
+Java, Kotlin, Rust and Dart definitions with the same name in different files
+(two `Util` classes in different packages, private `helper` functions in two
+crates) are separate definitions. A reference reaches the ones its file can
+see: its own file, then (Java/Kotlin) its package and its imports, then (Rust)
+its crate; with no such evidence it reaches all of them. Package and import
+lines are read with comments and string literals blanked, so a commented-out
+or quoted `import b.Util;` is not an import. Overloads in one file
+share one definition, since name-only references cannot tell `format(int)`
+from `format(String)`.
+
 | ID | Severity | Name | Scope |
 |:---|:---|:---|:---|
 | U001 | INFO | Unused function | Upload/API normalized dead-code category |
@@ -1746,6 +2321,8 @@ than by an import. These conventions apply to TS/JS, PHP and Python:
 | Wagtail | modules importing `wagtail` | Page attributes (`content_panels`, `promote_panels`, `settings_panels`, `search_fields`, `api_fields`, `template`, `subpage_types`, `parent_page_types`, `max_count`, `preview_modes`, ...), snippet/`ModelViewSet` options (`list_display`, `list_export`, `sort_order_field`, `menu_label`, ...), `Task.task_state_class`, `AccessibilityItem` `axe_*` options; the parameters of Page, preview, workflow-task and block hook methods (`serve`, `serve_preview`, `get_preview_template`, `get_context`, `user_can_access_editor`, `get_actions`, ...) |
 | Django | modules importing `django` | parameters of class-based-view handlers (`get`, `post`, ..., `dispatch`, `setup`), of system checks registered with `register(...)` (`app_configs`, `**kwargs`), and of documented ModelAdmin/Inline, Widget, Field and Form hooks; model classes in an app's `models` module (fields or a model-like base); UPPERCASE names in `locale/<lang>/formats.py` and `FORMAT_MODULE_PATH` format files |
 | Registration decorators | class decorators named `register*` | the class (`@register_setting`, `@register_snippet`, `@admin.register`) |
+| Python registration decorators | any Python module | functions decorated `@<object>.<attribute>` where the attribute is a route or registration verb (`get`, `post`, `route`, `api_route`, `on`, `on_event`, or has an underscore-separated word such as `tool`, `resource`, `prompt`, `task`, `command`, `event`, `handler`, `listener`, `subscriber`, `hook`, `signal`, `register`, `fixture`, `job`: `@mcp.tool()`, `@server.call_tool()`, `@client.event`, `@sio.on("chat")`, `@celery_app.task`), and a bare `@tool`, `@function_tool`, `@task`, `@shared_task`, `@hookimpl`, `@hookspec`, `@register*` imported from outside the project (also through an import alias). Cache and wrapper decorators (`functools`, `contextlib`, `st.cache_*`) never make a function used; a decorator the project defines (in the module or imported from the project's own package) counts only when its body registers the function |
+| Python package entry points | `pyproject.toml` `[project.scripts]`, `[project.gui-scripts]`, `[project.entry-points.<group>]`, Poetry `scripts` and `plugins`; `setup.cfg` `[options.entry_points]`; the literal `entry_points=` of `setup()` in `setup.py` (parsed, never run) | the named function or class (extras ignored), the class owning a `module:Class.attr` target, and the public methods and class attributes of a class that is itself an entry point (the plugin host calls them). A module-only entry (`pytest11 = "pkg.plugin"`) keeps no symbol by itself |
 
 A project is a Next.js project when a `next.config.*` file or a `package.json`
 that depends on `next` sits in the file's directory or a parent. Only the named
@@ -1757,6 +2334,47 @@ only when the file itself is one Next.js routes, Storybook loads or a tool
 reads as config, not to name-only marks such as `use*` hooks or a `page.tsx`
 outside `app/`. With discovery off, a Laravel listener stays live only through
 its `::class` registration in `$listen` or `Event::listen`.
+
+### Library public API (Python)
+
+Code outside a repository imports a library's public API, so a public name that
+nothing in the repository uses is not dead when the library declares it public.
+Skylos recognizes a conservative static subset of common documentation, typing
+and lazy-export declarations. Its exclusions below are Skylos policy; documentation
+builders and type checkers have their own configurable selection rules.
+
+| Declaration | Kept live |
+|:---|:---|
+| `__all__` | the names it lists (it is the module's exact API) |
+| `__init__.py` re-exports | names imported into a package `__init__` without `__all__`, and `import x as x` aliases |
+| Attribute docstring or `#:` comment | a public module-level name in a public module with no `__all__`: `URL = "..."` followed by `"""Doc."""`, `#: Doc.` on the line above, or `URL = "..."  #: Doc.` |
+| Sphinx object directive or role | the named object: `.. autofunction::`, `.. autoclass::`, `.. autodata::`, `.. py:function::`, `autosummary` entries, `:func:`/`:class:`/`:data:`/`:const:`/`:obj:`/`:meth:` roles, resolved through `.. currentmodule::`; reST, `.txt` and MyST (`{eval-rst}`, ```` ```{autofunction} ````, `{py:func}`) |
+| `automodule` and mkdocstrings `:::` | the module's selected documented public members; supported explicit member lists and undocumented-member options can also select undocumented members. Local mkdocstrings filters apply to automatic selection. None of these widen `__all__`. |
+| `.pyi` stub | explicit declarations, including explicitly declared public methods, limited by the stub's and implementation's `__all__`; explicit re-exports in an `__init__.pyi`, or relative imports used by a proven `lazy_loader.attach_stub` getter |
+| Lazy exports | names whose supported getter flow returns an attribute from the exact imported module, or names supplied to canonical `lazy_loader.attach` / `attach_stub` calls. Unused tables and unresolved owners supply no export evidence. |
+
+Private `_names`, names in private `_modules`, tests, scripts, docs and
+examples are never declared public this way, nor is a name marked
+`:meta private:` or `@private`. Changelog, history and release-note files are
+not read. A function docstring alone does not make a function public, and a
+documented class does not make its undocumented methods public. A
+`__getattr__` that only raises or warns does not export anything.
+
+Literal examples, comments and escaped documentation markup do not declare API.
+Evidence files must be regular files inside the scan root; symbolic links and
+oversized files do not supply evidence. Skylos does not build documentation or
+import the scanned package. Unsupported documentation options, complex filters,
+custom lazy-module replacements and unresolved dynamic behavior remain available
+for review rather than implicitly rescuing names.
+
+A project can declare public API that has no such marker with a dead-code
+entrypoint rule:
+
+```toml
+[[tool.skylos.dead_code.entrypoints]]
+full_name = "mypkg.datasets.*"
+reason = "public dataset catalog"
+```
 
 Generated sources (a leading comment such as `// Code generated ... DO NOT
 EDIT.`, `@generated`, `This file was automatically generated by ...` or `This
@@ -1795,9 +2413,23 @@ suppression, integrations, and public references.
 | SCA-* | varies | Software composition analysis vulnerability | Dependency manifests / installed packages |
 | SKY-SCA-LIC001 | HIGH (configurable via `license_severity`) | Dependency license policy violation | Declared dependency license (offline lockfile / installed metadata) cannot be satisfied without a license in `license_deny`, or outside `license_allow`; `NOASSERTION` never fires |
 | SKY-SCA-NPM-PUB001 | WARN (review only) | npm publisher change after release dormancy | Direct npm dependency pinned in a package lockfile; verify the publisher and release provenance before upgrading or deploying |
+| SKY-SCA-SRC001 | CRITICAL (direct) / HIGH (transitive) | Possible dependency confusion | A package matching `[tool.skylos.supply_chain] internal_packages` resolves from a public or merged index (`--extra-index-url`, a public lockfile registry); decided by the ca9 engine, reported only with configured patterns and registry evidence |
+| SKY-SCA-SRC003 | MEDIUM | Mutable dependency source | A Git dependency not pinned to a full commit, or a URL dependency without a hash, in a requirements file, `pyproject.toml`, `package.json` without a lockfile, or a lockfile Git/URL entry; local paths are not reported |
+| SKY-SCA-SRC004 | HIGH | Package moved to a source this repository did not use | In a pull request, a lockfile points a package at a private, Git or URL source it did not use, or at a new host. Advisory databases do not cover it. Packages matching `internal_packages` on the target branch are exempt |
+| SKY-SCA-INT001 | MEDIUM | Lockfile entry without integrity hash | A registry entry in `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock` or `poetry.lock` with no (or an empty) integrity hash; never `requirements.txt` or npm `inBundle` entries |
+| SKY-SCA-AGE001 | HIGH | Dependency version younger than the release-age window | The locked version was published less than `min_release_age_hours` ago; scans check this only when the policy sets it |
+| SKY-SCA-MAL000 | CRITICAL | Malware feed match without an advisory ID | Offline fallback: the installed ca9 malware feed matched a package but named no advisory ID (matches with an ID use `SKY-SCA-<id>`) |
+| SKY-SCA-UPG001 | CRITICAL | Dependency upgrade adds install-time or start-up code | `--diff`/`--diff-base` with `--review-upgrades`: an npm or PyPI lockfile version change whose new artifact adds a `.pth` or `sitecustomize` with code, an install/prepare hook, decode-and-exec, a Git/URL dependency, shipped agent/editor hooks, archive entries that install to the same path or differ only by case, an executable named like a system command, sourceless bytecode run at import or start-up, or an artifact that does not match the lockfile's integrity (`ca9.api.review_upgrades`); evidence names the file inside the package and a redacted snippet. Fails a diff gate on its own |
+| SKY-SCA-UPG002 | MEDIUM | Dependency upgrade adds code worth reviewing | As UPG001 when only ca9's `warn` list has deltas (new import-time network or exec, obfuscation growth, a native binary, a publisher change, changed install-time code, or anything ca9 flags in a newly added package, `block` list included, since there is no earlier version to compare against); otherwise findings follow ca9's lists, never the delta kind. Listed, not counted by the built-in gate. Changes ca9 did not review (timeout, unreachable registry, size cap, over 100, `complete: false`) and changed lockfiles Skylos could not read (over 64 MB, a link, rejected by the parser) are an analysis error (diff gate incomplete); internal packages and entries the lockfile resolves from a private registry are skipped with a warning; changed requirements pins, `pdm.lock` and `pylock.toml` are listed as not read |
+| SKY-SCA-API001 | MEDIUM | Your line uses API a dependency upgrade removed | `--diff`/`--diff-base` with `--review-upgrades`: a Python package's locked version changed and a line of yours uses a public name, module, method or keyword argument that exists in the old release and not the new one. Both releases are read statically through `ca9.artifacts`, never imported or run. Advice: no gate counts it, it is not uploaded to Cloud, and whatever could not be read is listed as could not check |
+| SKY-SCA-HRD001 | HIGH | Change weakens install hardening | `--diff`/`--diff-base` with `--sca`: `ca9.api.hardening_regressions` between the merge base and the tracked working tree (cooldown removed, lowered or bypassed for a package, `ignore-scripts` off, `allowBuilds`/`allowScripts`/`trustedDependencies` additions, `strictDepBuilds` off, SHA-pinned action moved to a tag). Packages in the base commit's `[tool.skylos.supply_chain.hardening_exceptions]` with a reason are skipped. Fails a diff gate on its own; a `check_failed` comparison is an analysis error (incomplete), never a pass |
 
 `SKY-SCA-LIC*` IDs are reserved for license policy and are not OSV advisory IDs.
 `SKY-SCA-NPM-PUB001` is a publisher history review signal, not an OSV advisory ID.
+`SKY-SCA-SRC*`, `SKY-SCA-INT*`, `SKY-SCA-AGE*`, `SKY-SCA-UPG*` and `SKY-SCA-HRD*`
+are supply-chain checks from the ca9 engine (`ca9.api`), not OSV advisory IDs. OSV advisories for malware
+(`MAL-*` IDs or aliases, `malicious-packages-origins`, CWE-506) keep their
+`SKY-SCA-<id>` rule ID and are reported `CRITICAL` with `metadata.malicious`.
 Declared licenses are normalized to SPDX; ambiguous values (for example `BSD`,
 `GPLv3`) are `NOASSERTION`, never guessed.
 
@@ -1839,4 +2471,11 @@ Prompt text may also use range notation such as `SKY-D226-228`,
 
 Custom rule packs may emit project-defined IDs from `.skylos/rules/*.yml`.
 Prefer a stable project prefix, for example `ORG-SEC001`, to avoid colliding
-with Skylos-owned `SKY-*` IDs.
+with Skylos-owned `SKY-*` IDs. Scans with `--quality` or `-a` load the packs
+in every `.skylos/rules/` folder from the scanned file up to the repository
+root (nearest pack wins per rule ID), plus `~/.skylos/rules/*.yml` and Cloud
+rules. With `SKYLOS_POLICY_BASE` set (PR CI), project packs are read from that
+commit only. A pack's rules only add findings; one with a `SKY-*` ID does not
+replace or hide the built-in finding. Packs that are symlinks, over 1 MB,
+invalid YAML, use YAML aliases or have no `rules` list are skipped and named
+in a scan warning.

@@ -19,6 +19,8 @@ from skylos.core.grep_verify_common import (
     _GrepDeadlineExceeded,
     _GrepEvidence,
     _GrepExecutionIncomplete,
+    _grep_line_content,
+    _grep_line_number,
     _grep_line_path,
     _grep_paths_equal,
     _run_grep,
@@ -43,6 +45,7 @@ from skylos.core.grep_verify_language_strategies import (
     _run_ts_strategies,
 )
 from skylos.core.grep_verify_parallel import parallel_multi_strategy_search_impl
+from skylos.core.python_local_bindings import local_binding_span
 from skylos.core.grep_verify_python_strategy import (
     multi_strategy_search as _multi_strategy_search_impl,
 )
@@ -189,12 +192,15 @@ def _cache_key(cache: Any, group_name: str, finding: dict) -> str | None:
     simple_name = finding.get("simple_name", finding.get("name", ""))
     finding_file = finding.get("file", "")
     content_hash = _fch(finding_file) if finding_file else ""
-    return (
+    key = (
         f"{_GREP_VERIFY_CACHE_VERSION}:group:{group_name}:"
         f"{simple_name}:{finding.get('full_name', '')}:"
         f"{finding.get('type', '')}:{content_hash}:"
         f"repo:{repository_fingerprint}"
     )
+    if finding.get("attribute_reads_resolved"):
+        key += ":attribute-reads-resolved"
+    return key
 
 
 def _load_cached_group_results(
@@ -392,7 +398,12 @@ def _apply_deterministic_rules(
 
 
 def _filter_evidence(finding, results, evidence_filter):
+    # These adapters resolve private declarations in their source scopes.
+    # A text match cannot establish the receiver or lexical binding.
+    if _finding_language(finding) in {"ruby", "swift", "csharp"}:
+        return GrepSearchResults({})
     filtered = _filter_typescript_binding_evidence(finding, results)
+    filtered = _filter_python_local_binding_evidence(finding, filtered)
     if evidence_filter is None:
         return filtered
     try:
@@ -407,6 +418,46 @@ def _filter_evidence(finding, results, evidence_filter):
 
 
 _TYPESCRIPT_BINDING_EXTENSIONS = frozenset({".ts", ".tsx", ".mts", ".cts"})
+_PYTHON_LOCAL_BINDING_EXTENSIONS = frozenset({".py", ".pyi"})
+
+
+def _filter_python_local_binding_evidence(
+    finding: dict, results: dict[str, list[str]]
+) -> dict[str, list[str]]:
+    finding_file = str(finding.get("file", ""))
+    if Path(finding_file).suffix.lower() not in _PYTHON_LOCAL_BINDING_EXTENSIONS:
+        return results
+    if finding.get("type") != "variable":
+        return results
+    name = str(finding.get("simple_name") or "")
+    line = finding.get("line")
+    if not name or not isinstance(line, int):
+        return results
+    span = local_binding_span(finding_file, name, line)
+    if span is None:
+        return results
+    start, end = span
+    filtered: dict[str, list[str]] = {}
+    for strategy, evidence in results.items():
+        owned = []
+        for grep_line in evidence:
+            path = _grep_line_path(grep_line)
+            number = _grep_line_number(grep_line)
+            if not path or number is None:
+                continue
+            if "f_locals" in _grep_line_content(grep_line):
+                owned.append(grep_line)
+                continue
+            if not start <= number <= end:
+                continue
+            if _grep_paths_equal(finding_file, path):
+                owned.append(grep_line)
+        if owned:
+            filtered[strategy] = owned
+    return GrepSearchResults(
+        filtered,
+        truncated_strategies=getattr(results, "truncated_strategies", frozenset()),
+    )
 
 
 def _filter_typescript_binding_evidence(
@@ -460,6 +511,8 @@ def _filter_typescript_binding_evidence(
 def _search_verification_evidence(
     finding, project_root, *, search_all_strategies=False
 ):
+    if _finding_language(finding) in {"ruby", "swift", "csharp"}:
+        return GrepSearchResults({})
     if search_all_strategies and _finding_language(finding) == "python":
         # Search every strategy; retained evidence is still bounded. A lost
         # match must not silently become a negative ownership conclusion.
@@ -657,10 +710,8 @@ def _grep_verify_findings_batched(
         if time.monotonic() >= deadline:
             incomplete_reason = "budget_exhausted"
         else:
-            batch_verdicts, batch_verified, batch_reason = (
-                _execute_pending_findings(
-                    pending, project_root, cache, deadline, evidence_filter
-                )
+            batch_verdicts, batch_verified, batch_reason = _execute_pending_findings(
+                pending, project_root, cache, deadline, evidence_filter
             )
             verdicts.update(batch_verdicts)
             verified.update(batch_verified)

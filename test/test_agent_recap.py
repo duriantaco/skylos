@@ -1,3 +1,4 @@
+import pytest
 import io
 import json
 from argparse import Namespace
@@ -191,3 +192,19 @@ def test_doctor_activity_line(tmp_path):
     with log.open("a") as fh:
         fh.write(json.dumps({"ts": _ts(0.1), "event": "pre-bash", "outcome": "block", "packages": 1, "findings": 1}) + "\n")
     assert hook_activity_line(repo).endswith("1 blocked or sent back in the last 7 days (skylos agent recap)")
+
+
+@pytest.mark.parametrize(
+    "kinds, expected",
+    [
+        (["malware"], "install_malware"),
+        (["hallucinated", "malware"], "install_malware"),
+        (["too_new"], "install_too_new"),
+        (["provenance", "too_new"], "install_provenance"),
+        (["hallucinated"], "install_hallucinated"),
+        ("malware", "install_hallucinated"),
+    ],
+)
+def test_blocked_installs_are_counted_by_what_was_wrong(kinds, expected):
+    record = {"event": "pre-bash", "outcome": "block", "packages": 1, "findings": 1, "finding_kinds": kinds}
+    assert classify(record) == expected

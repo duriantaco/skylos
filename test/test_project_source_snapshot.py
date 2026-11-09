@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from skylos.rules.danger import project_source
+from skylos.rules.danger.source_owned_code import source_owned_code_calls
 
 
 def _source(root, relative, text):
@@ -140,3 +141,45 @@ def test_snapshot_root_resolution_failure_is_not_a_safety_proof(tmp_path, monkey
     trees, complete = project_source.project_source_snapshot(tmp_path)
     assert not complete
     assert not trees
+
+
+def _owned_runner(root):
+    _source(root, "package/core.py", "value = 1\n")
+    path = _source(
+        root,
+        "runner.py",
+        "import ast\nfrom pathlib import Path\n"
+        "SOURCE = Path(__file__).parent / 'package' / 'core.py'\n"
+        "def run():\n"
+        "    tree = ast.parse(SOURCE.read_text())\n"
+        "    exec(compile(tree, 'core.py', 'exec'), {})\n",
+    )
+    return path, ast.parse(path.read_text())
+
+
+def test_adding_a_reader_monkeypatch_revokes_source_execution_proof(tmp_path):
+    path, tree = _owned_runner(tmp_path)
+    assert source_owned_code_calls(tree, path, tmp_path)
+
+    _source(
+        tmp_path,
+        "patcher.py",
+        "from pathlib import Path\nPath.read_text = replacement\n",
+    )
+    assert not source_owned_code_calls(tree, path, tmp_path)
+
+
+def test_same_size_rewrite_revokes_source_execution_proof(tmp_path):
+    path, tree = _owned_runner(tmp_path)
+    benign = "from pathlib import Path\nreader = None\n"
+    mutation = "from pathlib import Path\nPath.read_text = replacement\n"
+    size = max(len(benign), len(mutation))
+    patcher = _source(tmp_path, "patcher.py", benign.ljust(size))
+    assert source_owned_code_calls(tree, path, tmp_path)
+    stat = patcher.stat()
+
+    patcher.write_text(mutation.ljust(size))
+    os.utime(patcher, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    assert patcher.stat().st_size == stat.st_size
+    assert patcher.stat().st_mtime_ns == stat.st_mtime_ns
+    assert not source_owned_code_calls(tree, path, tmp_path)

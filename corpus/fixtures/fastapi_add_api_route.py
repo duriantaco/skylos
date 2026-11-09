@@ -8,3 +8,7 @@ async def read_items():
 
 
 app.add_api_route("/items", read_items, methods=["GET"])
+
+
+async def search_items():
+    return []

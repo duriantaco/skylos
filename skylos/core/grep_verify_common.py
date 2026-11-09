@@ -21,6 +21,8 @@ from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from skylos.core.notebook_sources import is_notebook, notebook_code_names
+
 from skylos.core.file_discovery import (
     _exclude_candidates,
     list_git_visible_files,
@@ -36,9 +38,12 @@ _TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
 _GO_EXTS = {".go"}
 _JAVA_EXTS = {".java"}
 _CPP_EXTS = {".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx"}
-_PHP_EXTS = {".php"}
+_PHP_EXTS = {".php", ".module", ".install", ".inc", ".theme", ".profile", ".engine"}
 _RUST_EXTS = {".rs"}
+_RUBY_EXTS = {".rb"}
+_SWIFT_EXTS = {".swift"}
 _DART_EXTS = {".dart"}
+_CSHARP_EXTS = {".cs"}
 _KOTLIN_EXTS = {".kt", ".kts"}
 
 _ALL_SOURCE_GLOBS = [
@@ -60,6 +65,12 @@ _ALL_SOURCE_GLOBS = [
     "*.hxx",
     "*.h",
     "*.php",
+    "*.module",
+    "*.install",
+    "*.inc",
+    "*.theme",
+    "*.profile",
+    "*.engine",
     "*.rs",
     "*.dart",
     "*.kt",
@@ -83,7 +94,10 @@ _LANG_GLOBS: dict[str, list[str]] = {
     "cpp": ["*.cpp", "*.cc", "*.cxx", "*.hpp", "*.hh", "*.hxx", "*.h"],
     "php": ["*.php"],
     "rust": ["*.rs"],
+    "ruby": ["*.rb"],
+    "swift": ["*.swift"],
     "dart": ["*.dart"],
+    "csharp": ["*.cs"],
     "kotlin": ["*.kt", "*.kts"],
 }
 
@@ -131,7 +145,7 @@ _DEFAULT_GREP_GLOBS = (
 )
 _GREP_EVIDENCE_SUFFIXES = frozenset(
     {glob[1:].lower() for glob in _ALL_SOURCE_GLOBS if glob.startswith("*.")}
-    | {".go", ".java", ".php", ".rs", ".dart", ".kt", ".kts"}
+    | {".go", ".java", ".php", ".rs", ".dart", ".cs", ".kt", ".kts"}
 )
 # Python's classifier must preserve the same leftmost-first semantics as each
 # original ripgrep pattern. Keep this translation deliberately narrow: an
@@ -308,8 +322,14 @@ def detect_language(file_path: str) -> str:
         return "php"
     if ext in _RUST_EXTS:
         return "rust"
+    if ext in _RUBY_EXTS:
+        return "ruby"
+    if ext in _SWIFT_EXTS:
+        return "swift"
     if ext in _DART_EXTS:
         return "dart"
+    if ext in _CSHARP_EXTS:
+        return "csharp"
     if ext in _KOTLIN_EXTS:
         return "kotlin"
     return "python"
@@ -392,7 +412,7 @@ def _ripgrep_command(request: GrepRequest, rg: str) -> list[str]:
         cmd.append("-F")
     for glob in request.include_globs:
         cmd.extend(["-g", glob])
-    for directory in (*_GREP_EXCLUDE_DIRS, *_scope_prune_names()):
+    for directory in _backend_prune_names(request.project_root):
         cmd.extend(["-g", f"!**/{directory}/**"])
     return cmd
 
@@ -537,6 +557,18 @@ def _scope_prune_names() -> tuple[str, ...]:
     return scope.prune_names if scope is not None else ()
 
 
+def _backend_prune_names(project_root: str) -> tuple[str, ...]:
+    # Backends run from a trusted binary directory and match absolute paths.
+    # An ancestor collision would prune the explicit target itself; leave
+    # these exclusions to the scope-aware result filter instead.
+    target = os.path.abspath(project_root).replace("\\", "/").rstrip("/") + "/"
+    return tuple(
+        directory
+        for directory in (*_GREP_EXCLUDE_DIRS, *_scope_prune_names())
+        if not fnmatch.fnmatchcase(target, "*/" + directory.replace("\\", "/") + "/**")
+    )
+
+
 _GREP_PRUNE_DEPTH = 3
 _GLOB_METACHARACTERS = frozenset("*?[]{}\\")
 
@@ -646,8 +678,17 @@ def grep_verification_scope(
 
 
 def _is_ignored_grep_path(path: str) -> bool:
+    scope = _GREP_SCOPE.get()
+    ignored_path = path
+    if scope is not None:
+        try:
+            ignored_path = str(Path(path).relative_to(scope.root))
+        except ValueError:
+            pass
     components = [
-        component for component in path.replace("\\", "/").split("/") if component
+        component
+        for component in ignored_path.replace("\\", "/").split("/")
+        if component
     ]
     ignored_names = {
         ".git",
@@ -665,7 +706,6 @@ def _is_ignored_grep_path(path: str) -> bool:
         for component in components
     ):
         return True
-    scope = _GREP_SCOPE.get()
     return scope is not None and scope.excludes(path)
 
 
@@ -895,7 +935,7 @@ def _grep_fallback_command(
     grep: str,
     target: str,
 ) -> list[str]:
-    grep_flags = ["-rn", "--null"]
+    grep_flags = ["-rn", "-H", "--null"]
     if request.fixed_string:
         grep_flags.append("-F")
     elif request.use_regex:
@@ -905,8 +945,9 @@ def _grep_fallback_command(
     for glob in request.include_globs:
         includes.extend(["--include", glob])
     excludes: list[str] = []
-    scope_names = (name for name in _scope_prune_names() if "/" not in name)
-    for directory in (*_GREP_EXCLUDE_DIRS, *scope_names):
+    for directory in _backend_prune_names(target):
+        if "/" in directory:
+            continue
         excludes.extend(["--exclude-dir", directory])
     return [
         grep,
@@ -2344,13 +2385,17 @@ def _read_python_grep_bytes(
         total = 0
         while True:
             if _deadline_expired(deadline):
-                raise _GrepDeadlineExceeded("deadline exceeded while reading grep files")
+                raise _GrepDeadlineExceeded(
+                    "deadline exceeded while reading grep files"
+                )
             chunk = os.read(file_fd, min(1024 * 1024, max_bytes - total + 1))
             if not chunk:
                 break
             total += len(chunk)
             if total > max_bytes:
-                raise _PythonCorpusTooLarge("in-process grep corpus exceeds its byte cap")
+                raise _PythonCorpusTooLarge(
+                    "in-process grep corpus exceeds its byte cap"
+                )
             chunks.append(chunk)
         return b"".join(chunks)
     finally:
@@ -2522,8 +2567,10 @@ def _python_grep_needs_exact_search(
             return True
         if check_case and not line.isascii():
             return True
-        if check_word and not line.isascii() and _rust_and_python_word_classes_can_differ(
-            line, deadline=deadline
+        if (
+            check_word
+            and not line.isascii()
+            and _rust_and_python_word_classes_can_differ(line, deadline=deadline)
         ):
             return True
     return False
@@ -2560,11 +2607,10 @@ def _run_python_grep_batch(
             candidates = _python_grep_candidate_lines(
                 corpus, _required_literal(request), deadline
             )
-            if _python_grep_needs_exact_search(
-                request, corpus, candidates, deadline
-            ):
+            if _python_grep_needs_exact_search(request, corpus, candidates, deadline):
                 direct.append(request)
                 continue
+
             def matches() -> Iterator[_GrepMatch]:
                 for line_index in candidates:
                     yield _GrepMatch(
@@ -2572,6 +2618,7 @@ def _run_python_grep_batch(
                         line_number=corpus.line_numbers[line_index],
                         content=_python_grep_line(corpus, line_index),
                     )
+
             classified = _classify_grep_request(
                 request, matches(), None, deadline=deadline
             )
@@ -2946,6 +2993,8 @@ def _python_line_has_name_token(grep_line: str, simple_name: str) -> bool:
 
 def _is_python_source_reference(grep_line: str, simple_name: str) -> bool:
     path = _grep_line_path(grep_line)
+    if path and is_notebook(path):
+        return simple_name in notebook_code_names(path)
     if path and Path(path).suffix.lower() not in _PYTHON_EXTS:
         return False
     return _python_line_has_name_token(grep_line, simple_name)

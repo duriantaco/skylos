@@ -13,6 +13,14 @@ from skylos.rules.sca.lockfile_types import (
     LockfileInventory,
     LockfileLimitError,
     LockfileParseError,
+    not_checked_source,
+)
+from skylos.rules.sca.package_sources import (
+    MAX_SOURCE_RECORDS,
+    SOURCE_GIT,
+    SOURCE_URL,
+    npm_registry_for,
+    source_record,
 )
 
 _MAX_BYTES = 10_000_000
@@ -183,6 +191,40 @@ def _source(entry: dict, name: str) -> tuple[str, str | None]:
     if not tarball.startswith(name + "/-/") or not tarball.endswith(".tgz"):
         return source_type, "unverified_registry_identity"
     return source_type, None
+
+
+def _integrity(entry: dict) -> str | None:
+    value = entry.get("integrity")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _add_source_record(inventory, entry, name, version, source_type, path, line, *, direct):
+    if source_type not in ("git", "external"):
+        return
+    url = entry.get("resolved")
+    if not isinstance(url, str):
+        url = entry.get("version")
+    kind = SOURCE_URL
+    if source_type == "git":
+        kind = SOURCE_GIT
+    if kind == SOURCE_URL and isinstance(url, str) and not url.startswith(("http://", "https://")):
+        return
+    record = source_record(
+        ecosystem="npm",
+        name=name,
+        version=version,
+        kind=kind,
+        url=url,
+        file=str(path),
+        line=line,
+        integrity=_integrity(entry),
+        direct=direct,
+        dev=entry.get("dev") is True,
+    )
+    if record is not None and len(inventory.source_records) < MAX_SOURCE_RECORDS:
+        inventory.source_records.append(record)
 
 
 def _declarations(entry: dict, *, legacy=False):
@@ -464,7 +506,17 @@ def parse_package_lock(
             problem["version"] = exact_version
         source_type, source_error = _source(entry, name)
         if source_error:
-            unresolved(source_error, source_type)
+            if source_error == "non_registry_source":
+                non_registry_names.update((name, installed_name))
+                inventory.not_checked.append(
+                    not_checked_source(problem, source_error, source_type)
+                )
+            else:
+                unresolved(source_error, source_type)
+            _add_source_record(
+                inventory, entry, name, exact_version, source_type, path, line,
+                direct=location in direct,
+            )
             continue
         if exact_version is None:
             reason = (
@@ -509,7 +561,10 @@ def parse_package_lock(
             "dependency_dev": entry.get("dev") is True,
             "source_type": source_type,
             "dependencies": edges,
+            "registry": npm_registry_for(source_type),
         }
+        if source_type == "npm_registry" and entry.get("inBundle") is not True:
+            dependency["integrity"] = _integrity(entry)
         if location in direct:
             dependency["dependency_roots"] = sorted(
                 {root for root, _ in direct[location]}

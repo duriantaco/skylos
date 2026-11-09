@@ -6,7 +6,7 @@ Each eligible finding gets ``metadata["verification"]``:
   are recorded but can never demote it.
 - ``ai_verified``: a majority of independent AI runs judged it real.
 - ``refuted``: every run refuted it with a code-level safety proof (kind and
-  line numbers). The only level allowed to stop a finding from blocking.
+  line numbers). Shown as a likely false positive; it still blocks.
 - ``unverified``: the runs did not agree. Still blocking.
 
 Findings that were not checked (no model, over budget, unsupported language,
@@ -265,6 +265,8 @@ def verify_security_findings(
                 line_count=line_count, runs=runs,
             )
             record["model"] = model
+            if not any(votes[id(finding)]):
+                record["answered"] = 0
             _metadata(finding)[VERIFICATION_KEY] = record
             counts[record["level"]] += 1
     return counts

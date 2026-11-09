@@ -61,6 +61,9 @@ def _with_finding_type_metadata(result, *, strict=False):
     expected.setdefault("analysis_summary", {})["finding_type_counts"] = (
         summarize_finding_types(expected)
     )
+    from skylos.reporting.top_risks import add_report_guidance
+
+    add_report_guidance(expected, config={})
     return expected
 
 
@@ -863,7 +866,7 @@ def test_apply_display_filters_severity_filters_without_crashing():
         {"severity": "MEDIUM", "file": "src/b.py", "message": "medium"},
         {"severity": "HIGH", "file": "src/c.py", "message": "high"},
     ]
-    assert filtered["unused_functions"] == result["unused_functions"]
+    assert filtered["unused_functions"] == []
     assert filtered["analysis_summary"]["total_files"] == 1
     assert filtered["analysis_summary"]["quality_count"] == 2
 
@@ -1165,7 +1168,7 @@ def test_rich_summary_counts_architecture_advisories_separately():
     printed = "\n".join(
         str(call.args[0]) for call in console.print.call_args_list if call.args
     )
-    assert "Quality: 0" in printed
+    assert "Quality: " not in printed
     assert "Architecture advisories: 1" in printed
 
 
@@ -1584,12 +1587,12 @@ def test_render_results_includes_ai_defect_summary_and_table():
         ],
     }
 
-    cli.render_results(console, result, tree=False, root_path="/root")
+    cli.render_results(console, result, tree=False, root_path="/root", verbose=True)
 
     printed = "\n".join(
         str(call.args[0]) for call in console.print.call_args_list if call.args
     )
-    assert "AI defects: 1" in printed
+    assert "SKY-L012" in printed and "blocks the gate" in printed
     console.rule.assert_any_call("[bold]AI Code")
 
     tables = [
@@ -1642,7 +1645,7 @@ def test_render_results_includes_unused_files_in_summary_and_table():
     )
 
     rendered = output.getvalue()
-    assert "Unused files: 1" in rendered
+    assert "Dead code: 1 file" in rendered
     assert "Unused Files" in rendered
     assert "SKY-E003" in rendered
     assert "src/unused.js:1" in rendered
@@ -1712,7 +1715,7 @@ def test_render_results_ai_defect_message_is_visible_at_narrow_terminal_width():
 
     rendered = output.getvalue()
     assert "AI Code" in rendered
-    assert "Review" in rendered
+    assert "Needs review" in rendered
     assert "Call to a missing" in rendered
     assert "local helper" in rendered
     assert "security.require_" in rendered
@@ -1802,9 +1805,8 @@ def test_render_results_unused_table_keeps_confidence_in_readable_message():
     for col in t.columns:
         headers.append(col.header)
 
-    assert "Type" in headers and "Severity" in headers
+    assert "Type" not in headers and "Severity" in headers
     columns = {column.header: list(column._cells) for column in t.columns}
-    assert columns["Type"] == ["Review", "Review", "Review"]
     for message, confidence in zip(columns["Message"], (95, 80, 50)):
         assert f"Confidence: {confidence}%" in message
 
@@ -1849,7 +1851,7 @@ def test_render_results_unused_table_includes_compact_dead_code_reason():
 
     table = tables[0]
     headers = [column.header for column in table.columns]
-    assert "Type" in headers and "Severity" in headers
+    assert "Type" not in headers and "Severity" in headers
     message_col = next(column for column in table.columns if column.header == "Message")
     assert "Evidence: uncertain · no refs · not exported" in list(message_col._cells)[0]
 
@@ -1871,7 +1873,7 @@ def test_render_results_shows_grep_verify_summary():
         "secrets": [],
     }
 
-    cli.render_results(console, result, tree=False, root_path="/root")
+    cli.render_results(console, result, tree=False, root_path="/root", verbose=True)
 
     printed = "\n".join(
         str(call.args[0]) for call in console.print.call_args_list if call.args
@@ -1935,7 +1937,7 @@ def test_render_results_shows_analysis_errors_without_grade():
         "secrets": [],
     }
 
-    cli.render_results(console, result, tree=False, root_path="/root")
+    cli.render_results(console, result, tree=False, root_path="/root", verbose=True)
 
     tables = [
         call.args[0]
@@ -2706,8 +2708,20 @@ def test_main_json_upload_calls_upload_report_quiet(
         "analyzer_owned": True,
         "gitlab_full_scan": False,
     }
-    mock_print.assert_called_once()
-    printed_payload = json.loads(mock_print.call_args.args[0])
+    stdout_calls = [
+        call
+        for call in mock_print.call_args_list
+        if call.kwargs.get("file", sys.stdout) is sys.stdout
+    ]
+    assert len(stdout_calls) == 1
+    assert [
+        call.args[0]
+        for call in mock_print.call_args_list
+        if call.kwargs.get("file") is sys.stderr
+    ] == [
+        f"View Cloud gate and results: {BASE_URL.rstrip('/')}/dashboard/scans/fixture-scan"
+    ]
+    printed_payload = json.loads(stdout_calls[0].args[0])
     assert (
         printed_payload["analysis_summary"]
         == _with_finding_type_metadata(result)["analysis_summary"]
@@ -3218,7 +3232,7 @@ def test_main_rich_output_writes_report_file(monkeypatch, tmp_path):
 
     output = output_path.read_text(encoding="utf-8")
     assert "Static Analysis Results" in output
-    assert "0 defects · 1 review · 0 advice in 0 groups" in output
+    assert "1 issue: dead code 1" in output
     assert "Unused Functions" in output
     assert "dead" in output
 
@@ -3442,6 +3456,11 @@ def test_main_circular_dependency_reporting_and_exit_codes(
         if output_format == "rich":
             assert "Circular Dependencies" in report
             assert "pkg.left → pkg.right → pkg.left" in report
+        elif output_format == "pretty":
+            assert report.count("SKY-CIRC") == 2
+            assert "Top risks" in report.split("SKY-CIRC")[0]
+            assert "pkg/left.py:4" in report
+            assert cycle["message"] in report
         else:
             assert report.count("SKY-CIRC") == 1
             assert "pkg/left.py:4" in report
@@ -3608,8 +3627,24 @@ def test_main_json_sca_operational_status_controls_exit_and_upload(
             "quality_gate": {"passed": True},
         }
     )
-    mock_print.assert_called_once()
-    printed = json.loads(mock_print.call_args.args[0])
+    stdout_calls = [
+        call
+        for call in mock_print.call_args_list
+        if call.kwargs.get("file", sys.stdout) is sys.stdout
+    ]
+    assert len(stdout_calls) == 1
+    assert [
+        call.args[0]
+        for call in mock_print.call_args_list
+        if call.kwargs.get("file") is sys.stderr
+    ] == (
+        []
+        if expected_exit
+        else [
+            f"View Cloud gate and results: {BASE_URL.rstrip('/')}/dashboard/scans/fixture-sca-scan"
+        ]
+    )
+    printed = json.loads(stdout_calls[0].args[0])
     gate = printed.pop("gate", None)
     assert printed == expected
     if gate_args:
@@ -4533,7 +4568,7 @@ class TestDiffFlag:
             patch("skylos.cli.subprocess.run") as mock_git,
             patch("builtins.print", side_effect=lambda x: captured_output.append(x)),
         ):
-            mock_git.return_value = Mock(returncode=0, stdout="src/app.py\n")
+            mock_git.side_effect = _fake_git("src/app.py\0")
             cli.main()
 
         output = json.loads(captured_output[0])
@@ -4636,7 +4671,7 @@ class TestDiffFlag:
             patch("skylos.cli.subprocess.run") as git_diff,
             patch("builtins.print", side_effect=lambda value: printed.append(value)),
         ):
-            git_diff.side_effect = _fake_git("src/dead.py\n")
+            git_diff.side_effect = _fake_git("src/dead.py\0")
             cli.main()
 
         diff_calls = [

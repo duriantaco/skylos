@@ -133,7 +133,7 @@ jobs:
 
 def print_free_plan_setup_summary(*, has_git: bool) -> None:
     print("=" * 60)
-    print("\n Workspace plan features (buying any credit pack turns them on):\n")
+    print("\n skylos sync setup installs these on the Workspace plan only:\n")
 
     if has_git:
         print("  🔒 Git hooks - Block bad code on push")
@@ -147,6 +147,8 @@ def print_free_plan_setup_summary(*, has_git: bool) -> None:
     print(" What you can do now:\n")
     print("  • Run local scans:")
     print("    $ skylos .\n")
+    print("  • Add the PR check and merge gate (free on every plan):")
+    print("    $ skylos cicd init\n")
     print("  • View results in dashboard:")
     print("    https://skylos.dev/dashboard\n")
     print("=" * 60 + "\n")

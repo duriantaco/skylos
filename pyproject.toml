@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
-version = "4.50.1"
-requires-python = ">=3.10"
+version = "5.4.0"
+requires-python = ">=3.11"
 description = "Python dead code, security and secrets scanner with a pull-request gate; narrower checks for TypeScript, Java and more."
 authors = [{name = "Aaron Oh", email = "aaronoh2015@gmail.com"}]
 readme = "README.md"
@@ -63,7 +63,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -77,6 +76,7 @@ dependencies = [
     "inquirer>=3.1.0",
     "libcst>=1.8.2",
     "rich>=14.0.0",
+    "markdown-it-py>=2.2.0",
     "textual>=1.0.0",
     "keyring>=25.6.0,!=3.4.2",
     "requests",
@@ -88,11 +88,14 @@ dependencies = [
     "tree-sitter-php>=0.24.1,<0.25",
     "tree-sitter-rust>=0.24.2,<0.25",
     "tree-sitter-cpp>=0.23.4,<0.24",
+    "tree-sitter-ruby>=0.23.1,<0.24",
+    "tree-sitter-swift>=0.7.4,<0.8",
+    "python-hcl2>=8.1.4,<9",
     "tomli>=2.0.1; python_version < '3.11'",
     "pyyaml",
     "networkx",
     "pyperclip",
-    "ca9>=0.6.0",
+    "ca9>=0.7.0",
     "mcp>=1.0.0,<2"
 ]
 
@@ -105,16 +108,17 @@ Source = "https://github.com/duriantaco/skylos"
 "MCP server" = "https://docs.skylos.dev/mcp-server"
 
 [project.optional-dependencies]
-llm = ["litellm>=1.84.0,<1.89.0", "aiohttp>=3.14.0"]
+llm = ["litellm>=1.84.0,<1.107.0", "aiohttp>=3.14.0", "filelock>=4.2.1"]
 lint = ["ruff>=0.15.0"]
 test = ["pytest>=9.0.2", "packaging>=24.2"]
 verdict = ["cryptography>=42"]
 # Dart parsing; this grammar ships no wheels, so installing it compiles C.
 dart = ["tree-sitter-dart-orchard>=0.3.2,<0.6"]
 all = [
+    "filelock>=4.2.1",
     "pytest>=9.0.2",
     "packaging>=24.2",
-    "litellm>=1.84.0,<1.89.0",
+    "litellm>=1.84.0,<1.107.0",
     "aiohttp>=3.14.0",
     "ruff>=0.15.0",
     "cryptography>=42",
@@ -141,6 +145,8 @@ namespaces = false
 # GitHub Actions context capabilities (generated from Octokit's webhook
 # schemas, MIT), action inputs that run code, and their NOTICE.
 "skylos.rules.config.cicd" = ["data/*.json", "data/NOTICE.txt"]
+# The local `skylos graph open` viewer page.
+"skylos.graph.viewer" = ["index.html", "app.js", "app.css"]
 [tool.skylos]
 complexity = 10
 nesting = 3

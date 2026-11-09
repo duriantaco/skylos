@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from skylos.analyzer import analyze
 from skylos.core.gatekeeper import check_gate
 
@@ -70,5 +72,76 @@ def test_operator_redirect_input_is_unknown_not_a_remote_source(tmp_path):
     )
     assert not any(r["rule_id"] == "SKY-D230" for r in result.get("danger", []))
     rows = [r for r in result.get("suppressed", []) if r["rule_id"] == "SKY-D230"]
+    assert len(rows) == 1
+    assert rows[0]["metadata"]["redirect_provenance"]["status"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "self.redirect(self.get_argument('next', '/'))",
+        "target = self.get_argument('next', '/')\n        self.redirect(target.strip())",
+    ],
+)
+def test_native_tornado_request_source_survives_project_policy(tmp_path, body):
+    result = _scan(
+        tmp_path,
+        {
+            "app.py": "import tornado\nclass Login(tornado.web.RequestHandler):\n"
+            "    def get(self):\n        " + body + "\n"
+        },
+    )
+    rows = [row for row in result.get("danger", []) if row["rule_id"] == "SKY-D230"]
+    assert len(rows) == 1
+    assert rows[0]["metadata"]["source_status"] == "untrusted"
+    assert (
+        rows[0]["metadata"]["redirect_source_proof"]["kind"]
+        == "native_framework_request"
+    )
+    assert not check_gate(result, {"gate": {"max_high": 0}})[0]
+
+
+def test_unrelated_tornado_read_does_not_promote_a_generic_target(tmp_path):
+    result = _scan(
+        tmp_path,
+        {
+            "app.py": "import tornado\nclass Login(tornado.web.RequestHandler):\n"
+            "    def finish(self, target):\n"
+            "        unused = self.get_argument('next', '/')\n"
+            "        self.redirect(target)\n"
+        },
+    )
+    assert not [row for row in result.get("danger", []) if row["rule_id"] == "SKY-D230"]
+    rows = [row for row in result.get("suppressed", []) if row["rule_id"] == "SKY-D230"]
+    assert len(rows) == 1
+    assert rows[0]["metadata"]["redirect_provenance"]["status"] == "unknown"
+    assert rows[0]["metadata"]["redirect_provenance"]["safety_proven"] is False
+
+
+def test_native_location_assignment_source_survives_project_policy(tmp_path):
+    result = _scan(
+        tmp_path,
+        {
+            "app.py": "from flask import request\ndef finish(response):\n"
+            "    response.headers['Location'] = request.args['next']\n"
+        },
+    )
+    rows = [row for row in result.get("danger", []) if row["rule_id"] == "SKY-D230"]
+    assert len(rows) == 1
+    assert rows[0]["metadata"]["source_status"] == "untrusted"
+    assert rows[0]["metadata"]["security_evidence"]["source"]
+
+
+def test_native_redirect_sink_does_not_promote_cli_input(tmp_path):
+    result = _scan(
+        tmp_path,
+        {
+            "cli.py": "import click\nfrom starlette.responses import RedirectResponse\n"
+            "@click.command()\n@click.argument('target')\ndef finish(target):\n"
+            "    return RedirectResponse(target)\n"
+        },
+    )
+    assert not [row for row in result.get("danger", []) if row["rule_id"] == "SKY-D230"]
+    rows = [row for row in result.get("suppressed", []) if row["rule_id"] == "SKY-D230"]
     assert len(rows) == 1
     assert rows[0]["metadata"]["redirect_provenance"]["status"] == "unknown"

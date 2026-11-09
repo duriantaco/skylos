@@ -158,7 +158,6 @@ def build_verify_change_response(
 ) -> dict[str, Any]:
     root = _project_root(project_root)
     parsed_range = _coerce_line_range(line_range)
-    scope_file = _scope_file(target_file, scan_target, root)
     findings: list[dict[str, Any]] = []
 
     for finding, category in _iter_ai_findings(
@@ -166,7 +165,7 @@ def build_verify_change_response(
         include_security_findings=include_security_findings,
         include_quality_rule_ids=include_quality_rule_ids,
     ):
-        if not _matches_target(finding, root, scope_file):
+        if not _matches_target(finding, root, target_file):
             continue
         if not _matches_line_range(finding, parsed_range):
             continue
@@ -238,7 +237,7 @@ def _iter_ai_findings(
             if _is_ai_finding(finding):
                 yield finding, category
             elif (
-                category in {"quality", "security"}
+                category == "quality"
                 and _finding_value(finding, ("rule_id", "rule"), "")
                 in include_quality_rule_ids
             ):
@@ -418,48 +417,21 @@ def _dependency_bump_declaration_span(
     return start, end
 
 
-def _scope_file(
-    target_file: str | Path | None,
-    scan_target: str | Path | None,
-    root: Path,
-) -> Path | None:
-    """The one file a response may report on: ``--file``, or a positional file.
-
-    Repo-wide passes still run from the project root for a single file, so
-    their findings in other files must not reach that file's response.
-    """
-    if target_file is not None:
-        return _absolute_path(target_file, root)
-    if scan_target is None:
-        return None
-    candidate = _absolute_path(scan_target, None)
-    if candidate.is_file():
-        return candidate
-    return None
-
-
 def _matches_target(
     finding: dict[str, Any],
     root: Path,
-    scope_file: Path | None,
+    target_file: str | Path | None,
 ) -> bool:
-    if scope_file is None:
+    if target_file is None:
         return True
 
     finding_file = _finding_value(finding, ("file", "file_path"), None)
     if not finding_file:
         return False
-    return _absolute_path(finding_file, root) == scope_file
 
-
-def _absolute_path(path: str | Path, root: Path | None) -> Path:
-    raw = Path(str(path)).expanduser()
-    if not raw.is_absolute() and root is not None:
-        raw = root / raw
-    try:
-        return raw.resolve()
-    except OSError:
-        return raw.absolute()
+    finding_keys = _file_keys(finding_file, root)
+    target_keys = _file_keys(target_file, root)
+    return finding_keys & target_keys != set()
 
 
 def _matches_line_range(
@@ -478,6 +450,23 @@ def _matches_line_range(
     if declaration_span is not None:
         line, finding_end = declaration_span
     return not (finding_end < start or line > end)
+
+
+def _file_keys(path: str | Path, root: Path) -> set[str]:
+    raw = Path(path)
+    keys = {str(raw).replace("\\", "/")}
+    try:
+        if raw.is_absolute():
+            resolved = raw
+        else:
+            resolved = root / raw
+
+        absolute = resolved.resolve()
+        keys.add(str(absolute).replace("\\", "/"))
+        keys.add(str(absolute.relative_to(root)).replace("\\", "/"))
+    except (OSError, ValueError):
+        pass
+    return keys
 
 
 def _relative_file(path: Any, root: Path) -> str:

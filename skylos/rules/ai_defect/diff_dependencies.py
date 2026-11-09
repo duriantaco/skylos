@@ -23,6 +23,8 @@ from skylos.rules.ai_defect.dependency_hallucination import (
     _pyproject_dependency_metadata,
     scan_diff_added_imports,
 )
+from skylos.rules.ai_defect.js_api_hallucination import JS_SOURCE_SUFFIXES
+from skylos.rules.ai_defect.js_diff_imports import scan_diff_js_added_imports
 from skylos.rules.ai_defect.manifest_dependency_hallucination import (
     RULE_ID_DEPENDENCY_HALLUCINATION,
     RULE_ID_VERSION_HALLUCINATION,
@@ -48,6 +50,17 @@ _DIFF_FILE_RE = re.compile(r"^\+\+\+ b/(.+)$")
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)")
 
 _PY_SUFFIXES = (".py", ".pyi", ".pyw")
+_UNCHECKED_IMPORT_LANGUAGES = {
+    ".go": "Go",
+    ".java": "Java",
+    ".rs": "Rust",
+    ".php": "PHP",
+    ".dart": "Dart",
+    ".vue": "Vue",
+    ".svelte": "Svelte",
+    ".astro": "Astro",
+}
+_JS_UNCHECKED_LABEL = "JavaScript/TypeScript"
 
 _REQ_NAME_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)")
 _REQ_PIN_RE = re.compile(r"==\s*([A-Za-z0-9!+*._-]+)")
@@ -105,21 +118,29 @@ def scan_diff_dependency_hallucinations(
     *,
     import_scanner=None,
     status_checker=None,
+    js_import_scanner=None,
 ) -> dict[str, Any]:
     """Deterministic dependency-hallucination checks scoped to a unified diff.
 
-    Checks import statements added to Python files and dependency entries added
-    to manifests (requirements*.txt, pyproject.toml, package.json, go.mod)
-    against the package registries. Returns {"findings": [...],
-    "registry_unreachable": bool}; registry_unreachable=True means at least one
-    lookup could not be completed, so a "pass" is incomplete rather than clean.
+    Checks import statements added to Python and JavaScript/TypeScript files
+    and dependency entries added to manifests (requirements*.txt,
+    pyproject.toml, package.json, go.mod) against the package registries.
+    Returns {"findings": [...], "registry_unreachable": bool,
+    "unchecked_import_files": {language: file count}};
+    registry_unreachable=True means at least one lookup could not be
+    completed, so a "pass" is incomplete rather than clean.
+    unchecked_import_files counts changed files whose imports were not read.
     """
     if import_scanner is None:
         import_scanner = scan_diff_added_imports
     if status_checker is None:
         status_checker = check_dependency_version_status
+    if js_import_scanner is None:
+        js_import_scanner = scan_diff_js_added_imports
 
     added_imports: list[tuple[str, int, str]] = []
+    js_files: list[tuple[str, list[tuple[int, str]]]] = []
+    unchecked_import_files: dict[str, int] = {}
     local_roots: set[str] = set()
     manifest_specs: list[dict[str, Any]] = []
 
@@ -131,6 +152,15 @@ def scan_diff_dependency_hallucinations(
                 if mod:
                     added_imports.append((file_path, line_no, mod))
             continue
+        if file_path.endswith(JS_SOURCE_SUFFIXES):
+            if added_lines:
+                js_files.append((file_path, added_lines))
+            continue
+        language = _UNCHECKED_IMPORT_LANGUAGES.get(PurePosixPath(file_path).suffix)
+        if language and added_lines:
+            unchecked_import_files[language] = (
+                unchecked_import_files.get(language, 0) + 1
+            )
         manifest_specs.extend(
             _manifest_specs_for_file(file_path, added_lines, repo_root)
         )
@@ -160,7 +190,23 @@ def scan_diff_dependency_hallucinations(
     findings.extend(manifest_findings)
     registry_unreachable = registry_unreachable or manifest_unreachable
 
-    return {"findings": findings, "registry_unreachable": registry_unreachable}
+    if js_files:
+        js_result = js_import_scanner(
+            repo_root, js_files, status_checker=status_checker
+        )
+        findings.extend(js_result.get("findings") or [])
+        registry_unreachable = registry_unreachable or bool(
+            js_result.get("registry_unreachable")
+        )
+        unchecked_js = len(js_result.get("unchecked_files") or [])
+        if unchecked_js:
+            unchecked_import_files[_JS_UNCHECKED_LABEL] = unchecked_js
+
+    return {
+        "findings": findings,
+        "registry_unreachable": registry_unreachable,
+        "unchecked_import_files": unchecked_import_files,
+    }
 
 
 def _parse_added_lines(diff_text) -> list[tuple[str, list[tuple[int, str]]]]:
@@ -184,7 +230,7 @@ def _parse_added_lines(diff_text) -> list[tuple[str, list[tuple[int, str]]]]:
         if raw_line.startswith("+"):
             line_no += 1
             current_added.append((line_no, raw_line[1:]))
-        elif not raw_line.startswith("-"):
+        elif not raw_line.startswith(("-", "\\")):
             line_no += 1
 
     return files

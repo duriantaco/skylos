@@ -1,6 +1,0 @@
-[tool.skylos.done]
-type_checker = "tsc"
-
-[tool.skylos.done.checks]
-type_check = "block"
-tests_pass = "off"

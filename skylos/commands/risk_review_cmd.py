@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 EXIT_PASS = 0
 EXIT_NEEDS_HUMAN = 1
 EXIT_INCOMPLETE = 2
+HUMAN_APPROVAL_SENTENCE = (
+    "A person with write access approving the head commit turns this "
+    "check green; bot approvals and approvals of older commits do not."
+)
 
 _LISTED_RISKS = 50
 _LISTED_ADVICE = 20
@@ -34,6 +38,7 @@ def add_risk_review_parser(subparsers) -> None:
             "guardrail settings changed, migrations changed, a very large diff. "
             "In GitHub Actions, a change with risks passes once a person with "
             "write access approves its head commit; bot approvals do not count. "
+            "While it waits, the pull request carries the label skylos:needs-human. "
             "Settings come from [tool.skylos.approval] at the base. Exit 0 pass, "
             "1 needs a human approval, 2 could not decide."
         ),
@@ -95,20 +100,27 @@ def run_risk_review(args, *, console: Console | None = None) -> int:
         if problem:
             return _report_error(args.format, err, problem, base_ref=base_ref)
 
+    context = None
+    context_problem = None
+    if group is None:
+        context, context_problem = _pull_request()
     human = None
     if result.complete and result.vetoes:
-        human = (
-            _merge_group_approval(args.path, result, group)
-            if group is not None
-            else _human_approval(result)
-        )
+        if group is not None:
+            human = _merge_group_approval(args.path, result, group)
+        else:
+            human = _human_approval(result, context, context_problem)
     exit_code, verdict = decide(result, human)
+    label = None
+    if exit_code != EXIT_INCOMPLETE and (context is not None or context_problem):
+        label = _update_label(context, context_problem, exit_code == EXIT_NEEDS_HUMAN)
     payload = build_payload(
         result,
         human,
         exit_code=exit_code,
         verdict=verdict,
         merge_group=_merge_group_info(group, human),
+        label=label,
     )
 
     if args.format == "json":
@@ -181,18 +193,22 @@ def _event_base_ref() -> str | None:
     return ref if isinstance(ref, str) and ref else None
 
 
-def _human_approval(result: ApprovalResult):
-    from skylos.cicd.approval_github import (
-        GitHubApiError,
-        HumanApproval,
-        find_human_approval,
-        pull_request_context,
-    )
+def _pull_request():
+    """The pull request of this GitHub Actions run, or the reason its
+    context is unusable; (None, None) outside a pull-request run."""
+    from skylos.cicd.approval_github import GitHubApiError, pull_request_context
 
     try:
-        context = pull_request_context()
+        return pull_request_context(), None
     except GitHubApiError as exc:
-        return HumanApproval("error", detail=str(exc))
+        return None, str(exc)
+
+
+def _human_approval(result: ApprovalResult, context, problem):
+    from skylos.cicd.approval_github import HumanApproval, find_human_approval
+
+    if problem:
+        return HumanApproval("error", detail=problem)
     if context is None:
         return None  # a local run: report the risks only
     return find_human_approval(
@@ -200,6 +216,14 @@ def _human_approval(result: ApprovalResult):
         result.head,
         non_human_logins=result.config.non_human_logins,
     )
+
+
+def _update_label(context, problem, needed: bool):
+    from skylos.cicd.approval_github import LabelUpdate, update_needs_human_label
+
+    if context is None:
+        return LabelUpdate("failed", detail=problem)
+    return update_needs_human_label(context, needed)
 
 
 def decide(result: ApprovalResult, human) -> tuple[int, str]:
@@ -224,10 +248,14 @@ def build_payload(
     exit_code: int,
     verdict: str,
     merge_group: dict | None = None,
+    label=None,
 ) -> dict:
     from skylos import __version__
 
     config = result.config
+    label_info = None
+    if label is not None:
+        label_info = label.to_dict()
     payload = {
         "approval": {
             "schema": SCHEMA,
@@ -238,6 +266,7 @@ def build_payload(
             "complete": result.complete,
             "needs_human_approval": result.classes_found,
             "human_approval": human.to_dict() if human is not None else None,
+            "label": label_info,
             "vetoes": [risk.to_dict() for risk in result.vetoes],
             "advisories": [risk.to_dict() for risk in result.advisories],
             "classes_checked": list(result.classes_checked),
@@ -394,6 +423,8 @@ def _print_text(console: Console, payload: dict) -> None:
         )
     for line in merge_group_lines(data):
         console.print(Text(line), soft_wrap=True)
+    for line in label_lines(data):
+        console.print(Text(line), soft_wrap=True)
     if data["advisories"]:
         console.print()
         console.print(Text("Advice (needs no approval):", style="bold"))
@@ -451,6 +482,33 @@ def merge_group_lines(data: dict) -> list[str]:
             + (f" (head {str(head)[:12]})" if head else "")
         )
     return lines
+
+
+def label_lines(data: dict, *, markdown: bool = False) -> list[str]:
+    """What the run did to the pull request's ``skylos:needs-human`` label."""
+    label = data.get("label")
+    if not isinstance(label, dict):
+        return []
+    name = label.get("name") or "skylos:needs-human"
+    action = label.get("action")
+    if action == "added":
+        search = f"is:pr is:open label:{name}"
+        if markdown:
+            search = f"`{search}`"
+        return [
+            f"Added the {name} label to this pull request",
+            f"Find every pull request waiting on a person: {search}",
+        ]
+    if action == "removed":
+        return [f"Removed the {name} label from this pull request"]
+    if action == "failed":
+        detail = str(label.get("detail") or "unknown reason")
+        if markdown:
+            from skylos.cicd.evidence import sanitize_markdown_text
+
+            detail = sanitize_markdown_text(detail, max_length=300)
+        return [f"Could not update the {name} label: {detail}"]
+    return []
 
 
 def _risk_line(risk: dict) -> str:
@@ -513,10 +571,11 @@ def render_markdown(payload: dict) -> str:
                 "approvals and approvals of older commits do not."
             )
         else:
-            lines.append(
-                "A person with write access approving the head commit turns this "
-                "check green; bot approvals and approvals of older commits do not."
-            )
+            lines.append(HUMAN_APPROVAL_SENTENCE)
+        lines.append("")
+    labelled = label_lines(data, markdown=True)
+    if labelled:
+        lines += labelled
         lines.append("")
     for item in data["classes_incomplete"][:20]:
         lines.append(

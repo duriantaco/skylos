@@ -18,6 +18,8 @@ from skylos.rules.secrets import (
     _SECRET_KEY_NAME_RE,
     _entropy as _secret_entropy,
 )
+from skylos.rules.secret_key_material import private_jwk_member_names
+from skylos.rules.secret_records import redact_secret_records
 
 EvidenceLabel = Literal["proven", "likely", "speculative"]
 EvidenceKind = Literal[
@@ -51,7 +53,8 @@ _SECRET_PATTERNS = tuple(pattern for _, pattern in PROVIDER_PATTERNS) + (
     re.compile(r"\bsk_(?:live|test|proj)_[A-Za-z0-9_-]{8,}\b"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),
     re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b"),
-    re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
+    # Display masking deliberately stays broader than credential classification.
+    re.compile(r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|AIPA)[A-Z0-9]{16}\b"),
     re.compile(
         r"(?i)AWS_SECRET_ACCESS_KEY\s*[:=]\s*['\"]?"
         r"[A-Za-z0-9/+=]{40,}"
@@ -151,6 +154,7 @@ _RULE_SUGGESTIONS: dict[str, str] = {
     "SKY-D280": "Authenticate mutating API routes before performing protected actions.",
     "SKY-D281": "Use parameterized queries instead of building SQL with string interpolation.",
     "SKY-D282": "Use a webhook library or HMAC comparison that verifies the provider signature.",
+    "SKY-D283": "Require authentication (a dependency, decorator or middleware that rejects unauthenticated callers) on routes that control devices, delete data, administer or run commands.",
     "SKY-S101": "Move the secret to environment variables or a secrets manager, then rotate it.",
     "SKY-S102": "Move the secret to server-only code and rotate it; expose only non-sensitive values through public client configuration.",
 }
@@ -414,6 +418,7 @@ def sanitize_untrusted_text(
     )
     text = text[:scan_length]
     text = _remove_unsafe_unicode_controls(text)
+    text = redact_secret_records(text, _REDACTED_SENTINEL)
     text = _PEM_BLOCK_RE.sub(_PEM_REDACTED_SENTINEL, text)
     text = _PEM_REMAINDER_RE.sub(_PEM_REDACTED_SENTINEL, text)
     text = GENERIC_KEYED_VALUE.sub(_redact_contextual_secret_match, text)
@@ -524,6 +529,7 @@ def _sanitize_payload_mapping(
     budget: list[int],
 ) -> dict[str, Any]:
     result: dict[str, Any] = {}
+    private_members = private_jwk_member_names(value)
     for raw_key, raw_value in islice(value.items(), max_items):
         if budget[0] <= 0:
             break
@@ -534,6 +540,10 @@ def _sanitize_payload_mapping(
             neutralize_mentions=neutralize_mentions,
         )
         if not key:
+            continue
+        if raw_key in private_members:
+            result[key] = "[redacted]"
+            budget[0] -= 1
             continue
         sanitized = _sanitize_payload_value(
             raw_value,

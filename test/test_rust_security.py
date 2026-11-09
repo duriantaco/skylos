@@ -219,7 +219,7 @@ fn read_file(filename: String) {
     assert "SKY-D215" in _rule_ids(findings)
 
 
-def test_sanitized_path_sink_is_safe(tmp_path):
+def test_string_prefix_removal_does_not_prove_path_containment(tmp_path):
     findings = _scan_rust_findings(
         tmp_path,
         """
@@ -230,7 +230,8 @@ fn read_file(path: String) {
 }
 """,
     )
-    assert "SKY-D215" not in _rule_ids(findings)
+    # /srv/data/../../etc/passwd becomes /../../etc/passwd, outside the root.
+    assert [(f["rule_id"], f["line"]) for f in findings] == [("SKY-D215", 5)]
 
 
 def test_path_sanitized_with_file_name_is_safe(tmp_path):

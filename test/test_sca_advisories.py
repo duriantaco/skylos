@@ -267,3 +267,83 @@ def test_match_count_limit_is_explicit(monkeypatch):
     assert transport.gets == ["GHSA-test-one"]
     assert result.receipt["complete"] is False
     assert result.receipt["limit_reasons"] == ["advisory_match_limit_exceeded"]
+
+
+def alias_advisory(advisory_id, aliases, severity=None, name="example"):
+    document = advisory(advisory_id, name=name)
+    document["aliases"] = aliases
+    if severity is None:
+        document.pop("database_specific")
+    else:
+        document["database_specific"] = {"severity": severity}
+    return document
+
+
+def test_aliased_advisories_for_one_package_version_are_one_finding(monkeypatch):
+    transport = Transport(
+        [{"vulns": [{"id": "PYSEC-2026-4320"}, {"id": "GHSA-test-one"}]}],
+        documents={
+            "PYSEC-2026-4320": alias_advisory("PYSEC-2026-4320", ["GHSA-test-one"]),
+            "GHSA-test-one": alias_advisory(
+                "GHSA-test-one", ["PYSEC-2026-4320"], "CRITICAL"
+            ),
+        },
+    )
+    result = scan(monkeypatch, transport)
+    assert len(result) == 1
+    assert result[0]["rule_id"] == "SKY-SCA-GHSA-test-one"
+    assert result[0]["severity"] == "CRITICAL"
+    assert result[0]["metadata"]["aliases"] == ["PYSEC-2026-4320"]
+    assert result[0]["metadata"]["merged_advisory_ids"] == ["PYSEC-2026-4320"]
+    assert result.receipt["complete"] is True
+
+
+def test_alias_chains_merge_and_unrelated_advisories_stay_separate(monkeypatch):
+    transport = Transport(
+        [
+            {
+                "vulns": [
+                    {"id": "GHSA-aaaa-one"},
+                    {"id": "PYSEC-2026-1"},
+                    {"id": "OSV-2026-9"},
+                    {"id": "GHSA-bbbb-two"},
+                ]
+            }
+        ],
+        documents={
+            "GHSA-aaaa-one": alias_advisory(
+                "GHSA-aaaa-one", ["CVE-2026-11111"], "HIGH"
+            ),
+            "PYSEC-2026-1": alias_advisory(
+                "PYSEC-2026-1", ["CVE-2026-11111", "OSV-2026-9"]
+            ),
+            "OSV-2026-9": alias_advisory("OSV-2026-9", []),
+            "GHSA-bbbb-two": alias_advisory("GHSA-bbbb-two", ["CVE-2026-22222"], "LOW"),
+        },
+    )
+    result = scan(monkeypatch, transport)
+    assert [finding["rule_id"] for finding in result] == [
+        "SKY-SCA-GHSA-aaaa-one",
+        "SKY-SCA-GHSA-bbbb-two",
+    ]
+    assert result[0]["metadata"]["merged_advisory_ids"] == [
+        "OSV-2026-9",
+        "PYSEC-2026-1",
+    ]
+    assert result[0]["metadata"]["aliases"] == [
+        "CVE-2026-11111",
+        "OSV-2026-9",
+        "PYSEC-2026-1",
+    ]
+    assert "merged_advisory_ids" not in result[1]["metadata"]
+
+
+def test_the_same_advisory_on_two_package_versions_is_not_merged(monkeypatch):
+    transport = Transport(
+        [{"vulns": [{"id": "GHSA-test-one"}]}, {"vulns": [{"id": "GHSA-test-one"}]}],
+    )
+    result = scan(monkeypatch, transport, [dependency("1.0.0"), dependency("2.0.0")])
+    assert [finding["metadata"]["package_version"] for finding in result] == [
+        "1.0.0",
+        "2.0.0",
+    ]

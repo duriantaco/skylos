@@ -11,10 +11,23 @@ from ca9.models import Verdict, VersionRange, Vulnerability
 
 logger = logging.getLogger(__name__)
 
+TIER_USED = "used"
+TIER_IMPORTED = "imported"
+TIER_NOT_IMPORTED = "not_imported"
+TIER_UNREACHABLE = "unreachable"
+TIER_UNKNOWN = "unknown"
+MAX_CALL_SITES = 5
+
 
 def finding_to_vulnerability(finding: dict) -> Vulnerability | None:
-    """Convert a Skylos SCA finding dict to a ca9 Vulnerability."""
+    """Convert a Skylos SCA finding dict to a ca9 Vulnerability.
+
+    Malicious packages are never converted: their install scripts run whether
+    or not the code is imported, so a reachability verdict must not attach.
+    """
     meta = finding.get("metadata") or {}
+    if meta.get("malicious") is True:
+        return None
     vuln_id = meta.get("vuln_id")
     pkg_name = meta.get("package_name")
     pkg_version = meta.get("package_version")
@@ -62,6 +75,54 @@ def _parse_affected_range(range_str: str) -> tuple[VersionRange, ...]:
             ranges.append(VersionRange(introduced=introduced, fixed=fixed))
 
     return tuple(ranges)
+
+
+def reachability_tier(result) -> str:
+    """What the evidence shows about use, whichever file a fix commit touched.
+
+    A call to a listed vulnerable API counts as use even when ca9's verdict is
+    inconclusive: whether GitHub answered changes that verdict, not the call.
+    Only a declared direct dependency with a complete dependency graph and no
+    sign of indirect use can read as not imported; anything else stays unknown,
+    because a package's dependents and command-line tools use it without an
+    import in your code.
+    """
+    evidence = result.evidence
+    if evidence is None:
+        if result.verdict == Verdict.REACHABLE:
+            return TIER_USED
+        return TIER_UNKNOWN
+    if evidence.version_in_range is False:
+        return TIER_UNREACHABLE
+    if result.verdict == Verdict.REACHABLE or evidence.api_usage_hits:
+        return TIER_USED
+    if result.verdict in (Verdict.UNREACHABLE_STATIC, Verdict.UNREACHABLE_DYNAMIC):
+        return TIER_UNREACHABLE
+    if evidence.package_imported:
+        return TIER_IMPORTED
+    if (
+        evidence.declared_direct_dependency
+        and evidence.dependency_graph_available
+        and not evidence.indirect_use_signals
+        and not evidence.unproven_import_mappings
+        and not evidence.dependency_graph_unresolved
+    ):
+        return TIER_NOT_IMPORTED
+    return TIER_UNKNOWN
+
+
+def _call_sites(evidence, repo_path: Path) -> list[dict]:
+    if evidence is None:
+        return []
+    sites = []
+    for hit in evidence.api_usage_hits[:MAX_CALL_SITES]:
+        path = Path(hit.file_path)
+        try:
+            path = path.resolve().relative_to(repo_path.resolve())
+        except (OSError, ValueError):
+            pass
+        sites.append({"file": path.as_posix(), "line": hit.line})
+    return sites
 
 
 def _discover_coverage(root: Path) -> Path | None:
@@ -124,6 +185,10 @@ def enrich_with_reachability(findings: list[dict], repo_path: Path) -> list[dict
             meta = pypi_findings[idx].setdefault("metadata", {})
             meta["reachability_verdict"] = verdict_map.get(vr.verdict, "inconclusive")
             meta["reachability_reason"] = vr.reason
+            meta["reachability_tier"] = reachability_tier(vr)
+            call_sites = _call_sites(vr.evidence, repo_path)
+            if call_sites:
+                meta["reachability_call_sites"] = call_sites
             if vr.imported_as:
                 meta["reachability_imported_as"] = vr.imported_as
             if vr.executed_files:

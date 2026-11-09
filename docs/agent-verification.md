@@ -33,7 +33,7 @@ Defense checks (weighted; drive the defense score and the gate):
 
 | Check | Severity (weight) | OWASP LLM | Verifies |
 |---|---|---|---|
-| `no-dangerous-sink` | critical (8) | LLM02 | No `eval`/`exec`/`subprocess` sink in the LLM output scope |
+| `no-dangerous-sink` | critical (8) | LLM02 | No `eval`/`exec`/`subprocess` sink in the LLM call's scope, and no model output reaching a shell, code or SQL sink one call hop away (Python) |
 | `tool-scope` | critical (8) | LLM04 | Agent tools avoid dangerous calls |
 | `tool-schema-present` | critical (8) | LLM04 | Every agent tool has a typed schema |
 | `untrusted-input-to-prompt` | critical (8) | LLM01 | Untrusted input cannot reach prompts unguarded |
@@ -90,6 +90,34 @@ Dynamic imports, monkeypatching, and effects inside arbitrary helpers can
 remain unresolved, so this evidence is a local static proof, not a runtime
 guarantee. The synthetic comparison and reproduction command are in
 `benchmarks/output_validation/README.md`.
+
+### Python tool calls and prompt inputs
+
+Tools passed as `tools=` or `functions=` are counted when Skylos can resolve
+them: decorated tool functions, plain functions, and OpenAI, Responses API,
+Anthropic or Gemini schema dicts, including names bound to module constants,
+aliases, `+` joins, `*` unpacking, and lists returned by a helper in the same file.
+
+A schema tool gets a handler only when the model's response reaches a call to
+that function in the LLM call's scope: a direct call, an alias, or a
+module-level dispatch dict such as `HANDLERS[call.function.name](**args)`.
+`no-dangerous-sink` then reports model output that reaches a shell, code or
+SQL sink in that handler (`output_sink_flows` in `skylos discover --json`).
+SQL counts only when the query text comes from a model-controlled argument;
+a fixed query with bound parameters does not. `tool-scope` reports the same
+handler's dangerous operations. A declared tool whose handler is never called
+with the model's output stays unbound, and the check message says so. Calls
+more than one hop away and handlers in other files are not followed.
+
+`prompt_inputs` lists function parameters that are formatted into prompt
+text (f-strings, `.format`, `+`, `%`) that reaches the call. When a Flask
+route elsewhere in the project passes `request.json`, `request.form`,
+`request.args`, `request.data` or `request.files` to that parameter, the
+entry names the route location. A parameter passed as its own message, or
+wrapped in matching tags such as `<user_input>...</user_input>`, does not
+fail `prompt-delimiter`. These entries drive `untrusted-input-to-prompt` and
+`prompt-delimiter` only; the length, PII and rate-limit checks still look
+for input read in the LLM call's own function.
 
 ## OWASP frameworks
 

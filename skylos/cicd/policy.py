@@ -72,6 +72,68 @@ def _base_text(context, commit, relative):
     return content.stdout
 
 
+def is_untracked_worktree_file(start_path, path):
+    """Whether Git lists ``path`` as an untracked file of this worktree.
+
+    ``skylos sync pull`` writes ``.skylos/config.yaml`` without committing it.
+    A file a commit carries, a file inside a submodule and a path through a
+    symlinked folder are never listed, so pull request content cannot pass.
+    """
+    context = GitContext.from_path(start_path)
+    try:
+        relative = Path(path).absolute().relative_to(context.root).as_posix()
+    except ValueError:
+        return False
+    listing = context.run("ls-files", "-z", "--others", "--", relative)
+    if listing.returncode:
+        return False
+    return [name for name in listing.stdout.split("\0") if name] == [relative]
+
+
+def base_rule_pack_texts(start_path, commit, rules_dir):
+    """(display path, text, problem) per rule pack in ``rules_dir`` at ``commit``.
+
+    Folders from ``start_path`` up to the repository root, nearest first;
+    ``.yml``/``.yaml`` files directly in the folder. A pack that is not a
+    regular tracked file or is too large has no text and names the problem.
+    """
+    from skylos.config import ConfigError
+
+    if not _COMMIT.fullmatch(str(commit)):
+        raise ConfigError("PR policy base must be a resolved commit")
+    context = GitContext.from_path(start_path)
+    current = Path(start_path).resolve()
+    if current.is_file():
+        current = current.parent
+    if not current.is_relative_to(context.root):
+        raise ConfigError("PR policy scope must be inside the repository")
+    packs = []
+    while True:
+        folder = (current.relative_to(context.root) / rules_dir).as_posix()
+        listing = context.run(
+            "ls-tree", "-z", "--name-only", commit, "--", f"{folder}/"
+        )
+        if listing.returncode:
+            raise ConfigError("Could not inspect base rule packs")
+        for name in sorted(filter(None, listing.stdout.split("\0"))):
+            if not name.lower().endswith((".yml", ".yaml")):
+                continue
+            if name.rpartition("/")[0] != folder:
+                continue
+            display = f"{name} (base {commit[:12]})"
+            try:
+                text = _base_text(context, commit, name)
+            except ConfigError as exc:
+                packs.append((display, None, str(exc)))
+                continue
+            if text is not None:
+                packs.append((display, text, None))
+        if current == context.root:
+            break
+        current = current.parent
+    return packs
+
+
 def load_base_policy(start_path, commit):
     """Config layers (root first) and synced policy, read from ``commit``.
 

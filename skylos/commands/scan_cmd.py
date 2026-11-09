@@ -6,6 +6,8 @@ from typing import Sequence
 
 from rich.markup import escape
 
+from skylos.core.cli_shared import quiet_analyzer_logs
+from skylos.core.diff_scope import DiffBaseUnavailable
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.constants import RIPGREP_INSTALL_URL
 from skylos.typecheck.cli import scan_type_check_exit
@@ -77,6 +79,163 @@ def _check_managed_gitlab_delivery(response: dict) -> None:
         raise SystemExit(2)
 
 
+def _closing_summary(result: dict, uncertainty_count) -> str | None:
+    checks = (result.get("analysis_summary") or {}).get("grade_categories")
+    if not isinstance(checks, (list, tuple)) or all(
+        check == "dead_code" for check in checks
+    ):
+        return None
+    from skylos.reporting.assessment_display import closing_summary
+
+    return closing_summary(result, uncertainty_count=uncertainty_count)
+
+
+def _ai_review_closing_line(result: dict) -> str | None:
+    from skylos.llm.ai_review import closing_line
+
+    line = closing_line(result)
+    if line:
+        return f"[muted]{escape(line)}[/muted]"
+    return None
+
+
+def _rewritable_dead_code(items, project_root):
+    from skylos.remediation.safety import python_rewrite_blocker
+
+    rewritable = []
+    blocked = []
+    blockers = {}
+    for item in items or []:
+        file_key = str(item.get("file") or "")
+        if file_key not in blockers:
+            blockers[file_key] = python_rewrite_blocker(
+                file_key, root_path=project_root
+            )
+        if blockers[file_key] is None:
+            rewritable.append(item)
+        else:
+            blocked.append((item, blockers[file_key]))
+    return rewritable, blocked
+
+
+def _print_blocked_dead_code(console, blocked) -> None:
+    if not blocked:
+        return
+    by_file = {}
+    for item, reason in blocked:
+        by_file.setdefault(str(item.get("file") or ""), reason)
+    examples = "; ".join(
+        f"{_display_location(path)}: {reason}"
+        for path, reason in list(by_file.items())[:3]
+    )
+    if len(by_file) > 3:
+        examples += f"; and {len(by_file) - 3} more files"
+    console.print(
+        f"[warn]Not offering {len(blocked)} item(s) Skylos cannot edit safely "
+        f"({escape(examples)}).[/warn]"
+    )
+
+
+def _display_location(path) -> str:
+    import pathlib
+
+    try:
+        resolved = pathlib.Path(path).resolve()
+        return str(resolved.relative_to(pathlib.Path.cwd().resolve()))
+    except (OSError, ValueError):
+        return str(path)
+
+
+def _ci_workflow_exists(project_root) -> bool:
+    return (project_root / ".github" / "workflows" / "skylos.yml").exists()
+
+
+def _print_local_next_steps(console, project_root, *, first_fix=None) -> None:
+    from skylos.cloud.cloud_receipt import local_next_steps
+
+    steps = local_next_steps(ci_configured=_ci_workflow_exists(project_root))
+    width = max(len(command) for command, _ in steps)
+    label = "Next:"
+    console.print()
+    if first_fix:
+        console.print(f"[bold]{label:<5}[/bold] {escape(first_fix)}", soft_wrap=True)
+        label = ""
+    for command, purpose in steps:
+        console.print(
+            f"[bold]{label:<5}[/bold] [brand]{escape(command.ljust(width))}[/brand]"
+            f"  [muted]{escape(purpose)}[/muted]",
+            soft_wrap=True,
+        )
+        label = ""
+
+
+def _print_cloud_upload_start(console) -> None:
+    from skylos.api import _print_pending_upload_reminder
+
+    _print_pending_upload_reminder()
+    console.print("[muted]Uploading findings to Skylos Cloud…[/muted]")
+
+
+def _print_cloud_gate_exit(console, args) -> None:
+    flag = "--gate"
+    if getattr(args, "strict", False):
+        flag = "--strict"
+    console.print(
+        "\n[bad]Exiting with code 1 because the Skylos Cloud quality gate "
+        f"failed ({flag}).[/bad]"
+    )
+
+
+def _print_cloud_receipt(
+    console,
+    project_root,
+    destination,
+    upload_resp,
+    *,
+    in_ci: bool,
+    done_receipt=None,
+    done_note=None,
+) -> None:
+    from skylos.api import BASE_URL
+    from skylos.cloud.cloud_receipt import cloud_receipt_lines, sent_line
+
+    lines = cloud_receipt_lines(
+        destination,
+        upload_resp,
+        BASE_URL,
+        ci_configured=in_ci or _ci_workflow_exists(project_root),
+        sent=sent_line(done_receipt, upload_resp, done_note),
+    )
+    for line in lines:
+        console.print(escape(line), soft_wrap=True)
+
+
+def _print_failed_gate_exit_note(console, args, passed) -> None:
+    if passed is not False:
+        return
+    flag = None
+    if getattr(args, "strict", False):
+        flag = "--strict"
+    if getattr(args, "gate", False):
+        flag = "--gate"
+    if flag and not getattr(args, "force", False):
+        console.print(
+            "\n[bad]Exiting with code 1 because the Skylos Cloud quality gate "
+            f"failed ({flag}).[/bad]"
+        )
+        return
+    if flag:
+        console.print(
+            "\n[warn]⚠️ --force: the failed quality gate does not change this "
+            "command's exit code.[/warn]"
+        )
+        return
+    console.print(
+        "\n[warn]⚠️ The failed quality gate does not change this command's exit "
+        "code; add --gate to make it fail.[/warn]"
+    )
+
+
 def _public_upload_receipt(response: dict) -> dict:
     """Keep a small public outcome beside the scan, never transport credentials."""
     from copy import deepcopy
@@ -106,6 +265,10 @@ def _public_upload_receipt(response: dict) -> dict:
         receipt["quality_gate"] = public_gate
     if response.get("quality_gate_reported") is False:
         receipt["quality_gate_status"] = "not_reported"
+    if response.get("success") and "previous_gate" in response:
+        from skylos.cloud.gate_status import clean_previous_gate
+
+        receipt["previous_gate"] = clean_previous_gate(response["previous_gate"])
     if isinstance(response.get("gitlab_delivery"), dict):
         receipt["delivery"] = {
             key: deepcopy(response["gitlab_delivery"][key])
@@ -136,7 +299,11 @@ def _verify_security_findings(
         VerificationSettings,
         verify_security_findings,
     )
-    from skylos.llm.runtime import resolve_llm_runtime
+    from skylos.llm.runtime import (
+        LLM_EXTRA_INSTALL_COMMAND,
+        llm_extra_installed,
+        resolve_llm_runtime,
+    )
 
     def note(message: str) -> None:
         if not machine_output:
@@ -149,6 +316,13 @@ def _verify_security_findings(
             "[warn]AI verification skipped: --verify-runs must be 1-9 and --verify-max 0 or more.[/warn]"
         )
         return
+    if not llm_extra_installed():
+        note(
+            "[warn]AI verification skipped: the LLM extra is not installed "
+            f"({escape(LLM_EXTRA_INSTALL_COMMAND)}). "
+            "Findings stay unchecked and keep blocking as before.[/warn]"
+        )
+        return
     model = (
         getattr(args, "verify_model", None)
         or os.getenv("SKYLOS_VERIFY_MODEL")
@@ -157,7 +331,7 @@ def _verify_security_findings(
     provider, api_key, base_url, local = resolve_llm_runtime(
         model=model,
         provider_override=getattr(args, "verify_provider", None),
-        base_url_override=None,
+        base_url_override=getattr(args, "api_base", None),
         console=None,
         allow_prompt=False,
     )
@@ -205,6 +379,94 @@ def _verify_security_findings(
         )
 
 
+def _run_ai_review(
+    result: dict, args, console, *, project_root, machine_output: bool
+) -> None:
+    import os
+
+    from skylos.llm import ai_review
+    from skylos.llm.runtime import (
+        LLM_EXTRA_INSTALL_COMMAND,
+        llm_extra_installed,
+        resolve_llm_runtime,
+    )
+
+    def note(message: str) -> None:
+        if not machine_output:
+            console.print(message)
+
+    model = (
+        getattr(args, "model", None)
+        or getattr(args, "verify_model", None)
+        or os.getenv("SKYLOS_VERIFY_MODEL")
+        or ai_review.DEFAULT_MODEL
+    )
+    if not getattr(args, "verify_model", None):
+        args.verify_model = model
+    use_llm = False
+    provider = None
+    api_key = None
+    base_url = None
+    if llm_extra_installed():
+        provider, api_key, base_url, local = resolve_llm_runtime(
+            model=model,
+            provider_override=getattr(args, "verify_provider", None),
+            base_url_override=getattr(args, "api_base", None),
+            console=None,
+            allow_prompt=False,
+        )
+        use_llm = bool(api_key or local)
+    use_jev = ai_review.jev_available()
+    if use_llm:
+        refusal = ai_review.provider_refusal(
+            model=model, api_key=api_key, provider=provider, base_url=base_url
+        )
+        if refusal:
+            use_llm = False
+            note(
+                f"[warn]AI review: {escape(model)} refused the request: "
+                f"{escape(refusal)}[/warn]"
+            )
+            if not use_jev:
+                note(
+                    "[warn]AI review skipped. Issues and blocking are unchanged.[/warn]"
+                )
+                return
+    if not use_llm and not use_jev:
+        install = ""
+        if not llm_extra_installed():
+            install = f" Install the LLM extra first ({escape(LLM_EXTRA_INSTALL_COMMAND)})."
+        note(
+            "[warn]AI review skipped: no LLM API key (skylos key) and no "
+            f"{ai_review.JEV_KEY_ENV}.{install} Issues and blocking are unchanged.[/warn]"
+        )
+        return
+    if use_llm:
+        _verify_security_findings(
+            result,
+            args,
+            console,
+            project_root=project_root,
+            machine_output=machine_output,
+        )
+        ai_review.attach_security_reviews(result)
+    try:
+        ai_review.review_dead_code(
+            result,
+            project_root=str(project_root),
+            model=model,
+            api_key=api_key,
+            provider=provider,
+            base_url=base_url,
+            use_llm=use_llm,
+            use_jev=use_jev,
+        )
+    except Exception as exc:
+        note(
+            f"[warn]AI review of unused code failed: {type(exc).__name__}. Issues are unchanged.[/warn]"
+        )
+
+
 def _report_scope_options(args, config):
     """Default report scope for this scan (see ``skylos.core.generated_files``)."""
     config = config or {}
@@ -216,6 +478,31 @@ def _report_scope_options(args, config):
     return {
         "skip_generated": not include_generated,
         "generated_keep_paths": list(getattr(args, "include_folders", None) or []),
+    }
+
+
+def _changed_file_scope_options(args, config, changed_files):
+    """Automatic exclusions must not hide the files a diff asks us to review."""
+    import os
+
+    from skylos.constants import parse_exclude_folders
+
+    if not (
+        changed_files is not None
+        or getattr(args, "diff", None)
+        or getattr(args, "diff_base", None)
+        or os.environ.get("SKYLOS_DIFF_BASE")
+    ):
+        return {}
+    return {
+        "changed_file_exclude_folders": sorted(
+            parse_exclude_folders(
+                user_exclude_folders=getattr(args, "exclude_folders", None),
+                config_exclude_folders=(config or {}).get("exclude"),
+                use_defaults=False,
+                include_folders=getattr(args, "include_folders", None),
+            )
+        ),
     }
 
 
@@ -272,7 +559,14 @@ def _exit_on_missing_scan_paths(args, *, cli_module) -> None:
     raise SystemExit(2)
 
 
-def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
+def run_scan_command(
+    argv: Sequence[str],
+    *,
+    cli_module: ModuleType,
+    cloud: bool = False,
+    cloud_gate: bool = False,
+    cloud_done_note: str | None = None,
+) -> None:
     """Keep compared gates and impact scans on one immutable policy."""
     import os
 
@@ -280,6 +574,9 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
     parser = cli_module._build_main_parser()
     args = cli_module._parse_main_cli_args(parser, argv)
+    args._cloud_command = cloud
+    args._cloud_gate = cloud_gate
+    args._cloud_done_note = cloud_done_note
     from skylos.typecheck.cli import validate_type_check_args
 
     validate_type_check_args(parser, args)
@@ -314,6 +611,8 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             return _run_scan_command(
                 argv, cli_module=cli_module, parser=parser, args=args
             )
+    except DiffBaseUnavailable as exc:
+        cli_module._exit_diff_unavailable(args, str(exc))
     except cli_module.ConfigError as exc:
         cli_module._exit_config_error(parser, args, str(exc))
     finally:
@@ -331,6 +630,211 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 raise SystemExit(2)
 
 
+def _add_supply_chain_diff_findings(result, project_root, base_ref, args, config):
+    """SKY-SCA-HRD001/UPG001/UPG002 and SKY-D375 for a diff-scoped scan.
+
+    They compare the merge base with the working tree, so they are diff
+    scoped by construction and are kept outside changed lines. A check that
+    could not run is an analysis error, which a diff-scoped gate treats as
+    incomplete.
+    """
+    from skylos.core.file_discovery import find_git_root
+    from skylos.rules.sca.supply_chain_diff import supply_chain_diff_findings
+
+    ignore = set()
+    if isinstance(config, dict):
+        ignore = {str(rule).upper() for rule in config.get("ignore") or []}
+    try:
+        findings, receipt, errors = supply_chain_diff_findings(
+            find_git_root(project_root) or project_root,
+            base_ref,
+            dependencies=bool(getattr(args, "sca", False)),
+            security=bool(getattr(args, "danger", False)),
+            review_upgrades=bool(getattr(args, "review_upgrades", False)),
+            ignore=ignore,
+        )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "supply-chain diff checks failed", exc_info=True
+        )
+        findings, receipt = [], {"status": "failed", "error_type": type(exc).__name__}
+        errors = [
+            {
+                "kind": "supply_chain_check_unavailable",
+                "component": "supply_chain",
+                "message": f"Supply-chain diff checks failed ({type(exc).__name__})",
+                "severity": "HIGH",
+            }
+        ]
+    summary = result.setdefault("analysis_summary", {})
+    summary["supply_chain_diff"] = receipt
+    for finding in findings:
+        section = "dependency_vulnerabilities"
+        if finding.get("category") == "SECURITY":
+            section = "danger"
+        result.setdefault(section, []).append(finding)
+    if findings:
+        summary["sca_count"] = len(result.get("dependency_vulnerabilities") or [])
+    if errors:
+        result.setdefault("analysis_errors", []).extend(errors)
+        summary["analysis_error_count"] = len(result["analysis_errors"])
+
+
+def _config_change_finding(item) -> bool:
+    """An agent/editor-config or publish-job finding (SKY-D365-D377) that
+    carries its change identity."""
+    from skylos.rules.config.agent_publish import (
+        AGENT_RULE_IDS,
+        IDENTITY_KEY,
+        PUBLISH_RULE_IDS,
+    )
+
+    return (
+        isinstance(item, dict)
+        and item.get("kind") == "config"
+        and str(item.get("rule_id") or "").upper() in AGENT_RULE_IDS | PUBLISH_RULE_IDS
+        and isinstance(item.get(IDENTITY_KEY), str)
+    )
+
+
+def _config_findings_new_since_base(
+    result, diff_root, base_ref, changed_ranges, console, machine_output
+):
+    """ids of SKY-D365-D377 findings that are new against the merge base.
+
+    These findings sit on the command line, but what makes one new can be
+    another line (``"runOptions": {"runOn": "folderOpen"}`` added to an
+    existing task, a hook moved from ``Stop`` to ``SessionStart``), so a
+    finding is new when its rule, path and identity (event or job name plus
+    the unredacted command) are not among the base's findings, whatever
+    lines changed. When the base cannot be compared, every such finding in a
+    changed file (or behind a changed link) counts as new.
+    """
+    import os
+    import pathlib
+
+    from skylos.rules.config.agent_files import link_components
+    from skylos.rules.config.agent_publish import IDENTITY_KEY
+
+    items = [
+        item
+        for category in _DIFF_FINDING_CATEGORIES
+        for item in result.get(category) or ()
+        if _config_change_finding(item)
+    ]
+    if not items:
+        return set()
+    from skylos.rules.sca.supply_chain_diff import config_base_identities
+
+    top = pathlib.Path(os.path.realpath(diff_root))
+    try:
+        known = config_base_identities(top, base_ref)
+    except Exception:  # noqa: BLE001 - an unusable base falls back to changed files
+        known = None
+    summary = result.setdefault("analysis_summary", {})
+    if known is not None:
+        summary["config_diff_basis"] = "base_findings"
+        new = set()
+        for item in items:
+            lexical = pathlib.Path(os.path.abspath(str(item.get("file") or "")))
+            try:
+                relative = lexical.relative_to(top).as_posix()
+            except ValueError:
+                new.add(id(item))
+                continue
+            identity = (str(item["rule_id"]).upper(), relative, item[IDENTITY_KEY])
+            if identity not in known:
+                new.add(id(item))
+        return new
+    summary["config_diff_basis"] = "changed_files"
+    if not machine_output:
+        console.print(
+            "[muted]--diff: the base's agent configs and workflows could not be "
+            "compared; every agent-config and publish-job finding in a changed "
+            "file counts as new.[/muted]"
+        )
+    changed = set()
+    for entry in changed_ranges or ():
+        if isinstance(entry, dict) and entry.get("file"):
+            changed.add(pathlib.Path(os.path.abspath(top / entry["file"])))
+    new = set()
+    for item in items:
+        lexical = pathlib.Path(os.path.abspath(str(item.get("file") or "")))
+        candidates = {lexical, pathlib.Path(os.path.realpath(lexical))}
+        candidates.update(link_components(lexical, top))
+        if candidates & changed:
+            new.add(id(item))
+    return new
+
+
+def _policy_base_baseline(project_root):
+    """Under ``SKYLOS_POLICY_BASE`` (pull-request CI), the baseline the base
+    commit holds: supply-chain trust-boundary findings are baselined only
+    when it lists them too, so a pull request cannot excuse its own."""
+    import os
+
+    from skylos.config import POLICY_BASE_ENV_VAR
+
+    ref = str(os.environ.get(POLICY_BASE_ENV_VAR) or "").strip()
+    if not ref:
+        return {}, None
+    from skylos.core.baseline_source import load_git_baseline
+
+    baseline, receipt = load_git_baseline(project_root, ref)
+    return {"policy_base": True, "policy_baseline": baseline}, receipt
+
+
+def _note_policy_base_baseline(result, receipt, console, machine_output):
+    if receipt is None:
+        return
+    summary = result.setdefault("analysis_summary", {})
+    record = summary.setdefault("baseline_policy_base", {"not_honoured": 0})
+    record["status"] = receipt.get("status")
+    record["error"] = receipt.get("error")
+    count = int(record.get("not_honoured") or 0)
+    if count and not machine_output:
+        console.print(
+            f"[warn]Baseline: {count} supply-chain finding(s) not in the policy "
+            "base commit's baseline counted as new.[/warn]"
+        )
+
+
+def _record_baseline_rule_coverage(result, baseline, args):
+    """Which supply-chain config rules the baseline saw, and an analysis
+    error when this run's ca9 can no longer decide rules the baseline
+    covered (the comparison would pass without them)."""
+    from skylos.core.baseline import baseline_rule_coverage
+    from skylos.core.gatekeeper import BASELINE_RULE_COVERAGE_KEY
+    from skylos.rules.config.agent_publish import available_rule_ids
+    from skylos.rules.sca import supply_chain
+
+    covered = baseline_rule_coverage(baseline)
+    if covered is None:
+        return
+    summary = result.setdefault("analysis_summary", {})
+    summary[BASELINE_RULE_COVERAGE_KEY] = covered
+    if not getattr(args, "danger", False):
+        return
+    lost = sorted(set(covered) - available_rule_ids(supply_chain.load_ca9_api()))
+    if not lost:
+        return
+    result.setdefault("analysis_errors", []).append(
+        {
+            "kind": "supply_chain_check_unavailable",
+            "component": "supply_chain",
+            "message": (
+                f"The baseline covers {', '.join(lost[:4])} but this run could not "
+                "check them: ca9 is not installed or too old. Upgrade ca9 "
+                "(pip install -U ca9) and rerun."
+            ),
+            "severity": "HIGH",
+        }
+    )
+    summary["analysis_error_count"] = len(result["analysis_errors"])
+
+
 @scan_type_check_exit
 def _run_scan_command(
     argv: Sequence[str], *, cli_module: ModuleType, parser, args
@@ -344,7 +848,6 @@ def _run_scan_command(
     Called from: skylos/cli.py _run_scan_command.
     """
     INTERACTIVE_AVAILABLE = cli_module.INTERACTIVE_AVAILABLE
-    Panel = cli_module.Panel
     Progress = cli_module.Progress
     Rule = cli_module.Rule
     SpinnerColumn = cli_module.SpinnerColumn
@@ -367,8 +870,10 @@ def _run_scan_command(
     )
     _print_main_scan_banner = cli_module._print_main_scan_banner
     _print_main_upload_manifest = cli_module._print_main_upload_manifest
-    _print_upload_cta = cli_module._print_upload_cta
     _print_upload_destination = cli_module._print_upload_destination
+    _print_upload_receipt = cli_module._print_upload_receipt
+    _refuse_mismatched_upload = cli_module._refuse_mismatched_upload
+    _resolve_upload_destination = cli_module._resolve_upload_destination
     _render_upload_failure = cli_module._render_upload_failure
     _run_pre_analysis_steps = cli_module._run_pre_analysis_steps
     _selected_rule_prerequisite_ids = cli_module._selected_rule_prerequisite_ids
@@ -429,6 +934,11 @@ def _run_scan_command(
             )
         if not _is_tty():
             parser.error("--tui requires an interactive terminal")
+    if getattr(args, "interactive", False) and not _is_tty():
+        parser.error(
+            "--interactive requires an interactive terminal; without one, preview "
+            "edits with 'skylos clean PATH --dry-run' and apply them with --apply"
+        )
     args._explicit_upload_requested = bool(getattr(args, "upload", False))
 
     try:
@@ -464,6 +974,9 @@ def _run_scan_command(
     custom_rules_data = pre_analysis.custom_rules_data
     changed_files = pre_analysis.changed_files
     trace_file = pre_analysis.trace_file
+    changed_file_scope_options = _changed_file_scope_options(
+        args, config, changed_files
+    )
 
     from skylos.cloud.gitlab import cli_full_scan
 
@@ -511,6 +1024,7 @@ def _run_scan_command(
                 include_review_proofs=include_review_proofs,
                 include_review_context=include_review_context,
                 **report_scope_options,
+                **changed_file_scope_options,
             )
 
         def run_main_analysis(progress_callback=None):
@@ -698,6 +1212,20 @@ def _run_scan_command(
                 }
                 logger.debug("npm publisher scan failed", exc_info=True)
 
+        supply_chain_base = getattr(args, "diff", None) or getattr(
+            args, "diff_base", None
+        )
+        if supply_chain_base == "auto":
+            from skylos.core.ci_env import auto_diff_base_ref
+
+            supply_chain_base = auto_diff_base_ref()
+        if supply_chain_base and (
+            getattr(args, "sca", False) or getattr(args, "danger", False)
+        ):
+            _add_supply_chain_diff_findings(
+                result, project_root, supply_chain_base, args, config
+            )
+
         if getattr(args, "diff", None):
             from skylos.cicd.review import (
                 get_changed_line_ranges,
@@ -729,13 +1257,17 @@ def _run_scan_command(
             if getattr(args, "diff_mode", "lines") == "impact":
                 from skylos.core.pr_impact import annotate_dead_code_impact
 
-                annotate_dead_code_impact(
-                    result, scan_path, project_root=project_root, base_ref=base_ref,
-                    config=config, confidence=args.confidence,
-                    config_file=config_file,
-                    exclude_folders=final_exclude_folders,
-                    grep_verify=not args.no_grep_verify,
-                )
+                impact_logs = nullcontext()
+                if quiet_analysis_output or not getattr(args, "verbose", False):
+                    impact_logs = quiet_analyzer_logs()
+                with impact_logs:
+                    annotate_dead_code_impact(
+                        result, scan_path, project_root=project_root, base_ref=base_ref,
+                        config=config, confidence=args.confidence,
+                        config_file=config_file,
+                        exclude_folders=final_exclude_folders,
+                        grep_verify=not args.no_grep_verify,
+                    )
 
         if args.pytest_fixtures:
             report_path = project_root / ".skylos_unused_fixtures.json"
@@ -795,6 +1327,8 @@ def _run_scan_command(
                         )
                         or str(item.get("rule_id", "")).upper()
                         in selected_prerequisite_ids
+                        or _config_change_finding(item)
+                        or item.get("kind") == "supply_chain_diff"
                     ]
             result.pop("unused_fixtures_counts", None)
             result = _apply_display_filters(result, preserve_grade=False)
@@ -842,13 +1376,23 @@ def _run_scan_command(
                 summary = result.setdefault("analysis_summary", {})
                 summary["analysis_error_count"] = len(kept_errors)
                 summary["analysis_warning_count"] = len(result["analysis_warnings"])
+            config_new = _config_findings_new_since_base(
+                result, diff_root, base_ref, changed_ranges, console, machine_output
+            )
             for category in _DIFF_FINDING_CATEGORIES:
                 items = result.get(category, [])
                 if items:
-                    diff_findings = filter_findings_to_diff(
-                        items, changed_ranges, project_root=diff_root
-                    )
-                    diff_finding_ids = {id(item) for item in diff_findings}
+                    try:
+                        diff_findings = filter_findings_to_diff(
+                            items, changed_ranges, project_root=diff_root
+                        )
+                    except ValueError as exc:
+                        cli_module._exit_diff_unavailable(args, str(exc))
+                    diff_finding_ids = {
+                        id(item)
+                        for item in diff_findings
+                        if not _config_change_finding(item)
+                    } | config_new
                     result[category] = [
                         item
                         for item in items
@@ -867,8 +1411,12 @@ def _run_scan_command(
                             item.get("rule_id") in {"SKY-A122", "SKY-A125"}
                             and item.get("kind") == "guardrail_tamper"
                         )
-                        or str(item.get("rule_id", "")).upper()
-                        in selected_prerequisite_ids
+                        or item.get("kind") == "supply_chain_diff"
+                        or (
+                            not _config_change_finding(item)
+                            and str(item.get("rule_id", "")).upper()
+                            in selected_prerequisite_ids
+                        )
                     ]
             # Fixture totals and aggregate grades describe the full scan, not
             # the findings visible in a diff-scoped report.
@@ -1062,6 +1610,7 @@ def _run_scan_command(
             from skylos.core.baseline import load_baseline, filter_new_findings
 
             baseline = load_baseline(project_root)
+            policy_options, policy_receipt = _policy_base_baseline(project_root)
             if "dependency_vulnerabilities" in result:
                 from skylos.config import dependency_baseline_policy_locked
                 from skylos.core.baseline_source import load_dependency_baseline
@@ -1088,6 +1637,7 @@ def _run_scan_command(
                     dependency_baseline=dependency_baseline or {},
                     dependency_disabled_reason=disabled_reason,
                     dependency_source=dependency_source,
+                    **policy_options,
                 )
                 if not machine_output:
                     receipt = result["analysis_summary"]["dependency_baseline"]
@@ -1100,9 +1650,25 @@ def _run_scan_command(
                     "[warn]No baseline found. Run 'skylos baseline .' first.[/warn]"
                 )
             else:
-                result = filter_new_findings(result, baseline)
+                result = filter_new_findings(
+                    result, baseline, project_root=project_root, **policy_options
+                )
+            if baseline is not None:
+                result.setdefault("analysis_summary", {})["baseline_scoped"] = True
+                _record_baseline_rule_coverage(result, baseline, args)
+                _note_policy_base_baseline(
+                    result, policy_receipt, console, machine_output
+                )
 
-        if getattr(args, "verify_security", False):
+        if getattr(args, "ai_review", False):
+            _run_ai_review(
+                result,
+                args,
+                console,
+                project_root=project_root,
+                machine_output=machine_output,
+            )
+        elif getattr(args, "verify_security", False):
             _verify_security_findings(
                 result,
                 args,
@@ -1162,6 +1728,11 @@ def _run_scan_command(
                     category=_cli_category,
                     file_filter=_cli_file_filter,
                 )
+            from skylos.reporting.top_risks import add_report_guidance
+
+            add_report_guidance(
+                json_output_result, project_root=project_root, config=config
+            )
             display_payload = json_output_result
             if getattr(args, "json_ci", False):
                 display_payload = _build_ci_json_payload(json_output_result)
@@ -1174,6 +1745,12 @@ def _run_scan_command(
                 if not defer_exit:
                     raise SystemExit(2)
                 return receipt, 2
+            formatted_destination = _resolve_upload_destination(project_root)
+            if _refuse_mismatched_upload(None, formatted_destination):
+                receipt = {"status": "skipped", "reason": "project_repository_mismatch"}
+                if not defer_exit:
+                    raise SystemExit(1)
+                return receipt, 1
             _attach_upload_project_context(result, project_root)
             if done_receipt is not None:
                 result["done_receipt"] = done_receipt
@@ -1201,6 +1778,31 @@ def _run_scan_command(
                     "error": "Cloud upload returned no usable receipt",
                 }
             receipt = _public_upload_receipt(upload_resp)
+            if receipt["status"] == "uploaded" and receipt.get("url"):
+                # Keep formatted stdout parseable and leave the exact saved
+                # scan reachable even when the Cloud gate exits below.
+                from skylos.api import BASE_URL as _cloud_base_url
+                from skylos.cloud.gate_status import formatted_gate_line
+
+                link_line = formatted_gate_line(upload_resp, _cloud_base_url)
+                if link_line is None:
+                    link_line = f"View Cloud gate and results: {receipt['url']}"
+                print(link_line, file=sys.stderr)
+                if formatted_destination is not None:
+                    from skylos.cloud.upload_destination import (
+                        branch_label,
+                        project_label,
+                        with_cloud_destination,
+                    )
+
+                    reported_destination = with_cloud_destination(
+                        formatted_destination, upload_resp
+                    )
+                    print(
+                        f"Skylos Cloud project: {project_label(reported_destination)}; "
+                        f"branch: {branch_label(reported_destination)}",
+                        file=sys.stderr,
+                    )
             delivery_exit = upload_resp.get("gitlab_delivery_exit_code", 0)
             if "gitlab_delivery_exit_code" in upload_resp:
                 print(upload_resp.get("gitlab_delivery_message", ""), file=sys.stderr)
@@ -1360,9 +1962,11 @@ def _run_scan_command(
                 sarif_data["runs"][0].setdefault("properties", {})["grade"] = grade_data
             summary = output_result.get("analysis_summary")
             if isinstance(summary, dict):
+                from skylos.rules.sca.posture import UPLOAD_SUMMARY_KEYS
+
                 coverage = {
                     key: summary[key]
-                    for key in ("sca_coverage", "custom_rules_coverage")
+                    for key in UPLOAD_SUMMARY_KEYS
                     if isinstance(summary.get(key), dict)
                 }
                 if coverage:
@@ -1432,9 +2036,30 @@ def _run_scan_command(
             upload_receipt, upload_exit_code = upload_formatted_result(defer_exit=True)
             if upload_receipt is not None:
                 display_payload["upload"] = upload_receipt
-            output_result_json = json.dumps(display_payload)
+            report_format = getattr(args, "report_format", None)
+            if report_format:
+                from skylos.reporting.report_page import render_report
+
+                output_result_json = render_report(
+                    json_output_result,
+                    report_format,
+                    project_root=project_root,
+                    config=config,
+                )
+            else:
+                output_result_json = json.dumps(display_payload)
             if args.output:
                 _write_scan_output(args.output, output_result_json)
+                if report_format:
+                    verdict = (json_output_result.get("issue_summary") or {}).get(
+                        "verdict"
+                    ) or {}
+                    print(
+                        f"Report written to {args.output}: {verdict.get('text', '')}",
+                        file=sys.stderr,
+                    )
+            elif report_format:
+                print(output_result_json, end="")
             else:
                 print(output_result_json)
 
@@ -1509,7 +2134,7 @@ def _run_scan_command(
             return
 
         if args.github:
-            _emit_github_annotations(output_result)
+            _emit_github_annotations(output_result, root_path=project_root)
             upload_formatted_result()
             exit_code = _finish_formatted_scan(
                 result, config, args, provenance=prov_report
@@ -1518,6 +2143,10 @@ def _run_scan_command(
                 raise SystemExit(exit_code)
             return
 
+    except DiffBaseUnavailable as exc:
+        cli_module._exit_diff_unavailable(args, str(exc))
+    except cli_module.ConfigError as exc:
+        cli_module._exit_config_error(parser, args, str(exc))
     except Exception as e:
         if gitlab_output:
             # Exceptions can contain scanned text, credentials, or host paths.
@@ -1542,6 +2171,11 @@ def _run_scan_command(
     if not args.gate:
         for warning in sca_coverage_warnings(result):
             console.print(f"[warn]{escape(warning)}[/warn]", soft_wrap=True)
+        from skylos.rules.sca.posture import POSTURE_KEY, posture_line
+
+        posture = posture_line((result.get("analysis_summary") or {}).get(POSTURE_KEY))
+        if posture:
+            console.print(f"[muted]{escape(posture)}[/muted]", soft_wrap=True)
 
     if args.gate:
         incomplete_exit_code = _strict_scan_exit_code(result, args)
@@ -1570,8 +2204,17 @@ def _run_scan_command(
             getattr(args, "no_upload", False)
         )
 
+        gate_destination = None
+        if should_upload_gate:
+            gate_destination = _resolve_upload_destination(project_root)
+            refusal_console = console
+            if args.json:
+                refusal_console = None
+            if _refuse_mismatched_upload(refusal_console, gate_destination):
+                raise SystemExit(1)
+
         if should_upload_gate and not args.json:
-            _print_upload_destination(console, project_root)
+            _print_upload_destination(console, project_root, gate_destination)
             _print_main_upload_manifest(console, args, result)
 
         if should_upload_gate:
@@ -1584,6 +2227,7 @@ def _run_scan_command(
                 strict=False,
                 analyzer_owned=True,
                 gitlab_full_scan=gitlab_full_scan,
+                failed_gate_note=bool(args.force),
             )
             if not upload_resp.get("success"):
                 _check_managed_gitlab_delivery(upload_resp)
@@ -1592,6 +2236,8 @@ def _run_scan_command(
                     raise SystemExit(1)
             else:
                 _check_managed_gitlab_delivery(upload_resp)
+                if not args.json:
+                    _print_upload_receipt(console, gate_destination, upload_resp)
                 cloud_gate_passed = upload_resp.get("quality_gate_passed")
                 if cloud_gate_passed is None:
                     cloud_gate_passed = (upload_resp.get("quality_gate") or {}).get(
@@ -1657,8 +2303,14 @@ def _run_scan_command(
         raise SystemExit(2)
 
     if args.interactive:
-        unused_functions = result.get("unused_functions", [])
-        unused_imports = result.get("unused_imports", [])
+        interactive_failures = 0
+        unused_functions, blocked_functions = _rewritable_dead_code(
+            result.get("unused_functions", []), project_root
+        )
+        unused_imports, blocked_imports = _rewritable_dead_code(
+            result.get("unused_imports", []), project_root
+        )
+        _print_blocked_dead_code(console, blocked_functions + blocked_imports)
 
         if not (unused_functions or unused_imports):
             console.print("[good]No unused functions/imports to process.[/good]")
@@ -1707,6 +2359,7 @@ def _run_scan_command(
                                     f"[good] ✓ {action_past} function:[/good] {func['name']}"
                                 )
                             else:
+                                interactive_failures += 1
                                 console.print(
                                     f"[bad] x Failed to {action_verb} function:[/bad] {func['name']}"
                                 )
@@ -1723,9 +2376,16 @@ def _run_scan_command(
                                     f"[good] ✓ {action_past} import:[/good] {imp['name']}"
                                 )
                             else:
+                                interactive_failures += 1
                                 console.print(
                                     f"[bad] x Failed to {action_verb} import:[/bad] {imp['name']}"
                                 )
+                        if interactive_failures:
+                            console.print(
+                                f"[bad]Cleanup incomplete: {interactive_failures} "
+                                "change(s) failed; see above.[/bad]"
+                            )
+                            raise SystemExit(1)
                         console.print("[good]Cleanup complete![/good]")
                     else:
                         console.print("[warn]Operation cancelled.[/warn]")
@@ -1738,7 +2398,7 @@ def _run_scan_command(
         from skylos.ui.tui import run_tui
 
         run_tui(output_result, root_path=project_root)
-    elif not args.upload:
+    elif not args.upload or getattr(args, "_cloud_command", False):
         display_result = output_result
         _cli_limit = getattr(args, "limit", None)
         advice_options = {}
@@ -1752,6 +2412,7 @@ def _run_scan_command(
                 display_result,
                 root_path=project_root,
                 limit=_cli_limit,
+                config=config,
                 **advice_options,
             )
             if args.output:
@@ -1763,6 +2424,9 @@ def _run_scan_command(
                     **advice_options,
                 )
         else:
+            view_options = {"config": config}
+            if getattr(args, "verbose", False):
+                view_options["verbose"] = True
             render_results(
                 console,
                 display_result,
@@ -1771,6 +2435,7 @@ def _run_scan_command(
                 limit=_cli_limit,
                 copy_badge=not getattr(args, "no_clipboard", False),
                 **advice_options,
+                **view_options,
             )
             if args.output:
                 _write_rich_report_output(
@@ -1780,10 +2445,16 @@ def _run_scan_command(
                     root_path=project_root,
                     limit=_cli_limit,
                     **advice_options,
+                    **view_options,
                 )
 
+    display_filtered = bool(
+        getattr(args, "severity", None)
+        or getattr(args, "category", None)
+        or getattr(args, "file_filter", None)
+    )
     unused_total = sum(
-        len(result.get(k, []))
+        len(output_result.get(k, []))
         for k in (
             "unused_functions",
             "unused_imports",
@@ -1793,15 +2464,16 @@ def _run_scan_command(
             "unused_files",
         )
     )
-    danger_count = len(result.get("danger", []) or [])
-    reliability_count = len(result.get("reliability", []) or [])
-    quality_count = len(result.get("quality", []) or [])
+    danger_count = len(output_result.get("danger", []) or [])
+    reliability_count = len(output_result.get("reliability", []) or [])
+    quality_count = len(output_result.get("quality", []) or [])
     if (
         getattr(args, "format", "rich") != "pretty"
         and not result.get("analysis_errors")
         and not getattr(args, "diff", None)
         and changed_files is None
     ):
+        uncertainty_count = dead_code_uncertainty_summary(result)["count"]
         print_badge(
             unused_total,
             logging.getLogger("skylos"),
@@ -1811,10 +2483,13 @@ def _run_scan_command(
             reliability_count=reliability_count,
             quality_enabled=bool(quality_count),
             quality_count=quality_count,
-            uncertainty_count=dead_code_uncertainty_summary(result)["count"],
+            uncertainty_count=uncertainty_count,
+            summary=_closing_summary(output_result, uncertainty_count),
+            ai_review_line=_ai_review_closing_line(output_result),
             # The grade panel above already offered the Skylos grade badge.
             show_badge=not (
-                output_result.get("assessment")
+                display_filtered
+                or output_result.get("assessment")
                 or output_result.get("grade")
                 and not args.upload
                 and not args.tui
@@ -1880,6 +2555,11 @@ def _run_scan_command(
             "[muted]Source analysis complete; preparing Cloud upload.[/muted]"
         )
 
+    first_fix = None
+    if not args.json and getattr(args, "format", "rich") != "pretty":
+        from skylos.ui.risk_view import next_fix_line
+
+        first_fix = next_fix_line(output_result, root_path=project_root, config=config)
     if (
         not args.json
         and getattr(args, "format", "rich") != "pretty"
@@ -1905,26 +2585,7 @@ def _run_scan_command(
             total_findings += len(result.get(k, []) or [])
 
         if total_findings > 0:
-            workflow_path = project_root / ".github" / "workflows" / "skylos.yml"
-            if not workflow_path.exists():
-                console.print()
-                console.print(
-                    Panel.fit(
-                        "[bold cyan]💡 Tip:[/bold cyan] Catch these issues automatically on every PR\n\n"
-                        "[dim]Run:[/dim] [bold]skylos cicd init[/bold]\n"
-                        "[dim]Then:[/dim] [bold]git add .github/workflows/skylos.yml && git push[/bold]\n\n"
-                        "[muted]30-second setup for automated code analysis in CI/CD[/muted]",
-                        title="[cyan]Set up CI/CD[/cyan]",
-                        border_style="cyan",
-                    )
-                )
-
-            from skylos.ui.nudge import pick_nudge
-
-            nudge = pick_nudge(result, args, project_root)
-            if nudge:
-                console.print(f"\n  {nudge}")
-            _print_upload_cta(console, project_root)
+            _print_local_next_steps(console, project_root, first_fix=first_fix)
         elif not getattr(args, "diff", None) and changed_files is None:
             console.print()
             console.print("[good]No findings reported at current settings.[/good]")
@@ -1937,6 +2598,9 @@ def _run_scan_command(
             nudge = pick_nudge(result, args, project_root)
             if nudge:
                 console.print(f"\n  {nudge}")
+
+    elif first_fix:
+        console.print(f"[bold]Next:[/bold] {escape(first_fix)}", soft_wrap=True)
 
     forgotten = result.get("forgotten", [])
     if forgotten:
@@ -1960,7 +2624,10 @@ def _run_scan_command(
     if args.upload and not args.json:
         from skylos.api import get_project_token as _check_token
 
-        has_link, using_env = _print_upload_destination(console, project_root)
+        upload_destination = _resolve_upload_destination(project_root)
+        has_link, using_env = _print_upload_destination(
+            console, project_root, upload_destination
+        )
 
         if (not has_link) and (not using_env) and (not _check_token()):
             if _is_tty() and not _is_ci():
@@ -1976,12 +2643,12 @@ def _run_scan_command(
                     raise SystemExit(0)
             elif _is_ci():
                 console.print(
-                    "[warn]No CI identity token or SKYLOS_TOKEN, so nothing was uploaded.[/warn]"
+                    "[warn]No GitHub Actions or GitLab CI identity and no SKYLOS_TOKEN, so nothing was uploaded.[/warn]"
                 )
                 console.print(
                     "  On GitHub Actions: give the job `permissions: id-token: write` and "
                     "upload from a push to the default branch (pull_request uploads are "
-                    "not accepted). Otherwise set SKYLOS_TOKEN to a project API key."
+                    "not accepted). Otherwise set SKYLOS_TOKEN to a CI project token."
                 )
                 console.print(
                     "  See: https://github.com/duriantaco/skylos/blob/main/docs/first-gated-pr.md"
@@ -1993,24 +2660,51 @@ def _run_scan_command(
                 login_result = manual_token_fallback(console=console)
                 if login_result is None:
                     raise SystemExit(1)
+            upload_destination = _resolve_upload_destination(project_root)
+            _print_upload_destination(console, project_root, upload_destination)
+
+        if _refuse_mismatched_upload(console, upload_destination):
+            raise SystemExit(1)
 
         # Uploads never cost credits, so the CLI never checks the balance first.
-        _print_main_upload_manifest(console, args, result)
+        if not getattr(args, "_cloud_command", False):
+            _print_main_upload_manifest(console, args, result)
         _attach_upload_project_context(result, project_root)
         if done_receipt is not None:
             result["done_receipt"] = done_receipt
+        cloud_command = getattr(args, "_cloud_command", False)
+        if cloud_command:
+            _print_cloud_upload_start(console)
         upload_resp = upload_report(
             result,
             is_forced=args.force,
+            quiet=cloud_command,
             strict=False,
             analyzer_owned=True,
             gitlab_full_scan=gitlab_full_scan,
+            failed_gate_note=False,
         )
 
         if not upload_resp.get("success"):
             _check_managed_gitlab_delivery(upload_resp)
             _render_upload_failure(console, upload_resp)
             if getattr(args, "_explicit_upload_requested", False):
+                raise SystemExit(1)
+        elif cloud_command:
+            _check_managed_gitlab_delivery(upload_resp)
+            _print_cloud_receipt(
+                console,
+                project_root,
+                upload_destination,
+                upload_resp,
+                in_ci=_is_ci(),
+                done_receipt=done_receipt,
+                done_note=getattr(args, "_cloud_done_note", None),
+            )
+            cloud_passed = upload_resp.get("quality_gate_passed")
+            cloud_gate = getattr(args, "_cloud_gate", False)
+            if cloud_passed is False and (args.strict or cloud_gate) and not args.force:
+                _print_cloud_gate_exit(console, args)
                 raise SystemExit(1)
         else:
             _check_managed_gitlab_delivery(upload_resp)
@@ -2021,9 +2715,12 @@ def _run_scan_command(
             qg = upload_resp.get("quality_gate") or {}
             new_v = qg.get("new_violations", 0)
             if new_v > 0:
-                console.print(
-                    f"[bold red]  {new_v} new violation{'s' if new_v != 1 else ''}[/bold red]"
-                )
+                from skylos.cloud.gate_status import new_issues_text
+
+                text = new_issues_text(new_v, upload_resp.get("new_issue_baseline"))
+                console.print(f"[bold red]  {escape(text)}[/bold red]")
+            _print_failed_gate_exit_note(console, args, passed)
+            _print_upload_receipt(console, upload_destination, upload_resp)
 
             if passed is False and (args.strict or args.gate) and not args.force:
                 raise SystemExit(1)

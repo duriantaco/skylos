@@ -266,6 +266,7 @@ class _Args:
 def test_scan_verification_is_skipped_without_a_key(monkeypatch, tmp_path):
     from skylos.commands import scan_cmd
 
+    monkeypatch.setattr("skylos.llm.runtime.llm_extra_installed", lambda: True)
     monkeypatch.setattr("skylos.llm.runtime.resolve_llm_runtime", lambda **_kw: ("openai", None, None, False))
     called = []
     monkeypatch.setattr("skylos.llm.finding_verification.verify_security_findings", lambda *a, **k: called.append(1))
@@ -277,9 +278,25 @@ def test_scan_verification_is_skipped_without_a_key(monkeypatch, tmp_path):
     assert any("skipped: no API key" in line and "keep blocking" in line for line in console.lines)
 
 
+def test_scan_verification_is_skipped_without_the_llm_extra(monkeypatch, tmp_path):
+    from skylos.commands import scan_cmd
+
+    monkeypatch.setattr("skylos.llm.runtime.llm_extra_installed", lambda: False)
+    monkeypatch.setattr("skylos.llm.runtime.resolve_llm_runtime", lambda **_kw: ("openai", "key", None, False))
+    called = []
+    monkeypatch.setattr("skylos.llm.finding_verification.verify_security_findings", lambda *a, **k: called.append(1))
+    console = _Console()
+    result = {"danger": [_finding()]}
+    scan_cmd._verify_security_findings(result, _Args(), console, project_root=tmp_path, machine_output=False)
+    assert called == []
+    assert "security_verification" not in result
+    assert any('pip install "skylos\\[llm]"' in line and "keep blocking" in line for line in console.lines)
+
+
 def test_scan_verification_reads_files_from_the_project_and_records_counts(monkeypatch, tmp_path):
     from skylos.commands import scan_cmd
 
+    monkeypatch.setattr("skylos.llm.runtime.llm_extra_installed", lambda: True)
     (tmp_path / "app.py").write_text(SOURCE, encoding="utf-8")
     monkeypatch.setattr("skylos.llm.runtime.resolve_llm_runtime", lambda **_kw: ("openai", "key", None, False))
     seen = {}
@@ -301,6 +318,7 @@ def test_scan_verification_reads_files_from_the_project_and_records_counts(monke
 def test_scan_verification_never_breaks_a_scan(monkeypatch, tmp_path):
     from skylos.commands import scan_cmd
 
+    monkeypatch.setattr("skylos.llm.runtime.llm_extra_installed", lambda: True)
     monkeypatch.setattr("skylos.llm.runtime.resolve_llm_runtime", lambda **_kw: ("openai", "key", None, False))
 
     def boom(*_a, **_k):

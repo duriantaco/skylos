@@ -1,0 +1,953 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-07",
+  "status": "validated_current_main",
+  "scope": "Finite reviewed source facts and development regression cases; no whole-project recall or overall scanner winner claim.",
+  "scanner_source": {
+    "initial_baseline_revision": "3cbc86af764f4e022e0ffdb9822f5b80052e5c0b",
+    "latest_main_baseline_revision": "1ba3b8ea2af1ea17c5c8ec37515994d0d89f86df",
+    "integrated_candidate_revision": "149384f7d4efb1e45edac9cb97912d137dc1dd4f",
+    "integrated_candidate_go_engine_sha256": "b7527e820d673209835125d3d4ab2961c5e09c5725a8a8b2bd613f022b3af3f6",
+    "latest_main_final_checks": "Verified: complete200case default corpus, eight natural-source arms, eight CLI controls, Go native/Python checks,78file integrated selection, and covered YAML construction-cost selector.",
+    "development_candidate_go_engine_sha256": "7c1adbfc8cc1ca3d01642ed1914b97d500f3fdb2616a0c151260a2482ea69cf7"
+  },
+  "default_corpus": {
+    "manifest": "benchmarks/security/manifest.json",
+    "cases": 200,
+    "expectations": 212,
+    "required": 111,
+    "absence_controls": 101,
+    "prior_cases": 139,
+    "prior_expectations": 148,
+    "prior_case_objects_unchanged": true,
+    "baseline_latest_main": {
+      "status": "SCORED",
+      "analysis_status": "complete",
+      "scored_cases": 200,
+      "counts": {
+        "TP": 88,
+        "FP": 5,
+        "FN": 23,
+        "TN": 96
+      }
+    },
+    "development_candidate": {
+      "status": "SCORED",
+      "analysis_status": "complete",
+      "scored_cases": 200,
+      "method": "Historical disjoint Go36 plus other164 development runs; superseded for integrated scoring by the complete rebased200 run.",
+      "counts": {
+        "TP": 111,
+        "FP": 0,
+        "FN": 0,
+        "TN": 101
+      }
+    },
+    "integrated_candidate": {
+      "status": "SCORED",
+      "analysis_status": "complete",
+      "scored_cases": 200,
+      "unscored_cases": 0,
+      "failure_count": 0,
+      "counts": {
+        "TP": 111,
+        "FP": 0,
+        "FN": 0,
+        "TN": 101
+      }
+    }
+  },
+  "optional_adversarial": {
+    "manifest": "benchmarks/security/adversarial_manifest.json",
+    "status": "SCORED_KNOWN_FAILURES",
+    "cases": 9,
+    "scored_cases": 9,
+    "counts": {
+      "TP": 0,
+      "FP": 1,
+      "FN": 8,
+      "TN": 0
+    },
+    "families": {
+      "go_function_values_request_alias_tls_write": 6,
+      "dart_identity_sanitizer": 2,
+      "kotlin_fixed_printf_argv": 1
+    }
+  },
+  "natural_cohorts": [
+    {
+      "id": "pygoat",
+      "repository": "https://github.com/adeyosemanputra/pygoat",
+      "revision": "2aa4cc14f251e4a780e94e200aed6b36a5b15c21",
+      "kind": "deliberately_vulnerable_training",
+      "reused": false,
+      "scanned_source_files": 32,
+      "facts": 10,
+      "scope": "Python files under dockerized_labs",
+      "source_inventory_sha256": "d2a1d09e2f238decdef9fbd3af8ba45c83bb8752cf694d517ac006363eda3db1"
+    },
+    {
+      "id": "quart",
+      "repository": "https://github.com/pallets/quart",
+      "revision": "29d339c87f9efd1ba5268666e2404530fe078911",
+      "kind": "production_framework_safe_controls",
+      "reused": false,
+      "scanned_source_files": 34,
+      "facts": 3,
+      "scope": "Python files under src/quart; three negative controls, no positive labels",
+      "source_inventory_sha256": "6c501cd678282421525b1382ef18bb662e54de3438b883f8fc9f8e5eef837f96"
+    },
+    {
+      "id": "juice",
+      "repository": "https://github.com/juice-shop/juice-shop",
+      "revision": "717f5efa886b0417eeecb52378b03cf10567b7e2",
+      "kind": "deliberately_vulnerable_training",
+      "reused": false,
+      "scanned_source_files": 6,
+      "facts": 6,
+      "scope": "Selected source files, not whole repository",
+      "source_files": [
+        "routes/fileServer.ts",
+        "routes/login.ts",
+        "routes/profileImageUrlUpload.ts",
+        "routes/redirect.ts",
+        "routes/search.ts",
+        "server.ts"
+      ],
+      "source_inventory_sha256": "1cc17264102b5f882d9e3fd99ed1bdd0b3445395bde79323db206dee1ba2dcc8"
+    },
+    {
+      "id": "govwa",
+      "repository": "https://github.com/0c34/govwa",
+      "revision": "4058f79f31eeb4a36d8f1e64bba1f0c899646e6f",
+      "kind": "deliberately_vulnerable_training",
+      "reused": true,
+      "scanned_source_files": 18,
+      "facts": 6,
+      "scope": "Selected source files, not whole repository",
+      "source_files": [
+        "app.go",
+        "setting/setting.go",
+        "user/session/session.go",
+        "user/user.go",
+        "util/config/config.go",
+        "util/cookie.go",
+        "util/database/database.go",
+        "util/http.go",
+        "util/middleware/middleware.go",
+        "util/template.go",
+        "vulnerability/csa/csa.go",
+        "vulnerability/idor/function.go",
+        "vulnerability/idor/idor.go",
+        "vulnerability/sqli/function.go",
+        "vulnerability/sqli/sqli.go",
+        "vulnerability/xss/function.go",
+        "vulnerability/xss/xss.go",
+        "vulnerability/xxe/xxe.go"
+      ],
+      "source_inventory_sha256": "08b28e63caf1d8aa30937f83d09bee205e3ef5062d17e0179708f1314dac07ee"
+    }
+  ],
+  "natural_fact_count": 25,
+  "selected_fact_examples": [
+    {
+      "cohort": "pygoat",
+      "path": "dockerized_labs/sql_injection_lab/app.py",
+      "line": 57,
+      "rule": "SKY-D211",
+      "present": true,
+      "reason": "POST fields interpolate SQL text before real sqlite3 execute.",
+      "source_sha256": "9a58b6da6a7c8e52ccccf70bde96e84b2ff71eb63a69dfea3be11c40c8e5fd5a"
+    },
+    {
+      "cohort": "pygoat",
+      "path": "dockerized_labs/insec_des_lab/main.py",
+      "line": 40,
+      "rule": "SKY-D205",
+      "present": true,
+      "reason": "POST serialized bytes reach pickle.loads before the type check.",
+      "source_sha256": "7e7e6707e16935692ee0c1d7535b7741502a624de0d4d3dea945a82a968a8ec7"
+    },
+    {
+      "cohort": "quart",
+      "path": "src/quart/helpers.py",
+      "line": 292,
+      "rule": "SKY-D215",
+      "present": false,
+      "reason": "Real safe_join result is rejected when None before send_file.",
+      "source_sha256": "438ffc3359b3bbef5a239847dfba81c7048cc33345dd18b558a243d96e2e4a94"
+    },
+    {
+      "cohort": "juice",
+      "path": "routes/profileImageUrlUpload.ts",
+      "line": 24,
+      "rule": "SKY-D216",
+      "present": true,
+      "reason": "Authenticated request imageUrl reaches actual Node fetch without a destination guard.",
+      "source_sha256": "75140f35e65141135d3abb4b3b86aad1556c0d2a22d733ae1d50a127cd0cbb26"
+    },
+    {
+      "cohort": "juice",
+      "path": "routes/profileImageUrlUpload.ts",
+      "line": 49,
+      "rule": "SKY-D230",
+      "present": false,
+      "reason": "Redirect uses operator BASE_PATH plus fixed /profile, independent of request imageUrl. Development target after v2 correction.",
+      "source_sha256": "75140f35e65141135d3abb4b3b86aad1556c0d2a22d733ae1d50a127cd0cbb26"
+    },
+    {
+      "cohort": "govwa",
+      "path": "vulnerability/sqli/function.go",
+      "line": 41,
+      "rule": "SKY-D211",
+      "present": true,
+      "reason": "Routed r.FormValue uid reaches fmt.Sprintf query text and database/sql DB.Query.",
+      "source_sha256": "b5a987a2bc057e0bdea4a546b3673450cc7ac91ad8587f7510d99f98760f472f"
+    }
+  ],
+  "natural_results": [
+    {
+      "scanner": "skylos",
+      "cohort": "pygoat",
+      "arm": "current-main",
+      "status": "SCORED",
+      "counts": {
+        "TP": 8,
+        "FP": 0,
+        "FN": 0,
+        "TN": 2
+      },
+      "outside_categories": 0,
+      "source_files_expected": 32,
+      "source_files_scanned": 32,
+      "analysis_errors": 0,
+      "raw_receipt_sha256": "80a68ebe05d6d7774a2b2c476ef40c9723588566bdfebfe82a7eebab2226ba04"
+    },
+    {
+      "scanner": "skylos",
+      "cohort": "quart",
+      "arm": "current-main",
+      "status": "SCORED",
+      "counts": {
+        "TP": 0,
+        "FP": 0,
+        "FN": 0,
+        "TN": 3
+      },
+      "outside_categories": 0,
+      "source_files_expected": 34,
+      "source_files_scanned": 34,
+      "analysis_errors": 0,
+      "raw_receipt_sha256": "fd96f4b30824f22489a8a82680a4216e9cf3747ee566c0301aeab06f829a036d"
+    },
+    {
+      "scanner": "skylos",
+      "cohort": "juice",
+      "arm": "current-main",
+      "status": "SCORED",
+      "counts": {
+        "TP": 4,
+        "FP": 1,
+        "FN": 0,
+        "TN": 1
+      },
+      "outside_categories": 0,
+      "source_files_expected": 6,
+      "source_files_scanned": 6,
+      "analysis_errors": 0,
+      "raw_receipt_sha256": "73a5cef6c8f5d52d94bdb0399dfbb0efb2d22f449dd2e5912fe250af17f3d0fb"
+    },
+    {
+      "scanner": "skylos",
+      "cohort": "govwa",
+      "arm": "current-main",
+      "status": "SCORED",
+      "counts": {
+        "TP": 1,
+        "FP": 0,
+        "FN": 0,
+        "TN": 5
+      },
+      "outside_categories": 0,
+      "source_files_expected": 18,
+      "source_files_scanned": 18,
+      "analysis_errors": 0,
+      "raw_receipt_sha256": "a9e535929a855a65a6b5775d0758320c05883f497e866491e7eb03c4ad6ad407"
+    },
+    {
+      "scanner": "skylos",
+      "cohort": "pygoat",
+      "arm": "rebased-candidate",
+      "status": "SCORED",
+      "counts": {
+        "TP": 8,
+        "FP": 0,
+        "FN": 0,
+        "TN": 2
+      },
+      "outside_categories": 0,
+      "source_files_expected": 32,
+      "source_files_scanned": 32,
+      "analysis_errors": 0,
+      "raw_receipt_sha256": "9d9ed25c7a8d0b576e34d5dd47156869041bae07e679adaa2aeae97762f44aee"
+    },
+    {
+      "scanner": "skylos",
+      "cohort": "quart",
+      "arm": "rebased-candidate",
+      "status": "SCORED",
+      "counts": {
+        "TP": 0,
+        "FP": 0,
+        "FN": 0,
+        "TN": 3
+      },
+      "outside_categories": 0,
+      "source_files_expected": 34,
+      "source_files_scanned": 34,
+      "analysis_errors": 0,
+      "raw_receipt_sha256": "ae6d419c6c14000dcc2ef7cebaab4e63143538de445c3761e584fb07caccf0ff"
+    },
+    {
+      "scanner": "skylos",
+      "cohort": "juice",
+      "arm": "rebased-candidate",
+      "status": "SCORED",
+      "counts": {
+        "TP": 4,
+        "FP": 0,
+        "FN": 0,
+        "TN": 2
+      },
+      "outside_categories": 0,
+      "source_files_expected": 6,
+      "source_files_scanned": 6,
+      "analysis_errors": 0,
+      "raw_receipt_sha256": "a270763bc5f6187c9582ae1754d1026af4e2ed175830e87b50cdeaac6f353608"
+    },
+    {
+      "scanner": "skylos",
+      "cohort": "govwa",
+      "arm": "rebased-candidate",
+      "status": "SCORED",
+      "counts": {
+        "TP": 1,
+        "FP": 0,
+        "FN": 0,
+        "TN": 5
+      },
+      "outside_categories": 0,
+      "source_files_expected": 18,
+      "source_files_scanned": 18,
+      "analysis_errors": 0,
+      "raw_receipt_sha256": "449ce3b0cded35cbb024a5699ebc188f955f2cc6680917a81063c9c1b3af8121"
+    },
+    {
+      "scanner": "bandit",
+      "cohort": "pygoat",
+      "arm": "before",
+      "status": "SCORED",
+      "counts": {
+        "TP": 5,
+        "FP": 0,
+        "FN": 0,
+        "TN": 2
+      },
+      "outside_categories": 3,
+      "source_files_expected": 32,
+      "source_files_scanned": 32,
+      "analysis_errors": 0,
+      "raw_receipt_sha256": "1dd0661d2f71ce16e431de18a380a18e19a0e8cf548e6791ec152369d3876437"
+    },
+    {
+      "scanner": "bandit",
+      "cohort": "quart",
+      "arm": "before",
+      "status": "SCORED",
+      "counts": {
+        "TP": 0,
+        "FP": 0,
+        "FN": 0,
+        "TN": 2
+      },
+      "outside_categories": 1,
+      "source_files_expected": 34,
+      "source_files_scanned": 34,
+      "analysis_errors": 0,
+      "raw_receipt_sha256": "192ef9b8a1b8b1910c37794b27a9436b1ed02d3ab2bbae7e1f9a0cd6088d1eaa"
+    },
+    {
+      "scanner": "semgrep",
+      "cohort": "pygoat",
+      "arm": "before",
+      "status": "SCORED",
+      "counts": {
+        "TP": 6,
+        "FP": 0,
+        "FN": 2,
+        "TN": 2
+      },
+      "outside_categories": 0,
+      "source_files_expected": 32,
+      "source_files_scanned": 32,
+      "analysis_errors": 0,
+      "raw_receipt_sha256": "32cf440753254adae719094e5b3e514a5183001532b28c403cac28728cbb16a2"
+    },
+    {
+      "scanner": "semgrep",
+      "cohort": "quart",
+      "arm": "before",
+      "status": "SCORED",
+      "counts": {
+        "TP": 0,
+        "FP": 0,
+        "FN": 0,
+        "TN": 3
+      },
+      "outside_categories": 0,
+      "source_files_expected": 34,
+      "source_files_scanned": 34,
+      "analysis_errors": 0,
+      "raw_receipt_sha256": "0c58b4d66dfa7b12e4744af5cc2ef9a334bf10568bfe6d8281bb0ee61847f903"
+    },
+    {
+      "scanner": "skylos",
+      "cohort": "juice",
+      "arm": "candidate",
+      "status": "SCORED",
+      "counts": {
+        "TP": 4,
+        "FP": 1,
+        "FN": 0,
+        "TN": 1
+      },
+      "outside_categories": 0,
+      "source_files_expected": 6,
+      "source_files_scanned": 6,
+      "analysis_errors": 0,
+      "raw_receipt_sha256": "adf8edc6a594e119741778226d8fe421343a55a7941dd44136bd1588b5bb8528"
+    },
+    {
+      "scanner": "semgrep",
+      "cohort": "juice",
+      "arm": "local",
+      "status": "SCORED",
+      "counts": {
+        "TP": 2,
+        "FP": 0,
+        "FN": 1,
+        "TN": 1
+      },
+      "outside_categories": 2,
+      "source_files_expected": 6,
+      "source_files_scanned": 6,
+      "analysis_errors": 0,
+      "raw_receipt_sha256": "8756a3f8a80a38fa4e7a8a2792ebe59a4280183754a1a96d598e06918a5035da"
+    },
+    {
+      "scanner": "semgrep",
+      "cohort": "govwa",
+      "arm": "local",
+      "status": "SCORED",
+      "counts": {
+        "TP": 1,
+        "FP": 0,
+        "FN": 0,
+        "TN": 5
+      },
+      "outside_categories": 0,
+      "source_files_expected": 18,
+      "source_files_scanned": 18,
+      "analysis_errors": 0,
+      "raw_receipt_sha256": "2c7feb9db30a4dc58750ecae12fdb55fc38623d9b997215ba859fcfa38dd20c5"
+    }
+  ],
+  "development_python_probes": {
+    "cases": 14,
+    "independent_holdout": false,
+    "counts": {
+      "skylos_baseline": {
+        "TP": 4,
+        "FP": 3,
+        "FN": 4,
+        "TN": 3
+      },
+      "skylos_candidate": {
+        "TP": 8,
+        "FP": 0,
+        "FN": 0,
+        "TN": 6
+      },
+      "bandit": {
+        "TP": 5,
+        "FP": 4,
+        "FN": 3,
+        "TN": 2
+      },
+      "semgrep_selected": {
+        "TP": 5,
+        "FP": 4,
+        "FN": 3,
+        "TN": 2
+      }
+    },
+    "mapping": "Vulnerability categories; D209/D212 are the same shell path; pickle is D205. Initial D233 bookkeeping typo retained in history and corrected without changing semantic labels."
+  },
+  "comparators": {
+    "bandit": {
+      "version": "1.9.4",
+      "status": "RUN",
+      "configuration": "All default installed checks, JSON recursive static scan with --ignore-nosec; scored only mapped Python vulnerability categories.",
+      "outside_categories": {
+        "pygoat": 3,
+        "quart": 1,
+        "ts_go": "all"
+      }
+    },
+    "semgrep": {
+      "version": "1.183.0",
+      "engine": "OSS",
+      "status": "RUN",
+      "settings": [
+        "local_config",
+        "metrics_off",
+        "disable_version_check",
+        "disable_nosem",
+        "no_git_ignore",
+        "one_worker"
+      ],
+      "python_rules_revision": "16b9e6d45f10649f6a531ec4838ed9924372c3bc",
+      "python_rule_files": [
+        {
+          "path": "python/flask/security/injection/subprocess-injection.yaml",
+          "sha256": "3999fd54bda682edd0391678e362cd8c70b313d4aeb24252179f374604c73d66",
+          "ids": [
+            "subprocess-injection"
+          ]
+        },
+        {
+          "path": "python/flask/security/injection/os-system-injection.yaml",
+          "sha256": "1d03d3a2b623500ebdaef23f57e4037ab434165ebc0240f1ceeaec3ee2fbe480",
+          "ids": [
+            "os-system-injection"
+          ]
+        },
+        {
+          "path": "python/flask/security/injection/user-eval.yaml",
+          "sha256": "1b264b83aca5b0cb5f6bda721cef7f6f97ba6733cbab89471fa9d98875bb67e5",
+          "ids": [
+            "eval-injection"
+          ]
+        },
+        {
+          "path": "python/flask/security/injection/user-exec.yaml",
+          "sha256": "6baf6b2cf08d10ca11aec05db52e13ca9b8002166cc997ef270343becb38c583",
+          "ids": [
+            "exec-injection"
+          ]
+        },
+        {
+          "path": "python/flask/security/injection/ssrf-requests.yaml",
+          "sha256": "b58b26365b07722e9408f38956365fa6b3a1a7351ad2b4a9c98a00d796f42452",
+          "ids": [
+            "ssrf-requests"
+          ]
+        },
+        {
+          "path": "python/flask/security/injection/path-traversal-open.yaml",
+          "sha256": "6334bed72d7dc051b208c0d0a44c7f492110f31e89b48afe43e486d0dc49ebe1",
+          "ids": [
+            "path-traversal-open"
+          ]
+        },
+        {
+          "path": "python/flask/security/injection/tainted-sql-string.yaml",
+          "sha256": "d9b562b5eb8bd7efaaa696ebd0db97e47fc498edeec094c6956ba3567bbddd77",
+          "ids": [
+            "tainted-sql-string"
+          ]
+        },
+        {
+          "path": "python/flask/security/open-redirect.yaml",
+          "sha256": "b70c080ef6b0e12b7954be9bd1bea7520767bf48bf13eb9a85773554497a2d9b",
+          "ids": [
+            "open-redirect"
+          ]
+        },
+        {
+          "path": "python/flask/security/insecure-deserialization.yaml",
+          "sha256": "bd53d297cfc842c23b289f6d15b2a98847b626d9e8fd71b71da794891a4aca34",
+          "ids": [
+            "insecure-deserialization"
+          ]
+        },
+        {
+          "path": "python/flask/security/secure-static-file-serve.yaml",
+          "sha256": "8abec107beb2158d160dd343fa2565295b028c436a956dc0a88e609dea1400bc",
+          "ids": [
+            "avoid_send_file_without_path_sanitization"
+          ]
+        },
+        {
+          "path": "python/flask/security/dangerous-template-string.yaml",
+          "sha256": "4c7dd55cfc00b1bf44e9fd4d60daaaaba25979f98eec75357f7344c0e08c4e28",
+          "ids": [
+            "dangerous-template-string"
+          ]
+        },
+        {
+          "path": "python/django/security/injection/sql/sql-injection-using-raw.yaml",
+          "sha256": "d632bb390c6bf5e477b38d49562c94eb3acba460fd8a3073c564dd3903d7bed2",
+          "ids": [
+            "sql-injection-using-raw"
+          ]
+        },
+        {
+          "path": "python/django/security/injection/sql/sql-injection-using-db-cursor-execute.yaml",
+          "sha256": "e4f74b36aa657c91def7eaea4ea545e046d63be195eb05d99de9ed6e20de1ef4",
+          "ids": [
+            "sql-injection-db-cursor-execute"
+          ]
+        },
+        {
+          "path": "python/django/security/injection/ssrf/ssrf-injection-requests.yaml",
+          "sha256": "ea10312bd2a8005370bb1207dad399a49f4a5baf176a99b67012184db69ff86a",
+          "ids": [
+            "ssrf-injection-requests"
+          ]
+        },
+        {
+          "path": "python/django/security/injection/path-traversal/path-traversal-open.yaml",
+          "sha256": "31601c492e870d65642111f2336aa04d138ef2fe9281f3eb3a38884b9cf889b7",
+          "ids": [
+            "path-traversal-open"
+          ]
+        },
+        {
+          "path": "python/django/security/injection/command/command-injection-os-system.yaml",
+          "sha256": "25656d77c95f6414ac7b98528b8d75b912fbb1f4a51be32db2c8fe77ad0d9fbc",
+          "ids": [
+            "command-injection-os-system"
+          ]
+        },
+        {
+          "path": "python/django/security/injection/open-redirect.yaml",
+          "sha256": "0241d11e8d6ddcb12adab3a5d0817becd3912ec85026dae3f9c83b477712c7cb",
+          "ids": [
+            "open-redirect"
+          ]
+        },
+        {
+          "path": "python/lang/security/deserialization/pickle.yaml",
+          "sha256": "ef221e31f87f24b5889c08e22e80ae176e0209c4099e822120904ed99d61a7e7",
+          "ids": [
+            "avoid-pickle",
+            "avoid-cPickle",
+            "avoid-dill",
+            "avoid-shelve"
+          ]
+        },
+        {
+          "path": "python/lang/security/deserialization/avoid-pyyaml-load.yaml",
+          "sha256": "a1ae4abf7e9476d4a440236d2d8743263e7fb39e1c68f2680467cbc66b3f7431",
+          "ids": [
+            "avoid-pyyaml-load"
+          ]
+        },
+        {
+          "path": "python/lang/security/audit/eval-detected.yaml",
+          "sha256": "4a7d2769392c93fecb74a76b313b36b499c0ca22b42966d48f174761d85a5eec",
+          "ids": [
+            "eval-detected"
+          ]
+        },
+        {
+          "path": "python/lang/security/dangerous-subprocess-use.yaml",
+          "sha256": "9aaf4e9fcb13afed4e60c04def4132f9f7f2baac3414dc1d7bbd5dcb29db0586",
+          "ids": [
+            "dangerous-subprocess-use"
+          ]
+        }
+      ],
+      "python_config_sha256": "0fb3a78793d767bd75118ca348bca315239a00222b06fb79cf9e29ae182b3e2a",
+      "ts_go_config_sha256": "6bac2e1a38087879a5d96895f95234f34f93825d0b55f4d690e03cc663e8c8b1",
+      "ts_go_source_cache_sha256": "86fc627485e2c2e08f3b3b1ec0e549390b333c5e1738714724818ce6a770fd91",
+      "ts_go_rule_versions": [
+        {
+          "id": "go.lang.security.audit.dangerous-exec-command.dangerous-exec-command",
+          "version_id": "vdT06Xp"
+        },
+        {
+          "id": "go.lang.security.audit.database.string-formatted-query.string-formatted-query",
+          "version_id": "ZRTKA2q"
+        },
+        {
+          "id": "javascript.lang.security.detect-child-process.detect-child-process",
+          "version_id": "5PT7KnG"
+        },
+        {
+          "id": "javascript.lang.security.audit.dangerous-spawn-shell.dangerous-spawn-shell",
+          "version_id": "PkTR3nY"
+        },
+        {
+          "id": "javascript.lang.security.audit.spawn-shell-true.spawn-shell-true",
+          "version_id": "qkTR79W"
+        },
+        {
+          "id": "go.lang.security.audit.sqli.gosql-sqli.gosql-sqli",
+          "version_id": "RGT0Lpr"
+        },
+        {
+          "id": "go.lang.security.injection.tainted-url-host.tainted-url-host",
+          "version_id": "yeTxpOj"
+        },
+        {
+          "id": "go.lang.security.injection.tainted-sql-string.tainted-sql-string",
+          "version_id": "nWTQ5qD"
+        },
+        {
+          "id": "javascript.sequelize.security.audit.sequelize-injection-express.express-sequelize-injection",
+          "version_id": "nWT2Llx"
+        },
+        {
+          "id": "javascript.express.security.audit.express-ssrf.express-ssrf",
+          "version_id": "8KT5rBr"
+        },
+        {
+          "id": "problem-based-packs.insecure-transport.go-stdlib.bypass-tls-verification.bypass-tls-verification",
+          "version_id": "ZRT358j"
+        }
+      ],
+      "excluded_juice_facts": 2,
+      "limitations": "Selected TS/Go config has no redirect rule; its Express SSRF rule models request, not this fetch flow. No Pro or full-registry claim."
+    },
+    "snyk": {
+      "status": "NOT_RUN",
+      "reason": "CLI not installed and no local authentication configured. No zero score or upload."
+    }
+  },
+  "changes": [
+    {
+      "group": "python_callable_identity",
+      "paths": [
+        "skylos/rules/danger/callable_bindings.py",
+        "skylos/rules/danger/calls.py",
+        "skylos/rules/danger/danger.py",
+        "skylos/rules/danger/danger_cmd/cmd_flow.py"
+      ],
+      "effect": "Capture-time dangerous provider identity and source-visible replacement controls."
+    },
+    {
+      "group": "typescript_optional_shell",
+      "paths": [
+        "skylos/visitors/languages/typescript/child_process_shell.py",
+        "skylos/visitors/languages/typescript/express_taint.py"
+      ],
+      "effect": "Real Node argv APIs with effective shell:true/path options and request command/argv input."
+    },
+    {
+      "group": "go_sanitizer_and_guard_proofs",
+      "paths": [
+        "skylos/engines/go/internal/analyzer/taint.go",
+        "skylos/engines/go/internal/analyzer/guardproof.go"
+      ],
+      "effect": "Sink-specific path barriers; value/position/scope-aware rejecting guards."
+    },
+    {
+      "group": "typescript_config_redirect",
+      "paths": [
+        "skylos/visitors/languages/typescript/danger.py"
+      ],
+      "effect": "Static operator-env redirect provenance, preserving request/mutation lookalikes. Juice profile fact is development evidence after this fix."
+    }
+  ],
+  "validation_runs": [
+    {
+      "suite": "Python danger/provider broader selection",
+      "passed": 695,
+      "xfail": 2,
+      "note": "Separate run; not summed with focused repeats."
+    },
+    {
+      "suite": "TS security, including config redirect",
+      "passed": 1128,
+      "skipped": 4,
+      "note": "Four existing manual-fixture skips."
+    },
+    {
+      "suite": "Go native",
+      "passing_test_and_subtest_events": 408,
+      "note": "Test/subtest events include parent/package structure; not408independent scenarios. Previous327event run is historical.",
+      "stage": "post_rebase"
+    },
+    {
+      "suite": "Go Python security integration",
+      "passed": 55,
+      "stage": "post_rebase",
+      "seconds": 19.46
+    },
+    {
+      "suite": "Unchanged Go expected-output corpus",
+      "contracts": 142,
+      "baseline_passed": 142,
+      "candidate_passed": 142
+    },
+    {
+      "suite": "Reporting, gates, SARIF, completeness",
+      "passed": 280
+    },
+    {
+      "suite": "YAML construction cost under coverage",
+      "passed": 1,
+      "stage": "post_rebase",
+      "seconds": 1.24,
+      "unchanged_budget_seconds": 5
+    },
+    {
+      "suite": "Actual CLI positive/negative gate/listing/exit controls",
+      "cases": 8,
+      "passed": 8,
+      "coverage": "complete",
+      "stage": "post_rebase"
+    },
+    {
+      "suite": "Rebased integrated selection",
+      "files": 78,
+      "passed": 3985,
+      "skipped": 4,
+      "xfail": 2,
+      "deselected": 2,
+      "seconds": 118.88,
+      "note": "Two known captured-random xfails; four existing skips. Default core/Dart wrapper tests deselected because complete200case runner executed separately. Not a full-suite run; overlaps earlier focused runs."
+    }
+  ],
+  "evidence": {
+    "source_inventory_digest_method": "SHA256 of UTF-8 json.dumps(relative_path_to_sha256,sort_keys=True,separators=(comma,colon)).",
+    "raw_receipts": [
+      {
+        "group": "corpus",
+        "name": "corpus-main-1ba3b8ea.json",
+        "sha256": "791fda0c143c8dc347adb5211f093fae34f60e14ff911cc6bc014d72cc06a520",
+        "published_raw": false
+      },
+      {
+        "group": "corpus",
+        "name": "corpus-go-final.json",
+        "sha256": "8d433ccfa57c78a6a8c0b93259e49eae4015e68bb72d8aa72ed94d7cce4667f9",
+        "published_raw": false
+      },
+      {
+        "group": "corpus",
+        "name": "corpus-other-final.json",
+        "sha256": "193668cc0706efdcfd669cd857c59f2ddda22d0f2a2588139f5a15ece81db723",
+        "published_raw": false
+      },
+      {
+        "group": "corpus",
+        "name": "adversarial-final.json",
+        "sha256": "e5d71ddb40350b20290654decee6680f9f3a3afe29af0602a2893775bac497d6",
+        "published_raw": false
+      },
+      {
+        "group": "corpus",
+        "name": "final-cli-results.json",
+        "sha256": "d579ed43d2b4343a17aea184eb3caad42597556a022ba4b731c29cf683dd3539",
+        "published_raw": false
+      },
+      {
+        "group": "python",
+        "name": "scores.json",
+        "sha256": "0118bcda67c002bd58529ac4a60f4b3bbfae1c4691c89da62c31b1f44b06b239",
+        "published_raw": false
+      },
+      {
+        "group": "real-source",
+        "name": "scores.json",
+        "sha256": "d2bd54d73a8b805cf5dc5891e0301f64222c617680517755c200529e1e05932f",
+        "published_raw": false
+      },
+      {
+        "group": "integration",
+        "name": "corpus-rebased-final.json",
+        "sha256": "08c52bf0ae9b5ac3982826b4164e49d3707449f6e36f8d532490552dd85be700",
+        "published_raw": false
+      },
+      {
+        "group": "integration",
+        "name": "final-cli-rebased.stdout",
+        "sha256": "d579ed43d2b4343a17aea184eb3caad42597556a022ba4b731c29cf683dd3539",
+        "published_raw": false
+      },
+      {
+        "group": "integration-main-1ba3b8ea",
+        "name": "scores.json",
+        "sha256": "d87bc0ef910733e4668575315122ccc3872d8558a6798ba54b04ad45ae5bff49",
+        "published_raw": false
+      },
+      {
+        "group": "inventory",
+        "name": "go-rebased-receipt.json",
+        "sha256": "972c8bbf2b400d3046ef2ea8fa4a0c8c020130c6040628b4e6242e9520f1d24d",
+        "published_raw": false
+      },
+      {
+        "group": "final_integration",
+        "name": "integrated-tests.xml",
+        "sha256": "88731f7a088033f08767b5500b1c73d0ec2c950fc2a8ad7e034d0d8cd4eefa8f",
+        "published_raw": false
+      },
+      {
+        "group": "final_integration",
+        "name": "integrated-tests.log",
+        "sha256": "4ff01b7a7cd56693061112f93436e0fc08a06f68f1fe8fe35be977fe996951c7",
+        "published_raw": false
+      },
+      {
+        "group": "final_integration",
+        "name": "yaml-cost-rebased.xml",
+        "sha256": "df4ed47599ba3a961dd8fdf8e1909d80febf467e0be5150d447580a55d099659",
+        "published_raw": false
+      },
+      {
+        "group": "final_integration",
+        "name": "yaml-cost-rebased.log",
+        "sha256": "a717ef070b397c87c950f2fea6e6f5b8cb0a6789a7d5b2ad5a37da79030c6e29",
+        "published_raw": false
+      }
+    ],
+    "initial_failed_incomplete_runs": "Preserved separately and UNSCORED; no missing files or errors in scored selected-snapshot arms.",
+    "registry": "Existing catalog/shared-expectation drift remains unrefreshed and unexecuted; not passed."
+  },
+  "reproduce": [
+    "From skylos/engines/go: go build -o /tmp/skylos-security-go ./cmd/skylos-go",
+    "SKYLOS_GO_BIN=/tmp/skylos-security-go python scripts/security_benchmark.py --manifest benchmarks/security/manifest.json --json",
+    "SKYLOS_GO_BIN=/tmp/skylos-security-go python scripts/security_benchmark.py --manifest benchmarks/security/adversarial_manifest.json --json",
+    "skylos \"$SNAPSHOT\" --danger --format json --no-upload --no-grep-verify --include-generated",
+    "bandit -r \"$PYTHON_SNAPSHOT\" -f json --ignore-nosec",
+    "semgrep scan --config \"$PINNED_LOCAL_CONFIG\" --oss-only --metrics=off --disable-version-check --disable-nosem --no-git-ignore --jobs 1 --json \"$SNAPSHOT\""
+  ],
+  "limits": [
+    "Training-source flaws are not production incidents. Quart labels are safe framework controls.",
+    "All completeness claims apply only to selected static snapshots. Omitted source and unreviewed warnings receive no score.",
+    "No target code/apps/tests/install/build scripts were executed; no source upload, paid calls or cloud comparator runs.",
+    "No universal precision/recall estimate or overall winner conclusion.",
+    "The78file integrated selection and separately completed corpus are verified; full repository suite was not run. Overlapping suites are not summed."
+  ],
+  "natural_history": "Earlier 3cbc86af baseline/development outputs retained by digest. The eight latest-main/rebased-candidate arms reuse all25 original labels/inputs; no new holdouts.",
+  "guard_oracle_history": {
+    "P5": "Original filepath.Join(root,filepath.Clean(r.URL.Path)) negative restored. Intermediate Python-style-join inference retracted after trusted offline Go standard-library proof; genuine FormValue traversal control remains positive.",
+    "Z3": "Original parsed-Host-only negative deliberately corrected to positive; Host-and-Scheme safe control retained."
+  },
+  "final_source_hashes": {
+    "go_taint.go": "60e2965cafb96aee531789b39008e2ff2d52219d9739a0846a3458b178ac3097",
+    "go_guardproof.go": "9c466ac0775ef9f6d0eecf893292549ce0f4f064ceaa11e13c7ab0cb77d08272",
+    "ts_child_process_shell.py": "9630f229c2b12df27ff117f152ac3ecd8076335f5f92a8e856d13182627ff6e1",
+    "ts_express_taint.py": "07d068995f17a7855cecd9459a986db65dc32348f330a084f0291304bd115475",
+    "ts_danger.py": "2e7f605887de3f5efe5c52615066dcdb45007640ef30d9a30882103968499be0",
+    "python_callable_bindings.py": "f4f57b8f734351924738c0800da8cd9f3915a1125757c74f06598ba3898f17ce",
+    "python_calls.py": "ff5cd1a2fc9ec6b1a50b1c722d87516faff7302636d84d4dac39d773694ca75a",
+    "python_danger.py": "b61852fd81087612868743a048639627ecd560e92f8926da4f55d790101f832b",
+    "python_cmd_flow.py": "c90a80cfb940e016f767fc1f07e770fe225c4a97c071832d20aed6f8ce6a1dd8"
+  },
+  "fullsuite_not_run": true
+}

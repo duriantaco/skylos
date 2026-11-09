@@ -104,15 +104,12 @@ def build_sonar_migration_plan(properties: dict[str, str]) -> dict[str, Any]:
 
     config: dict[str, Any] = {
         "exclude": exclusions,
-        "gate": {
-            "enabled": True,
-            "mode": "zero-new",
-        },
     }
 
     notes = [
         "Review Sonar quality profiles manually; Skylos does not import Sonar rule activation yet.",
         "Coverage thresholds are not imported into Skylos gates in this first migration slice.",
+        "Sonar's quality gate is not imported; set limits under [tool.skylos.gate] and run skylos cicd init to gate pull requests.",
     ]
     if test_paths:
         notes.append(
@@ -136,18 +133,47 @@ def build_sonar_migration_plan(properties: dict[str, str]) -> dict[str, Any]:
     }
 
 
-def write_skylos_yaml_config(path: str | Path, config: dict[str, Any]) -> Path:
-    output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+def skylos_toml_text(config: dict[str, Any]) -> str:
+    """The mapped settings as TOML keys for skylos.toml or [tool.skylos]."""
     try:
-        import yaml
-    except ImportError as exc:
-        raise RuntimeError("Writing YAML requires PyYAML.") from exc
+        import tomllib
+    except ImportError:
+        import tomli as tomllib
 
-    output_path.write_text(  # skylos: ignore[SKY-D215] user-selected migration output path
-        yaml.safe_dump(config, sort_keys=False, allow_unicode=False),
-        encoding="utf-8",
+    items = ", ".join(
+        json.dumps(str(item), ensure_ascii=False).replace("\x7f", "\\u007f")
+        for item in config.get("exclude", [])
     )
+    text = f"exclude = [{items}]\n"
+    if tomllib.loads(text) != {
+        "exclude": [str(item) for item in config.get("exclude", [])]
+    }:
+        raise ValueError("Could not write the Sonar exclusions as TOML")
+    return text
+
+
+def existing_skylos_config(folder: str | Path) -> Path | None:
+    """The nearest Skylos config file in ``folder`` or above it.
+
+    A new skylos.toml there would hide a pyproject.toml in the same folder
+    and replace the exclude list of the files above it.
+    """
+    from skylos.config import CONFIG_FILE_NAMES, describe_config_sources
+
+    for source in describe_config_sources(Path(folder).resolve()):
+        if source["kind"] in CONFIG_FILE_NAMES:
+            return Path(source["path"])
+    return None
+
+
+def write_skylos_toml_config(path: str | Path, config: dict[str, Any]) -> Path:
+    output_path = Path(path)
+    text = skylos_toml_text(config)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(  # skylos: ignore[SKY-D215] user-selected migration output path
+        output_path, "x", encoding="utf-8"
+    ) as handle:
+        handle.write(text)
     return output_path
 
 

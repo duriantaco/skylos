@@ -333,7 +333,7 @@ def _format_advice_groups(result: dict) -> str:
         lines.append(
             f"- {group['rule_id']}: {count} advice {'entry' if count == 1 else 'entries'} "
             f"in {files} {'file' if files == 1 else 'files'} — {group['name']}; "
-            f"Advice priority: {priority}\n"
+            f"Severity: {priority}\n"
         )
     return "".join(lines)
 

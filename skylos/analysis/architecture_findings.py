@@ -37,7 +37,9 @@ def _iad_gate_note(advisory: bool) -> str:
 
 
 def _iad_docs_url(rule_id: str) -> str:
-    return f"https://docs.skylos.dev/rules/{rule_id}"
+    from skylos.rules.guidance import rule_docs_url
+
+    return rule_docs_url(rule_id)
 
 
 def _iad_remediations(

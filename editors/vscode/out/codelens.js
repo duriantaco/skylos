@@ -90,7 +90,7 @@ class SkylosCodeLensProvider {
             }
             if (showAllActions && (0, findingCore_1.isDeadCodeRule)(f.ruleId)) {
                 lenses.push(new vscode.CodeLens(range, {
-                    title: "Ignore",
+                    title: "Add to whitelist",
                     command: "skylos.addToWhitelist",
                     arguments: [f.message],
                 }));

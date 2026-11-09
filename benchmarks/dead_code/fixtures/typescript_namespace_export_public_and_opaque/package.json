@@ -1,0 +1,1 @@
+{"private":true,"exports":"./public.ts","scripts":{"start":"node index.ts"}}

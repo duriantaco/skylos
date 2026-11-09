@@ -12,6 +12,7 @@ No network request is made.
 
 from __future__ import annotations
 
+import argparse
 import re
 import subprocess
 from pathlib import Path
@@ -100,11 +101,30 @@ def choose_badge(root: Path | None, *, api_url: str, origin: str | None = None) 
     }
 
 
+def _badge_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="skylos badge",
+        description=(
+            "Print README badge Markdown for this repository. It picks the "
+            "Skylos Cloud gate badge when the repository is linked to a Cloud "
+            "project, else the GitHub Actions badge for the Skylos workflow, "
+            "else a static 'Checked with Skylos' badge. No network request is made."
+        ),
+        allow_abbrev=False,
+    )
+    parser.add_argument(
+        "--plain",
+        action="store_true",
+        help="Print only the Markdown line, for scripts (no clipboard copy)",
+    )
+    return parser
+
+
 def run_badge_command(argv: list[str] | None = None) -> int:
     from skylos.api import BASE_URL
 
-    argv = list(argv or [])
-    plain = "--plain" in argv
+    options, _unused = _badge_parser().parse_known_args(list(argv or []))
+    plain = options.plain
     root = _git_root(Path.cwd().resolve())
     badge = choose_badge(root, api_url=BASE_URL)
 

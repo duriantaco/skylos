@@ -1,5 +1,196 @@
 ## Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+* **cicd:** read the PR diff as bytes and parse Git's quoted and TAB-terminated paths, so non-ASCII names, non-UTF-8 bytes and bare CRs no longer hide security regressions from the PR review.
+* **cicd:** keep changed-line counts and risk evidence scoped to the PR diff in summary-only reviews.
+* **sbom:** keep reachable transitive packages out of SPDX root direct-dependency relationships.
+* **sbom:** refuse output paths named after supported Bun, Cargo, Composer, RubyGems, Pub, Gradle, NuGet, Maven, and setuptools dependency inputs.
+* **scale:** keep parallel danger-rule worker results picklable instead of retrying them in the parent process.
+
+## [5.4.0](https://github.com/duriantaco/skylos/compare/v5.3.0...v5.4.0) (2026-11-02)
+
+
+### Features
+
+* **output:** show the verdict and top risks first and add skylos report ([#1144](https://github.com/duriantaco/skylos/issues/1144)) ([c90f1e2](https://github.com/duriantaco/skylos/commit/c90f1e2f04cd396343988a84f5fbbbaa9b4d2852))
+* **security:** flag open control and admin routes as SKY-D283 ([#1145](https://github.com/duriantaco/skylos/issues/1145)) ([31ff5c0](https://github.com/duriantaco/skylos/commit/31ff5c0ac51e99f077613fba2f366a199ae0d8a7))
+
+
+### Bug Fixes
+
+* **ci:** add Python 3.15 container images ([#1150](https://github.com/duriantaco/skylos/issues/1150)) ([14932fb](https://github.com/duriantaco/skylos/commit/14932fbe0b336813d7ed56bf0c6f3d1da902d96d))
+* **deadcode:** tighten public API detection ([#1149](https://github.com/duriantaco/skylos/issues/1149)) ([e68feed](https://github.com/duriantaco/skylos/commit/e68feedcbb3860e369312698537d6e35155996cb))
+* **security:** preserve XSS escaping through safe Namespace helpers ([#1151](https://github.com/duriantaco/skylos/issues/1151)) ([5c5a83c](https://github.com/duriantaco/skylos/commit/5c5a83c580b5d4e5d0e621168738613d436944a5))
+* **security:** prevent noise filters from hiding real findings ([#1146](https://github.com/duriantaco/skylos/issues/1146)) ([40732e0](https://github.com/duriantaco/skylos/commit/40732e0b112311b58456ae25726edf37b41b83a0))
+
+## [5.3.0](https://github.com/duriantaco/skylos/compare/v5.2.0...v5.3.0) (2026-10-31)
+
+
+### Features
+
+* **cicd:** opt-in AI review on the default-branch upload ([#1126](https://github.com/duriantaco/skylos/issues/1126)) ([ac308ed](https://github.com/duriantaco/skylos/commit/ac308ede6f0a7174434219d04a0e38c5a03f1e54))
+
+
+### Bug Fixes
+
+* **ai-review:** stop on a refused key and never record failed calls as unsure ([#1128](https://github.com/duriantaco/skylos/issues/1128)) ([39d2049](https://github.com/duriantaco/skylos/commit/39d2049e99cf13eb4190f69ac7b0bd054c29aeb7))
+* **analyzer:** reduce noise with conservative provenance checks ([#1130](https://github.com/duriantaco/skylos/issues/1130)) ([9c8ccc0](https://github.com/duriantaco/skylos/commit/9c8ccc08ae2ef78199f87cd8fe8079b0e2074aff))
+* **deadcode:** prove Django command and provider reachability ([#1138](https://github.com/duriantaco/skylos/issues/1138)) ([91356bf](https://github.com/duriantaco/skylos/commit/91356bf98f86d8e27e708015f23d3872e04c1766))
+* **defend:** call it AI app safety in reports, help and CI steps ([#1127](https://github.com/duriantaco/skylos/issues/1127)) ([e332af8](https://github.com/duriantaco/skylos/commit/e332af86b1ebd1aada0120f2dc9abfbc9aca12a1))
+* **pricing:** match Cloud prices and only charge remediate when the AI runs ([#1141](https://github.com/duriantaco/skylos/issues/1141)) ([3300a81](https://github.com/duriantaco/skylos/commit/3300a81b0dada125980e7e7efc3f6d442986d0f6))
+* **security:** avoid false XSS warnings from unrelated Namespace writes ([#1142](https://github.com/duriantaco/skylos/issues/1142)) ([2b4ba5f](https://github.com/duriantaco/skylos/commit/2b4ba5f9dfb2a703b0ba494fbd529ea78b063fde))
+* **security:** distinguish compound check descriptions from directives ([#1140](https://github.com/duriantaco/skylos/issues/1140)) ([f4bff65](https://github.com/duriantaco/skylos/commit/f4bff656cf285dab3d2d6ae334d980c3441e69c0))
+* **security:** improve YAML and code execution checks ([#1136](https://github.com/duriantaco/skylos/issues/1136)) ([e8fd22c](https://github.com/duriantaco/skylos/commit/e8fd22ca0851e854142dce19b72ed081b2e264ad))
+* **security:** prevent unsafe route paths from being marked safe ([#1137](https://github.com/duriantaco/skylos/issues/1137)) ([643276e](https://github.com/duriantaco/skylos/commit/643276ee9d1a9c7a07642fc1b1417b236361bf6a))
+* **security:** recognize normalized URL scheme guards ([#1139](https://github.com/duriantaco/skylos/issues/1139)) ([a96d59c](https://github.com/duriantaco/skylos/commit/a96d59cb7f01432fcd5abd0ff496aab3b362d56e))
+* **security:** scope import evidence and preserve prompt severity ([#1131](https://github.com/duriantaco/skylos/issues/1131)) ([8a6d32c](https://github.com/duriantaco/skylos/commit/8a6d32c612565ef54aafff7c19769ffc98837c8b))
+
+## [5.2.0](https://github.com/duriantaco/skylos/compare/v5.1.5...v5.2.0) (2026-10-29)
+
+
+### Features
+
+* **scan:** add --ai-review and group AI commands by job ([#1124](https://github.com/duriantaco/skylos/issues/1124)) ([6d1c982](https://github.com/duriantaco/skylos/commit/6d1c982f14d36e71eb5763583ee44a5397bd93da))
+
+
+### Bug Fixes
+
+* **cli:** always name the program skylos in usage and errors ([#1125](https://github.com/duriantaco/skylos/issues/1125)) ([5451aac](https://github.com/duriantaco/skylos/commit/5451aacf9a9142cdbcc998a44b36687825147ffb))
+* **deps:** resolve filelock and MSAL security alerts ([#1123](https://github.com/duriantaco/skylos/issues/1123)) ([0031acc](https://github.com/duriantaco/skylos/commit/0031accc4af26fd3c6150d19355d11a5af3eea4b))
+* **sca:** report aliased advisories for one package version once ([#1121](https://github.com/duriantaco/skylos/issues/1121)) ([bceab8c](https://github.com/duriantaco/skylos/commit/bceab8c7dbf48f461c6277e04350eb0dae4a689d))
+* **upload:** keep coverage when listing folds a package advisories ([#1119](https://github.com/duriantaco/skylos/issues/1119)) ([30cca09](https://github.com/duriantaco/skylos/commit/30cca09bb54d2ade965f317b1d987fea00eee345))
+* **upload:** stop sending the definitions file cloud refuses ([#1120](https://github.com/duriantaco/skylos/issues/1120)) ([805a3af](https://github.com/duriantaco/skylos/commit/805a3aff4e6f62295b954cc5809e97e5abeaf1e7))
+
+## [5.1.5](https://github.com/duriantaco/skylos/compare/v5.1.4...v5.1.5) (2026-10-28)
+
+
+### Bug Fixes
+
+* **analyzer:** preserve references and security flows ([#1115](https://github.com/duriantaco/skylos/issues/1115)) ([088f0f4](https://github.com/duriantaco/skylos/commit/088f0f41c428eb2e4471dcba5dfe7efd07641db9))
+* **cli:** shorten saved paths in command output ([#1112](https://github.com/duriantaco/skylos/issues/1112)) ([acd86a5](https://github.com/duriantaco/skylos/commit/acd86a59ad197381a0d2487b82b05eaba0573c2c))
+* **dead-code:** reduce Python and JS/TS FPs ([#1118](https://github.com/duriantaco/skylos/issues/1118)) ([78b80da](https://github.com/duriantaco/skylos/commit/78b80dadb4b22696fa92743073ee853d8f8daf72))
+* **dead-code:** resolve FastAPI routers in nested projects ([#1107](https://github.com/duriantaco/skylos/issues/1107)) ([3035566](https://github.com/duriantaco/skylos/commit/30355668d8778b7d713d633d4a92893080dd103f))
+* **rust:** improve dead code, quality and security checks ([#1111](https://github.com/duriantaco/skylos/issues/1111)) ([c226937](https://github.com/duriantaco/skylos/commit/c226937654cc4a7fcf1cb0f93989b4abf7cb1fe6))
+* **security:** close python data flow and provenance gaps ([#1110](https://github.com/duriantaco/skylos/issues/1110)) ([142c3f9](https://github.com/duriantaco/skylos/commit/142c3f920f57b8f602378a36f4219ecf9c944519))
+* **security:** improve secret, path and XSS checks ([#1116](https://github.com/duriantaco/skylos/issues/1116)) ([bbd4bb3](https://github.com/duriantaco/skylos/commit/bbd4bb37aa4d4c42b304e96afd0f2be7c4564ca5))
+* **security:** skip password confirmations, dry-run publishes ([#1108](https://github.com/duriantaco/skylos/issues/1108)) ([4b98679](https://github.com/duriantaco/skylos/commit/4b98679383b1e86e94ecfd31e4002f95fbc02cc6))
+* **upload:** send MEDIUM for advisories with no severity rating ([#1117](https://github.com/duriantaco/skylos/issues/1117)) ([c041f5a](https://github.com/duriantaco/skylos/commit/c041f5aaaef58598103ae93713f4184be2b53ea6))
+
+## [5.1.4](https://github.com/duriantaco/skylos/compare/v5.1.3...v5.1.4) (2026-10-27)
+
+
+### Bug Fixes
+
+* **cli:** show the Workspace plan name in whoami and project commands ([#1103](https://github.com/duriantaco/skylos/issues/1103)) ([5bd15e5](https://github.com/duriantaco/skylos/commit/5bd15e5865d0b4233a1e457f408707bb92d1c345))
+
+## [5.1.3](https://github.com/duriantaco/skylos/compare/v5.1.2...v5.1.3) (2026-10-27)
+
+
+### Bug Fixes
+
+* **gate:** apply the synced skylos cloud policy to skylos --gate ([#1101](https://github.com/duriantaco/skylos/issues/1101)) ([0b46dbf](https://github.com/duriantaco/skylos/commit/0b46dbf47997d2a429d1296d6269aeff53a507d4))
+* **sync:** say sync pull needs a git remote before contacting cloud ([#1100](https://github.com/duriantaco/skylos/issues/1100)) ([2a20b49](https://github.com/duriantaco/skylos/commit/2a20b49daa430457d9b409dd7d52853fbd758aeb))
+
+## [5.1.2](https://github.com/duriantaco/skylos/compare/v5.1.1...v5.1.2) (2026-10-27)
+
+
+### Bug Fixes
+
+* **cli:** make help, docs and tour match what commands do ([#1095](https://github.com/duriantaco/skylos/issues/1095)) ([df0e251](https://github.com/duriantaco/skylos/commit/df0e251e136b96a70d251843c1fb929828326b0f))
+* **cli:** safer clean, clear no-terminal errors and honest filters ([#1094](https://github.com/duriantaco/skylos/issues/1094)) ([511e63c](https://github.com/duriantaco/skylos/commit/511e63cf5bdd54411c5bb7a423296df6737de666))
+* **deadcode:** quiet framework class attributes when deps are off-path ([#1090](https://github.com/duriantaco/skylos/issues/1090)) ([806bc79](https://github.com/duriantaco/skylos/commit/806bc79d981df6c4fce7e5513460d9bc62efadde))
+* **defend:** find schema tools, tool-call sinks and prompt inputs ([#1098](https://github.com/duriantaco/skylos/issues/1098)) ([908d83e](https://github.com/duriantaco/skylos/commit/908d83ecea591b39956fa5f44e4936045aec6743))
+* **done:** check made-up npm imports in JS and TS files ([#1096](https://github.com/duriantaco/skylos/issues/1096)) ([ea838a8](https://github.com/duriantaco/skylos/commit/ea838a8342d6015db1a1c75062694703063d5de5))
+* **done:** stop excusing deleted tests and made-up imports ([#1091](https://github.com/duriantaco/skylos/issues/1091)) ([0a19a1c](https://github.com/duriantaco/skylos/commit/0a19a1c8559ae3c11cd3c201fb2a505459f252b9))
+* **llm:** fail clearly without skylos[llm] and fix related CI, MCP and suite output ([#1092](https://github.com/duriantaco/skylos/issues/1092)) ([db2033f](https://github.com/duriantaco/skylos/commit/db2033fbadc8983e72da84fa443a468cb4983ec0))
+
+## [5.1.1](https://github.com/duriantaco/skylos/compare/v5.1.0...v5.1.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **cli:** cleaner debt, clean and sbom output ([#1086](https://github.com/duriantaco/skylos/issues/1086)) ([7f6795c](https://github.com/duriantaco/skylos/commit/7f6795c1508550dcbb9069befa8ae17d9e36a473))
+* **done:** show a quieted CI test step on the CI line too ([#1087](https://github.com/duriantaco/skylos/issues/1087)) ([a6349bd](https://github.com/duriantaco/skylos/commit/a6349bd675fac9dfd5a33ca1c2f66984a186160d))
+
+
+### Performance Improvements
+
+* **ci:** run tests in parallel shards ([#1089](https://github.com/duriantaco/skylos/issues/1089)) ([87b27a2](https://github.com/duriantaco/skylos/commit/87b27a2b473040e27f06344fd82cf6ddd31b6058))
+
+## [5.1.0](https://github.com/duriantaco/skylos/compare/v5.0.0...v5.1.0) (2026-10-26)
+
+
+### Features
+
+* **cicd:** write configs for GitLab, Jenkins and other CIs ([#1080](https://github.com/duriantaco/skylos/issues/1080)) ([3d401df](https://github.com/duriantaco/skylos/commit/3d401dfbaea9bc39435f12b7ddb7db5cd3fceea7))
+* **cli:** accept --security and suggest close flag names ([#1074](https://github.com/duriantaco/skylos/issues/1074)) ([f85a206](https://github.com/duriantaco/skylos/commit/f85a20668156fb84ffc80fe4e7c75fda7fd1a760))
+* **cli:** name the next command after a local scan ([#1077](https://github.com/duriantaco/skylos/issues/1077)) ([5399ad7](https://github.com/duriantaco/skylos/commit/5399ad7459ff1f336f74140ef06c62d1ec1f2190))
+* **cloud:** add skylos cloud ([#1076](https://github.com/duriantaco/skylos/issues/1076)) ([ad931ef](https://github.com/duriantaco/skylos/commit/ad931efb6567e9a4b101a23245aebfd2990e9ce9))
+* **diff:** find the PR base branch on Jenkins, GitLab and other CIs ([#1079](https://github.com/duriantaco/skylos/issues/1079)) ([31359b4](https://github.com/duriantaco/skylos/commit/31359b4c79dd5304a92f1402cedab6459dc03ab5))
+* **doctor:** report which CI runs Skylos ([#1081](https://github.com/duriantaco/skylos/issues/1081)) ([cbbf458](https://github.com/duriantaco/skylos/commit/cbbf458ca9063e9eee8eb2d39b2c76e8b37ec115))
+* **done:** add change map showing what a change touches ([#1073](https://github.com/duriantaco/skylos/issues/1073)) ([ef69cae](https://github.com/duriantaco/skylos/commit/ef69caec8dc037761dd8af0706087659199924df))
+* **php:** drupal entrypoints ([#1055](https://github.com/duriantaco/skylos/issues/1055)) ([12f44dc](https://github.com/duriantaco/skylos/commit/12f44dcc3c06161322de51da6e5a5b5e27399dad))
+* **upload:** show gate changes and branch links ([#1070](https://github.com/duriantaco/skylos/issues/1070)) ([cfa6a98](https://github.com/duriantaco/skylos/commit/cfa6a98bd9bf74555d656618499ba2da501c970e))
+
+
+### Bug Fixes
+
+* **ci:** escape test workflow name in release trigger ([#1061](https://github.com/duriantaco/skylos/issues/1061)) ([4c55a08](https://github.com/duriantaco/skylos/commit/4c55a0844d4f84721598bff29b508378db4589de))
+* **cloud:** clearer first-run output for skylos cloud, sync pull and doctor ([#1085](https://github.com/duriantaco/skylos/issues/1085)) ([cf9b057](https://github.com/duriantaco/skylos/commit/cf9b057bd74c1697148d07cb83e6f123393252ab))
+* **dead-code:** prove FastAPI registrations and dependency contracts ([#1071](https://github.com/duriantaco/skylos/issues/1071)) ([23bb8f4](https://github.com/duriantaco/skylos/commit/23bb8f4ae8eee4f8bc95060b9e2c21c4c53ef0c5))
+* **dead-code:** report hidden unused locals and imports ([#1062](https://github.com/duriantaco/skylos/issues/1062)) ([8e4ee19](https://github.com/duriantaco/skylos/commit/8e4ee19c8dd9b27165ff7d0d4f95b03f00f8177a))
+* **deadcode:** close remaining large-app Django FP gaps after [#1056](https://github.com/duriantaco/skylos/issues/1056) ([#1072](https://github.com/duriantaco/skylos/issues/1072)) ([305a027](https://github.com/duriantaco/skylos/commit/305a027cd7f361fb7b9f2bad33953516d819412e))
+* **deadcode:** preserve proven Django and test entrypoints ([#1059](https://github.com/duriantaco/skylos/issues/1059)) ([e03d668](https://github.com/duriantaco/skylos/commit/e03d668edeb4750ae4ee0e44aee878ddb61255ad))
+* **deadcode:** prove django hooks and signal registration ([#1060](https://github.com/duriantaco/skylos/issues/1060)) ([3d064e8](https://github.com/duriantaco/skylos/commit/3d064e81ee9f49ad91fdec73a6b2e32e04afcb9c))
+* **deadcode:** quiet Django app false positives from issue [#1056](https://github.com/duriantaco/skylos/issues/1056) ([#1068](https://github.com/duriantaco/skylos/issues/1068)) ([2a64255](https://github.com/duriantaco/skylos/commit/2a64255cfa380078b6524352cc89bdb89cfee97d))
+* **deadcode:** respect explicit scan roots in grep exclusions ([#1084](https://github.com/duriantaco/skylos/issues/1084)) ([8ac683b](https://github.com/duriantaco/skylos/commit/8ac683b816cb27d243feda652dd213a00b088d69))
+* **security:** cut FPs and demote low-risk findings ([#1063](https://github.com/duriantaco/skylos/issues/1063)) ([b4c6856](https://github.com/duriantaco/skylos/commit/b4c6856373a30a131f5f1fa273083b7477e3b013))
+* **upload:** mention the symbol map in the Sends line ([#1075](https://github.com/duriantaco/skylos/issues/1075)) ([8f2dada](https://github.com/duriantaco/skylos/commit/8f2dada7d4e9b74707620b59a7bdc43c1b1be8a1))
+
+
+### Performance Improvements
+
+* **ai-defects:** reuse per-file dependency import analysis ([#1058](https://github.com/duriantaco/skylos/issues/1058)) ([adfa12d](https://github.com/duriantaco/skylos/commit/adfa12ddd2a876b2fec01769b837fc096b3967f1))
+
+## [5.0.0](https://github.com/duriantaco/skylos/compare/v4.50.1...v5.0.0) (2026-10-23)
+
+
+### Features
+
+* **agents:** add `skylos agent recap`, hook activity in `skylos doctor`, and a live README badge ([#1012](https://github.com/duriantaco/skylos/pull/1012)) ([ba7a926](https://github.com/duriantaco/skylos/commit/ba7a92635ceea56bea7d221e0f440c589bdeba1f))
+* **cicd:** add `skylos cicd agent-review` for approved Cloud PR reviews, with GitHub OIDC, bounded source bundles and a generated trusted workflow ([#1047](https://github.com/duriantaco/skylos/pull/1047)) ([0e4055c](https://github.com/duriantaco/skylos/commit/0e4055c70e3d8f1b0409227e4f16f6c514b3b5a4))
+* **quality:** add idiom advice backed by source evidence for repeated imports, boolean branches, f-string conversions and handlers that only re-raise (`SKY-L036`–`SKY-L039`) ([#1042](https://github.com/duriantaco/skylos/pull/1042)) ([fa1c9a3](https://github.com/duriantaco/skylos/commit/fa1c9a340770bf7ae79f06dcc30fc76b9f202e0c))
+* **security:** add Dependabot execution and cooldown checks, decoded-secret exposure, workflow obfuscation and trusted-publishing advice (`SKY-D360`–`SKY-D364`) ([#1043](https://github.com/duriantaco/skylos/pull/1043)) ([f806a0a](https://github.com/duriantaco/skylos/commit/f806a0a28a4585554414f5d0ef951b7cf87f1d5d))
+
+### Bug Fixes
+
+* **analyzer:** require source evidence for exclusions and live references; track import bindings and match mock targets exactly ([#1025](https://github.com/duriantaco/skylos/pull/1025)) ([f93ce5e](https://github.com/duriantaco/skylos/commit/f93ce5ec0ff72b3d737d359eb802952a264b68eb)), ([#1048](https://github.com/duriantaco/skylos/pull/1048)) ([d3d9d21](https://github.com/duriantaco/skylos/commit/d3d9d213f747f52af2fb806b99f5a9b4867b5f18))
+* **dead-code:** verify dynamic lookups, lazy exports, browser entrypoints, registration and import evidence before marking code as used ([#1036](https://github.com/duriantaco/skylos/pull/1036)) ([55b81f3](https://github.com/duriantaco/skylos/commit/55b81f3dfbd9173d62bb7c2b737034250377fdc8)), ([#1044](https://github.com/duriantaco/skylos/pull/1044)) ([8159626](https://github.com/duriantaco/skylos/commit/81596265441ab69562d2e130924612219a030ac0))
+* **security:** resolve sink receivers from source bindings and classify filesystem reads, writes and exclusive creates using their actual open modes ([#1030](https://github.com/duriantaco/skylos/pull/1030)) ([59aecb8](https://github.com/duriantaco/skylos/commit/59aecb83dee2cd28d632e850eb6ceef587308160)), ([#1033](https://github.com/duriantaco/skylos/pull/1033)) ([f7accea](https://github.com/duriantaco/skylos/commit/f7acceae92ec6110ff14f875e2a4b402c0b48a5e))
+* **security:** trace filesystem paths through exact call sites and helper callers, preserving safe, untrusted, unknown and incomplete provenance ([#1032](https://github.com/duriantaco/skylos/pull/1032)) ([d7ea15b](https://github.com/duriantaco/skylos/commit/d7ea15b1816423358f1a6dd3dedad16e74cd0f48)), ([#1039](https://github.com/duriantaco/skylos/pull/1039)) ([48c5f77](https://github.com/duriantaco/skylos/commit/48c5f770831d4a0d99b47cc961f13939cb2fc3f4))
+* **security:** lock `SKY-D215` regressions for nested path-table lookups: retain proven safe temporary paths while reporting unsafe values and mutations and preserving unknown caller evidence ([#1052](https://github.com/duriantaco/skylos/pull/1052)) ([d2e0588](https://github.com/duriantaco/skylos/commit/d2e05884474bdc927fd199f051ed2cae9f8cdfae))
+* **security:** verify SQL, LLM and web input safety evidence; validate URL guards and bound XSS helper tracing ([#1040](https://github.com/duriantaco/skylos/pull/1040)) ([58081f5](https://github.com/duriantaco/skylos/commit/58081f5f9a9bf2de61736cab8227dbf4c2b82c7c)), ([#1045](https://github.com/duriantaco/skylos/pull/1045)) ([929e7b3](https://github.com/duriantaco/skylos/commit/929e7b32d3cd3e339b5c0b564d386e2d60cf72fb))
+* **security:** verify workflow credential exposure and actor authorization; follow GitHub Actions expressions, outputs and reachable triggers before reporting injection or cache risks ([#1035](https://github.com/duriantaco/skylos/pull/1035)) ([07e80f4](https://github.com/duriantaco/skylos/commit/07e80f4dfd4f899affdaa57bbba9e46776e59c4d)), ([#1043](https://github.com/duriantaco/skylos/pull/1043)) ([f806a0a](https://github.com/duriantaco/skylos/commit/f806a0a28a4585554414f5d0ef951b7cf87f1d5d))
+* **secrets:** preserve scalar values when reading pnpm lockfile streams ([#1031](https://github.com/duriantaco/skylos/pull/1031)) ([34b5e20](https://github.com/duriantaco/skylos/commit/34b5e20478559193af7f0b9374c316650ee4440f))
+* **dependencies:** verify declared and transitive import providers and explicit package scopes without treating unrelated lockfile entries as declarations ([#1041](https://github.com/duriantaco/skylos/pull/1041)) ([65994e3](https://github.com/duriantaco/skylos/commit/65994e38a037cfecef1fd0d3d9b787622f728c4f))
+* **performance:** correct `SKY-P401`/`SKY-P403` receiver and control-flow analysis ([#1015](https://github.com/duriantaco/skylos/pull/1015)) ([7b5c5a3](https://github.com/duriantaco/skylos/commit/7b5c5a3f776e2be1a0db1f0a8d4015459c88fcd5))
+* **quality:** correct metrics and typing scope, and report code left unused by PR changes ([#1016](https://github.com/duriantaco/skylos/pull/1016)) ([9d6255f](https://github.com/duriantaco/skylos/commit/9d6255f97000dae1fb6d15b6e45d6cdef840f5b1))
+* **quality:** reduce false positives using source and control-flow evidence for mutable defaults, resource lifetimes, test code and security context ([#1013](https://github.com/duriantaco/skylos/pull/1013)) ([12ea15f](https://github.com/duriantaco/skylos/commit/12ea15f9c321b69e150afef878c66740f5022d50)), ([#1018](https://github.com/duriantaco/skylos/pull/1018)) ([47d631c](https://github.com/duriantaco/skylos/commit/47d631ccf255c5b7fc523daa1ea92c8bc5278e83))
+* **quality:** respect pytest collection and typing contexts, preserve boolean-call evidence and keep advice scoped to the relevant code ([#1021](https://github.com/duriantaco/skylos/pull/1021)) ([5f4a478](https://github.com/duriantaco/skylos/commit/5f4a478ae4a5906847f6349c0e3b1b0e77597f07)), ([#1023](https://github.com/duriantaco/skylos/pull/1023)) ([2b0c305](https://github.com/duriantaco/skylos/commit/2b0c3050cca19b253fa299df88d38eebdf5db615))
+* **quality:** require source and policy evidence for annotation, parameter, metric and design advice ([#1024](https://github.com/duriantaco/skylos/pull/1024)) ([7c2ce60](https://github.com/duriantaco/skylos/commit/7c2ce602caa374f400c50b12c61e28d79ee44331)), ([#1027](https://github.com/duriantaco/skylos/pull/1027)) ([f43e565](https://github.com/duriantaco/skylos/commit/f43e56538460426b54a1cfcef92619ed4b049ea3)), ([#1029](https://github.com/duriantaco/skylos/pull/1029)) ([2b15100](https://github.com/duriantaco/skylos/commit/2b151005d79f5471f356414e39ef658e5bea3854))
+* **quality:** keep `SKY-L036`–`SKY-L039` style advice out of default displays and gates while retaining raw JSON records; `--all-advice` and explicit rule selection include it ([#1046](https://github.com/duriantaco/skylos/pull/1046)) ([9a98c5e](https://github.com/duriantaco/skylos/commit/9a98c5e51c34be70c1e813c538b39620a6d7f494))
+* **reporting:** combine complexity advice per function, preserve raw findings and count grouped advice consistently across reports, uploads and gates ([#1019](https://github.com/duriantaco/skylos/pull/1019)) ([91ac1ed](https://github.com/duriantaco/skylos/commit/91ac1ed2a8be3ac6f4785292a0a052d97676d175)), ([#1022](https://github.com/duriantaco/skylos/pull/1022)) ([5ecd621](https://github.com/duriantaco/skylos/commit/5ecd62166176cb3877aea58746d6408eafa09878)), ([#1049](https://github.com/duriantaco/skylos/pull/1049)) ([1c80c7e](https://github.com/duriantaco/skylos/commit/1c80c7e28a3c79cf0c1967842148dacf9d8a797d))
+* **reporting:** normalize nested evidence and definition paths for uploads, keep receiver proofs relative to the scanned project, and mask external evidence paths ([#1050](https://github.com/duriantaco/skylos/pull/1050)) ([7999e8f](https://github.com/duriantaco/skylos/commit/7999e8fe439fe595980a0fad5a2984d167a42805))
+* **ci:** fall back to a full scan when push history is unavailable and trigger releases after required checks finish ([#1017](https://github.com/duriantaco/skylos/pull/1017)) ([851d8b7](https://github.com/duriantaco/skylos/commit/851d8b7de377bddaa2223eeacbe4b73e2e77ad6d)), ([#1034](https://github.com/duriantaco/skylos/pull/1034)) ([2d9bda8](https://github.com/duriantaco/skylos/commit/2d9bda852c4a9431aadb6a2eef9c2f0e1e81ce67))
+
+### Dependency Updates
+
+* **deps:** update `mcp` to 1.30.0 and `aiohttp` to 3.14.4 ([#1020](https://github.com/duriantaco/skylos/pull/1020)) ([5479e14](https://github.com/duriantaco/skylos/commit/5479e140cb3e51b15a589222a987bb66e55884c1)), ([#1028](https://github.com/duriantaco/skylos/pull/1028)) ([6ff92db](https://github.com/duriantaco/skylos/commit/6ff92dbf5c4babaa6f75c95dfd25caced83fe11b))
+* **deps:** update `certifi` to 2026.10.19 and the VS Code extension's `markdown-it` to 14.3.3 ([#1037](https://github.com/duriantaco/skylos/pull/1037)) ([087d87e](https://github.com/duriantaco/skylos/commit/087d87e35aa56acf1fd785b50dfceb11f9b9bf02)), ([#1038](https://github.com/duriantaco/skylos/pull/1038)) ([9f21b78](https://github.com/duriantaco/skylos/commit/9f21b7851a7ad1ad298ddd5f561f8400af24703f))
+
 ## [4.50.1](https://github.com/duriantaco/skylos/compare/v4.50.0...v4.50.1) (2026-10-15)
 
 

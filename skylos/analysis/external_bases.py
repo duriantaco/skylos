@@ -6,12 +6,16 @@ Sphinx ``Domain.resolve_xref``, a Pygments ``Style.styles``) is an override:
 the library calls or reads it, so it has no reference inside the project.
 
 The external MRO is read from source, never imported. Modules are located by
-file lookup in the running interpreter's standard-library directory and in
-the ``site-packages``/``dist-packages`` entries on ``sys.path`` that lie
-outside the scan root. A class's bases are followed through its module's
-imports, re-exports and simple aliases, with depth, file-size and file-count
-limits and a per-search-path cache. A base that cannot be found stays
-unresolved and callers keep their previous behaviour for it.
+file lookup in the running interpreter's standard-library directory and one
+project virtualenv, preferring ``.venv``, ``venv``, ``env``, then ``.env``.
+When no project virtualenv is found, ``site-packages``/``dist-packages`` entries
+on ``sys.path`` outside the scan root are used instead. Project dependency
+sources take precedence over the scanner's installed dependency versions.
+A class's bases are followed through its module's imports, re-exports and
+simple aliases, with depth, file-size and file-count limits and a
+per-search-path cache. A base that cannot be found stays unresolved and
+callers keep their previous behaviour for it (see also curated framework
+class attributes in ``documented_conventions``).
 
 A few documented hooks belong to classes implemented in C, which have no
 source to read; they are listed in ``_NATIVE_CLASS_MEMBERS``.
@@ -400,9 +404,52 @@ class ExternalClassIndex:
         return members.get(member)
 
 
+_VENV_DIR_NAMES = (".venv", "venv", "env", ".env")
+
+
+def _venv_site_packages(scan_roots) -> list[Path]:
+    """``site-packages`` from the first available project virtualenv.
+
+    Scanner images often lack the app's third-party deps on ``sys.path``. The
+    app's ``.venv`` (excluded from dead-code file walk) still holds Celery /
+    Django sources that define subclass hooks such as ``ResultConsumer``.
+    Prefer the first scan root, then ``.venv``, ``venv``, ``env``, ``.env``.
+    Keep one environment authoritative so stale environments cannot contribute
+    incompatible package files. Arbitrary vendored trees are not included.
+    """
+    for root in scan_roots:
+        try:
+            root_path = Path(root).resolve()
+        except (OSError, RuntimeError):
+            continue
+        if not root_path.is_dir():
+            continue
+        for venv_name in _VENV_DIR_NAMES:
+            venv = root_path / venv_name
+            if not venv.is_dir():
+                continue
+            found: list[Path] = []
+            for pattern in (
+                "lib/python*/site-packages",
+                "lib/site-packages",
+                "Lib/site-packages",
+            ):
+                found.extend(
+                    path for path in sorted(venv.glob(pattern)) if path.is_dir()
+                )
+            if found:
+                return found
+    return []
+
+
 def default_search_dirs(exclude_roots=()) -> list[Path]:
-    """The interpreter's standard library plus the site-packages entries on
-    ``sys.path``, minus anything inside ``exclude_roots`` (the scan)."""
+    """Stdlib plus one project venv, or the scanner's external site-packages.
+
+    The selected project environment is authoritative for dependency source.
+    Mixing scanner or stale virtualenv packages could invent an incompatible
+    MRO. Without a project environment, keep the scanner's search-path order.
+    Vendored trees inside the scan remain excluded.
+    """
     excluded = []
     for root in exclude_roots:
         try:
@@ -417,9 +464,13 @@ def default_search_dirs(exclude_roots=()) -> list[Path]:
     stdlib = sysconfig.get_paths().get("stdlib")
     if stdlib:
         candidates.append(Path(stdlib))
-    for entry in sys.path:
-        if entry and Path(entry).name in ("site-packages", "dist-packages"):
-            candidates.append(Path(entry))
+    project_sites = _venv_site_packages(excluded)
+    if project_sites:
+        candidates.extend(project_sites)
+    else:
+        for entry in sys.path:
+            if entry and Path(entry).name in ("site-packages", "dist-packages"):
+                candidates.append(Path(entry))
 
     dirs: list[Path] = []
     for candidate in candidates:
@@ -427,7 +478,10 @@ def default_search_dirs(exclude_roots=()) -> list[Path]:
             resolved = candidate.resolve()
         except (OSError, RuntimeError):
             continue
-        if resolved in dirs or not resolved.is_dir() or inside_scan(resolved):
+        if resolved in dirs or not resolved.is_dir():
+            continue
+        # Only explicitly selected virtualenv sources may be inside the scan.
+        if inside_scan(resolved) and candidate not in project_sites:
             continue
         dirs.append(resolved)
     return dirs
@@ -636,7 +690,49 @@ def external_override_owner(def_obj, analyzer) -> Optional[str]:
     overrides, or None when no resolvable external ancestor defines it."""
     if getattr(def_obj, "type", None) not in ("method", "variable"):
         return None
-    owner = project_class_graph(analyzer).owner_class(def_obj)
-    if owner is None:
+    graph = project_class_graph(analyzer)
+    owner = graph.owner_class(def_obj)
+    if owner is not None:
+        return external_member_owner(owner, def_obj.simple_name, analyzer)
+    if def_obj.type != "variable" or def_obj.simple_name != "_fields_":
         return None
-    return external_member_owner(owner, def_obj.simple_name, analyzer)
+    declaration = getattr(def_obj, "python_class_owner", None)
+    if declaration is None:
+        return None
+    owner_name, owner_line = declaration
+    owner = graph.defs.get(owner_name)
+    if (
+        owner is None
+        or owner.type != "class"
+        or str(owner.filename) != str(def_obj.filename)
+        or not isinstance(owner.node, ast.ClassDef)
+        or owner.node.lineno != owner_line
+    ):
+        return None
+    statements = tuple(_iter_flat(owner.node.body))
+    if any(
+        isinstance(statement, (ast.Global, ast.Nonlocal))
+        and "_fields_" in statement.names
+        for statement in statements
+    ):
+        return None
+    if not any(
+        statement.lineno == def_obj.line
+        and (
+            isinstance(statement, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "_fields_"
+                for target in statement.targets
+            )
+            or isinstance(statement, ast.AnnAssign)
+            and statement.value is not None
+            and isinstance(statement.target, ast.Name)
+            and statement.target.id == "_fields_"
+        )
+        for statement in statements
+    ):
+        return None
+    native_owner = external_member_owner(owner, "_fields_", analyzer)
+    if native_owner in {"_ctypes.Structure", "_ctypes.Union"}:
+        return native_owner
+    return None

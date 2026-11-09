@@ -8,7 +8,6 @@ import shlex
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
-from collections.abc import Iterable
 from pathlib import Path
 from difflib import SequenceMatcher
 from typing import Any, Callable
@@ -191,24 +190,13 @@ def scan_manifest_dependency_hallucinations(
     repo_root: str | Path | None,
     *,
     status_checker: StatusChecker | None = None,
-    target_files: Iterable[str | Path] | None = None,
 ) -> list[dict[str, Any]]:
-    """Check all project manifests, or only explicitly selected file surfaces.
-
-    File verification supplies ``target_files``; source imports are checked
-    separately, so an ordinary source file needs no manifest inventory walk.
-    Directory scans retain the complete manifest and install-surface scan.
-    """
     findings: list[dict[str, Any]] = []
     root = _repo_root(repo_root)
     if root is None:
         return findings
 
-    dependencies = (
-        _collect_manifest_dependencies(root)
-        if target_files is None
-        else _collect_selected_dependencies(root, target_files)
-    )
+    dependencies = _collect_manifest_dependencies(root)
     if not dependencies:
         return findings
 
@@ -281,8 +269,9 @@ def _status_checker(status_checker: StatusChecker | None) -> StatusChecker:
     return check_dependency_version_status
 
 
-def _manifest_parsers() -> dict[str, Callable[[Path], list[dict[str, Any]]]]:
-    return {
+def _collect_manifest_dependencies(root: Path) -> list[dict[str, Any]]:
+    dependencies: list[dict[str, Any]] = []
+    parsers = {
         "requirements.txt": parse_requirements_txt_candidates,
         "pyproject.toml": parse_pyproject_toml_candidates,
         "package.json": parse_package_json_candidates,
@@ -293,58 +282,6 @@ def _manifest_parsers() -> dict[str, Callable[[Path], list[dict[str, Any]]]]:
         "pubspec.yaml": _parse_pubspec_yaml,
     }
 
-
-def _collect_selected_dependencies(
-    root: Path, target_files: Iterable[str | Path]
-) -> list[dict[str, Any]]:
-    dependencies: list[dict[str, Any]] = []
-    parsers = _manifest_parsers()
-    seen: set[Path] = set()
-    for selected in target_files:
-        path = Path(selected)
-        if not path.is_absolute():
-            path = root / path
-        parser = parsers.get(path.name) or _parser_for_manifest_path(path)
-        install_surface = _is_install_surface_file(root, path)
-        if parser is None and not install_surface:
-            continue
-        try:
-            if path.is_symlink():
-                continue
-            resolved = path.resolve(strict=True)
-            relative = resolved.relative_to(root)
-            if resolved in seen or not resolved.is_file():
-                continue
-            # os.walk does not descend directory symlinks. Keep that boundary
-            # while allowing alternate spellings of the project root itself.
-            parent = path.parent
-            while parent.resolve() != root:
-                if parent.is_symlink() or parent.parent == parent:
-                    break
-                parent = parent.parent
-            else:
-                kept = list(relative.parts[:-1])
-                _filter_manifest_dirs(kept)
-                if len(kept) != len(relative.parts) - 1:
-                    continue
-                seen.add(resolved)
-                depth = len(relative.parts) - 1
-                if parser is not None and depth <= 3:
-                    dependencies.extend(
-                        _apply_manifest_dependency_context(
-                            root, resolved, parser(resolved)
-                        )
-                    )
-                if install_surface and depth <= INSTALL_SURFACE_MAX_DEPTH:
-                    dependencies.extend(_parse_install_surface_file(resolved))
-        except Exception as exc:
-            logger.debug("Failed to inspect selected dependency file %s: %s", path, exc)
-    return dependencies
-
-
-def _collect_manifest_dependencies(root: Path) -> list[dict[str, Any]]:
-    dependencies: list[dict[str, Any]] = []
-    parsers = _manifest_parsers()
     resolver = ParentResolver()
     for dirpath, dirnames, filenames in os.walk(root):
         _filter_manifest_dirs(dirnames)

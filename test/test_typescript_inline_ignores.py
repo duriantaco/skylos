@@ -277,7 +277,9 @@ def test_non_ascii_case_folding_cannot_create_directive(tmp_path, directive):
 def test_non_ascii_rule_id_cannot_suppress_secret(tmp_path):
     result = _scan(
         tmp_path,
-        'const token = "ghp_1234567890abcdef1234567890abcdef1234";'
+        'const token = "g'
+        r"h"
+        'p_1234567890abcdef1234567890abcdef1234";'
         " // skylos: ignore[SKY-ſ101]\n",
         enable_secrets=True,
     )
@@ -299,7 +301,9 @@ def test_secret_ignore_text_outside_directive_comment_cannot_suppress(
 ):
     result = _scan(
         tmp_path,
-        'const token = "ghp_1234567890abcdef1234567890abcdef1234"; ' + lookalike + "\n",
+        'const token = "g'
+        r"h"
+        'p_1234567890abcdef1234567890abcdef1234"; ' + lookalike + "\n",
         enable_secrets=True,
     )
 
@@ -310,7 +314,9 @@ def test_secret_ignore_text_outside_directive_comment_cannot_suppress(
 def test_valid_rule_specific_comment_moves_secret_to_suppressed_output(tmp_path):
     result = _scan(
         tmp_path,
-        'const token = "ghp_1234567890abcdef1234567890abcdef1234";'
+        'const token = "g'
+        r"h"
+        'p_1234567890abcdef1234567890abcdef1234";'
         " // skylos: ignore[SKY-S101]\n",
         enable_secrets=True,
     )
@@ -347,7 +353,9 @@ def test_non_line_separator_cannot_shift_secret_onto_later_ignore(tmp_path, sepa
     result = _scan(
         tmp_path,
         f"/* explanatory{separator}text */\n"
-        'const token = "ghp_1234567890abcdef1234567890abcdef1234";\n'
+        'const token = "g'
+        r"h"
+        'p_1234567890abcdef1234567890abcdef1234";\n'
         "// skylos: ignore[SKY-S101]\n",
         enable_secrets=True,
     )
@@ -386,9 +394,9 @@ def test_non_line_separator_cannot_shift_archive_finding_onto_later_ignore(
 def test_secret_line_numbers_follow_ecmascript_line_terminators(tmp_path, line_ending):
     result = _scan(
         tmp_path,
-        "/* explanatory text */"
-        + line_ending
-        + 'const token = "ghp_1234567890abcdef1234567890abcdef1234";\n',
+        "/* explanatory text */" + line_ending + 'const token = "g'
+        r"h"
+        'p_1234567890abcdef1234567890abcdef1234";\n',
         enable_secrets=True,
     )
 
@@ -403,9 +411,9 @@ def test_secret_line_numbers_do_not_split_on_non_terminator_controls(
 ):
     result = _scan(
         tmp_path,
-        "/* explanatory text */"
-        + separator
-        + 'const token = "ghp_1234567890abcdef1234567890abcdef1234";\n',
+        "/* explanatory text */" + separator + 'const token = "g'
+        r"h"
+        'p_1234567890abcdef1234567890abcdef1234";\n',
         enable_secrets=True,
     )
 

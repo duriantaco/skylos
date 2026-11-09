@@ -404,3 +404,252 @@ def test_conditionally_imported_output_module_keeps_its_identity(
     if reported:
         expected = [source.count("\n")]
     assert _d251_lines(tmp_path, monkeypatch, source) == expected
+
+
+JWT_CODECS = [
+    (
+        "from jwt import encode, decode",
+        'encode(payload, key, algorithm="HS256")',
+        'decode(token, key, algorithms=["HS256"])',
+    ),
+    (
+        "import jwt",
+        'jwt.encode(payload, key, algorithm="HS256")',
+        'jwt.decode(token, key, algorithms=["HS256"])',
+    ),
+    (
+        "from jwt.api_jwt import encode as pack, decode as unpack",
+        'pack(payload, key, algorithm="HS256")',
+        'unpack(token, key, algorithms=["HS256"])',
+    ),
+    (
+        "from jose.jwt import encode as pack, decode as unpack",
+        'pack(payload, key, algorithm="HS256")',
+        'unpack(token, key, algorithms=["HS256"])',
+    ),
+    (
+        "from jose.jws import sign as pack, verify as unpack",
+        'pack(payload, key, algorithm="HS256")',
+        'unpack(token, key, algorithms=["HS256"])',
+    ),
+    (
+        "from authlib.jose import jwt as codec",
+        'codec.encode({"alg": "HS256"}, payload, key, check=False)',
+        "codec.decode(token, key)",
+    ),
+]
+
+
+@pytest.mark.parametrize("imports, encode_call, decode_call", JWT_CODECS)
+@pytest.mark.parametrize("secret_in_payload", [True, False])
+def test_jwt_roundtrip_keeps_payload_credentials_but_not_the_signing_key(
+    tmp_path, monkeypatch, imports, encode_call, decode_call, secret_in_payload
+):
+    if secret_in_payload:
+        payload = '{"password": os.getenv("SERVICE_PASSWORD")}'
+        key = '"0123456789abcdef0123456789abcdef"'
+    else:
+        payload = '{"sub": "public-user"}'
+        key = 'os.getenv("JWT_SECRET_KEY")'
+    source = _source(
+        f"""
+        import logging
+        import os
+        {imports}
+
+        payload = {payload}
+        key = {key}
+        token = {encode_call}
+        claims = {decode_call}
+        logging.info("claims %s", claims)
+        """
+    )
+    expected = []
+    if secret_in_payload:
+        expected = [source.count("\n")]
+    assert _d251_lines(tmp_path, monkeypatch, source, listed_only=True) == expected
+
+
+@pytest.mark.parametrize(
+    "imports, encode_call, decode_call",
+    [
+        (
+            "from jwt import encode, decode",
+            'encode(payload=payload, key=key, algorithm="HS256")',
+            'decode(jwt=token, key=key, algorithms=["HS256"])',
+        ),
+        (
+            "import jwt",
+            'jwt.encode(payload=payload, key=key, algorithm="HS256")',
+            'jwt.decode(jwt=token, key=key, algorithms=["HS256"])',
+        ),
+        (
+            "from jose import jwt",
+            'jwt.encode(claims=payload, key=key, algorithm="HS256")',
+            'jwt.decode(token=token, key=key, algorithms=["HS256"])',
+        ),
+        (
+            "from jose import jws",
+            'jws.sign(payload=payload, key=key, algorithm="HS256")',
+            'jws.verify(token=token, key=key, algorithms=["HS256"])',
+        ),
+        (
+            "from authlib.jose import jwt",
+            'jwt.encode(header={"alg": "HS256"}, payload=payload, key=key, check=False)',
+            "jwt.decode(s=token, key=key)",
+        ),
+    ],
+)
+@pytest.mark.parametrize("secret_in_payload", [True, False])
+def test_jwt_keyword_arguments_keep_payload_credentials_only(
+    tmp_path, monkeypatch, imports, encode_call, decode_call, secret_in_payload
+):
+    if secret_in_payload:
+        payload = '{"password": os.getenv("SERVICE_PASSWORD")}'
+        key = '"0123456789abcdef0123456789abcdef"'
+    else:
+        payload = '{"sub": "public-user"}'
+        key = 'os.getenv("JWT_SECRET_KEY")'
+    source = _source(
+        f"""
+        import logging
+        import os
+        {imports}
+
+        payload = {payload}
+        key = {key}
+        token = {encode_call}
+        claims = {decode_call}
+        logging.info("claims %s", claims)
+        """
+    )
+    expected = []
+    if secret_in_payload:
+        expected = [source.count("\n")]
+    assert _d251_lines(tmp_path, monkeypatch, source, listed_only=True) == expected
+
+
+@pytest.mark.parametrize(
+    "imports, encode_call, decode_call",
+    [
+        (
+            "from jwt import encode, decode",
+            'encode(*(payload, key), algorithm="HS256")',
+            'decode(*(token, key), algorithms=["HS256"])',
+        ),
+        (
+            "import jwt",
+            'jwt.encode(*(payload, key), algorithm="HS256")',
+            'jwt.decode(*(token, key), algorithms=["HS256"])',
+        ),
+        (
+            "import jwt",
+            'jwt.encode(**{"payload": payload, "key": key, "algorithm": "HS256"})',
+            'jwt.decode(**{"jwt": token, "key": key, "algorithms": ["HS256"]})',
+        ),
+    ],
+)
+def test_jwt_unpacked_arguments_do_not_discard_payload_credentials(
+    tmp_path, monkeypatch, imports, encode_call, decode_call
+):
+    source = _source(
+        f"""
+        import logging
+        import os
+        {imports}
+
+        payload = {{"password": os.getenv("SERVICE_PASSWORD")}}
+        key = "0123456789abcdef0123456789abcdef"
+        token = {encode_call}
+        claims = {decode_call}
+        logging.info("claims %s", claims)
+        """
+    )
+    assert _d251_lines(tmp_path, monkeypatch, source, listed_only=True) == [
+        source.count("\n")
+    ]
+
+
+@pytest.mark.parametrize(
+    "encoder",
+    [
+        "from vendor.tokens import encode",
+        """def replace(original):
+    def replacement(payload, key, **options):
+        return key
+    return replacement
+@replace
+def encode(payload, key, **options):
+    return payload""",
+    ],
+)
+def test_nonlibrary_token_encoder_keeps_the_signing_key_reviewable(
+    tmp_path, monkeypatch, encoder
+):
+    source = (
+        "import logging\nimport os\n"
+        + encoder
+        + '\nkey = os.getenv("JWT_SECRET_KEY")\n'
+        + 'token = encode({"sub": "public-user"}, key, algorithm="HS256")\n'
+        + 'logging.info("token %s", token)\n'
+    )
+    assert _d251_lines(tmp_path, monkeypatch, source, listed_only=True) == [
+        source.count("\n")
+    ]
+
+
+@pytest.mark.parametrize(
+    "imports, encoder",
+    [("from jwt import encode", "encode"), ("import jwt", "jwt.encode")],
+)
+def test_project_jwt_encoder_keeps_the_signing_key_reviewable(
+    tmp_path, monkeypatch, imports, encoder
+):
+    write_fixture(
+        tmp_path,
+        "jwt.py",
+        "def encode(payload, key, **options):\n    return key\n",
+    )
+    source = _source(
+        f"""
+        import logging
+        import os
+        {imports}
+
+        key = os.getenv("JWT_SECRET_KEY")
+        token = {encoder}({{"sub": "public-user"}}, key, algorithm="HS256")
+        logging.info("token %s", token)
+        """
+    )
+    assert _d251_lines(tmp_path, monkeypatch, source, listed_only=True) == [
+        source.count("\n")
+    ]
+
+
+@pytest.mark.parametrize(
+    "imports, encoder",
+    [("from jwt import encode", "encode"), ("import jwt", "jwt.encode")],
+)
+def test_project_patched_jwt_encoder_keeps_the_signing_key_reviewable(
+    tmp_path, monkeypatch, imports, encoder
+):
+    write_fixture(
+        tmp_path,
+        "patch_jwt.py",
+        "import jwt\njwt.encode = lambda payload, key, **options: key\n",
+    )
+    source = _source(
+        f"""
+        import logging
+        import os
+        import patch_jwt
+        {imports}
+
+        key = os.getenv("JWT_SECRET_KEY")
+        token = {encoder}({{"sub": "public-user"}}, key, algorithm="HS256")
+        logging.info("token %s", token)
+        """
+    )
+    assert _d251_lines(tmp_path, monkeypatch, source, listed_only=True) == [
+        source.count("\n")
+    ]

@@ -15,21 +15,9 @@ from .tools import CATEGORIES
 VERDICTS = {"tp", "fp"}
 
 
-LABEL_ALIASES = {"skylos-hook": "skylos"}
-
-
 def fingerprint(ws_id: str, f: dict) -> str:
     key = f"{ws_id}|{f['tool']}|{f['rule']}|{f['file']}|{f['line']}"
     return hashlib.sha256(key.encode()).hexdigest()[:16]
-
-
-def lookup_label(labels: dict, ws_id: str, f: dict) -> dict | None:
-    """A tool's own label, else the label of the tool it shares findings with."""
-    label = labels.get(fingerprint(ws_id, f))
-    alias = LABEL_ALIASES.get(f["tool"])
-    if label is None and alias:
-        label = labels.get(fingerprint(ws_id, {**f, "tool": alias}))
-    return label
 
 
 def dedupe(findings: list[dict]) -> list[dict]:
@@ -113,7 +101,7 @@ def build_report(
             f["workspace"] = ws_id
             f["kind"] = ws.kind
             f["fingerprint"] = fingerprint(ws_id, f)
-            lab = lookup_label(labels, ws_id, f)
+            lab = labels.get(f["fingerprint"])
             f["verdict"] = lab["verdict"] if lab else None
             f["detects"] = (lab or {}).get("detects")
             if f["detects"] and f["detects"] not in location_candidates(ws, f):

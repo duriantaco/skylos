@@ -36,8 +36,32 @@ _EXTENDED_CONTEXT_FIELDS = (
     "lockfile_requires_python",
     "dependency_extra_requirements",
 )
+_CASE_SENSITIVE_ECOSYSTEMS = frozenset(
+    {"npm", "Go", "Maven", "crates.io", "RubyGems", "Pub"}
+)
+_CASE_INSENSITIVE_ECOSYSTEMS = frozenset({"NuGet", "Packagist"})
 _ADVISORY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}\Z")
 _FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
+
+
+SUPPLY_CHAIN_TRUST_RULES = frozenset(
+    {f"SKY-D{number}" for number in range(365, 378)}
+    | {"SKY-SCA-UPG001", "SKY-SCA-HRD001", "SKY-SCA-AGE001"}
+)
+
+
+def supply_chain_trust_rule(finding) -> bool:
+    """Agent/editor-config and publish-job rules (SKY-D365-D377), malware
+    (``SKY-SCA-MAL*`` or ``metadata.malicious``), unsafe upgrades, weakened
+    hardening and too-young versions: a pull request must not be able to
+    excuse these through a baseline it edits itself."""
+    if not isinstance(finding, dict):
+        return False
+    rule_id = str(finding.get("rule_id") or "").upper()
+    if rule_id in SUPPLY_CHAIN_TRUST_RULES or rule_id.startswith("SKY-SCA-MAL"):
+        return True
+    metadata = finding.get("metadata")
+    return isinstance(metadata, dict) and metadata.get("malicious") is True
 
 
 def dependency_scan_complete(result: dict) -> bool:
@@ -123,7 +147,9 @@ def dependency_fingerprints(finding, project_root=None) -> set[str] | None:
         return None
     if ecosystem == "PyPI":
         name = re.sub(r"[-_.]+", "-", name).lower()
-    elif ecosystem not in {"npm", "Go"}:
+    elif ecosystem in _CASE_INSENSITIVE_ECOSYSTEMS:
+        name = name.casefold()
+    elif ecosystem not in _CASE_SENSITIVE_ECOSYSTEMS:
         return None
     severity = finding.get("severity", "UNKNOWN")
     if not isinstance(severity, str) or severity not in {
@@ -237,13 +263,29 @@ def _known_fingerprints(baseline):
 
 
 def filter_dependency_findings(
-    result, baseline, *, project_root=None, disabled_reason=None, source=None
+    result,
+    baseline,
+    *,
+    project_root=None,
+    disabled_reason=None,
+    source=None,
+    policy_base=False,
+    policy_baseline=None,
 ):
+    """Split dependency findings into new and baselined ones.
+
+    With ``policy_base``, a supply-chain trust-boundary finding
+    (``supply_chain_trust_rule``) is baselined only when ``policy_baseline``
+    (the baseline on the policy base commit) holds it as well."""
     filtered = dict(result)
     findings = result.get("dependency_vulnerabilities", [])
     if not isinstance(findings, list):
         return filtered
     known = _known_fingerprints(baseline)
+    base_known = None
+    if policy_base:
+        base_known = _known_fingerprints(policy_baseline) or set()
+    not_honoured = 0
     status = disabled_reason or (
         "applied" if known is not None else "no_dependency_baseline"
     )
@@ -257,8 +299,14 @@ def filter_dependency_findings(
             if status == "applied"
             else None
         )
-        if identity and identity <= known:
+        trusted = True
+        if base_known is not None and supply_chain_trust_rule(finding):
+            trusted = bool(identity) and identity <= base_known
+        if identity and identity <= known and trusted:
             existing.append(finding)
+        elif identity and identity <= known:
+            not_honoured += 1
+            new.append(finding)
         else:
             new.append(finding)
     if "dependency_vulnerabilities" in result:
@@ -275,5 +323,7 @@ def filter_dependency_findings(
         "identity_version": IDENTITY_VERSION,
         **({"source": source} if source is not None else {}),
     }
+    if policy_base:
+        summary["dependency_baseline"]["policy_base_not_honoured"] = not_honoured
     filtered["analysis_summary"] = summary
     return filtered

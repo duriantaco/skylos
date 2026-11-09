@@ -229,7 +229,7 @@ def test_api_get_401_raises(monkeypatch):
     monkeypatch.setattr(syncmod.requests, "get", fake_get)
     with pytest.raises(syncmod.AuthError) as e:
         syncmod.api_get("/api/sync/whoami", "BADTOKEN")
-    assert "Invalid API token" in str(e.value)
+    assert "Invalid Skylos token" in str(e.value)
 
 
 def test_api_get_shows_cloud_reason_for_refused_request(monkeypatch):
@@ -283,7 +283,10 @@ def test_api_get_401_names_a_rejected_ci_identity(monkeypatch):
     monkeypatch.setattr(syncmod.requests, "get", fake_get)
     with pytest.raises(syncmod.AuthError) as e:
         syncmod.api_get("/api/sync/whoami", "oidc:JWT")
-    assert str(e.value) == "Skylos Cloud rejected this CI identity token"
+    assert (
+        str(e.value)
+        == "Skylos Cloud rejected this GitHub Actions or GitLab CI identity"
+    )
 
 
 def test_api_get_connection_error(monkeypatch):
@@ -452,6 +455,9 @@ def test_cmd_project_list_marks_active_project(
     assert "* Active Project  [proj_active]" in out
     assert "Other Project  [proj_other]" in out
     assert "active for this repo" in out
+    assert "Plan: Workspace" in out
+    assert "Plan: Free" in out
+    assert "Plan: Pro" not in out
 
 
 def test_cmd_connect_with_token_arg_saves_creds(isolated_creds, monkeypatch, capsys):
@@ -768,6 +774,58 @@ def test_cmd_pull_calls_endpoints_in_order(isolated_creds, monkeypatch, tmp_path
         "/api/sync/config",
         "/api/sync/suppressions",
     ]
+
+
+def _repo_without_remote(isolated_creds, monkeypatch, tmp_path):
+    _, creds_file = isolated_creds
+    creds_file.parent.mkdir(parents=True, exist_ok=True)
+    creds_file.write_text(json.dumps({"token": "TOK"}))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(syncmod, "_find_repo_root", lambda: repo)
+    calls = []
+
+    def fake_api_get(endpoint, token):
+        calls.append(endpoint)
+        raise AssertionError(f"Unexpected endpoint {endpoint}")
+
+    monkeypatch.setattr(syncmod, "api_get", fake_api_get)
+    return repo, calls
+
+
+def test_cmd_pull_without_a_git_remote_says_how_to_fix_it(
+    isolated_creds, monkeypatch, tmp_path, capsys
+):
+    repo, calls = _repo_without_remote(isolated_creds, monkeypatch, tmp_path)
+
+    with pytest.raises(SystemExit) as e:
+        syncmod.cmd_pull()
+
+    assert e.value.code == 1
+    out = capsys.readouterr().out
+    assert "needs a git repository with a remote" in out
+    assert "git remote add origin <url>" in out
+    assert "trusted suppression state" not in out
+    assert calls == []
+    assert not (repo / syncmod.SKYLOS_DIR / syncmod.CONFIG_FILE).exists()
+    assert not (repo / syncmod.SKYLOS_DIR / syncmod.SUPPRESSIONS_FILE).exists()
+
+
+def test_cmd_pull_dry_run_without_a_git_remote_fails_the_same_way(
+    isolated_creds, monkeypatch, tmp_path, capsys
+):
+    _, calls = _repo_without_remote(isolated_creds, monkeypatch, tmp_path)
+
+    with pytest.raises(SystemExit) as e:
+        syncmod.cmd_pull(dry_run=True, output_format="json")
+
+    assert e.value.code == 1
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["status"] == "failed"
+    assert "git remote add origin <url>" in receipt["error"]
+    assert calls == []
 
 
 def test_cmd_pull_rejects_suppressions_from_another_project(
@@ -1249,3 +1307,57 @@ def test_cli_source_never_names_a_pro_plan_or_the_missing_pricing_page():
         if banned.search(line)
     ]
     assert hits == []
+
+
+def test_pull_prints_paths_relative_to_the_current_folder(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    inside = tmp_path / ".skylos" / "config.yaml"
+    outside = tmp_path.parent / "elsewhere" / "config.yaml"
+    assert syncmod._display_path(inside) == str(Path(".skylos") / "config.yaml")
+    assert syncmod._display_path(outside) == str(outside)
+
+
+def test_cmd_project_status_shows_the_workspace_plan_name(
+    isolated_creds, monkeypatch, tmp_path, capsys
+):
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    monkeypatch.setattr(syncmod, "_find_repo_root", lambda: repo_root)
+    monkeypatch.setattr(syncmod, "get_token", lambda: "TOK")
+    monkeypatch.setattr(
+        syncmod,
+        "api_get",
+        lambda endpoint, token: {
+            "project": {"name": "Proj"},
+            "organization": {"name": "Acme"},
+            "plan": "pro",
+        },
+    )
+
+    syncmod.cmd_project_status()
+    out = capsys.readouterr().out
+
+    assert "  Plan:         Workspace" in out
+    assert "Plan:         Pro" not in out
+
+
+def test_whoami_shows_the_workspace_plan_name(monkeypatch, capsys):
+    from skylos.commands import whoami_cmd
+
+    monkeypatch.setattr(whoami_cmd, "get_project_token", lambda: "TOK")
+    monkeypatch.setattr(
+        whoami_cmd,
+        "get_project_info",
+        lambda token: {
+            "ok": True,
+            "project": {"name": "acme-shop"},
+            "organization": {"name": "Acme"},
+            "plan": "pro",
+        },
+    )
+
+    assert whoami_cmd.run_whoami_command() == 0
+    out = capsys.readouterr().out
+
+    assert "Plan:     Workspace" in out
+    assert "Plan:     pro" not in out

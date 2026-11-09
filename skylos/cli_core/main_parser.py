@@ -4,16 +4,58 @@ import argparse
 from collections.abc import Callable, Sequence
 
 
+class _ScanArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        prefix = "unrecognized arguments: "
+        if not message.startswith(prefix):
+            super().error(message)
+        hint = _closest_option(self, message[len(prefix) :].split())
+        if hint:
+            message = f"{message} (did you mean {hint}?)"
+        self.exit(
+            2, f"{self.prog}: error: {message}\nSee the scan flags: skylos . --help\n"
+        )
+
+
+def _closest_option(parser: argparse.ArgumentParser, unknown: list[str]):
+    import difflib
+
+    options = [
+        option for option in parser._option_string_actions if option.startswith("--")
+    ]
+    for token in unknown:
+        if not token.startswith("--"):
+            continue
+        matches = difflib.get_close_matches(
+            token.split("=", 1)[0], options, n=1, cutoff=0.75
+        )
+        if matches:
+            return matches[0]
+    return None
+
+
 def build_main_parser(*, version: str) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    from skylos.constants import SUPPORTED_LANGUAGES_TEXT
+
+    parser = _ScanArgumentParser(
+        prog="skylos",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
-            "Find dead code, secrets, and risky flows in Python, JS/TS, Go, "
-            "Java, Kotlin, PHP, Rust, Dart, and C#"
+            "Find dead code, secrets, and risky flows in\n"
+            f"{SUPPORTED_LANGUAGES_TEXT}.\n"
+            "Coverage is deepest in Python, TypeScript/JavaScript and Java; see\n"
+            "Language Support in the README for the other languages."
         ),
-        epilog="""
-Run 'skylos commands' for a full list of all available commands.
-Run 'skylos tour' for a guided walkthrough of capabilities.
-        """,
+        epilog=(
+            "Exit codes:\n"
+            "  0  scan finished (findings alone do not fail a default scan)\n"
+            "  1  findings with --format concise or --strict, or a failed --gate\n"
+            "     (--force exits 0 instead)\n"
+            "  2  usage error or incomplete analysis\n"
+            "\n"
+            "Run 'skylos commands' for a full list of all available commands.\n"
+            "Run 'skylos tour' for a guided walkthrough of capabilities."
+        ),
     )
     parser.add_argument("path", nargs="+", help="Path(s) to the project")
     parser.add_argument(
@@ -55,9 +97,10 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         "--verify",
         action="store_true",
         help=(
-            "(PRO source-scan option) Verify scan findings with the neuro-symbolic "
-            "prover. For AI-code verification and the Python working-tree model, "
-            "use 'skylos verify [path]'."
+            "(Skylos Cloud source-scan option; Free workspaces have a daily limit) "
+            "Verify scan findings with the neuro-symbolic prover. For AI-code "
+            "verification and the Python working-tree model, use "
+            "'skylos verify [path]'."
         ),
     )
     parser.add_argument(
@@ -135,13 +178,13 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         "--model",
         type=str,
         default=None,
-        help="LLM model. Examples: gpt-4o-mini, claude-sonnet-4-20250514, groq/llama3-70b-8192. Full list: https://docs.litellm.ai/docs/providers",
+        help="Model for --ai-review. Examples: gpt-4.1, claude-sonnet-4-20250514, groq/llama3-70b-8192. Full list: https://docs.litellm.ai/docs/providers",
     )
     parser.add_argument(
         "--api-base",
         type=str,
         default=None,
-        help="Custom API URL for self-hosted models",
+        help="Custom API URL for a self-hosted model used by --ai-review or --verify-security",
     )
     parser.add_argument(
         "--version",
@@ -166,11 +209,18 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
             "github",
             "gitlab",
             "concise",
+            "report-md",
+            "report-html",
         ),
         default="rich",
         help=(
             "Output format. Use 'pretty' for grouped human output or "
-            "'concise' for IDE-friendly file:line findings only. "
+            "'report-md'/'report-html' for a one-page summary to share "
+            "(verdict, top risks with fixes, counts, coverage gaps; see "
+            "skylos report), or "
+            "'concise' for IDE-friendly file:line findings only. Without "
+            "--gate, 'concise' exits 1 when it lists findings (repository-policy "
+            "advice alone does not count; --force exits 0). "
             "'json-ci' is a compact JSON for CI and agents: it keeps "
             "findings, per-finding evidence and summary counts but omits "
             "the top-level 'dead_code_evidence' and 'definitions' bulk. "
@@ -184,7 +234,16 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         help="Comment out selected dead code instead of deleting item",
     )
     parser.add_argument("--output", "-o", type=str, help="Write output to file")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose")
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help=(
+            "Show detail in the rich report: finding Type, a Fix line on every "
+            "row, every test-code finding, full dead-code evidence, and "
+            "progress logs"
+        ),
+    )
     parser.add_argument(
         "--confidence",
         "-c",
@@ -248,8 +307,21 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
     )
     parser.add_argument(
         "--danger",
+        "--security",
         action="store_true",
+        dest="danger",
         help="Scan for security issues. Off by default.",
+    )
+    parser.add_argument(
+        "--ai-review",
+        action="store_true",
+        dest="ai_review",
+        help=(
+            "Ask an AI model to double-check security and unused-code issues "
+            "(and Jev too, when TYPESAFE_API_KEY is set). Each issue gets an AI "
+            "verdict: confirmed, AI disagrees, or unsure. Nothing is hidden and "
+            "blocking never changes. Needs an LLM API key or TYPESAFE_API_KEY."
+        ),
     )
     parser.add_argument(
         "--verify-security",
@@ -303,6 +375,18 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         "--sca",
         action="store_true",
         help="Scan dependencies for known vulnerabilities (CVEs) via OSV.dev.",
+    )
+    parser.add_argument(
+        "--review-upgrades",
+        action="store_true",
+        dest="review_upgrades",
+        help=(
+            "With --diff or --diff-base (implies --sca), download the old and new "
+            "version of each npm/PyPI package the change upgrades and report new "
+            "install hooks, .pth/sitecustomize code and other risky code "
+            "(SKY-SCA-UPG001/UPG002), and your lines that use Python API the "
+            "upgrade removed (SKY-SCA-API001). Never installs or runs them."
+        ),
     )
     parser.add_argument(
         "--scan-publisher-changes",
@@ -367,7 +451,8 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         help="Only report findings in lines changed since BASE_REF (e.g. --diff origin/main), "
         "including staged, unstaged and untracked changes (--diff HEAD = uncommitted work). "
         "Use --diff without a value to auto-detect the PR target branch "
-        "(GITHUB_BASE_REF, Bitbucket or Azure Pipelines PR target) or origin/main.",
+        "(GitHub Actions, GitLab CI, Jenkins, Bitbucket, Azure Pipelines, "
+        "Buildkite, Travis CI, Drone, Woodpecker) or origin/main.",
     )
     parser.add_argument(
         "--diff-mode",
@@ -488,6 +573,8 @@ def apply_main_output_format(
     flag_by_format = {
         "json": "json",
         "json-ci": "json",
+        "report-md": "json",
+        "report-html": "json",
         "llm": "llm",
         "github": "github",
     }
@@ -513,6 +600,10 @@ def apply_main_output_format(
     # variant shares the plain `json` output path; only the payload building
     # differs, so the two are distinguished here rather than downstream.
     setattr(args, "json_ci", output_format == "json-ci")
+    report_format = None
+    if output_format in {"report-md", "report-html"}:
+        report_format = output_format.removeprefix("report-")
+    setattr(args, "report_format", report_format)
 
     return args
 

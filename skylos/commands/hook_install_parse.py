@@ -13,8 +13,9 @@ it would fetch. Each one comes back as an :class:`InstallTarget`:
 * ``local``: a path inside the project, a workspace package, or a binary
   already in ``node_modules/.bin`` (``npx tsc``). Nothing is fetched.
 * ``manifest``: installs what a manifest or lockfile names (``npm ci``,
-  ``pip install -r requirements.txt``, ``uv sync``). Out of scope for the
-  hook; ``skylos . -a`` and ``skylos done`` check manifests.
+  ``pip install -r requirements.txt``, ``uv sync``). With
+  ``lockfiles=True`` the lockfile installs are returned too, each naming the
+  manager in ``lockfile``, so the hook can check the locked packages.
 
 Covered: pip / ``python -m pip`` / ``uv pip`` / ``uv add`` / ``uv tool`` /
 ``uvx`` / ``uv run --with`` / poetry / pdm / pipenv / pipx (install, run,
@@ -37,6 +38,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from skylos.commands.hook_shell_commands import SimpleCommand, simple_commands
+from skylos.commands.hook_shell_writes import Writes, earlier_writes
 
 PYPI = "PyPI"
 NPM = "npm"
@@ -61,9 +63,16 @@ INSTALL_HINT_RE = re.compile(
 # Hosts that serve the default public registry: an index flag naming one of
 # them changes nothing about what a public-registry check means.
 PUBLIC_REGISTRY_HOSTS = {
-    PYPI: frozenset({"pypi.org", "pypi.python.org", "files.pythonhosted.org"}),
+    PYPI: frozenset(
+        {"pypi.org", "pypi.python.org", "files.pythonhosted.org",
+         "mirrors.aliyun.com", "pypi.tuna.tsinghua.edu.cn", "mirrors.tuna.tsinghua.edu.cn",
+         "pypi.mirrors.ustc.edu.cn", "mirrors.ustc.edu.cn", "mirrors.cloud.tencent.com",
+         "mirror.baidu.com", "repo.huaweicloud.com", "mirrors.huaweicloud.com",
+         "pypi.doubanio.com", "mirrors.bfsu.edu.cn"}
+    ),
     NPM: frozenset(
-        {"registry.npmjs.org", "registry.npmjs.com", "registry.yarnpkg.com"}
+        {"registry.npmjs.org", "registry.npmjs.com", "registry.yarnpkg.com",
+         "registry.npmmirror.com", "registry.npm.taobao.org"}
     ),
     GO: frozenset({"proxy.golang.org"}),
     JSR: frozenset({"jsr.io", "npm.jsr.io"}),
@@ -116,20 +125,34 @@ class InstallTarget:
     runs: bool = False  # a one-shot runner executes it right away
     bin: str = ""  # runner command to look for in node_modules/.bin
     cwd: str = ""
+    requested: str = ""
+    lockfile: str = ""
+    preceded: bool = False
+    named: bool = False
+    pre: bool = False
+    constraints: tuple[str, ...] = ()
+    exclusive_index: bool = False
+    writes: Writes | None = None
 
 
 def install_targets(
-    command: str, cwd: Path, *, root: Path | None = None
+    command: str, cwd: Path, *, root: Path | None = None, lockfiles: bool = False
 ) -> list[InstallTarget]:
     """Packages ``command`` would install or run, run from ``cwd``.
 
     ``root`` is the project root: local archives outside it count as direct
     sources, and ``node_modules/.bin`` is searched from ``cwd`` up to it.
+    ``lockfiles`` also returns installs from a lockfile (``npm ci``, ``uv
+    sync``, ...) as ``manifest`` targets. ``requested`` holds the version
+    range or tag the command asked for; ``preceded`` marks a manifest
+    install that runs after another command in the same line, and ``writes``
+    what those earlier commands may write. ``named`` marks a lockfile install
+    that also adds the packages the command names.
     """
     commands = simple_commands(command, cwd)
     downloads = any(simple.program.lower() in _DOWNLOADERS for simple in commands)
     targets: list[InstallTarget] = []
-    for simple in commands:
+    for position, simple in enumerate(commands):
         if simple.more_args:
             # xargs appends words read from stdin: an unknown operand.
             simple = replace(
@@ -137,7 +160,14 @@ def install_targets(
                 args=[*simple.args, "$XARGS"],
                 dynamic=simple.dynamic | {len(simple.args)},
             )
-        for target in _command_targets(simple):
+        simple = _unwrap_corepack(simple)
+        found = _command_targets(simple)
+        if lockfiles:
+            found = found + _lockfile_targets(simple)
+        for target in found:
+            if (target.kind == MANIFEST or target.constraints) and position > 0:
+                target = replace(target, preceded=True,
+                                 writes=earlier_writes(commands[:position]))  # fmt: skip
             targets.append(_resolve_local(target, simple, root, downloads))
             if len(targets) >= MAX_TARGETS:
                 return targets
@@ -368,13 +398,23 @@ _UV_ENV_INDEXES = (
 )  # fmt: skip
 
 
+_PIP_DOWNLOAD_VALUE = _PIP_INSTALL_VALUE | frozenset({"-d", "--dest", "-w", "--wheel-dir"})
+_TRUE_WORDS = frozenset({"1", "true", "yes", "on"})
+
+
 def _pip_tool(simple: SimpleCommand, start: int, tool: str) -> list[InstallTarget]:
     args = simple.args
     scanned = list(_scan(args, start, _PIP_GENERAL_VALUE, stop_at_operand=True))
     operands = _operands(scanned)
-    if not operands or operands[0].value.lower() != "install":
+    if not operands:
         return []
-    return _pip_install(simple, operands[0].index + 1, f"{tool} install")
+    sub = operands[0].value.lower()
+    if sub == "install":
+        return _pip_install(simple, operands[0].index + 1, f"{tool} install")
+    if sub in {"download", "wheel"}:
+        return _pip_install(simple, operands[0].index + 1, f"{tool} {sub}",
+                            value_flags=_PIP_DOWNLOAD_VALUE)  # fmt: skip
+    return []
 
 
 def _pip_install(
@@ -403,7 +443,58 @@ def _pip_install(
         targets.append(_python_target(simple, arg, tool, registries, style=style))
     if no_index:
         targets = [_as_local(t, "--no-index: local files only") for t in targets]
-    return targets
+    return _with_python_options(simple, scanned, targets, registries)
+
+
+def _with_python_options(
+    simple: SimpleCommand,
+    scanned: list[_Arg],
+    targets: list[InstallTarget],
+    registries: tuple[str, ...],
+) -> list[InstallTarget]:
+    """Prerelease, constraint and exclusive-index options that change which
+    version installs or where it comes from."""
+    pre = _has_flag(scanned, "--pre", "--allow-prereleases")
+    if simple.env.get("PIP_PRE", "").strip().lower() in _TRUE_WORDS:
+        pre = True
+    prerelease = [arg.value for arg in _values(scanned, "--prerelease")]
+    prerelease.append(simple.env.get("UV_PRERELEASE", ""))
+    if any((value or "").strip().lower() == "allow" for value in prerelease):
+        pre = True
+    constraints: list[str] = []
+    for arg in _values(scanned, "-c", "--constraint", "--constraints"):
+        constraints.append(_constraint_path(simple, arg.value or "", _is_dynamic_arg(simple, arg)))
+    for name in ("PIP_CONSTRAINT", "UV_CONSTRAINT"):
+        for value in simple.env.get(name, "").split():
+            constraints.append(_constraint_path(simple, value, "$" in value))
+    exclusive = False
+    for arg in _values(scanned, "-i", "--index-url", "--default-index"):
+        if not _is_public_registry(_dyn_value(simple, arg), PYPI):
+            exclusive = True
+    for name in ("PIP_INDEX_URL", "UV_INDEX_URL", "UV_DEFAULT_INDEX"):
+        value = simple.env.get(name, "")
+        if value and not _is_public_registry(value, PYPI):
+            exclusive = True
+    updated = []
+    for target in targets:
+        if target.kind == REGISTRY:
+            target = replace(target, pre=pre, constraints=tuple(constraints))
+        elif target.kind == MANIFEST:
+            target = replace(target, pre=pre, constraints=tuple(constraints),
+                             exclusive_index=exclusive, registries=registries)  # fmt: skip
+        updated.append(target)
+    return updated
+
+
+def _constraint_path(simple: SimpleCommand, value: str, dynamic: bool) -> str:
+    if dynamic or not value:
+        return "$"
+    if _URL_RE.match(value):
+        return value
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = simple.cwd / path
+    return str(path)
 
 
 def _python_registries(
@@ -462,7 +553,8 @@ def _requirements_target(simple: SimpleCommand, arg: _Arg, tool: str) -> Install
             value,
             source=f"requirements file downloaded from {value}",
         )
-    return InstallTarget(PYPI, MANIFEST, tool, value, source="requirements file")
+    return InstallTarget(PYPI, MANIFEST, tool, value, source="requirements file",
+                         lockfile="requirements", cwd=str(simple.cwd))  # fmt: skip
 
 
 def _python_target(
@@ -522,6 +614,9 @@ def _classify_python(
     ):
         return _python_location(base, raw)
     name, version = _python_name_version(raw, style)
+    requested = ""
+    if name is not None and not version:
+        requested = _python_requested(raw)
     if name is None:
         if editable:
             return replace(base, kind=LOCAL, source="editable install")
@@ -529,7 +624,21 @@ def _classify_python(
     if editable:
         # "pip install -e name" is not valid pip; treat as a local path.
         return replace(base, kind=LOCAL, source="editable install")
-    return replace(base, kind=REGISTRY, name=name, version=version, source="")
+    return replace(base, kind=REGISTRY, name=name, version=version, source="",
+                   requested=requested)  # fmt: skip
+
+
+def _python_requested(raw: str) -> str:
+    """The specifier of an unpinned request: ``>=2,<3``, ``^1.2``, ""."""
+    if "@" in raw:
+        value = raw.partition("@")[2].strip()
+        if value.lower() == "latest":
+            return ""
+        return value
+    match = _PY_SPEC_RE.match(raw)
+    if not match:
+        return ""
+    return (match.group("rest") or "").strip()
 
 
 def _python_name_version(raw: str, style: str) -> tuple[str | None, str]:
@@ -816,9 +925,10 @@ def _poetry(simple: SimpleCommand) -> list[InstallTarget]:
     scanned = list(_scan(simple.args, rest, _POETRY_VALUE))
     configured = bool(_values(scanned, "--source"))
     targets = [
-        _python_target(simple, arg, "poetry add", (), style="poetry")
+        replace(_python_target(simple, arg, "poetry add", (), style="poetry"),
+                pre=_has_flag(scanned, "--allow-prereleases"))
         for arg in _operands(scanned)
-    ]
+    ]  # fmt: skip
     if configured:
         # A named source from pyproject.toml: the project's own index.
         targets = [replace(t, registries=("configured:the poetry source named by --source",))
@@ -960,6 +1070,8 @@ def _npm(simple: SimpleCommand) -> list[InstallTarget]:
     rest = operands[0].index + 1
     if sub in _NPM_INSTALL_ALIASES:
         return _npm_install_args(simple, rest, f"npm {sub}", _NPM_VALUE)
+    if sub == "pack":
+        return _npm_install_args(simple, rest, "npm pack", _NPM_VALUE | {"--pack-destination"})
     if sub in {"exec", "x"}:
         return _npx_args(simple, rest, "npm exec")
     if sub in {"init", "create", "innit"}:
@@ -972,7 +1084,24 @@ def _npm_install_args(
 ) -> list[InstallTarget]:
     scanned = list(_scan(simple.args, start, value_flags, bool_words=True))
     registries = _npm_registries(simple, scanned)
-    return [_npm_target(simple, arg, tool, registries) for arg in _operands(scanned)]
+    targets = [_npm_target(simple, arg, tool, registries) for arg in _operands(scanned)]
+    tags = []
+    if tool.startswith("npm "):
+        tags = [name_value for name, name_value in simple.env.items()
+                if name.lower() == "npm_config_tag" and name_value]  # fmt: skip
+    for arg in _values(scanned, "--tag"):
+        if _is_dynamic_arg(simple, arg):
+            tags.append("$" + (arg.value or ""))
+        else:
+            tags.append(arg.value or "")
+    if not tags:
+        return targets
+    tagged = []
+    for target in targets:
+        if target.kind == REGISTRY and not target.version and not target.requested:
+            target = replace(target, requested=tags[-1] or "")
+        tagged.append(target)
+    return tagged
 
 
 def _npx(simple: SimpleCommand) -> list[InstallTarget]:
@@ -1255,11 +1384,14 @@ def _classify_npm(
     if not _NPM_NAME_RE.match(name) or name.startswith((".", "_")):
         return replace(base, kind=DYNAMIC, source="could not read the package name")
     version = ""
+    requested = (version_spec or "").strip()
     if version_spec:
         exact = _NPM_EXACT_RE.match(version_spec.strip())
         if exact:
             version = exact.group("version")
-    return replace(base, kind=REGISTRY, name=name, version=version, source="")
+            requested = ""
+    return replace(base, kind=REGISTRY, name=name, version=version, source="",
+                   requested=requested)  # fmt: skip
 
 
 def _split_npm_name(raw: str) -> tuple[str, str | None]:
@@ -1435,6 +1567,161 @@ def _strip_subpath(spec: str) -> str:
     parts = spec.split("/")
     keep = 2 if spec.startswith("@") else 1
     return "/".join(parts[:keep])
+
+
+_NPM_CI_ALIASES = frozenset(
+    {"ci", "clean-install", "ic", "install-clean", "isntall-clean", "cit",
+     "install-ci-test", "clean-install-test", "sit"}
+)  # fmt: skip
+_HELP_FLAGS = ("--help", "-h", "--version", "-v")
+_LOCKFILE_DIR_FLAGS = {
+    "npm": ("--prefix", "-C"),
+    "pnpm": ("--dir", "-C", "--lockfile-dir"),
+    "yarn": ("--cwd",),
+    "yarnpkg": ("--cwd",),
+    "bun": ("--cwd",),
+    "uv": ("--directory", "--project"),
+    "poetry": ("-C", "--directory", "-P", "--project"),
+    "pipenv": (),
+}
+
+
+def _lockfile_targets(simple: SimpleCommand) -> list[InstallTarget]:
+    """Installs that also install everything a lockfile names, and ``uv pip
+    sync`` requirements files."""
+    program = simple.program.lower().removesuffix(".exe").removesuffix(".cmd")
+    manager, tool, named = _lockfile_install(simple, program)
+    if manager == "requirements":
+        return _uv_pip_sync_files(simple)
+    if not manager:
+        return []
+    scanned = list(_scan(simple.args, 0, _lockfile_value_flags(program)))
+    directory = simple.cwd
+    for arg in _values(scanned, *_LOCKFILE_DIR_FLAGS.get(program, ())):
+        if _is_dynamic_arg(simple, arg):
+            return [InstallTarget(_lockfile_ecosystem(manager), DYNAMIC, tool, arg.value or "",
+                                  source="project directory named at run time")]  # fmt: skip
+        directory = simple.cwd / Path(arg.value or "").expanduser()
+    return [
+        InstallTarget(_lockfile_ecosystem(manager), MANIFEST, tool, str(directory),
+                      source="lockfile", lockfile=manager, cwd=str(directory), named=named)
+    ]  # fmt: skip
+
+
+_GLOBAL_FLAGS = ("-g", "--global", "--location=global")
+_UV_NO_SYNC = ("--no-sync", "--no-project", "--script")
+
+
+def _lockfile_install(simple: SimpleCommand, program: str) -> tuple[str, str, bool]:
+    """(manager, tool, named) for a command that installs the project's
+    locked packages, or ("", "", False)."""
+    args = simple.args
+    if program == "npm":
+        sub, rest = _subcommand(simple, _NPM_EXEC_VALUE)
+        if sub in _NPM_CI_ALIASES:
+            return "npm", f"npm {sub}", False
+        if sub in _NPM_INSTALL_ALIASES and not _has_any(args, _GLOBAL_FLAGS):
+            return "npm", f"npm {sub}", _later_operands(simple, rest, _NPM_VALUE)
+        return "", "", False
+    if program == "pnpm":
+        sub, rest = _subcommand(simple, _PNPM_GLOBAL_VALUE)
+        if sub in {"install", "i", "add"} and not _has_any(args, _GLOBAL_FLAGS):
+            return "pnpm", f"pnpm {sub}", _later_operands(simple, rest, _PNPM_GLOBAL_VALUE)
+        return "", "", False
+    if program in {"yarn", "yarnpkg"}:
+        sub, rest = _subcommand(simple, _YARN_GLOBAL_VALUE)
+        if sub == "" and not any(arg in _HELP_FLAGS for arg in args):
+            return "yarn", "yarn", False
+        if sub in {"install", "add"}:
+            return "yarn", f"yarn {sub}", _later_operands(simple, rest, _YARN_GLOBAL_VALUE)
+        return "", "", False
+    if program == "bun":
+        sub, rest = _subcommand(simple, _BUN_GLOBAL_VALUE)
+        if sub in {"install", "i", "add", "a"} and not _has_any(args, _GLOBAL_FLAGS):
+            return "bun", f"bun {sub}", _later_operands(simple, rest, _BUN_GLOBAL_VALUE)
+        return "", "", False
+    if program == "uv":
+        sub, rest = _subcommand(simple, _UV_GLOBAL_VALUE)
+        if sub == "sync":
+            return "uv", "uv sync", False
+        if sub in {"run", "add", "remove"} and not _has_any(args, _UV_NO_SYNC):
+            return "uv", f"uv {sub}", sub != "run"
+        if sub == "pip" and _subcommand(simple, _UV_GLOBAL_VALUE, rest)[0] == "sync":
+            return "requirements", "uv pip sync", False
+        return "", "", False
+    if program == "poetry":
+        sub, rest = _subcommand(simple, frozenset({"-C", "--directory", "-P", "--project"}))
+        if sub in {"install", "sync"}:
+            return "poetry", f"poetry {sub}", False
+        if sub in {"add", "remove"} and "--lock" not in args:
+            return "poetry", f"poetry {sub}", True
+        return "", "", False
+    if program == "pipenv":
+        sub, rest = _subcommand(simple, frozenset({"--python"}))
+        scanned = list(_scan(simple.args, rest, _PIPENV_VALUE))
+        if sub == "sync":
+            return "pipenv", "pipenv sync", False
+        if sub == "install" and not _values(scanned, "-r", "--requirements"):
+            return "pipenv", "pipenv install", bool(_operands(scanned))
+    return "", "", False
+
+
+def _has_any(args: list[str], flags: tuple[str, ...]) -> bool:
+    return any(arg in flags for arg in args)
+
+
+def _later_operands(simple: SimpleCommand, start: int, value_flags: frozenset[str]) -> bool:
+    scanned = _scan(simple.args, start, value_flags, bool_words=True)
+    return bool(_operands(scanned))
+
+
+_COREPACK_MANAGERS = frozenset({"npm", "npx", "pnpm", "pnpx", "yarn", "yarnpkg"})
+
+
+def _unwrap_corepack(simple: SimpleCommand) -> SimpleCommand:
+    """``corepack pnpm@9 add x`` runs ``pnpm add x``."""
+    if simple.program.lower().removesuffix(".exe").removesuffix(".cmd") != "corepack":
+        return simple
+    for index, arg in enumerate(simple.args):
+        if arg.startswith("-"):
+            continue
+        name = arg.split("@", 1)[0].lower()
+        if name not in _COREPACK_MANAGERS or simple.is_dynamic(index):
+            return simple
+        shift = index + 1
+        return replace(simple, program=name, args=simple.args[shift:],
+                       dynamic=frozenset(i - shift for i in simple.dynamic if i >= shift))  # fmt: skip
+    return simple
+
+
+def _lockfile_value_flags(program: str) -> frozenset[str]:
+    flags = {
+        "npm": _NPM_EXEC_VALUE,
+        "pnpm": _PNPM_GLOBAL_VALUE,
+        "yarn": _YARN_GLOBAL_VALUE,
+        "yarnpkg": _YARN_GLOBAL_VALUE,
+        "bun": _BUN_GLOBAL_VALUE,
+        "uv": _UV_PIP_INSTALL_VALUE,
+        "poetry": _POETRY_VALUE,
+        "pipenv": _PIPENV_VALUE,
+    }
+    return flags.get(program, frozenset())
+
+
+def _lockfile_ecosystem(manager: str) -> str:
+    if manager in {"npm", "pnpm", "yarn", "bun"}:
+        return NPM
+    return PYPI
+
+
+def _uv_pip_sync_files(simple: SimpleCommand) -> list[InstallTarget]:
+    rest = _subcommand(simple, _UV_GLOBAL_VALUE)[1]
+    rest = _subcommand(simple, _UV_GLOBAL_VALUE, rest)[1]
+    scanned = list(_scan(simple.args, rest, _UV_PIP_INSTALL_VALUE))
+    return [
+        _requirements_target(simple, replace(arg, value_index=arg.index), "uv pip sync")
+        for arg in _operands(scanned)
+    ]
 
 
 _TOOLS = {

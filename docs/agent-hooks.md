@@ -10,19 +10,41 @@ makes it, instead of waiting for CI:
 - **Before a package install or one-shot run** (`pip`, `uv`/`uvx`, `poetry`,
   `pipx`, `npm`/`npx`, `pnpm dlx`, `yarn dlx`, `bun`/`bunx`, `go`, `deno`),
   Skylos blocks packages that do not exist (hallucinated) or are one-letter
-  look-alikes of popular packages (typosquats), and asks you before installs
-  it cannot verify: git and URL sources, registries it does not know, and
-  lookups that fail.
+  look-alikes of popular packages (typosquats), versions reported as malware,
+  versions published less than 48 hours ago, and npm versions that lost the
+  provenance their earlier versions had. `npm ci`, `uv sync`,
+  `pip install -r` and other lockfile installs get the malware check over
+  every locked package. It asks you before installs it cannot verify: git and
+  URL sources, registries it does not know, and lookups that fail.
+- **Before the agent adds an MCP server** (`claude mcp add`, `codex mcp add`,
+  `gemini mcp add`, or an edit to `.mcp.json`, `.cursor/mcp.json` and the
+  other MCP configs), Skylos checks the package the server would run for
+  malware, release age and existence, and requires an exact version: an
+  unpinned `npx -y pkg` is blocked with the pinned command to use instead.
+  Before the agent adds a command that runs on its own (a `SessionStart` hook
+  in `.claude/settings.json`, a `folderOpen` task in `.vscode/tasks.json`),
+  Skylos asks you.
+- **At each prompt**, Skylos reports agent config changes it did not see the
+  agent make and re-checks configured MCP servers (what an unpinned one would
+  fetch today).
 - **Before a git command**, Skylos blocks ways around the repository's git
   hooks: `--no-verify`, `HUSKY=0`, `core.hooksPath=/dev/null` and similar.
 - **When the agent says it is done**, Skylos blocks the stop while issues the
   agent added in this session are still open.
 
 Everything runs locally. It needs no account, no Docker and no API key. The
-only network calls are package-registry lookups, and only for install commands
-and new imports.
+only network calls are package-registry and OSV (`api.osv.dev`) lookups, and
+only for install commands, MCP servers and new imports.
 
 ## Install
+
+`skylos setup` installs the Claude Code and Codex hooks for the project
+(`.claude/settings.json` and `.codex/hooks.json`; `--no-codex` skips Codex)
+with the hook command `skylos`, resolved on each machine's PATH, so the
+committed files work for every teammate. It runs the same check as the
+installer below: the `skylos` on PATH must support `skylos hook`, or nothing is
+installed. The commands below install one agent at a time, or Cursor, or the
+user-level config:
 
 ```bash
 pip install skylos
@@ -145,12 +167,34 @@ entries are easy to find because every Skylos command contains
 
 ## What each hook does
 
+The installer writes eight hooks. Five of them check and can block:
+
 | Hook | Claude Code | Codex | Cursor | What it does |
 |:---|:---|:---|:---|:---|
-| `post-edit` | `PostToolUse` on `Edit\|Write\|MultiEdit` | `PostToolUse` on `apply_patch` | `afterFileEdit` | Verifies the changed lines and reports failures to the agent |
+| `post-edit` | `PostToolUse` on `Edit\|Write\|MultiEdit` | `PostToolUse` on `apply_patch\|Edit\|Write` | `afterFileEdit` | Verifies the changed lines and reports failures to the agent |
 | `pre-read` | `PreToolUse` on `Read` | not available (Codex reads files through the shell; `pre-bash` covers that) | `beforeReadFile` | Blocks reading a file that contains secrets |
-| `pre-bash` | `PreToolUse` on `Bash\|PowerShell` | `PreToolUse` on `Bash` | `beforeShellExecution` | Blocks commands that would print a secret file or variable, installs of hallucinated or typosquatted packages, and git-hook bypasses; asks before installs it cannot verify |
+| `pre-bash` | `PreToolUse` on `Bash\|PowerShell` | `PreToolUse` on `Bash` | `beforeShellExecution` | Blocks commands that would print a secret file or variable, installs of hallucinated, typosquatted, malicious or too-new package versions, unpinned or unsafe MCP servers, and git-hook bypasses; asks before installs it cannot verify |
+| `pre-edit` | `PreToolUse` on `Edit\|Write\|MultiEdit` | `PreToolUse` on `apply_patch\|Edit\|Write` | not available | Blocks edits to agent configs that add unpinned or unsafe MCP servers; asks before new agent hooks and `folderOpen` tasks ([MCP servers and agent configs](#mcp-servers-and-agent-configs)). It also records the file before the edit for `skylos provenance` |
 | `stop` | `Stop` | `Stop` | `stop` | Blocks "done" while issues this session added are still open |
+
+The other three never block:
+
+| Hook | Claude Code | Codex | Cursor | What it does |
+|:---|:---|:---|:---|:---|
+| `session-start` | `UserPromptSubmit` | `UserPromptSubmit` | `beforeSubmitPrompt` | Records the starting checkout, so `stop` can tell the agent's changes from earlier ones (with a committed `[tool.skylos.done]` table; see [Done gate](./done-gate.md#in-the-agent-loop)). Tells Claude Code the blocking checks once per session, and reports agent config changes and MCP server problems at every prompt ([below](#at-each-prompt-session-start)) |
+| `post-bash` | `PostToolUse` on `Bash\|PowerShell` | `PostToolUse` on `Bash` | not available | Files a shell command changed (their lines stay unattributed) |
+| `post-failure` | `PostToolUseFailure` on `Edit\|Write\|MultiEdit` and on `Bash\|PowerShell` | not available | not available | Partial changes from a failed edit or command (their lines stay unattributed) |
+
+On the first prompt of a session, Claude Code gets at most six lines explaining
+which Done checks block in this repository (the `block` checks of the committed
+table, or that Done tests are not configured), what the edit and pull request
+gates block, and the command to run before finishing (`skylos done --base <base>`,
+using the base `skylos open` would use). These instructions are sent once per
+session and only to Claude Code. Agent config and MCP server warnings still run
+at every prompt for Claude Code, Codex and Cursor.
+
+`skylos hook recheck FILE... [--range L1:L2]` and `skylos hook recheck --session`
+are commands for the agent, not hooks; see [post-edit](#post-edit).
 
 ### post-edit
 
@@ -160,13 +204,6 @@ Skylos works out which lines the edit added:
   `new_string` in the file.
 - **Codex:** from the `+` lines of the `apply_patch` envelope.
 - **Cursor:** from `edits[].new_string`.
-
-A file changed through the shell, such as `cat > run.py` or `sed -i`, gets the same
-check: Claude Code does not run an `Edit|Write` hook for those, so after every shell
-command Skylos compares Git's view of the changed files with what it last saw, and it
-looks once more at `stop` for anything a failed command, a subagent or another process
-changed. Work already uncommitted when the prompt arrives is not attributed to the
-agent.
 
 A `Write` that creates a new file counts as all new lines. Skylos then runs
 `skylos verify` on the file with security and secret checks on, and keeps only
@@ -180,60 +217,23 @@ helper like `def load(path): return open(path).read()` is reported as path
 traversal. The hook does not block on that. It blocks only on:
 
 1. **Secrets** (SKY-S*).
-2. **Real untrusted input reaching a sink** (SKY-D211/212/215/216/217/228/230/...):
+2. **Real untrusted input reaching a sink** (SKY-D211/212/215/216/217/230/...):
    Skylos checks the enclosing function on the AST for a web-route, CLI or
    MCP-tool parameter (`@app.get`, `@router.post`, `@click.command`,
-   `@mcp.tool`, ...), `request.*` / a `Request`-typed parameter, a submitted form
-   field (`form.q.data`, `form.cleaned_data`), `input()`,
+   `@mcp.tool`, ...), `request.*` / a `Request`-typed parameter, `input()`,
    `sys.argv`, `os.environ`/`os.getenv`, `sys.stdin`, or `parse_args()`, and
-   follows simple assignments to the sink. JS and TS get the same check:
-   `req.`/`request.`/`ctx.` query, body, params and headers, Hono's `c.req`,
-   NestJS `@Param`/`@Query`/`@Body` parameters, Next.js `searchParams` and
-   `formData`, and `process.argv`/`process.env`. A local named `query` or
-   `db.query(...)` is not a source. For other languages it uses the finding's
-   `security_evidence.source`. Raw SQL also blocks when an f-string, `+`, `%`,
-   `.format` or template literal builds it from a function parameter, wherever
-   the caller got the value. Constants, bound parameters, tagged templates,
-   numeric parameters and a helper passing through a complete `sql` argument do
-   not. Neither does a value a guard first proved to be in a fixed set, such as
-   `if sort not in COLUMNS: raise` or a lookup in a constant map, which is OWASP's
-   recommended handling for identifiers.
+   follows simple assignments to the sink. For other languages it uses the
+   finding's `security_evidence.source`.
 3. **Sinks dangerous whatever the input:** unsafe deserialization
    (`pickle.loads`, SKY-D204/205/233), Trojan Source (SKY-D344), disabled TLS
-   verification (SKY-D210 / Go SKY-G210: `verify=False`, `InsecureSkipVerify`),
-   disabled JWT verification (SKY-D232, JS/TS SKY-D246) and other disabled
-   security controls (SKY-L011), which agents add to silence an error,
-   server-side template injection (SKY-D349), Flask debug mode (SKY-D346),
-   a wildcard CORS origin with credentials (SKY-D231; a wildcard alone is a
-   note), and
+   verification (SKY-D210 / Go SKY-G210: `verify=False`, `InsecureSkipVerify`)
+   and disabled JWT verification (SKY-D232, JS/TS SKY-D246), which agents add
+   to silence an error, and
    `eval`/`exec`/`os.system`/`shell=True`/`yaml.load` with a non-constant
    argument. `os.system("clear")` is not blocked.
 4. **Hallucinations:** nonexistent dependencies, versions, APIs and
-   references (SKY-D222/224/225, SKY-L012/L023), including a dependency added
-   to a manifest such as `requirements.txt`, `pyproject.toml` or `package.json`,
-   and violations of your own AI contract (SKY-A105).
-5. **Type errors the edit introduced**, when the base commit's
-   `[tool.skylos.done.checks]` sets `type_check = "block"`: Skylos runs the project's
-   declared checker (mypy, Pyright, Pyrefly or tsc) with the project's own
-   configuration, compares against the session baseline, and blocks on
-   `introduced` and `unclassified` errors in the edited file or in an unchanged
-   caller the edit broke, plus net-new compiler suppressions and escapes (see
-   [Type checking](./type-checking.md#escapes-the-guard-blocks)). `preexisting`
-   errors are notes. `type_check = "advise"` makes every type diagnostic a
-   note. The post-edit run has a 60-second budget (or the configured
-   `type_check_timeout_seconds` when lower). A check that takes 15 seconds or
-   more still reports, then stops running per edit for that session, and the
-   full check runs at `stop` through Done, which decides the final verdict either
-   way. When the checker cannot finish, the agent gets a non-blocking note. A checker that is not installed is reported, never skipped
-   silently. `skylos hook recheck FILE` applies the same type policy, so a fixed
-   error clears and an open one still blocks.
-
-Hard-coded credentials (SKY-L014) block like secrets. A removed security
-control (SKY-L021: a dropped auth check or ownership test) blocks even when the
-edit only deleted lines, because deleting is how it happens. A sink on the first
-line of a multi-line call is on the changed lines when an inner line of that call
-changed, such as `options={"verify_signature": False}`. Weak hashes and insecure
-randomness (SKY-D207, SKY-D250) are always notes.
+   references (SKY-D222/224/225, SKY-L012/L023), and violations of your own
+   AI contract (SKY-A105).
 
 Other findings on the changed lines are **notes**: Claude Code gets them as
 non-blocking `additionalContext`; they are not re-raised at `stop`.
@@ -349,11 +349,14 @@ Each command gets one of these outcomes:
 | Outcome | Examples | What happens |
 |:---|:---|:---|
 | Package does not exist, pinned version does not exist, or one-edit look-alike of a popular package (SKY-D222/D225) | `pip install fastapi-authz`, `npx -y cowsy`, `npm create foo` when `create-foo` is not published | **Blocked** on every agent |
+| Version reported as malware | `npm install chalk@5.6.1`, `pip install aiocpa==0.1.13`, `npm i c@npm:chalk@5.6.1`, `npx -y xrpl@4.2.1`, `npm install chalk` while `latest` is a malicious release | **Blocked** on every agent (see [Supply-chain checks](#supply-chain-checks)) |
+| Version younger than the release cooldown (default 48 hours) | `npm install typescript@next` six hours after a nightly, `pip install openai` the day of a release | **Blocked**; the message names the newest older version to install instead |
+| npm version published without the provenance its earlier versions had | a release pushed from a stolen token instead of the project's CI | **Blocked** |
 | Direct source: code from outside a registry | `npm install github:user/repo#b181e0`, `npm install user/repo`, `pip install git+https://...`, `uvx --from git+https://...`, a tarball or wheel URL, `deno run https://...`, an archive outside the project, an archive downloaded by the same command (`curl -LO ... && npm i ./x.tgz`) | `direct_source` policy (default: ask) |
 | Untrusted registry or index | `--index-url`/`--extra-index-url`/`-i`/`-f URL`, `--registry`, `--@scope:registry=`, `PIP_INDEX_URL=`, `UV_INDEX_URL=`, `NPM_CONFIG_REGISTRY=`, `GOPROXY=`, `GOSUMDB=off` on the command line | `direct_source` policy (default: ask), unless the registry is in `trusted_registries` |
 | Could not verify | registry unreachable, timeout, HTTP 429/5xx; package named at run time (`pip install $PKG`, `xargs npm i`, `npx $(...)`); a name Skylos cannot read; more than 25 packages in one command; a package missing from the public registry while your configuration points at a private one; an install or git command longer than Skylos reads (16,384 characters, not counting here-document bodies) | `on_unverified` policy (default: ask) |
 | Not fetched from a registry | `npx tsc` when `tsc` is the project's own `bin`, in `node_modules/.bin` (this directory or any parent) or a global npm bin, as npm itself resolves it; `npx --no`; local paths and archives inside the project (`pip install -e .`, `npm i ../lib`, `workspace:`/`file:`/`link:`); `pip install --no-index` | allowed |
-| Manifest install | `npm ci`, `npm install`, `pip install -r requirements.txt`, `uv sync`, `poetry install`, `go mod download` | allowed; manifests are checked by `skylos . -a` and `skylos done` (SKY-D222), not here |
+| Lockfile install | `npm ci`, `npm install` (with or without packages), `pnpm install`/`add`, `yarn`, `yarn add`, `bun install`/`add`, `uv sync`, `uv run`, `uv add`/`remove`, `uv pip sync`, `poetry install`/`add`, `pipenv sync`/`install`, `pip install -r requirements.txt` | the malware check runs over every locked package, whatever source the lockfile records (see [Supply-chain checks](#supply-chain-checks)); a malicious one is **blocked**, and a tarball, git or URL source from an unknown host is "could not verify" (`direct_source`). Global installs (`npm i -g`) and `uv run --no-sync` do not read the project lockfile. No lockfile: allowed as before, unless an earlier part of the same command could have written it. `go mod download` and package.json ranges without a lockfile are not checked here; `skylos . -a` and `skylos done` check manifests |
 
 A git commit hash ref (`github:cline/cline#b181e0`) is called out in the
 message: GitHub serves commits from any fork through the parent repository's
@@ -391,11 +394,15 @@ configuration) skip the public check.
 **Your own registry configuration.** "Not on npmjs.org" is not evidence of a
 hallucination when your configuration fetches from somewhere else. Skylos
 reads `registry=` and `@scope:registry=` from `.npmrc` (from the working
-directory up to the project root, and `~/.npmrc`), `npm_config_registry`,
-`PIP_INDEX_URL`/`PIP_EXTRA_INDEX_URL`/`UV_*INDEX*` from the environment,
-`pip.conf`/`pip.ini`, `uv.toml`, `[[tool.uv.index]]`, `[[tool.poetry.source]]`
-and `[[tool.pdm.source]]`, and `GOPROXY`/`GOPRIVATE`/`GONOPROXY` (environment
-or `go env -w`). With such a registry configured:
+directory up to the project root, and `~/.npmrc`) and `npm_config_registry`
+for the npm tools, and for Python only the configuration the installing tool
+itself reads: `PIP_INDEX_URL`/`PIP_EXTRA_INDEX_URL` and `pip.conf`/`pip.ini`
+for pip (and pipx, pipenv); `UV_*INDEX*`, `uv.toml` and `[tool.uv]` for uv;
+`[[tool.poetry.source]]` for poetry; `[[tool.pdm.source]]` for pdm. Go reads
+`GOPROXY`/`GOPRIVATE`/`GONOPROXY` (environment or `go env -w`). Public
+mirrors (`registry.yarnpkg.com`, `registry.npmmirror.com`, the common PyPI
+mirrors) count as the public registry and get every check. With another
+registry configured:
 
 - a scoped npm package whose scope has its own registry is never sent to
   npmjs.org; it is allowed if that registry is trusted, otherwise it is
@@ -403,7 +410,12 @@ or `go env -w`). With such a registry configured:
 - a `GOPRIVATE` module is never sent to the Go proxy and is allowed;
 - any other package missing from the public registry becomes "could not
   verify" (ask) instead of a block. Look-alikes of popular packages are still
-  blocked.
+  blocked;
+- a package that exists publicly gets every check when the registry is
+  declared (`trusted_registries`), unless its name matches
+  `internal_packages`. When the registry is not declared, a pinned version
+  still gets the malware check, and Skylos adds a one-line note that the
+  release age was not checked.
 
 To allow your own names (internal packages, deliberate look-alikes) without
 any check, list them in `pyproject.toml`:
@@ -413,6 +425,10 @@ any check, list them in `pyproject.toml`:
 hooks_allow_packages = ["internal-pkg", "npm:my-reactt"]   # optional npm:/pypi:/go:/jsr: prefix
 ```
 
+PyPI names match after PEP 503 normalisation (`Foo_Bar` = `foo-bar`); npm,
+Go and JSR names match exactly, ignoring case, so allowing `acme-utils` does
+not allow the different npm package `acme.utils`.
+
 Well-known packages that sit one edit from a popular name (`preact`, `pyaml`,
 `react-dom`, ...) are never flagged, and neither is any package in the
 popular list itself. Registry answers that settle the question (exists, does
@@ -420,6 +436,94 @@ not exist, version does not exist) are cached in
 `.skylos/cache/dependency_versions.json`; "could not verify" answers are
 retried next time. A PEP 440 local version (`torch==1.11.0+cu113`) is never on
 PyPI, so only the public version (`1.11.0`) is checked.
+
+#### Supply-chain checks
+
+Every package version the command would install, and every package in the
+lockfile a lockfile install reads, is checked before the command runs:
+
+- **Malware.** One OSV `querybatch` with fresh data (no cache). A version is
+  malware when OSV lists a `MAL-*` record or alias for it, a record with
+  `malicious-packages-origins`, or a record with CWE-506 (embedded malicious
+  code); withdrawn records do not count, and ordinary CVEs never block an
+  install (`skylos . -a` reports those). When OSV does not answer, the
+  installed ca9 feed answers instead (`ca9 feed update`); with neither, the
+  package is "could not verify" (`on_unverified`). A malicious version that
+  the registry already removed is reported as malware, not as a missing
+  version.
+- **Release cooldown.** A version published less than
+  `min_release_age_hours` ago (default 48) is blocked. Most hijacked releases
+  (chalk and debug in September 2025, the Shai-Hulud worm) were found and
+  pulled within hours; two days also covers the ones found on the second or
+  third day (Shai-Hulud 2.0, tj-actions). The message
+  names the newest older version that has no malware report, for example
+  `Install typescript@7.0.2 instead`. An unpinned install is checked at the
+  version the manager would install: npm's `latest` dist-tag (or the tag from
+  `--tag`, `NPM_CONFIG_TAG` or `.npmrc` `tag=`) or the version a range
+  resolves to; PyPI's newest final release that matches the specifier
+  (yanked releases skipped), a prerelease with `--pre`/`PIP_PRE`/
+  `--prerelease allow`, and the pin from a constraints file (`-c`,
+  `PIP_CONSTRAINT`, `UV_CONSTRAINT`). A constraints file Skylos cannot read is
+  "could not verify".
+- **npm provenance.** A version published without a provenance attestation
+  when the releases before it had one is blocked; the message names the
+  newest earlier version with provenance. When the registry does not answer,
+  nothing is blocked.
+
+```toml
+[tool.skylos.supply_chain]
+block_malware = true          # false: known malware asks instead of blocking
+min_release_age_hours = 48    # 0 turns the cooldown off; the hook default is 48
+check_provenance = true       # npm only
+internal_packages = ["acme-*", "@acme/*"]   # kept private when served by a declared registry
+```
+
+`pip download`, `pip wheel` and `npm pack <spec>` fetch the package too, so
+they get the same checks as an install (`pip download evil==1.0 && pip
+install ./evil.whl` is blocked at the download). `corepack pnpm add x` is
+read as `pnpm add x`.
+
+**Lockfiles and requirements files.** Every locked entry with a name and
+version is checked for malware, wherever the lockfile says it came from
+(`registry.npmjs.org`, a mirror, an Artifactory URL, a private uv index),
+except entries from a declared registry whose name matches
+`internal_packages`. A tarball, git or URL source from a host that is neither
+public nor declared is also "could not verify" (`direct_source`), because its
+contents need not match the version it claims. Requirements files follow
+pip: index options never switch the check off (`--index-url
+https://pypi.org/simple`, `--extra-index-url https://download.pytorch.org/...`
+are checked as usual); only an exclusive private `--index-url` keeps
+`internal_packages` names away from OSV. `name @ url`, `git+...` and URL
+lines are direct sources, like `pip install <url>`. A constraint pin (`-c`)
+is the version of an unpinned requirement.
+
+When an earlier part of the same command line may write the lockfile, its
+manifest, the requirements file or anything it includes (`curl -o`, `cp`,
+`mv`, `tee`, `>`, `sed -i`, `git checkout`, `git pull`, `patch`, `unzip`,
+`tar`, or any other command that names the file), Skylos does not read it:
+the install is "could not verify". Read-only commands such as `cat`, `grep`
+or `git diff` count only through a redirect. A script that writes the file
+without naming it is not detected.
+
+A synced Skylos Cloud policy (`supply_chain` in `.skylos/config.yaml`) can
+only tighten these values. When it sets `trusted_registries` or
+`private_registries`, those lists replace `[tool.skylos.hooks]
+trusted_registries`, so a repository cannot trust a registry Cloud does not.
+When Cloud sets `block_malware`, `hooks_allow_packages` no longer skips the
+malware check (it still skips the existence, release-age and provenance
+checks); without Cloud, it skips them all. Packages from a trusted registry
+on the command line are never sent to OSV or the public registry; a pinned
+version from an untrusted `--registry`/`--index-url` gets the malware check
+as well as the `direct_source` question. Release age and provenance come from
+the ca9 engine (`ca9.api`, installed with Skylos); an older ca9 without it
+makes those packages "could not verify" until you run `pip install -U ca9`.
+
+Limits: the whole install check (registry lookups included) shares a
+20-second budget inside the 30-second hook timeout, and at most 5,000 locked
+packages are checked per lockfile; anything not checked in time is "could
+not verify", never passed. `bun.lockb` (binary) is not read; use the text
+`bun.lock`. Shell aliases and functions that wrap an install command are not
+followed.
 
 **Git hook bypass.** Agents skip a failing pre-commit hook instead of fixing
 it. With `block_hook_bypass = true` (the default), pre-bash blocks:
@@ -461,6 +565,164 @@ message names the hooks that would not run and tells the agent to fix what the
 hook reports, or to stop and tell you if the hook fails for an unrelated
 reason.
 
+### MCP servers and agent configs
+
+An MCP server started with `npx -y pkg` or `uvx pkg` fetches whatever the
+newest release is on every launch, and a hook planted in
+`.claude/settings.json` or `.vscode/tasks.json` runs as soon as the agent or
+editor opens the project. Skylos checks both when the agent changes them.
+
+**Which changes are checked.** In `pre-bash`: `claude mcp add` in all its
+forms (`-s/--scope`, `--transport`, `-e KEY=V`, `--` before the command,
+`add-json`, global options such as `--debug` before `mcp`;
+`add-from-claude-desktop` always asks, because Skylos cannot see what it
+imports), `codex mcp add` (also after `-c k=v`) and `gemini mcp add`,
+including with an environment prefix, inside `bash -c`, or run through
+`npx @anthropic-ai/claude-code`. A command whose program is only known at run
+time (`c=claude; $c mcp add ...`) asks. `claude plugin install`, `claude
+plugin marketplace add` and `gemini extensions install|link` ask, because
+plugins and extensions load code into the agent. In `pre-edit`: edits to
+`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.vscode/tasks.json`,
+`.gemini/settings.json`, `.claude/settings.json`,
+`.claude/settings.local.json`, `.claude/agents/*.md`, `.cursor/hooks.json`,
+`.codex/hooks.json`, `.codex/config.toml`, the same files in your home
+directory, and `~/.claude.json` (user scope and every project's scope).
+Skylos applies the edit to the current text and has ca9 read the file before
+and after, so JSON with comments and trailing commas is read the way the
+agents read it. A file with duplicate keys asks: agents keep the last value,
+so Skylos cannot be sure which server or hook runs. Cursor has no pre-edit
+hook, so a Cursor edit to these files is reported at the next prompt.
+
+A shell command that writes one of these files itself asks, because the hook
+cannot see what it writes: a redirect, `tee`, `sponge` or any program naming
+the file (globs such as `.claude/setting*.json` included), `cp`/`mv`/`rsync`
+into an agent config folder or of a config-named file into the folder that
+holds it, `curl -o`/`-O` and `wget` saving under a config name, inline code
+naming one (`python3 -c "open('.mcp.json','w')..."`), `sed -i`/`perl -i`,
+`git checkout|restore ... -- .claude`, `git apply`/`am`/`patch` of a patch
+that touches an agent config (or one Skylos cannot read), and archive
+extraction (`tar x`, `unzip`). Read-only commands (`cat`, `jq`, `git diff`,
+`git add`) and plain branch switches pass; a branch switch or pull that
+changes these files is reported at the next prompt.
+
+**What each MCP server gets.** Skylos first unwraps the launch (`timeout`,
+`sudo`, `nohup`, `env`, `nice`, `time`, `stdbuf`, `sh -c` ...); ca9 then
+reads the launcher (`npx`, `npm exec`, `pnpm dlx`, `yarn dlx`, `bunx`, `uvx`,
+`uv tool run`, `pipx run`, `docker run`, `cmd /c`). Registry flags
+(`--registry`, `--index-url`) and registry variables in the server's `env` or
+`-e` (`npm_config_registry`, `PIP_INDEX_URL`, `UV_INDEX_URL`) are kept: a
+registry you have not declared in `trusted_registries` asks instead of being
+checked against the public registry.
+
+| Server | Result |
+|:---|:---|
+| Package with an exact version (`pkg@1.4.2`, `pkg==2.1.0`) | Same checks as an install of that version: existence, malware, release age, npm provenance. Clean passes; otherwise **blocked** |
+| Package without an exact version (`npx -y pkg`, `@latest`, `@^1`, `uvx --from pkg tool`) | Checked at the version the launcher fetches today, then **blocked** with the pinned command, for example `claude mcp add x -- npx -y some-mcp@1.4.2`. When that version is too new, the pin is the newest older version without a malware report |
+| Git or URL source, untrusted registry, image without a digest, a launcher Skylos cannot read | Asks (`direct_source` / `on_unverified`) |
+| A wrapper that starts more than one program (`sh -c "curl ... \| sh"`), inline code (`node -e`, `python -c`), `uv run --with`, a program outside the project (`node /opt/x/server.js`, a binary on PATH) | Asks |
+| ca9 flags it: a script in a hidden home folder, a package name imitating a vendor | Asks (malware still blocks) |
+| Script inside the project (`node ./server.js`), installed module (`python -m pkg`) | Passes; it fetches nothing |
+| Remote server (`--transport http`, `"url"`) | Passes with a note; the note says "could not verify" for plain `http://` to a host that is not local |
+
+**Commands and settings that run code.** Adding or changing any of these
+asks you:
+
+- a hook command in an agent's settings (any event, plus `statusLine`,
+  `apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport` and
+  `otelHeadersHelper` in Claude Code), hooks or MCP servers in
+  `.claude/agents/*.md` frontmatter, Codex `notify`, and a `folderOpen` task
+  in `.vscode/tasks.json`;
+- settings `env` that changes what runs or where traffic goes: `PATH`,
+  `BASH_ENV`, `PYTHONPATH`, `NODE_OPTIONS`, `HTTPS_PROXY`/`HTTP_PROXY`,
+  `npm_config_registry` and other registry variables,
+  `CLAUDE_CODE_SHELL_PREFIX`, `LD_*`/`DYLD_*`, `ANTHROPIC_BASE_URL`,
+  `OPENAI_BASE_URL`;
+- `enabledPlugins`, `extraKnownMarketplaces`, `enabledMcpjsonServers` and
+  `enableAllProjectMcpServers: true`;
+- removing Skylos's own hooks or weakening them (another event, matcher or a
+  shorter timeout), in an edit or through `skylos agent install-hooks
+  --uninstall` run by the agent, and `disableAllHooks: true`.
+
+Removing other entries is allowed. A hook counts as Skylos's own only when its
+command is, character for character, what `skylos agent install-hooks` writes
+on this machine (the running Skylos console script, or `skylos` on PATH),
+outside the project and outside temp folders, in a settings file whose `env`
+sets no `PATH` or loader variable. `python -m skylos.entry` never counts
+(`-m` imports from the project folder), and neither does a symlink the
+project commits. `curl ... | sh; skylos hook pre-bash ...` or a `skylos`
+binary somewhere else is asked about like any other command. The scanner
+(`SKY-D365`) uses the same rule, without the "this machine" part. Codex
+cannot ask; Skylos blocks there instead.
+
+Without a ca9 that reads agent configs (`ca9.api.agent_config` and
+`parse_mcp_server`), every MCP addition and every edit to these files is
+"could not verify" (asks) until you run `pip install -U ca9`.
+
+#### At each prompt (session-start)
+
+`session-start` keeps a snapshot of what these files run in
+`.skylos/cache/agent-configs.json`: names and hashes only, never commands,
+URLs or environment values. At each prompt it reports, one line each, what
+changed since the snapshot without a checked agent edit or command:
+servers added, changed or removed, new hook commands and code-loading
+settings, removed or changed Skylos hooks, duplicate keys. That covers changes
+made by another program, such as a malicious package writing a server into
+`~/.cursor/mcp.json`, Cursor's edits, branch switches, and edits the agent
+made through the shell. Only the exact change Skylos checked is folded into
+the snapshot after it lands; anything else written at the same time is still
+reported. The first run only records the snapshot.
+
+Once per session (or hourly, or when a server changes), every configured MCP
+server is checked again at the version it would run now: known malware, a
+release younger than the cooldown, or a package that no longer exists is
+reported. Unpinned servers that pass are not repeated each session; servers
+that could not be checked in the time budget (8 seconds) are counted as
+"could not be verified". The report never blocks the prompt. In Claude Code
+it reaches you and the agent; in Codex you; in Cursor the Hooks output
+channel.
+
+## Harden the agents' own settings
+
+```bash
+skylos agent harden            # print (default; writes nothing)
+skylos agent harden --offline  # no version lookups
+skylos agent harden --write    # merge the JSON settings, after you confirm, in a terminal
+```
+
+`skylos agent harden` prints each agent's native settings for this project:
+
+- **Claude Code, `~/.claude/settings.json`**: `permissions.deny` `Read` rules
+  for `~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.npmrc`, `~/.pypirc` and
+  `~/.claude.json`, and the sandbox with `credentials.files` denies for the
+  same paths, `failIfUnavailable: true` and `allowUnsandboxedCommands: false`.
+- **Claude Code, `.claude/settings.json`**: `Read(./.env)` and
+  `Read(./.env.*)` denies, and `allowedMcpServers` with each MCP server in
+  this project's configs as an exact `serverCommand` (unpinned ones pinned to
+  the version that passes the malware and release-age checks; ones that fail
+  are left out with the reason) or `serverUrl`.
+- **Cursor, `.cursor/sandbox.json`**: `"readBoundary": "workspace"` (Cursor
+  3.23+), so the agent asks before reading outside the project.
+- **Codex, `~/.codex/config.toml`** (printed only): `sandbox_mode =
+  "workspace-write"`, `approval_policy = "on-request"`, no network.
+
+This is policy and audit, not protection, and Skylos enforces none of it.
+Claude Code's `Read` rules cover its own file tools and the file commands it
+recognizes, not a Python or Node script the agent runs; its sandbox covers
+shell commands, not hooks, MCP servers, the status line or `apiKeyHelper`.
+Servers started through a wrapper (`timeout`, `sudo`, `sh -c`), with inline
+code, or from outside the project are left out of `allowedMcpServers`.
+`allowedMcpServers` only binds when an admin sets it in managed settings with
+`allowManagedMcpServersOnly`; in project settings anyone who edits a settings
+file can widen it, and it also blocks servers you added in other scopes. It
+matches the command exactly, so change the MCP config to the pinned command
+too. Codex documents no read deny list (it can read `~/.ssh`), and neither
+Codex nor Cursor has an MCP allowlist Skylos can pin by version, so none is
+generated for them.
+
+`--write` merges into the three JSON files (lists gain the missing entries,
+other keys are kept). It runs only from an interactive terminal after you
+answer `y`, so an agent cannot run it.
+
 ### stop
 
 Each `post-edit` records a hashed identity (rule plus the hash of the source
@@ -480,7 +742,19 @@ this hook and the issues are unchanged:
 - **Claude Code:** Skylos lets the agent stop and shows you a warning.
 - **Codex:** Skylos lets the agent stop and shows you a warning.
 - **Cursor:** Skylos sends no follow-up message. Cursor's own `loop_limit`
-  also applies; the installer sets it to 3.
+  also applies; the installer sets it to 10.
+
+With a committed `[tool.skylos.done]` table, `stop` also runs the Done checks
+and your tests (see [Done gate](./done-gate.md#in-the-agent-loop)). When they
+pass, Claude Code shows you
+`Skylos Done passed: 4 tests run; receipt .skylos/receipts/latest.json`;
+Codex and Cursor show nothing. A second `stop` on the same tree, policy and
+Skylos version, while that session's passing receipt is still
+`.skylos/receipts/latest.json`, reuses the pass instead of running the static
+checks and tests again: the recorded-edit recheck still runs, no new receipt is
+written, and the hook log line carries `done_reused: true`. Any difference
+runs everything again, and a failed or unfinished Done is never reused. A
+blocking Done message ends with the receipt path.
 
 ## Hook contract used
 
@@ -488,6 +762,8 @@ Every hook exits `0` and signals through JSON on stdout.
 
 | Situation | Claude Code / Codex output | Cursor output |
 |:---|:---|:---|
+| session-start, first prompt of a session | Claude: `{"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": "..."}}`; Codex: no output | `{"continue": true}` |
+| session-start, later prompts | no output | `{"continue": true}` |
 | pre-read / pre-bash block | `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "..."}}` | `{"permission": "deny", "user_message": "...", "agent_message": "..."}` (`beforeReadFile`: `permission` + `user_message`) |
 | pre-bash ask (unverifiable install) | Claude: `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": "...", "additionalContext": "..."}}`; Codex: the deny shape above (Codex has no `ask`) | `{"permission": "ask", "user_message": "...", "agent_message": "..."}` |
 | pre-bash allowed by policy (`"allow"`) | Claude: `{"systemMessage": "...", "hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "..."}}` (no `permissionDecision`); Codex: `{"systemMessage": "..."}` | `{"permission": "allow"}`; the note goes to stderr |
@@ -497,6 +773,7 @@ Every hook exits `0` and signals through JSON on stdout.
 | post-edit pass | no output | no output |
 | stop, issues open | `{"decision": "block", "reason": "..."}` | `{"followup_message": "..."}` |
 | stop, clean | `{}` (Codex requires JSON from Stop) | `{}` |
+| stop, Done passed | Claude: `{"systemMessage": "Skylos Done passed: ..."}` (no `decision`, so the agent stops); Codex: `{}` | `{}` |
 | Skylos error (fails open) | the allow/stop output above plus `"systemMessage": "..."`; Claude `pre-read`/`pre-bash`/`post-edit` also get `hookSpecificOutput.additionalContext` (no `permissionDecision`) | the allow/stop output above; the message goes to stderr |
 
 References:
@@ -545,10 +822,15 @@ An explicitly configured but invalid agent standards policy
 gives Claude Code and Codex a repair message at `post-edit` and reports the
 problem to all three agents at `stop`; `skylos hook recheck` exits 2. Hook
 timeouts set by the installer are 15 s (`pre-read`), 30 s
-(`pre-bash`), 120 s (`post-edit`) and 9,060 s (`stop`). The stop ceiling covers
-the maximum trusted test, mutation, failing-test baseline and optional type-check
-budgets, plus receipt writing. All three agents treat a timeout as a non-blocking
-failure.
+(`session-start`, `pre-edit`, `pre-bash`, `post-bash`, `post-failure`),
+120 s (`post-edit`) and 9,060 s (`stop`). The `stop` timeout covers the
+largest trusted budgets the Done gate allows when it runs checks at stop:
+3,600 s for the test command, 1,800 s for changed-line mutation checks and
+1,800 s for rerunning failing tests on the session's starting commit,
+1,800 s for optional type checking, plus 60 s to save the receipt.
+Without a committed `[tool.skylos.done]` table,
+`stop` runs no tests and only rechecks recorded issues. All three agents treat
+a timeout as a non-blocking failure.
 
 Each hook call appends one JSON line to `.skylos/hook.log` with the time,
 event, client, outcome, counts and duration. `pre-bash` outcomes are `skip`,
@@ -640,10 +922,13 @@ takes about 3 s with a warm index.
 - It doesn't guard every way to read a file. `pre-read` covers Claude Code's
   `Read` tool and Cursor's `beforeReadFile`, but `cat .env` through the shell
   and Codex file reads are not blocked.
-- It doesn't check the packages inside requirement files, manifests or
-  lockfiles (`pip install -r`, `npm ci`, `uv sync`); `skylos . -a` and
-  `skylos done` do. A requirements file named by URL (`pip install -r
-  https://...`) is a direct source.
+- It checks the packages inside lockfiles and requirements files (`npm ci`,
+  `uv sync`, `pip install -r`) for malware only, not for existence or release
+  age; `skylos . -a` and `skylos done` check the rest. A requirements file
+  named by URL (`pip install -r https://...`) is a direct source.
+- An exact MCP server pin freezes that package, not its dependencies. A
+  config written by a script that does not name the file, or by an edit in
+  Cursor (which has no pre-edit hook), is only seen at the next prompt.
 - It doesn't follow dependencies declared inside a script (`uv run
   script.py` with inline PEP 723 metadata), `cargo`, `gem` or `composer`
   installs, `conda`, or package managers' own lifecycle scripts.

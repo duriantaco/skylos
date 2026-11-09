@@ -292,6 +292,16 @@ def _no_installed_requirement_records(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_saved_osv_answers(monkeypatch, tmp_path_factory):
+    """Fake OSV responses must never reach the real user's saved answers,
+    and tests of failed requests must not wait out the retry delays."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path_factory.mktemp("xdg-cache")))
+    monkeypatch.setattr(
+        "skylos.rules.sca.vulnerability_scanner.OSV_RETRY_DELAYS", (0.0, 0.0)
+    )
+
+
+@pytest.fixture(autouse=True)
 def _isolate_cloud_uploads(monkeypatch, tmp_path_factory):
     """Keep upload retries fast and their side effects out of the checkout.
 
@@ -314,6 +324,9 @@ def _isolate_cloud_uploads(monkeypatch, tmp_path_factory):
 
     home_guard = tmp_path_factory.mktemp("no-real-home") / ".skylos" / "pending-uploads"
     monkeypatch.setattr(_pending_uploads, "default_pending_root", lambda: home_guard)
+    import skylos.cli
+
+    monkeypatch.setattr(skylos.cli, "_resolve_upload_destination", lambda _root: None)
     yield
 
 
@@ -405,3 +418,19 @@ def pytest_unconfigure(config):
         print(
             f"\nSkylos trace: {stats['unique_functions']} functions across {stats['files_traced']} files"
         )
+
+
+@pytest.fixture(autouse=True)
+def _ca9_supply_chain_engine_off(monkeypatch):
+    """Keep dependency tests independent of the installed ca9 version.
+
+    Dependency tests check OSV handling on minimal lockfiles that record no
+    integrity hashes; with ``ca9.api`` installed every such entry is also a
+    correct SKY-SCA-INT001 finding, and whether it appears would depend on the
+    ca9 release in the environment. ``test_sca_supply_chain.py`` installs the
+    engine it needs (a contract fake or the real ``ca9.api``) per test.
+    """
+    from skylos.rules.sca import supply_chain, upgrade_api_diff
+
+    monkeypatch.setattr(supply_chain, "load_ca9_api", lambda: None)
+    monkeypatch.setattr(upgrade_api_diff, "_load_ca9", lambda: None)

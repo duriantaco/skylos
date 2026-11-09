@@ -139,7 +139,8 @@ def test_private_source_blocks_manifest_guess_but_keeps_public_findings(tmp_path
     }
     assert result.receipt["complete"] is False
     assert result.receipt["manifest_source_conflict_count"] == 1
-    assert result.receipt["unresolved_lockfile_dependency_count"] == 1
+    assert result.receipt["unresolved_lockfile_dependency_count"] == 0
+    assert result.receipt["non_registry_lockfile_dependency_count"] == 1
     assert [finding["metadata"]["package_name"] for finding in result] == ["example"]
     assert "secret" not in json.dumps(result.receipt)
 

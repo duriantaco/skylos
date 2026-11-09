@@ -50,14 +50,14 @@ def build_code_scan_manifest(
         label="Code Scan",
         tool="skylos",
         includes=ordered,
-        excludes=["AI defense", "technical debt"],
+        excludes=["AI app safety", "technical debt"],
         notes=notes,
     )
 
 
 def build_defense_manifest() -> UploadFamilyManifest:
     return UploadFamilyManifest(
-        label="AI Defense",
+        label="AI app safety",
         tool="skylos-defend",
         includes=[
             "defense score",
@@ -80,7 +80,7 @@ def build_debt_manifest() -> UploadFamilyManifest:
             "baseline status",
             "signal evidence",
         ],
-        excludes=["code scan findings", "AI defense"],
+        excludes=["code scan findings", "AI app safety"],
     )
 
 

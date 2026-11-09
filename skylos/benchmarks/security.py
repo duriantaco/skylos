@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import shutil
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from skylos.analyzer import analyze
+from skylos.benchmarks._analysis_validation import analysis_issues
 
 
 SECURITY_TAXONOMY: dict[str, str] = {
@@ -27,12 +29,18 @@ SECURITY_TAXONOMY: dict[str, str] = {
     "auth_bypass": "Authentication or token verification is bypassed or disabled.",
     "cookie_security": "Session cookies omit required browser or transport protections.",
     "cors": "CORS policy is overly permissive or credential unsafe.",
+    "tls_verification": "TLS peer verification settings and provider identity controls.",
+    "weak_hash": "MD5/SHA1 warnings, explicit nonsecurity use and strong-hash lookalikes.",
+    "weak_random": "Security-sensitive random values and the identity of their source.",
+    "sensitive_logging": "Credential-source data reaches output, with redaction and response-data controls.",
     "dart": "Dart security flow and sanitizer patterns.",
     "go": "Go security flow and sanitizer patterns.",
     "java": "Java security flow and sanitizer patterns.",
+    "kotlin": "Kotlin security flow and sanitizer patterns.",
     "javascript": "JavaScript security flow and sanitizer patterns.",
     "php": "PHP security flow and sanitizer patterns.",
     "rust": "Rust security flow and sanitizer patterns.",
+    "ruby": "Ruby explicit Kernel command execution patterns.",
     "shell": "Shell security flow and sanitizer patterns.",
     "typescript": "TypeScript security flow and sanitizer patterns.",
     "csharp": "C# security flow and sanitizer patterns.",
@@ -62,9 +70,11 @@ SUPPORTED_LANGUAGES = {
     "typescript",
     "php",
     "rust",
+    "ruby",
     "shell",
     "dart",
     "csharp",
+    "kotlin",
 }
 SCANNER_LANGUAGE_SUPPORT = {
     "skylos": SUPPORTED_LANGUAGES,
@@ -83,7 +93,26 @@ _BANDIT_TO_SKYLOS_RULE = {
     "B607": "SKY-D209",
     "B608": "SKY-D211",
     "B310": "SKY-D216",
+    "B501": "SKY-D210",
+    "B311": "SKY-D250",
 }
+
+
+def _bandit_rule_id(finding: Mapping[str, Any]) -> str:
+    test_id = finding["test_id"]
+    if test_id == "B324":
+        # B324 also covers MD4/SHA and crypt methods. Only the exact generated
+        # hashlib message identifies one of the native MD5/SHA1 rule families.
+        # Verified against PyCQA/bandit 48ef27bd1bbc32f4e585c92310f7a574e87f6b04.
+        message = finding.get("issue_text")
+        for algorithm, rule_id in (("MD5", "SKY-D207"), ("SHA1", "SKY-D208")):
+            expected = (
+                f"Use of weak {algorithm} hash for security. "
+                "Consider usedforsecurity=False"
+            )
+            if message == expected:
+                return rule_id
+    return _BANDIT_TO_SKYLOS_RULE.get(test_id, test_id)
 
 
 @dataclass(frozen=True)
@@ -301,8 +330,8 @@ def _scan_case(case_path: Path, scan: dict[str, Any] | None = None) -> dict[str,
     if scan:
         scan_cfg.update(scan)
 
-    # In-repo fixture paths otherwise resolve to the Skylos project root and
-    # inherit its config, coverage, and trace evidence.
+    # A fixture is a complete static snapshot, not a diff with a Git base.
+    # Isolating it also prevents parent config and usage evidence leaking in.
     with tempfile.TemporaryDirectory(prefix="skylos-security-benchmark-") as tmp:
         isolated_path = Path(tmp) / case_path.name
         if case_path.is_dir():
@@ -320,30 +349,16 @@ def _scan_case(case_path: Path, scan: dict[str, Any] | None = None) -> dict[str,
                 enable_quality=bool(scan_cfg.get("enable_quality", False)),
                 enable_danger=bool(scan_cfg.get("enable_danger", True)),
                 enable_secrets=bool(scan_cfg.get("enable_secrets", False)),
-                changed_files=_case_changed_files(isolated_path),
                 grep_verify=bool(scan_cfg.get("grep_verify", False)),
+                grep_cache=False,
+                trace_file=False,
+                enable_ai_defects=False,
+                enable_dependency_hallucinations=False,
+                enable_sca=False,
             )
         finally:
             analyzer_logger.setLevel(prev_level)
     return json.loads(raw)
-
-
-def _case_changed_files(case_path: Path) -> set[str]:
-    if case_path.is_file():
-        return {str(case_path.resolve())} if not case_path.is_symlink() else set()
-
-    changed_files: set[str] = set()
-    for current_root, dirnames, filenames in os.walk(case_path, followlinks=False):
-        dirnames[:] = [
-            name for name in dirnames if not (Path(current_root) / name).is_symlink()
-        ]
-        base = Path(current_root)
-        for filename in filenames:
-            path = base / filename
-            if path.is_symlink() or not path.is_file():
-                continue
-            changed_files.add(str(path.resolve()))
-    return changed_files
 
 
 def _scan_bandit_case(
@@ -376,16 +391,29 @@ def _scan_bandit_case(
             f"bandit benchmark scan emitted invalid JSON: {exc}"
         ) from exc
 
+    if (
+        not isinstance(payload, Mapping)
+        or not isinstance(payload.get("results"), list)
+        or not isinstance(payload.get("errors", []), list)
+        or any(
+            not isinstance(finding, Mapping)
+            or not isinstance(finding.get("test_id"), str)
+            or not finding["test_id"].strip()
+            for finding in payload.get("results", [])
+        )
+    ):
+        return {"analysis_errors": [{"kind": "invalid_scanner_report"}]}
+    if payload.get("errors"):
+        return {"analysis_errors": payload["errors"]}
+
     danger = []
-    for finding in payload.get("results", []) or []:
-        if not isinstance(finding, dict):
-            continue
+    for finding in payload["results"]:
         test_id = finding.get("test_id")
         if not isinstance(test_id, str):
             continue
         danger.append(
             {
-                "rule_id": _BANDIT_TO_SKYLOS_RULE.get(test_id, test_id),
+                "rule_id": _bandit_rule_id(finding),
                 "bandit_rule_id": test_id,
                 "message": finding.get("issue_text", ""),
                 "file": finding.get("filename", ""),
@@ -441,6 +469,14 @@ def _evaluate_expectations(
                         for token in tokens
                     }
                 )
+                if expected.startswith("SKY-"):
+                    matched = sorted(
+                        {
+                            finding["rule_id"]
+                            for finding in findings
+                            if finding.get("rule_id") == expected
+                        }
+                    )
 
                 if mode == "present":
                     if matched:
@@ -530,7 +566,13 @@ def run_case(
     manifest_path: str | Path,
     *,
     scanner: str = "skylos",
+    capture_result: Callable[[str, object], None] | None = None,
 ) -> dict[str, Any]:
+    """Score one case, optionally delivering a deep copy of its full raw report.
+
+    Capture includes invalid reports and runs outside the measured analysis time.
+    Callback errors propagate; mutating the captured copy cannot change grading.
+    """
     manifest_root = Path(manifest_path).parent
     case_path = (manifest_root / case["path"]).resolve()
 
@@ -541,6 +583,58 @@ def run_case(
         scanner=scanner,
     )
     elapsed_seconds = time.perf_counter() - start
+    if capture_result is not None:
+        capture_result(case["id"], deepcopy(result))
+
+    issues = analysis_issues(result, scanner=scanner)
+    if isinstance(result, Mapping):
+        categories = {
+            category
+            for mode in ("present", "absent")
+            for category in case.get("expect", {}).get(mode, {})
+        }
+        for category in sorted(categories):
+            if category not in result:
+                continue
+            findings = result[category]
+            if not isinstance(findings, list) or any(
+                not isinstance(finding, Mapping)
+                or (
+                    not isinstance(finding.get("rule_id"), str)
+                    or not finding["rule_id"].strip()
+                )
+                for finding in findings
+            ):
+                issues.append(f"{category} must contain finding objects with rule IDs")
+    if issues:
+        return {
+            "id": case["id"],
+            "path": str(case_path),
+            "description": case.get("description", ""),
+            "languages": _case_languages(case),
+            "taxonomy": list(case.get("taxonomy", [])),
+            "importance": case.get("importance", "high"),
+            "elapsed_seconds": round(elapsed_seconds, 4),
+            "analysis_status": "incomplete",
+            "analysis_issues": issues,
+            "scored": False,
+            "findings_by_category": {},
+            "true_positives": 0,
+            "false_positives": 0,
+            "false_negatives": 0,
+            "true_negatives": 0,
+            "scores": _unavailable_scores(),
+            "failures": [
+                SecurityBenchmarkFailure(
+                    case_id=case["id"],
+                    failure_type="analysis",
+                    category="analysis",
+                    mode="completeness",
+                    expected="complete analysis before scoring",
+                    found=issues,
+                ).to_dict()
+            ],
+        }
 
     failures, tp, fp, fn, tn = _evaluate_expectations(case, result)
 
@@ -571,6 +665,9 @@ def run_case(
         "taxonomy": list(case.get("taxonomy", [])),
         "importance": case.get("importance", "high"),
         "elapsed_seconds": round(elapsed_seconds, 4),
+        "analysis_status": "complete",
+        "analysis_issues": [],
+        "scored": True,
         "findings_by_category": findings_by_category,
         "true_positives": tp,
         "false_positives": fp,
@@ -597,7 +694,8 @@ def _aggregate_scores(
         "false_negatives": 0,
         "true_negatives": 0,
     }
-    for result in case_results:
+    scored_results = [result for result in case_results if result.get("scored", True)]
+    for result in scored_results:
         for key in totals:
             totals[key] += int(result.get(key, 0))
 
@@ -609,7 +707,21 @@ def _aggregate_scores(
         elapsed_seconds=0.0,
         max_seconds=None,
     )
-    return scores, totals
+    return scores if scored_results else _unavailable_scores(), totals
+
+
+def _unavailable_scores() -> dict[str, float]:
+    return dict.fromkeys(
+        (
+            "precision",
+            "recall",
+            "f1",
+            "absence_guard",
+            "latency_score",
+            "overall_score",
+        ),
+        0.0,
+    )
 
 
 def run_manifest(
@@ -617,10 +729,17 @@ def run_manifest(
     selected_cases: set[str] | None = None,
     *,
     scanner: str = "skylos",
+    capture_result: Callable[[str, object], None] | None = None,
 ) -> dict[str, Any]:
+    """Run selected cases, capturing raw reports only for cases actually scanned."""
     manifest = load_manifest(manifest_path)
     cases = validate_manifest(manifest, manifest_path)
     selected = set(selected_cases or set())
+    unknown = selected - {case["id"] for case in cases}
+    if unknown:
+        raise ValueError(
+            "unknown security benchmark case id(s): " + ", ".join(sorted(unknown))
+        )
 
     case_results = []
     skipped_cases = []
@@ -639,7 +758,10 @@ def run_manifest(
                 }
             )
             continue
-        result = run_case(case, manifest_path, scanner=scanner)
+        capture_kwargs = (
+            {"capture_result": capture_result} if capture_result is not None else {}
+        )
+        result = run_case(case, manifest_path, scanner=scanner, **capture_kwargs)
         case_results.append(result)
         total_elapsed += result["elapsed_seconds"]
 
@@ -649,6 +771,8 @@ def run_manifest(
                 label,
                 {
                     "case_count": 0.0,
+                    "scored_case_count": 0.0,
+                    "unscored_case_count": 0.0,
                     "weight": 0.0,
                     "overall_score": 0.0,
                     "failures": 0.0,
@@ -659,8 +783,12 @@ def run_manifest(
                 },
             )
             bucket["case_count"] += 1
-            bucket["weight"] += weight
-            bucket["overall_score"] += result["scores"]["overall_score"] * weight
+            if result.get("scored", True):
+                bucket["scored_case_count"] += 1
+                bucket["weight"] += weight
+                bucket["overall_score"] += result["scores"]["overall_score"] * weight
+            else:
+                bucket["unscored_case_count"] += 1
             bucket["failures"] += len(result["failures"])
             for count_key in (
                 "true_positives",
@@ -680,6 +808,8 @@ def run_manifest(
         taxonomy_summary[label] = {
             "description": SECURITY_TAXONOMY[label],
             "case_count": int(bucket["case_count"]),
+            "scored_case_count": int(bucket["scored_case_count"]),
+            "unscored_case_count": int(bucket["unscored_case_count"]),
             "weighted_score": round(bucket["overall_score"] / weight, 2),
             "failure_count": int(bucket["failures"]),
             "true_positives": int(bucket["true_positives"]),
@@ -688,10 +818,21 @@ def run_manifest(
             "true_negatives": int(bucket["true_negatives"]),
         }
 
+    scored_count = sum(case.get("scored", True) for case in case_results)
+    unscored_count = len(case_results) - scored_count
     return {
         "manifest": str(Path(manifest_path).resolve()),
         "scanner": scanner,
         "case_count": len(case_results),
+        "scored_case_count": scored_count,
+        "unscored_case_count": unscored_count,
+        "analysis_status": "incomplete"
+        if unscored_count
+        else "complete"
+        if scored_count
+        else "not_run",
+        "metrics_scoped_to_scored_cases": True,
+        **({"score_unavailable_reason": "no_valid_cases"} if not scored_count else {}),
         "skipped_case_count": len(skipped_cases),
         "skipped_cases": skipped_cases,
         "pass_count": pass_count,
@@ -710,6 +851,11 @@ def format_summary(summary: dict[str, Any]) -> str:
     lines = [
         f"Security benchmark scanner: {summary.get('scanner', 'skylos')}",
         f"Security benchmark cases: {summary['case_count']}",
+        f"Security benchmark analysis: {summary.get('analysis_status', 'complete')}",
+        (
+            f"Security benchmark scored cases: {summary.get('scored_case_count', summary['case_count'])}; "
+            f"unscored cases: {summary.get('unscored_case_count', 0)}; metrics cover scored cases only"
+        ),
         f"Security benchmark skipped cases: {summary.get('skipped_case_count', 0)}",
         f"Security benchmark failures: {summary['failure_count']}",
         (
@@ -742,7 +888,13 @@ def format_summary(summary: dict[str, Any]) -> str:
             )
 
     for case in summary["cases"]:
-        status = "PASS" if not case["failures"] else "FAIL"
+        status = (
+            "UNSCORED"
+            if case.get("scored") is False
+            else "PASS"
+            if not case["failures"]
+            else "FAIL"
+        )
         lines.append(
             f"{status} {case['id']} [{case['importance']}] "
             f"score={case['scores']['overall_score']} "

@@ -107,7 +107,12 @@ def test_publisher_review_reaches_json_and_sarif_without_failing_gate(
     assert calls == [(project, True)]
     assert exit_code == 0
     assert result.get("dependency_vulnerabilities", []) == []
-    assert result["publisher_change_findings"] == [finding]
+    listed = result["publisher_change_findings"]
+    assert [
+        {key: value for key, value in row.items() if key not in {"fix", "docs_url"}}
+        for row in listed
+    ] == [finding]
+    assert all(row["fix"] and row["docs_url"] for row in listed)
     summary = result["analysis_summary"]
     assert summary["publisher_change_count"] == 1
     assert summary["publisher_change_scan"] == {

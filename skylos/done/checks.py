@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
-from skylos.done.base import Comparison, DoneError, _git_text
+from skylos.done.base import SKYLOS_DATA_FILES, Comparison, DoneError, _git_text, is_synced_policy_file
 from skylos.done.config import DoneConfig
 from skylos.done.inventory import (
     RewrittenTest,
@@ -945,14 +945,15 @@ def check_gate_tampering(ctx: CheckContext) -> CheckResult:
     findings: list[Finding] = []
     for changed in comparison.changed:
         for path in dict.fromkeys(p for p in (changed.base_path, changed.path) if p):
-            pattern = _protected_match(path, ctx.config.protected_paths)
+            pattern = _protected_match(path, _patterns_for(path, ctx.config.protected_paths))
             if pattern:
                 findings.append(
                     Finding(
                         RULE_GATE_TAMPERING,
                         path,
                         None,
-                        f"changes {path}, which is protected ({pattern} in protected_paths)",
+                        f"changes {path}, which is protected ({pattern} in protected_paths)"
+                        + _untracked_policy_note(comparison, path),
                     )
                 )
                 break
@@ -1019,6 +1020,23 @@ def check_gate_tampering(ctx: CheckContext) -> CheckResult:
         },
         findings=findings,
     )
+
+
+def _untracked_policy_note(comparison: Comparison, path: str) -> str:
+    """Why an untracked synced policy file still counts as a change."""
+    if path not in comparison._untracked or not is_synced_policy_file(path):
+        return ""
+    from skylos.core.report_context import is_ci
+
+    if is_ci():
+        return "; an untracked synced policy file is not trusted in CI"
+    return "; it is not what skylos sync pull last wrote"
+
+
+def _patterns_for(path: str, patterns: tuple[str, ...]) -> tuple[str, ...]:
+    if path in SKYLOS_DATA_FILES:
+        return tuple(pattern for pattern in patterns if pattern != ".skylos/")
+    return patterns
 
 
 def _protected_match(path: str, patterns: tuple[str, ...]) -> str | None:
@@ -1251,31 +1269,45 @@ def check_unknown_imports(ctx: CheckContext) -> CheckResult:
                 blocking=blocking,
             )
         )
+    unchecked_note = _unchecked_imports_note(result.get("unchecked_import_files"))
     unreachable = bool(result.get("registry_unreachable"))
     status = _status(findings)
     if status == "pass" and unreachable:
         status = "incomplete"
     blocking = sum(f.blocking for f in findings)
-    summary = (
-        f"{blocking} import(s) or package(s) do not exist"
-        if blocking
-        else "Could not reach the package registry"
-        if unreachable
-        else "Every added import and package resolves"
-    )
+    unresolved = len(findings) - blocking
+    if blocking:
+        summary = f"{blocking} import(s) or package(s) do not exist"
+    elif unreachable:
+        summary = "Could not reach the package registry"
+    elif unresolved:
+        summary = (
+            f"No missing packages found; {unresolved} import(s) could not be "
+            "tied to a declared package"
+        )
+    else:
+        summary = "Every added import and package resolves"
     return CheckResult(
         id="unknown_imports",
         rule=next((f.rule for f in findings if f.blocking), "SKY-D222"),
         status=status,
-        summary=summary,
+        summary=summary + unchecked_note,
         evidence={
             "missing": blocking,
-            "unresolved": len(findings) - blocking,
+            "unresolved": unresolved,
             "registry_unreachable": unreachable,
-            "summary": summary,
+            "summary": summary + unchecked_note,
+            "unchecked_import_files": dict(result.get("unchecked_import_files") or {}),
         },
         findings=findings,
     )
+
+
+def _unchecked_imports_note(unchecked: dict[str, int] | None) -> str:
+    if not unchecked:
+        return ""
+    parts = [f"{count} {language}" for language, count in sorted(unchecked.items())]
+    return f"; imports in {', '.join(parts)} file(s) were not checked"
 
 
 def _python_import_lines(source: str | None) -> set[int] | None:
@@ -1362,6 +1394,7 @@ def check_silenced_checks(ctx: CheckContext) -> CheckResult:
     from skylos.done.ci_checks import RULE_CI_CHECK, ci_weakening
     from skylos.done.lint_config import RULE_LINT_CONFIG, detect_weakened_settings
     from skylos.done.suppressions import new_suppressions
+    from skylos.done.test_config import _is_workflow, detect_loosened_test_config
 
     comparison = ctx.comparison
     base_paths, head_paths, removed = ctx._repository_paths()
@@ -1386,6 +1419,11 @@ def check_silenced_checks(ctx: CheckContext) -> CheckResult:
     findings += [
         Finding(rule, file, line, message, blocking=blocking)
         for rule, file, line, message, blocking in inline.findings
+    ]
+    findings += [
+        Finding(RULE_TEST_CONFIG, item.file, item.line, f"{item.message} (also listed under tests)")
+        for item in detect_loosened_test_config(comparison)
+        if _is_workflow(item.file)
     ]
     blocking = [f for f in findings if f.blocking]
     if blocking:

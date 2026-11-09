@@ -23,6 +23,15 @@ from skylos.rules.sca.lockfile_types import (
     LockfileInventory,
     LockfileLimitError,
     LockfileParseError,
+    NON_REGISTRY_REASONS,
+    not_checked_source,
+)
+from skylos.rules.sca.package_sources import (
+    MAX_SOURCE_RECORDS,
+    PYPI_REGISTRY_HOST,
+    SOURCE_GIT,
+    SOURCE_URL,
+    source_record,
 )
 from skylos.rules.sca.uv_lockfile import _name, _package_lines, _public_registry
 
@@ -120,6 +129,67 @@ def _source(package):
             return "registry", None
         return kind, "non_public_registry"
     return "unknown", "unsupported_package_source"
+
+
+def _registry(kind):
+    """Poetry writes ``[package.source]`` for every package that does not
+    come from PyPI, so a package without one was locked from PyPI; a
+    ``legacy`` source reaches here only when it is public PyPI."""
+    if kind in {"registry_unspecified", "registry"}:
+        return PYPI_REGISTRY_HOST
+    return None
+
+
+def _file_hash(package, name, metadata):
+    """The first artifact hash: ``files`` (lock 2.x) or ``[metadata.files]``."""
+    files = package.get("files")
+    if not isinstance(files, list) and isinstance(metadata, dict):
+        table = metadata.get("files")
+        if isinstance(table, dict):
+            files = table.get(package.get("name")) or table.get(name)
+    if not isinstance(files, list):
+        return None
+    for item in files:
+        if not isinstance(item, dict):
+            continue
+        value = item.get("hash")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _add_source_record(inventory, package, name, version, kind, path, line, metadata):
+    source = package.get("source")
+    if not isinstance(source, dict) or not isinstance(source.get("url"), str):
+        return
+    url = source["url"]
+    ref = None
+    if kind == "git":
+        ref = source.get("resolved_reference") or source.get("reference")
+        if not url.startswith("git+"):
+            url = "git+" + url
+    record = source_record(
+        ecosystem="PyPI",
+        name=name,
+        version=_version_text(version),
+        kind=_SOURCE_KINDS[kind],
+        url=url,
+        file=str(path),
+        line=line,
+        ref=ref,
+        integrity=_file_hash(package, name, metadata),
+    )
+    if record is not None and len(inventory.source_records) < MAX_SOURCE_RECORDS:
+        inventory.source_records.append(record)
+
+
+_SOURCE_KINDS = {"git": SOURCE_GIT, "url": SOURCE_URL}
+
+
+def _version_text(value):
+    if isinstance(value, str):
+        return value
+    return None
 
 
 def _workspace_path(source):
@@ -414,7 +484,14 @@ def parse_poetry_lock(
                     inventory.non_registry_names.append(name)
             if _version(version):
                 issue["version"] = version
-            inventory.unresolved.append(issue)
+            if name and reason in NON_REGISTRY_REASONS:
+                inventory.not_checked.append(not_checked_source(issue, reason, kind))
+            else:
+                inventory.unresolved.append(issue)
+            if kind in {"git", "url"}:
+                _add_source_record(
+                    inventory, package, name, version, kind, path, line, metadata
+                )
             continue
         groups = _labels(package.get("groups", []), "groups")
         if "category" in package:
@@ -457,6 +534,8 @@ def parse_poetry_lock(
             "dependency_sections": ["dependencies"],
             "dependency_graph_complete": True,
             "dependencies": edges,
+            "integrity": _file_hash(package, name, metadata),
+            "registry": _registry(kind),
         }
         node["record"] = record
         inventory.dependencies.append(record)

@@ -24,6 +24,7 @@ from skylos.analyzer import (
     _go_engine_analysis_report,
     _resolve_analysis_root,
 )
+from skylos.visitors.languages.php import PHP_SOURCE_EXTS
 from skylos.visitors.languages.shell import SHELL_SOURCE_EXTS
 
 
@@ -391,8 +392,10 @@ class TestSkylos:
                 ".hpp",
                 ".hh",
                 ".hxx",
-                ".php",
+                *PHP_SOURCE_EXTS,
                 ".rs",
+                ".rb",
+                ".swift",
                 ".dart",
                 ".cs",
                 ".kt",
@@ -1527,6 +1530,110 @@ def ignore_symlink_write(destination: str, filename: str) -> None:
         assert ("server.py", "registered_resource") not in unused
         assert ("server.py", "plain_dead") in unused
 
+    def test_cache_and_wrapper_decorators_do_not_make_functions_used(self, tmp_path):
+        (tmp_path / "web.py").write_text(
+            "import contextlib\n"
+            "import functools\n"
+            "from functools import wraps\n\n"
+            "import streamlit as st\n"
+            "from flask import Flask\n\n"
+            "app = Flask(__name__)\n\n"
+            "def get_tool(fn):\n"
+            "    @wraps(fn)\n"
+            "    def inner(*args):\n"
+            "        return fn(*args)\n"
+            "    return inner\n\n"
+            "@app.route('/')\n"
+            "def index():\n"
+            "    return cached_rows()\n\n"
+            "@functools.lru_cache\n"
+            "def cached_rows():\n"
+            "    return [1]\n\n"
+            "@functools.lru_cache(maxsize=None)\n"
+            "def stale_lookup():\n"
+            "    return 2\n\n"
+            "@functools.singledispatch\n"
+            "def unused_dispatch(value):\n"
+            "    return value\n\n"
+            "@functools.singledispatch\n"
+            "def render(value):\n"
+            "    return value\n\n"
+            "@render.register(int)\n"
+            "def _render_int(value):\n"
+            "    return value\n\n"
+            "@contextlib.contextmanager\n"
+            "def unused_managed():\n"
+            "    yield\n\n"
+            "@st.cache_resource\n"
+            "def unused_loader():\n"
+            "    return 3\n\n"
+            "@get_tool\n"
+            "def unused_wrapped():\n"
+            "    return 4\n\n"
+            "print(render(1))\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+        unused = {item["simple_name"] for item in result.get("unused_functions", [])}
+
+        assert {
+            "stale_lookup",
+            "unused_dispatch",
+            "unused_managed",
+            "unused_loader",
+            "unused_wrapped",
+        } <= unused
+        live = {"index", "cached_rows", "render", "_render_int", "get_tool"}
+        assert not live & unused
+
+    def test_imported_registration_decorators_keep_functions_live(self, tmp_path):
+        (tmp_path / "handlers.py").write_text(
+            "import pluggy\n"
+            "import socketio\n"
+            "from celery import Celery\n"
+            "from crewai.tools import tool as crew_tool\n"
+            "from langchain_core.tools import tool\n\n"
+            "sio = socketio.AsyncServer()\n"
+            "celery_app = Celery('jobs')\n"
+            "hookspec = pluggy.HookspecMarker('demo')\n\n"
+            "@hookspec\n"
+            "def demo_hook(arg):\n"
+            "    pass\n\n"
+            "@tool\n"
+            "def lookup_weather(city):\n"
+            "    return city\n\n"
+            "@crew_tool('Search')\n"
+            "def crew_search(query):\n"
+            "    return query\n\n"
+            "@sio.on('chat')\n"
+            "async def chat_message(sid, data):\n"
+            "    return data\n\n"
+            "@sio.event\n"
+            "async def connect(sid, environ):\n"
+            "    return True\n\n"
+            "@celery_app.task(bind=True)\n"
+            "def send_report(self, report_id):\n"
+            "    return report_id\n\n"
+            "def plain_dead():\n"
+            "    return None\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+        unused = {item["simple_name"] for item in result.get("unused_functions", [])}
+
+        live = {
+            "demo_hook",
+            "lookup_weather",
+            "crew_search",
+            "chat_message",
+            "connect",
+            "send_report",
+        }
+        assert not live & unused
+        assert "plain_dead" in unused
+
     def test_package_scan_resolves_relative_and_module_import_styles(self, tmp_path):
         package = tmp_path / "pkg"
         package.mkdir()
@@ -2033,9 +2140,7 @@ max_args = false
         }
         assert all(finding["advisory"] is False for finding in enforced)
         assert result["architecture_metrics"].get("advisories", []) == []
-        assert result["analysis_summary"]["quality_count"] == len(
-            result["quality"]
-        )
+        assert result["analysis_summary"]["quality_count"] == len(result["quality"])
 
     def test_typescript_architecture_metrics_and_layer_policy(self, tmp_path):
         (tmp_path / "package.json").write_text(
@@ -2893,7 +2998,7 @@ class TestClass:
             project_root=scan_root,
         )
 
-        assert len(result) == 29
+        assert len(result) == 30
         assert result[28] == {}
         assert result[0] == []
         assert result[19] == []
@@ -2910,7 +3015,7 @@ class TestClass:
 
         result = proc_file(str(source), "oversized", project_root=tmp_path)
 
-        assert len(result) == 29
+        assert len(result) == 30
         assert result[28] == {}
         assert result[0] == []
         assert result[19] == []
@@ -2931,7 +3036,7 @@ class TestClass:
 
         result = proc_file(str(source), "bounded", project_root=tmp_path)
 
-        assert len(result) == 29
+        assert len(result) == 30
         assert result[28]["version"] == 1
         assert result[28]["definition_count"] == 0
         assert result[19] == [source_text]
@@ -3583,6 +3688,44 @@ used()
         assert "unused_no_ignore" in unreachable
         assert "unused_ignore" not in unreachable
         assert "used" not in unreachable
+
+    @pytest.mark.parametrize(
+        ("ignored", "hidden"),
+        [("SKY-U001", "unused_function"), ("SKY-UC001", "unreachable")],
+    )
+    def test_config_ignore_turns_off_exactly_the_named_rule(
+        self, tmp_path, ignored, hidden
+    ):
+        (tmp_path / "pyproject.toml").write_text(
+            f'[tool.skylos]\nignore = ["{ignored}"]\n'
+        )
+        (tmp_path / "mod.py").write_text(
+            "import json\n\n\n"
+            "def unused_function():\n    return 1\n\n\n"
+            "class UnusedClass:\n    pass\n\n\n"
+            "def used_function():\n    return 2\n    print('never runs')\n\n\n"
+            "used_function()\n"
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, enable_quality=True))
+
+        reported = {
+            "unused_function": {
+                item["simple_name"] for item in result["unused_functions"]
+            }
+            == {"unused_function"},
+            "unreachable": any(
+                item["rule_id"] == "SKY-UC001" for item in result.get("quality", [])
+            ),
+        }
+        assert reported == {
+            "unused_function": hidden != "unused_function",
+            "unreachable": hidden != "unreachable",
+        }
+        assert {item["simple_name"] for item in result["unused_classes"]} == {
+            "UnusedClass"
+        }
+        assert {item["simple_name"] for item in result["unused_imports"]} == {"json"}
 
     def test_analyze_suppresses_pytest_plugin_hook_methods(self, tmp_path):
         src = tmp_path / "plugin.py"

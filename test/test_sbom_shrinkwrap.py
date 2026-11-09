@@ -239,8 +239,8 @@ def test_private_shrinkwrap_source_is_not_exported_as_public_registry_package(
     assert receipt["manifest_source_conflict_count"] == 1
     assert receipt["ignored_lockfile_count"] == 1
     assert receipt["complete"] is False
-    assert receipt["lockfile_issues"][0]["file"] == "npm-shrinkwrap.json"
-    assert receipt["lockfile_issues"][0]["reason"] == "non_registry_source"
+    assert receipt["lockfile_not_checked"][0]["file"] == "npm-shrinkwrap.json"
+    assert receipt["lockfile_not_checked"][0]["reason"] == "non_registry_source"
     assert "private.invalid" not in captured.out
     assert str(tmp_path) not in captured.out
 

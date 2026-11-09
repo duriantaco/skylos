@@ -30,8 +30,6 @@ def content():
         analyze(
             str(tmp_path),
             enable_danger=True,
-            enable_dead_code=False,
-            enable_repo_policy=False,
             grep_verify=False,
         )
     )

@@ -15,6 +15,13 @@ from skylos.rules.danger.danger_web.html_context import (
 from skylos.rules.danger.danger_web.url_patterns import FLAG_NAMES, url_pattern_is_safe
 from skylos.rules.danger.taint import TaintVisitor, XSS_SANITIZERS
 from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
+from skylos.rules.danger.module_namespace import (
+    attribute_write_names,
+    has_mock_api_patching,
+    module_rebinding,
+    module_name_for,
+)
+from .namespace_provenance import sanitizer_namespace_effects
 
 # Template-source sinks: the first argument (or ``source=``) is compiled as a
 # Jinja template, so untrusted text there is template code, not data.
@@ -320,7 +327,7 @@ class _HelperEnv:
 class _XSSFlowChecker(TaintVisitor):
     SAFE_MARK_FUNCS = {"Markup", "mark_safe"}
 
-    def __init__(self, tree, file_path, findings, sanitizers=None):
+    def __init__(self, tree, file_path, findings, sanitizers=None, project_root=None):
         super().__init__(file_path, findings, sanitizers=sanitizers)
         self.untrusted_sources = UntrustedSourceIndex(tree)
         self._tree = tree
@@ -336,6 +343,57 @@ class _XSSFlowChecker(TaintVisitor):
         self._local_counts: dict = {}
         self._url_checkers: dict = {}
         self._checking_urls: set = set()
+        self._has_api_patching = has_mock_api_patching(tree)
+        self._project_root = project_root
+
+    def _namespace_effects(self):
+        cached = getattr(self, "_namespace_effects_cache", None)
+        if cached is None or cached[0] is not self._tree:
+            cached = (
+                self._tree,
+                sanitizer_namespace_effects(
+                    self._tree, self.file_path, self._project_root
+                ),
+            )
+            self._namespace_effects_cache = cached
+        return cached[1]
+
+    def _import_names_are_stable(self, call_name):
+        if super()._import_names_are_stable(call_name):
+            return True
+        effects = self._namespace_effects()
+        if effects is None or not effects[1]:
+            return False
+        cached = getattr(self, "_isolated_rebinding_cache", None)
+        if cached is None or cached[0] is not self._tree:
+            cached = (
+                self._tree,
+                module_rebinding(
+                    self._tree,
+                    module_name_for(self.file_path),
+                    isolated_namespace_reads=effects[1],
+                ),
+            )
+            self._isolated_rebinding_cache = cached
+        dynamic, rebound = cached[1]
+        return not dynamic and not any(part in rebound for part in call_name.split("."))
+
+    def _sanitizer_is_unpatched(self, qualified):
+        cached = getattr(self, "_attribute_writes_cache", None)
+        if cached is None or cached[0] is not self._tree:
+            written = attribute_write_names(self._tree)
+            if written[1]:
+                effects = self._namespace_effects()
+                if effects is not None:
+                    written = attribute_write_names(
+                        self._tree,
+                        isolated_writes=effects[0],
+                        resolved_attribute_names=effects[2],
+                    )
+            cached = (self._tree, written)
+            self._attribute_writes_cache = cached
+        names, computed = cached[1]
+        return not computed and qualified.rsplit(".", 1)[-1] not in names
 
     def _template_source_arg(self, node: ast.Call, qn: str):
         last = qn.split(".")[-1]
@@ -613,10 +671,19 @@ class _XSSFlowChecker(TaintVisitor):
         call_name = _qualified_name_from_call(node)
         if not call_name:
             return None
+        if self._has_api_patching:
+            return None
         if call_name in self.sanitizers:
             if self._root_is_rebound(call_name, func):
                 return None
-            return call_name
+            if not self._import_names_are_stable(call_name):
+                return None
+            sanitizer = (
+                self.untrusted_sources.resolved_import(func, call_name) or call_name
+            )
+            if not self._sanitizer_is_unpatched(sanitizer):
+                return None
+            return sanitizer
         if not self._may_import(call_name, self._sanitizer_prefixes):
             return None
         if not self._import_names_are_stable(call_name):
@@ -632,7 +699,10 @@ class _XSSFlowChecker(TaintVisitor):
         root = call_name.split(".")[0]
         if not self._module_binding_counts().get(root):
             return False
-        return self.untrusted_sources.resolved_import(func, call_name) is None
+        return (
+            self.untrusted_sources.resolved_import(func, call_name)
+            not in self.sanitizers
+        )
 
     def _escapes_quotes(self, node: ast.Call, sanitizer: str) -> bool:
         if sanitizer not in _QUOTE_ESCAPING_SANITIZERS:
@@ -1326,10 +1396,10 @@ def _alias_groups(bindings) -> dict:
     return groups
 
 
-def scan(tree, file_path, findings):
+def scan(tree, file_path, findings, *, project_root=None):
     try:
         checker = _XSSFlowChecker(
-            tree, file_path, findings, sanitizers=XSS_SANITIZERS
+            tree, file_path, findings, sanitizers=XSS_SANITIZERS, project_root=project_root
         )
         checker.visit(tree)
     except Exception as e:

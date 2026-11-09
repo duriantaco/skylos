@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 _GITHUB_ANNOTATION_LEVELS = {
     "CRITICAL": "error",
     "HIGH": "error",
@@ -124,6 +127,62 @@ def _github_annotation_items(result):
     return annotations
 
 
+def _recorded_analysis_root(result):
+    summary = result.get("analysis_summary") if isinstance(result, dict) else None
+    if not isinstance(summary, dict):
+        return None
+    scope = summary.get("comparison_scope")
+    if not isinstance(scope, dict):
+        return None
+    recorded = scope.get("repository_root")
+    if isinstance(recorded, str) and recorded and Path(recorded).is_absolute():
+        return Path(recorded)
+    return None
+
+
+def _github_annotation_roots(result, root_path):
+    """The folder relative finding paths start from, and the repository root."""
+    from skylos.core.file_discovery import find_git_root
+
+    analysis_root = _recorded_analysis_root(result)
+    if analysis_root is None and root_path is not None:
+        from skylos.analyzer import _resolve_analysis_root
+
+        scan_root = Path(root_path).resolve()
+        if not scan_root.is_dir():
+            scan_root = scan_root.parent
+        analysis_root = _resolve_analysis_root(scan_root)
+    if analysis_root is None:
+        return None, None
+    repo_root = find_git_root(analysis_root)
+    if repo_root is None and root_path is not None:
+        repo_root = find_git_root(root_path)
+    if repo_root is None:
+        repo_root = analysis_root
+    return analysis_root, Path(repo_root).resolve()
+
+
+def _github_repo_relative_path(file, analysis_root, repo_root):
+    """GitHub places annotations by repository-relative path."""
+    raw = str(file or "")
+    if not raw or repo_root is None:
+        return raw
+    path = Path(raw)
+    if not path.is_absolute():
+        path = Path(analysis_root) / path
+    candidates = [Path(os.path.abspath(path))]
+    try:
+        candidates.append(path.resolve())
+    except (OSError, RuntimeError):
+        pass
+    for candidate in candidates:
+        try:
+            return candidate.relative_to(repo_root).as_posix()
+        except ValueError:
+            continue
+    return raw
+
+
 def _filter_github_annotations_by_severity(annotations, severity_filter):
     if severity_filter:
         allowed = _GITHUB_ANNOTATION_THRESHOLDS.get(severity_filter, set())
@@ -144,7 +203,9 @@ def _emit_github_annotation(annotation):
     print(f"::{level} file={file},line={line},title={title}::{msg}")
 
 
-def _emit_github_annotations(result, *, max_annotations=50, severity_filter=None):
+def _emit_github_annotations(
+    result, *, max_annotations=50, severity_filter=None, root_path=None
+):
     _emit_github_grade_annotation(result)
     from skylos.reporting.assessment_display import dependency_coverage_lines
 
@@ -157,6 +218,11 @@ def _emit_github_annotations(result, *, max_annotations=50, severity_filter=None
     annotations = _github_annotation_items(result)
     annotations = _filter_github_annotations_by_severity(annotations, severity_filter)
     annotations.sort(key=_github_annotation_sort_key)
+    analysis_root, repo_root = _github_annotation_roots(result, root_path)
+    for annotation in annotations:
+        annotation["file"] = _github_repo_relative_path(
+            annotation["file"], analysis_root, repo_root
+        )
 
     for annotation in annotations[:max_annotations]:
         _emit_github_annotation(annotation)

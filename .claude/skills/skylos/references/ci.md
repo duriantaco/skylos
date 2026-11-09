@@ -26,9 +26,77 @@ Review these files for CI changes:
 - `scripts/skylos_gate.py`
 - `test/test_cicd_*.py`
 - `test/test_gatekeeper.py`
+- `skylos/core/ci_env.py`
+- `test/test_ci_platforms.py`
+- `test/test_ci_bitbucket_azure.py`
+- `docs/ci-platforms.md`
 
 Generated workflows should be deterministic, least-privilege, and explicit
 about which events receive secrets.
+
+## GitHub Pull Request Uploads
+
+Skylos Cloud trusts a GitHub OIDC upload only from a default-branch `push`, or
+from `pull_request_target` in `.github/workflows/skylos.yml` (Cloud also checks
+the run and the PR head). With uploads on, `cicd init` therefore adds three
+`pull_request_target` jobs (`skylos/cicd/pr_upload.py`), only when the output
+is that path:
+
+- `pr-policy` (`skylos cicd pr-policy`): OIDC, no checkout; saves
+  `/api/sync/config` and optional `/api/sync/rules` as an artifact.
+- `pr-scan` (`skylos cicd pr-scan`): `contents: read`, no OIDC/secrets/cache;
+  Skylos installed before the PR head is checked out (`persist-credentials:
+  false`); deletes every `.skylos` in the checkout, scans with
+  `SKYLOS_POLICY_BASE` (repo settings from the base commit) and
+  `SKYLOS_SYNCED_POLICY_FILE` (the Cloud policy), restores inline-ignored
+  non-dead-code findings, writes a prepared upload.
+- `pr-publish` (`skylos cicd pr-publish`): OIDC, no checkout; checks the
+  artifact's commit, PR number and project root, then uploads.
+
+Keep every other job off `pull_request_target`, never give a job that reads PR
+files `id-token`, write scopes, `github.token` or secrets, and keep
+`test/test_cicd_pr_upload.py` (audit-clean and mutation-flagged workflows)
+passing.
+
+## Other CI Platforms
+
+`skylos cicd init` picks the CI from the repository (`skylos/cicd/platforms.py`):
+Generated pull request scans add `--review-upgrades` when dependency checks
+(`--sca`) are selected, on GitHub Actions and the other CI templates; push and
+default-branch scans do not. That flag also runs `SKY-SCA-API001` (your lines
+that use Python API the upgrade removed); the `summary` job posts its section on
+plain `pull_request`, so it does not depend on `pull_request_target`.
+
+- `.github/workflows/` keeps the GitHub workflow; other CI files found get a
+  `--ci` hint.
+- Otherwise one of `.gitlab-ci.yml`, `Jenkinsfile`, `bitbucket-pipelines.yml`,
+  `azure-pipelines.yml` or `.circleci/config.yml` gets that CI's template; two
+  or more write nothing until `--ci` is given.
+- `--ci other` and Buildkite/Travis/Drone/Woodpecker/TeamCity print commands.
+- An existing CI file is never edited; the block to add is printed.
+
+`--diff` with no value reads the pull request target branch per CI in
+`skylos/core/ci_env.py`. Each variable counts only inside its own CI and only on
+a pull request build; the table is in `docs/ci-platforms.md`.
+
+When changing templates:
+
+- Keep the GitHub workflow byte-identical unless the task changes it; compare
+  `cicd init` output with HEAD across its flags.
+- Jenkins and "other" install plain `skylos`: `skylos[dart]` builds from
+  source and stock Jenkins agents have no C compiler. The `python:3.12`
+  templates and the GitHub workflow install `[dart]` only when the scan path
+  has Dart files (`has_dart_files` in `skylos/cicd/workflow.py`, the scanner's
+  discovery with .gitignore and default excludes).
+- Upload default: `cicd init` adds the Cloud upload jobs only when
+  `_cloud_login_found` sees `SKYLOS_TOKEN`, `.skylos/link.json` or a saved
+  login (`get_project_token`); otherwise it prints the `Cloud upload: off`
+  line. `--upload` / `--no-upload` always decide. Tests pin the login with
+  `monkeypatch.setattr(cicd_cmd, "_cloud_login_found", ...)`.
+- Jenkins with no configured URL sets no `JENKINS_URL`; detection also uses
+  `JENKINS_HOME` or a `jenkins-` `BUILD_TAG`.
+- Test template changes in a CI container with a wheel of the working tree,
+  not the PyPI version the template pins.
 
 ## Repo Map And Pages
 

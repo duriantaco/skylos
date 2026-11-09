@@ -10,6 +10,8 @@ from .danger_fs.path_flow import scan as scan_path
 from .danger_web.xss_flow import scan as scan_xss
 from .danger_redirect.redirect_flow import scan as scan_redirect
 from .danger_cors.cors_flow import scan as scan_cors
+from .danger_web.route_auth import scan as scan_route_auth
+from .danger_web.cookie_flags import scan as scan_cookie_flags
 from .danger_jwt.jwt_flow import scan as scan_jwt
 from .danger_access.access_flow import scan as scan_access
 from .danger_mcp.mcp_flow import scan as scan_mcp
@@ -18,10 +20,12 @@ from .danger_agent.tool_privilege import scan as scan_agent_tool_privilege
 from .danger_llm.consumption import scan as scan_llm_consumption
 from .danger_llm.llm_flow import scan as scan_llm
 from .danger_ml.model_deserialization import scan as scan_ml_model_load
+from .danger_logging import scan as scan_secret_logging
+from .pickle_provenance import safe_pickle_loads
+from .yaml_loader_provenance import yaml_loader_classes, yaml_load_call_name
+from .callable_bindings import callable_names
 from .python_security_gaps import scan as scan_python_security_gaps
 from .weak_random_context import private_model_slug_evidence
-from .browser_tls import browser_tls_finding
-from .danger_logging import scan as scan_secret_logging
 from skylos.security.command_guard import (
     findings_for_command,
     is_external_url,
@@ -30,13 +34,20 @@ from skylos.security.command_guard import (
 from .calls import (
     DANGEROUS_CALLS,
     _is_test_module,
+    _call_low_risk_context,
     _call_severity,
+    _tls_verification_disabled,
     _matches_rule,
     _declares_non_security_use,
     _kw_equals,
     _qualified_name_from_call as qualified_name_from_call,
     _weak_random_has_security_context,
+    _weak_random_call_name,
     _yaml_load_without_safeloader,
+    _ruamel_unsafe_type,
+    track_import_aliases,
+    unpickler_load_name,
+    unrestricted_unpickler_classes,
 )
 
 
@@ -56,13 +67,18 @@ _BIDI_CONTROL_CHARS = {
 
 
 class _DangerousCallsChecker(ast.NodeVisitor):
-    def __init__(self, file_path, findings):
+    def __init__(self, file_path, findings, project_root=None):
         self.file_path = file_path
+        self._project_root = project_root
         self.findings = findings
         self._symbol_stack = ["<module>"]
         self.aliases = {}
         self.assigned_calls_stack = [{}]
         self._parents_annotated = False
+        self._safe_pickle_loads = set()
+        self._module = None
+        self._unpickler_classes = {}
+        self._safe_yaml_loaders = None
 
     def _annotate_parents(self, node: ast.AST) -> None:
         for child in ast.iter_child_nodes(node):
@@ -105,16 +121,25 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         self.assigned_calls_stack.pop()
         self._symbol_stack.pop()
 
+    def _yaml_loader_classes(self):
+        if self._safe_yaml_loaders is None:
+            self._safe_yaml_loaders = yaml_loader_classes(
+                self._module, self.file_path, self._project_root
+            )
+        return self._safe_yaml_loaders
+
     def visit_Module(self, node):
+        self._safe_pickle_loads = safe_pickle_loads(node, self.file_path)
+        self._module = node
+        self._unpickler_classes = unrestricted_unpickler_classes(node)
+        self._safe_yaml_loaders = None
         if not self._parents_annotated:
             self._annotate_parents(node)
             self._parents_annotated = True
         self.generic_visit(node)
 
     def visit_Import(self, node):
-        for alias in node.names:
-            local = alias.asname or alias.name.split(".", 1)[0]
-            self.aliases[local] = alias.name
+        track_import_aliases(self.aliases, node)
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node):
@@ -138,25 +163,55 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node):
-        browser_finding = browser_tls_finding(node, self.file_path)
-        if browser_finding:
-            self.findings.append(browser_finding)
         name = qualified_name_from_call(
             node, self.aliases, self.assigned_calls_stack[-1]
         )
+        name = yaml_load_call_name(node, self._module) or name
+        name = unpickler_load_name(name, self._unpickler_classes)
+        for candidate in callable_names(
+            node, name, self._module, self.file_path, self._project_root
+        ):
+            self._check_call(node, candidate)
+        self.generic_visit(node)
+
+    def _check_call(self, node, name):
         if name:
+            random_name = _weak_random_call_name(
+                node, name, self._module, self.file_path, self._project_root
+            )
             for rule_key, tup in DANGEROUS_CALLS.items():
+                if tup[0] == "SKY-D210":
+                    continue
                 rule_id, severity, message = tup[0], tup[1], tup[2]
                 if len(tup) > 3:
                     opts = tup[3]
                 else:
                     opts = None
 
-                if not _matches_rule(name, rule_key):
+                candidate = random_name if rule_id == "SKY-D250" else name
+                if not _matches_rule(candidate, rule_key):
                     continue
 
-                if rule_key == "yaml.load" and not _yaml_load_without_safeloader(
-                    node, self.aliases
+                if rule_key == "pickle.loads" and id(node) in self._safe_pickle_loads:
+                    continue
+
+                if rule_key in {
+                    "yaml.load",
+                    "yaml.load_all",
+                } and not _yaml_load_without_safeloader(
+                    node,
+                    self.aliases,
+                    self._yaml_loader_classes(),
+                    self.file_path,
+                    self._project_root,
+                    self._module,
+                ):
+                    continue
+
+                if (
+                    opts
+                    and opts.get("ruamel_unsafe_type")
+                    and not _ruamel_unsafe_type(node)
                 ):
                     continue
 
@@ -167,8 +222,10 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                 ):
                     continue
 
-                if opts and opts.get("production_only") and _is_test_module(
-                    self.file_path
+                if (
+                    opts
+                    and opts.get("production_only")
+                    and _is_test_module(self.file_path)
                 ):
                     continue
 
@@ -182,27 +239,51 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                     if _declares_non_security_use(node):
                         continue
 
-                self.findings.append(
-                    {
-                        "rule_id": rule_id,
-                        "severity": _call_severity(node, severity, opts),
-                        "message": message,
-                        "file": str(self.file_path),
-                        "line": node.lineno,
-                        "col": node.col_offset,
-                        "symbol": self._current_symbol(),
-                    }
+                finding = {
+                    "rule_id": rule_id,
+                    "severity": _call_severity(node, severity, opts),
+                    "message": message,
+                    "file": str(self.file_path),
+                    "line": node.lineno,
+                    "col": node.col_offset,
+                    "symbol": self._current_symbol(),
+                }
+                low_risk = _call_low_risk_context(
+                    node, finding["severity"], severity, opts
                 )
+                if low_risk is not None:
+                    finding["low_risk_context"] = low_risk
                 if opts and opts.get("weak_random"):
                     evidence = private_model_slug_evidence(node)
                     if evidence:
-                        self.findings[-1]["security_evidence"] = evidence
+                        finding["security_evidence"] = evidence
+                self.findings.append(finding)
                 break
+            else:
+                self._append_tls_finding(name, node)
 
-        self.generic_visit(node)
+    def _append_tls_finding(self, name: str, node: ast.Call) -> None:
+        if _is_test_module(self.file_path):
+            return
+        message = _tls_verification_disabled(
+            node, name, filename=self.file_path, project_root=self._project_root
+        )
+        if message is None:
+            return
+        self.findings.append(
+            {
+                "rule_id": "SKY-D210",
+                "severity": "HIGH",
+                "message": message,
+                "file": str(self.file_path),
+                "line": node.lineno,
+                "col": node.col_offset,
+                "symbol": self._current_symbol(),
+            }
+        )
 
     def _append_shell_command_findings(self, name: str, node: ast.Call) -> None:
-        if name == "os.system":
+        if name in _SHELL_COMMAND_CALLS:
             command_node = node.args[0] if node.args else None
         elif name.startswith("subprocess.") and _call_kw_is_true(node, "shell"):
             command_node = node.args[0] if node.args else None
@@ -279,19 +360,25 @@ _SQL_TOKENS = (
     "read_sql",
     ".raw(",
     "objects.raw",
+    ".fetch",
+    "execute_sql",
+    "query_items",
 )
 _SQL_RAW_TOKENS = (
-    "sqlalchemy",
-    ".text(",
-    " text(",
-    "read_sql",
     ".raw(",
     "objects.raw",
+    "rawsql",
+    ".extra(",
 )
 _CMD_TOKENS = (
-    "os.system",
+    "system",
     "subprocess",
     "popen",
+    "getoutput",
+    "getstatusoutput",
+    "execl",
+    "execv",
+    "spawn",
     "exec_command",
     "shell=true",
     "shell = true",
@@ -344,7 +431,13 @@ _XSS_TOKENS = (
     "autoescape false",
     "<",
 )
-_REDIRECT_TOKENS = ("redirect", "httpresponseredirect")
+_REDIRECT_TOKENS = (
+    "redirect",
+    "httpfound",
+    "httpseeother",
+    "httpmovedpermanently",
+    "location",
+)
 _CORS_TOKENS = (
     "cors",
     "access-control-allow-origin",
@@ -352,6 +445,7 @@ _CORS_TOKENS = (
     "cors_allow_all_origins",
     "origins",
 )
+_ROUTE_TOKENS = (".post(", ".put(", ".patch(", ".delete(", ".route(", ".api_route(")
 _JWT_TOKENS = ("jwt", "verify_signature", "algorithms")
 _MCP_TOKENS = ("mcp", "fastmcp")
 _WEBHOOK_TOKENS = ("webhook", "webhooks")
@@ -399,6 +493,7 @@ _AGENT_TOOL_TOKENS = (
     "tools =",
 )
 _ML_MODEL_LOAD_TOKENS = (
+    "trust_remote_code",
     "torch.load",
     "weights_only",
     "joblib.load",
@@ -428,6 +523,16 @@ _HTTP_UPLOAD_CALLS = {
     "requests.put",
 }
 _HTTP_REQUEST_CALLS = {"httpx.request", "requests.request"}
+_SHELL_COMMAND_CALLS = frozenset(
+    {
+        "os.system",
+        "os.popen",
+        "subprocess.getoutput",
+        "subprocess.getstatusoutput",
+        "asyncio.create_subprocess_shell",
+        "asyncio.subprocess.create_subprocess_shell",
+    }
+)
 
 
 def _constant_str(node: ast.AST | None) -> str | None:
@@ -507,7 +612,9 @@ def _has_any(source: str, tokens: tuple[str, ...]) -> bool:
     return any(token in source for token in tokens)
 
 
-def _scan_trojan_source_text(src: str, file_path: Path, findings: list[dict]) -> None:
+def scan_trojan_source_text(src: str, file_path: Path, findings: list[dict]) -> None:
+    if not any(char in src for char in _BIDI_CONTROL_CHARS):
+        return
     for line_no, line in enumerate(src.splitlines(), start=1):
         for col, char in enumerate(line):
             if char not in _BIDI_CONTROL_CHARS:
@@ -534,17 +641,36 @@ def scan_file_with_tree(
     tree, file_path, findings, *, source: str | None = None, project_root=None
 ):
     """Run taint-flow scanners on an already-parsed AST (no re-read/re-parse)."""
-    if source is None or _has_any(source.lower(), ("jinja", "requests", "httpx", "urllib", "importlib", "__import__", "gradio", "/tmp/", "url_for", "subprocess", "shlex")):
+    if source is None or _has_any(
+        source.lower(),
+        (
+            "jinja",
+            "requests",
+            "httpx",
+            "urllib",
+            "importlib",
+            "__import__",
+            "gradio",
+            "/tmp/",
+            "makedirs",
+            "mkdir",
+            "url_for",
+            "subprocess",
+            "shlex",
+        ),
+    ):
         scan_python_security_gaps(tree, file_path, findings, project_root=project_root)
     if source is None:
         scan_sql(tree, file_path, findings, project_root=project_root)
-        scan_cmd(tree, file_path, findings)
+        scan_cmd(tree, file_path, findings, project_root=project_root)
         scan_sql_raw(tree, file_path, findings)
         scan_ssrf(tree, file_path, findings)
-        scan_path(tree, file_path, findings)
-        scan_xss(tree, file_path, findings)
-        scan_redirect(tree, file_path, findings)
+        scan_path(tree, file_path, findings, project_root=project_root)
+        scan_xss(tree, file_path, findings, project_root=project_root)
+        scan_redirect(tree, file_path, findings, project_root=project_root)
         scan_cors(tree, file_path, findings)
+        scan_route_auth(tree, file_path, findings, project_root=project_root)
+        scan_cookie_flags(tree, file_path, findings)
         scan_jwt(tree, file_path, findings)
         scan_access(tree, file_path, findings)
         scan_mcp(tree, file_path, findings)
@@ -561,19 +687,23 @@ def scan_file_with_tree(
     if _has_any(source_lower, _SQL_TOKENS):
         scan_sql(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _CMD_TOKENS):
-        scan_cmd(tree, file_path, findings)
+        scan_cmd(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _SQL_RAW_TOKENS):
         scan_sql_raw(tree, file_path, findings)
     if _has_any(source_lower, _SSRF_TOKENS):
         scan_ssrf(tree, file_path, findings)
     if _has_any(source_lower, _PATH_TOKENS):
-        scan_path(tree, file_path, findings)
+        scan_path(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _XSS_TOKENS):
-        scan_xss(tree, file_path, findings)
+        scan_xss(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _REDIRECT_TOKENS):
-        scan_redirect(tree, file_path, findings)
+        scan_redirect(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _CORS_TOKENS):
         scan_cors(tree, file_path, findings)
+    if _has_any(source_lower, _ROUTE_TOKENS):
+        scan_route_auth(tree, file_path, findings, project_root=project_root)
+    if "_cookie" in source_lower:
+        scan_cookie_flags(tree, file_path, findings)
     if "jwt" in source_lower and _has_any(source_lower, _JWT_TOKENS):
         scan_jwt(tree, file_path, findings)
     if "fields" in source_lower and "__all__" in source_lower:
@@ -642,14 +772,16 @@ def dedupe_findings(findings: list[dict]) -> list[dict]:
     return deduped
 
 
-def _scan_file(file_path: Path, findings):
+def _scan_file(file_path: Path, findings, project_root=None):
     src = file_path.read_text(encoding="utf-8", errors="ignore")
-    _scan_trojan_source_text(src, file_path, findings)
+    scan_trojan_source_text(src, file_path, findings)
     tree = ast.parse(src)
 
-    scan_file_with_tree(tree, file_path, findings, source=src)
+    scan_file_with_tree(
+        tree, file_path, findings, source=src, project_root=project_root
+    )
 
-    checker = _DangerousCallsChecker(file_path, findings)
+    checker = _DangerousCallsChecker(file_path, findings, project_root)
     checker.visit(tree)
 
 
@@ -661,7 +793,7 @@ def scan_ctx(_, files):
             continue
 
         try:
-            _scan_file(file_path, findings)
+            _scan_file(file_path, findings, _)
         except Exception as e:
             print(f"Scan failed for {file_path}: {e}", file=sys.stderr)
 

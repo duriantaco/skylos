@@ -69,6 +69,8 @@ def _audits(result):
     assert {identity(row) for row in raw} == {
         identity(row) for row in [*listed, *diagnostics]
     }
+    assert len(raw) == len(listed) + len(diagnostics)
+    assert not listed
     for row in diagnostics:
         assert row["metadata"]["url_scheme_provenance"]["status"] == "unknown"
         assert row["metadata"]["url_scheme_provenance"]["safety_proven"] is False

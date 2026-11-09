@@ -7,3 +7,7 @@ def home(request):
 
 
 urlpatterns = [path("", home)]
+
+
+def status(request):
+    return HttpResponse(str(request))

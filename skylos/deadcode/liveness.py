@@ -3,12 +3,15 @@ from __future__ import annotations
 import ast
 import os
 import re
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-from skylos.deadcode.plugin_registry import find_literal_plugin_registry_targets
+from skylos.deadcode.plugin_registry import (
+    find_literal_plugin_registry_targets,
+    find_nested_dict_getattr_targets,
+)
 from skylos.deadcode.registration_liveness import (
     find_method_registered_targets,
     find_patched_instance_methods,
@@ -19,9 +22,22 @@ from skylos.deadcode.string_references import (
 )
 from skylos.deadcode.framework_liveness import find_framework_entrypoint_targets
 from skylos.deadcode.external_protocols import find_external_protocol_callbacks
+from skylos.deadcode.robot_framework_liveness import find_robot_framework_targets
+from skylos.deadcode.unittest_liveness import find_unittest_entrypoint_targets
+from skylos.deadcode.django_signal_liveness import find_django_signal_targets
+from skylos.deadcode.django_autoreload_liveness import find_django_autoreload_targets
+from skylos.deadcode.django_converter_liveness import (
+    find_django_converter_classes,
+    find_django_converter_method_targets,
+)
 from skylos.analysis.ast_cache import releases_python_ast_cache
 from skylos.constants import AUTO_CALLED
 from skylos.deadcode.python_ast import ParsedPythonFile, parse_python_files
+from skylos.deadcode.provider_method_liveness import find_provider_method_targets
+from skylos.deadcode.logging_config_liveness import find_logging_config_targets
+from skylos.deadcode.property_descriptor_liveness import classify_property_descriptors
+from skylos.deadcode.public_api import find_declared_public_api_targets
+from skylos.deadcode.finite_dispatch import record_finite_dispatch_references
 
 
 SENTINEL_CALLER = "<skylos.deadcode.liveness>"
@@ -101,14 +117,6 @@ class LivenessReport:
         }
 
 
-@dataclass(frozen=True)
-class _AttrCall:
-    attr: str
-    base_name: str
-    file: Path
-    line: int
-
-
 @releases_python_ast_cache
 def apply_dead_code_liveness(
     definitions: dict[str, Any],
@@ -118,6 +126,7 @@ def apply_dead_code_liveness(
     *,
     exclude_folders: Iterable[str] | None = None,
     module_names: dict[str, str] | None = None,
+    django_converter_classes: frozenset[tuple[str, str]] | None = None,
 ) -> LivenessReport:
 
     report = LivenessReport()
@@ -127,8 +136,8 @@ def apply_dead_code_liveness(
     root = Path(project_root).resolve()
     py_files = _python_files(root, files)
     parsed_files = parse_python_files(py_files)
+    classify_property_descriptors(definitions, parsed_files, module_names)
     docs_text = _read_public_docs(root)
-    attr_calls = _collect_attr_calls(parsed_files)
 
     classes: dict[str, Any] = {}
     class_methods: dict[str, list[Any]] = defaultdict(list)
@@ -140,6 +149,13 @@ def apply_dead_code_liveness(
         ):
             class_methods[defn.name.rsplit(".", 1)[0]].append(defn)
 
+    for target, caller in find_logging_config_targets(definitions, parsed_files, root):
+        _mark(target, "logging_config_factory", report)
+        target.heuristic_refs["reachable_from_root"] = 1.0
+        if caller is not None:
+            caller.calls.add(target.name)
+            target.called_by.add(caller.name)
+
     _rescue_optional_import_fallbacks(definitions, refs, report)
     _rescue_protocol_overrides(classes, class_methods, report)
     _rescue_registration_methods(classes, class_methods, report)
@@ -147,8 +163,32 @@ def apply_dead_code_liveness(
         definitions, parsed_files, root, exclude_folders=exclude_folders
     ):
         _mark(target, reason, report)
+    for target, reason in find_robot_framework_targets(
+        definitions, parsed_files, root, exclude_folders=exclude_folders
+    ):
+        _mark(target, reason, report)
+    for target, reason in find_django_signal_targets(definitions, parsed_files, root):
+        _mark(target, reason, report)
+    for target, reason in find_django_autoreload_targets(
+        definitions, parsed_files, root
+    ):
+        _mark(target, reason, report)
+    for target, reason in find_unittest_entrypoint_targets(
+        definitions, parsed_files, root
+    ):
+        _mark(target, reason, report)
+    if django_converter_classes is None:
+        django_converter_classes = find_django_converter_classes(
+            definitions, py_files, root
+        )
+    for target, reason in find_django_converter_method_targets(
+        definitions, django_converter_classes
+    ):
+        _mark(target, reason, report)
     for target in find_literal_plugin_registry_targets(definitions, parsed_files):
         _mark(target, "literal_plugin_registry", report)
+    for target in find_nested_dict_getattr_targets(definitions, parsed_files):
+        _mark(target, "nested_dict_getattr_registry", report)
     for target in find_dynamic_module_attribute_targets(definitions, parsed_files):
         _mark(target, "dynamic_module_attribute", report)
     for target in find_registered_decorator_targets(
@@ -159,8 +199,15 @@ def apply_dead_code_liveness(
         _mark(target, "registered_by_decorator", report)
     for target in find_patched_instance_methods(definitions, parsed_files):
         _mark(target, "patched_into_external_module", report)
+    for target, reason in find_declared_public_api_targets(
+        definitions, parsed_files, root, module_names
+    ):
+        _mark(target, reason, report)
     _rescue_documented_public_methods(classes, class_methods, docs_text, report)
-    _rescue_unique_external_attr_calls(classes, class_methods, attr_calls, report)
+    _rescue_unique_external_attr_calls(
+        definitions, classes, class_methods, parsed_files, report
+    )
+    record_finite_dispatch_references(definitions, parsed_files)
     return report
 
 
@@ -321,8 +368,12 @@ def _mark(defn: Any, reason: str, report: LivenessReport) -> None:
     refs = getattr(defn, "heuristic_refs", None)
     if refs is not None:
         refs[f"dead_code_liveness:{reason}"] = 1.0
-        if reason.startswith(("flask_web_", "django_web_")):
+        if reason.startswith(
+            ("flask_web_", "django_web_", "ros_launch_", "celery_", "robot_")
+        ):
             refs["framework_root"] = 1.0
+        if reason == "unittest_discovery":
+            refs["test_entrypoint"] = 1.0
     signals = getattr(defn, "framework_signals", None)
     if signals is not None and reason not in signals:
         signals.append(reason)
@@ -423,33 +474,6 @@ def _read_public_docs(root: Path) -> str:
         except OSError:
             continue
     return "\n".join(parts)
-
-
-def _collect_attr_calls(files: Iterable[ParsedPythonFile]) -> list[_AttrCall]:
-    calls: list[_AttrCall] = []
-    for parsed in files:
-        for node in ast.walk(parsed.tree):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-                calls.append(
-                    _AttrCall(
-                        node.func.attr,
-                        _attr_call_base_name(node.func),
-                        parsed.path,
-                        getattr(node, "lineno", 0),
-                    )
-                )
-    return calls
-
-
-def _attr_call_base_name(func: ast.Attribute) -> str:
-    value = func.value
-    if isinstance(value, ast.Name):
-        return value.id
-    while isinstance(value, ast.Attribute):
-        value = value.value
-    if isinstance(value, ast.Name):
-        return value.id
-    return ""
 
 
 def _rescue_optional_import_fallbacks(
@@ -691,8 +715,7 @@ def _sphinx_documented_method_keys(
 ) -> set[tuple[str, str]]:
     referenced: set[tuple[str, str]] = set()
     role_targets = [
-        match.group(1)
-        for match in re.finditer(r"(?=:meth:`([^`]*)`)", text)
+        match.group(1) for match in re.finditer(r"(?=:meth:`([^`]*)`)", text)
     ]
     for method_name, keys in by_method.items():
         if any(target.endswith(method_name) for target in role_targets):
@@ -729,52 +752,32 @@ def _is_regex_word_identifier(value: str) -> bool:
 
 
 def _rescue_unique_external_attr_calls(
+    definitions,
     classes: dict[str, Any],
     class_methods: dict[str, list[Any]],
-    attr_calls: list[_AttrCall],
+    parsed_files: list[ParsedPythonFile],
     report: LivenessReport,
 ) -> None:
-    if not attr_calls:
-        return
-
-    method_by_simple: dict[str, list[tuple[str, Any]]] = defaultdict(list)
+    candidates = []
     for owner, methods in class_methods.items():
         if not _owner_live(classes, owner):
             continue
-        for method in methods:
-            if _is_support_file(method):
-                continue
-            name = getattr(method, "simple_name", "")
-            if _is_public_name(name):
-                method_by_simple[name].append((owner, method))
-
-    call_count: Counter[str] = Counter()
-    calls_by_attr: dict[str, list[_AttrCall]] = defaultdict(list)
-    for call in attr_calls:
-        call_count[call.attr] += 1
-        calls_by_attr[call.attr].append(call)
-
-    for method_name, owner_methods in method_by_simple.items():
-        if len(owner_methods) != 1:
-            continue
-        if method_name in COMMON_UNTYPED_ATTR_CALLS:
-            continue
-        if call_count.get(method_name, 0) == 0:
-            continue
-        _owner, method = owner_methods[0]
-        method_file = Path(getattr(method, "filename", "")).resolve()
-        if _has_external_framework_proxy_call(calls_by_attr[method_name], method_file):
-            _mark(method, "unique_external_attr_call", report)
-
-
-def _has_external_framework_proxy_call(
-    calls: list[_AttrCall],
-    method_file: Path,
-) -> bool:
-    for call in calls:
-        if call.file.resolve() == method_file:
-            continue
-        if call.base_name not in FRAMEWORK_PROXY_NAMES:
-            continue
-        return True
-    return False
+        candidates.extend(
+            method
+            for method in methods
+            if not _is_support_file(method)
+            and _is_public_name(getattr(method, "simple_name", ""))
+        )
+    for method, caller, execution_evidence in find_provider_method_targets(
+        definitions,
+        parsed_files,
+        candidates,
+        proxy_names=FRAMEWORK_PROXY_NAMES,
+        common_proxy_methods=COMMON_UNTYPED_ATTR_CALLS,
+    ):
+        if caller is not None:
+            caller.calls.add(method.name)
+            method.called_by.add(caller.name)
+        _mark(method, "source_provider_method", report)
+        if execution_evidence is not None:
+            method.heuristic_refs[execution_evidence] = 1.0

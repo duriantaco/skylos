@@ -4,6 +4,7 @@ import os
 import traceback
 from pathlib import Path
 
+from skylos.analysis.penalties import DEAD_CODE_RULE_BY_TYPE
 from skylos.config import load_config
 from skylos.core.evidence_contract import attach_evidence_contract
 from skylos.core.review_context import review_config_hash_for_category
@@ -85,7 +86,6 @@ def build_analysis_result(
     analysis_errors=None,
     include_review_proofs=False,
     review_config=None,
-    enable_dead_code=True,
 ):
     """Assemble the final result dict from analysis outputs."""
     architecture_main_guard_modules = _normal_set(architecture_main_guard_modules)
@@ -97,45 +97,37 @@ def build_analysis_result(
         if isinstance(review_config, dict)
         else load_config(_primary_path(path), config_file=config_file)
     )
-    if enable_dead_code:
-        from skylos.deadcode.confidence import (
-            BELOW_THRESHOLD_SHOW_WITH,
-            calibrate_dead_code_confidence,
-            experimental_hidden_counts,
-        )
+    from skylos.deadcode.confidence import (
+        BELOW_THRESHOLD_SHOW_WITH,
+        calibrate_dead_code_confidence,
+        experimental_hidden_counts,
+    )
 
-        # Before the threshold and the evidence ledger read ``confidence``.
-        calibrate_dead_code_confidence(
-            analyzer.defs, getattr(analyzer, "_ts_demoted_exports", ())
-        )
-        ledger, evidence = dead_code_evidence(
-            analyzer,
-            path,
-            pyproject_entrypoint_qnames,
-            threshold=thr,
-        )
-        unused, rescued, abstained = dead_code_candidate_decisions(
-            analyzer,
-            thr,
-            evidence,
-            review_config=project_cfg,
-            include_review_proofs=include_review_proofs,
-        )
-        # Definitions in generated files (Django migrations) are already outside
-        # the dead-code scope; empty generated files are not reported either.
-        empty_files = without_report_only_files(
-            empty_files, report_only_file_keys(analyzer)
-        )
-        context_map = definition_context(analyzer, thr, evidence)
-        whitelisted = whitelisted_definitions(analyzer, all_suppressed)
-    else:
-        from skylos.deadcode.evidence import EvidenceLedger
-
-        ledger = EvidenceLedger()
-        evidence = ledger.to_dict()
-        unused, rescued, abstained = [], [], []
-        context_map, whitelisted = {}, []
-        empty_files = []
+    # Before the threshold and the evidence ledger read ``confidence``.
+    calibrate_dead_code_confidence(
+        analyzer.defs, getattr(analyzer, "_ts_demoted_exports", ())
+    )
+    ledger, evidence = dead_code_evidence(
+        analyzer,
+        path,
+        pyproject_entrypoint_qnames,
+        threshold=thr,
+    )
+    unused, rescued, abstained = dead_code_candidate_decisions(
+        analyzer,
+        thr,
+        evidence,
+        review_config=project_cfg,
+        include_review_proofs=include_review_proofs,
+    )
+    unused = _without_config_ignored_dead_code(unused, project_cfg)
+    # Definitions in generated files (Django migrations) are already outside
+    # the dead-code scope; empty generated files are not reported either.
+    empty_files = without_report_only_files(
+        empty_files, report_only_file_keys(analyzer)
+    )
+    context_map = definition_context(analyzer, thr, evidence)
+    whitelisted = whitelisted_definitions(analyzer, all_suppressed)
 
     result = _base_result(
         analyzer,
@@ -151,11 +143,6 @@ def build_analysis_result(
         unused,
         analysis_errors,
     )
-    if not enable_dead_code:
-        result["analysis_summary"]["dead_code"] = {
-            "enabled": False,
-            "status": "not_enabled",
-        }
     _attach_analysis_reports(analyzer, result)
     _attach_workspace(analyzer, result, workspace_inventory, path)
     _attach_findings(
@@ -174,27 +161,24 @@ def build_analysis_result(
     _enrich_danger(result, enable_danger)
     _bucket_unused_definitions(result, unused)
     _attach_unused_ts_exports(result, unused_ts_exports)
-    if enable_dead_code:
-        hidden_parameters = _hidden_parameter_count(
-            analyzer, thr, evidence, project_cfg
-        )
-        if hidden_parameters:
-            # Unused parameters are below the default threshold (callback and
-            # override signatures); say how many and how to list them.
-            result["analysis_summary"]["dead_code_below_threshold"] = {
-                "unused_parameters": {
-                    "count": hidden_parameters,
-                    "show_with": BELOW_THRESHOLD_SHOW_WITH["signature_parameter"],
-                }
+    hidden_parameters = _hidden_parameter_count(analyzer, thr, evidence, project_cfg)
+    if hidden_parameters:
+        # Unused parameters are below the default threshold (callback and
+        # override signatures); say how many and how to list them.
+        result["analysis_summary"]["dead_code_below_threshold"] = {
+            "unused_parameters": {
+                "count": hidden_parameters,
+                "show_with": BELOW_THRESHOLD_SHOW_WITH["signature_parameter"],
             }
-        hidden = experimental_hidden_counts(analyzer.defs, thr)
-        if hidden:
-            # Never silent: say that experimental-language candidates exist below
-            # the threshold and how to list them.
-            result["analysis_summary"]["dead_code_experimental"] = {
-                language: {"listed": False, "show_with": "--confidence 40"}
-                for language in sorted(hidden)
-            }
+        }
+    hidden = experimental_hidden_counts(analyzer.defs, thr)
+    if hidden:
+        # Never silent: say that experimental-language candidates exist below
+        # the threshold and how to list them.
+        result["analysis_summary"]["dead_code_experimental"] = {
+            language: {"listed": False, "show_with": "--confidence 40"}
+            for language in sorted(hidden)
+        }
 
     attach_circular_and_architecture(
         result,
@@ -214,7 +198,7 @@ def build_analysis_result(
         workspace_inventory=workspace_inventory,
     )
     graded_files = files
-    apply_report_scope(result, analyzer)
+    apply_report_scope(result, analyzer, modmap=modmap, raw_imports=all_raw_imports)
     if isinstance(getattr(analyzer, "_review_context", None), dict):
         _attach_effective_review_config_hashes(result, project_cfg)
     measured_paths = {str(file) for file in graded_files}
@@ -238,7 +222,6 @@ def build_analysis_result(
         enable_ai_defects,
         enable_sca,
         enable_secrets,
-        enable_dead_code=enable_dead_code,
     )
     attach_directory_rollups(result, getattr(analyzer, "_project_root", None))
     from skylos.reporting.finding_types import (
@@ -384,6 +367,9 @@ def _attach_analysis_reports(analyzer, result):
     sca_coverage = getattr(analyzer, "_sca_coverage", None)
     if isinstance(sca_coverage, dict):
         result["analysis_summary"]["sca_coverage"] = dict(sca_coverage)
+    supply_chain_summary = getattr(analyzer, "_supply_chain_summary", None)
+    if isinstance(supply_chain_summary, dict):
+        result["analysis_summary"].update(supply_chain_summary)
 
     dependency_import_notes = getattr(analyzer, "_dependency_import_notes", None)
     if isinstance(dependency_import_notes, dict):
@@ -534,12 +520,42 @@ def _attach_empty_files(result, empty_files):
     result["analysis_summary"]["unused_files_count"] = len(empty_files)
 
 
+_PYTHON_SUFFIXES = (".py", ".pyi", ".pyw")
+
+
+def _attach_python_security_cwes(findings) -> None:
+    """Python security findings carry their rule's CWE ids for SARIF and
+    compliance consumers. A finding that already names its CWEs keeps them."""
+    from skylos.rules.quality.standards import security_cwe_entries
+
+    for finding in findings:
+        if not isinstance(finding, dict) or finding.get("cwe"):
+            continue
+        if not str(finding.get("file") or "").lower().endswith(_PYTHON_SUFFIXES):
+            continue
+        entries = security_cwe_entries(finding.get("rule_id"))
+        if entries:
+            finding["cwe"] = entries
+
+
 def _enrich_danger(result, enable_danger):
     if not enable_danger or not result.get("danger"):
         return
     from skylos.rules.compliance import enrich_findings_with_compliance
 
+    _attach_python_security_cwes(result["danger"])
     result["danger"] = enrich_findings_with_compliance(result["danger"])
+
+
+def _without_config_ignored_dead_code(unused, project_cfg):
+    ignored = set((project_cfg or {}).get("ignore") or ())
+    if not ignored:
+        return unused
+    return [
+        item
+        for item in unused
+        if DEAD_CODE_RULE_BY_TYPE.get(item.get("type")) not in ignored
+    ]
 
 
 def _bucket_unused_definitions(result, unused):
@@ -574,7 +590,6 @@ def _attach_grade(
     enable_ai_defects,
     enable_sca,
     enable_secrets,
-    enable_dead_code=True,
 ):
     try:
         from skylos.reporting.grader import count_lines_of_code
@@ -587,7 +602,6 @@ def _attach_grade(
             enable_ai_defects,
             enable_sca,
             enable_secrets,
-            enable_dead_code=enable_dead_code,
         )
         # A supplemental finding is evidence of risk, not evidence that an
         # entire scanner phase ran. Assessment counts every finding separately.
@@ -610,7 +624,6 @@ def _grade_categories(
     enable_ai_defects,
     enable_sca,
     enable_secrets,
-    enable_dead_code=True,
 ):
     categories = []
     if enable_danger:
@@ -619,8 +632,7 @@ def _grade_categories(
         categories.append("quality")
     if enable_ai_defects:
         categories.append("ai_defects")
-    if enable_dead_code:
-        categories.append("dead_code")
+    categories.append("dead_code")
     if enable_sca:
         categories.append("dependencies")
     if enable_secrets:

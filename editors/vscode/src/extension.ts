@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { FindingsStore } from "./store";
-import { scanWorkspace, scanFile, cancelScan, out, doctorSkylos, buildScanErrorMessage, SkylosScanError } from "./scanner";
+import { scanWorkspace, scanFile, cancelScan, out, doctorSkylos, buildScanErrorMessage, SkylosScanError, runSkylosCommand } from "./scanner";
+import { whitelistName } from "./suppressionCore";
 import { DiagnosticsManager } from "./diagnostics";
 import { DecorationsManager } from "./decorations";
 import { SkylosTreeProvider, FindingNode } from "./sidebar";
@@ -357,8 +358,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand("skylos.addToWhitelist", async (message: string) => {
-      const match = message.match(/Unused \w+:\s*(.+)/);
-      const name = match?.[1]?.trim();
+      const name = whitelistName(message);
       if (!name) {
         vscode.window.showErrorMessage("Could not extract name from finding.");
         return;
@@ -368,22 +368,20 @@ export function activate(context: vscode.ExtensionContext) {
       if (!ws)
         return;
 
-      const configPath = vscode.Uri.joinPath(ws.uri, ".skylosignore");
-      try {
-        const doc = await vscode.workspace.openTextDocument(configPath);
-        const edit = new vscode.WorkspaceEdit();
-        edit.insert(configPath, new vscode.Position(doc.lineCount, 0), `\n${name}`);
-        await vscode.workspace.applyEdit(edit);
-        vscode.window.showInformationMessage(`Added "${name}" to .skylosignore`);
-      } catch {
-        const edit = new vscode.WorkspaceEdit();
-        edit.createFile(configPath, { overwrite: false, ignoreIfExists: true });
-        await vscode.workspace.applyEdit(edit);
-        const edit2 = new vscode.WorkspaceEdit();
-        edit2.insert(configPath, new vscode.Position(0, 0), `${name}\n`);
-        await vscode.workspace.applyEdit(edit2);
-        vscode.window.showInformationMessage(`Created .skylosignore and added "${name}"`);
+      if (!vscode.workspace.isTrusted) {
+        vscode.window.showWarningMessage("Skylos: Trust this workspace before adding to the whitelist.");
+        return;
       }
+
+      const result = await runSkylosCommand(["whitelist", name], ws.uri.fsPath);
+      if (result.code === 0 && /Added '.*' to whitelist/.test(result.stdout)) {
+        vscode.window.showInformationMessage(
+          `Added "${name}" to [tool.skylos.whitelist] in pyproject.toml. Every symbol named "${name}" is now skipped.`,
+        );
+        return;
+      }
+      const detail = (result.error ?? `${result.stdout}\n${result.stderr}`).trim().split("\n")[0];
+      vscode.window.showWarningMessage(`Skylos: could not add "${name}" to the whitelist. ${detail}`);
     }),
 
     vscode.commands.registerCommand("skylos.statusBarClick", () => {

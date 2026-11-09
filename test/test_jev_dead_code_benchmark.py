@@ -109,19 +109,123 @@ def test_checked_in_ground_truth_builds_blind_plan_without_duplicate_arms():
     plan = build_plan(MANIFEST_PATH)
 
     assert plan["network_used"] is False
-    assert plan["case_count"] == 21
-    assert plan["request_count"] == 27
-    assert plan["ground_truth_count"] == 124
-    assert plan["decision_count"] == 164
+    assert plan["case_count"] == 98
+    assert plan["request_count"] == 104
+    assert plan["ground_truth_count"] == 466
+    assert plan["decision_count"] == 506
     assert plan["neutralization_status_counts"] == {
         "applied": 6,
-        "skipped": 12,
-        "not_applicable": 3,
+        "skipped": 21,
+        "not_applicable": 71,
     }
-    assert plan["unused_count"] == 47
-    assert plan["used_count"] == 77
+    assert plan["unused_count"] == 149
+    assert plan["used_count"] == 317
     assert plan["model"] == "jev-1.13.0"
     assert plan["endpoint"] == JEV_ENDPOINT
+
+    # Each new Ruby case adds two labels and one original request. Qualified
+    # member names cannot be neutralized, so no duplicate arm is scheduled.
+    ruby_cases = {"ruby-block-scope", "ruby-inherited-callback"}
+    batches = prepare_batches(MANIFEST_PATH, ruby_cases)
+    assert {(batch.case_id, batch.arm, len(batch.questions)) for batch in batches} == {
+        (case_id, "original", 2) for case_id in ruby_cases
+    }
+    assert len(batches) == 2
+
+    # These non-Python fixtures add 40 labels and six original requests.
+    # Three have label cues that cannot be safely renamed in non-Python source;
+    # the other three have no cues to neutralize. Neither produces a duplicate.
+    depth_cases = {
+        "typescript-javascript-namespace-members": 5,
+        "typescript-namespace-escape-boundaries": 5,
+        "go-dead-call-graph": 14,
+        "go-scope-identity": 5,
+        "rust-value-bindings": 4,
+        "rust-callback-scopes": 7,
+    }
+    batches = prepare_batches(MANIFEST_PATH, set(depth_cases))
+    assert {(batch.case_id, batch.arm, len(batch.questions)) for batch in batches} == {
+        (case_id, "original", count) for case_id, count in depth_cases.items()
+    }
+    assert len(batches) == 6
+
+    # Source-audited language cases add 55 labels and eight original requests.
+    # Three cannot neutralize non-Python cues; five have no cues to neutralize.
+    audit_cases = {
+        "typescript-lexical-value-identity": 4,
+        "typescript-dead-import-consumers": 8,
+        "typescript-loaded-import-consumers": 6,
+        "go-project-import-graph": 6,
+        "go-private-test-helpers": 8,
+        "rust-import-expression-uses": 10,
+        "rust-private-function-cycles": 8,
+        "rust-cross-file-cycle-roots": 5,
+    }
+    batches = prepare_batches(MANIFEST_PATH, set(audit_cases))
+    assert {(batch.case_id, batch.arm, len(batch.questions)) for batch in batches} == {
+        (case_id, "original", count) for case_id, count in audit_cases.items()
+    }
+    assert len(batches) == 8
+
+    # These source-frozen module/trait cases add 36 labels. None needs a
+    # renamed arm, so each gets exactly one original request.
+    next_cases = {
+        "typescript-reexport-demand-chain": 3,
+        "typescript-reexport-public-and-escape": 6,
+        "go-local-module-replacement": 6,
+        "go-local-replacement-live-callback-cycle": 6,
+        "rust-local-trait-receiver-identity": 5,
+        "typescript-reexport-enumerated-aliases": 4,
+        "rust-macro-import-evidence": 6,
+    }
+    batches = prepare_batches(MANIFEST_PATH, set(next_cases))
+    assert {(batch.case_id, batch.arm, len(batch.questions)) for batch in batches} == {
+        (case_id, "original", count) for case_id, count in next_cases.items()
+    }
+    assert len(batches) == 7
+
+    # The five deeper-language and 28 Swift contracts add 115 labels.
+    # Non-Python source is kept as an original-only request, never duplicated.
+    latest_cases = {
+        "typescript-nested-namespace-export": 2,
+        "typescript-namespace-export-public-and-opaque": 6,
+        "go-workspace-private-cycle": 6,
+        "go-workspace-live-callback": 6,
+        "rust-source-module-trait": 5,
+        "swift-private-functions": 3,
+        "swift-callback": 4,
+        "swift-dead-cycle": 4,
+        "swift-live-cycle": 4,
+        "swift-parameter-shadow": 2,
+        "swift-local-shadow": 2,
+        "swift-initializer-before-binding": 2,
+        "swift-owner-identity": 6,
+        "swift-extension": 4,
+        "swift-fileprivate": 3,
+        "swift-function-value": 3,
+        "swift-keypath": 3,
+        "swift-property-read": 4,
+        "swift-string-not-use": 2,
+        "swift-comment-not-use": 2,
+        "swift-overload-labels": 3,
+        "swift-default-argument": 3,
+        "swift-raw-identifiers": 3,
+        "swift-protocol-witness": 4,
+        "swift-codable": 2,
+        "swift-equatable": 2,
+        "swift-reflection": 3,
+        "swift-objc-selector": 3,
+        "swift-conditional": 3,
+        "swift-closure-capture": 3,
+        "swift-private-type": 4,
+        "swift-member-cycle": 4,
+        "swift-property-wrapper": 5,
+    }
+    batches = prepare_batches(MANIFEST_PATH, set(latest_cases))
+    assert {(batch.case_id, batch.arm, len(batch.questions)) for batch in batches} == {
+        (case_id, "original", count) for case_id, count in latest_cases.items()
+    }
+    assert len(batches) == 33
 
 
 def test_dynamic_dispatch_challenge_builds_single_blind_request():

@@ -1,4 +1,10 @@
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
 
 from skylos.analyzer import analyze
 from skylos.rules.secrets import scan_ctx, ALLOWED_FILE_SUFFIXES
@@ -52,7 +58,9 @@ class TestAllowedSuffixes:
 def test_csharp_source_detects_provider_and_generic_secrets():
     source = (
         "public static class Credentials {\n"
-        '    public const string GitHubToken = "ghp_1234567890abcdef1234567890abcdef1234";\n'
+        '    public const string GitHubToken = "g'
+        r"h"
+        'p_1234567890abcdef1234567890abcdef1234";\n'
         '    public const string ApiKey = "Z8k2Lm9Qp4Rs7Tv1Wx6Ya3Bc5De0Fg2H";\n'
         "}\n"
     )
@@ -116,7 +124,7 @@ def test_csharp_provider_tokens_with_sensitive_words_are_not_suppressed():
 
 
 def test_csharp_stripe_test_mode_key_is_not_a_placeholder():
-    source = 'public const string StripeKey = "sk_test_A1b2C3d4E5f6G7h8I9j0";\n'
+    source = 'public const string StripeKey = "s' r"k" '_test_A1b2C3d4E5f6G7h8I9j0";\n'
     ctx = {"relpath": "src/Credentials.cs", "lines": [source], "tree": None}
 
     assert any(
@@ -142,7 +150,9 @@ def test_csharp_generic_secret_with_sensitive_word_is_not_suppressed():
 def test_csharp_secret_reaches_analyzer_json_output(tmp_path):
     source = (
         "public static class Credentials {\n"
-        '    public const string GitHubToken = "ghp_A1b2C3d4E5f6G7h8I9j0secretK1l2M3n4O5";\n'
+        '    public const string GitHubToken = "g'
+        r"h"
+        'p_A1b2C3d4E5f6G7h8I9j0secretK1l2M3n4O5";\n'
         "}\n"
     )
     (tmp_path / "Credentials.cs").write_text(source, encoding="utf-8")
@@ -156,6 +166,227 @@ def test_csharp_secret_reaches_analyzer_json_output(tmp_path):
         and finding["line"] == 2
         for finding in result.get("secrets", [])
     )
+
+
+_AWS_KEY_ID = "A" r"K" "IA4HZQ7XW2NB9KD3LT"
+_GITHUB_TOKEN = "g" r"h" "p_Zt7Kq2Lm9Xc4Vb8Nw1Rp6Hs3Jd5Fg0Ty2Ua8"
+
+
+@pytest.mark.parametrize(
+    ("relpath", "line", "provider"),
+    [
+        (
+            "src/main/java/Config.java",
+            f'String KEY = "{_AWS_KEY_ID}";',
+            "aws_access_key_id",
+        ),
+        (
+            "src/main/resources/application.properties",
+            f"aws.accessKeyId={_AWS_KEY_ID}",
+            "aws_access_key_id",
+        ),
+        (
+            "src/main/resources/application.properties",
+            "mail.password=Wq8#mZ2!vR7pL4xK",
+            "config_credential",
+        ),
+        ("settings.xml", f"<password>{_GITHUB_TOKEN}</password>", "github"),
+        ("Dockerfile", f"ENV AWS_ACCESS_KEY_ID={_AWS_KEY_ID}", "aws_access_key_id"),
+        ("deploy/Dockerfile.prod", f"ENV GH={_GITHUB_TOKEN}", "github"),
+        ("infra/prod.tfvars", f'github_token = "{_GITHUB_TOKEN}"', "github"),
+        ("infra/main.tf", f'access_key = "{_AWS_KEY_ID}"', "aws_access_key_id"),
+        (".npmrc", f"//npm.pkg.github.com/:_authToken={_GITHUB_TOKEN}", "github"),
+        ("build.gradle", f'def token = "{_GITHUB_TOKEN}"', "github"),
+        ("native/config.h", f'#define TOKEN "{_GITHUB_TOKEN}"', "github"),
+        (
+            "scripts/setup.sh",
+            f"export AWS_ACCESS_KEY_ID={_AWS_KEY_ID}",
+            "aws_access_key_id",
+        ),
+        (
+            "scripts/setup.sh",
+            'export DB_PASSWORD="${DB_PASSWORD:-Xk8mQ2vR7pL4xKz9Tq3W}"',
+            "generic",
+        ),
+        (
+            "src/main/resources/application.properties",
+            "spring.datasource.password=${DB_PASSWORD}",
+            None,
+        ),
+        ("src/main/resources/application.properties", "app.secret=changeme", None),
+        (
+            "src/main/resources/application.properties",
+            "app.api-token=<your-token>",
+            None,
+        ),
+        ("settings.xml", "<password>${env.NEXUS_PASSWORD}</password>", None),
+        ("Dockerfile", "ENV DB_PASSWORD=${DB_PASSWORD}", None),
+        ("infra/prod.tfvars", 'db_password = "changeme"', None),
+        (".npmrc", "//registry.npmjs.org/:_authToken=${NPM_TOKEN}", None),
+        (".pypirc", "password = <your-token>", None),
+        (
+            "scripts/setup.sh",
+            'export API_TOKEN="${API_TOKEN:?set API_TOKEN first}"',
+            None,
+        ),
+        (
+            "scripts/setup.sh",
+            'export API_TOKEN="$(cat /run/secrets/api_token_file)"',
+            None,
+        ),
+    ],
+)
+def test_config_build_and_script_files_report_real_secrets_not_placeholders(
+    relpath, line, provider
+):
+    findings = scan_ctx({"relpath": relpath, "lines": [line + "\n"], "tree": None})
+
+    providers = {finding["provider"] for finding in findings}
+    if provider is None:
+        assert providers == set()
+    else:
+        assert provider in providers
+
+
+@pytest.mark.parametrize(
+    ("first_line", "scanned"),
+    [
+        ("#!/usr/bin/env bash", True),
+        ("#!/bin/sh -e", True),
+        ("#!/usr/bin/env python3", False),
+        ("old token notes", False),
+    ],
+)
+def test_extensionless_file_is_scanned_only_as_a_shell_script(first_line, scanned):
+    lines = [first_line + "\n", f"export GITHUB_TOKEN={_GITHUB_TOKEN}\n"]
+
+    findings = scan_ctx({"relpath": "bin/deploy", "lines": lines, "tree": None})
+
+    assert bool(findings) is scanned
+
+
+def test_shell_script_probe_accepts_long_script(tmp_path):
+    from skylos.rules.secrets import file_starts_like_shell_script
+
+    source = tmp_path / "deploy"
+    source.write_text("#!/usr/bin/env bash\n" + "echo ready\n" * 128, encoding="utf-8")
+
+    assert file_starts_like_shell_script(source) is True
+
+
+@pytest.mark.parametrize(
+    "kind", ["symlink", "directory", "missing", "unreadable", "binary"]
+)
+def test_shell_script_probe_rejects_symlink_directory_and_unreadable(
+    tmp_path, monkeypatch, kind
+):
+    from skylos.rules import secrets
+
+    source = tmp_path / "deploy"
+    if kind == "directory":
+        source.mkdir()
+    elif kind != "missing":
+        source.write_bytes(
+            b"#!/bin/sh\n" + (b"\0" if kind == "binary" else b"echo ready\n")
+        )
+    if kind == "symlink":
+        link = tmp_path / "linked"
+        try:
+            link.symlink_to(source)
+        except OSError:
+            pytest.skip("symlinks are not supported on this filesystem")
+        source = link
+    if kind == "unreadable":
+
+        def denied(*args, **kwargs):
+            raise PermissionError("file is not readable")
+
+        with monkeypatch.context() as patch:
+            patch.setattr("builtins.open", denied)
+            patch.setattr(os, "open", denied)
+            assert secrets.file_starts_like_shell_script(source) is False
+    else:
+        assert secrets.file_starts_like_shell_script(source) is False
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes are unavailable")
+def test_shell_script_probe_rejects_fifo_without_blocking(tmp_path):
+    source = tmp_path / "deploy"
+    os.mkfifo(source)
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-P",
+            "-c",
+            "import sys; from skylos.rules.secrets import file_starts_like_shell_script; "
+            "print(file_starts_like_shell_script(sys.argv[1]))",
+            str(source),
+        ],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    )
+
+    assert completed.stdout.strip() == "False"
+
+
+def test_directory_scan_reads_new_secret_files_and_honours_real_comments(tmp_path):
+    files = {
+        "Dockerfile": f"FROM alpine\nENV AWS_ACCESS_KEY_ID={_AWS_KEY_ID}\n",
+        "settings.xml": f"<settings>\n<password>{_GITHUB_TOKEN}</password>\n</settings>\n",
+        "infra/prod.tfvars": f'github_token = "{_GITHUB_TOKEN}"\n',
+        ".npmrc": f"//npm.pkg.github.com/:_authToken={_GITHUB_TOKEN}\n",
+        "native/config.h": f'#define TOKEN "{_GITHUB_TOKEN}"\n',
+        "bin/deploy": f"#!/usr/bin/env bash\nexport GITHUB_TOKEN={_GITHUB_TOKEN}\n",
+        "bin/NOTES": f"old token {_GITHUB_TOKEN}\n",
+        "src/test/resources/app.properties": f"github.token={_GITHUB_TOKEN}\n",
+        "src/main/java/Config.java": (
+            "class Config {\n"
+            f'  String A = "{_GITHUB_TOKEN}"; // skylos: ignore[SKY-S101] revoked sample\n'
+            f'  String B = "{_GITHUB_TOKEN} // skylos: ignore[SKY-S101]";\n'
+            "}\n"
+        ),
+        "scripts/setup.sh": (
+            "#!/bin/sh\n"
+            f"export A={_GITHUB_TOKEN} # skylos: ignore[SKY-S101] CI sample\n"
+            f'echo "# skylos: ignore[SKY-S101]" {_GITHUB_TOKEN}\n'
+        ),
+    }
+    for relative, text in files.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    result = json.loads(analyze(str(tmp_path), enable_secrets=True, grep_verify=False))
+
+    reported = {
+        (finding["file"], finding["line"])
+        for finding in result.get("secrets", [])
+        if finding["provider"] in {"github", "aws_access_key_id"}
+    }
+    suppressed = {
+        (finding["file"], finding["line"])
+        for finding in result.get("suppressed", [])
+        if finding.get("rule_id") == "SKY-S101"
+    }
+    assert reported == {
+        ("Dockerfile", 2),
+        ("settings.xml", 2),
+        ("infra/prod.tfvars", 1),
+        (".npmrc", 1),
+        ("native/config.h", 1),
+        ("bin/deploy", 2),
+        ("src/test/resources/app.properties", 1),
+        ("src/main/java/Config.java", 3),
+        ("scripts/setup.sh", 3),
+    }
+    assert suppressed == {("src/main/java/Config.java", 2), ("scripts/setup.sh", 2)}
 
 
 def test_public_html_subresource_integrity_is_not_a_secret():
@@ -173,7 +404,8 @@ def test_public_html_subresource_integrity_is_not_a_secret():
 
 class TestEnvFileScanning:
     def test_detects_aws_key_in_env(self):
-        src = "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE1234567890abcdef\n"
+        value = "Ab3dE5fG7hJ9kL2mN4pQ6rS8tU0vW1xY2zA4" + "bC6d"
+        src = "AWS_SECRET_ACCESS_K" r"E" "Y=" + value + "\n"
         ctx = {"relpath": ".env", "lines": src.splitlines(True), "tree": None}
         findings = list(scan_ctx(ctx))
         assert len(findings) > 0
@@ -197,7 +429,7 @@ class TestEnvFileScanning:
 
 class TestYamlFileScanning:
     def test_detects_key_in_yaml(self):
-        src = 'api_key: "sk_live_1234567890abcdef1234567890abcdef"\n'
+        src = 'api_key: "s' r"k" '_live_1234567890abcdef1234567890abcdef"\n'
         ctx = {"relpath": "config.yaml", "lines": src.splitlines(True), "tree": None}
         findings = list(scan_ctx(ctx))
         assert len(findings) > 0
@@ -211,7 +443,7 @@ class TestYamlFileScanning:
 
 class TestJsonFileScanning:
     def test_detects_key_in_json(self):
-        src = '{"api_key": "sk_live_1234567890abcdef1234567890abcdef"}\n'
+        src = '{"api_key": "s' r"k" '_live_1234567890abcdef1234567890abcdef"}\n'
         ctx = {"relpath": "config.json", "lines": src.splitlines(True), "tree": None}
         findings = list(scan_ctx(ctx))
         assert len(findings) > 0

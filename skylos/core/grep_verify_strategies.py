@@ -74,6 +74,11 @@ def build_parallel_strategy_tasks(
 ) -> list[tuple[Callable[[], dict[str, list[str]]], str]]:
     tasks: list[tuple[Callable[[], dict[str, list[str]]], str]] = []
 
+    if lang == "csharp":
+        # C# references require namespace, receiver and signature binding.
+        # The native visitor/resolver supplies that proof; plain text does not.
+        return tasks
+
     if lang == "python":
         tasks.append(
             (

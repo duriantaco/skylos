@@ -8,3 +8,7 @@ def list_users():
 
 
 app.add_url_rule("/users", view_func=list_users)
+
+
+def create_report():
+    return []

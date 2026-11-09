@@ -242,23 +242,23 @@ def manual_token_fallback(console=None, base_url=None):
     # Cloud trusts the credential, not the machine holding it. A trusted CI
     # key retains that authority if someone saves it on a developer machine.
     note = (
-        "Do not paste a key marked as a CI key. It can publish trusted uploads "
+        "Do not paste a project token marked for CI. It can publish trusted uploads "
         "even from this machine, and any coding agent that can read it can use "
-        "that authority. Keep CI keys in your CI secret store."
+        "that authority. Keep CI project tokens in your CI secret store."
     )
     if console:
         console.print("\n[bold]Manual connection[/bold]")
         console.print(
-            f"Get your API key at: [bold]{base_url}/dashboard/settings[/bold]"
+            f"Get a project token at: [bold]{base_url}/dashboard/settings[/bold]"
         )
         console.print(f"[dim]{note}[/dim]\n")
     else:
         print("\nManual connection")
-        print(f"Get your API key at: {base_url}/dashboard/settings")
+        print(f"Get a project token at: {base_url}/dashboard/settings")
         print(f"{note}\n")
 
     try:
-        token = input("Paste your API token: ").strip()
+        token = input("Paste your project token: ").strip()
     except (KeyboardInterrupt, EOFError):
         if console:
             console.print("\n[dim]Cancelled.[/dim]")
@@ -332,8 +332,8 @@ def _print_connected_result(result, console=None):
         if result.repo_subpath:
             console.print(f"  Project root: {result.repo_subpath}")
         console.print(
-            "\n  Nothing is uploaded automatically. Add [bold]--upload[/bold] "
-            "to a scan to send it to this project."
+            "\n  Nothing is uploaded automatically. [bold]skylos cloud[/bold] "
+            "scans with every check and sends the findings to this project."
         )
         console.print(f"\n  [dim]{mcp_hint}[/dim]")
     else:
@@ -344,8 +344,8 @@ def _print_connected_result(result, console=None):
         if result.repo_subpath:
             print(f"  Project root: {result.repo_subpath}")
         print(
-            "\n  Nothing is uploaded automatically. Add --upload "
-            "to a scan to send it to this project."
+            "\n  Nothing is uploaded automatically. skylos cloud "
+            "scans with every check and sends the findings to this project."
         )
         print(f"\n  {mcp_hint}")
 

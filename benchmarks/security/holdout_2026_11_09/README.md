@@ -3,12 +3,17 @@
 This change tightens source provenance and adds the Python checks exercised by
 `security-gaps.md`. It does not solve general SAST precision.
 
+The repository replay counts, labels and runtime fingerprint below describe the
+frozen security implementation at `2621062e`, before integration with newer main
+changes. They are historical measurements, not fresh accuracy measurements of the
+merged implementation.
+
 The frozen implementation completed the original **26 pinned repository scans**
 with valid JSON and no timeout. All **12 original REAL cases remain detected**.
 Of the original **101 WRONG historical labels, 37 still appear as security
 claims**. The other 64 no longer do; some moved into explicit UNKNOWN diagnostics.
 That is a classification/provenance improvement, not proof that 64 operations
-are safe. These are matches against historical labels, not a fresh275-row
+are safe. These are matches against historical labels, not a fresh 275-row
 measurement. New unreviewed detections are excluded from those counts.
 
 The fresh PyPI 5.4.0 comparison produced usable code-security output for 24 of the
@@ -31,7 +36,7 @@ scripts were never executed; target dependencies were not installed.
 | Official PyPI 5.4.0 | 208 | 1 | 37 | 133 | 37 |
 | Frozen change | 160 | 1 | 26 | 97 | 36 |
 
-All217 union rows have per-row labels, trust-boundary reasoning, confidence,
+All 217 union rows have per-row labels, trust-boundary reasoning, confidence,
 limits and pinned source URLs/hashes in [labels.json](./labels.json). Related
 rules are separate rows. The same HTTPie TLS issue is retained; its visible
 impact is update-metadata integrity, not automatic installation or RCE.
@@ -91,6 +96,28 @@ checks with unrelated drift were not reported as passes.
 All scanned target source hashes and both frozen engine inventories remained
 unchanged. Each label binds to the pinned full file SHA256; no label is inferred
 from a rule ID alone. Runtime source fingerprint: `f70f090a629831d7da5bffa363dd049e4972ab87753abf4988f77918b3d7d055`.
+
+## Main integration validation
+
+Integration with main `a10d85d3` preserves its newer logging, native-provider,
+mutation and source-snapshot checks. A combined run across 101 test files
+completed with 3,868 passes and two expected failures. Its single failing core
+benchmark reproduced the same 13 Go case failures on exact main: the tracked Go
+binary predates source fixes. An offline build of main's Go source passes those
+13 cases and the merged core benchmark without changing expectations.
+
+Final urllib/source-prefilter checks pass 417 cases. A duplicated urllib audit
+hook was removed, and concatenated shared temporary paths now reach the new
+scanner. The frozen private contract registry remains blocked by reviewed
+version drift; that registry is not reported as passed. The replay counts and
+labels above remain bound to the earlier frozen implementation.
+
+Final SQL/Cosmos checks pass 178 cases. Selected pinned source replays retain
+the earlier path classifications and security detections. Both GraphRAG Cosmos
+query candidates remain present as UNKNOWN diagnostics with `safety_proven:
+false`; they are not silently lost or counted as confirmed vulnerabilities.
+These bounded static checks did not execute target code or repeat the full
+29-repository accuracy study.
 
 ## Original repository pins
 

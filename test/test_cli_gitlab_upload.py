@@ -189,7 +189,7 @@ def test_cli_delivery_status_is_visible_and_never_reuploads_saved_scan(
     assert "Scan saved." in stderr
     assert len(managed) == 1
     if reason == "plan_required":
-        assert "upgrade" in stderr and "setup" in stderr
+        assert "GitLab comments need the Workspace plan." in stderr
     elif expected == 2:
         assert reason in stderr
 

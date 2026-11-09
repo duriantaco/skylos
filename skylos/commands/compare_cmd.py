@@ -57,7 +57,7 @@ def _build_compare_parser() -> argparse.ArgumentParser:
         "--sca",
         action="store_true",
         help=(
-            "Opt in to bounded exact-pin direct-dependency OSV checks; "
+            "Opt in to OSV checks on dependency lockfiles and exact manifest pins; "
             "package/version metadata may be queried and full SCA category "
             "coverage is not claimed"
         ),
@@ -284,7 +284,7 @@ def _render_upload_result(
     message = f"Scanner Proof upload failed: {error}"
     upgrade_url = str(upload_result.get("upgrade_url") or "").strip()
     if upgrade_url:
-        message = f"{message}\nUpgrade Workspace Governance: {upgrade_url}"
+        message = f"{message}\nGet the Workspace plan: {upgrade_url}"
     if args.output_format == "json":
         print(message, file=sys.stderr)
     else:
@@ -354,19 +354,21 @@ def _run_local_scan(
     )
 
     from skylos.analyzer import analyze
+    from skylos.core.cli_shared import quiet_analyzer_logs
 
-    raw = analyze(
-        str(scan_path),
-        conf=confidence,
-        exclude_folders=exclude_folders or None,
-        enable_secrets=False,
-        enable_danger=True,
-        enable_quality=True,
-        enable_ai_defects=True,
-        enable_sca=enable_sca,
-        enable_dependency_hallucinations=False,
-        grep_cache=False,
-    )
+    with quiet_analyzer_logs():
+        raw = analyze(
+            str(scan_path),
+            conf=confidence,
+            exclude_folders=exclude_folders or None,
+            enable_secrets=False,
+            enable_danger=True,
+            enable_quality=True,
+            enable_ai_defects=True,
+            enable_sca=enable_sca,
+            enable_dependency_hallucinations=False,
+            grep_cache=False,
+        )
     (
         post_revision,
         post_worktree_dirty,

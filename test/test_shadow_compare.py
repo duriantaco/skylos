@@ -1483,7 +1483,7 @@ def test_compare_upload_failure_prints_upgrade_link(monkeypatch, tmp_path, capsy
     output = capsys.readouterr()
     assert exit_code == 2
     assert json.loads(output.out)["mode"] == "shadow"
-    assert "Upgrade Workspace Governance" in output.err
+    assert "Get the Workspace plan" in output.err
     assert "https://cloud.example/dashboard/billing" in output.err
 
 

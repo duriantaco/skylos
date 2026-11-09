@@ -402,10 +402,12 @@ def _attribute_source(
 
 
 def _argument_parser_names(
-    body: list[ast.AST], import_bindings: dict[str, str | None]
+    body: list[ast.AST], import_bindings: dict[str, str | None],
+    parser_factories=frozenset(), scope: ast.AST | None = None,
 ) -> set[str]:
     """Names whose assignments all construct a proven argparse parser."""
     assigned: dict[str, bool] = {}
+    factory_receivers: set[str] = set()
     for node in body:
         value, targets = _assign_parts(node)
         if value is None or not targets:
@@ -415,9 +417,121 @@ def _argument_parser_names(
         imported = import_bindings.get(head)
         canonical = f"{imported}.{tail}" if imported and tail else imported
         is_parser = canonical == "argparse.ArgumentParser"
+        is_factory = callee in parser_factories and not value.args and not value.keywords
         for target in targets:
-            assigned[target] = assigned.get(target, True) and is_parser
+            assigned[target] = assigned.get(target, True) and (is_parser or is_factory)
+            if is_factory:
+                factory_receivers.add(target)
+    # A factory result is new proof, so decline it if the parser escapes or
+    # gets configured/replaced after construction. Explicit argv/namespace
+    # remains unknown here: it can come from an HTTP caller, not the process.
+    if factory_receivers and scope is not None:
+        parents = {
+            id(child): parent for parent in ast.walk(scope)
+            for child in ast.iter_child_nodes(parent)
+        }
+        for node in ast.walk(scope):
+            if not isinstance(node, ast.Name) or node.id not in factory_receivers:
+                continue
+            if not isinstance(node.ctx, ast.Load):
+                continue
+            parent = parents.get(id(node))
+            call = parents.get(id(parent))
+            if not (
+                isinstance(parent, ast.Attribute) and parent.attr == "parse_args"
+                and isinstance(call, ast.Call) and call.func is parent
+                and not call.args and not call.keywords
+            ):
+                assigned[node.id] = False
     return {name for name, is_parser in assigned.items() if is_parser}
+
+
+def _plain_parser_factory(func, bindings, module_values):
+    """Prove one bounded factory shape, without trusting its name/annotation.
+
+    Custom actions/type callbacks, parser escapes, decorators and arbitrary
+    defaults can introduce data from outside argv. Leave those factories
+    unknown rather than granting them an operator-source label.
+    """
+    if not isinstance(func, ast.FunctionDef) or func.decorator_list or _params(func):
+        return False
+    statements = list(func.body)
+    if statements and isinstance(statements[0], ast.Expr) and isinstance(
+        statements[0].value, ast.Constant
+    ) and isinstance(statements[0].value.value, str):
+        statements = statements[1:]
+    if len(statements) < 2 or not isinstance(statements[-1], ast.Return):
+        return False
+    first = statements[0]
+    if not (
+        isinstance(first, ast.Assign) and len(first.targets) == 1
+        and isinstance(first.targets[0], ast.Name)
+        and isinstance(first.value, ast.Call)
+    ):
+        return False
+    receiver = first.targets[0].id
+    callee = _dotted(first.value.func)
+    head, _, tail = callee.partition(".")
+    imported = bindings.get(head)
+    canonical = f"{imported}.{tail}" if imported and tail else imported
+    if canonical != "argparse.ArgumentParser":
+        return False
+    if not isinstance(statements[-1].value, ast.Name) or statements[-1].value.id != receiver:
+        return False
+
+    def plain(value, depth=0):
+        if depth > 5:
+            return False
+        if isinstance(value, ast.Constant):
+            return isinstance(value.value, (str, int, float, bool, type(None)))
+        if isinstance(value, (ast.Tuple, ast.List, ast.Set)):
+            return all(plain(item, depth + 1) for item in value.elts)
+        if isinstance(value, ast.Name):
+            resolved = module_values.get(value.id)
+            # A module list can be mutated through append()/an escaped alias
+            # without rebinding its name. Only immutable literal constants
+            # are proof here; local literal choices/defaults are separate.
+            return immutable_literal(resolved, depth + 1)
+        return False
+
+    def immutable_literal(value, depth):
+        if depth > 5:
+            return False
+        if isinstance(value, ast.Constant):
+            return plain(value, depth)
+        if isinstance(value, ast.Tuple):
+            return all(immutable_literal(item, depth + 1) for item in value.elts)
+        if isinstance(value, ast.Name):
+            return immutable_literal(module_values.get(value.id), depth + 1)
+        return False
+
+    if any(not plain(arg) for arg in first.value.args) or any(
+        kw.arg is None or not plain(kw.value) for kw in first.value.keywords
+    ):
+        return False
+    for statement in statements[1:-1]:
+        if not (
+            isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call)
+            and isinstance(statement.value.func, ast.Attribute)
+            and isinstance(statement.value.func.value, ast.Name)
+            and statement.value.func.value.id == receiver
+            and statement.value.func.attr == "add_argument"
+        ):
+            return False
+        call = statement.value
+        if any(not plain(arg) for arg in call.args):
+            return False
+        for kw in call.keywords:
+            if kw.arg == "type":
+                if not (
+                    isinstance(kw.value, ast.Name)
+                    and kw.value.id in {"str", "int", "float", "bool"}
+                    and kw.value.id not in bindings
+                ):
+                    return False
+            elif kw.arg is None or not plain(kw.value):
+                return False
+    return True
 
 
 def _call_source(node: ast.Call, cli_parser_names=frozenset()) -> str | None:
@@ -538,6 +652,7 @@ class _FunctionSources:
         incoming: dict[str, list[str]] | None = None,
         traversal_incoming: dict[str, list[str]] | None = None,
         import_bindings: dict[str, str | None] | None = None,
+        parser_factories=frozenset(),
     ):
         self.func = func
         self.request_names: set[str] = set(REQUEST_NAMES)
@@ -561,7 +676,9 @@ class _FunctionSources:
             body = list(_module_level_nodes(func))
         elif module is not None:
             body = list(_module_level_nodes(module))
-        self.cli_parser_names = _argument_parser_names(body, self.import_bindings)
+        self.cli_parser_names = _argument_parser_names(
+            body, self.import_bindings, parser_factories, func or module
+        )
         for name, labels in (incoming or {}).items():
             self._merge_origin(self.origins, name, labels)
         for name, labels in (traversal_incoming or {}).items():
@@ -659,16 +776,170 @@ class UntrustedSourceIndex:
     """Caches per-function source facts for one file."""
 
     def __init__(
-        self, module: ast.AST | None = None, *, follow_local_calls: bool = False
+        self, module: ast.AST | None = None, *, follow_local_calls: bool = False,
+        prove_parser_factories: bool = False,
     ):
         self.module = module
         self.follow_local_calls = follow_local_calls
+        # Opt-in: only the SSRF operator-source distinction consumes this
+        # stronger parser proof. Other rule families retain their old facts.
+        self.prove_parser_factories = prove_parser_factories
+        self._parser_factories_cache: dict[int, frozenset[str]] = {}
+        self._module_parser_factory_cache: frozenset[str] | None = None
         self._cache: dict[int, _FunctionSources] = {}
         self._calls_indexed = False
         self._parents: dict[int, ast.AST] | None = None
         self._scope_bindings_cache: dict[int, dict[str, str | None]] = {}
         self._import_bindings_cache: dict[int, dict[str, str | None]] = {}
         self._unsafe_import_roots: tuple[set[str], bool] | None = None
+
+    def _parser_factories_for(self, func):
+        if not self.prove_parser_factories or self.module is None:
+            return frozenset()
+        key = id(func)
+        cached = self._parser_factories_cache.get(key)
+        if cached is not None:
+            return cached
+        factories = set(self._module_parser_factories())
+        if not factories:
+            self._parser_factories_cache[key] = frozenset()
+            return frozenset()
+        if func is not None:
+            if self._parents is None:
+                self._parents = {
+                    id(child): parent for parent in ast.walk(self.module)
+                    for child in ast.iter_child_nodes(parent)
+                }
+            current = func
+            while current is not None and current is not self.module:
+                if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    factories.difference_update(_scope_bindings(current))
+                current = self._parents.get(id(current))
+        result = frozenset(factories)
+        self._parser_factories_cache[key] = result
+        return result
+
+    def _module_parser_factories(self):
+        if self._module_parser_factory_cache is not None:
+            return self._module_parser_factory_cache
+        if self._unsafe_import_roots is None:
+            self._unsafe_import_roots = _unsafe_import_roots(self.module)
+        unsafe, computed = self._unsafe_import_roots
+        # Attribute/subscript mutation and dynamic namespace writes can alter
+        # argv, constructors, callbacks or factory bindings. Decline the proof.
+        if unsafe or computed:
+            self._module_parser_factory_cache = frozenset()
+            return frozenset()
+        definitions = {}
+        values = {}
+        competing = set()
+        for node in ast.walk(self.module):
+            if (
+                isinstance(node, ast.ImportFrom)
+                and any(
+                    alias.name == '*' or node.module == 'sys' and alias.name == 'argv'
+                    for alias in node.names
+                )
+            ) or (
+                isinstance(node, ast.Attribute) and node.attr == 'argv'
+            ) or (
+                isinstance(node, ast.Call)
+                and _dotted(node.func) in {
+                    'exec', 'eval', 'builtins.exec', 'builtins.eval',
+                    'globals', 'locals', 'vars',
+                }
+            ):
+                self._module_parser_factory_cache = frozenset()
+                return frozenset()
+            if isinstance(node, ast.Global):
+                competing.update(node.names)
+        for statement in self.module.body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if statement.decorator_list:
+                    self._module_parser_factory_cache = frozenset()
+                    return frozenset()
+                if statement.name in definitions or statement.name in values:
+                    competing.add(statement.name)
+                definitions[statement.name] = statement
+            elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                value, targets = _assign_parts(statement)
+                for name in targets:
+                    if name in values or name in definitions:
+                        competing.add(name)
+                    values[name] = value
+        # _module_level_nodes deliberately skips function/class definitions.
+        # A conditional second definition still rebinds the module name.
+        stack = list(self.module.body)
+        while stack:
+            node = stack.pop()
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if definitions.get(node.name) is not node:
+                    competing.add(node.name)
+                continue
+            stack.extend(ast.iter_child_nodes(node))
+        # Conditional/repeated bindings are not the single top-level value.
+        for node in _module_level_nodes(self.module):
+            value, targets = _assign_parts(node)
+            for name in targets:
+                if values.get(name) is not value:
+                    competing.add(name)
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    competing.add(alias.asname or alias.name.split('.', 1)[0])
+            if isinstance(node, ast.ExceptHandler) and node.name:
+                competing.add(node.name)
+            elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+                competing.add(node.name)
+            elif isinstance(node, ast.MatchMapping) and node.rest:
+                competing.add(node.rest)
+        stable_values = {name: value for name, value in values.items() if name not in competing}
+        factories = set()
+        for name, factory in definitions.items():
+            if name in competing:
+                continue
+            local = _scope_bindings(factory)
+            literals = {name: value for name, value in stable_values.items() if name not in local}
+            if _plain_parser_factory(factory, self._import_bindings_for(factory), literals):
+                factories.add(name)
+        if factories:
+            parents = {
+                id(child): parent for parent in ast.walk(self.module)
+                for child in ast.iter_child_nodes(parent)
+            }
+            imports = self._import_bindings_for(None)
+            protected = {
+                name: imported for name, imported in imports.items()
+                if imported in {'argparse', 'argparse.ArgumentParser'}
+            }
+            for node in ast.walk(self.module):
+                if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+                    continue
+                parent = parents.get(id(node))
+                if node.id in definitions:
+                    if not (isinstance(parent, ast.Call) and parent.func is node):
+                        # A function object exposes its module globals, so
+                        # leaking even another helper invalidates all proofs.
+                        factories.clear()
+                        break
+                if node.id not in protected:
+                    continue
+                referenced = node
+                if protected[node.id] == 'argparse':
+                    if not (
+                        isinstance(parent, ast.Attribute)
+                        and parent.attr in {'ArgumentParser', 'ArgumentTypeError'}
+                    ):
+                        factories.clear()
+                        break
+                    referenced = parent
+                    parent = parents.get(id(referenced))
+                if not (isinstance(parent, ast.Call) and parent.func is referenced):
+                    # Aliases, annotations and arguments can expose the
+                    # constructor/module to code that replaces its behavior.
+                    factories.clear()
+                    break
+        self._module_parser_factory_cache = frozenset(factories)
+        return self._module_parser_factory_cache
 
     def _import_bindings_for(self, func: ast.AST | None) -> dict[str, str | None]:
         if self.module is None:
@@ -824,7 +1095,8 @@ class UntrustedSourceIndex:
 
         facts = {
             id(func): _FunctionSources(
-                func, None, import_bindings=self._import_bindings_for(func)
+                func, None, import_bindings=self._import_bindings_for(func),
+                parser_factories=self._parser_factories_for(func),
             )
             for func in functions
         }
@@ -892,6 +1164,7 @@ class UntrustedSourceIndex:
                         incoming[fid],
                         traversal_incoming[fid],
                         import_bindings=self._import_bindings_for(func),
+                        parser_factories=self._parser_factories_for(func),
                     )
         self._cache.update(facts)
 
@@ -904,6 +1177,7 @@ class UntrustedSourceIndex:
                 func,
                 self.module if func is None else None,
                 import_bindings=self._import_bindings_for(func),
+                parser_factories=self._parser_factories_for(func),
             )
             self._cache[key] = facts
         return facts

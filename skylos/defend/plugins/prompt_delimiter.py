@@ -19,6 +19,8 @@ class PromptDelimiterPlugin(DefensePlugin):
     )
 
     def applies_to(self, integration: LLMIntegration) -> bool:
+        if integration.prompt_inputs:
+            return True
         return bool(integration.input_sources) and bool(integration.prompt_sites)
 
     def check(
@@ -31,6 +33,16 @@ class PromptDelimiterPlugin(DefensePlugin):
                 "User input is delimited in prompt template",
             )
 
+        undelimited = [
+            item.label for item in integration.prompt_inputs if not item.delimited
+        ]
+        if undelimited:
+            inputs = ", ".join(undelimited[:3])
+            return self._fail(
+                integration,
+                integration.location,
+                f"User input concatenated into prompt without delimiters: {inputs}",
+            )
         return self._fail(
             integration,
             integration.location,

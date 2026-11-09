@@ -1,0 +1,537 @@
+{
+  "version": 1,
+  "name": "Terraform AWS declaration policies",
+  "cases": [
+    {
+      "id": "aws-sg-world-ssh",
+      "path": "fixtures/aws_sg_world_ssh",
+      "description": "Literal worldwide IPv4 ingress permits TCP SSH.",
+      "languages": [
+        "hcl"
+      ],
+      "taxonomy": [
+        "terraform",
+        "aws"
+      ],
+      "expect": {
+        "checks": [
+          {
+            "rule_id": "SKY-D400",
+            "resource": "aws_security_group.admin",
+            "status": "unsafe"
+          }
+        ]
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only declaration policy fixture; no Terraform, provider, target code or cloud API is executed."
+      }
+    },
+    {
+      "id": "aws-sg-private-admin",
+      "path": "fixtures/aws_sg_private_admin",
+      "description": "Private-only source does not cover the entire address family.",
+      "languages": [
+        "hcl"
+      ],
+      "taxonomy": [
+        "terraform",
+        "aws"
+      ],
+      "expect": {
+        "checks": [
+          {
+            "rule_id": "SKY-D400",
+            "resource": "aws_security_group.admin",
+            "status": "safe"
+          }
+        ]
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only declaration policy fixture; no Terraform, provider, target code or cloud API is executed."
+      }
+    },
+    {
+      "id": "aws-sg-world-https",
+      "path": "fixtures/aws_sg_world_https",
+      "description": "Worldwide HTTPS alone does not permit SSH or RDP.",
+      "languages": [
+        "hcl"
+      ],
+      "taxonomy": [
+        "terraform",
+        "aws"
+      ],
+      "expect": {
+        "checks": [
+          {
+            "rule_id": "SKY-D400",
+            "resource": "aws_security_group_rule.web",
+            "status": "safe"
+          }
+        ]
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only declaration policy fixture; no Terraform, provider, target code or cloud API is executed."
+      }
+    },
+    {
+      "id": "aws-sg-egress-all",
+      "path": "fixtures/aws_sg_egress_all",
+      "description": "Outbound traffic is outside the administrative ingress policy.",
+      "languages": [
+        "hcl"
+      ],
+      "taxonomy": [
+        "terraform",
+        "aws"
+      ],
+      "expect": {
+        "checks": [
+          {
+            "rule_id": "SKY-D400",
+            "resource": "aws_security_group_rule.outbound",
+            "status": "not_applicable"
+          }
+        ]
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only declaration policy fixture; no Terraform, provider, target code or cloud API is executed."
+      }
+    },
+    {
+      "id": "aws-sg-ipv6-all",
+      "path": "fixtures/aws_sg_ipv6_all",
+      "description": "All-protocol worldwide IPv6 ingress includes SSH and RDP regardless of ports.",
+      "languages": [
+        "hcl"
+      ],
+      "taxonomy": [
+        "terraform",
+        "aws"
+      ],
+      "expect": {
+        "checks": [
+          {
+            "rule_id": "SKY-D400",
+            "resource": "aws_vpc_security_group_ingress_rule.admin",
+            "status": "unsafe"
+          }
+        ]
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only declaration policy fixture; no Terraform, provider, target code or cloud API is executed."
+      }
+    },
+    {
+      "id": "aws-sg-unknown-cidr",
+      "path": "fixtures/aws_sg_unknown_cidr",
+      "description": "Runtime variable source cannot prove broad or restricted ingress.",
+      "languages": [
+        "hcl"
+      ],
+      "taxonomy": [
+        "terraform",
+        "aws"
+      ],
+      "expect": {
+        "checks": [
+          {
+            "rule_id": "SKY-D400",
+            "resource": "aws_security_group_rule.admin",
+            "status": "unknown"
+          }
+        ]
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only declaration policy fixture; no Terraform, provider, target code or cloud API is executed."
+      }
+    },
+    {
+      "id": "aws-sg-world-mixed-unknown",
+      "path": "fixtures/aws_sg_world_mixed_unknown",
+      "description": "A known world source independently proves broad access despite another unresolved source.",
+      "languages": [
+        "hcl"
+      ],
+      "taxonomy": [
+        "terraform",
+        "aws"
+      ],
+      "expect": {
+        "checks": [
+          {
+            "rule_id": "SKY-D400",
+            "resource": "aws_security_group_rule.admin",
+            "status": "unsafe"
+          }
+        ]
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only declaration policy fixture; no Terraform, provider, target code or cloud API is executed."
+      }
+    },
+    {
+      "id": "aws-sg-split-world",
+      "path": "fixtures/aws_sg_split_world",
+      "description": "The union of two literal IPv4 halves is worldwide.",
+      "languages": [
+        "hcl"
+      ],
+      "taxonomy": [
+        "terraform",
+        "aws"
+      ],
+      "expect": {
+        "checks": [
+          {
+            "rule_id": "SKY-D400",
+            "resource": "aws_security_group_rule.admin",
+            "status": "unsafe"
+          }
+        ]
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only declaration policy fixture; no Terraform, provider, target code or cloud API is executed."
+      }
+    },
+    {
+      "id": "aws-rds-unencrypted",
+      "path": "fixtures/aws_rds_unencrypted",
+      "description": "A directly declared new DB explicitly disables storage encryption.",
+      "languages": [
+        "hcl"
+      ],
+      "taxonomy": [
+        "terraform",
+        "aws"
+      ],
+      "expect": {
+        "checks": [
+          {
+            "rule_id": "SKY-D401",
+            "resource": "aws_db_instance.database",
+            "status": "unsafe"
+          }
+        ]
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only declaration policy fixture; no Terraform, provider, target code or cloud API is executed."
+      }
+    },
+    {
+      "id": "aws-rds-encrypted-json",
+      "path": "fixtures/aws_rds_encrypted_json",
+      "description": "Structured Terraform JSON directly enables new-DB storage encryption.",
+      "languages": [
+        "hcl"
+      ],
+      "taxonomy": [
+        "terraform",
+        "aws"
+      ],
+      "expect": {
+        "checks": [
+          {
+            "rule_id": "SKY-D401",
+            "resource": "aws_db_instance.database",
+            "status": "safe"
+          }
+        ]
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only declaration policy fixture; no Terraform, provider, target code or cloud API is executed."
+      }
+    },
+    {
+      "id": "aws-rds-missing-encryption",
+      "path": "fixtures/aws_rds_missing_encryption",
+      "description": "The initial rule requires an explicit literal encryption decision; omission stays unknown.",
+      "languages": [
+        "hcl"
+      ],
+      "taxonomy": [
+        "terraform",
+        "aws"
+      ],
+      "expect": {
+        "checks": [
+          {
+            "rule_id": "SKY-D401",
+            "resource": "aws_db_instance.database",
+            "status": "unknown"
+          }
+        ]
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only declaration policy fixture; no Terraform, provider, target code or cloud API is executed."
+      }
+    },
+    {
+      "id": "aws-rds-snapshot",
+      "path": "fixtures/aws_rds_snapshot",
+      "description": "Restored storage encryption derives from snapshot context, not a direct new-DB declaration.",
+      "languages": [
+        "hcl"
+      ],
+      "taxonomy": [
+        "terraform",
+        "aws"
+      ],
+      "expect": {
+        "checks": [
+          {
+            "rule_id": "SKY-D401",
+            "resource": "aws_db_instance.database",
+            "status": "unknown"
+          }
+        ]
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only declaration policy fixture; no Terraform, provider, target code or cloud API is executed."
+      }
+    },
+    {
+      "id": "aws-rds-replica",
+      "path": "fixtures/aws_rds_replica",
+      "description": "Replica encryption can be inherited and storage_encrypted may be ignored.",
+      "languages": [
+        "hcl"
+      ],
+      "taxonomy": [
+        "terraform",
+        "aws"
+      ],
+      "expect": {
+        "checks": [
+          {
+            "rule_id": "SKY-D401",
+            "resource": "aws_db_instance.database",
+            "status": "unknown"
+          }
+        ]
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only declaration policy fixture; no Terraform, provider, target code or cloud API is executed."
+      }
+    },
+    {
+      "id": "aws-provider-unresolved",
+      "path": "fixtures/aws_provider_unresolved",
+      "description": "An unresolved provider alias does not prove official AWS semantics.",
+      "languages": [
+        "hcl"
+      ],
+      "taxonomy": [
+        "terraform",
+        "aws"
+      ],
+      "expect": {
+        "checks": [
+          {
+            "rule_id": "SKY-D401",
+            "resource": "aws_db_instance.database",
+            "status": "unknown"
+          }
+        ]
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only declaration policy fixture; no Terraform, provider, target code or cloud API is executed."
+      }
+    },
+    {
+      "id": "aws-count-zero",
+      "path": "fixtures/aws_count_zero",
+      "description": "Literal zero count creates no instances.",
+      "languages": [
+        "hcl"
+      ],
+      "taxonomy": [
+        "terraform",
+        "aws"
+      ],
+      "expect": {
+        "checks": [
+          {
+            "rule_id": "SKY-D401",
+            "resource": "aws_db_instance.database",
+            "status": "not_applicable"
+          }
+        ]
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only declaration policy fixture; no Terraform, provider, target code or cloud API is executed."
+      }
+    },
+    {
+      "id": "aws-malformed",
+      "path": "fixtures/aws_malformed",
+      "description": "Malformed input must produce a parse error and cannot earn safe credit.",
+      "languages": [
+        "hcl"
+      ],
+      "taxonomy": [
+        "terraform",
+        "aws"
+      ],
+      "expect": {
+        "parse_status": "incomplete",
+        "checks": []
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only declaration policy fixture; no Terraform, provider, target code or cloud API is executed."
+      }
+    },
+    {
+      "id": "aws-rds-sibling-local-unsafe",
+      "path": "fixtures/aws_rds_sibling_local_unsafe",
+      "description": "A bounded sibling-file literal local is resolved, while a local holding an input variable remains unknown even with a safe default.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source context/format contract, labelled before native analysis. No Terraform or provider code is executed."
+      },
+      "expect": {
+        "parse_status": "complete",
+        "checks": [
+          {
+            "rule_id": "SKY-D401",
+            "resource": "aws_db_instance.db",
+            "status": "unsafe"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws-rds-sibling-local-safe",
+      "path": "fixtures/aws_rds_sibling_local_safe",
+      "description": "A bounded sibling-file literal local is resolved, while a local holding an input variable remains unknown even with a safe default.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source context/format contract, labelled before native analysis. No Terraform or provider code is executed."
+      },
+      "expect": {
+        "parse_status": "complete",
+        "checks": [
+          {
+            "rule_id": "SKY-D401",
+            "resource": "aws_db_instance.db",
+            "status": "safe"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws-rds-sibling-local-variable-default",
+      "path": "fixtures/aws_rds_sibling_local_variable_default",
+      "description": "A bounded sibling-file literal local is resolved, while a local holding an input variable remains unknown even with a safe default.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source context/format contract, labelled before native analysis. No Terraform or provider code is executed."
+      },
+      "expect": {
+        "parse_status": "complete",
+        "checks": [
+          {
+            "rule_id": "SKY-D401",
+            "resource": "aws_db_instance.db",
+            "status": "unknown"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws-modern-ingress-json-unsafe",
+      "path": "fixtures/aws_modern_ingress_json_unsafe",
+      "description": "Literal modern-ingress policy semantics must survive the TFJSON format; quoted ports remain explicit unsupported model values rather than safe credit.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source context/format contract, labelled before native analysis. No Terraform or provider code is executed."
+      },
+      "expect": {
+        "parse_status": "complete",
+        "checks": [
+          {
+            "rule_id": "SKY-D400",
+            "resource": "aws_vpc_security_group_ingress_rule.admin",
+            "status": "unsafe"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws-modern-ingress-json-safe",
+      "path": "fixtures/aws_modern_ingress_json_safe",
+      "description": "Literal modern-ingress policy semantics must survive the TFJSON format; quoted ports remain explicit unsupported model values rather than safe credit.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source context/format contract, labelled before native analysis. No Terraform or provider code is executed."
+      },
+      "expect": {
+        "parse_status": "complete",
+        "checks": [
+          {
+            "rule_id": "SKY-D400",
+            "resource": "aws_vpc_security_group_ingress_rule.admin",
+            "status": "safe"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws-modern-ingress-json-numeric-string",
+      "path": "fixtures/aws_modern_ingress_json_numeric_string",
+      "description": "Literal modern-ingress policy semantics must survive the TFJSON format; quoted ports remain explicit unsupported model values rather than safe credit.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source context/format contract, labelled before native analysis. No Terraform or provider code is executed."
+      },
+      "expect": {
+        "parse_status": "complete",
+        "checks": [
+          {
+            "rule_id": "SKY-D400",
+            "resource": "aws_vpc_security_group_ingress_rule.admin",
+            "status": "unknown"
+          }
+        ]
+      }
+    }
+  ]
+}

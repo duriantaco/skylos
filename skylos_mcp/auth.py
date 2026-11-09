@@ -26,6 +26,8 @@ TOOL_CREDIT_MAP: dict[str, str] = {
 
 UNAUTHENTICATED_TOOLS = {"analyze"}
 
+LOCAL_TOOLS = frozenset({"change_map", "graph_find", "graph_show", "graph_impact", "graph_areas", "graph_relevant", "graph_pending", "graph_describe"})
+
 UNAUTH_DAILY_LIMIT = 5
 UNAUTH_WINDOW_SECONDS = 86400
 MCP_CLIENT_TOKEN_ENV = "SKYLOS_MCP_TOKEN"
@@ -260,8 +262,9 @@ def check_tool_access(tool_name: str) -> tuple[bool, str]:
                 f"Tool '{tool_name}' requires authentication. "
                 f"Set the SKYLOS_API_KEY environment variable for this MCP server "
                 f"(create a key at {CLOUD_BASE_URL}/dashboard/settings). "
-                f"Without a key only 'analyze' is available "
-                f"({UNAUTH_DAILY_LIMIT} calls/day). No key is needed for the local "
+                f"Without a key, 'analyze' is available "
+                f"({UNAUTH_DAILY_LIMIT} calls/day) and the local map tools "
+                f"('change_map' and the 'graph_*' tools) have no limit. No key is needed for the local "
                 f"CLI: `skylos verify <file>` and `skylos agent install-hooks` "
                 f"run fully locally.",
             )
@@ -281,6 +284,14 @@ def check_tool_access(tool_name: str) -> tuple[bool, str]:
         )
 
     return (True, "")
+
+
+def record_uncharged_call(tool_name: str) -> None:
+    session = get_session()
+    if not session.authenticated:
+        session.record_unauth_call()
+        return
+    session.record_call(tool_name)
 
 
 def deduct_credits(tool_name: str) -> tuple[bool, str]:

@@ -4,6 +4,12 @@ from typing import Any, Optional, NamedTuple
 from skylos.constants import PENALTIES, get_non_library_dir_kind, is_test_path
 from skylos.config import is_whitelisted
 from skylos.deadcode.config_entrypoints import configured_entrypoint_reason
+from skylos.deadcode._reachability_bindings import bound_names
+from skylos.deadcode.django_hook_proofs import (
+    django_clean_field,
+    django_hook_ancestry,
+    django_method_hook,
+)
 from skylos.analysis.known_patterns import (
     HARD_ENTRYPOINTS,
     PYTEST_HOOKS,
@@ -275,11 +281,6 @@ _DJANGO_URLCONF_HANDLER_VARS = {
     "handler500",
 }
 
-_DJANGO_PATH_CONVERTER_METHODS = {
-    "to_python",
-    "to_url",
-}
-
 _GUNICORN_CONFIG_SETTINGS = {
     "access_log_format",
     "accesslog",
@@ -432,6 +433,16 @@ _NOQA_DEAD_CODE_CODES_BY_TYPE = {
     "variable": {"F841"},
     "constant": {"F841"},
 }
+DEAD_CODE_RULE_BY_TYPE = {
+    "function": "SKY-U001",
+    "method": "SKY-U001",
+    "import": "SKY-U002",
+    "variable": "SKY-U003",
+    "constant": "SKY-U003",
+    "class": "SKY-U004",
+    "type": "SKY-U004",
+    "parameter": "SKY-U006",
+}
 
 
 def _suppress(def_obj, reason=None, code=None, folder_role=None):
@@ -518,6 +529,12 @@ def _check_inline_ignore(def_obj, visitor):
     ignore_lines = _coerce_line_set(getattr(visitor, "ignore_lines", None), -1)
     if suppression_lines & ignore_lines:
         return _suppress(def_obj, "inline ignore comment")
+    rule_id = DEAD_CODE_RULE_BY_TYPE.get(def_obj.type)
+    ignore_rules_by_line = getattr(visitor, "ignore_rules_by_line", None)
+    if rule_id and isinstance(ignore_rules_by_line, dict):
+        for line in suppression_lines:
+            if rule_id in ignore_rules_by_line.get(line, ()):
+                return _suppress(def_obj, "inline ignore comment", code=rule_id)
     noqa_codes_by_line = getattr(visitor, "noqa_codes_by_line", None) or {}
     if not isinstance(noqa_codes_by_line, dict):
         noqa_codes_by_line = {}
@@ -606,6 +623,8 @@ def _check_non_library_path(def_obj, analyzer, cfg):
         getattr(analyzer, "_project_root", None),
         extra_dirs=extra_dirs,
     )
+    if non_library_kind == "test" and _proven_go_test_helper(def_obj, analyzer, cfg):
+        return None
     if non_library_kind and def_obj.type in (
         "function",
         "method",
@@ -624,7 +643,39 @@ def _check_non_library_path(def_obj, analyzer, cfg):
     return None
 
 
+def _proven_go_test_helper(def_obj, analyzer, cfg):
+    if (
+        not getattr(def_obj, "go_proven_unused_test_helper", False)
+        or def_obj.type != "function"
+        or def_obj.is_exported
+        or not str(def_obj.filename).endswith("_test.go")
+    ):
+        return False
+    try:
+        directories = Path(def_obj.filename).resolve().relative_to(
+            Path(analyzer._project_root).resolve()
+        ).parts[:-1]
+    except (AttributeError, TypeError, ValueError, OSError):
+        return False
+    extra_dirs = {
+        folder.lower() for folder in ((cfg or {}).get("non_library_dirs") or {})
+    }
+    for directory in directories:
+        if directory.lower() in extra_dirs or directory.lower() in {
+            "doc", "docs", "documentation"
+        }:
+            return False
+        role = get_non_library_dir_kind(Path(directory) / "source.go")
+        if role is not None and role != "test":
+            return False
+    return True
+
+
 def _check_framework_decorations(def_obj, framework):
+    if def_obj.type == "parameter" and def_obj.line in getattr(
+        framework, "fastapi_candidate_lines", ()
+    ):
+        return None
     if def_obj.line in getattr(framework, "framework_decorated_lines", set()):
         return _suppress(def_obj)
     return None
@@ -681,53 +732,20 @@ def _parent_simple_name(def_obj):
     return parent.split(".")[-1]
 
 
-def _class_declares_django_path_converter_protocol(analyzer, class_name):
-    has_regex = False
-    has_to_python = False
-    has_to_url = False
-
-    for candidate in getattr(analyzer, "defs", {}).values():
-        if "." not in str(getattr(candidate, "name", "")):
-            continue
-        if _parent_simple_name(candidate) != class_name:
-            continue
-        if candidate.type == "variable" and candidate.simple_name == "regex":
-            has_regex = True
-        elif candidate.type == "method" and candidate.simple_name == "to_python":
-            has_to_python = True
-        elif candidate.type == "method" and candidate.simple_name == "to_url":
-            has_to_url = True
-
-    return has_regex and has_to_python and has_to_url
-
-
 def _check_django_path_converter(def_obj, analyzer, framework):
-    converter_classes = set(
-        getattr(analyzer, "_global_django_path_converter_classes", set())
-    )
-    converter_classes.update(getattr(framework, "django_path_converter_classes", set()))
+    converter_classes = getattr(analyzer, "_global_django_path_converter_classes", set())
     if not converter_classes:
         return None
-
-    if def_obj.type == "class":
-        class_name = def_obj.simple_name
-    else:
-        class_name = _parent_simple_name(def_obj)
-    if class_name not in converter_classes:
+    if def_obj.type != "class" and not (
+        def_obj.type == "variable" and def_obj.simple_name == "regex"
+    ):
         return None
-    if not _class_declares_django_path_converter_protocol(analyzer, class_name):
+    key = str(Path(def_obj.filename).resolve()), def_obj.name
+    if key not in converter_classes:
         return None
-
     if def_obj.type == "class":
         return _suppress(def_obj, "Django path converter class")
-    if def_obj.type == "variable" and def_obj.simple_name == "regex":
-        return _suppress(def_obj, "Django path converter regex")
-    if (
-        def_obj.type == "method"
-        and def_obj.simple_name in _DJANGO_PATH_CONVERTER_METHODS
-    ):
-        return _suppress(def_obj, "Django path converter method")
-    return None
+    return _suppress(def_obj, "Django path converter regex")
 
 
 def _is_gunicorn_config_path(filename):
@@ -757,7 +775,7 @@ def _check_gunicorn_config(def_obj):
     return None
 
 
-def _check_django_drf_structural(def_obj, framework):
+def _check_django_drf_structural(def_obj, framework, analyzer=None):
     detected = getattr(framework, "detected_frameworks", set())
     simple_name = def_obj.simple_name
     _DJANGO_DRF_FRAMEWORKS = {
@@ -785,6 +803,17 @@ def _check_django_drf_structural(def_obj, framework):
         parent = def_obj.name.rsplit(".", 1)[0].split(".")[-1]
         for base in _class_base_names(parent, framework):
             if simple_name in _FRAMEWORK_CLASS_ATTRS.get(base, ()):
+                family = None
+                if base in DJANGO_MODEL_BASES:
+                    family = "model"
+                elif base in DJANGO_FORM_BASES:
+                    family = "form"
+                elif base in DJANGO_COMMAND_BASES:
+                    family = "command"
+                if family is not None and django_hook_ancestry(
+                    def_obj, analyzer, family
+                ) is False:
+                    continue
                 return _suppress(def_obj, f"{base} attribute read by the framework")
 
     if def_obj.type == "class" and (
@@ -813,20 +842,35 @@ def _check_django_drf_structural(def_obj, framework):
             return _suppress(def_obj)
 
     if def_obj.type == "variable" and simple_name in _DJANGO_COMMAND_ATTRS:
-        if _name_parent_has_base(def_obj, DJANGO_COMMAND_BASES, framework):
+        status = django_hook_ancestry(def_obj, analyzer, "command")
+        if status is True or (
+            status is None
+            and _name_parent_has_base(def_obj, DJANGO_COMMAND_BASES, framework)
+        ):
             return _suppress(def_obj, "Django management command attribute")
 
     if def_obj.type == "class":
         class_bases = _class_base_names(simple_name, framework)
 
+        proven_families = {
+            family: django_hook_ancestry(def_obj, analyzer, family)
+            for family in ("model", "form", "command")
+        }
+        if True in proven_families.values():
+            return _suppress(def_obj, "Django framework class")
+
+        legacy_bases = DJANGO_VIEW_BASES | DJANGO_ADMIN_BASES | DJANGO_APPCONFIG_BASES | DJANGO_MIDDLEWARE_BASES
+        uncertain_bases = set()
+        for family, bases in (
+            ("model", DJANGO_MODEL_BASES),
+            ("form", DJANGO_FORM_BASES),
+            ("command", DJANGO_COMMAND_BASES),
+        ):
+            if proven_families[family] is None:
+                uncertain_bases.update(bases)
+
         if "django" in detected and class_bases.intersection(
-            DJANGO_MODEL_BASES
-            | DJANGO_VIEW_BASES
-            | DJANGO_ADMIN_BASES
-            | DJANGO_FORM_BASES
-            | DJANGO_COMMAND_BASES
-            | DJANGO_APPCONFIG_BASES
-            | DJANGO_MIDDLEWARE_BASES
+            legacy_bases | uncertain_bases
         ):
             return _suppress(def_obj, "Django framework class")
 
@@ -867,39 +911,55 @@ def _is_django_migration_class(def_obj, framework):
 
 def _check_django_methods(def_obj, framework, analyzer=None):
     detected = getattr(framework, "detected_frameworks", set())
-    if "django" not in detected:
-        return None
-
     simple_name = def_obj.simple_name
 
     _DJANGO_CHECKS = [
-        (DJANGO_MODEL_METHODS, DJANGO_MODEL_BASES),
-        (DJANGO_VIEW_METHODS, DJANGO_VIEW_BASES),
-        (DJANGO_ADMIN_METHODS, DJANGO_ADMIN_BASES),
-        (DJANGO_FORM_METHODS, DJANGO_FORM_BASES),
-        (DJANGO_COMMAND_METHODS, DJANGO_COMMAND_BASES),
-        (DJANGO_APPCONFIG_METHODS, DJANGO_APPCONFIG_BASES),
-        (DJANGO_MIDDLEWARE_METHODS, DJANGO_MIDDLEWARE_BASES),
+        (DJANGO_MODEL_METHODS, DJANGO_MODEL_BASES, "model"),
+        (DJANGO_VIEW_METHODS, DJANGO_VIEW_BASES, None),
+        (DJANGO_ADMIN_METHODS, DJANGO_ADMIN_BASES, None),
+        (DJANGO_FORM_METHODS, DJANGO_FORM_BASES, "form"),
+        (DJANGO_COMMAND_METHODS, DJANGO_COMMAND_BASES, "command"),
+        (DJANGO_APPCONFIG_METHODS, DJANGO_APPCONFIG_BASES, None),
+        (DJANGO_MIDDLEWARE_METHODS, DJANGO_MIDDLEWARE_BASES, None),
     ]
 
-    for methods, bases in _DJANGO_CHECKS:
-        if simple_name in methods and has_base_class(def_obj, bases, framework):
+    for methods, bases, family in _DJANGO_CHECKS:
+        if simple_name not in methods or def_obj.type != "method":
+            continue
+        status = None
+        if family is not None:
+            status = django_method_hook(def_obj, analyzer)
+        if status is True:
+            return _suppress(def_obj, "Django framework hook")
+        if status is False:
+            continue
+        if "django" in detected and has_base_class(def_obj, bases, framework):
+            return _suppress(def_obj)
+
+    if def_obj.type == "method" and simple_name.startswith("clean_"):
+        status = django_hook_ancestry(def_obj, analyzer, "form")
+        if status is True:
+            if django_clean_field(def_obj, analyzer) is not False:
+                return _suppress(def_obj, "Django form field cleaning hook")
+        elif status is None and "django" in detected and has_base_class(
+            def_obj, DJANGO_FORM_BASES, framework
+        ):
             return _suppress(def_obj)
 
     if def_obj.type == "parameter" and "." in def_obj.name:
         parts = def_obj.name.split(".")
         parent_method = parts[-2] if len(parts) >= 2 else ""
-        if parent_method in DJANGO_COMMAND_METHODS and _name_parent_has_base(
-            def_obj,
-            DJANGO_COMMAND_BASES,
-            framework,
-        ):
-            return _suppress(def_obj, "Django management command parameter")
+        if parent_method in DJANGO_COMMAND_METHODS:
+            status = django_hook_ancestry(def_obj, analyzer, "command")
+            if status is True:
+                return _suppress(def_obj, "Django management command parameter")
+            if status is None and "django" in detected and _name_parent_has_base(
+                def_obj, DJANGO_COMMAND_BASES, framework
+            ):
+                return _suppress(def_obj, "Django management command parameter")
 
-    if simple_name.startswith("clean_") and has_base_class(
-        def_obj, DJANGO_FORM_BASES, framework
-    ):
-        return _suppress(def_obj)
+    if "django" not in detected:
+        return None
 
     if def_obj.type == "variable" and simple_name in _ADMIN_ATTRS:
         if "." in def_obj.name:
@@ -940,6 +1000,88 @@ def _check_django_methods(def_obj, framework, analyzer=None):
     ):
         return _suppress(def_obj)
 
+    return None
+
+
+def _drf_validation_field_is_declared(def_obj, graph, owner):
+    field_name = def_obj.simple_name.removeprefix("validate_")
+    ancestors, _ = graph.ancestry(owner)
+    for candidate in (owner, *ancestors):
+        node = getattr(candidate, "node", None)
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for statement in reversed(node.body):
+            if isinstance(statement, ast.Assign):
+                targets, value = statement.targets, statement.value
+            elif isinstance(statement, ast.AnnAssign):
+                targets, value = [statement.target], statement.value
+            else:
+                targets, value = (), None
+            if not any(
+                isinstance(target, ast.Name) and target.id == field_name
+                for target in targets
+            ):
+                if field_name in bound_names([statement]).counts:
+                    return False
+                continue
+            if not isinstance(value, ast.Call) or not isinstance(
+                value.func, (ast.Name, ast.Attribute)
+            ):
+                return False
+            reference = ast.unparse(value.func)
+            root = reference.split(".", 1)[0]
+            if root in bound_names(node.body[: node.body.index(statement)]).counts:
+                return False
+            module = candidate.name.rsplit(".", 1)[0]
+            while getattr(graph.defs.get(module), "type", None) == "class":
+                module = module.rsplit(".", 1)[0]
+            binding = graph.defs.get(f"{module}.{root}")
+            if binding is not None and binding.type != "import":
+                return False
+            provider = graph.resolve_reference(candidate.filename, reference)
+            return provider.startswith(
+                (
+                    "rest_framework.serializers.",
+                    "rest_framework.fields.",
+                    "rest_framework.relations.",
+                )
+            ) and provider.rsplit(".", 1)[-1].endswith("Field")
+    return False
+
+
+def _drf_dispatch_hook_reason(def_obj, analyzer):
+    """Prove DRF dispatch separately from a method's reporting confidence."""
+    if def_obj.type != "method":
+        return None
+    name = def_obj.simple_name
+    serializer_hook = name in DRF_SERIALIZER_METHODS or name.startswith("validate_")
+    roles = []
+    if serializer_hook:
+        roles.append((DRF_SERIALIZER_BASES, "DRF serializer hook"))
+    if name in DRF_VIEWSET_METHODS:
+        roles.append((DRF_VIEWSET_BASES, "DRF view hook"))
+    if name in DRF_PERMISSION_METHODS:
+        roles.append((DRF_PERMISSION_BASES, "DRF permission hook"))
+    if name in _DRF_BACKEND_METHODS:
+        roles.append((_DRF_BACKEND_BASES, "DRF backend hook"))
+    if not roles:
+        return None
+    graph = project_class_graph(analyzer)
+    owner = graph.owner_class(def_obj)
+    if owner is None:
+        return None
+    _, external = graph.ancestry(owner)
+    for qualified in external:
+        if not qualified.startswith("rest_framework."):
+            continue
+        base = qualified.rsplit(".", 1)[-1]
+        for bases, reason in roles:
+            if base in bases:
+                if name.startswith(
+                    "validate_"
+                ) and not _drf_validation_field_is_declared(def_obj, graph, owner):
+                    continue
+                return reason
     return None
 
 
@@ -1351,6 +1493,13 @@ def _check_dependency_injected_parameter(def_obj, analyzer, framework):
     if def_obj.type != "parameter":
         return None
     key = (def_obj.line, def_obj.simple_name)
+    if key in getattr(framework, "fastapi_callback_parameters", ()):
+        return _suppress(def_obj, "FastAPI callback parameter")
+    precise = getattr(framework, "fastapi_dependency_parameters", None)
+    if precise is not None:
+        if key in precise:
+            return _suppress(def_obj, "FastAPI dependency parameter (Depends/Security)")
+        return None
     if key in getattr(framework, "dependency_injected_params", set()):
         return _suppress(def_obj, "FastAPI dependency parameter (Depends/Security)")
     alias = getattr(framework, "param_annotation_aliases", {}).get(key)
@@ -1410,6 +1559,13 @@ def _check_settings_config(def_obj):
         if attr.isupper() or not attr.startswith("_"):
             return _suppress(def_obj)
     return None
+
+
+def _is_function_local(def_obj, analyzer):
+    if "." not in def_obj.name:
+        return False
+    owner = analyzer.defs.get(def_obj.name.rsplit(".", 1)[0])
+    return owner is not None and owner.type in ("function", "method")
 
 
 def _check_data_model_fields(def_obj, analyzer, framework):
@@ -1524,7 +1680,20 @@ def _check_data_model_fields(def_obj, analyzer, framework):
         if fr is not None and fr >= def_obj.line:
             return _suppress(def_obj)
 
-    if def_obj.type == "variable" and "." in def_obj.name:
+    if def_obj.type == "variable" and _is_function_local(def_obj, analyzer):
+        owner = def_obj.name.rsplit(".", 1)[0]
+        if owner in getattr(framework, "dynamic_local_functions", ()):
+            return _suppress(def_obj, "function reads its locals dynamically")
+        return None
+
+    if (
+        def_obj.type == "variable"
+        and "." in def_obj.name
+        and def_obj.name not in getattr(analyzer, "_module_variable_names", ())
+        # These visitors resolve reads against the declared member owner.
+        # A same-named field on another type is not a read of this field.
+        and not str(def_obj.filename).endswith((".dart", ".cs"))
+    ):
         _, attr = def_obj.name.rsplit(".", 1)
         dotted_variable_counts = getattr(
             analyzer, "_dotted_variable_simple_name_counts", None
@@ -1709,10 +1878,15 @@ def apply_penalties(
     if _check_django_path_converter(def_obj, analyzer, framework) is True:
         return
 
-    if _check_django_drf_structural(def_obj, framework) is True:
+    if _check_django_drf_structural(def_obj, framework, analyzer) is True:
         return
 
     if _check_django_methods(def_obj, framework, analyzer) is True:
+        return
+
+    drf_dispatch_reason = _drf_dispatch_hook_reason(def_obj, analyzer)
+    if drf_dispatch_reason is not None:
+        _suppress(def_obj, drf_dispatch_reason, code="drf_hook")
         return
 
     if _check_drf_methods(def_obj, framework) is True:

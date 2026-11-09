@@ -25,12 +25,6 @@ _QUERY_CACHE: dict[tuple[int, str], Query] = {}
 
 _SIMPLE_PATTERN = """
 (method_invocation
-  object: (identifier) @rt_obj
-  name: (identifier) @rt_method
-  (#eq? @rt_obj "Runtime")
-  (#eq? @rt_method "exec"))
-
-(method_invocation
   name: (identifier) @exec_method
   (#eq? @exec_method "exec")
   arguments: (argument_list) @exec_args)
@@ -220,6 +214,14 @@ _JAVA_SQL_SINK_ARGS = {
     ".executeUpdate(": (0,),
     ".execute(": (0,),
 }
+_JAVA_LDAP_RECEIVER_HINT = re.compile(
+    r"\b(?:ctx|context|dirContext|ldapContext|ldapTemplate|ldap)\s*\.\s*search\s*\(",
+    re.IGNORECASE,
+)
+_JAVA_XPATH_RECEIVER_HINT = re.compile(
+    r"(?:\bxpath\s*\.|newXPath\s*\(\s*\)\s*\.)\s*(?:evaluate|compile)\s*\(",
+    re.IGNORECASE,
+)
 _JAVA_LDAP_SINK_ARGS = {
     ".search(": (1,),
 }
@@ -249,6 +251,7 @@ _SECRET_PREFIXES = (
 )
 
 _SQL_KEYWORDS = ("SELECT", "INSERT", "UPDATE", "DELETE", "DROP")
+
 
 def _base64_alphabet(extra: str) -> str:
     return string.ascii_uppercase + string.ascii_lowercase + string.digits + extra
@@ -1632,28 +1635,34 @@ def _scan_servlet_security_flows(
                         cwe="CWE-89",
                     )
 
-            if ".search(" in stripped and expr_tainted(stripped):
+            if (
+                ".search(" in stripped
+                and _JAVA_LDAP_RECEIVER_HINT.search(statement_text)
+                and expr_tainted(stripped)
+            ):
                 _add_java_flow_finding(
                     findings,
                     seen,
-                    rule_id="SKY-D240",
+                    rule_id="SKY-D239",
                     severity="CRITICAL",
-                    message="LDAP search filter uses servlet-controlled data. Escape LDAP filter values or use safe APIs.",
+                    message="LDAP query uses servlet-controlled data. Escape LDAP filter and DN values or use a fixed filter with encoded arguments.",
                     file_path=file_path,
                     line=line_no,
                     category="ldap_injection",
                     cwe="CWE-90",
                 )
 
-            if (".evaluate(" in stripped or ".compile(" in stripped) and expr_tainted(
-                stripped
+            if (
+                (".evaluate(" in stripped or ".compile(" in stripped)
+                and _JAVA_XPATH_RECEIVER_HINT.search(statement_text)
+                and expr_tainted(stripped)
             ):
                 _add_java_flow_finding(
                     findings,
                     seen,
-                    rule_id="SKY-D241",
+                    rule_id="SKY-D229",
                     severity="CRITICAL",
-                    message="XPath expression uses servlet-controlled data. Use fixed expressions or strict allowlists.",
+                    message="XPath expression uses servlet-controlled data. Use fixed expressions with XPath variables or strict allowlists.",
                     file_path=file_path,
                     line=line_no,
                     category="xpath_injection",
@@ -1698,6 +1707,165 @@ def _scan_servlet_security_flows(
     return findings
 
 
+_RUNTIME_RECEIVERS = {"Runtime", "java.lang.Runtime"}
+_CALLABLE_BODIES = {"method_declaration", "constructor_declaration"}
+_UNSAFE_JSON_TYPE_IDS = {"CLASS", "MINIMAL_CLASS"}
+
+
+def _inside_callable_body(node) -> bool:
+    current = node.parent
+    while current is not None:
+        if current.type in _CALLABLE_BODIES:
+            return True
+        current = current.parent
+    return False
+
+
+def _object_input_stream_findings(nodes: list, file_path: str) -> list[dict]:
+    return [
+        {
+            "rule_id": "SKY-D204",
+            "severity": "HIGH",
+            "message": "ObjectInputStream deserializes data without a class filter. Use a data-only format or set an ObjectInputFilter allowlist.",
+            "file": str(file_path),
+            "line": node.start_point[0] + 1,
+            "col": 0,
+            "cwe": "CWE-502",
+        }
+        for node in nodes
+    ]
+
+
+def _runtime_declared_names(call, source_bytes: bytes) -> set[str]:
+    scope = call.parent
+    while scope is not None and scope.type not in {
+        "class_body",
+        "enum_body",
+        "program",
+    }:
+        scope = scope.parent
+    names = set()
+    if scope is None:
+        scope = call
+    for child in _iter_nodes(scope):
+        if child.type not in {
+            "local_variable_declaration",
+            "field_declaration",
+            "formal_parameter",
+        }:
+            continue
+        type_node = child.child_by_field_name("type")
+        if (
+            type_node is None
+            or _get_text(source_bytes, type_node) not in _RUNTIME_RECEIVERS
+        ):
+            continue
+        if child.type == "formal_parameter":
+            name_node = child.child_by_field_name("name")
+            if name_node is not None:
+                names.add(_get_text(source_bytes, name_node))
+            continue
+        for declarator in child.children:
+            if declarator.type == "variable_declarator":
+                name_node = declarator.child_by_field_name("name")
+                if name_node is not None:
+                    names.add(_get_text(source_bytes, name_node))
+    return names
+
+
+def _is_runtime_receiver(call, source_bytes: bytes) -> bool:
+    receiver = call.child_by_field_name("object")
+    while receiver is not None and receiver.type == "parenthesized_expression":
+        children = receiver.named_children
+        receiver = None
+        if children:
+            receiver = children[0]
+    if receiver is None:
+        return False
+    if receiver.type == "method_invocation":
+        name = receiver.child_by_field_name("name")
+        owner = receiver.child_by_field_name("object")
+        return (
+            name is not None
+            and _get_text(source_bytes, name) == "getRuntime"
+            and owner is not None
+            and _get_text(source_bytes, owner) in _RUNTIME_RECEIVERS
+        )
+    if receiver.type == "identifier":
+        return _get_text(source_bytes, receiver) in _runtime_declared_names(
+            call, source_bytes
+        )
+    return False
+
+
+def _exec_args_are_constant(call) -> bool:
+    args = call.child_by_field_name("arguments")
+    if args is None:
+        return False
+    values = [
+        child
+        for child in args.named_children
+        if child.type not in {"line_comment", "block_comment"}
+    ]
+    if len(values) != 1:
+        return False
+    command = values[0]
+    if command.type == "string_literal":
+        return True
+    if command.type != "array_creation_expression":
+        return False
+    initializer = command.child_by_field_name("value")
+    if initializer is None:
+        return False
+    elements = [
+        child
+        for child in initializer.named_children
+        if child.type not in {"line_comment", "block_comment"}
+    ]
+    return bool(elements) and all(child.type == "string_literal" for child in elements)
+
+
+def _json_type_info_findings(
+    root_node, file_path: str, source_bytes: bytes
+) -> list[dict]:
+    findings = []
+    for node in _iter_nodes(root_node):
+        if node.type != "annotation":
+            continue
+        name = node.child_by_field_name("name")
+        if (
+            name is None
+            or _get_text(source_bytes, name).rsplit(".", 1)[-1] != "JsonTypeInfo"
+        ):
+            continue
+        arguments = node.child_by_field_name("arguments")
+        if arguments is None:
+            continue
+        for pair in arguments.named_children:
+            if pair.type != "element_value_pair":
+                continue
+            key = pair.child_by_field_name("key")
+            value = pair.child_by_field_name("value")
+            if key is None or value is None or _get_text(source_bytes, key) != "use":
+                continue
+            if (
+                _get_text(source_bytes, value).rsplit(".", 1)[-1]
+                in _UNSAFE_JSON_TYPE_IDS
+            ):
+                findings.append(
+                    {
+                        "rule_id": "SKY-D233",
+                        "severity": "MEDIUM",
+                        "message": "@JsonTypeInfo(use = Id.CLASS) lets JSON name the Java class to create. Use Id.NAME with registered subtypes.",
+                        "file": str(file_path),
+                        "line": node.start_point[0] + 1,
+                        "col": 0,
+                        "cwe": "CWE-502",
+                    }
+                )
+    return findings
+
+
 def scan_danger(root_node, file_path: str, lang: Language | None = None) -> list[dict]:
     findings: list[dict] = []
     if lang is None:
@@ -1708,19 +1876,29 @@ def scan_danger(root_node, file_path: str, lang: Language | None = None) -> list
     source_bytes: bytes = root_node.text
     simple_captures = _run_batch(root_node, lang, "danger_simple", _SIMPLE_PATTERN)
 
-    for node in simple_captures.get("rt_method", []):
-        findings.append(
-            {
-                "rule_id": "SKY-D203",
-                "severity": "HIGH",
-                "message": "Runtime.exec() — risk of command injection. Use ProcessBuilder with argument list instead.",
-                "file": str(file_path),
-                "line": node.start_point[0] + 1,
-                "col": 0,
+    for node in simple_captures.get("exec_method", []):
+        call = node.parent
+        if call is None or not _is_runtime_receiver(call, source_bytes):
+            continue
+        finding = {
+            "rule_id": "SKY-D203",
+            "severity": "HIGH",
+            "message": "Runtime.exec() runs an OS command. Pass a fixed argv array and validate any input.",
+            "file": str(file_path),
+            "line": call.start_point[0] + 1,
+            "col": 0,
+            "cwe": "CWE-78",
+        }
+        if _exec_args_are_constant(call):
+            finding["severity"] = "LOW"
+            finding["low_risk_context"] = {
+                "reason": "constant-shell-command",
+                "detail": "the command is a fixed string with no input",
             }
-        )
+        findings.append(finding)
 
     sql_captures = _run_batch(root_node, lang, "danger_sql", _SQL_PATTERN)
+    string_built_sql: list[dict] = []
     for args_node in sql_captures.get("sql_args", []):
         for child in args_node.children:
             if child.type in ("(", ")", ","):
@@ -1728,14 +1906,15 @@ def scan_danger(root_node, file_path: str, lang: Language | None = None) -> list
             if child.type == "binary_expression":
                 text = _get_text(source_bytes, child).upper()
                 if any(kw in text for kw in _SQL_KEYWORDS):
-                    findings.append(
+                    string_built_sql.append(
                         {
                             "rule_id": "SKY-D211",
-                            "severity": "CRITICAL",
+                            "severity": "HIGH",
                             "message": "SQL query built with string concatenation — risk of SQL injection. Use PreparedStatement with parameterized queries.",
                             "file": str(file_path),
                             "line": child.start_point[0] + 1,
                             "col": 0,
+                            "cwe": "CWE-89",
                         }
                     )
             break
@@ -1780,17 +1959,14 @@ def scan_danger(root_node, file_path: str, lang: Language | None = None) -> list
     deserial_captures = _run_batch(
         root_node, lang, "danger_deserial", _DESERIAL_PATTERN
     )
-    for node in deserial_captures.get("ois_type", []):
-        findings.append(
-            {
-                "rule_id": "SKY-D204",
-                "severity": "CRITICAL",
-                "message": "ObjectInputStream — unsafe deserialization. Attacker-controlled data can lead to remote code execution.",
-                "file": str(file_path),
-                "line": node.start_point[0] + 1,
-                "col": 0,
-            }
+    object_streams = deserial_captures.get("ois_type", [])
+    findings.extend(
+        _object_input_stream_findings(
+            [node for node in object_streams if not _inside_callable_body(node)],
+            file_path,
         )
+    )
+    findings.extend(_json_type_info_findings(root_node, file_path, source_bytes))
 
     findings.extend(_scan_archive_extraction(root_node, file_path, source_bytes))
     try:
@@ -1801,6 +1977,13 @@ def scan_danger(root_node, file_path: str, lang: Language | None = None) -> list
     except Exception:
         # Compatibility fallback only: keep the previous text scanners available
         # for parser/analyzer failures, but do not use them as normal coverage.
+        _extend_unique_findings(
+            findings,
+            _object_input_stream_findings(
+                [node for node in object_streams if _inside_callable_body(node)],
+                file_path,
+            ),
+        )
         helper_summaries = _collect_java_helper_summaries(root_node, source_bytes)
         _extend_unique_findings(
             findings, _scan_request_path_traversal(root_node, file_path, source_bytes)
@@ -1811,6 +1994,8 @@ def scan_danger(root_node, file_path: str, lang: Language | None = None) -> list
                 root_node, file_path, source_bytes, helper_summaries
             ),
         )
+
+    _extend_unique_findings(findings, string_built_sql)
 
     is_test_file = get_non_library_dir_kind(file_path) == "test"
     string_captures = _run_batch(root_node, lang, "danger_strings", _STRING_PATTERN)

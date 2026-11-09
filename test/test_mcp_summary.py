@@ -149,6 +149,7 @@ def test_verify_dead_code_rejects_incomplete_static_analysis(
     fake = _FakeMCP()
     _register_tools(fake)
     monkeypatch.setattr(mcp_server, "_gate", lambda _tool_name: None)
+    monkeypatch.setattr("skylos.llm.runtime.llm_extra_installed", lambda: True)
     monkeypatch.setattr(
         analyzer_module,
         "analyze",
@@ -384,6 +385,7 @@ def test_mcp_remediate_rejects_test_cmd(monkeypatch):
     fake = FakeMCP()
     _register_tools(fake)
     monkeypatch.setattr(mcp_server, "_gate", lambda _tool_name: None)
+    monkeypatch.setattr(mcp_server, "_access_error", lambda _tool_name: None)
 
     result = fake.tools["remediate"](".", test_cmd="true; touch /tmp/marker")
 

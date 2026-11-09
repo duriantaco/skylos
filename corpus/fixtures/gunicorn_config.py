@@ -13,3 +13,10 @@ control_socket_disable = True
 
 def worker_exit(server, worker):
     server.log.info("worker %s exiting", worker.pid)
+
+
+worker_hint = "balanced"
+
+
+def on_message(server, message):
+    return (server, message)

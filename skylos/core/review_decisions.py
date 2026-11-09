@@ -1729,8 +1729,10 @@ def _environment_dependency_hash(
             "sha256:" + hashlib.sha256(raw_value.encode("utf-8")).hexdigest()
         )
 
-    explicit_config = str(os.environ.get("SKYLOS_CONFIG_FILE") or "").strip()
-    if explicit_config:
+    for config_variable in ("SKYLOS_CONFIG_FILE", "SKYLOS_SYNCED_POLICY_FILE"):
+        explicit_config = str(os.environ.get(config_variable) or "").strip()
+        if not explicit_config:
+            continue
         candidate = Path(explicit_config).expanduser()
         if not candidate.is_absolute():
             candidate = Path.cwd() / candidate
@@ -1751,7 +1753,7 @@ def _environment_dependency_hash(
                 dependency_cache[cache_key] = None
             return None
         config_bytes = config_text.encode("utf-8", "surrogateescape")
-        environment["SKYLOS_CONFIG_FILE"] = sha256_value(
+        environment[config_variable] = sha256_value(
             {
                 "content": "sha256:" + hashlib.sha256(config_bytes).hexdigest(),
             }
@@ -1954,6 +1956,7 @@ def _repository_semantic_hash(
         suffix = relative.suffix.lower()
         return bool(
             _is_relevant_rel(relative)
+            or suffix in _LANGUAGES
             or suffix in ALLOWED_FILE_SUFFIXES
             or name == ".env"
             or name.startswith(".env.")
@@ -2505,6 +2508,28 @@ def _python_dynamic_imports(tree: ast.AST) -> list[str] | None:
     return dynamic_modules
 
 
+def _python_primary_loader_is_static(
+    file_path: str,
+    source: str,
+    dependency_cache: dict[str, Any] | None,
+) -> bool:
+    cache_key = (
+        f"python-primary-loader:{file_path}:"
+        f"{hashlib.sha256(source.encode('utf-8', 'surrogatepass')).hexdigest()}"
+    )
+    if dependency_cache is not None and cache_key in dependency_cache:
+        return dependency_cache[cache_key]
+    try:
+        tree = ast.parse(source, type_comments=True)
+    except (MemoryError, RecursionError, SyntaxError, ValueError):
+        is_static = False
+    else:
+        is_static = _python_dynamic_imports(tree) is not None
+    if dependency_cache is not None:
+        dependency_cache[cache_key] = is_static
+    return is_static
+
+
 def _python_dependency_hash(
     project_root: str | Path,
     file_path: str,
@@ -2969,14 +2994,10 @@ def finding_identity(
                 semantic_cache[file_path] = semantic_source_hash
         local_dependency_hash = None
         if language == "python":
-            try:
-                primary_tree = ast.parse(source, type_comments=True)
-            except (MemoryError, RecursionError, SyntaxError, ValueError):
-                return None
             # A loader recovered from runtime state in the finding's own file
             # can change without any repository input changing.  Do not mint a
             # reusable identity for that case.
-            if _python_dynamic_imports(primary_tree) is None:
+            if not _python_primary_loader_is_static(file_path, source, dependency_cache):
                 return None
             local_dependency_hash = _python_dependency_hash(
                 project_root,
@@ -3002,28 +3023,20 @@ def finding_identity(
             )
             if local_dependency_hash is None:
                 return None
-        if local_dependency_hash in (None, "dependency-closure-incomplete"):
-            # No proven local closure (another language, or a Python import
-            # the closure could not follow): bind the review to the bounded
-            # snapshot of every analyzer input instead.
-            repository_hash = _repository_semantic_hash(
-                project_root,
-                source_cache=source_cache,
-                dependency_cache=dependency_cache,
-            )
-            if repository_hash is None:
-                return None
-        else:
-            # The finding's file, its proven import closure and the language's
-            # dependency environment are already bound above.  Folding in the
-            # whole-repository snapshot made every unrelated commit reopen each
-            # approved high-risk review.  Trade-off: a reverse importer,
-            # startup monkeypatch or framework registry outside the closure no
-            # longer invalidates the review on its own.
-            repository_hash = "local-dependency-closure-complete"
+        # A forward import closure does not prove all callers, startup bindings,
+        # or framework registrations that made a reviewed sink safe.  Bind every
+        # high-risk decision to the bounded repository input snapshot as well.
+        # An incomplete snapshot must leave the finding visible for review.
+        repository_hash = _repository_semantic_hash(
+            project_root,
+            source_cache=source_cache,
+            dependency_cache=dependency_cache,
+        )
+        if repository_hash is None:
+            return None
         semantic_dependency_hash = sha256_value(
             {
-                "scope": "high-risk-proof-envelope-v3",
+                "scope": "high-risk-proof-envelope-v4",
                 "local_dependency_hash": local_dependency_hash,
                 "repository_hash": repository_hash,
             }

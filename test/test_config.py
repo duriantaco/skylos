@@ -509,6 +509,21 @@ extra_credential_names = ["tenant_signing_secret"]
         )
         self.assertEqual(config["vibe"]["extra_network_timeout_calls"], [])
 
+    def test_extra_insecure_random_funcs_reaches_the_vibe_dictionary(self):
+        from skylos.rules.vibe_dictionary import build_vibe_dictionary
+
+        (self.root / "pyproject.toml").write_text(
+            '[tool.skylos.vibe]\nextra_insecure_random_funcs = ["gauss"]\n',
+            encoding="utf-8",
+        )
+
+        config = load_config(self.root)
+
+        self.assertEqual(config["vibe"]["extra_insecure_random_funcs"], ["gauss"])
+        vibe = build_vibe_dictionary(config["vibe"])
+        self.assertIn("gauss", vibe.insecure_random_funcs)
+        self.assertIn("randint", vibe.insecure_random_funcs)
+
     def test_load_config_whitelist_list_backcompat(self):
         toml_path = self.root / "pyproject.toml"
         toml_path.write_text(
@@ -634,12 +649,14 @@ lower_confidence = "boom"
         self.assertEqual(config["whitelist"], ["safe_*"])
         self.assertEqual(config["lower_confidence"], [])
         self.assertEqual(config["whitelist_documented"], {"kept_*": "reason"})
-        self.assertEqual(config["whitelist_temporary"], {"legacy_*": {}})
+        self.assertEqual(
+            config["whitelist_temporary"], {"legacy_*": {"expires": "456"}}
+        )
         self.assertTrue(ok)
         self.assertEqual(reason, "reason")
         self.assertEqual(penalty, 0)
-        self.assertTrue(legacy_ok)
-        self.assertIn("temporary whitelist", legacy_reason)
+        self.assertFalse(legacy_ok)
+        self.assertIsNone(legacy_reason)
 
     def test_is_path_excluded_glob_path_match(self):
         cfg = {"exclude": ["src/**/gen_*.py"]}

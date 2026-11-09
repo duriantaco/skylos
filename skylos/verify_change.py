@@ -8,7 +8,6 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from skylos.analysis.ast_cache import releases_python_ast_cache
 from skylos.core.git_safety import (
     read_only_git_environment,
     worktree_safe_git_command,
@@ -35,7 +34,6 @@ __all__ = [
 ]
 
 
-@releases_python_ast_cache
 def verify_change_path(
     path: str | Path,
     *,
@@ -81,14 +79,8 @@ def verify_change_path(
     )
 
     analyzer_owned = analyze_func is None
-    cache_root = root
     if analyzer_owned:
-        from skylos.analyzer import _resolve_analysis_root
         from skylos.analyzer import analyze as analyze_func
-        from skylos.rules.ai_defect.module_facts_index import active_module_facts_index
-
-        if active_module_facts_index() is None:
-            cache_root = _resolve_analysis_root(scan_target)
 
     analysis_options = _analysis_options(
         confidence=confidence,
@@ -98,21 +90,7 @@ def verify_change_path(
         changed_files=changed_files,
         project_config_overrides=contract_project_config_overrides(contract),
     )
-    if analyzer_owned:
-        # Verification never reports unused-code conclusions. Repository-policy
-        # advice is only reportable when a caller explicitly selects those rules.
-        analysis_options["enable_dead_code"] = False
-        analysis_options["enable_repo_policy"] = bool(
-            include_quality_rule_ids
-            & {"SKY-R101", "SKY-R102", "SKY-R103", "SKY-R104", "SKY-R105"}
-        )
-        if changed_files:
-            analysis_options["verification_files"] = changed_files
-    with _facts_session(cache_root, enabled=analyzer_owned) as index:
-        try:
-            raw_result = analyze_func(str(scan_target), **analysis_options)
-        finally:
-            _emit_verification_stats(index)
+    raw_result = analyze_func(str(scan_target), **analysis_options)
     analysis_result = _analysis_result_dict(raw_result)
     _absolutize_secret_paths(analysis_result, scan_target)
     _add_contract_route_findings(
@@ -371,38 +349,11 @@ def _facts_session(root: Path, *, enabled: bool):
         return contextlib.nullcontext()
     try:
         from skylos.rules.ai_defect.module_facts_index import (
-            active_module_facts_index,
             module_facts_index_session,
         )
     except ImportError:
         return contextlib.nullcontext()
-    # Hooks and diff verification already choose a cache location (including
-    # the user-cache redirect outside Git). Borrow that session rather than
-    # loading another index for each selected file.
-    active = active_module_facts_index()
-    if active is not None:
-        return contextlib.nullcontext(active)
     return module_facts_index_session(root)
-
-
-def _emit_verification_stats(index) -> None:
-    """Opt-in benchmark diagnostics; keep the verify payload and stdout stable."""
-    if os.environ.get("SKYLOS_VERIFY_STATS") != "1":
-        return
-    import sys
-
-    from skylos.rules.ai_defect.module_facts_index import describe
-
-    stream = sys.stderr
-    if stream is None or getattr(stream, "closed", False):
-        return
-    try:
-        print(
-            "SKYLOS_VERIFY_STATS=" + json.dumps({"module_facts": describe(index)}),
-            file=stream,
-        )
-    except (OSError, ValueError):
-        pass
 
 
 def parse_added_lines(diff: str) -> dict[str, list[tuple[int, int]] | None]:
@@ -680,20 +631,17 @@ def _absolutize_secret_paths(
 ) -> None:
     """Secrets report files relative to the analyzer's discovery root.
 
-    The analyzer resolves that root upward from the scan target to the
-    project (nearest pyproject.toml, package.json, setup.py or .git), so for
-    a nested file or folder it is neither the file's folder nor the verify
-    project root used to match findings.
+    That root is the scanned directory, or the parent of a scanned file, which
+    is not necessarily the verify project root used to match findings.
     """
     secrets = analysis_result.get("secrets")
     if not isinstance(secrets, list):
         return
-    from skylos.analyzer import analysis_root_for_target
-
     try:
-        base = analysis_root_for_target(scan_target)
+        resolved = scan_target.resolve()
     except OSError:
         return
+    base = resolved if resolved.is_dir() else resolved.parent
     for finding in secrets:
         if not isinstance(finding, dict):
             continue

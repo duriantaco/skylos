@@ -15,18 +15,35 @@ import (
 	"skylos/engines/go/internal/output"
 )
 
-var sqlSinks = map[string][]string{
-	"database/sql": {"Query", "QueryRow", "Exec", "QueryContext", "ExecContext"},
-}
-
 var cmdSinks = map[string][]string{
 	"os/exec": {"Command", "CommandContext"},
 	"os":      {"StartProcess"},
+	"syscall": {"Exec"},
 }
 
-var pathSinks = map[string][]string{
-	"os":        {"Open", "OpenFile", "ReadFile", "WriteFile", "Create", "Remove", "RemoveAll", "Mkdir", "MkdirAll"},
-	"io/ioutil": {"ReadFile", "WriteFile"},
+// pathSinks: the path arguments of file-system calls (gosec G304 and CodeQL's
+// FileSystemAccess models).
+var pathSinks = map[string]map[string][]int{
+	"os": {
+		"Open": {0}, "OpenFile": {0}, "ReadFile": {0}, "WriteFile": {0}, "Create": {0},
+		"Remove": {0}, "RemoveAll": {0}, "Mkdir": {0}, "MkdirAll": {0}, "ReadDir": {0},
+		"Rename": {0, 1}, "Chmod": {0}, "Chown": {0}, "Lchown": {0}, "Chtimes": {0},
+		"Stat": {0}, "Lstat": {0}, "Truncate": {0}, "Link": {0, 1}, "Symlink": {0, 1},
+		"Readlink": {0}, "DirFS": {0},
+	},
+	"io/ioutil": {"ReadFile": {0}, "WriteFile": {0}, "ReadDir": {0}},
+}
+
+// Framework file responses: gin c.File/FileAttachment, echo
+// c.File/Attachment/Inline, fiber c.SendFile/Download (CodeQL models).
+var frameworkFileSinks = map[string]map[string]bool{
+	"gin":   {"File": true, "FileAttachment": true},
+	"echo":  {"File": true, "Attachment": true, "Inline": true},
+	"fiber": {"SendFile": true, "Download": true},
+}
+
+var sshSessionRunMethods = map[string]bool{
+	"Run": true, "Start": true, "Output": true, "CombinedOutput": true,
 }
 
 var httpSinks = map[string][]string{
@@ -56,23 +73,36 @@ type Analyzer struct {
 	callTaint map[*ast.CallExpr]*funcTaint
 	// the current file is test-support code (see isTestSupportFile)
 	testSupport bool
+	// declarations of the current file's package directory
+	facts      *pkgFacts
+	factsByDir map[string]*pkgFacts
+	dirFiles   map[string][]string
+	// the function whose types resolve numeric values while taint is checked
+	scope *funcTaint
 }
 
 func New() *Analyzer {
 	return &Analyzer{
-		fset:    token.NewFileSet(),
-		imports: make(map[string]string),
-		seen:    make(map[string]bool),
+		fset:       token.NewFileSet(),
+		imports:    make(map[string]string),
+		seen:       make(map[string]bool),
+		factsByDir: make(map[string]*pkgFacts),
+		dirFiles:   make(map[string][]string),
 	}
 }
 
 func (a *Analyzer) AnalyzeDir(root string) ([]output.Finding, error) {
+	return a.AnalyzeDirScoped(root, nil)
+}
+
+func (a *Analyzer) AnalyzeDirScoped(root string, sourceFiles map[string]bool) ([]output.Finding, error) {
 	resolvedRoot, rootErr := filepath.EvalSymlinks(root)
 	if rootErr != nil {
 		return nil, rootErr
 	}
 	root = resolvedRoot
 
+	var files []string
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -93,17 +123,39 @@ func (a *Analyzer) AnalyzeDir(root string) ([]output.Finding, error) {
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
+		if sourceFiles != nil && !sourceFiles[path] {
+			return nil
+		}
 
 		resolvedPath, err := filepath.EvalSymlinks(path)
 		if err != nil || !isPathWithinRoot(resolvedRoot, resolvedPath) {
 			return nil
 		}
 
-		a.analyzeFile(resolvedPath)
+		files = append(files, resolvedPath)
+		dir := filepath.Dir(resolvedPath)
+		a.dirFiles[dir] = append(a.dirFiles[dir], resolvedPath)
 		return nil
 	})
 
+	for _, path := range files {
+		a.analyzeFile(path)
+	}
 	return a.findings, err
+}
+
+func (a *Analyzer) packageFacts(path string) *pkgFacts {
+	dir := filepath.Dir(path)
+	if facts, ok := a.factsByDir[dir]; ok {
+		return facts
+	}
+	paths := a.dirFiles[dir]
+	if len(paths) == 0 {
+		paths = []string{path}
+	}
+	facts := collectPackageFacts(paths)
+	a.factsByDir[dir] = facts
+	return facts
 }
 
 func isPathWithinRoot(root, path string) bool {
@@ -120,19 +172,8 @@ func (a *Analyzer) analyzeFile(path string) {
 		return
 	}
 
-	a.imports = make(map[string]string)
-
-	for _, imp := range file.Imports {
-		importPath := strings.Trim(imp.Path.Value, `"`)
-		var alias string
-		if imp.Name != nil {
-			alias = imp.Name.Name
-		} else {
-			parts := strings.Split(importPath, "/")
-			alias = parts[len(parts)-1]
-		}
-		a.imports[alias] = importPath
-	}
+	a.imports = fileImports(file)
+	a.facts = a.packageFacts(path)
 
 	a.computeTaint(file)
 	a.testSupport = a.isTestSupportFile(file)
@@ -183,26 +224,12 @@ func (a *Analyzer) analyzeFile(path string) {
 func (a *Analyzer) checkCallExpr(call *ast.CallExpr, path string) {
 	pkg, funcName := a.getFuncInfo(call.Fun)
 	ft := a.taintFor(call)
+	a.scope = ft
+	defer func() { a.scope = nil }()
 
-	sqlMatched := false
-	if funcs, ok := sqlSinks[pkg]; ok && contains(funcs, funcName) {
-		sqlMatched = true
-		_ = funcs
-	}
-	if !sqlMatched {
-		if isSQLMethodName(funcName) && a.isSQLReceiver(call.Fun) {
-			sqlMatched = true
-		}
-	}
-	if sqlMatched {
-		queryArg := 0
-		if strings.HasSuffix(funcName, "Context") {
-			queryArg = 1 // QueryContext(ctx, query, args...)
-		}
-		if len(call.Args) > queryArg {
-			if severity, detail := a.sqlQuerySeverity(call.Args[queryArg], ft); severity != "" {
-				a.addFinding(call, path, "SKY-G211", severity, "SQL Injection", detail)
-			}
+	if queryArg, stringOnly, ok := a.sqlQueryArg(call, ft); ok && len(call.Args) > queryArg {
+		if severity, detail := a.sqlQuerySeverity(call.Args[queryArg], ft, stringOnly); severity != "" {
+			a.addFinding(call, path, "SKY-G211", severity, "SQL Injection", detail)
 		}
 	}
 
@@ -210,6 +237,8 @@ func (a *Analyzer) checkCallExpr(call *ast.CallExpr, path string) {
 		severity, detail := "", ""
 		if pkg == "os/exec" && (funcName == "Command" || funcName == "CommandContext") {
 			severity, detail = a.execCommandSeverity(call, funcName, ft)
+		} else if pkg == "syscall" && len(call.Args) == 3 {
+			severity, detail = a.syscallExecSeverity(call, ft)
 		} else if len(call.Args) > 0 && a.isTainted(call.Args[0], ft.tainted) {
 			severity = "CRITICAL"
 			detail = "The program path comes from request or network input. Run a fixed program and validate its arguments."
@@ -219,22 +248,33 @@ func (a *Analyzer) checkCallExpr(call *ast.CallExpr, path string) {
 		}
 	}
 
-	pathArg := -1
-	if funcs, ok := pathSinks[pkg]; ok && contains(funcs, funcName) {
-		pathArg = 0
-	} else if pkg == "net/http" && funcName == "ServeFile" {
-		pathArg = 2
+	if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sshSessionRunMethods[funcName] && len(call.Args) == 1 {
+		if a.resolveType(sel.X, ft, 0).is(sshPath, "Session") && a.isTainted(call.Args[0], ft.tainted) {
+			a.addFinding(call, path, "SKY-G212", "CRITICAL", "Command Injection",
+				"Remote shell command built from request or network input. Run a fixed command and pass validated values.")
+		}
 	}
-	if pathArg >= 0 && len(call.Args) > pathArg && a.isUntrustedPath(call.Args[pathArg], ft) {
-		a.addFinding(call, path, "SKY-G215", "HIGH", "Potential Path Traversal",
-			"File path comes from request or network input without a containment check. "+
-				"Use filepath.Base, or clean it and verify it stays under a fixed base (filepath.Rel or a prefix check).")
+
+	var pathArgs []int
+	if funcs, ok := pathSinks[pkg]; ok {
+		pathArgs = funcs[funcName]
+	} else if pkg == "net/http" && funcName == "ServeFile" {
+		pathArgs = []int{2}
+	} else if sel, ok := call.Fun.(*ast.SelectorExpr); ok && frameworkFileSinks[a.frameworkOf(sel.X, ft)][funcName] {
+		pathArgs = []int{0}
+	}
+	for _, pathArg := range pathArgs {
+		if len(call.Args) > pathArg && a.isUntrustedPath(call.Args[pathArg], ft) {
+			a.addFinding(call, path, "SKY-G215", "HIGH", "Potential Path Traversal",
+				"File path comes from request or network input without a containment check. "+
+					"Use filepath.Base, or clean it and verify it stays under a fixed base (filepath.Rel or a prefix check).")
+			break
+		}
 	}
 
 	if funcs, ok := httpSinks[pkg]; ok && contains(funcs, funcName) {
 		if len(call.Args) > 0 && a.isSSRFURL(call.Args[0], ft) {
-			a.addFinding(call, path, "SKY-G216", "CRITICAL", "Potential SSRF",
-				"HTTP request URL comes from request or network input and can choose the host. Validate it against an allowlist.")
+			a.addFinding(call, path, "SKY-G216", "CRITICAL", "Potential SSRF", ssrfDetail)
 		}
 	}
 
@@ -247,10 +287,29 @@ func (a *Analyzer) checkCallExpr(call *ast.CallExpr, path string) {
 			urlArg = 2
 		}
 		if urlArg >= 0 && len(call.Args) > urlArg && a.isSSRFURL(call.Args[urlArg], ft) {
-			a.addFinding(call, path, "SKY-G216", "CRITICAL", "Potential SSRF",
-				"HTTP request URL comes from request or network input and can choose the host. Validate it against an allowlist.")
+			a.addFinding(call, path, "SKY-G216", "CRITICAL", "Potential SSRF", ssrfDetail)
 		}
 	}
+
+	if pkg == "net/http/httputil" && funcName == "NewSingleHostReverseProxy" && len(call.Args) == 1 && a.isSSRFURL(call.Args[0], ft) {
+		a.addFinding(call, path, "SKY-G216", "CRITICAL", "Potential SSRF",
+			"Reverse proxy target comes from request or network input and can choose the host. Proxy only to fixed or allowlisted upstreams.")
+	}
+
+	if sel, ok := call.Fun.(*ast.SelectorExpr); ok && a.resolveType(sel.X, ft, 0).is("net/http", "Client") {
+		switch funcName {
+		case "Get", "Head", "Post", "PostForm":
+			if len(call.Args) > 0 && a.isSSRFURL(call.Args[0], ft) {
+				a.addFinding(call, path, "SKY-G216", "CRITICAL", "Potential SSRF", ssrfDetail)
+			}
+		case "Do":
+			if len(call.Args) == 1 && ft.urlAssigned[rootName(call.Args[0])] {
+				a.addFinding(call, path, "SKY-G216", "CRITICAL", "Potential SSRF", ssrfDetail)
+			}
+		}
+	}
+
+	a.checkXSS(call, ft, path)
 
 	if funcs, ok := cryptoWeakFuncs[pkg]; ok && contains(funcs, funcName) {
 		rule := "SKY-G207"
@@ -277,13 +336,73 @@ func (a *Analyzer) checkCallExpr(call *ast.CallExpr, path string) {
 	}
 
 	// SKY-G220: Open redirect
+	if target := a.redirectTarget(call, pkg, funcName, ft); target != nil && a.isOpenRedirectTarget(target, ft) {
+		a.addFinding(call, path, "SKY-G220", "HIGH", "Open Redirect",
+			"Redirect target comes from request or network input and can choose where the redirect goes. "+
+				"Allow only same-origin paths (one leading \"/\", not \"//\") or an allowlist.")
+	}
+}
+
+const ssrfDetail = "HTTP request URL comes from request or network input and can choose the host. Validate it against an allowlist."
+
+// redirectTarget: http.Redirect(w, r, url, code); gin and echo
+// c.Redirect(code, url); fiber v2 c.Redirect(url, code...) and v3
+// c.Redirect().To(url) (CodeQL url-redirection models).
+func (a *Analyzer) redirectTarget(call *ast.CallExpr, pkg, funcName string, ft *funcTaint) ast.Expr {
 	if pkg == "net/http" && funcName == "Redirect" {
-		if len(call.Args) >= 3 && a.isOpenRedirectTarget(call.Args[2], ft) {
-			a.addFinding(call, path, "SKY-G220", "HIGH", "Open Redirect",
-				"Redirect target comes from request or network input and can choose where the redirect goes. "+
-					"Allow only same-origin paths (one leading \"/\", not \"//\") or an allowlist.")
+		if len(call.Args) >= 3 {
+			return call.Args[2]
+		}
+		return nil
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil
+	}
+	switch funcName {
+	case "Redirect":
+		switch a.frameworkOf(sel.X, ft) {
+		case "gin", "echo":
+			if len(call.Args) >= 2 {
+				return call.Args[1]
+			}
+		case "fiber":
+			if len(call.Args) >= 1 {
+				return call.Args[0]
+			}
+		}
+	case "To":
+		inner, ok := sel.X.(*ast.CallExpr)
+		if !ok || len(inner.Args) != 0 || len(call.Args) != 1 {
+			return nil
+		}
+		if innerSel, ok := inner.Fun.(*ast.SelectorExpr); ok && innerSel.Sel.Name == "Redirect" && a.frameworkOf(innerSel.X, ft) == "fiber" {
+			return call.Args[0]
 		}
 	}
+	return nil
+}
+
+// syscallExecSeverity: syscall.Exec(argv0, argv, envv) runs argv0; with a
+// shell, argv carries the command string.
+func (a *Analyzer) syscallExecSeverity(call *ast.CallExpr, ft *funcTaint) (string, string) {
+	if a.isTainted(call.Args[0], ft.tainted) {
+		return "CRITICAL", "The program path comes from request or network input. Run a fixed program and validate its arguments."
+	}
+	program, ok := stringLiteralValue(call.Args[0])
+	argv, isLit := call.Args[1].(*ast.CompositeLit)
+	if !ok || !isLit || !isShellCommandName(program) || len(argv.Elts) < 2 {
+		return "", ""
+	}
+	args := append([]ast.Expr{call.Args[0]}, argv.Elts[1:]...)
+	commandIndex, found := shellCommandArgIndex(program, args)
+	if !found || !a.isVariable(args[commandIndex]) {
+		return "", ""
+	}
+	if a.isTainted(args[commandIndex], ft.tainted) {
+		return "CRITICAL", "Shell command built from request or network input. Pass arguments to a fixed program without a shell."
+	}
+	return "HIGH", "Shell command built from a non-constant value. If any part comes from outside the program this is command injection; pass arguments to a fixed program without a shell."
 }
 
 func (a *Analyzer) checkCompositeLit(lit *ast.CompositeLit, path string) {
@@ -634,10 +753,15 @@ func (a *Analyzer) getFuncInfo(expr ast.Expr) (pkg, funcName string) {
 
 func (a *Analyzer) isStringConcat(expr ast.Expr) bool {
 	binExpr, ok := expr.(*ast.BinaryExpr)
-	if !ok {
+	if !ok || binExpr.Op != token.ADD {
 		return false
 	}
-	return binExpr.Op == token.ADD && (a.hasStringLit(binExpr.X) || a.hasStringLit(binExpr.Y))
+	for _, operand := range flattenAdd(binExpr) {
+		if a.hasStringLit(operand) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Analyzer) isFormatString(expr ast.Expr) bool {
@@ -870,33 +994,6 @@ func (a *Analyzer) addFinding(node ast.Node, path, ruleID, severity, message, de
 		Line:     pos.Line,
 		Col:      pos.Column,
 	})
-}
-
-var sqlMethodNames = map[string]bool{
-	"Query": true, "QueryRow": true, "Exec": true,
-	"QueryContext": true, "ExecContext": true, "QueryRowContext": true,
-	"Prepare": true, "PrepareContext": true,
-}
-
-func isSQLMethodName(name string) bool {
-	return sqlMethodNames[name]
-}
-
-func (a *Analyzer) isSQLReceiver(expr ast.Expr) bool {
-	sel, ok := expr.(*ast.SelectorExpr)
-	if !ok {
-		return false
-	}
-	id, ok := sel.X.(*ast.Ident)
-	if !ok {
-		return false
-	}
-	name := strings.ToLower(id.Name)
-	switch name {
-	case "db", "tx", "conn", "sqldb", "database", "stmt", "row", "rows":
-		return true
-	}
-	return false
 }
 
 // checkDeferInLoop (SKY-G203, MEDIUM like Python's SKY-L008 missing resource

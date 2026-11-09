@@ -1,6 +1,9 @@
 import argparse
 from pathlib import Path
 
+from skylos.core.cli_shared import quiet_analyzer_logs
+from skylos.ui.paths import shown_path
+
 
 def _resolve_gate_settings(debt_args, policy) -> tuple[int | None, str | None]:
     min_score = debt_args.min_score
@@ -240,6 +243,14 @@ def run_debt_command(
             f"[red]Error: --history-limit must be > 0, got {debt_args.history_limit}[/red]"
         )
         return 1
+    if debt_args.with_agent and not debt_args.show_history:
+        from rich.markup import escape
+
+        from skylos.llm.runtime import LLM_EXTRA_MISSING_MESSAGE, llm_extra_importable
+
+        if not llm_extra_importable():
+            console.print(f"[red]Error: {escape(LLM_EXTRA_MISSING_MESSAGE)}[/red]")
+            return 2
 
     if debt_args.show_history:
         try:
@@ -273,7 +284,7 @@ def run_debt_command(
         elif debt_args.output_json:
             print(output)
         else:
-            console.print(output)
+            console.print(output, markup=False)
         return 0
 
     exclude = set(
@@ -301,11 +312,12 @@ def run_debt_command(
             console.print("[dim]No changed files found.[/dim]")
             return 0
 
-    snapshot = run_debt_analysis(
-        target,
-        exclude_folders=sorted(exclude),
-        changed_files=changed_files,
-    )
+    with quiet_analyzer_logs():
+        snapshot = run_debt_analysis(
+            target,
+            exclude_folders=sorted(exclude),
+            changed_files=changed_files,
+        )
     project_target = Path(snapshot.project).resolve()
     is_project_scope = target == project_target
 
@@ -383,7 +395,7 @@ def run_debt_command(
         except (OSError, ValueError) as e:
             console.print(f"[red]Error writing debt baseline: {e}[/red]")
             return 1
-        console.print(f"[green]Debt baseline written to {baseline_path}[/green]")
+        console.print(f"[green]Debt baseline written to {shown_path(baseline_path)}[/green]")
 
     if debt_args.history:
         if not is_project_scope:
@@ -426,7 +438,7 @@ def run_debt_command(
     elif debt_args.output_json:
         print(output)
     else:
-        console.print(output)
+        console.print(output, markup=False)
 
     upload_failed = False
     if debt_args.upload:

@@ -6,18 +6,17 @@ from skylos.analyzer import analyze
 from skylos.core.gatekeeper import check_gate
 
 
-def _analyze(tmp_path, files, *, enable_dead_code=True):
+def _analyze(tmp_path, files, *, single_file=False):
     for name, source in files.items():
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(source)
     return json.loads(
         analyze(
-            str(tmp_path),
+            str(tmp_path / next(iter(files))) if single_file else str(tmp_path),
             enable_danger=True,
             enable_dependency_hallucinations=False,
             grep_verify=False,
-            enable_dead_code=enable_dead_code,
         )
     )
 
@@ -34,13 +33,11 @@ def _sql_rows(result, section="danger"):
         "def lookup(cursor):\n    row = cursor.execute('SELECT digest FROM cache').fetchone()\n    cursor.execute(f\"DELETE FROM cache WHERE digest = '{row[0]}'\")\n",
     ],
 )
-@pytest.mark.parametrize("enable_dead_code", [True, False])
+@pytest.mark.parametrize("single_file", [False, True])
 def test_unknown_query_sources_are_diagnostics_not_injection_claims(
-    tmp_path, source, enable_dead_code
+    tmp_path, source, single_file
 ):
-    result = _analyze(
-        tmp_path, {"database.py": source}, enable_dead_code=enable_dead_code
-    )
+    result = _analyze(tmp_path, {"database.py": source}, single_file=single_file)
     assert _sql_rows(result) == []
     rows = _sql_rows(result, "suppressed")
     assert len(rows) == 1

@@ -232,7 +232,7 @@ def test_review_state_revision_tracks_ambiguity_and_ignores_ci(monkeypatch, tmp_
     )
 
 
-def test_v2_suppression_survives_line_shift_and_keeps_audit_record(tmp_path):
+def test_v2_suppression_keeps_audit_record_for_exact_context(tmp_path):
     source = tmp_path / "app.py"
     source.write_text(
         "import os\nENABLED = True\ndef write_report(path):\n"
@@ -246,12 +246,9 @@ def test_v2_suppression_survives_line_shift_and_keeps_audit_record(tmp_path):
         "decisions": [_v2_decision(identity, line_number=4)],
     }
 
-    source.write_text(
-        "# unrelated heading\nimport os\nENABLED = True\ndef write_report(path):\n"
-        "    open(path).write('ok')\n"
+    projected = apply_review_decisions(
+        _result(source, line=4), bundle, tmp_path, now=NOW
     )
-    shifted = _result(source, line=5)
-    projected = apply_review_decisions(shifted, bundle, tmp_path, now=NOW)
 
     assert projected["danger"] == []
     assert projected["analysis_summary"]["danger_count"] == 0
@@ -265,7 +262,7 @@ def test_v2_suppression_survives_line_shift_and_keeps_audit_record(tmp_path):
     }
 
 
-def test_security_review_survives_nearby_comment_only_line_shift(tmp_path):
+def test_security_review_reopens_for_comment_only_snapshot_change(tmp_path):
     source = tmp_path / "app.py"
     source.write_text("def write_report(path):\n    open(path).write('ok')\n")
     result = _result(source, line=2)
@@ -280,7 +277,8 @@ def test_security_review_survives_nearby_comment_only_line_shift(tmp_path):
     shifted = _result(source, line=3)
     projected = apply_review_decisions(shifted, bundle, tmp_path, now=NOW)
 
-    assert projected["danger"] == []
+    assert len(projected["danger"]) == 1
+    assert projected["reviewed_findings"] == []
 
 
 def test_changed_security_context_resurfaces_finding(tmp_path):
@@ -1122,9 +1120,9 @@ def _security_review_repo(tmp_path, *, validator_imports=""):
     return source, validator, unrelated
 
 
-def test_unimported_python_change_keeps_security_review(tmp_path):
-    # Any commit elsewhere in the repository used to reopen every approved
-    # high-risk review: the identity folded in a whole-repository snapshot.
+def test_unimported_python_change_reopens_security_review(tmp_path):
+    # The absence of a forward import does not prove a source file irrelevant
+    # to callers, startup bindings, or deployment registration.
     source, _validator, unrelated = _security_review_repo(tmp_path)
     result = _result(source, line=3)
     identity = annotate_result_identities(result, tmp_path)["danger"][0]
@@ -1138,9 +1136,113 @@ def test_unimported_python_change_keeps_security_review(tmp_path):
     changed = annotate_result_identities(result, tmp_path)["danger"][0]
     projected = apply_review_decisions(result, bundle, tmp_path, now=NOW)
 
-    assert changed["context_hash"] == identity["context_hash"]
-    assert projected["danger"] == []
-    assert len(projected["reviewed_findings"]) == 1
+    assert changed["context_hash"] != identity["context_hash"]
+    assert len(projected["danger"]) == 1
+    assert projected["reviewed_findings"] == []
+
+
+@pytest.mark.parametrize(
+    "changed_caller",
+    [
+        "from app import write_report\nwrite_report(input())\n",
+        "import app\napp.safe_path = lambda value: value\n",
+        "from app import write_report\nPUBLIC_HANDLERS = [write_report]\n",
+    ],
+    ids=["reverse-caller", "startup-monkeypatch", "framework-registry"],
+)
+def test_reverse_context_change_reopens_security_review(tmp_path, changed_caller):
+    source, _validator, _unrelated = _security_review_repo(tmp_path)
+    caller = tmp_path / "entrypoint.py"
+    caller.write_text("from app import write_report\nwrite_report()\n")
+    result = _result(source, line=3)
+    identity = annotate_result_identities(result, tmp_path)["danger"][0]
+    bundle = {"version": 2, "decisions": [_v2_decision(identity, line_number=3)]}
+
+    caller.write_text(changed_caller)
+    changed = annotate_result_identities(result, tmp_path)["danger"][0]
+    projected = apply_review_decisions(result, bundle, tmp_path, now=NOW)
+
+    assert changed["stable_fingerprint"] == identity["stable_fingerprint"]
+    assert changed["context_hash"] != identity["context_hash"]
+    assert len(projected["danger"]) == 1
+    assert projected["reviewed_findings"] == []
+
+
+def test_new_startup_import_context_reopens_security_review(tmp_path):
+    source, _validator, _unrelated = _security_review_repo(tmp_path)
+    result = _result(source, line=3)
+    identity = annotate_result_identities(result, tmp_path)["danger"][0]
+    bundle = {"version": 2, "decisions": [_v2_decision(identity, line_number=3)]}
+
+    (tmp_path / "bootstrap.py").write_text(
+        "import app\nimport validator\napp.safe_path = validator.safe_path\n"
+    )
+    projected = apply_review_decisions(result, bundle, tmp_path, now=NOW)
+
+    assert len(projected["danger"]) == 1
+    assert projected["reviewed_findings"] == []
+
+
+@pytest.mark.parametrize("suffix", [".sh", ".bash", ".zsh", ".ksh", ".bats"])
+def test_shell_startup_context_change_reopens_security_review(tmp_path, suffix):
+    source, _validator, _unrelated = _security_review_repo(tmp_path)
+    startup = tmp_path / f"start{suffix}"
+    startup.write_text("export PUBLIC=false\npython app.py\n")
+    result = _result(source, line=3)
+    identity = annotate_result_identities(result, tmp_path)["danger"][0]
+    bundle = {"version": 2, "decisions": [_v2_decision(identity, line_number=3)]}
+
+    startup.write_text("export PUBLIC=true\npython app.py\n")
+    projected = apply_review_decisions(result, bundle, tmp_path, now=NOW)
+
+    assert len(projected["danger"]) == 1
+    assert projected["reviewed_findings"] == []
+
+
+@pytest.mark.parametrize(
+    ("name", "original", "changed"),
+    [
+        ("settings.json", '{"public": false}\n', '{"public": true}\n'),
+        (".env", "PUBLIC=false\n", "PUBLIC=true\n"),
+    ],
+)
+def test_repository_runtime_config_change_reopens_security_review(
+    tmp_path, name, original, changed
+):
+    source, _validator, _unrelated = _security_review_repo(tmp_path)
+    config = tmp_path / name
+    config.write_text(original)
+    result = _result(source, line=3)
+    identity = annotate_result_identities(result, tmp_path)["danger"][0]
+    bundle = {"version": 2, "decisions": [_v2_decision(identity, line_number=3)]}
+
+    config.write_text(changed)
+    projected = apply_review_decisions(result, bundle, tmp_path, now=NOW)
+
+    assert len(projected["danger"]) == 1
+    assert projected["reviewed_findings"] == []
+
+
+@pytest.mark.parametrize("incomplete", ["size-limit", "symlink"])
+def test_complete_import_closure_requires_complete_repository_snapshot(
+    tmp_path, monkeypatch, incomplete
+):
+    source, _validator, unrelated = _security_review_repo(tmp_path)
+    result = _result(source, line=3)
+    identity = annotate_result_identities(result, tmp_path)["danger"][0]
+    bundle = {"version": 2, "decisions": [_v2_decision(identity, line_number=3)]}
+
+    if incomplete == "size-limit":
+        monkeypatch.setattr(review_decisions, "MAX_REPOSITORY_SOURCE_BYTES", 1)
+    else:
+        unrelated.unlink()
+        unrelated.symlink_to(source)
+    changed = annotate_result_identities(result, tmp_path)["danger"][0]
+    projected = apply_review_decisions(result, bundle, tmp_path, now=NOW)
+
+    assert "stable_fingerprint" not in changed
+    assert len(projected["danger"]) == 1
+    assert projected["reviewed_findings"] == []
 
 
 @pytest.mark.parametrize("target", ["source", "validator"])
@@ -1230,7 +1332,7 @@ def test_imported_typescript_dependency_change_resurfaces_finding(tmp_path):
     assert len(projected["danger"]) == 1
 
 
-def test_typescript_dependency_comment_change_keeps_review_identity(tmp_path):
+def test_typescript_dependency_comment_change_reopens_snapshot_review(tmp_path):
     source = tmp_path / "app.ts"
     validator = tmp_path / "validator.ts"
     source.write_text(
@@ -1253,7 +1355,8 @@ def test_typescript_dependency_comment_change_keeps_review_identity(tmp_path):
     )
     projected = apply_review_decisions(result, bundle, tmp_path, now=NOW)
 
-    assert projected["danger"] == []
+    assert len(projected["danger"]) == 1
+    assert projected["reviewed_findings"] == []
 
 
 def test_unresolved_relative_typescript_dependency_abstains_from_identity(tmp_path):

@@ -41,7 +41,7 @@ def test_nudge_ignores_symlinked_pyproject(tmp_path, monkeypatch):
 
     assert (
         nudge.pick_nudge(result, _scan_args(), tmp_path)
-        == "[dim]Check LLM defenses:[/dim] [bold]skylos defend .[/bold]"
+        == "[dim]Let an AI double-check them:[/dim] [bold]skylos . -a --ai-review[/bold]"
     )
 
 

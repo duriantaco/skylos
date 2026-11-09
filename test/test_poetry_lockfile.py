@@ -231,11 +231,16 @@ def test_explicit_public_pypi_source(url):
 def test_nonpublic_sources_remain_explicit_without_leaking_values(source, reason):
     result = parse(document(package("private", source=source), package("public")))
     assert [dep["name"] for dep in result.dependencies] == ["public"]
-    assert result.unresolved[0]["reason"] == reason
-    assert result.unresolved[0]["name"] == "private"
+    bucket = result.unresolved
+    if reason in {"non_public_registry", "non_registry_source"}:
+        bucket = result.not_checked
+        assert result.unresolved == []
+    assert bucket[0]["reason"] == reason
+    assert bucket[0]["name"] == "private"
     assert result.non_registry_names == ["private"]
     assert "secret" not in repr(result)
     assert "secret" not in repr(result.unresolved)
+    assert "secret" not in repr(result.not_checked)
 
 
 @pytest.mark.parametrize(

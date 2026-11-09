@@ -119,6 +119,9 @@ class SubjectRemoval:
             if _is_source(item.base_path or item.path)
         ]
         self._removed: set[str] | None = None
+        self._library_origins: dict[str, set[str]] = {}
+        self._code_names: set[str] = set()
+        self._test_imports: dict[str, dict[str, set[str]]] = {}
         self._added_bodies: dict[str, list[str]] | None = None
         self._base_bodies: dict[str, list[str]] = {}
         self._head_hits: dict[tuple[str, bool], set[str] | None] = {}
@@ -151,6 +154,8 @@ class SubjectRemoval:
             return None
         names, literals = self._uses(test)
         for name in sorted(names & self.removed_names() if names else ()):
+            if self._uses_own_import(test, name):
+                continue
             if not self._renamed(name) and self._gone(name, word=True):
                 return f"uses {name}, which the change removed"
         for literal in literals[:_MAX_LITERALS]:
@@ -260,10 +265,18 @@ class SubjectRemoval:
             after: set[str] = set()
             for item in self.changed:
                 if item.base_path:
-                    found = _definitions(item.base_path, self.base_text(item.base_path))
+                    source = self.base_text(item.base_path)
+                    found = _definitions(item.base_path, source)
                     before |= set(found)
+                    imported = _library_imports(item.base_path, source)
                     for name, body in found.items():
                         self._base_bodies.setdefault(name, body)
+                        if name in imported:
+                            self._library_origins.setdefault(name, set()).update(
+                                imported[name]
+                            )
+                        else:
+                            self._code_names.add(name)
                 if item.head_path:
                     after |= set(
                         _definitions(item.head_path, self.head_text(item.head_path))
@@ -274,6 +287,35 @@ class SubjectRemoval:
                 if len(name) >= 3 and not name.startswith("__")
             }
         return self._removed
+
+    def _uses_own_import(self, test: TestItem, name: str) -> bool:
+        """The changed code only imported ``name``, and the test imports it
+        from the same place and uses it by that name alone (``Decimal`` from
+        ``decimal``): the change dropped an import, not the code the test
+        runs."""
+        origins = self._library_origins.get(name)
+        if not origins or name in self._code_names or isinstance(test, JsTestItem):
+            return False
+        function = self._python_function(test)
+        if function is None:
+            return False
+        if test.path not in self._test_imports:
+            self._test_imports[test.path] = _python_imported_only(
+                self.base_text(test.path) or ""
+            )
+        own = {key: set(value) for key, value in self._test_imports[test.path].items()}
+        for node in ast.walk(function):
+            if isinstance(node, ast.Attribute) and node.attr == name:
+                return False
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and name in node.value.split(".")
+            ):
+                return False
+            for bound, origin in _import_origins(node):
+                own.setdefault(bound, set()).add(origin)
+        return bool(own.get(name)) and own[name] <= origins
 
     def _renamed(self, name: str) -> bool:
         """A definition with a similar body was added under another name."""
@@ -546,6 +588,54 @@ def _bound_names(node) -> list[str]:
     if isinstance(node, (ast.Import, ast.ImportFrom)):
         return [
             (alias.asname or alias.name).split(".")[0]
+            for alias in node.names
+            if alias.name != "*"
+        ]
+    return []
+
+
+def _library_imports(path: str | None, source: str | None) -> dict[str, set[str]]:
+    if not path or source is None or not path.endswith(".py"):
+        return {}
+    return _python_imported_only(source)
+
+
+def _python_imported_only(source: str) -> dict[str, set[str]]:
+    """Names a module or class body binds only by absolute imports, with
+    where each comes from (``Decimal`` -> ``decimal.Decimal``)."""
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return {}
+    origins: dict[str, set[str]] = {}
+    other: set[str] = set()
+    scopes = [tree] + [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+    for scope in scopes:
+        for node in _scope_statements(scope.body):
+            imported = _import_origins(node)
+            for name, origin in imported:
+                origins.setdefault(name, set()).add(origin)
+            if not imported:
+                other.update(_bound_names(node))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            other.add(node.name)
+    return {name: found for name, found in origins.items() if name not in other}
+
+
+def _import_origins(node) -> list[tuple[str, str]]:
+    if isinstance(node, ast.Import):
+        found = []
+        for alias in node.names:
+            if alias.asname:
+                found.append((alias.asname, alias.name))
+            else:
+                root = alias.name.split(".")[0]
+                found.append((root, root))
+        return found
+    if isinstance(node, ast.ImportFrom) and not node.level and node.module:
+        return [
+            (alias.asname or alias.name, f"{node.module}.{alias.name}")
             for alias in node.names
             if alias.name != "*"
         ]

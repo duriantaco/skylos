@@ -138,7 +138,7 @@ _CONTRADICTIONS = [
     (("lockfile_not_checked", 0), "reason", "unsupported_package_source"),
     (("lockfile_not_checked", 0), "source_type", "unknown"),
     (("lockfile_not_checked", 0), "source_type", []),
-    (("lockfile_not_checked", 0), "file", "poetry.lock"),
+    (("lockfile_not_checked", 0), "file", "requirements.txt"),
     (("query",), "status", "incomplete"),
     (("query",), "complete", False),
     (("query",), "requested_batches", True),

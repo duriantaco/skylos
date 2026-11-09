@@ -333,8 +333,8 @@ def test_real_pr_cannot_remove_base_coverage_requirement(project, monkeypatch, o
 
 
 def test_real_cli_required_sca_rejects_unsupported_only_project(project, monkeypatch, osv):
-    (project / "Cargo.toml").write_text(  # skylos: ignore[SKY-D324] fixed Cargo.toml under the fresh pytest project fixture
-        '[package]\nname = "test"\nversion = "0.1.0"\n', encoding="utf-8"
+    (project / "Package.resolved").write_text(  # skylos: ignore[SKY-D324] fixed Package.resolved under the fresh pytest project fixture
+        '{"pins": [], "version": 2}\n', encoding="utf-8"
     )
     config_dir = project / ".skylos"
     config_dir.mkdir()

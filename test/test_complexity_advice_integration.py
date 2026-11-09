@@ -95,6 +95,7 @@ def _render(kind, result, *, expand=False, limit=None, all_advice=False):
             limit=limit,
             copy_badge=False,
             all_advice=all_advice,
+            verbose=True,
         )
     return console.export_text()
 

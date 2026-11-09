@@ -77,8 +77,12 @@ _INVENTORY_LIMIT_REASONS = {
         "manifests and lockfiles exceed {total_mb:,} MB in total"
     ),
     "dependency_limit_exceeded": (
-        "a lockfile or the project exceeds the dependency inventory limit "
-        "({dependencies:,} dependencies or an oversized lockfile)"
+        "the project lists more than {dependencies:,} unique dependencies "
+        "(package, version and ecosystem)"
+    ),
+    "dependency_entry_limit_exceeded": (
+        "the dependency files list more than {dependency_entries:,} entries in "
+        "total, or a lockfile exceeds a parse limit"
     ),
 }
 
@@ -588,6 +592,7 @@ def _scanner_limits():
         "total_mb": getattr(scanner, "MAX_TOTAL_MANIFEST_BYTES", 50_000_000)
         // 1_000_000,
         "dependencies": getattr(scanner, "MAX_UNIQUE_DEPENDENCIES", 5_000),
+        "dependency_entries": getattr(scanner, "MAX_DEPENDENCY_ENTRIES", 50_000),
         "matches": getattr(scanner, "MAX_OSV_MATCHES", 10_000),
     }
 
@@ -607,6 +612,7 @@ def _sca_reason(coverage):
         )
         hints.append(PARSE_ERROR_HINT)
     _unresolved_lockfile_cause(coverage, causes, details)
+    _most_unchecked_cause(coverage, causes)
     _query_causes(coverage.get("query"), limits, causes, hints)
 
     text = f"Dependency vulnerability scan incomplete (status: {coverage['status']})"
@@ -640,6 +646,17 @@ def _limit_reason_causes(raw_reasons, phrases, limits, causes):
     for reason in raw_reasons:
         if reason in phrases:
             causes.append(phrases[reason].format(**limits))
+
+
+def _most_unchecked_cause(coverage, causes):
+    if coverage.get("most_packages_not_checked") is not True:
+        return
+    unchecked = _positive_int(coverage.get("non_registry_lockfile_dependency_count"))
+    causes.append(
+        f"{unchecked} packages come from a private registry, Git or a URL, more "
+        "than Skylos could check, so a pass would say little about these "
+        "dependencies. A private mirror of public packages does this"
+    )
 
 
 def _unresolved_lockfile_cause(coverage, causes, details):

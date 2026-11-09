@@ -7,6 +7,7 @@ import json
 import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 
 try:
     import tomllib
@@ -121,7 +122,6 @@ class DoneConfig:
     problems: tuple[str, ...] = ()
     type_checker: str = "auto"
     type_check_timeout_seconds: int = DEFAULT_TYPE_CHECK_TIMEOUT_SECONDS
-    type_escape_allow: tuple[tuple[str, str, str], ...] = ()
 
     def mode(self, check_id: str) -> str:
         return self.modes.get(check_id, DEFAULT_MODES.get(check_id, "off"))
@@ -151,10 +151,11 @@ class DoneConfig:
             settings["type_checker"] = self.type_checker
         if self.type_check_timeout_seconds != DEFAULT_TYPE_CHECK_TIMEOUT_SECONDS:
             settings["type_check_timeout_seconds"] = self.type_check_timeout_seconds
-        if self.type_escape_allow:
-            settings["type_escape_allow"] = [list(e) for e in self.type_escape_allow]
         canonical = json.dumps(settings, sort_keys=True, separators=(",", ":"))
         return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+CONFIG_FILE_NAMES = (".skylos.toml", "skylos.toml", "pyproject.toml")
 
 
 def base_config_text(comparison, *, sha: str | None = None) -> str | None:
@@ -163,11 +164,22 @@ def base_config_text(comparison, *, sha: str | None = None) -> str | None:
     The same file ``load_config`` reads at the root: ``.skylos.toml``, else
     ``skylos.toml``, else ``pyproject.toml``. Never the working tree.
     """
-    for name in (".skylos.toml", "skylos.toml"):
+    for name in CONFIG_FILE_NAMES[:-1]:
         text = comparison.base_text(name, sha=sha)
         if text is not None:
             return text
-    return comparison.base_text("pyproject.toml", sha=sha)
+    return comparison.base_text(CONFIG_FILE_NAMES[-1], sha=sha)
+
+
+def working_tree_config_file(root) -> Path:
+    """The file ``base_config_text`` reads once it is committed: the first of
+    ``.skylos.toml``, ``skylos.toml`` and ``pyproject.toml`` that exists in the
+    working tree, else ``pyproject.toml``."""
+    root = Path(root)
+    for name in CONFIG_FILE_NAMES[:-1]:
+        if (root / name).is_file():
+            return root / name
+    return root / CONFIG_FILE_NAMES[-1]
 
 
 def skylos_settings_table(data) -> dict | None:
@@ -268,7 +280,6 @@ def parse_done_config(pyproject_text: str | None) -> DoneConfig:
             "allow_preexisting_failures needs verify_preexisting; failures still block"
         )
         allow_preexisting = False
-    escape_allow = _type_escape_allow(table.get("type_escape_allow"), problems)
     return DoneConfig(
         test_command=test_command,
         junit_xml=junit_xml,
@@ -285,30 +296,7 @@ def parse_done_config(pyproject_text: str | None) -> DoneConfig:
         problems=tuple(problems),
         type_checker=type_checker,
         type_check_timeout_seconds=type_check_timeout,
-        type_escape_allow=escape_allow,
     )
-
-
-def _type_escape_allow(value, problems: list[str]) -> tuple[tuple[str, str, str], ...]:
-    if value is None:
-        return ()
-    if not isinstance(value, list):
-        problems.append("type_escape_allow must be a list of tables")
-        return ()
-    entries = []
-    for entry in value:
-        fields = ()
-        if isinstance(entry, dict):
-            fields = tuple(entry.get(key) for key in ("file", "line", "reason"))
-        if len(fields) != 3 or not all(
-            isinstance(f, str) and f.strip() for f in fields
-        ):
-            problems.append(
-                "type_escape_allow entries need file, line and reason; entry ignored"
-            )
-            continue
-        entries.append(tuple(f.strip() for f in fields))
-    return tuple(entries)
 
 
 def _test_command(value, problems: list[str]) -> tuple[str, ...] | None:

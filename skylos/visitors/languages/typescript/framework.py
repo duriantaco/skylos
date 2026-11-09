@@ -19,6 +19,7 @@ from .conventions import (
     is_react_email_template,
 )
 from .tool_configs import is_tool_config_file
+from .site_generators import site_generator_entry
 
 _STORYBOOK_FILE_RE = re.compile(r"\.(?:stories|story)\.(?:[cm]?[jt]sx?)$")
 _REACT_WRAPPERS: set[str] = {"memo", "forwardRef"}
@@ -67,6 +68,7 @@ def is_framework_loaded_file(file_path: str) -> bool:
         or is_nextjs_project_pages_file(file_path)
         or is_nextjs_project_entry_file(file_path)
         or convention_reason(file_path)
+        or site_generator_entry(file_path)
     )
 
 
@@ -200,6 +202,13 @@ class TSFrameworkVisitor:
         ):
             self._mark_default_export()
             self._mark_named_exports(self._exported_names())
+            return
+        site_entry = site_generator_entry(self._file_path)
+        if site_entry is not None:
+            read_exports = site_entry[1]
+            if "default" in read_exports:
+                self._mark_default_export()
+            self._mark_named_exports(set(read_exports) - {"default"})
             return
         expo_exports = expo_router_exports(self._file_path)
         if expo_exports:

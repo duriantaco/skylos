@@ -43,6 +43,48 @@ def test_stdin_in_web_application_remains_untrusted(tmp_path, source):
     assert any(row["rule_id"] == "SKY-D215" for row in _paths(result))
 
 
+@pytest.mark.parametrize("direct_first", [False, True])
+def test_direct_operator_read_does_not_reclassify_a_helper_source(
+    tmp_path, direct_first
+):
+    direct = "open(name).read()\n"
+    helper = "consume(name)\n"
+    result = _scan(
+        tmp_path,
+        "def consume(path):\n    return open(path).read()\n"
+        "name = input()\n" + (direct + helper if direct_first else helper + direct),
+    )
+    visible = _paths(result)
+    assert any(row.get("symbol") == "consume" for row in visible)
+    assert not any(row.get("symbol") == "<module>" for row in visible)
+    assert any(row.get("symbol") == "<module>" for row in _paths(result, "suppressed"))
+
+
+@pytest.mark.parametrize(
+    "replacement,source",
+    [
+        ("builtins.input = fetch", "input()"),
+        ("setattr(builtins, 'input', fetch)", "input()"),
+        ("sys.stdin.read = fetch", "sys.stdin.read()"),
+        ("setattr(sys.stdin, 'read', fetch)", "sys.stdin.read()"),
+    ],
+)
+def test_replaced_stdin_provider_is_not_operator_proof(tmp_path, replacement, source):
+    (tmp_path / "patcher.py").write_text(
+        "import builtins, sys\nfrom requests import get\n"
+        "def fetch():\n    return get('https://example.invalid/path').text\n"
+        + replacement
+        + "\n"
+    )
+    result = _scan(tmp_path, f"import sys, patcher\nopen({source}).read()\n")
+    assert any(row["rule_id"] == "SKY-D215" for row in _paths(result))
+
+
+def test_opaque_function_is_not_a_standalone_stdin_entrypoint(tmp_path):
+    result = _scan(tmp_path, "def read():\n    return open(input()).read()\n")
+    assert any(row["rule_id"] == "SKY-D215" for row in _paths(result))
+
+
 def test_remote_subprocess_stdin_is_not_operator_proof(tmp_path):
     result = _scan(
         tmp_path,

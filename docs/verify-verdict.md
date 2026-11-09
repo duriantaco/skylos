@@ -24,12 +24,12 @@ It does **not** prove:
   the results a CI job uploaded for the commit. Only when `repository_verified`
   is true (a GitHub OIDC upload bound to the repository id, for a project bound
   to that repository by its GitHub repository id) can it tie those results to
-  this repository's CI. For a project API key, GitLab OIDC, or any other
+  this repository's CI. For a project token, a GitLab CI identity, or any other
   upload, anyone holding that credential could have uploaded results that
   claim this commit. The command says so in one line, for example:
 
   ```
-  The results were uploaded with a project API key "ci-deploy", so Skylos can't prove they came from this commit's code.
+  The results were uploaded with a project token "ci-deploy", so Skylos can't prove they came from this commit's code.
   ```
 
 ## Recommended deploy gate
@@ -69,7 +69,7 @@ You can also download a verdict from the scan page in the dashboard
 | `--project PROJECT_ID` | the verdict is for this Skylos project id (exact). |
 | `--workspace ORG_ID` | the verdict belongs to this Skylos workspace id (exact). Verdicts signed before workspaces were recorded never match. |
 | `--require-repository-verified` | the upload was GitHub OIDC bound to the repository **and** the project is bound to that repository by its GitHub repository id (`repository_binding: verified`; missing counts as unverified). |
-| `--require-trusted-upload` | Skylos Cloud trusted the upload (`upload_identity.trust` is `verified_ci` or `trusted_api_key`): CI with GitHub or GitLab OIDC, or a CI key the project trusts. A `skylos login` key never is, because any coding agent on that machine can read it. Verdicts signed before Skylos Cloud recorded trust fail this. A GitLab merge request pipeline (`upload_identity.event` = `merge_request_event`) counts as trusted but runs the merge request's own CI configuration; `--require-repository-verified` accepts only GitHub uploads from the default branch or the pinned `pull_request_target` workflow. |
+| `--require-trusted-upload` | Skylos Cloud trusted the upload (`upload_identity.trust` is `verified_ci` or `trusted_api_key`): CI with GitHub or GitLab OIDC, or a CI project token. A login token from `skylos login` never is, because any coding agent on that machine can read it. Verdicts signed before Skylos Cloud recorded trust fail this. A GitLab merge request pipeline (`upload_identity.event` = `merge_request_event`) counts as trusted but runs the merge request's own CI configuration; `--require-repository-verified` accepts only GitHub uploads from the default branch or the pinned `pull_request_target` workflow. |
 | `--max-age DURATION` | the verdict was signed within this time (`90m`, `24h`, `7d`, `2w`; units `s m h d w`). A signing time more than five minutes in the future is rejected. |
 | `--require-passed` | the result is PASSED at level `SKYLOS_POLICY_PASSED`. |
 | `--allow-override` | with `--require-passed`, also accept `SKYLOS_GATE_OVERRIDDEN`. |

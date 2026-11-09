@@ -1,4 +1,5 @@
 import copy
+import datetime
 import fnmatch
 import os
 import re
@@ -6,6 +7,7 @@ from pathlib import Path
 
 CONFIG_FILE_ENV_VAR = "SKYLOS_CONFIG_FILE"
 POLICY_BASE_ENV_VAR = "SKYLOS_POLICY_BASE"
+SYNCED_POLICY_ENV_VAR = "SKYLOS_SYNCED_POLICY_FILE"
 # Read in this order within one directory; only the first one with Skylos
 # settings counts there (like Ruff's .ruff.toml > ruff.toml > pyproject.toml).
 CONFIG_FILE_NAMES = (".skylos.toml", "skylos.toml", "pyproject.toml")
@@ -20,15 +22,36 @@ class ConfigError(ValueError):
 class _LoadedConfig(dict):
     """Config data with loader-owned policy provenance, outside editable keys."""
 
-    __slots__ = ("_dependency_baseline_locked",)
+    __slots__ = (
+        "_dependency_baseline_locked",
+        "_synced_gate",
+        "_unused_synced_gate",
+    )
 
-    def __init__(self, config: dict, *, dependency_baseline_locked: bool):
+    def __init__(
+        self,
+        config: dict,
+        *,
+        dependency_baseline_locked: bool,
+        synced_gate: dict | None = None,
+        unused_synced_gate: bool = False,
+    ):
         super().__init__(config)
         self._dependency_baseline_locked = dependency_baseline_locked
+        self._synced_gate = copy.deepcopy(synced_gate)
+        self._unused_synced_gate = unused_synced_gate
 
     @property
     def dependency_baseline_locked(self) -> bool:
         return self._dependency_baseline_locked
+
+    @property
+    def synced_gate(self) -> dict | None:
+        return copy.deepcopy(self._synced_gate)
+
+    @property
+    def unused_synced_gate(self) -> bool:
+        return self._unused_synced_gate
 
 
 def dependency_baseline_policy_locked(config: dict) -> bool:
@@ -36,6 +59,23 @@ def dependency_baseline_policy_locked(config: dict) -> bool:
     return (
         isinstance(config, _LoadedConfig) and config.dependency_baseline_locked is True
     )
+
+
+def synced_gate_policy(config: dict) -> dict | None:
+    """The gate section of the synced Skylos Cloud policy the loader applied.
+
+    It comes from ``.skylos/config.yaml`` (or ``SKYLOS_SYNCED_POLICY_FILE``),
+    never from a repository TOML file, so a ``[tool.skylos.gate]`` table
+    cannot pose as Cloud policy.
+    """
+    if not isinstance(config, _LoadedConfig):
+        return None
+    return config.synced_gate
+
+
+def synced_gate_left_out_by_policy_base(config: dict) -> bool:
+    """A working-tree synced gate that a base-branch policy check did not read."""
+    return isinstance(config, _LoadedConfig) and config.unused_synced_gate is True
 
 
 DEFAULTS = {
@@ -106,6 +146,7 @@ DEFAULTS = {
         "extra_credential_suffixes": [],
         "extra_secret_names": [],
         "extra_security_var_keywords": [],
+        "extra_insecure_random_funcs": [],
         "extra_well_known_env_vars": [],
         "extra_sensitive_file_keywords": [],
         "extra_placeholder_values": [],
@@ -188,13 +229,20 @@ def load_config(start_path, config_file=None) -> dict:
         current = current.parent
 
     explicit_config = resolve_config_file_path(config_file)
+    operator_synced_cfg = load_operator_synced_policy()
     policy_base = os.environ.get(POLICY_BASE_ENV_VAR)
     if policy_base:
         from skylos.cicd.policy import load_base_policy
 
         user_layers, synced_cfg = load_base_policy(current, policy_base)
+        unused_synced_gate = False
+        if operator_synced_cfg is not None:
+            synced_cfg = operator_synced_cfg
+        elif not isinstance(synced_cfg.get("gate"), dict):
+            synced_cfg, unused_synced_gate = _pulled_synced_policy(current, synced_cfg)
         # An explicitly supplied operator file remains supported. Repository
-        # discovery and synced policy come exclusively from the selected base.
+        # discovery comes exclusively from the selected base; synced policy
+        # from the base, or from an untracked file that sync pull wrote.
         if explicit_config is not None:
             user_layers = [_load_toml_user_config(explicit_config, explicit=True)]
         final_cfg = _merge_user_config(copy.deepcopy(DEFAULTS), synced_cfg)
@@ -204,7 +252,9 @@ def load_config(start_path, config_file=None) -> dict:
             user_cfg.pop(INHERITANCE_ROOT_SETTING, None)
             final_cfg = _merge_user_config(final_cfg, user_cfg)
         return _finalize_loaded_config(
-            _restore_synced_policy_precedence(final_cfg, synced_cfg), synced_cfg
+            _restore_synced_policy_precedence(final_cfg, synced_cfg),
+            synced_cfg,
+            unused_synced_gate=unused_synced_gate,
         )
     layers, sync_config = _find_config_layers(current)
     if explicit_config is not None:
@@ -212,6 +262,8 @@ def load_config(start_path, config_file=None) -> dict:
 
     final_cfg = copy.deepcopy(DEFAULTS)
     synced_cfg = _load_synced_config(sync_config) if sync_config else {}
+    if operator_synced_cfg is not None:
+        synced_cfg = operator_synced_cfg
 
     if synced_cfg:
         final_cfg = _merge_user_config(final_cfg, synced_cfg)
@@ -238,14 +290,47 @@ def load_config(start_path, config_file=None) -> dict:
     )
 
 
-def _finalize_loaded_config(final_cfg: dict, synced_cfg: dict) -> dict:
+def _finalize_loaded_config(
+    final_cfg: dict, synced_cfg: dict, *, unused_synced_gate: bool = False
+) -> dict:
     # Derive provenance only from the separately loaded synced configuration,
     # after every repository merge. A TOML key cannot impersonate this attribute.
     synced_gate = synced_cfg.get("gate")
     policy_locked = (
         isinstance(synced_gate, dict) and bool(synced_gate)
     ) or _has_synced_security_policy(synced_cfg)
-    return _LoadedConfig(final_cfg, dependency_baseline_locked=policy_locked)
+    if not isinstance(synced_gate, dict):
+        synced_gate = None
+    return _LoadedConfig(
+        final_cfg,
+        dependency_baseline_locked=policy_locked,
+        synced_gate=synced_gate,
+        unused_synced_gate=unused_synced_gate,
+    )
+
+
+def _pulled_synced_policy(start_dir: Path, base_synced_cfg: dict) -> tuple[dict, bool]:
+    """Synced policy for a base-branch check: ``(policy, gate left out)``.
+
+    The base commit has no synced gate. A ``.skylos/config.yaml`` that
+    ``skylos sync pull`` left untracked is Skylos Cloud policy, not branch
+    content, so it applies. One that a commit or the index carries is branch
+    content and stays out. In CI an untracked file may come from a pull
+    request's own build steps, so CI reads Cloud policy only from the base or
+    from ``SKYLOS_SYNCED_POLICY_FILE``.
+    """
+    from skylos.cicd.policy import is_untracked_worktree_file
+    from skylos.core.report_context import is_ci
+
+    _layers, sync_config = _find_config_layers(start_dir)
+    if not sync_config:
+        return base_synced_cfg, False
+    pulled = _load_synced_config(sync_config)
+    if not isinstance(pulled.get("gate"), dict):
+        return base_synced_cfg, False
+    if not is_ci() and is_untracked_worktree_file(start_dir, sync_config):
+        return pulled, False
+    return base_synced_cfg, True
 
 
 def resolve_config_file_path(config_file=None) -> Path | None:
@@ -515,6 +600,34 @@ def _load_synced_config(sync_config: Path) -> dict:
     return _normalize_synced_config(raw)
 
 
+def load_operator_synced_policy() -> dict | None:
+    """The synced policy file named by ``SKYLOS_SYNCED_POLICY_FILE``, or None.
+
+    CI sets it to Skylos Cloud policy fetched outside the checkout. It then
+    replaces any ``.skylos/config.yaml`` in the checkout or the policy base,
+    and a file that cannot be read stops the scan instead of dropping policy.
+    """
+    raw_path = str(os.environ.get(SYNCED_POLICY_ENV_VAR) or "").strip()
+    if not raw_path:
+        return None
+    path = Path(raw_path)
+    if not path.is_absolute() or not _is_safe_config_file(path, "config.yaml"):
+        raise ConfigError(
+            f"{SYNCED_POLICY_ENV_VAR} must be the absolute path of a config.yaml file"
+        )
+    try:
+        import yaml
+
+        if path.stat().st_size > 2 * 1024 * 1024:
+            raise ValueError("synced policy is too large")
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ConfigError(f"Could not read {SYNCED_POLICY_ENV_VAR}") from exc
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{SYNCED_POLICY_ENV_VAR} must hold a mapping")
+    return _normalize_synced_config(raw)
+
+
 def _normalize_synced_config(raw: dict) -> dict:
     normalized = dict(raw)
     alias_map = {
@@ -694,8 +807,14 @@ def _safe_temporary_whitelist(value):
         expires = config.get("expires")
         if isinstance(reason, str):
             entry["reason"] = reason
-        if isinstance(expires, str):
+        if isinstance(expires, datetime.datetime):
+            entry["expires"] = expires.date().isoformat()
+        elif isinstance(expires, datetime.date):
+            entry["expires"] = expires.isoformat()
+        elif isinstance(expires, str):
             entry["expires"] = expires
+        elif expires is not None:
+            entry["expires"] = str(expires)
         safe[pattern] = entry
     return safe
 
@@ -908,21 +1027,33 @@ def is_path_excluded(filepath, cfg) -> bool:
     return False
 
 
-def is_whitelisted(name, filepath, cfg) -> tuple[bool, str | None, int]:
-    import datetime
+def temporary_whitelist_state(config, today=None) -> str:
+    """``active``, ``expired``, or ``invalid`` (an expiry that is not a date).
 
+    An entry without ``expires`` stays active. An unreadable expiry hides
+    nothing, so a mistyped date cannot make a temporary entry permanent.
+    """
+    if "expires" not in config:
+        return "active"
+    try:
+        exp_date = datetime.date.fromisoformat(config.get("expires"))
+    except (TypeError, ValueError):
+        return "invalid"
+    if today is None:
+        today = datetime.date.today()
+    if today > exp_date:
+        return "expired"
+    return "active"
+
+
+def is_whitelisted(name, filepath, cfg) -> tuple[bool, str | None, int]:
     for pattern, config in cfg.get("whitelist_temporary", {}).items():
         if fnmatch.fnmatch(name, pattern):
             expires = config.get("expires")
             reason = config.get("reason", "temporary whitelist")
 
-            if expires:
-                try:
-                    exp_date = datetime.date.fromisoformat(expires)
-                    if datetime.date.today() > exp_date:
-                        continue
-                except ValueError:
-                    pass
+            if temporary_whitelist_state(config) != "active":
+                continue
 
             return True, f"{reason} (expires: {expires})", 0
 
@@ -953,24 +1084,48 @@ def is_whitelisted(name, filepath, cfg) -> tuple[bool, str | None, int]:
 
 
 def get_expired_whitelists(cfg) -> list[tuple[str, str, str]]:
-    import datetime
+    return _temporary_whitelists_in_state(cfg, "expired")
 
-    expired = []
+
+def get_invalid_whitelist_expiries(cfg) -> list[tuple[str, str, str]]:
+    return _temporary_whitelists_in_state(cfg, "invalid")
+
+
+def _temporary_whitelists_in_state(cfg, state) -> list[tuple[str, str, str]]:
     today = datetime.date.today()
+    return [
+        (pattern, config.get("reason", ""), config.get("expires"))
+        for pattern, config in cfg.get("whitelist_temporary", {}).items()
+        if temporary_whitelist_state(config, today) == state
+    ]
 
-    for pattern, config in cfg.get("whitelist_temporary", {}).items():
-        expires = config.get("expires")
-        reason = config.get("reason", "")
 
-        if expires:
-            try:
-                exp_date = datetime.date.fromisoformat(expires)
-                if today > exp_date:
-                    expired.append((pattern, reason, expires))
-            except ValueError:
-                pass
+def whitelist_warnings(cfg) -> list[str]:
+    """Plain-text warnings for temporary whitelist entries that hide nothing."""
+    warnings = []
+    for pattern, _reason, expires in get_expired_whitelists(cfg):
+        warnings.append(
+            f"Temporary whitelist entry '{printable_text(pattern)}' expired on "
+            f"{printable_text(expires)}; its findings are reported again. Renew or "
+            "remove it under [tool.skylos.whitelist.temporary]."
+        )
+    for pattern, _reason, expires in get_invalid_whitelist_expiries(cfg):
+        warnings.append(
+            f"Temporary whitelist entry '{printable_text(pattern)}' has an unreadable "
+            f"expires value '{printable_text(expires)}', so it hides nothing. Use a "
+            'date such as expires = "2026-12-31".'
+        )
+    return warnings
 
-    return expired
+
+def printable_text(value) -> str:
+    parts = []
+    for char in str(value):
+        if char.isprintable():
+            parts.append(char)
+        else:
+            parts.append(f"\\x{ord(char):02x}")
+    return "".join(parts)
 
 
 _NOQA_RE = re.compile(r"#\s*noqa\b(?::\s*([^#]+))?", re.IGNORECASE)

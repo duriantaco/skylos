@@ -451,6 +451,32 @@ def test_trojan_source_bidi_control_flags(tmp_path):
     assert "SKY-D344" in _rule_ids(out)
 
 
+def test_scan_reports_python_bidi_controls_once_as_trojan_source(tmp_path):
+    import json
+
+    from skylos.analyzer import analyze
+
+    _write(tmp_path, "access.py", 'ACCESS = "admin"  # \u202e } \u2066 if x:\nprint(ACCESS)\n')
+    _write(tmp_path, "isolate.py", 'LABEL = "user\u2067name"\nprint(LABEL)\n')
+    _write(tmp_path, "zero_width.py", 'NOTE = "pass\u200bword"\nprint(NOTE)\n')
+    _write(tmp_path, "escaped.py", 'MARK = "\\u202e"\nprint(MARK)\n')
+    _write(tmp_path, "notes.md", "Read me \u202e carefully.\n")
+
+    result = json.loads(
+        analyze(str(tmp_path), conf=0, enable_danger=True, grep_verify=False)
+    )
+    found = {
+        (Path(f["file"]).name, f["rule_id"], f["line"]) for f in result["danger"]
+    }
+
+    assert ("access.py", "SKY-D344", 1) in found
+    assert ("isolate.py", "SKY-D344", 1) in found
+    assert ("access.py", "SKY-D260", 1) not in found
+    assert ("zero_width.py", "SKY-D260", 1) in found
+    assert ("notes.md", "SKY-D260", 1) in found
+    assert not any(name == "escaped.py" for name, _rule, _line in found)
+
+
 def test_flask_debug_mode_flags(tmp_path):
     out = _scan_one(
         tmp_path,
@@ -721,7 +747,26 @@ def unpack(archive, destination, member):
     assert archive_findings[0]["line"] == 7
 
 
-def test_archive_extract_recognizes_short_handle_from_zipfile(tmp_path):
+def test_archive_extract_recognizes_short_handle_from_tarfile(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_tar_extract.py",
+        """
+import tarfile
+
+def unpack(upload, destination, member):
+    with tarfile.open(upload) as tf:
+        tf.extract(member, path=destination)
+        tf.extract(member)
+""",
+    )
+    archive_findings = [
+        finding for finding in out if finding.get("rule_id") == "SKY-D326"
+    ]
+    assert [finding["line"] for finding in archive_findings] == [6, 7]
+
+
+def test_zipfile_short_handle_is_not_unsafe_extraction(tmp_path):
     out = _scan_one(
         tmp_path,
         "a_zip_extract.py",
@@ -734,10 +779,7 @@ def unpack(upload, destination, member):
         zf.extract(member)
 """,
     )
-    archive_findings = [
-        finding for finding in out if finding.get("rule_id") == "SKY-D326"
-    ]
-    assert [finding["line"] for finding in archive_findings] == [6, 7]
+    assert "SKY-D326" not in _rule_ids(out)
 
 
 def test_archive_extract_in_helper_keeps_one_arg_call(tmp_path):
@@ -915,6 +957,110 @@ def test_yaml_positional_safe_loader_does_not_trigger(tmp_path):
     code = "import yaml\nyaml.load('a: 1', yaml.SafeLoader)\n"
     out = _scan_one(tmp_path, "b_yaml_safe_positional.py", code)
     assert "SKY-D206" not in _rule_ids(out)
+
+
+_STRICT_LOADER = (
+    "import yaml\n"
+    "class StrictLoader(yaml.SafeLoader):\n"
+    "    def construct_mapping(self, node, deep=False):\n"
+    "        result = {}\n"
+    "        for key_node, value_node in node.value:\n"
+    "            key = self.construct_object(key_node, deep=deep)\n"
+    "            if key in result:\n"
+    "                raise ValueError(key)\n"
+    "            result[key] = self.construct_object(value_node, deep=deep)\n"
+    "        return result\n"
+)
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        _STRICT_LOADER + "yaml.load('a: 1', Loader=StrictLoader)\n",
+        _STRICT_LOADER + "yaml.load('a: 1', StrictLoader)\n",
+        _STRICT_LOADER
+        + "class Stricter(StrictLoader):\n    pass\n"
+        + "yaml.load('a: 1', Loader=Stricter)\n",
+        "from yaml import CSafeLoader as Fast\n"
+        "import yaml\n"
+        "class L(Fast):\n    pass\n"
+        "yaml.load('a: 1', Loader=L)\n",
+    ],
+)
+def test_yaml_safe_loader_subclass_does_not_trigger(tmp_path, code):
+    out = _scan_one(tmp_path, "yaml_safe_subclass.py", code)
+    assert "SKY-D206" not in _rule_ids(out)
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        _STRICT_LOADER
+        + "StrictLoader.add_constructor('!x', lambda l, n: None)\n"
+        + "yaml.load('a: 1', Loader=StrictLoader)\n",
+        _STRICT_LOADER
+        + "yaml.add_multi_constructor('!', lambda l, s, n: None, Loader=StrictLoader)\n"
+        + "yaml.load('a: 1', Loader=StrictLoader)\n",
+        "import yaml\n"
+        "class L(yaml.SafeLoader):\n"
+        "    yaml_constructors = dict(yaml.UnsafeLoader.yaml_constructors)\n"
+        "yaml.load('a: 1', Loader=L)\n",
+        "import yaml\n"
+        "class L(yaml.SafeLoader):\n"
+        "    def construct_object(self, node, deep=False):\n"
+        "        return yaml.constructor.UnsafeConstructor.construct_object(self, node, deep)\n"
+        "yaml.load('a: 1', Loader=L)\n",
+        "import yaml\n"
+        "class L(yaml.SafeLoader, yaml.UnsafeLoader):\n    pass\n"
+        "yaml.load('a: 1', Loader=L)\n",
+        "import yaml\n"
+        "class L(yaml.FullLoader):\n    pass\n"
+        "yaml.load('a: 1', Loader=L)\n",
+        _STRICT_LOADER
+        + "StrictLoader = yaml.UnsafeLoader\n"
+        + "yaml.load('a: 1', Loader=StrictLoader)\n",
+        _STRICT_LOADER
+        + "def read(StrictLoader):\n"
+        + "    return yaml.load('a: 1', Loader=StrictLoader)\n",
+        _STRICT_LOADER
+        + "register(StrictLoader)\n"
+        + "yaml.load('a: 1', Loader=StrictLoader)\n",
+        _STRICT_LOADER
+        + "setattr(StrictLoader, name, value)\n"
+        + "yaml.load('a: 1', Loader=StrictLoader)\n",
+        _STRICT_LOADER
+        + "yaml.SafeLoader.yaml_constructors = {}\n"
+        + "yaml.load('a: 1', Loader=StrictLoader)\n",
+        _STRICT_LOADER
+        + "yaml.SafeLoader.yaml_constructors['!x'] = object\n"
+        + "yaml.load('a: 1', Loader=StrictLoader)\n",
+        "import yaml\n"
+        "def build():\n"
+        "    class L(yaml.SafeLoader):\n        pass\n"
+        "    return yaml.load('a: 1', Loader=L)\n",
+        "import yaml\n"
+        "from loaders import StrictLoader\n"
+        "yaml.load('a: 1', Loader=StrictLoader)\n",
+        "import yaml\n"
+        "class SafeLoader(yaml.UnsafeLoader):\n    pass\n"
+        "class L(SafeLoader):\n    pass\n"
+        "yaml.load('a: 1', Loader=L)\n",
+        "import yaml\n"
+        "class SafeLoader(yaml.UnsafeLoader):\n    pass\n"
+        "yaml.load('a: 1', Loader=SafeLoader)\n",
+        "import yaml\n"
+        "class CSafeLoader(yaml.SafeLoader):\n    pass\n"
+        "CSafeLoader.add_constructor('!x', object)\n"
+        "yaml.load('a: 1', CSafeLoader)\n",
+        "import yaml\n"
+        "@decorate\n"
+        "class L(yaml.SafeLoader):\n    pass\n"
+        "yaml.load('a: 1', Loader=L)\n",
+    ],
+)
+def test_yaml_loader_subclass_without_safe_proof_still_reports(tmp_path, code):
+    out = _scan_one(tmp_path, "yaml_unsafe_subclass.py", code)
+    assert "SKY-D206" in _rule_ids(out)
 
 
 def test_subprocess_without_shell_true_is_ok(tmp_path):

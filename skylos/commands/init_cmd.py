@@ -18,7 +18,6 @@ god_file_max_lines = 500
 god_file_max_definitions = 40
 god_file_max_top_level_definitions = 25
 duplicate_strings = 3
-model = "gpt-4.1"
 exclude = []
 ignore = []
 
@@ -42,12 +41,6 @@ entrypoints = []
 # name = ["create", "pre_hook", "post_hook"]
 # parent = { name = "Main", base_classes = ["Application"] }
 # reason = "framework lifecycle method"
-
-[tool.skylos.templates]
-# security = ".skylos/templates/security.md"
-# quality = ".skylos/templates/quality.md"
-# security_audit = ".skylos/templates/security_audit.md"
-# review = ".skylos/templates/review.md"
 
 [tool.skylos.vibe]
 extra_phantom_names = []
@@ -80,10 +73,10 @@ names = []
 [tool.skylos.whitelist.documented]
 
 [tool.skylos.whitelist.temporary]
+# "legacy_*" = { reason = "migration", expires = "2026-12-31" }
 
 [tool.skylos.gate]
-fail_on_critical = true
-max_critical = 0 
+# Any critical security issue and any secret always fail the gate.
 max_high = 5
 max_security = 0
 max_reliability = 0
