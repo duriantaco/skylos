@@ -459,6 +459,24 @@ In Cursor, findings arrive at `stop` rather than after each edit. The hooks
 are not a sandbox: they check edits, file reads and package installs, not
 every command. See [what they don't do](./docs/agent-hooks.md#what-it-doesnt-do).
 
+## Cleanup workflow
+
+Use `skylos cleanup` to prioritize existing quality, AI-code and dead-code findings,
+retain local task history, and preview a supported patch before applying it:
+
+```bash
+skylos cleanup . --next
+skylos cleanup . --task TASK_ID
+skylos cleanup . --task TASK_ID --apply --test-cmd "pytest -q test/test_orders.py"
+```
+
+Source edits require `--apply`; tests run only with `--test-cmd`. A change stays
+`applied_unverified` when tests were skipped. `--context` adds bounded source
+context; optional `--review` sends it to your configured model as advisory review.
+Cloud's Cleanup tasks panel groups saved findings and connects existing issue
+ownership, work status and outcome notes. See [Cleanup](./docs/cleanup.md) for
+supported edits, receipts, exclusions and limits.
+
 ## Common Workflows
 
 | Goal | Command | What You Get | More Detail |
