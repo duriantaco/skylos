@@ -43,6 +43,7 @@ _RUST_EXTS = {".rs"}
 _RUBY_EXTS = {".rb"}
 _SWIFT_EXTS = {".swift"}
 _DART_EXTS = {".dart"}
+_CSHARP_EXTS = {".cs"}
 _KOTLIN_EXTS = {".kt", ".kts"}
 
 _ALL_SOURCE_GLOBS = [
@@ -96,6 +97,7 @@ _LANG_GLOBS: dict[str, list[str]] = {
     "ruby": ["*.rb"],
     "swift": ["*.swift"],
     "dart": ["*.dart"],
+    "csharp": ["*.cs"],
     "kotlin": ["*.kt", "*.kts"],
 }
 
@@ -143,7 +145,7 @@ _DEFAULT_GREP_GLOBS = (
 )
 _GREP_EVIDENCE_SUFFIXES = frozenset(
     {glob[1:].lower() for glob in _ALL_SOURCE_GLOBS if glob.startswith("*.")}
-    | {".go", ".java", ".php", ".rs", ".dart", ".kt", ".kts"}
+    | {".go", ".java", ".php", ".rs", ".dart", ".cs", ".kt", ".kts"}
 )
 # Python's classifier must preserve the same leftmost-first semantics as each
 # original ripgrep pattern. Keep this translation deliberately narrow: an
@@ -326,6 +328,8 @@ def detect_language(file_path: str) -> str:
         return "swift"
     if ext in _DART_EXTS:
         return "dart"
+    if ext in _CSHARP_EXTS:
+        return "csharp"
     if ext in _KOTLIN_EXTS:
         return "kotlin"
     return "python"

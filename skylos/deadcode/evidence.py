@@ -359,7 +359,9 @@ def build_dead_code_evidence(
     entrypoints = set(pyproject_entrypoint_qnames or ())
 
     for definition in definitions.values():
-        if getattr(definition, "type", None) not in DEAD_CODE_SYMBOL_TYPES:
+        kind = getattr(definition, "type", None)
+        dart_import = kind == "import" and str(definition.filename).endswith(".dart")
+        if kind not in DEAD_CODE_SYMBOL_TYPES and not dart_import:
             continue
 
         symbol = SymbolKey.from_definition(definition)
