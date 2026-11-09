@@ -8,6 +8,7 @@
 * **cicd:** keep changed-line counts and risk evidence scoped to the PR diff in summary-only reviews.
 * **sbom:** keep reachable transitive packages out of SPDX root direct-dependency relationships.
 * **sbom:** refuse output paths named after supported Bun, Cargo, Composer, RubyGems, Pub, Gradle, NuGet, Maven, and setuptools dependency inputs.
+* **scale:** keep parallel danger-rule worker results picklable instead of retrying them in the parent process.
 
 ## [5.4.0](https://github.com/duriantaco/skylos/compare/v5.3.0...v5.4.0) (2026-11-02)
 

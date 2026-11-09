@@ -497,11 +497,31 @@ class _RandomBindings:
         self.module = module
         self.filename = filename
         self.project_root = project_root
+        self._ready = True
         self.flows = {}
         self.providers = {}
         self.remaining = 200000
         self.mutated_outer = set()
         self._index_outer_mutations()
+
+    def __getstate__(self):
+        # The flow cache holds the local outer() closure and is keyed by id(),
+        # so rebuild it from the module after the worker result is unpickled.
+        return {
+            "module": self.module,
+            "filename": self.filename,
+            "project_root": self.project_root,
+        }
+
+    def __setstate__(self, state):
+        self.module = state["module"]
+        self.filename = state["filename"]
+        self.project_root = state["project_root"]
+        self._ready = False
+
+    def _ensure_ready(self):
+        if not self._ready:
+            self.__init__(self.module, self.filename, self.project_root)
 
     def _index_outer_mutations(self):
         for scope in ast.walk(self.module):
@@ -535,6 +555,7 @@ class _RandomBindings:
                 parent = getattr(parent, "parent", None)
 
     def stable(self, qualified):
+        self._ensure_ready()
         if qualified not in self.providers:
             self.providers[qualified] = provider_binding_is_stable(
                 qualified, self.module, self.filename, self.project_root
@@ -542,6 +563,7 @@ class _RandomBindings:
         return self.providers[qualified]
 
     def _scope(self, node):
+        self._ensure_ready()
         while node is not None:
             if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
                 return node
@@ -549,6 +571,7 @@ class _RandomBindings:
         return self.module
 
     def _flow(self, scope):
+        self._ensure_ready()
         if id(scope) in self.flows:
             return self.flows[id(scope)]
         self.flows[id(scope)] = None
@@ -598,6 +621,7 @@ class _RandomBindings:
         return result
 
     def call_name(self, node, legacy):
+        self._ensure_ready()
         scope = self._scope(node)
         flow = self._flow(scope)
         if flow is None:
