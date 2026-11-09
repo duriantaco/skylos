@@ -2,6 +2,7 @@ from __future__ import annotations
 import ast
 import re
 import sys
+from string import Formatter
 from skylos.rules.danger.taint import TaintVisitor, PATH_SANITIZERS
 from skylos.rules.danger.module_namespace import (
     attribute_write_names,
@@ -9,6 +10,8 @@ from skylos.rules.danger.module_namespace import (
     module_name_for,
     module_rebinding,
 )
+from skylos.rules.danger.builtin_bindings import builtin_references
+from skylos.rules.danger.import_proof import provider_binding_is_stable
 from skylos.rules.danger.danger_fs.closed_world import HELPER_PARAMETER_SOURCE
 from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
 from skylos.security.receiver_resolution import ReceiverResolver
@@ -634,14 +637,18 @@ class _PathFlowChecker(TaintVisitor):
         self._class_methods = ()
         self._non_archive_imports_uncertain = True
         self._import_parents = {}
+        self._builtin_string_refs = frozenset()
+        self._path_parents = {}
 
     def visit_Module(self, node):
         self.untrusted_sources = UntrustedSourceIndex(node, follow_local_calls=True)
+        self._builtin_string_refs = builtin_references(node, {"str"})
         self._import_parents = {
             id(child): parent
             for parent in ast.walk(node)
             for child in ast.iter_child_nodes(parent)
         }
+        self._path_parents = self._import_parents
         self._non_archive_imports_uncertain = module_rebinding(
             node, module_name_for(self.file_path)
         )[0] or has_mock_api_patching(node)
@@ -1002,6 +1009,14 @@ class _PathFlowChecker(TaintVisitor):
     def is_tainted(self, node):
         if _is_path_name_projection(node) or is_traversal_safe_value(node):
             return False
+        # The common taint visitor does not seed stdin readers. Keep them as
+        # candidates here so repository provenance can distinguish a local
+        # program's operator input from a web/tool application's input stream.
+        sources = self.untrusted_sources.for_function(
+            self._current_function()
+        ).sources_in(node)
+        if any("sys.stdin" in source for source in sources):
+            return True
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
             return self.is_tainted(node.left) or self.is_tainted(node.right)
         if isinstance(node, ast.Subscript):
@@ -1510,6 +1525,8 @@ class _PathFlowChecker(TaintVisitor):
             return
         if self._path_is_contained(path_expr):
             return
+        if self._portable_filename(path_expr):
+            return
         sink = "filesystem path operation"
         evidence = self._untrusted_path_evidence(path_expr, sink, traversal=True)
         if evidence is None:
@@ -1521,6 +1538,150 @@ class _PathFlowChecker(TaintVisitor):
             sink,
             evidence,
         )
+
+    def _portable_filename(self, expr):
+        """A final filename with actual string-method separator removal.
+
+        This deliberately proves only the sink's operand. Treating a cleaned
+        component as globally safe would hide a later URL decode. Dot segments
+        require a fixed affix, and portable paths must remove drive colons and
+        both separators. Symlink rules still examine the original source.
+        """
+        original = expr
+        if (
+            isinstance(expr, ast.Call)
+            and isinstance(expr.func, ast.Attribute)
+            and expr.func.attr == "format"
+            and isinstance(expr.func.value, ast.Constant)
+            and isinstance(expr.func.value.value, str)
+            and not any(isinstance(arg, ast.Starred) for arg in expr.args)
+            and all(kw.arg is not None for kw in expr.keywords)
+        ):
+            named = {kw.arg: kw.value for kw in expr.keywords}
+            parts = []
+            position = 0
+            try:
+                for literal, field, spec, conversion in Formatter().parse(
+                    expr.func.value.value
+                ):
+                    parts.append(ast.Constant(value=literal))
+                    if field is None:
+                        continue
+                    if spec or conversion:
+                        return False
+                    if field == "":
+                        value = expr.args[position]
+                        position += 1
+                    elif field.isdecimal():
+                        value = expr.args[int(field)]
+                    elif field.isidentifier():
+                        value = named[field]
+                    else:
+                        return False
+                    parts.append(ast.FormattedValue(value=value, conversion=-1))
+            except (ValueError, IndexError, KeyError):
+                return False
+            expr = ast.JoinedStr(values=parts)
+        if not isinstance(expr, ast.JoinedStr):
+            return False
+        separators = (
+            {"/"} if self._posix_filename_branch(original) else {"/", "\\", ":"}
+        )
+        literals = [
+            part.value for part in expr.values if isinstance(part, ast.Constant)
+        ]
+        if any(
+            not isinstance(text, str) or any(char in text for char in separators)
+            for text in literals
+        ):
+            return False
+        if not any(char != "." for text in literals for char in text):
+            return False
+
+        def removed(value, depth=0):
+            if depth > 8 or not isinstance(value, ast.Call) or value.keywords:
+                return None
+            method = value.func
+            if not isinstance(method, ast.Attribute) or method.attr != "replace":
+                return None
+            if (
+                isinstance(method.value, ast.Name)
+                and method.value.id == "str"
+                and id(method.value) in self._builtin_string_refs
+            ):
+                # Unbound str.replace uses the real descriptor even for a str
+                # subclass that overrides its own .replace method.
+                if len(value.args) != 3:
+                    return None
+                prior = removed(value.args[0], depth + 1) or set()
+                old, new = value.args[1:]
+            else:
+                if len(value.args) != 2:
+                    return None
+                prior = removed(method.value, depth + 1)
+                if prior is None:
+                    return None
+                old, new = value.args
+            if not (
+                isinstance(old, ast.Constant)
+                and old.value in {"/", "\\", ":"}
+                and isinstance(new, ast.Constant)
+                and isinstance(new.value, str)
+                and not any(char in new.value for char in "/\\:")
+            ):
+                return None
+            return prior | {old.value}
+
+        formatted = [
+            part for part in expr.values if isinstance(part, ast.FormattedValue)
+        ]
+        return bool(formatted) and all(
+            part.conversion == -1
+            and part.format_spec is None
+            and (removed(part.value) or set()) >= separators
+            for part in formatted
+        ) and provider_binding_is_stable(
+            "builtins.str.replace",
+            self.untrusted_sources.module,
+            self.file_path,
+            getattr(self, "project_root", None),
+        )
+
+    def _posix_filename_branch(self, expr):
+        """Only an actual stdlib platform guard establishes POSIX semantics."""
+        current = expr
+        while id(current) in self._path_parents:
+            parent = self._path_parents[id(current)]
+            if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                return False
+            if isinstance(parent, ast.If) and current in parent.body:
+                test = parent.test
+                if (
+                    isinstance(test, ast.Compare)
+                    and len(test.ops) == 1
+                    and isinstance(test.ops[0], ast.Eq)
+                    and len(test.comparators) == 1
+                    and isinstance(test.comparators[0], ast.Constant)
+                    and test.comparators[0].value == "posix"
+                ):
+                    name = _expr_name(test.left)
+                    resolved = self.untrusted_sources.resolved_import(
+                        self._current_function(), name
+                    )
+                    if (
+                        resolved == "os.name"
+                        and self._import_names_are_stable(name)
+                        and self._sanitizer_is_unpatched("os.name")
+                        and provider_binding_is_stable(
+                            "os.name",
+                            self.untrusted_sources.module,
+                            self.file_path,
+                            getattr(self, "project_root", None),
+                        )
+                    ):
+                        return True
+            current = parent
+        return False
 
     def _flag_symlink_write_if_unsafe(self, node, path_expr):
         if not self._path_needs_symlink_protection(path_expr):

@@ -1,6 +1,7 @@
 import ast
 import bisect
 import re
+from .weak_random_context import private_model_slug_evidence
 from skylos.rules.base import SkylosRule
 from .pickle_provenance import safe_pickle_loads
 from .source_owned_code import source_owned_code_calls
@@ -2779,6 +2780,8 @@ def _weak_random_value_reaches_security_use(
 def _weak_random_has_security_context(
     node: ast.Call, current_symbol: str | None = None
 ) -> bool:
+    if private_model_slug_evidence(node):
+        return True
     if _name_looks_security_sensitive(current_symbol):
         return True
 
@@ -3284,6 +3287,10 @@ class DangerousCallsRule(SkylosRule):
             )
             if low_risk is not None:
                 finding["low_risk_context"] = low_risk
+            if opts and opts.get("weak_random"):
+                evidence = private_model_slug_evidence(node)
+                if evidence:
+                    finding["security_evidence"] = evidence
             findings.append(finding)
             break
 

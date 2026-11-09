@@ -5,14 +5,17 @@ them. Measured through SKY-D230 on ``redirect(url_for(...))``: a trusted
 ``url_for`` builds a local URL, an untrusted one is reported."""
 
 import ast
+import errno
 import io
 import json
 import os
 import zipfile
+from pathlib import Path
 
 import pytest
 
 from skylos.analyzer import analyze
+from skylos.analysis.errors import analysis_result_incomplete
 from test.fixture_paths import write_fixture
 
 VIEW = (
@@ -41,11 +44,11 @@ def _zip_bytes(preamble=b"", comment=b""):
     return buffer.getvalue()
 
 
-def _redirects(root, monkeypatch):
+def _scan_result(root, monkeypatch):
     monkeypatch.setenv("SKYLOS_JOBS", "1")
     if not (root / "pyproject.toml").exists():
         write_fixture(root, "pyproject.toml", '[project]\nname="shop"\n')
-    result = json.loads(
+    return json.loads(
         analyze(
             str(root),
             enable_danger=True,
@@ -56,12 +59,37 @@ def _redirects(root, monkeypatch):
             all_advice=False,
         )
     )
-    assert not result.get("analysis_errors")
+
+
+def _redirect_locations(result, root):
     return sorted(
         (f["file"].replace(str(root), "").lstrip("/"), f["line"])
         for f in result.get("danger", [])
         if f["rule_id"] == "SKY-D230"
     )
+
+
+def _redirects(root, monkeypatch):
+    result = _scan_result(root, monkeypatch)
+    assert not result.get("analysis_errors")
+    return _redirect_locations(result, root)
+
+
+def _assert_permission_incomplete(result, root):
+    errors = result["analysis_errors"]
+    assert errors
+    for error in errors:
+        assert error["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"
+        assert error["severity"] == "HIGH"
+        assert error["kind"] == "security_scan_error"
+        assert error["error_type"] == "PermissionError"
+        assert Path(error["file"]).is_relative_to(root)
+    assert analysis_result_incomplete(result)
+    assert result["analysis_summary"]["analysis_error_count"] == len(errors)
+    assert result["analysis_summary"]["grade_unavailable_reason"] == (
+        "analysis_incomplete"
+    )
+    assert "grade" not in result
 
 
 def _plugin_app(root, helper, plugin, extra=None):
@@ -501,7 +529,14 @@ def test_unreadable_directory_or_special_file_fails_closed(tmp_path, monkeypatch
     hidden = tmp_path / "hidden"
     hidden.chmod(0)
     try:
-        assert _redirects(tmp_path, monkeypatch) == REPORTED
+        result = _scan_result(tmp_path, monkeypatch)
+        assert _redirect_locations(result, tmp_path) == REPORTED
+        if result.get("analysis_errors"):
+            _assert_permission_incomplete(result, tmp_path)
+        else:
+            # Permission checks can be suppressed by pathlib or bypassed by
+            # the runtime; unreadable context must still revoke provider trust.
+            assert result["analysis_summary"]["analysis_error_count"] == 0
     finally:
         hidden.chmod(0o755)
     other = tmp_path / "other"
@@ -509,6 +544,28 @@ def test_unreadable_directory_or_special_file_fails_closed(tmp_path, monkeypatch
     (tmp_path / "hidden" / "flask.py").unlink()
     os.mkfifo(other / "input.pipe")
     assert _redirects(tmp_path, monkeypatch) == REPORTED
+
+
+def test_permission_error_preserves_findings_and_marks_analysis_incomplete(
+    tmp_path, monkeypatch
+):
+    from skylos.rules.danger import danger
+
+    _plugin_app(tmp_path, "VALUE = 1\n", "VALUE = 2\n", ("hidden/flask.py", FAKE))
+    real_scan = danger.scan_file_with_tree
+
+    def denied_context(tree, file, findings, **kwargs):
+        real_scan(tree, file, findings, **kwargs)
+        if file == tmp_path / "shop/views.py":
+            raise PermissionError(
+                errno.EACCES, "Permission denied", str(tmp_path / "hidden")
+            )
+
+    monkeypatch.setattr(danger, "scan_file_with_tree", denied_context)
+    result = _scan_result(tmp_path, monkeypatch)
+
+    assert _redirect_locations(result, tmp_path) == REPORTED
+    _assert_permission_incomplete(result, tmp_path)
 
 
 def test_provider_module_escaping_from_an_imported_module_removes_trust(

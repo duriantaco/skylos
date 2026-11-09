@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from skylos.security.receiver_resolution import ReceiverResolver
+from ..untrusted_sources import UntrustedSourceIndex
 
 from ..import_proof import (
     _provider_effects,
@@ -34,17 +36,99 @@ def _private_import_context(tree, filename, root):
     return private if private.complete else None
 
 
-def _private_provider_effects(context, names):
+def _private_provider_effects(context, names, *, project_sdk=False):
     # The original trees attest source identity. Fresh Module roots own the
     # mutable effect budgets, so this optional model cannot exhaust other rules.
-    return all(
-        _provider_effects(
+    closure = {path for path, _ in context.entries}
+    for path, parsed in context.entries:
+        if not _provider_effects(
             names,
             ast.Module(body=list(parsed.body), type_ignores=parsed.type_ignores),
             context.local_symbols(path, names),
-        )
-        for path, parsed in context.entries
-    )
+        ):
+            return False
+    if not project_sdk:
+        return True
+    for path, parsed in context.trees.items():
+        if path not in closure and not _provider_effects(
+            names, _annotation_effect_tree(parsed), context.local_symbols(path, names)
+        ):
+            return False
+    return True
+
+
+def _annotation_effect_tree(tree):
+    """Ignore only inert SDK ``Type | None`` annotations in other modules.
+
+    These types use Python's ordinary type union operation. The main import
+    closure keeps its original strict effect proof. Calls, subscriptions,
+    arbitrary type expressions and all provider mutations remain visible.
+    """
+    imports = UntrustedSourceIndex(tree)
+    native_types = {
+        f"{module}.{kind}"
+        for module in ("azure.cosmos", "azure.cosmos.aio")
+        for kind in _TYPES
+    }
+    annotations = set()
+
+    def inert_union(node, scope):
+        values = []
+        pending = [node]
+        while pending:
+            value = pending.pop()
+            if isinstance(value, ast.BinOp) and isinstance(value.op, ast.BitOr):
+                pending.extend((value.left, value.right))
+            elif isinstance(value, ast.Constant) and value.value is None:
+                values.append(None)
+            else:
+                parts = []
+                current = value
+                while isinstance(current, ast.Attribute):
+                    parts.append(current.attr)
+                    current = current.value
+                if not isinstance(current, ast.Name):
+                    return False
+                name = ".".join(reversed([*parts, current.id]))
+                if imports.resolved_import(scope, name) not in native_types:
+                    return False
+                values.append(name)
+        return None in values and any(value is not None for value in values)
+
+    def collect(node, scope=None):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            scope = node
+        for field_name, value in ast.iter_fields(node):
+            if field_name in {"annotation", "returns"} and isinstance(value, ast.BinOp):
+                if inert_union(value, scope):
+                    annotations.add(id(value))
+            if isinstance(value, ast.AST):
+                collect(value, scope)
+            elif isinstance(value, list):
+                for child in value:
+                    if isinstance(child, ast.AST):
+                        collect(child, scope)
+
+    collect(tree)
+    if not annotations:
+        return ast.Module(body=list(tree.body), type_ignores=tree.type_ignores)
+
+    def clone(value):
+        if isinstance(value, ast.AST):
+            if id(value) in annotations:
+                return ast.copy_location(ast.Constant(value=None), value)
+            copied = type(value)(
+                **{key: clone(item) for key, item in ast.iter_fields(value)}
+            )
+            for key in value._attributes:
+                if hasattr(value, key):
+                    setattr(copied, key, getattr(value, key))
+            return copied
+        if isinstance(value, list):
+            return [clone(item) for item in value]
+        return value
+
+    return clone(tree)
 
 
 @dataclass(eq=False)
@@ -81,7 +165,11 @@ class CosmosQueryProvenance:
         self.root = project_root
         self.resolver = None
         try:
-            self.resolver = ReceiverResolver(tree, filename, project_root)
+            self.resolver = ReceiverResolver(tree, filename)
+            if project_root and not self.resolver.root.resolve().is_relative_to(
+                Path(project_root).resolve()
+            ):
+                self.resolver = ReceiverResolver(tree, filename, project_root)
         except (OSError, RuntimeError, ValueError, RecursionError):
             pass
         self._plain_classes = {}
@@ -134,7 +222,7 @@ class CosmosQueryProvenance:
         names = set()
         for contract in contracts:
             names.update(context.qualified_names(contract))
-        return _private_provider_effects(context, names)
+        return _private_provider_effects(context, names, project_sdk=True)
 
     def _has_escaping_receiver(self):
         for node in ast.walk(self.tree):

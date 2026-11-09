@@ -1,5 +1,6 @@
 from __future__ import annotations
 import ast
+import hashlib
 from collections import Counter
 import sys
 from skylos.rules.danger.taint import TaintVisitor
@@ -215,9 +216,14 @@ def _stable_module_classes(tree):
 class _RedirectFlowChecker(TaintVisitor):
     def __init__(self, file_path, findings, tree):
         super().__init__(file_path, findings)
+        self.tree = tree
+        self.source_ast_sha256 = None
         self._exception_states = []
         self._loop_states = []
         self.untrusted_sources = UntrustedSourceIndex(tree)
+        self.redirect_evidence_sources = UntrustedSourceIndex(
+            tree, follow_local_calls=True
+        )
         self._classes = _stable_module_classes(tree)
         self._class_stack = []
         self._reader_override_cache = {}
@@ -1009,6 +1015,8 @@ class _RedirectFlowChecker(TaintVisitor):
                 self._report_redirect(
                     node,
                     "Possible open redirect: request data chooses the redirect target.",
+                    url_arg,
+                    native_source=True,
                 )
         else:
             self._check_location_headers(node)
@@ -1017,20 +1025,12 @@ class _RedirectFlowChecker(TaintVisitor):
 
     def _check_legacy_redirect(self, node, url_arg):
         if _is_request_args_get(url_arg):
-            self.findings.append(
-                {
-                    "rule_id": "SKY-D230",
-                    "severity": "HIGH",
-                    "message": (
-                        "Possible open redirect: request parameter passed to "
-                        "redirect via .get() — default value does not prevent "
-                        "attacker-supplied input."
-                    ),
-                    "file": str(self.file_path),
-                    "line": node.lineno,
-                    "col": node.col_offset,
-                    "symbol": self._current_symbol(),
-                }
+            self._report_redirect(
+                node,
+                "Possible open redirect: request parameter passed to "
+                "redirect via .get() — default value does not prevent "
+                "attacker-supplied input.",
+                url_arg,
             )
         elif self._starts_with_internal_url(url_arg):
             pass
@@ -1038,7 +1038,82 @@ class _RedirectFlowChecker(TaintVisitor):
             self._report_redirect(
                 node,
                 "Possible open redirect: user-controlled URL passed to redirect.",
+                url_arg,
+                native_source=self._carries_tornado_data(url_arg),
             )
+
+    def _carries_tornado_data(self, node, seen=(), depth=0):
+        """Retain native RequestHandler proof only along the target's values.
+
+        The project tracer does not model Tornado argument readers. An
+        unrelated read elsewhere in a function must not turn a generic
+        parameter into a proven request source.
+        """
+        if depth > _MAX_REQUEST_DATA_DEPTH or node is None:
+            return False
+        if self._starts_with_internal_url(node) or _keeps_origin(node):
+            return False
+        if self._tornado_argument_read(node):
+            return True
+        if isinstance(node, ast.Name):
+            if node.id in seen:
+                return False
+            scope = self._current_function()
+            if scope is None or not self._local_bindings(scope, node.id):
+                scope = self.untrusted_sources.module
+            return any(
+                kind == "value"
+                and self._carries_tornado_data(value, (*seen, node.id), depth + 1)
+                for kind, value in self._local_bindings(scope, node.id)
+            )
+        if isinstance(node, ast.Call):
+            arguments = [*node.args, *(item.value for item in node.keywords)]
+            func = node.func
+            name = _dotted(func)
+            resolved = (
+                self.untrusted_sources.resolved_import(self._current_function(), name)
+                if name
+                else None
+            )
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr in _STRING_PROPAGATING_METHODS
+            ):
+                arguments.insert(0, func.value)
+            elif not (
+                name == "str"
+                or resolved in _PROPAGATING_FUNCTIONS
+                or isinstance(func, ast.Name)
+                and self._defines_in_module(func.id)
+            ):
+                return False
+            return any(
+                self._carries_tornado_data(value, seen, depth + 1)
+                for value in arguments
+            )
+        if isinstance(
+            node, (ast.Attribute, ast.Subscript, ast.NamedExpr, ast.Await, ast.Starred)
+        ):
+            return self._carries_tornado_data(node.value, seen, depth + 1)
+        if isinstance(node, ast.JoinedStr):
+            values = [
+                item.value
+                for item in node.values
+                if isinstance(item, ast.FormattedValue)
+            ]
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+            values = [node.left, node.right]
+        elif isinstance(node, ast.IfExp):
+            values = [node.body, node.orelse]
+        elif isinstance(node, ast.BoolOp):
+            values = node.values
+        elif isinstance(node, ast.Tuple):
+            values = node.elts
+        else:
+            return False
+        return any(
+            self._carries_tornado_data(value, seen, depth + 1) for value in values
+        )
 
     def _proven_open_redirect(self, value) -> bool:
         """Redirect sinks added after ``redirect``/``HttpResponseRedirect``
@@ -1244,7 +1319,67 @@ class _RedirectFlowChecker(TaintVisitor):
             return self._call_carries_request_data(node, seen, depth)
         return False
 
-    def _report_redirect(self, node, message):
+    def _report_redirect(self, node, message, operand, *, native_source=False):
+        evidence = self.redirect_evidence_sources.evidence(
+            self._current_function(),
+            operand,
+            sink="redirect target",
+            missing_guard="redirect origin allowlist",
+            evidence_kind="python_redirect_taint",
+        )
+        metadata = {}
+        if evidence is not None:
+            metadata["security_evidence"] = evidence
+        request_evidence = evidence is not None and any(
+            source.startswith(
+                ("request data ", "route parameter ", "MCP/agent tool argument ")
+            )
+            for source in evidence.get("sources", ())
+        )
+        # Preserve the native checker's richer request/provider semantics.
+        # An opaque or replaced URL helper cannot erase a visible request
+        # input, while CLI, environment and stdin alone do not prove one.
+        tornado_source = self._carries_tornado_data(operand)
+        native_source = (
+            tornado_source or request_evidence or (native_source and evidence is None)
+        )
+        if native_source:
+            # Newer sink families already require native framework request
+            # provenance. The legacy project tracer does not model every
+            # supported reader (notably Tornado), so it cannot invalidate
+            # that stronger local proof.
+            proven_source = bool(tornado_source or request_evidence)
+            metadata["source_status"] = "untrusted" if proven_source else "unresolved"
+            metadata["redirect_source_proof"] = {
+                "kind": "native_framework_request"
+                if proven_source
+                else "native_request_candidate",
+                "analysis_complete": False,
+            }
+            if not proven_source:
+                metadata["audit_only"] = True
+        else:
+            if self.source_ast_sha256 is None:
+                self.source_ast_sha256 = hashlib.sha256(
+                    ast.dump(self.tree).encode()
+                ).hexdigest()
+            metadata["redirect_operand"] = {
+                "line": operand.lineno,
+                "col": operand.col_offset,
+                "end_line": operand.end_lineno,
+                "end_col": operand.end_col_offset,
+            }
+            metadata["redirect_source_ast_sha256"] = self.source_ast_sha256
+            metadata["redirect_sink"] = "redirect target"
+            if evidence is not None:
+                metadata["source_status"] = "untrusted"
+            else:
+                metadata["source_status"] = "unresolved"
+                metadata["audit_only"] = True
+                message = (
+                    "Review redirect target: its origin is unresolved; "
+                    "attacker control has not been established."
+                )
         self.findings.append(
             {
                 "rule_id": "SKY-D230",
@@ -1254,6 +1389,7 @@ class _RedirectFlowChecker(TaintVisitor):
                 "line": node.lineno,
                 "col": node.col_offset,
                 "symbol": self._current_symbol(),
+                "metadata": metadata,
             }
         )
 
@@ -1273,6 +1409,8 @@ class _RedirectFlowChecker(TaintVisitor):
                             self._report_redirect(
                                 node,
                                 "Possible open redirect: user-controlled URL set as the Location header.",
+                                value,
+                                native_source=True,
                             )
                             return
         if (
@@ -1286,6 +1424,8 @@ class _RedirectFlowChecker(TaintVisitor):
             self._report_redirect(
                 node,
                 "Possible open redirect: user-controlled URL set as the Location header.",
+                node.args[1],
+                native_source=True,
             )
 
     def visit_Assign(self, node):
@@ -1302,6 +1442,8 @@ class _RedirectFlowChecker(TaintVisitor):
                 self._report_redirect(
                     node,
                     "Possible open redirect: user-controlled URL set as the Location header.",
+                    node.value,
+                    native_source=True,
                 )
                 break
         super().visit_Assign(node)

@@ -7,6 +7,8 @@ from test.test_security_sanitizer_identity import _analyze
 
 
 BASE = (
+    "from flask import Flask, request\n"
+    "web=Flask(__name__)\n"
     "from starlette.applications import Starlette\n"
     "from starlette.routing import Route\n"
     "from starlette.responses import RedirectResponse as redirect\n"
@@ -43,6 +45,7 @@ def test_native_instance_builder_is_bounded_to_stable_receiver(
 ):
     source = BASE + setup + "def run(value):\n" + body
     source += f"    return redirect({receiver}.url_path_for('item',slug=value))\n"
+    source += "@web.get('/go')\ndef caller():\n    return run(request.args['next'])\n"
     result = _analyze(tmp_path, monkeypatch, source)
     rows = [row for row in result.get("danger", []) if row["rule_id"] == "SKY-D230"]
     assert bool(rows) is vulnerable
@@ -63,7 +66,8 @@ def test_native_builder_requires_fixed_origin_path_segment(
         tmp_path,
         monkeypatch,
         BASE.replace("/item/{slug}", path)
-        + "def run(value):\n    return redirect(app.url_path_for('item',slug=value))\n",
+        + "def run(value):\n    return redirect(app.url_path_for('item',slug=value))\n"
+        + "@web.get('/go')\ndef caller():\n    return run(request.args['next'])\n",
     )
     assert (
         any(row["rule_id"] == "SKY-D230" for row in result.get("danger", []))

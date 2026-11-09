@@ -49,6 +49,7 @@ _READ_BUILTINS = {
     "frozenset",
 }
 _IMMUTABLE_VALUES = {
+    "os.name",
     "ssl.CERT_NONE",
     "ssl.CERT_OPTIONAL",
     "ssl.CERT_REQUIRED",

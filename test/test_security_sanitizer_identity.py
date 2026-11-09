@@ -219,7 +219,10 @@ def test_redirect_builder_from_local_provider_is_not_native(tmp_path, monkeypatc
         tmp_path,
         monkeypatch,
         "from werkzeug.utils import redirect\nimport flask\n"
-        "def run(value):\n    return redirect(flask.url_for(value))\n",
+        "from fastapi import FastAPI, Request\napi=FastAPI()\n"
+        "def run(value):\n    return redirect(flask.url_for(value))\n"
+        "@api.get('/go')\ndef route(request: Request):\n"
+        "    return run(request.query_params['next'])\n",
         (("flask.py", "def url_for(value):\n    return value\n"),),
     )
     assert any(f["rule_id"] == "SKY-D230" for f in result.get("danger", []))

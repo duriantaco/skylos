@@ -510,7 +510,15 @@ _DOCUMENTED_EXAMPLE_CREDENTIALS = frozenset(
         "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
         "https://hooks.slack.com/services/T00000000/B00000000/" + "X" * 24,
         "https://hooks.slack-gov.com/services/T00000000/B00000000/" + "X" * 24,
+        # RFC 6749 section 5.1's published refresh-token example.
+        "tGzv3JOkF0XG5Qx2TlKWIA",
+        # RFC 6749 section 5.1's published access-token example.
+        "2YotnFZFEjr1zCsicMWpAA",
     }
+)
+
+_PUBLIC_PROTOCOL_IDENTIFIERS = frozenset(
+    {"urn:ietf:params:oauth:grant-type:jwt-bearer"}  # RFC 7523 section 2.1
 )
 
 
@@ -896,6 +904,8 @@ def _keyed_generic_candidates(
         keyed_start = keyed_match.start("val")
         keyed_end = keyed_match.end("val")
         key = _keyed_match_name(keyed_match)
+        if keyed_token in _PUBLIC_PROTOCOL_IDENTIFIERS:
+            continue
         if secret_shapes.is_location_value(key, keyed_token):
             continue  # a URL: its own parts are scanned as bare tokens
         if secret_shapes.is_file_path_value(keyed_token) or (

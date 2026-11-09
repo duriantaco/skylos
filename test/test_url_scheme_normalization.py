@@ -57,7 +57,23 @@ def _audits(result):
         for row in result["report"].get("danger", [])
         if row["rule_id"] == "SKY-D218"
     ]
-    assert len(raw) == len(listed)
+    diagnostics = [
+        row
+        for row in result["report"].get("suppressed", [])
+        if row["rule_id"] == "SKY-D218"
+    ]
+
+    def identity(row):
+        return row["rule_id"], row["file"], row["line"], row.get("col")
+
+    assert {identity(row) for row in raw} == {
+        identity(row) for row in [*listed, *diagnostics]
+    }
+    assert len(raw) == len(listed) + len(diagnostics)
+    assert not listed
+    for row in diagnostics:
+        assert row["metadata"]["url_scheme_provenance"]["status"] == "unknown"
+        assert row["metadata"]["url_scheme_provenance"]["safety_proven"] is False
     for row in listed:
         assert row["severity"] == "MEDIUM"
         assert row["finding_type"] == "review"

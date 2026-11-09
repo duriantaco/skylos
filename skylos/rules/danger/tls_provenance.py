@@ -663,12 +663,79 @@ def _local_callable_identities(definition, filename, project_root):
         return set()
 
 
+def _local_data_method(node, bindings):
+    """A direct, non-escaping instance whose method only returns plain data."""
+    if not isinstance(node.func, ast.Attribute) or not isinstance(
+        node.func.value, ast.Call
+    ):
+        return None, None
+    constructor = node.func.value
+    if constructor.args or constructor.keywords:
+        return None, None
+    owner = bindings.value(constructor.func)
+    if (
+        not isinstance(owner, ast.ClassDef)
+        or not isinstance(getattr(owner, "parent", None), ast.Module)
+        or owner.bases
+        or owner.keywords
+        or owner.decorator_list
+    ):
+        return None, None
+
+    def data(value, parameters):
+        if isinstance(value, ast.Constant):
+            return True
+        if isinstance(value, ast.Name):
+            return value.id in parameters
+        if isinstance(value, (ast.List, ast.Tuple)):
+            return all(data(item, parameters) for item in value.elts)
+        if isinstance(value, ast.Dict):
+            return all(
+                isinstance(key, ast.Constant) and data(item, parameters)
+                for key, item in zip(value.keys, value.values)
+            )
+        return False
+
+    selected = []
+    for method in owner.body:
+        if isinstance(method, ast.Pass) or (
+            isinstance(method, ast.Expr) and isinstance(method.value, ast.Constant)
+        ):
+            continue
+        if (
+            not isinstance(method, ast.FunctionDef)
+            or method.name.startswith("__")
+            or not _pure_local_definition(method)
+        ):
+            return None, None
+        arguments = [*method.args.posonlyargs, *method.args.args]
+        parameters = {arg.arg for arg in arguments[1:] + method.args.kwonlyargs}
+        parameters.update(
+            arg.arg for arg in (method.args.vararg, method.args.kwarg) if arg
+        )
+        for statement in method.body:
+            if isinstance(statement, ast.Pass) or (
+                isinstance(statement, ast.Expr)
+                and isinstance(statement.value, ast.Constant)
+            ):
+                continue
+            if not isinstance(statement, ast.Return) or not data(
+                statement.value, parameters
+            ):
+                return None, None
+        if method.name == node.func.attr:
+            selected.append(method)
+    return (owner, selected[0]) if len(selected) == 1 else (None, None)
+
+
 def _inert_call(node, bindings, qualified=None, filename=None, project_root=None):
     if not _discarded_result(node, bindings):
         return False
-    definition = bindings.value(node.func)
+    owner, method = _local_data_method(node, bindings)
+    definition = method or bindings.value(node.func)
     if isinstance(definition, (ast.FunctionDef, ast.ClassDef)):
-        identities = _local_callable_identities(definition, filename, project_root)
+        identity_owner = owner or definition
+        identities = _local_callable_identities(identity_owner, filename, project_root)
         if not identities or not all(
             project_provider_effects_are_stable(
                 identity, bindings.tree, filename, project_root
@@ -693,7 +760,7 @@ def _inert_call(node, bindings, qualified=None, filename=None, project_root=None
             if (
                 isinstance(part, ast.Name)
                 and isinstance(part.ctx, ast.Load)
-                and part.id == definition.name
+                and part.id == identity_owner.name
             ):
                 parent = getattr(part, "parent", None)
                 if not (isinstance(parent, ast.Call) and parent.func is part):

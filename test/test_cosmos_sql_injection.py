@@ -235,9 +235,9 @@ def test_cosmos_sink_survives_full_json_output(tmp_path):
         tmp_path,
         "app.py",
         "from azure.cosmos import CosmosClient\n"
-        "def search(value):\n"
-        "    container = CosmosClient('https://db').get_database_client('db').get_container_client('items')\n"
-        "    return container.query_items(query=f\"SELECT * FROM c WHERE c.name = '{value}'\")\n",
+        "value = input()\n"
+        "container = CosmosClient('https://db').get_database_client('db').get_container_client('items')\n"
+        "container.query_items(query=f\"SELECT * FROM c WHERE c.name = '{value}'\")\n",
         overwrite=True,
     )
     result = json.loads(
@@ -256,6 +256,40 @@ def test_cosmos_sink_survives_full_json_output(tmp_path):
     assert findings[0].get("listing", {}).get("listed", True)
     assert (
         findings[0]["metadata"]["cosmos_receiver"]["proof_kind"]
+        == "stable_sdk_factory_chain"
+    )
+
+
+def test_cosmos_helper_without_an_input_source_remains_a_diagnostic(tmp_path):
+    from skylos.analyzer import analyze
+
+    write_fixture(
+        tmp_path,
+        "app.py",
+        "from azure.cosmos import CosmosClient\n"
+        "def search(value):\n"
+        "    container = CosmosClient('https://db').get_database_client('db').get_container_client('items')\n"
+        "    return container.query_items(query=f\"SELECT * FROM c WHERE c.name = '{value}'\")\n",
+        overwrite=True,
+    )
+    result = json.loads(
+        analyze(
+            str(tmp_path),
+            enable_danger=True,
+            enable_dependency_hallucinations=False,
+            grep_verify=False,
+            all_advice=False,
+        )
+    )
+    assert not result.get("analysis_errors")
+    assert not [row for row in result.get("danger", []) if row["rule_id"] == "SKY-D211"]
+    rows = [row for row in result.get("suppressed", []) if row["rule_id"] == "SKY-D211"]
+    assert len(rows) == 1
+    assert rows[0]["line"] == 4
+    assert rows[0]["metadata"]["sql_provenance"]["status"] == "unknown"
+    assert rows[0]["metadata"]["sql_provenance"]["safety_proven"] is False
+    assert (
+        rows[0]["metadata"]["cosmos_receiver"]["proof_kind"]
         == "stable_sdk_factory_chain"
     )
 
@@ -408,3 +442,112 @@ def test_optional_cosmos_proof_preserves_existing_provider_budget(tmp_path, proo
     assert [(effect.complete, effect.ref_work) for effect in effects] == before
     assert provider_binding_is_stable("json.loads", tree, path, tmp_path)
     assert proven
+
+
+def test_unrelated_string_target_patch_does_not_hide_the_sdk_sink(tmp_path):
+    findings = _scan(
+        tmp_path,
+        """
+        from azure.cosmos import CosmosClient
+        def search(value):
+            container = CosmosClient('https://db').get_database_client('db').get_container_client('items')
+            return container.query_items(query=f"SELECT * FROM c WHERE c.name = '{value}'")
+        """,
+        extra={
+            "other.py": "def test_cache(monkeypatch, replacement):\n    monkeypatch.setattr('cache.to_thread', replacement)\n"
+        },
+    )
+    assert len(findings) == 1
+
+
+def test_project_sdk_patch_revokes_the_factory_proof(tmp_path):
+    assert not _scan(
+        tmp_path,
+        """
+        from azure.cosmos import CosmosClient
+        def search(value):
+            container = CosmosClient('https://db').get_database_client('db').get_container_client('items')
+            return container.query_items(query=f"SELECT * FROM c WHERE c.name = '{value}'")
+        """,
+        extra={
+            "patcher.py": "from azure.cosmos import CosmosClient\nCosmosClient.get_database_client = replacement\n"
+        },
+    )
+
+
+@pytest.mark.parametrize("future", ["", "from __future__ import annotations\n"])
+@pytest.mark.parametrize("alias", ["DatabaseProxy", "DatabaseProxy as Proxy"])
+def test_unrelated_sdk_type_union_does_not_hide_a_query(tmp_path, future, alias):
+    typename = alias.split(" as ")[-1]
+    findings = _scan(
+        tmp_path,
+        "from azure.cosmos import CosmosClient\n"
+        "def search(value):\n"
+        "    container = CosmosClient('https://db').get_database_client('db').get_container_client('items')\n"
+        "    return container.query_items(query=f'SELECT {value}')\n",
+        extra={
+            "types.py": future
+            + f"from azure.cosmos import {alias}\nclient: {typename} | None = None\n"
+        },
+    )
+    assert [(finding["line"], finding["col"]) for finding in findings] == [(4, 11)]
+
+
+@pytest.mark.parametrize(
+    "effect",
+    [
+        "CosmosClient.get_database_client = replacement",
+        "configure(CosmosClient)",
+        "other: mutate(CosmosClient) | None = None",
+        "other: DatabaseProxy | project_type = None",
+    ],
+)
+def test_sdk_type_annotations_do_not_hide_mutations_or_effects(tmp_path, effect):
+    assert not _scan(
+        tmp_path,
+        "from azure.cosmos import CosmosClient\n"
+        "def search(value):\n"
+        "    container = CosmosClient('https://db').get_database_client('db').get_container_client('items')\n"
+        "    return container.query_items(query=f'SELECT {value}')\n",
+        extra={
+            "types.py": "from azure.cosmos import DatabaseProxy, CosmosClient\n"
+            "client: DatabaseProxy | None = None\n" + effect + "\n"
+        },
+    )
+
+
+def test_monorepo_package_base_keeps_the_project_wide_sdk_proof(tmp_path):
+    from skylos.rules.danger.danger_sql.sql_flow import scan
+    import ast
+
+    write_fixture(
+        tmp_path, "packages/vector-store/pyproject.toml", "[project]\nname='vectors'\n"
+    )
+    write_fixture(tmp_path, "packages/vector-store/vectors/__init__.py", "")
+    write_fixture(
+        tmp_path,
+        "packages/vector-store/vectors/base.py",
+        "from abc import ABC\nclass Store(ABC): pass\n",
+    )
+    source = (
+        "from azure.cosmos import CosmosClient\nfrom vectors.base import Store\n"
+        "class VectorStore(Store):\n"
+        "    def connect(self):\n"
+        "        self.container = CosmosClient('https://db').get_database_client('db').get_container_client('items')\n"
+        "    def search(self, value):\n"
+        "        return self.container.query_items(query=f'SELECT {value}')\n"
+    )
+    path = write_fixture(tmp_path, "packages/vector-store/vectors/cosmos.py", source)
+    findings = []
+    scan(ast.parse(source), path, findings, project_root=tmp_path)
+    assert [(finding["rule_id"], finding["line"]) for finding in findings] == [
+        ("SKY-D211", 7)
+    ]
+    write_fixture(
+        tmp_path,
+        "patcher.py",
+        "from azure.cosmos import CosmosClient\nCosmosClient.get_database_client = replacement\n",
+    )
+    findings = []
+    scan(ast.parse(source), path, findings, project_root=tmp_path)
+    assert findings == []

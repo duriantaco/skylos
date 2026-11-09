@@ -151,7 +151,7 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D216 | CRITICAL | Server-side request forgery | Python, TS/JS, Go, Java, Kotlin, C#, PHP, Dart, Shell, audit | CWE-918 / A10 |
 | D213 | HIGH | Hugging Face `trust_remote_code=True`: loading the model or dataset imports and runs Python files from its repository. MEDIUM when `revision=` pins a commit SHA or the path is a local directory; a non-literal value is the caller's choice and is not reported | Python | CWE-94, CWE-829 / A08 |
 | D217 | CRITICAL | Raw SQL / ORM SQL injection: Django `.objects.raw()`, `QuerySet.extra()` (`select` values, `where`/`tables`/`order_by` entries) and `RawSQL()`, peewee `Model.raw()`. SQLAlchemy `text()` and pandas `read_sql` are reported once, as D211 | Python | CWE-89 / A03 |
-| D218 | MEDIUM | Dynamic urllib URL scheme audit (`SKY-D218`) | Python | Conditional audit |
+| D218 | MEDIUM | Conditional URL scheme audit; unresolved cases are diagnostics | Python | CWE-918 |
 | D220 | CRITICAL | SQL injection in added code / diff validation | MCP code-change validator | CWE-89 / A03 |
 | D223 | MEDIUM | Undeclared third-party dependency | Python | supply-chain |
 | D226 | CRITICAL | XSS: unsafe DOM or HTML rendering (Go: request input converted to an `html/template` safe type such as `template.HTML`; Java/Kotlin: request data written to a servlet response writer (HIGH), Kotlin also Ktor `respondText(..., ContentType.Text.Html)`; C#: request input in `HtmlString`, `Html.Raw` or `MarkupString`, HIGH; PHP: Drupal `Markup::create()` and Blade `{!! !!}` of request data, HIGH) | Python, TS/JS, Go, Java, Kotlin, C#, PHP, audit | CWE-79 / A03 |
@@ -338,6 +338,21 @@ single-quoted literal is not a finding: those engines do not treat a backslash
 as an escape. On other or unknown connections (MySQL and PostgreSQL can),
 outside a literal, inside a quoted identifier, after a prefix such as `E'`,
 with a `!r` conversion or next to a comment marker it still is.
+
+Python D211 and D230 require an identified input source before a completed
+project analysis presents a security claim. Unresolved candidates remain in
+JSON `suppressed` with `sql_provenance` or `redirect_provenance` marked
+`unknown` and `safety_proven: false`. They do not fail a security gate. A
+truncated or changed source index keeps candidates visible as incomplete;
+it never proves safety. D218 is a conditional scheme audit and remains an
+unknown diagnostic; D216 still reports source-backed SSRF separately.
+Operator-owned CLI/environment redirect targets do not establish remote input.
+
+Python D251 follows proven credential inputs into print/logging. Native HTTP
+response bodies and verified payloads do not inherit the signing key or
+request credential merely because it was supplied to the API. Request URLs,
+request headers, response history, whole response objects, unknown transforms
+and project wrappers retain credential evidence.
 
 For Python D215, Starlette/FastAPI `FileResponse` and Flask/Werkzeug
 `send_file` are path sinks. `send_from_directory` is a sink only for its
@@ -766,6 +781,19 @@ Skylos does not execute pytest or load `conftest.py` to resolve these values.
 | D347 | MEDIUM | Unsafe logging config listener | Python |
 | D348 | HIGH | Insecure temporary filename | Python |
 | D349 | CRITICAL | Server-side template injection (request data compiled as Jinja template source; Java Velocity `evaluate`, FreeMarker `new Template(...)` source, `StringTemplateLoader.putTemplate`, Groovy `TemplateEngine.createTemplate`; PHP Drupal `inline_template` render arrays) | Python, Java, PHP |
+| D355 | HIGH | Jinja environment with omitted or explicitly disabled autoescape | Python |
+| D356 | MEDIUM | Cleartext outbound HTTP request | Python |
+| D357 | HIGH | Untrusted input used as a dynamic Python import name | Python |
+| D358 | HIGH | Public Gradio launch without configured authentication | Python |
+| D359 | MEDIUM | Cached Flask external URL derived from the request host | Python |
+
+D355–D359 require review of deployment and input context. D356 records a
+cleartext transport choice; it does not establish that sensitive data is sent.
+D357 requires an identified input source, rather than reporting every plugin
+import. D359 requires cache and request-host evidence. Related D215/D324/D325
+checks at the same filesystem operation appear together in terminal reports;
+JSON, SARIF and gates retain each raw finding. Missing request timeouts remain
+SKY-L031 quality findings and should be reported separately in comparisons.
 
 D329 flags `rm -rf` of `/`, `~`, `$HOME`, `.`, `*`, `.git`, any other absolute
 path, and `$VAR/` or `$VAR/*` (an empty variable makes it `/`). Split flags
@@ -998,7 +1026,7 @@ not reported by D350 to D353.
   event, MEDIUM otherwise; LOW for the medium advisory without one.
 
 Suppress with `# skylos: ignore[SKY-D35x]` on the reported line or the line
-above it. SKY-D355 to SKY-D359 are reserved.
+above it. SKY-D355 to SKY-D359 cover the Python checks described above.
 
 ## Kubernetes Deployment Exposure (SKY-DEP)
 

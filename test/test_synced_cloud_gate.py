@@ -938,7 +938,12 @@ def test_diff_scan_of_an_unchanged_branch_passes_with_cloud_limits(
 def test_diff_scan_fails_on_the_new_sql_injection(scan_repo, monkeypatch, capsys):
     _git(scan_repo, "checkout", "-q", "-b", "agent/order-search")
     (scan_repo / "db.py").write_text(DB_BASE + DB_SEARCH, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest project fixture under tmp_path
-    (scan_repo / "main.py").write_text(MAIN, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest project fixture under tmp_path
+    search_main = (
+        "from db import search_orders\n\n\n"
+        'if __name__ == "__main__":\n'
+        '    print(search_orders(input("Customer: ")))\n'
+    )
+    (scan_repo / "main.py").write_text(search_main, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest project fixture under tmp_path
     _git(scan_repo, "commit", "-qam", "search orders")
 
     exit_code, out, _err = _scan(monkeypatch, capsys, "--gate", "--diff", "main")

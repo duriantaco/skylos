@@ -128,6 +128,7 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
             r"(output|reveal|display|leak)\s+(all\s+)?"
             r"(env\b|environment|secrets?|api.?keys?|credentials?|passwords?)"
             r"|(reveal|display|leak)\s+(all\s+)?tokens?"
+            rf"|(?:reveal|display|leak)\s+{_DETERMINERS}{_CREDENTIAL_TOKEN_KINDS}[\s_-]+tokens?"
             rf"|output\s+all\s+tokens?"
             rf"|output\s+{_DETERMINERS}{_CREDENTIAL_TOKEN_KINDS}[\s_-]+tokens?"
             rf"|{_CLAUSE_START}output\s+{_DETERMINERS}tokens?\s+{_SECRET_STORE}"
@@ -406,6 +407,33 @@ def _python_placeholder_descriptions(
     return {key for key, count in descriptions.items() if count == occurrences[key]}
 
 
+def _python_streaming_docstrings(source: str) -> set[tuple[int, str]]:
+    """Recognize complete technical docstrings, never prompt assignments."""
+    if "streaming" not in source.lower():
+        return set()
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError):
+        return set()
+    descriptions = set()
+    for owner in ast.walk(tree):
+        if not isinstance(
+            owner, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            continue
+        first = owner.body[0] if owner.body else None
+        if not isinstance(first, ast.Expr) or not isinstance(first.value, ast.Constant):
+            continue
+        value = first.value.value
+        if isinstance(value, str) and re.fullmatch(
+            r"Uses?\s+streaming\s+to\s+display\s+tokens?\s+as\s+they\s+arrive[.!]?",
+            value.strip(),
+            re.I,
+        ):
+            descriptions.add((first.value.lineno, normalize(value)))
+    return descriptions
+
+
 def _instruction_pattern_evidence(
     text: str,
     segment_type: str,
@@ -541,6 +569,13 @@ def scan_file(
             )
         ):
             continue
+        if (
+            not is_agent_instruction
+            and not is_reviewer_config
+            and char_hex == "U+200D"
+            and _only_emoji_joiners(source_lines, line_no)
+        ):
+            continue
         hidden_severity, hidden_rule = high_signal("HIGH")
         if (
             is_reviewer_config
@@ -583,8 +618,11 @@ def scan_file(
         keep_comments=is_agent_instruction or is_reviewer_config,
     )
     placeholder_descriptions = set()
+    streaming_docstrings = set()
     if segment_ext == ".py":
         placeholder_descriptions = _python_placeholder_descriptions(source, segments)
+        if not is_agent_instruction and not is_reviewer_config:
+            streaming_docstrings = _python_streaming_docstrings(source)
 
     is_high_risk_file = basename.lower() in _HIGH_RISK_FILENAMES
     seen_findings: set[tuple[int, str]] = set()
@@ -593,6 +631,8 @@ def scan_file(
 
     for text, line_no, segment_type in segments:
         normalized = normalize(text)
+        if segment_type == "string" and (line_no, normalized) in streaming_docstrings:
+            continue
         placeholder_description = (
             segment_type == "string"
             and (line_no, normalized) in placeholder_descriptions
@@ -1128,7 +1168,13 @@ def _add_source_homoglyph_findings(
     is_agent_instruction: bool,
 ) -> None:
     seen_lines: set[int] = set()
-    for char, ascii_like, line_no in detect_homoglyphs(source):
+    # HTML punctuation, quotes and escapes separate words. Combining those
+    # boundaries can incorrectly treat an ordinary Cyrillic phrase beside an
+    # ASCII tag or Python expression as one mixed-script identifier.
+    words = "\n".join(
+        " ".join(re.findall(r"\w+", line)) for line in source.splitlines()
+    )
+    for char, ascii_like, line_no in detect_homoglyphs(words):
         if len(findings) >= MAX_FINDINGS_PER_FILE:
             return
         if line_no in seen_lines:

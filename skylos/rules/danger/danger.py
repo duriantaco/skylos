@@ -24,6 +24,8 @@ from .danger_logging import scan as scan_secret_logging
 from .pickle_provenance import safe_pickle_loads
 from .yaml_loader_provenance import yaml_loader_classes, yaml_load_call_name
 from .callable_bindings import callable_names
+from .python_security_gaps import scan as scan_python_security_gaps
+from .weak_random_context import private_model_slug_evidence
 from skylos.security.command_guard import (
     findings_for_command,
     is_external_url,
@@ -41,6 +43,7 @@ from .calls import (
     _qualified_name_from_call as qualified_name_from_call,
     _weak_random_has_security_context,
     _weak_random_call_name,
+    _client_nonce_material_reaches_return,
     _yaml_load_without_safeloader,
     _ruamel_unsafe_type,
     track_import_aliases,
@@ -230,6 +233,12 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                 if opts and opts.get("weak_random"):
                     if not _weak_random_has_security_context(
                         node, self._current_symbol()
+                    ) and not _client_nonce_material_reaches_return(
+                        node,
+                        {
+                            "filename": self.file_path,
+                            "project_root": self._project_root,
+                        },
                     ):
                         continue
 
@@ -251,6 +260,10 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                 )
                 if low_risk is not None:
                     finding["low_risk_context"] = low_risk
+                if opts and opts.get("weak_random"):
+                    evidence = private_model_slug_evidence(node)
+                    if evidence:
+                        finding["security_evidence"] = evidence
                 self.findings.append(finding)
                 break
             else:
@@ -341,6 +354,7 @@ class _PythonCommandExfilChecker(_DangerousCallsChecker):
 
 
 _SQL_TOKENS = (
+    "query_items",
     "sqlalchemy",
     ".execute",
     ".executemany",
@@ -634,8 +648,27 @@ def scan_file_with_tree(
     tree, file_path, findings, *, source: str | None = None, project_root=None
 ):
     """Run taint-flow scanners on an already-parsed AST (no re-read/re-parse)."""
+    if source is None or _has_any(
+        source.lower(),
+        (
+            "jinja",
+            "requests",
+            "httpx",
+            "urllib",
+            "importlib",
+            "__import__",
+            "gradio",
+            "/tmp/",
+            "makedirs",
+            "mkdir",
+            "url_for",
+            "subprocess",
+            "shlex",
+        ),
+    ):
+        scan_python_security_gaps(tree, file_path, findings, project_root=project_root)
     if source is None:
-        scan_sql(tree, file_path, findings)
+        scan_sql(tree, file_path, findings, project_root=project_root)
         scan_cmd(tree, file_path, findings, project_root=project_root)
         scan_sql_raw(tree, file_path, findings)
         scan_ssrf(tree, file_path, findings)
@@ -659,7 +692,7 @@ def scan_file_with_tree(
 
     source_lower = source.lower()
     if _has_any(source_lower, _SQL_TOKENS):
-        scan_sql(tree, file_path, findings)
+        scan_sql(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _CMD_TOKENS):
         scan_cmd(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _SQL_RAW_TOKENS):

@@ -67,6 +67,40 @@ def _fixed_scheme(checker, expr, at, depth=0):
         prefix = _text(expr.left)
         # An unknown object can replace the whole string via __radd__.
         return prefix is not None and _text(expr.right) is not None
+    if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name):
+        name = expr.func.id
+        if checker._name_is_local(name, expr) or not checker._module_global_is_stable(
+            name
+        ):
+            return False
+        definitions = [
+            n
+            for n in checker.tree.body
+            if isinstance(n, ast.FunctionDef) and n.name == name
+        ]
+        if len(definitions) != 1 or definitions[0].decorator_list:
+            return False
+        function = definitions[0]
+        returns = []
+        pending = list(function.body)
+        while pending:
+            child = pending.pop()
+            if isinstance(
+                child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+            ):
+                continue
+            if isinstance(child, (ast.Yield, ast.YieldFrom)):
+                return False
+            if isinstance(child, ast.Return):
+                returns.append(child.value)
+            pending.extend(ast.iter_child_nodes(child))
+        # Only a directly visible fixed scheme proves a helper's result. An
+        # argument, unknown helper or decorator cannot establish this proof.
+        return bool(returns) and all(
+            isinstance(value, (ast.Constant, ast.JoinedStr))
+            and _fixed_scheme(checker, value, expr, depth + 1)
+            for value in returns
+        )
     func = checker._current_function()
     if isinstance(expr, ast.Name):
         value, statement = (None, None)
@@ -493,6 +527,8 @@ def audit_urlopen(checker, node):
             "col": node.col_offset,
             "symbol": checker._current_symbol(),
             "metadata": {
+                "audit_only": True,
+                "source_status": "unresolved",
                 "security_evidence": {
                     "evidence_kind": "url_scheme_audit",
                     "source": "dynamic URL; attacker control is not established",

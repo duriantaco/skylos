@@ -58,6 +58,7 @@ from skylos.rules.danger.module_namespace import (
     module_name_for,
     module_rebinding,
 )
+from skylos.rules.danger.import_proof import provider_binding_is_stable
 from skylos.rules.danger.untrusted_sources import (
     REQUEST_ANNOTATIONS,
     REQUEST_NAMES,
@@ -1041,6 +1042,7 @@ class _Project:
         self._param_value_active = set()
         self._import_maps = {}
         self._launch = None
+        self._operator_stdin = None
         self._constant_tables = {}
         self._store_cache = {}
         self._returned = {}
@@ -2673,6 +2675,24 @@ class _Project:
             order, external = self.mro(value.node)
             if any(cls.name in _REQUEST_TYPE_NAMES for _, cls in order):
                 return False
+            for unit, cls in order:
+                if any(
+                    isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and member.name in {"__new__", "__getattr__", "__getattribute__"}
+                    for member in cls.body
+                ):
+                    return False
+                info = self.class_info.get(id(cls))
+                for decorator in cls.decorator_list:
+                    target = (
+                        decorator.func if isinstance(decorator, ast.Call) else decorator
+                    )
+                    resolved = self.values(unit, info[1], target) if info else None
+                    if not resolved or any(
+                        item.kind != "ext" or item.name != "dataclasses.dataclass"
+                        for item in resolved
+                    ):
+                        return False
             return all(self._non_request_external(name) for name in external)
         if value.kind != "ext" or value.name in _UNINFORMATIVE_TYPES:
             return False
@@ -2947,6 +2967,32 @@ class _Project:
             return SAFE, _step(unit, fn, f"test value `{name}` of `{label}`")
         return None
 
+    def operator_stdin(self):
+        """Standard input is operator input only for a complete local program.
+
+        Web/tool entry points and stream rebinding retain the old untrusted
+        classification. No directory or function-name heuristic establishes it.
+        """
+        if self._operator_stdin is not None:
+            return self._operator_stdin
+        self._operator_stdin = False
+        if not self.complete or self.truncated:
+            return False
+        for unit in self.units:
+            if unit.is_test:
+                continue
+            if self.framework_context(unit):
+                return False
+            for scope in unit.function_scopes.values():
+                decorator = entrypoint_decorator(scope.node, self.import_map(unit))
+                if decorator and not self._cli_decorator(unit, scope.node, decorator):
+                    return False
+            for target, _value, _statement, _scope in unit.attribute_stores:
+                if target.attr == "stdin":
+                    return False
+        self._operator_stdin = True
+        return True
+
     def _cli_decorator(self, unit, fn, decorator):
         """A ``@<group>.command`` decorator is a command line when the group
         resolves to Click/Typer, or the same function also carries Click or
@@ -3151,6 +3197,8 @@ class _Tracer:
         self.unit_runtime_stable = {}
         self.process_members = {}
         self.plain_model_memo = {}
+        self._django_uuid_paths = None
+        self._stdin_sink_scope = None
 
     def _limit(self, unit, node, text):
         self.limited += 1
@@ -4094,6 +4142,16 @@ class _Tracer:
         return polarity_names(test, holds, lambda call: set(), members)
 
     def _attribute(self, unit, scope, node, env):
+        if self.rule in {"SKY-D215", "SKY-D324", "SKY-D325"}:
+            if self._django_uuid_paths is None:
+                from skylos.rules.danger.danger_fs.django_uuid_paths import (
+                    DjangoUUIDPaths,
+                )
+
+                self._django_uuid_paths = DjangoUUIDPaths(self)
+            proof = self._django_uuid_paths.proof(unit, scope, node)
+            if proof is not None:
+                return _Facts.leaf(SAFE, _step(unit, node, proof))
         source = self._attribute_source(unit, scope, node)
         if source is not None:
             return _Facts.leaf(source[0], _step(unit, node, source[1]))
@@ -4392,7 +4450,8 @@ class _Tracer:
                 if name == "os.environ":
                     return OPERATOR, "process environment `os.environ`"
                 if name == "sys.stdin" or name.startswith("sys.stdin."):
-                    return UNTRUSTED, "standard input `sys.stdin`"
+                    kind = self._stdin_kind(unit, scope, "sys.stdin.read")
+                    return kind, "standard input `sys.stdin`"
                 if name in _SAFE_ATTRIBUTES:
                     return SAFE, f"interpreter location `{name}`"
         base = node.value
@@ -4715,7 +4774,18 @@ class _Tracer:
         func = node.func
         for name in names:
             if name in _STDIN_CALLS:
-                return _Facts.leaf(UNTRUSTED, _step(unit, node, f"standard input `{name}()`"))
+                if not self._native_stdin(unit, name):
+                    return _Facts.leaf(
+                        UNTRUSTED,
+                        _step(unit, node, f"replaced standard input `{name}()`"),
+                    )
+                selected = self._cli_selected_stdin(unit, scope, node)
+                if selected is not None:
+                    return selected
+                kind = self._stdin_kind(unit, scope, name)
+                return _Facts.leaf(
+                    kind, _step(unit, node, f"standard input `{name}()`")
+                )
             if name in _ENV_CALLS:
                 if node.args:
                     facts = self._environment(unit, node, node.args[0])
@@ -4761,6 +4831,73 @@ class _Tracer:
                 and self.project._class_extends(owner_class, _TORNADO_HANDLER_BASES)
             ):
                 return _Facts.leaf(UNTRUSTED, _step(unit, node, f"request argument `self.{func.attr}()`"))
+        return None
+
+    def _native_stdin(self, unit, name):
+        return provider_binding_is_stable(name, unit.tree, unit.path, self.project.root)
+
+    def _stdin_kind(self, unit, scope, name):
+        # A direct standalone module read belongs to its local operator.
+        # An arbitrary function has no such entry-point proof; helper streams
+        # require the actual CLI selector proof below.
+        if (
+            scope is unit.module
+            and self._stdin_sink_scope == (id(unit), id(scope))
+            and self.project.operator_stdin()
+            and self._native_stdin(unit, name)
+        ):
+            return OPERATOR
+        return UNTRUSTED
+
+    def _cli_selected_stdin(self, unit, scope, node):
+        """A file helper's '-' branch selected by actual argparse input.
+
+        A project may contain a separate web application. Its presence does
+        not make an operator-selected CLI stream a request body. Follow the
+        selector's callers, preserving unknown callers and remote alternatives.
+        """
+        for parent in unit.ancestors(node):
+            if parent is scope.node:
+                break
+            if not isinstance(parent, ast.If):
+                continue
+            test = parent.test
+            if not (
+                isinstance(test, ast.Compare)
+                and len(test.ops) == 1
+                and isinstance(test.ops[0], ast.Eq)
+                and len(test.comparators) == 1
+            ):
+                continue
+            left, right = test.left, test.comparators[0]
+            if isinstance(left, ast.Constant):
+                left, right = right, left
+            if not (
+                isinstance(left, ast.Name)
+                and isinstance(right, ast.Constant)
+                and right.value == "-"
+            ):
+                continue
+            if not any(
+                node is part
+                for statement in parent.body
+                for part in ast.walk(statement)
+            ):
+                continue
+            found = unit.lookup(scope, left.id)
+            if found is None or not any(bind.kind == "param" for bind in found[1]):
+                continue
+            facts = self.trace(unit, scope, left)
+            if (
+                not facts.chains[OPERATOR]
+                or facts.chains[UNTRUSTED]
+                or facts.chains[INCOMPLETE]
+                or facts.chains[PARAMETER]
+            ):
+                continue
+            return facts.then(
+                _step(unit, node, "CLI file selector chooses standard input with '-'")
+            )
         return None
 
     def _parsed_arguments(self, unit, scope, node):
@@ -6913,6 +7050,9 @@ _CONVENTION_SOURCES = (
     re.compile(r"^route parameter `[^`]+` of `[^`]+` \(@(?:[\w]+\.)*(?:command|group|callback|argument|option)\)$"),
     re.compile(r"^request data `(?:request|req)\b"),
 )
+_STANDALONE_STDIN_SOURCE = re.compile(
+    r"^(?:standard input|`?(?:input|raw_input|sys\.stdin)(?:`|\.|\())"
+)
 PATH_RULES_TRACED = frozenset({"SKY-D215", "SKY-D324", "SKY-D325"})
 
 
@@ -6932,8 +7072,11 @@ def _convention_finding(finding):
     sources = [source for source in sources if source]
     if not sources:
         return False
+    patterns = _CONVENTION_SOURCES
+    if finding.get("symbol") in {None, "<module>"}:
+        patterns += (_STANDALONE_STDIN_SOURCE,)
     return all(
-        isinstance(source, str) and any(pattern.match(source) for pattern in _CONVENTION_SOURCES)
+        isinstance(source, str) and any(pattern.match(source) for pattern in patterns)
         for source in sources
     )
 
@@ -7042,10 +7185,16 @@ def _classify(project, tracers, finding):
         facts = _Facts.leaf(UNKNOWN, f"{finding.get('file')}:{finding.get('line')} path operand is not located in the indexed source")
         return UNKNOWN, _provenance_record(UNKNOWN, str(finding.get("symbol") or ""), facts, project, limits), None
     rule = finding.get("rule_id")
-    tracer = tracers.get(rule)
+    scope = unit.scope_of(operand)
+    sink_scope = (id(unit), id(scope)) if scope is unit.module else None
+    # Stdin's standalone proof belongs to this sink scope. A helper must not
+    # reuse facts classified as operator input for a different direct sink.
+    tracer_key = (rule, sink_scope)
+    tracer = tracers.get(tracer_key)
     if tracer is None:
         tracer = _Tracer(project, rule)
-        tracers[rule] = tracer
+        tracer._stdin_sink_scope = sink_scope
+        tracers[tracer_key] = tracer
     tracer.work = 0
     facts = tracer.trace(unit, unit.scope_of(operand), operand).then(_sink_step(unit, finding, operand))
     if tracer.work > _MAX_WORK:

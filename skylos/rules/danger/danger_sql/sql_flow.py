@@ -1,5 +1,6 @@
 from __future__ import annotations
 import ast
+import hashlib
 import re
 import string
 import sys
@@ -15,6 +16,7 @@ from skylos.rules.danger.danger_sql.write_only_collections import (
 )
 from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
 from skylos.security.receiver_resolution import ReceiverResolver
+from skylos.rules.danger.danger_sql.class_sql_constants import project_class_constants
 
 
 DB_MODULES = frozenset(
@@ -130,6 +132,17 @@ SQL_BUILDER_METHODS = frozenset(
         "on_conflict_do_nothing",
         "on_conflict_do_update",
         "on_duplicate_key_update",
+        "join",
+        "outerjoin",
+        "join_from",
+        "outerjoin_from",
+        "options",
+        "distinct",
+        "add_columns",
+        "correlate",
+        "with_for_update",
+        "execution_options",
+        "params",
     }
 )
 STANDARD_LITERAL_CONNECTIONS = frozenset({"sqlite3.connect", "duckdb.connect"})
@@ -490,8 +503,10 @@ class _SQLFlowChecker(TaintVisitor):
     SEVERITY_HIGH = "HIGH"
     DBAPI_SQL_SINK_SUFFIXES = (".execute", ".executemany", ".executescript")
 
-    def __init__(self, tree: ast.AST, file_path, findings):
+    def __init__(self, tree: ast.AST, file_path, findings, project_root=None):
         super().__init__(file_path, findings)
+        self.project_root = project_root
+        self.tree = tree
         self.untrusted_sources = UntrustedSourceIndex(tree)
         self.receiver_resolver = None
         self.receiver_resolution_error = None
@@ -534,6 +549,230 @@ class _SQLFlowChecker(TaintVisitor):
         self.db_receiver_alias_stack: list[set[str]] = [set()]
         self.write_only_methods: dict[int, WriteOnlyReceiver] = {}
         self.write_only_receiver_stack: list[WriteOnlyReceiver | None] = [None]
+        self._read_module_classes(tree, bindings)
+        self._attribute_owners: dict[tuple[int, str], str | None] = {}
+        self._class_constants_loaded = False
+        self._class_constants = None
+        self.method_decorators = builtin_references(tree, {"property", "classmethod"})
+        self.sql_source_ast_sha256 = None
+
+    def _read_module_classes(self, tree: ast.AST, bindings) -> None:
+        self.method_classes: dict[int, ast.ClassDef] = {}
+        self.module_classes: set[str] = set()
+        self.module_written_attributes: set[str] = set()
+        self.has_sql_sink = False
+        if not isinstance(tree, ast.Module):
+            return
+        counts = Counter()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                counts[node.name] += 1
+            elif isinstance(node, ast.Attribute):
+                if isinstance(node.ctx, (ast.Store, ast.Del)):
+                    self.module_written_attributes.add(node.attr)
+            elif isinstance(node, ast.Call) and _callee_name(
+                node
+            ) in SQL_EXECUTE_METHODS | {"read_sql", "read_sql_query", "text"}:
+                self.has_sql_sink = True
+        for statement in tree.body:
+            if not isinstance(statement, ast.ClassDef):
+                continue
+            if counts[statement.name] == 1 and statement.name not in bindings:
+                self.module_classes.add(statement.name)
+            for member in statement.body:
+                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    self.method_classes[id(member)] = statement
+
+    def _project_class_constants(self):
+        if not self._class_constants_loaded:
+            self._class_constants_loaded = True
+            root = self.project_root or getattr(self.receiver_resolver, "root", None)
+            self._class_constants = project_class_constants(
+                root, self.file_path, self.tree
+            )
+        return self._class_constants
+
+    def _is_fixed_class_text(self, node: ast.Attribute) -> bool:
+        if not self.has_sql_sink or not isinstance(node.value, ast.Name):
+            return False
+        if node.attr in self.module_written_attributes:
+            return False
+        owner = self._attribute_owner(node.value.id)
+        if owner is None:
+            return False
+        constants = self._project_class_constants()
+        return constants is not None and constants.holds_fixed_text(owner, node.attr)
+
+    def _class_mapping_iteration_names(self, node):
+        iterator = node.iter
+        if (
+            not isinstance(iterator, ast.Call)
+            or not isinstance(iterator.func, ast.Attribute)
+            or iterator.func.attr not in {"items", "values", "keys"}
+            or iterator.args
+            or iterator.keywords
+        ):
+            return []
+        mapping = iterator.func.value
+        if not isinstance(mapping, ast.Attribute) or not isinstance(
+            mapping.value, ast.Name
+        ):
+            return []
+        owner = self._attribute_owner(mapping.value.id)
+        constants = self._project_class_constants()
+        if (
+            owner is None
+            or constants is None
+            or not constants.holds_fixed_mapping(owner, mapping.attr)
+        ):
+            return []
+        if isinstance(node.target, ast.Name) and iterator.func.attr in {
+            "values",
+            "keys",
+        }:
+            return [node.target.id]
+        if (
+            iterator.func.attr == "items"
+            and isinstance(node.target, (ast.Tuple, ast.List))
+            and len(node.target.elts) == 2
+            and all(isinstance(item, ast.Name) for item in node.target.elts)
+        ):
+            return [item.id for item in node.target.elts]
+        return []
+
+    def _attribute_owner(self, name: str) -> str | None:
+        """The class ``name.attribute`` reads from: a method's own first
+        parameter, or a module class that nothing in scope shadows."""
+        function = self._current_function()
+        key = (id(function), name)
+        if key not in self._attribute_owners:
+            self._attribute_owners[key] = self._find_attribute_owner(function, name)
+        return self._attribute_owners[key]
+
+    def _find_attribute_owner(self, function, name: str) -> str | None:
+        if function is not None:
+            klass = self.method_classes.get(id(function))
+            if klass is not None and self._is_method_receiver(function, name):
+                return klass.name
+            if any(self._binds_name(scope, name) for scope in self._function_stack):
+                return None
+        if name in self.module_classes and self._import_names_are_stable(name):
+            return name
+        return None
+
+    @staticmethod
+    def _binds_name(function: ast.AST, name: str) -> bool:
+        arguments = function.args
+        parameters = [
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+            *filter(None, (arguments.vararg, arguments.kwarg)),
+        ]
+        if any(parameter.arg == name for parameter in parameters):
+            return True
+        return any(
+            isinstance(child, ast.Name)
+            and child.id == name
+            and isinstance(child.ctx, (ast.Store, ast.Del))
+            for child in ast.walk(function)
+        )
+
+    def _is_method_receiver(self, function: ast.AST, name: str) -> bool:
+        positional = [*function.args.posonlyargs, *function.args.args]
+        if not positional or positional[0].arg != name:
+            return False
+        for decorator in function.decorator_list:
+            if id(decorator) in self.method_decorators:
+                continue
+            provider = self._stable_provider(decorator)
+            if provider not in {
+                "abc.abstractmethod",
+                "typing.final",
+                "typing.override",
+            }:
+                return False
+        return not any(
+            isinstance(child, ast.Name)
+            and child.id == name
+            and isinstance(child.ctx, (ast.Store, ast.Del))
+            for child in ast.walk(function)
+        )
+
+    def _stable_provider(self, func: ast.AST) -> str | None:
+        name = _qualified_name_from_expr(func)
+        if not name or not self._import_names_are_stable(name):
+            return None
+        resolved = self.untrusted_sources.resolved_import(
+            self._current_function(), name
+        )
+        if resolved is None or not self._sanitizer_is_unpatched(resolved):
+            return None
+        return resolved
+
+    def _is_generated_hex_text(self, node: ast.Call) -> bool:
+        if self._stable_provider(node.func) == "secrets.token_hex":
+            return True
+        if (
+            not isinstance(node.func, ast.Attribute)
+            or node.func.attr != "hexdigest"
+            or not isinstance(node.func.value, ast.Call)
+            or node.args
+            or node.keywords
+        ):
+            return False
+        constructor = node.func.value
+        provider = self._stable_provider(constructor.func)
+        algorithms = {
+            "md5",
+            "sha1",
+            "sha224",
+            "sha256",
+            "sha384",
+            "sha512",
+            "sha3_224",
+            "sha3_256",
+            "sha3_384",
+            "sha3_512",
+            "blake2b",
+            "blake2s",
+        }
+        if provider in {f"hashlib.{name}" for name in algorithms}:
+            return self._sanitizer_is_unpatched("hashlib.hexdigest")
+        if provider != "hashlib.new" or not constructor.args:
+            return False
+        algorithm = constructor.args[0]
+        return (
+            isinstance(algorithm, ast.Constant)
+            and algorithm.value in algorithms
+            and self._sanitizer_is_unpatched("hashlib.hexdigest")
+        )
+
+    def _bound_column_expression(self, node: ast.AST) -> bool:
+        if (
+            not isinstance(node, ast.Call)
+            or not isinstance(node.func, ast.Attribute)
+            or not isinstance(node.func.value, ast.Attribute)
+            or self.is_tainted(node.func.value)
+        ):
+            return False
+        return node.func.attr in {
+            "in_",
+            "not_in",
+            "notin_",
+            "like",
+            "ilike",
+            "not_like",
+            "not_ilike",
+            "contains",
+            "startswith",
+            "endswith",
+            "is_",
+            "is_not",
+            "isnot",
+            "between",
+            "match",
+        }
 
     def _push(self):
         super()._push()
@@ -656,6 +895,8 @@ class _SQLFlowChecker(TaintVisitor):
             if fact in (_TEXT_IDENTIFIER, _TEXT_COMPOSED):
                 return fact
             return None
+        if isinstance(node, ast.Attribute) and self._is_fixed_class_text(node):
+            return _TEXT_SAFE
         if isinstance(node, ast.JoinedStr):
             return self._joined_text_kind(node)
         if isinstance(node, ast.BinOp):
@@ -683,6 +924,8 @@ class _SQLFlowChecker(TaintVisitor):
             return None
         if not isinstance(node, ast.Call):
             return None
+        if self._is_generated_hex_text(node):
+            return _TEXT_SAFE
         if self._is_psycopg_composition(node):
             return _TEXT_COMPOSED
         if self._is_identifier_quote_call(node):
@@ -891,7 +1134,10 @@ class _SQLFlowChecker(TaintVisitor):
         scope = self.sql_literal_stack[-1]
         if name in scope:
             return scope[name]
-        if len(self.sql_literal_stack) > 1 and name not in self.rebound_global_sql_names:
+        if (
+            len(self.sql_literal_stack) > 1
+            and name not in self.rebound_global_sql_names
+        ):
             return self.sql_literal_stack[0].get(name)
         return None
 
@@ -958,7 +1204,10 @@ class _SQLFlowChecker(TaintVisitor):
             value.value, (str, int, float)
         ):
             return str(value.value)
-        if isinstance(value, ast.Call) and self._builtin_called(value) in _NUMERIC_CALLS:
+        if (
+            isinstance(value, ast.Call)
+            and self._builtin_called(value) in _NUMERIC_CALLS
+        ):
             return "0"
         return None
 
@@ -1075,10 +1324,13 @@ class _SQLFlowChecker(TaintVisitor):
                 "filter_by",
                 "limit",
                 "offset",
+                "params",
+                "execution_options",
             }
             for arg in [*call.args, *(keyword.value for keyword in call.keywords)]:
                 if not binds_values and (
-                    _is_interpolated_string(arg) or self.is_tainted(arg)
+                    _is_interpolated_string(arg)
+                    or (self.is_tainted(arg) and not self._bound_column_expression(arg))
                 ):
                     return False
         func = chain[-1].func
@@ -1320,6 +1572,10 @@ class _SQLFlowChecker(TaintVisitor):
         )
 
     def _sqli_finding(self, node, severity, message, query_expr, sink, evidence=None):
+        if self.sql_source_ast_sha256 is None:
+            self.sql_source_ast_sha256 = hashlib.sha256(
+                ast.dump(self.tree).encode()
+            ).hexdigest()
         finding = {
             "rule_id": self.RULE_ID_SQLI,
             "severity": severity,
@@ -1331,9 +1587,26 @@ class _SQLFlowChecker(TaintVisitor):
         }
         if evidence is None:
             evidence = self._source_evidence(node, query_expr, sink)
-        metadata = {}
+        metadata = {
+            "sql_operand": {
+                "line": getattr(query_expr, "lineno", None),
+                "col": getattr(query_expr, "col_offset", None),
+                "end_line": getattr(query_expr, "end_lineno", None),
+                "end_col": getattr(query_expr, "end_col_offset", None),
+            },
+            "sql_sink": sink,
+            "sql_source_ast_sha256": self.sql_source_ast_sha256,
+        }
         if evidence is not None:
             metadata["security_evidence"] = evidence
+            metadata["source_status"] = "untrusted"
+        else:
+            metadata["source_status"] = "unresolved"
+            metadata["audit_only"] = True
+            finding["message"] = (
+                "Review SQL execution: the query's origin is unresolved; "
+                "attacker control has not been established."
+            )
         if isinstance(node, ast.Call):
             receiver = self._receiver_resolution(node)
             if receiver is not None:
@@ -1590,6 +1863,7 @@ class _SQLFlowChecker(TaintVisitor):
         tables = [scope.copy() for scope in self.sql_table_stack]
         texts = [scope.copy() for scope in self.sql_text_stack]
         literals = [scope.copy() for scope in self.sql_literal_stack]
+        branch_statements = []
         for branch in (node.body, node.orelse):
             self.sql_statement_stack = [scope.copy() for scope in statements]
             self.sql_table_stack = [scope.copy() for scope in tables]
@@ -1597,7 +1871,14 @@ class _SQLFlowChecker(TaintVisitor):
             self.sql_literal_stack = [scope.copy() for scope in literals]
             for child in branch:
                 self.visit(child)
+            branch_statements.append(
+                [scope.copy() for scope in self.sql_statement_stack]
+            )
         self._invalidate_branch_sql_bindings([*node.body, *node.orelse])
+        for index, scope in enumerate(branch_statements[0]):
+            for name, proven in scope.items():
+                if proven and branch_statements[1][index].get(name, False):
+                    self.sql_statement_stack[index][name] = True
 
     def visit_For(self, node):
         statements = [scope.copy() for scope in self.sql_statement_stack]
@@ -1610,6 +1891,12 @@ class _SQLFlowChecker(TaintVisitor):
         else:
             self.visit(node.iter)
             self.visit(node.target)
+            if isinstance(node.target, ast.Name) and self._joins_sql_safe_text(
+                node.iter
+            ):
+                self.sql_text_stack[-1][node.target.id] = True
+            for name in self._class_mapping_iteration_names(node):
+                self.sql_text_stack[-1][name] = True
         for child in node.body:
             self.visit(child)
         self.sql_statement_stack = statements
@@ -1720,7 +2007,9 @@ class _SQLFlowChecker(TaintVisitor):
                 if self.cosmos_provenance is None:
                     from .cosmos_provenance import CosmosQueryProvenance
 
-                    root = getattr(self.receiver_resolver, "root", None)
+                    root = self.project_root or getattr(
+                        self.receiver_resolver, "root", None
+                    )
                     self.cosmos_provenance = CosmosQueryProvenance(
                         self.untrusted_sources.module, self.file_path, root
                     )
@@ -1742,7 +2031,9 @@ class _SQLFlowChecker(TaintVisitor):
                     query,
                     "SQL text passed to Cosmos ContainerProxy.query_items()",
                 )
-                self.findings[-1].setdefault("metadata", {})["cosmos_receiver"] = provider
+                self.findings[-1].setdefault("metadata", {})["cosmos_receiver"] = (
+                    provider
+                )
         if (
             isinstance(node.func, ast.Attribute)
             and node.func.attr in SQL_EXECUTE_METHODS | SQL_FETCH_METHODS
@@ -1871,9 +2162,9 @@ class _SQLFlowChecker(TaintVisitor):
         self.generic_visit(node)
 
 
-def scan(tree, file_path, findings):
+def scan(tree, file_path, findings, project_root=None):
     try:
-        checker = _SQLFlowChecker(tree, file_path, findings)
+        checker = _SQLFlowChecker(tree, file_path, findings, project_root)
         checker.visit(tree)
     except Exception as e:
         print(f"SQL flow analysis failed for {file_path}: {e}", file=sys.stderr)
