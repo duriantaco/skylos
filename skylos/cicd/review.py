@@ -446,8 +446,10 @@ def _get_per_file_diffs(
             diff_cmd,
             cwd=cwd,
             capture_output=True,
-            text=True,
             env=read_only_git_environment(),
+            # Read bytes and decode explicitly, like get_changed_line_ranges:
+            # universal-newline conversion could turn bare CR inside source
+            # into fake headers.
         )
         if result.returncode != 0:
             if raise_on_error:
@@ -464,17 +466,29 @@ def _get_per_file_diffs(
     file_diffs: dict[str, str] = {}
     current_file = None
     current_lines: list[str] = []
+    in_hunk = False
 
-    for line in result.stdout.splitlines():
+    diff_output = result.stdout
+    if isinstance(diff_output, bytes):
+        diff_output = diff_output.decode("utf-8", errors="replace")
+
+    for line in diff_output.split("\n"):
         if line.startswith("diff --git"):
             if current_file and current_lines:
                 file_diffs[current_file] = "\n".join(current_lines)
             current_file = None
             current_lines = [line]
-        elif line.startswith("+++ b/"):
-            current_file = line[6:]
+            in_hunk = False
+        elif line.startswith("+++ ") and not in_hunk:
+            # Reuse the shared header parser: Git quotes paths with non-ASCII
+            # bytes, quotes or control characters, and appends a TAB after an
+            # unquoted name containing spaces. A line inside a hunk that
+            # happens to start with "+++ " is source text, not a new file.
+            current_file = _new_diff_header_path(line[4:])
             current_lines.append(line)
         else:
+            if line.startswith("@@"):
+                in_hunk = True
             current_lines.append(line)
 
     if current_file and current_lines:
