@@ -167,7 +167,10 @@ def _definition_factors(definition: Any, definitions: dict, demoted: set[int]):
         if not simple.startswith(("_", "#")):
             factors.append("public_method")
     elif kind == "variable" and "." in name:
-        owner = definitions.get(name.rsplit(".", 1)[0])
+        owner_name = name.rsplit(".", 1)[0]
+        owner = definitions.get(owner_name)
+        if owner is None and suffix == ".cs":
+            owner = definitions.get(f"csharp:type:{owner_name}")
         if owner is not None and getattr(owner, "type", None) == "class":
             factors.append("class_attribute")
 

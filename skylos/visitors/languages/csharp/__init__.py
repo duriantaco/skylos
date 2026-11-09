@@ -17,6 +17,7 @@ class DummyVisitor:
         self.first_read_lineno: dict = {}
         self.framework_decorated_lines: set[int] = set()
         self.detected_frameworks: set[str] = set()
+        self.csharp_reference_context: dict[str, list[dict]] = {}
 
 
 def _empty_result(config: dict) -> tuple:
@@ -58,7 +59,10 @@ def scan_csharp_file(
     except Exception:
         return _empty_result(config)
 
-    defs, refs, raw_imports = scan_symbols(str(path), source)
+    visitor = DummyVisitor()
+    defs, refs, raw_imports = scan_symbols(
+        str(path), source, reference_context=visitor.csharp_reference_context
+    )
     findings = scan_danger(str(path), source) if enable_danger_rules else []
     quality_findings = scan_quality(str(path), source) if enable_quality_rules else []
 
@@ -67,8 +71,8 @@ def scan_csharp_file(
         refs,
         set(),
         set(),
-        DummyVisitor(),
-        DummyVisitor(),
+        visitor,
+        visitor,
         quality_findings,
         findings,
         [],

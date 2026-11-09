@@ -65,6 +65,7 @@ def scan_dart_file(
         is_test_file=core.is_test_file,
         test_decorated_lines=core.test_decorated_lines,
     )
+    visitor.dart_bindings = core.binding_metadata
     findings = (
         scan_danger(core.root_node, str(path), source) if enable_danger_rules else []
     )
