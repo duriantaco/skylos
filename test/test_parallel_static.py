@@ -1,4 +1,7 @@
+import ast
+
 import skylos.scale.parallel_static as ps
+from skylos.rules.danger.callable_bindings import callable_names
 
 
 class DummyFuture:
@@ -326,3 +329,69 @@ def test_pool_shuts_down_and_waits_after_normal_completion(monkeypatch, tmp_path
     ps.run_proc_file_parallel(files, {files[0]: "a", files[1]: "b"}, jobs=2)
 
     assert created[0].shutdown_calls == [(True, False)]
+
+
+def test_python_danger_worker_results_do_not_need_parent_retry(monkeypatch, tmp_path):
+    """Danger rules cache flow state on the module; worker results must still
+    cross the process boundary instead of being recomputed in the parent."""
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    source = (
+        "import os\n"
+        "import random\n"
+        "\n"
+        "def run(cmd):\n"
+        "    os.system(cmd)\n"
+        "\n"
+        "def weak():\n"
+        "    return random.random()\n"
+        "\n"
+        "def helper(x):\n"
+        "    return x + 1\n"
+        "\n"
+        "def main():\n"
+        "    run('echo hi')\n"
+        "    helper(1)\n"
+        "    weak()\n"
+        "\n"
+        "main()\n"
+    )
+    files = []
+    for name in ("one.py", "two.py"):
+        path = tmp_path / name
+        path.write_text(source, encoding="utf-8")
+        files.append(path)
+    modmap = {path: path.stem for path in files}
+
+    retried = []
+    monkeypatch.setattr(
+        ps, "_retry_in_parent", lambda *args, **kwargs: retried.append(args[0])
+    )
+
+    out = ps.run_proc_file_parallel(
+        files,
+        modmap,
+        jobs=2,
+        enable_danger_rules=True,
+        project_root=tmp_path,
+    )
+
+    assert retried == []
+    assert len(out) == len(files)
+    for result in out:
+        assert not isinstance(result, ps.WorkerCrash)
+        names = [definition.name for definition in result[0]]
+        assert any(name.endswith(".run") for name in names)
+        assert len(result[7]) == 2  # SKY-D203 and SKY-D212 for os.system
+
+        # The unpickled index must rebuild its id-keyed caches from the
+        # restored module, not stay empty.
+        definition = next(
+            definition for definition in result[0] if definition.name.endswith(".run")
+        )
+        module = definition.node.parent
+        assert isinstance(module, ast.Module)
+        call = next(
+            node for node in ast.walk(definition.node) if isinstance(node, ast.Call)
+        )
+        assert callable_names(call, None, module, definition.filename) == ("os.system",)

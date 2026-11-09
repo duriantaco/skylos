@@ -143,6 +143,7 @@ class _CallableFlow(ValueFlow):
 class _CallableIndex:
     def __init__(self, module):
         self.module = module
+        self._ready = True
         self.parents = {}
         self.flows = {}
         self.watched = {}
@@ -203,7 +204,23 @@ class _CallableIndex:
                         if isinstance(root, ast.Name) and root.id not in local:
                             self.mutable_outer.add(root.id)
 
+    def __getstate__(self):
+        # Worker results travel back through pickle, and a Definition's node
+        # reaches this module through parent pointers. The flow caches hold
+        # closures (flow.<locals>.outer), and every cache is keyed by id(),
+        # so the unpickled index rebuilds them from the module on first use.
+        return {"module": self.module}
+
+    def __setstate__(self, state):
+        self.module = state["module"]
+        self._ready = False
+
+    def _ensure_ready(self):
+        if not self._ready:
+            self.__init__(self.module)
+
     def scope(self, node):
+        self._ensure_ready()
         while node is not None:
             if isinstance(node, _SCOPES):
                 return node
@@ -211,6 +228,7 @@ class _CallableIndex:
         return self.module
 
     def free_names(self, scope):
+        self._ensure_ready()
         key = id(scope)
         if key not in self.reads:
             names = set()
@@ -225,6 +243,7 @@ class _CallableIndex:
         return self.reads[key]
 
     def flow(self, scope):
+        self._ensure_ready()
         key = id(scope)
         if key in self.flows:
             return self.flows[key]
@@ -274,6 +293,7 @@ class _CallableIndex:
         return self.flows[key]
 
     def names(self, node, legacy, filename, project_root):
+        self._ensure_ready()
         context = filename, project_root
         if self.provider_context != context:
             # A shared AST may be checked with a wider project inventory by
@@ -304,6 +324,7 @@ class _CallableIndex:
         return tuple(sorted(found))
 
     def provider_available(self, name, filename, project_root):
+        self._ensure_ready()
         key = name.split(".", 1)[0], filename, project_root
         if key not in self.provider_checks:
             self.provider_checks[key] = provider_is_unshadowed(
