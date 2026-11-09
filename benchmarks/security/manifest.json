@@ -4,13 +4,13 @@
     {
       "id": "sql-tainted-param",
       "path": "fixtures/sql_tainted_param",
-      "description": "Tainted SQL query passed as a function parameter should be detected even when execute() receives params separately.",
+      "description": "Request-supplied SQL passed through a helper remains injection even when execute() binds a separate ID value.",
       "taxonomy": ["sql_injection"],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
         "license": "Apache-2.0",
-        "notes": "Regression fixture distilled from a confirmed false negative in Skylos SQL flow analysis."
+        "notes": "An HTTP query string supplies the SQL text; an unrelated ID is correctly bound but does not parameterize that query text."
       },
       "budget": {
         "max_seconds": 6.0

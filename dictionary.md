@@ -130,6 +130,7 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D215 | HIGH | Path traversal and archive extraction traversal | Python, TS/JS, Go, Java, PHP, Rust, Dart, Shell | CWE-22 / A01 |
 | D216 | CRITICAL | Server-side request forgery | Python, TS/JS, Go, Java, Dart, Shell, audit | CWE-918 / A10 |
 | D217 | CRITICAL | Raw SQL / ORM SQL injection | Python | CWE-89 / A03 |
+| D218 | MEDIUM | Conditional URL scheme audit; unresolved cases are diagnostics | Python | CWE-918 |
 | D220 | CRITICAL | SQL injection in added code / diff validation | MCP code-change validator | CWE-89 / A03 |
 | D223 | MEDIUM | Undeclared third-party dependency | Python | supply-chain |
 | D226 | CRITICAL | XSS: unsafe DOM or HTML rendering | Python, TS/JS, Java, audit | CWE-79 / A03 |
@@ -151,7 +152,7 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D247 | MEDIUM | CORS wildcard origin | TS/JS | CWE-942 / A05 |
 | D248 | MEDIUM | Hardcoded internal URL | TS/JS | CWE-798 |
 | D250 | MEDIUM | Insecure randomness for security-sensitive values | Python, TS/JS, Go, Java | CWE-330 |
-| D251 | HIGH | Sensitive data in logs | TS/JS | CWE-532 |
+| D251 | HIGH | Sensitive data in logs | Python, TS/JS | CWE-532 |
 | D252 | MEDIUM | Insecure cookie flags | TS/JS, Go, Java | CWE-614 |
 | D253 | MEDIUM | Timing-unsafe comparison | TS/JS | CWE-208 |
 | D254 | HIGH | HTTP session trust boundary violation | Java | CWE-501 |
@@ -217,6 +218,21 @@ single-quoted literal is not a finding: those engines do not treat a backslash
 as an escape. On other or unknown connections (MySQL and PostgreSQL can),
 outside a literal, inside a quoted identifier, after a prefix such as `E'`,
 with a `!r` conversion or next to a comment marker it still is.
+
+Python D211 and D230 require an identified input source before a completed
+project analysis presents a security claim. Unresolved candidates remain in
+JSON `suppressed` with `sql_provenance` or `redirect_provenance` marked
+`unknown` and `safety_proven: false`. They do not fail a security gate. A
+truncated or changed source index keeps candidates visible as incomplete;
+it never proves safety. D218 is a conditional scheme audit and remains an
+unknown diagnostic; D216 still reports source-backed SSRF separately.
+Operator-owned CLI/environment redirect targets do not establish remote input.
+
+Python D251 follows proven credential inputs into print/logging. Native HTTP
+response bodies and verified payloads do not inherit the signing key or
+request credential merely because it was supplied to the API. Request URLs,
+request headers, response history, whole response objects, unknown transforms
+and project wrappers retain credential evidence.
 
 For Python D215, Starlette/FastAPI `FileResponse` and Flask/Werkzeug
 `send_file` are path sinks. `send_from_directory` is a sink only for its
@@ -462,6 +478,19 @@ Skylos does not execute pytest or load `conftest.py` to resolve these values.
 | D347 | MEDIUM | Unsafe logging config listener | Python |
 | D348 | HIGH | Insecure temporary filename | Python |
 | D349 | CRITICAL | Server-side template injection (request data compiled as Jinja template source) | Python |
+| D355 | HIGH | Jinja environment with omitted or explicitly disabled autoescape | Python |
+| D356 | MEDIUM | Cleartext outbound HTTP request | Python |
+| D357 | HIGH | Untrusted input used as a dynamic Python import name | Python |
+| D358 | HIGH | Public Gradio launch without configured authentication | Python |
+| D359 | MEDIUM | Cached Flask external URL derived from the request host | Python |
+
+D355–D359 require review of deployment and input context. D356 records a
+cleartext transport choice; it does not establish that sensitive data is sent.
+D357 requires an identified input source, rather than reporting every plugin
+import. D359 requires cache and request-host evidence. Related D215/D324/D325
+checks at the same filesystem operation appear together in terminal reports;
+JSON, SARIF and gates retain each raw finding. Missing request timeouts remain
+SKY-L031 quality findings and should be reported separately in comparisons.
 
 D329 flags `rm -rf` of `/`, `~`, `$HOME`, `.`, `*`, `.git`, any other absolute
 path, and `$VAR/` or `$VAR/*` (an empty variable makes it `/`). Split flags

@@ -4267,6 +4267,16 @@ class Skylos:
                             )
 
                 if danger_findings:
+                    from skylos.rules.danger.danger_sql.sql_source_policy import (
+                        resolve_source_required_findings,
+                    )
+
+                    danger_findings = resolve_source_required_findings(
+                        danger_findings,
+                        scan_path=path,
+                        project_root=project_root,
+                        suppressed=result.setdefault("suppressed", []),
+                    )
                     from skylos.rules.compliance import (
                         enrich_findings_with_compliance,
                     )
@@ -6279,6 +6289,16 @@ class Skylos:
 
             all_dangers = drop_closed_world_helper_findings(
                 all_dangers, scan_path=path, suppressed=all_suppressed
+            )
+            from skylos.rules.danger.danger_sql.sql_source_policy import (
+                resolve_source_required_findings,
+            )
+
+            all_dangers = resolve_source_required_findings(
+                all_dangers,
+                scan_path=path,
+                project_root=project_root,
+                suppressed=all_suppressed,
             )
             from skylos.security.static_trace import attach_security_traces
 

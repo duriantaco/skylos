@@ -82,6 +82,7 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
             r"(output|reveal|display|leak)\s+(all\s+)?"
             r"(env\b|environment|secrets?|api.?keys?|credentials?|passwords?)"
             r"|(reveal|display|leak)\s+(all\s+)?tokens?"
+            rf"|(?:reveal|display|leak)\s+{_DETERMINERS}{_CREDENTIAL_TOKEN_KINDS}[\s_-]+tokens?"
             rf"|output\s+all\s+tokens?"
             rf"|output\s+{_DETERMINERS}{_CREDENTIAL_TOKEN_KINDS}[\s_-]+tokens?"
             rf"|{_CLAUSE_START}output\s+{_DETERMINERS}tokens?\s+{_SECRET_STORE}"
@@ -134,6 +135,28 @@ _PROMPT_KEYS_RE = re.compile(
 )
 
 
+def _literal_pattern_match(pattern: re.Pattern, text: str) -> bool:
+    for match in pattern.finditer(text):
+        directive = match.group().lower()
+        suffix = text[match.end() :]
+        if re.fullmatch(r"new\s+instructions?:\s*", directive):
+            if re.fullmatch(r"(?:\{[A-Za-z_][\w.]*\}|%[srd])\s*", suffix):
+                continue
+        if re.fullmatch(r"display\s+tokens?", directive):
+            clause = re.split(r"[.!?;\n]", text[: match.start()])[-1]
+            if (
+                re.search(r"\bstreaming\b", clause, re.I)
+                and not re.search(_SECRET_STORE, clause, re.I)
+                and not re.search(
+                    r"\b(?:credentials?|secrets?|passwords?|api|auth)\b", clause, re.I
+                )
+                and re.match(r"\s+as\s+they\s+arrive(?:[.!?]|$)", suffix, re.I)
+            ):
+                continue
+        return True
+    return False
+
+
 def scan_file(
     filepath: str | Path,
     *,
@@ -175,9 +198,7 @@ def scan_file(
 
     ext = filepath.suffix.lower()
     basename = filepath.name
-    if not is_agent_instruction and any(
-        basename.startswith(p) for p in _SKIP_PREFIXES
-    ):
+    if not is_agent_instruction and any(basename.startswith(p) for p in _SKIP_PREFIXES):
         return []
 
     try:
@@ -210,6 +231,13 @@ def scan_file(
     for index, (char_hex, line_no) in enumerate(zero_width_hits):
         if index == 0 and leading_bom:
             continue
+        if (
+            not is_agent_instruction
+            and not is_reviewer_config
+            and char_hex == "U+200D"
+            and _only_emoji_joiners(source_lines, line_no)
+        ):
+            continue
         hidden_severity, hidden_rule = high_signal("HIGH")
         if (
             is_reviewer_config
@@ -238,9 +266,7 @@ def scan_file(
             return findings
 
     if not high_only:
-        _add_source_homoglyph_findings(
-            findings, filepath, source, is_agent_instruction
-        )
+        _add_source_homoglyph_findings(findings, filepath, source, is_agent_instruction)
     if len(findings) >= MAX_FINDINGS_PER_FILE:
         return findings
 
@@ -263,7 +289,7 @@ def scan_file(
         for pattern, base_severity in _PATTERNS:
             if high_only and base_severity != "HIGH":
                 continue
-            if pattern.search(normalized):
+            if _literal_pattern_match(pattern, normalized):
                 severity = _adjust_severity(
                     base_severity, segment_type, is_high_risk_file
                 )
@@ -308,7 +334,7 @@ def scan_file(
     for decoded_text, line_no in decoded_blobs:
         normalized = normalize(decoded_text)
         for pattern, base_severity in _PATTERNS:
-            if pattern.search(normalized):
+            if _literal_pattern_match(pattern, normalized):
                 snippet = decoded_text.strip()[:80]
                 payload_severity, payload_rule = high_signal("HIGH")
                 findings.append(
@@ -352,7 +378,9 @@ def _only_emoji_joiners(lines: list[str], line_no: int) -> bool:
             continue
         before = line[index - 1] if index > 0 else ""
         after = line[index + 1] if index + 1 < len(line) else ""
-        if not (before and after and _is_pictographic(before) and _is_pictographic(after)):
+        if not (
+            before and after and _is_pictographic(before) and _is_pictographic(after)
+        ):
             return False
     return True
 
@@ -681,7 +709,11 @@ def _add_source_homoglyph_findings(
     is_agent_instruction: bool,
 ) -> None:
     seen_lines: set[int] = set()
-    for char, ascii_like, line_no in detect_homoglyphs(source):
+    # HTML punctuation, quotes and escapes separate words. Combining those
+    # boundaries can incorrectly treat an ordinary Cyrillic phrase beside an
+    # ASCII tag or Python expression as one mixed-script identifier.
+    words = "\n".join(" ".join(re.findall(r"\w+", line)) for line in source.splitlines())
+    for char, ascii_like, line_no in detect_homoglyphs(words):
         if len(findings) >= MAX_FINDINGS_PER_FILE:
             return
         if line_no in seen_lines:
@@ -748,7 +780,9 @@ def _make_finding(
     }
 
 
-def is_scannable_path(filepath: str | Path, scan_path: str | Path | None = None) -> bool:
+def is_scannable_path(
+    filepath: str | Path, scan_path: str | Path | None = None
+) -> bool:
     if scan_path is not None:
         path = Path(scan_path)
     else:

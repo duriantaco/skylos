@@ -560,6 +560,9 @@ _RULES = (
         "SKY-D217", "Raw SQL execution", "security", "CRITICAL", finding_type="review"
     ),
     RuleCatalogEntry(
+        "SKY-D218", "URL scheme audit", "security", "MEDIUM", finding_type="review"
+    ),
+    RuleCatalogEntry(
         "SKY-D222",
         "Dependency hallucination",
         "ai_defect",
@@ -1034,6 +1037,41 @@ _RULES = (
         "security",
         "HIGH",
         aliases=("GHSA-8q5r-mmjf-575q", "GHSA-wpqr-6v78-jr5g"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D355",
+        "Jinja environment without autoescape",
+        "security",
+        "HIGH",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D356",
+        "Cleartext outbound HTTP",
+        "security",
+        "MEDIUM",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D357",
+        "Untrusted dynamic Python import",
+        "security",
+        "HIGH",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D358",
+        "Public Gradio launch without configured auth",
+        "security",
+        "HIGH",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D359",
+        "Cached request-derived external Flask URL",
+        "security",
+        "MEDIUM",
         finding_type="review",
     ),
     RuleCatalogEntry(

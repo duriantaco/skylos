@@ -1,5 +1,7 @@
 import ast
 import re
+from .browser_tls import browser_tls_finding
+from .weak_random_context import private_model_slug_evidence
 from skylos.rules.base import SkylosRule
 from skylos.security.command_guard import scan_shell_command
 from skylos.security.command_guard_types import (
@@ -327,6 +329,7 @@ _WEAK_RANDOM_SECURITY_KEYWORDS = {
     "apikey",
     "auth",
     "cookie",
+    "cnonce",
     "credential",
     "csrf",
     "jwt",
@@ -387,6 +390,8 @@ def _enclosing_function_name(node: ast.AST) -> str | None:
 def _weak_random_has_security_context(
     node: ast.Call, current_symbol: str | None = None
 ) -> bool:
+    if private_model_slug_evidence(node):
+        return True
     if _name_looks_security_sensitive(current_symbol):
         return True
 
@@ -575,7 +580,8 @@ class DangerousCallsRule(SkylosRule):
         if not name:
             return None
 
-        findings = []
+        browser_finding = browser_tls_finding(node, context.get("filename"))
+        findings = [browser_finding] if browser_finding else []
 
         for rule_key, tup in DANGEROUS_CALLS.items():
             if not _matches_rule(name, rule_key):
@@ -619,6 +625,10 @@ class DangerousCallsRule(SkylosRule):
                     "col": node.col_offset,
                 }
             )
+            if opts and opts.get("weak_random"):
+                evidence = private_model_slug_evidence(node)
+                if evidence:
+                    findings[-1]["security_evidence"] = evidence
             break
 
         if not findings and _is_flask_style_debug_run(

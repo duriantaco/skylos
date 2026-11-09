@@ -39,6 +39,11 @@ from skylos.ui.dead_code_evidence import (
 from skylos.ui.quality_advice import pytest_signature_advice, pytest_signature_title
 from skylos.ui.scope_notes import scope_note_lines
 from skylos.ui.security_evidence import security_evidence_details
+from skylos.reporting.path_display import (
+    group_path_checks,
+    path_check_details,
+    path_rule_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -252,7 +257,7 @@ def _finding_table_cells(item, category, root_path=None):
     rule = (
         complexity.rule_label
         if complexity is not None
-        else str(item.get("rule_id") or item.get("rule") or "")
+        else path_rule_label(item) or str(item.get("rule_id") or item.get("rule") or "")
     )
     name = str(item.get("name") or item.get("simple_name") or "")
     details = []
@@ -315,6 +320,7 @@ def _finding_table_cells(item, category, root_path=None):
     if not isinstance(metadata, dict):
         metadata = {}
     details.extend(security_evidence_details(item))
+    details.extend(path_check_details(item))
     if category in {"dependency_vulnerabilities", "publisher_change_findings"}:
         details.append(
             f"Package: {metadata.get('package_name', '?')}@{metadata.get('package_version', '?')}"
@@ -924,6 +930,8 @@ def _render_danger(
     console: Console, root_path, limit, items, *, title="Security", reliability=False
 ):
     category = "reliability" if reliability else "danger"
+    if not reliability:
+        items = group_path_checks(items or [])
     _render_finding_table(console, root_path, limit, title, items, category)
 
 

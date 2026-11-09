@@ -18,6 +18,10 @@ from .danger_agent.tool_privilege import scan as scan_agent_tool_privilege
 from .danger_llm.consumption import scan as scan_llm_consumption
 from .danger_llm.llm_flow import scan as scan_llm
 from .danger_ml.model_deserialization import scan as scan_ml_model_load
+from .python_security_gaps import scan as scan_python_security_gaps
+from .weak_random_context import private_model_slug_evidence
+from .browser_tls import browser_tls_finding
+from .danger_logging import scan as scan_secret_logging
 from skylos.security.command_guard import (
     findings_for_command,
     is_external_url,
@@ -134,6 +138,9 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node):
+        browser_finding = browser_tls_finding(node, self.file_path)
+        if browser_finding:
+            self.findings.append(browser_finding)
         name = qualified_name_from_call(
             node, self.aliases, self.assigned_calls_stack[-1]
         )
@@ -186,6 +193,10 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                         "symbol": self._current_symbol(),
                     }
                 )
+                if opts and opts.get("weak_random"):
+                    evidence = private_model_slug_evidence(node)
+                    if evidence:
+                        self.findings[-1]["security_evidence"] = evidence
                 break
 
         self.generic_visit(node)
@@ -255,6 +266,7 @@ class _PythonCommandExfilChecker(_DangerousCallsChecker):
 
 
 _SQL_TOKENS = (
+    "query_items",
     "sqlalchemy",
     ".execute",
     ".executemany",
@@ -518,10 +530,14 @@ def _scan_trojan_source_text(src: str, file_path: Path, findings: list[dict]) ->
             break
 
 
-def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None):
+def scan_file_with_tree(
+    tree, file_path, findings, *, source: str | None = None, project_root=None
+):
     """Run taint-flow scanners on an already-parsed AST (no re-read/re-parse)."""
+    if source is None or _has_any(source.lower(), ("jinja", "requests", "httpx", "urllib", "importlib", "__import__", "gradio", "/tmp/", "url_for", "subprocess", "shlex")):
+        scan_python_security_gaps(tree, file_path, findings, project_root=project_root)
     if source is None:
-        scan_sql(tree, file_path, findings)
+        scan_sql(tree, file_path, findings, project_root=project_root)
         scan_cmd(tree, file_path, findings)
         scan_sql_raw(tree, file_path, findings)
         scan_ssrf(tree, file_path, findings)
@@ -537,12 +553,13 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         scan_llm_consumption(tree, file_path, findings)
         scan_llm(tree, file_path, findings)
         scan_ml_model_load(tree, file_path, findings)
+        findings.extend(scan_secret_logging(tree, {"filename": file_path}))
         _PythonCommandExfilChecker(file_path, findings).visit(tree)
         return
 
     source_lower = source.lower()
     if _has_any(source_lower, _SQL_TOKENS):
-        scan_sql(tree, file_path, findings)
+        scan_sql(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _CMD_TOKENS):
         scan_cmd(tree, file_path, findings)
     if _has_any(source_lower, _SQL_RAW_TOKENS):
@@ -577,6 +594,8 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         scan_llm(tree, file_path, findings)
     if _has_any(source_lower, _ML_MODEL_LOAD_TOKENS):
         scan_ml_model_load(tree, file_path, findings)
+    if _has_any(source_lower, ("print", "logging", "loguru")):
+        findings.extend(scan_secret_logging(tree, {"filename": file_path}))
     if _has_any(
         source_lower,
         (

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .url_scheme import audit_urlopen
 import ast
 import re
 import sys
@@ -2321,6 +2322,7 @@ class _SSRFFlowChecker(TaintVisitor):
                         if len(self.findings) > before:
                             break
 
+        audit_urlopen(self, node)
         self.generic_visit(node)
 
 

@@ -826,6 +826,8 @@ class _Project:
         self._param_value_active = set()
         self._import_maps = {}
         self._launch = None
+        self._operator_stdin = None
+        self._annotation_nodes = {}
         self._constant_tables = {}
         self._store_cache = {}
         self._returned = {}
@@ -2372,9 +2374,10 @@ class _Project:
                     annotated = node.attr
                 if annotated in REQUEST_ANNOTATIONS and self.framework_context(unit):
                     return UNTRUSTED, _step(unit, fn, f"request object `{name}` of `{label}`")
-        if name in REQUEST_NAMES and self.framework_context(unit):
+        non_request = self.declared_non_request(unit, fn, param)
+        if name in REQUEST_NAMES and not non_request and self.framework_context(unit):
             return UNTRUSTED, _step(unit, fn, f"request data `{name}` of `{label}` (web framework module)")
-        if name in REQUEST_NAMES and _reads_request_attributes(fn, name):
+        if name in REQUEST_NAMES and not non_request and _reads_request_attributes(fn, name):
             return UNTRUSTED, _step(unit, fn, f"request data `{name}` of `{label}` (reads HTTP request fields)")
         info = self.function_info.get(id(fn))
         owner = None
@@ -2389,6 +2392,159 @@ class _Project:
         if unit.is_test and (label.startswith("test") or _is_fixture(fn)):
             return SAFE, _step(unit, fn, f"test value `{name}` of `{label}`")
         return None
+
+    def declared_non_request(self, unit, fn, param):
+        """An explicit ordinary model type disables the request-name convention.
+
+        This is not a safety proof: the parameter's actual callers and field
+        assignments still determine its provenance. Unknown annotations and
+        request subclasses leave the convention in force.
+        """
+        annotation = param.annotation
+        if annotation is None:
+            return False
+        info = self.function_info.get(id(fn))
+        if info is None or info[1] is None:
+            return False
+
+        def ordinary(node, depth=0):
+            if depth > 8:
+                return False
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                parsed = self._annotation_nodes.get(id(node))
+                if parsed is None:
+                    try:
+                        parsed = ast.parse(node.value, mode="eval").body
+                    except (SyntaxError, ValueError):
+                        return False
+                    self._annotation_nodes[id(node)] = parsed
+                return ordinary(parsed, depth + 1)
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+                parts = [
+                    part
+                    for part in (node.left, node.right)
+                    if not (isinstance(part, ast.Constant) and part.value is None)
+                ]
+                return bool(parts) and all(ordinary(part, depth + 1) for part in parts)
+            if isinstance(node, ast.Subscript):
+                wrappers = self.values(unit, info[1], node.value)
+                names = {value.name for value in wrappers or () if value.kind == "ext"}
+                parts = (
+                    list(node.slice.elts)
+                    if isinstance(node.slice, ast.Tuple)
+                    else [node.slice]
+                )
+                if names and names <= {
+                    "typing.Optional",
+                    "typing.Union",
+                    "typing.Annotated",
+                }:
+                    if names == {"typing.Annotated"}:
+                        parts = parts[:1]
+                    parts = [
+                        part
+                        for part in parts
+                        if not (isinstance(part, ast.Constant) and part.value is None)
+                    ]
+                    return bool(parts) and all(
+                        ordinary(part, depth + 1) for part in parts
+                    )
+                return ordinary(node.value, depth + 1)
+            values = self.values(unit, info[1], node)
+            if not values:
+                return False
+            for value in values:
+                if value.kind == "ext":
+                    # A named external class is not enough: aliases to web
+                    # request types and unknown third-party wrappers stay open.
+                    if value.name not in {
+                        "builtins.str",
+                        "builtins.bytes",
+                        "builtins.int",
+                        "builtins.float",
+                        "builtins.bool",
+                        "builtins.dict",
+                        "builtins.list",
+                        "builtins.tuple",
+                        "builtins.set",
+                    }:
+                        return False
+                elif value.kind == "cls":
+                    order, external = self.mro(value.node)
+                    if any(
+                        cls.name
+                        in REQUEST_ANNOTATIONS
+                        | {
+                            "WSGIRequest",
+                            "ASGIRequest",
+                            "BaseRequest",
+                            "HTTPServerRequest",
+                        }
+                        for _, cls in order
+                    ):
+                        return False
+                    # An unresolved or third-party base could itself be a
+                    # request object. Only fully indexed ordinary classes
+                    # establish this negative naming-convention evidence.
+                    if external:
+                        return False
+                    for class_unit, cls in order:
+                        if any(
+                            isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                            and member.name
+                            in {"__new__", "__getattr__", "__getattribute__"}
+                            for member in cls.body
+                        ):
+                            return False
+                        class_info = self.class_info.get(id(cls))
+                        for decorator in cls.decorator_list:
+                            target = (
+                                decorator.func
+                                if isinstance(decorator, ast.Call)
+                                else decorator
+                            )
+                            resolved = (
+                                self.values(class_unit, class_info[1], target)
+                                if class_info
+                                else None
+                            )
+                            if not resolved or any(
+                                item.kind != "ext"
+                                or item.name != "dataclasses.dataclass"
+                                for item in resolved
+                            ):
+                                return False
+                else:
+                    return False
+            return True
+
+        return ordinary(annotation)
+
+    def operator_stdin(self):
+        """Standard input is operator input only for a complete local program.
+
+        Web/tool entry points and stream rebinding retain the old untrusted
+        classification. No directory or function-name heuristic establishes it.
+        """
+        if self._operator_stdin is not None:
+            return self._operator_stdin
+        self._operator_stdin = False
+        if not self.complete or self.truncated:
+            return False
+        for unit in self.units:
+            if unit.is_test:
+                continue
+            if self.framework_context(unit):
+                return False
+            for scope in unit.function_scopes.values():
+                decorator = entrypoint_decorator(scope.node, self.import_map(unit))
+                if decorator and not self._cli_decorator(unit, scope.node, decorator):
+                    return False
+            for target, _value, _statement, _scope in unit.attribute_stores:
+                if target.attr == "stdin":
+                    return False
+        self._operator_stdin = True
+        return True
 
     def _cli_decorator(self, unit, fn, decorator):
         """A ``@<group>.command`` decorator is a command line when the group
@@ -2587,6 +2743,7 @@ class _Tracer:
         self.limited = 0
         self.trace_memo = {}
         self.summary_memo = {}
+        self._django_uuid_paths = None
 
     def _limit(self, unit, node, text):
         self.limited += 1
@@ -3495,6 +3652,16 @@ class _Tracer:
         return names
 
     def _attribute(self, unit, scope, node, env):
+        if self.rule in {"SKY-D215", "SKY-D324", "SKY-D325"}:
+            if self._django_uuid_paths is None:
+                from skylos.rules.danger.danger_fs.django_uuid_paths import (
+                    DjangoUUIDPaths,
+                )
+
+                self._django_uuid_paths = DjangoUUIDPaths(self)
+            proof = self._django_uuid_paths.proof(unit, scope, node)
+            if proof is not None:
+                return _Facts.leaf(SAFE, _step(unit, node, proof))
         source = self._attribute_source(unit, scope, node)
         if source is not None:
             return _Facts.leaf(source[0], _step(unit, node, source[1]))
@@ -3766,6 +3933,8 @@ class _Tracer:
                 function = bind.scope.node
                 if unit.is_test and (_function_label(function).startswith("test") or _is_fixture(function)):
                     return False
+                if self.project.declared_non_request(unit, function, bind.node):
+                    return False
         return True
 
     @staticmethod
@@ -3791,7 +3960,8 @@ class _Tracer:
                 if name == "os.environ":
                     return OPERATOR, "process environment `os.environ`"
                 if name == "sys.stdin" or name.startswith("sys.stdin."):
-                    return UNTRUSTED, "standard input `sys.stdin`"
+                    kind = OPERATOR if self.project.operator_stdin() else UNTRUSTED
+                    return kind, "standard input `sys.stdin`"
                 if name in _SAFE_ATTRIBUTES:
                     return SAFE, f"interpreter location `{name}`"
         base = node.value
@@ -3898,7 +4068,11 @@ class _Tracer:
         func = node.func
         for name in names:
             if name in _STDIN_CALLS:
-                return _Facts.leaf(UNTRUSTED, _step(unit, node, f"standard input `{name}()`"))
+                selected = self._cli_selected_stdin(unit, scope, node)
+                if selected is not None:
+                    return selected
+                kind = OPERATOR if self.project.operator_stdin() else UNTRUSTED
+                return _Facts.leaf(kind, _step(unit, node, f"standard input `{name}()`"))
             if name in _ENV_CALLS:
                 if node.args:
                     facts = self._environment(unit, node, node.args[0])
@@ -3943,7 +4117,61 @@ class _Tracer:
                 and func.attr in _TORNADO_ARGUMENT_METHODS
                 and self.project._class_extends(owner_class, _TORNADO_HANDLER_BASES)
             ):
-                return _Facts.leaf(UNTRUSTED, _step(unit, node, f"request argument `self.{func.attr}()`"))
+                return _Facts.leaf(
+                    UNTRUSTED,
+                    _step(unit, node, f"request argument `self.{func.attr}()`"),
+                )
+        return None
+
+    def _cli_selected_stdin(self, unit, scope, node):
+        """A file helper's '-' branch selected by actual argparse input.
+
+        A project may contain a separate web application. Its presence does
+        not make an operator-selected CLI stream a request body. Follow the
+        selector's callers, preserving unknown callers and remote alternatives.
+        """
+        for parent in unit.ancestors(node):
+            if parent is scope.node:
+                break
+            if not isinstance(parent, ast.If):
+                continue
+            test = parent.test
+            if not (
+                isinstance(test, ast.Compare)
+                and len(test.ops) == 1
+                and isinstance(test.ops[0], ast.Eq)
+                and len(test.comparators) == 1
+            ):
+                continue
+            left, right = test.left, test.comparators[0]
+            if isinstance(left, ast.Constant):
+                left, right = right, left
+            if not (
+                isinstance(left, ast.Name)
+                and isinstance(right, ast.Constant)
+                and right.value == "-"
+            ):
+                continue
+            if not any(
+                node is part
+                for statement in parent.body
+                for part in ast.walk(statement)
+            ):
+                continue
+            found = unit.lookup(scope, left.id)
+            if found is None or not any(bind.kind == "param" for bind in found[1]):
+                continue
+            facts = self.trace(unit, scope, left)
+            if (
+                not facts.chains[OPERATOR]
+                or facts.chains[UNTRUSTED]
+                or facts.chains[INCOMPLETE]
+                or facts.chains[PARAMETER]
+            ):
+                continue
+            return facts.then(
+                _step(unit, node, "CLI file selector chooses standard input with '-'")
+            )
         return None
 
     def _parsed_arguments(self, unit, scope, node):
@@ -3952,7 +4180,8 @@ class _Tracer:
         request; any other parser is unknown."""
         parsers = self.project.values(unit, scope, node.func.value)
         if parsers and all(
-            value.kind in {"extinst", "extattr"} and value.name.startswith(_REQUEST_PARSERS)
+            value.kind in {"extinst", "extattr"}
+            and value.name.startswith(_REQUEST_PARSERS)
             for value in parsers
         ):
             return _Facts.leaf(UNTRUSTED, _step(unit, node, f"request arguments `{_describe(node)}`"))
@@ -4161,6 +4390,7 @@ def _scan_root(scan_path, project_root):
 _CONVENTION_SOURCES = (
     re.compile(r"^route parameter `[^`]+` of `[^`]+` \(@(?:[\w]+\.)*(?:command|group|callback|argument|option)\)$"),
     re.compile(r"^request data `(?:request|req)\b"),
+    re.compile(r"^(?:standard input|`?(?:input|raw_input|sys\.stdin)(?:`|\.|\())"),
 )
 PATH_RULES_TRACED = frozenset({"SKY-D215", "SKY-D324", "SKY-D325"})
 

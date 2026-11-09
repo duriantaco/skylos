@@ -31,6 +31,11 @@ from skylos.reporting.finding_types import (
     iter_result_findings,
 )
 from skylos.reporting.rollups import FINDING_SECTIONS
+from skylos.reporting.path_display import (
+    group_path_checks,
+    path_check_details,
+    path_rule_label,
+)
 from skylos.reporting.typing_coverage import typing_coverage_text
 from skylos.ui.dead_code_evidence import (
     compact_dead_code_evidence,
@@ -453,6 +458,8 @@ def collect_pretty_findings(
 
     for category, category_label, fallback_label in CATEGORY_SPECS:
         items = by_category.get(category, [])
+        if category == "danger":
+            items = group_path_checks(items)
         if limit is not None:
             items = items[:limit]
         for item in items:
@@ -488,7 +495,9 @@ def _make_pretty_finding(
     severity = _severity(item, category)
     complexity = complexity_display(item)
     rule = _sanitize_terminal_text(
-        complexity.rule_label if complexity is not None else _rule_id(item, category)
+        complexity.rule_label
+        if complexity is not None
+        else path_rule_label(item) or _rule_id(item, category)
     )
     title = _sanitize_terminal_text(
         f"{complexity.name}: {item.get('name') or item.get('simple_name')}"
@@ -523,7 +532,7 @@ def _make_pretty_finding(
 
 
 def _context_details(item):
-    details = security_evidence_details(item)
+    details = [*security_evidence_details(item), *path_check_details(item)]
     test_advice = pytest_signature_advice(item)
     if test_advice:
         details.append(test_advice)
