@@ -20,6 +20,8 @@ MAX_BLOCKING_FINDINGS = 10
 MAX_READ_FIRST = 8
 MAX_UNCHECKED = 10
 MAX_NOT_TRACED = 5
+MAX_API_SITES = 10
+MAX_API_NOTES = 5
 _TEXT = 300
 _SHORT = 200
 _NOT_RUN = "not run"
@@ -40,6 +42,7 @@ _RISK_CLEARED = {"eligible", "human_approved"}
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _RUN_ID_RE = re.compile(r"^\d{1,20}$")
 _SERVER_RE = re.compile(r"^https://[A-Za-z0-9.-]+(?::\d{1,5})?$")
+_DUNDER_RE = re.compile(r"＿＿(\w+)＿＿")
 
 
 @dataclass(frozen=True)
@@ -52,6 +55,19 @@ class SummaryInputs:
     risk_requested: bool = False
     risk_review: dict | None = None
     run_url: str | None = None
+    upgrade_api: dict | None = None
+
+
+def upgrade_api_receipt(results: Any) -> dict | None:
+    """The upgrade API comparison a scan recorded, or None when it did not run."""
+    receipt = results
+    for key in ("analysis_summary", "supply_chain_diff", "checks", "upgrade_api"):
+        if not isinstance(receipt, dict):
+            return None
+        receipt = receipt.get(key)
+    if isinstance(receipt, dict):
+        return receipt
+    return None
 
 
 def run_url_from_env(env: Any = None) -> str | None:
@@ -88,6 +104,7 @@ def brief_lines(inputs: SummaryInputs) -> list[str]:
             "**Blocking**",
             _gate_lines(inputs) + _done_blocking_lines(inputs.done_receipt),
         ),
+        _section("**Dependency API changes**", _upgrade_api_lines(inputs.upgrade_api)),
         _read_first_lines(inputs.change_map),
         _section(
             "**Not checked by tests**",
@@ -321,6 +338,79 @@ def _not_traced_lines(change_map: dict | None) -> list[str]:
     if extra > 0:
         shown += f" +{extra} more"
     return [f"- not traced: {shown}"]
+
+
+def _api_site_line(site: dict) -> str:
+    return (
+        f"  - `{_text(_where(site.get('file'), site.get('line')), _SHORT)}` · "
+        f"`{_text(site.get('symbol') or '', _SHORT)}` removed in "
+        f"{_text(site.get('package') or '', 120)} {_text(site.get('new') or '', 80)}"
+    )
+
+
+def _api_could_not_check_line(row: dict) -> str:
+    line = f"- Could not check `{_text(row.get('subject') or '', _SHORT)}`"
+    symbol = row.get("symbol")
+    if symbol:
+        line += f" at `{_text(symbol, _SHORT)}`"
+    where = _where(row.get("file"), row.get("line"))
+    if where:
+        line += f" (`{_text(where, _SHORT)}`)"
+    more = _count(row.get("count")) - 1
+    if more > 0:
+        line += f" and {more} more sites"
+    reason = _text(row.get("reason") or "no reason recorded")
+    reason = _DUNDER_RE.sub(r"`__\1__`", reason)
+    return f"{line}: {reason}"
+
+
+def _upgrade_api_lines(receipt: dict | None) -> list[str]:
+    """The verdict is only ever one of the two fixed sentences, and the clean
+    one needs every package compared and nothing left unread."""
+    if not isinstance(receipt, dict):
+        return []
+    packages = _dicts(receipt.get("packages"))
+    rows = _dicts(receipt.get("could_not_check"))
+    if not packages and not rows:
+        return []
+    lines: list[str] = []
+    sites = _dicts(receipt.get("sites"))
+    review = _count(receipt.get("review_sites"))
+    if review:
+        lead = f"- Review these {review} call sites"
+        if review == 1:
+            lead = "- Review this call site"
+        lines.append(lead)
+        lines.extend(_api_site_line(site) for site in sites[:MAX_API_SITES])
+        hidden = review - min(len(sites), MAX_API_SITES)
+        if hidden > 0:
+            lines.append(f"  - … and {hidden} more")
+    elif not rows and receipt.get("status") == "complete":
+        checked = _count(receipt.get("call_sites"))
+        noun = "call sites"
+        if checked == 1:
+            noun = "call site"
+        lines.append(
+            f"- No API-level impact found in {checked} {noun} "
+            "(behaviour changes not checked)"
+        )
+    lines.extend(_api_could_not_check_line(row) for row in rows[:MAX_API_NOTES])
+    omitted = len(rows) - MAX_API_NOTES + _count(receipt.get("could_not_check_omitted"))
+    if omitted > 0:
+        lines.append(f"- Could not check {omitted} more; the run log lists them")
+    private = sum(_count(item.get("private")) for item in packages)
+    if private:
+        lines.append(f"- {private} uses of underscore-private names were not compared")
+    not_used = [item for item in packages if item.get("status") == "not_used"]
+    for item in not_used[:MAX_API_NOTES]:
+        lines.append(
+            f"- `{_text(item.get('name') or '', 120)}` "
+            f"{_text(item.get('old') or '', 80)} to {_text(item.get('new') or '', 80)}: "
+            "not used, 0 call sites"
+        )
+    if len(not_used) > MAX_API_NOTES:
+        lines.append(f"- … and {len(not_used) - MAX_API_NOTES} more not used")
+    return lines
 
 
 def _risk_class_line(name: Any, vetoes: list[dict]) -> str:

@@ -844,6 +844,7 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-SCA-AGE001": {
         "default": "Pin the newest version older than the release-age window, or wait."
     },
+    "SKY-SCA-API001": {"default": "Update this line to the new version's API before merging the upgrade, or keep the old version."},
     "SKY-SCA-HRD001": {"default": "Keep the hardening setting, or record a reviewed exception on the base branch."},
     "SKY-SCA-INT001": {
         "default": "Regenerate the lockfile with your package manager so every entry has a hash."

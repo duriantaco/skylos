@@ -632,6 +632,7 @@ checkout itself is never handed to it, installed or run.
 | `SKY-SCA-HRD001` | HIGH | The change weakens install hardening (`ca9.api.hardening_regressions`): a cooldown removed or lowered (npm `min-release-age`, pnpm `minimumReleaseAge`, Yarn `npmMinimalAgeGate`, Bun `minimumReleaseAge` in seconds, uv `exclude-newer`, pip `--uploaded-prior-to`, Dependabot `cooldown`, Renovate `minimumReleaseAge`; compared in minutes, and a removal that falls back to an equal or longer default such as pnpm 11's one day is not reported), a package newly allowed to skip the cooldown, `ignore-scripts` turned off, packages added to pnpm `allowBuilds`, npm `allowScripts` or Bun `trustedDependencies`, `strictDepBuilds` turned off, or an action pinned to a SHA moved to a tag or branch |
 | `SKY-SCA-UPG001` | CRITICAL | With `--review-upgrades`: ca9 puts a delta of a lockfile change (npm or PyPI) in its `block` list: an upgrade adds install-time or start-up code (a `.pth` file or `sitecustomize` with code, a new install or prepare hook, decode-and-exec, a new Git or URL dependency, agent/editor hook files shipped in the package, two archive entries that install to the same path or differ only by case, a new executable named like a system command such as `node`, `git`, `pip`, `sh` or `curl`, bytecode without source that runs at import or interpreter start, an artifact that does not match the lockfile's integrity) |
 | `SKY-SCA-UPG002` | MEDIUM | With `--review-upgrades`: only ca9's `warn` list has deltas: import-time network or exec calls, a much larger obfuscated file, a native binary, a new publisher, install-time code that changed beyond version strings and other literals, or anything ca9 flags in a newly added package (no base version), `block` list included, because there is no earlier version to compare against. A review signal, not proof |
+| `SKY-SCA-API001` | MEDIUM | With `--review-upgrades`: a line of yours uses a name, module, method or keyword argument that exists in the old version of a Python package and not in the new one. Advice: listed, never counted by any gate |
 
 `--review-upgrades` implies `--sca`. It downloads both versions of each
 upgraded package through ca9's hash-verified fetcher (trusted indexes only,
@@ -664,6 +665,73 @@ checked, so those are never paired or looked up. The policy values come from
 ca9 whose `review_upgrades` takes no `options` is still used when none is set,
 and is an analysis error when `internal_packages` or registries are set (it
 would look them up publicly).
+
+#### Which of your lines an upgrade breaks (`SKY-SCA-API001`)
+
+Python has no compile step, so CI misses a removed API unless a test runs that
+line. For each Python package whose locked version changed (`uv.lock`,
+`poetry.lock`, `Pipfile.lock`, and `==` pins in `requirements*.txt` and
+`requirements/*.txt`), `--review-upgrades` compares the public API of both
+releases and names your lines that use something the new one no longer has.
+There is no model, no account, no install and no import of the package.
+
+- **Both versions** are fetched and unpacked by `ca9.artifacts` (digest-verified,
+  size-capped: 50 MB per archive, 20,000 files, the same kind of file on both
+  sides) and read with `ast` (`.py`, and `.pyi` for compiled modules). Nothing
+  from the archive runs.
+- **The surface** is each module's bound names, classes, methods and parameters.
+  `__all__`, re-exports and star imports inside the package are followed, so a
+  symbol that moved but still imports from the same path is not reported.
+  Underscore-private names are not public and are not compared.
+- **Your code** is every tracked `.py` file except `node_modules`, `.venv`,
+  `venv`, `vendor`, `build`, `dist` and similar. Import aliases, `from x import
+  y`, attribute access, keyword arguments, `with X() as y` and `x = Class()` are
+  followed. A parameter or local that shadows the name is not the package, and
+  neither is a top-level module of your own with the same name. An import in
+  `try`/`except ImportError`, or an attribute behind `hasattr`, has already
+  handled the removal and is counted but not reported.
+- **A removed keyword** is reported when the old signature names it and the new
+  one rejects it. Where the new signature only has `**kwargs`, the forwarding is
+  followed through the package; if it cannot be followed the line is "could not
+  check". A keyword that goes through `**kwargs` on both versions without being
+  followed is treated as unchanged (the visible signature is the same) and
+  counted in `keywords_not_followed`.
+
+The pull request comment gets one section, with one of two fixed sentences:
+`No API-level impact found in N call sites (behaviour changes not checked)` or
+`Review these N call sites`. The first appears only when every changed package
+was compared and nothing was left unread. It is never a statement that an
+upgrade is fine: only names and keyword arguments are compared, not behaviour.
+
+Anything that could not be read says `Could not check` with the reason and
+removes the clean sentence: a failed download, no comparable wheel or sdist, an
+archive over its limits, a compiled module with no `.pyi`, a module `__getattr__`
+that may provide the name, a computed `__all__`, a module that writes through
+`globals()` or `sys.modules`, a star import that cannot be followed, a file of
+yours that mentions the package and does not parse, an internal package, npm
+packages (only Python is compared so far), `pdm.lock` and `pylock.toml`. A
+package no file imports is listed as `not used, 0 call sites`.
+
+Limits: at most 25 packages and 180 seconds per scan. The rule does not see
+behaviour changes, changed return types or defaults, positional arguments,
+newly required parameters, methods called through `self.x` or a function's
+return value, string-based references (Django settings, Celery task names), or
+what your other dependencies call. It reads the whole repository, so a monorepo
+with two services on different versions can name lines in the other service.
+
+On a Dependabot pull request the generated workflow needs no
+`pull_request_target`: the comment comes from the `summary` job on the plain
+`pull_request` event, using `GITHUB_TOKEN`. GitHub gives Dependabot-triggered
+runs a read-only token and no Actions secrets, but the job's explicit
+`permissions: pull-requests: write` raises the token, as GitHub's Dependabot
+troubleshooting page documents. Pull requests from real forks keep a read-only
+token, so they get no comment; the scan and its findings still run.
+
+`SKY-SCA-API001` never fails a gate, built-in or synced from Skylos Cloud, and
+is not uploaded to Skylos Cloud. Could-not-check rows are never an analysis
+error, so they do not stop a diff gate as incomplete. Turn the check off with
+`ignore = ["SKY-SCA-API001"]`. The receipt is
+`analysis_summary.supply_chain_diff.checks.upgrade_api`.
 
 Lockfiles are read up to 64 MB per side (other compared files up to 2 MB). A
 lockfile that changed but could not be read (over 64 MB, not UTF-8, a link) or

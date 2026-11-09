@@ -133,6 +133,7 @@ from skylos.core.safe_cache_io import read_text_no_symlink
 logger = logging.getLogger(__name__)
 
 LINK_FILE = ".skylos/link.json"
+LOCAL_ONLY_UPLOAD_RULES = frozenset({"SKY-SCA-API001"})
 GLOBAL_CREDS_FILE = Path.home() / ".skylos" / "credentials.json"
 
 __all__ = [
@@ -922,6 +923,11 @@ def _prepare_report_upload(
         extract_metadata=True,
         analyzer_owned=analyzer_owned,
     )
+    all_findings = [
+        finding
+        for finding in all_findings
+        if finding.get("rule_id") not in LOCAL_ONLY_UPLOAD_RULES
+    ]
     reviewed_findings = (
         normalization_input.get("reviewed_findings", []) if analyzer_owned else []
     )
@@ -1423,6 +1429,17 @@ def _done_receipt_for_upload(
     return receipt
 
 
+def _without_local_only_receipts(summary: dict[str, Any]) -> dict[str, Any]:
+    diff = summary.get("supply_chain_diff")
+    checks = None
+    if isinstance(diff, dict):
+        checks = diff.get("checks")
+    if not isinstance(checks, dict) or "upgrade_api" not in checks:
+        return summary
+    kept = {key: value for key, value in checks.items() if key != "upgrade_api"}
+    return {**summary, "supply_chain_diff": {**diff, "checks": kept}}
+
+
 def _build_compatibility_inline_payload(
     all_findings: list[dict[str, Any]],
     result_json: Any,
@@ -1432,6 +1449,7 @@ def _build_compatibility_inline_payload(
     summary = result.get("analysis_summary")
     if not isinstance(summary, dict):
         summary = {}
+    summary = _without_local_only_receipts(summary)
 
     payload = {
         **metadata,

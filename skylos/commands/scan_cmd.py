@@ -1328,6 +1328,7 @@ def _run_scan_command(
                         or str(item.get("rule_id", "")).upper()
                         in selected_prerequisite_ids
                         or _config_change_finding(item)
+                        or item.get("kind") == "supply_chain_diff"
                     ]
             result.pop("unused_fixtures_counts", None)
             result = _apply_display_filters(result, preserve_grade=False)

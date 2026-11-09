@@ -360,6 +360,7 @@ def _append_threshold_reason(
 
 
 REPORT_ONLY_DEPENDENCY_RULES = frozenset({"SKY-SCA-SRC003", "SKY-SCA-UPG002"})
+ADVICE_ONLY_DEPENDENCY_RULES = frozenset({"SKY-SCA-API001"})
 FULL_SCAN_REPORT_ONLY_RULES = frozenset(
     {f"SKY-D{number}" for number in range(365, 375)} | {"SKY-D376", "SKY-D377"}
 )
@@ -396,6 +397,17 @@ def _built_in_gate_dependencies(dependencies):
         finding
         for finding in dependencies or ()
         if _rule_id(finding) not in REPORT_ONLY_DEPENDENCY_RULES
+    ]
+
+
+def _gate_dependencies(dependencies):
+    """Dependency findings any gate may count. ``SKY-SCA-API001`` (your line
+    uses API an upgrade removed) is advice: neither the built-in gate nor a
+    synced Skylos Cloud gate counts it."""
+    return [
+        finding
+        for finding in dependencies or ()
+        if _rule_id(finding) not in ADVICE_ONLY_DEPENDENCY_RULES
     ]
 
 
@@ -995,7 +1007,7 @@ def _gate_findings(results, config=None):
             results, gate_only=True, explicit_rules=explicit_rule_ids(config)
         ),
         "secrets": results.get("secrets", []) or [],
-        "dependencies": results.get("dependency_vulnerabilities", []) or [],
+        "dependencies": _gate_dependencies(results.get("dependency_vulnerabilities")),
         "dead_code": _collect_dead_code_items(results),
     }
 
@@ -1123,8 +1135,27 @@ def sca_coverage_warnings(results):
         _sca_receipt_warnings(results)
         + _saved_answer_warnings(results)
         + _upgrade_review_warnings(results)
+        + _upgrade_api_warnings(results)
         + _workflow_audit_warnings(results)
     )
+
+
+def _upgrade_api_warnings(results):
+    upgrade_api = results
+    for key in ("analysis_summary", "supply_chain_diff", "checks", "upgrade_api"):
+        if not isinstance(upgrade_api, dict):
+            return []
+        upgrade_api = upgrade_api.get(key)
+    if not isinstance(upgrade_api, dict):
+        return []
+    rows = [
+        f"{row.get('subject')}: {row.get('reason')}"
+        for row in upgrade_api.get("could_not_check") or ()
+        if isinstance(row, dict) and not row.get("unsupported")
+    ]
+    if not rows:
+        return []
+    return [f"Dependency API comparison could not check {'; '.join(rows[:3])}"]
 
 
 def _workflow_audit_warnings(results):

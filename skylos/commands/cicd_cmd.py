@@ -290,7 +290,11 @@ def _review_gate_reasons(args, results, load_config_func) -> tuple[str, ...]:
 
 
 def _review_summary_inputs(args, results, console, load_config_func):
-    from skylos.cicd.pr_summary import SummaryInputs, run_url_from_env
+    from skylos.cicd.pr_summary import (
+        SummaryInputs,
+        run_url_from_env,
+        upgrade_api_receipt,
+    )
 
     gate_result = getattr(args, "gate_result", None)
     gate_reasons = ()
@@ -311,6 +315,7 @@ def _review_summary_inputs(args, results, console, load_config_func):
         risk_requested=bool(getattr(args, "risk_review", None)),
         risk_review=sidecars["risk_review"],
         run_url=run_url_from_env(),
+        upgrade_api=upgrade_api_receipt(results),
     )
 
 
