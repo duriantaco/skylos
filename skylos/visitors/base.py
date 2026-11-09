@@ -971,6 +971,7 @@ class Visitor(ast.NodeVisitor):
         self._in_protocol_class = False
         self.protocol_classes = set()
         self.protocol_class_decls: set[tuple[str, int]] = set()
+        self._typing_protocol_bases: set[int] = set()
         self._in_overload = False
         self._in_abstractmethod = False
         self.namedtuple_classes = set()
@@ -1127,6 +1128,9 @@ class Visitor(ast.NodeVisitor):
 
     def visit_Module(self, node: ast.Module) -> None:
         from skylos.rules.quality._protocols import type_checking_function_ids
+        from skylos.visitors.typing_protocols import typing_protocol_bases
+
+        self._typing_protocol_bases = typing_protocol_bases(node, self.file)
 
         namespace_modules = {"inspect", "sys", "builtins"}
         self._package_namespace_provider = self._is_package_initializer and any(
@@ -1816,29 +1820,10 @@ class Visitor(ast.NodeVisitor):
     ) -> bool:
         """True only for bases that resolve to typing(.extensions).Protocol.
 
-        A bare ``Protocol`` or ``asyncio.Protocol`` is a different class that
-        merely shares the name, so it must not turn its subclasses into
-        protocol declarations.
+        The reaching lexical import identifies the provider; the spelling
+        ``Protocol`` alone does not establish a typing contract.
         """
-        if isinstance(base_expr, ast.Name):
-            target = self.alias.get(base_expr.id)
-            if not target or not self._alias_binding_is_active(
-                base_expr.id, current_definition
-            ):
-                return False
-            return target in {"typing.Protocol", "typing_extensions.Protocol"}
-        if (
-            isinstance(base_expr, ast.Attribute)
-            and base_expr.attr == "Protocol"
-            and isinstance(base_expr.value, ast.Name)
-        ):
-            target = self.alias.get(base_expr.value.id)
-            if not target or not self._alias_binding_is_active(
-                base_expr.value.id, current_definition
-            ):
-                return False
-            return target in {"typing", "typing_extensions"}
-        return False
+        return id(base_expr) in self._typing_protocol_bases
 
     def _is_numba_overload_decorator(
         self, name: str, current_definition: str | None = None

@@ -1417,8 +1417,11 @@ def _check_protocol_abc(def_obj, analyzer, framework):
             return _suppress(def_obj)
 
     if def_obj.type == "class":
-        protocol_classes = getattr(framework, "protocol_classes", set())
-        if simple_name in protocol_classes:
+        from skylos.visitors.typing_protocols import protocol_member_declaration
+
+        if protocol_member_declaration(
+            def_obj, getattr(framework, "protocol_class_decls", set())
+        ):
             return _suppress(def_obj, "Protocol class")
 
     if def_obj.type in ("method", "class") and "." in def_obj.name:
@@ -1437,17 +1440,23 @@ def _check_protocol_abc(def_obj, analyzer, framework):
                 return -40
 
     if def_obj.type in ("method", "parameter") and "." in def_obj.name:
-        parts = def_obj.name.split(".")
-        protocol_classes = getattr(framework, "protocol_classes", set())
-        for part in parts[:-1]:
-            if part in protocol_classes:
-                return _suppress(def_obj, "Protocol class member")
+        from skylos.visitors.typing_protocols import protocol_member_declaration
+
+        if protocol_member_declaration(
+            def_obj, getattr(framework, "protocol_class_decls", set())
+        ):
+            return _suppress(def_obj, "Protocol class member")
 
     if def_obj.type == "variable" and "." in def_obj.name:
         owner = getattr(def_obj, "python_class_owner", None)
         if owner:
             protocol_decls = getattr(framework, "protocol_class_decls", set())
-            if (str(owner[0]), owner[1]) in protocol_decls:
+            from skylos.visitors.typing_protocols import protocol_attribute_binding
+
+            if (
+                (str(owner[0]), owner[1]) in protocol_decls
+                and protocol_attribute_binding(def_obj)
+            ):
                 return _suppress(def_obj, "Protocol class member")
 
     if def_obj.type == "method" and "." in def_obj.name:
