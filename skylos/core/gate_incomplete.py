@@ -612,6 +612,7 @@ def _sca_reason(coverage):
         )
         hints.append(PARSE_ERROR_HINT)
     _unresolved_lockfile_cause(coverage, causes, details)
+    _most_unchecked_cause(coverage, causes)
     _query_causes(coverage.get("query"), limits, causes, hints)
 
     text = f"Dependency vulnerability scan incomplete (status: {coverage['status']})"
@@ -645,6 +646,17 @@ def _limit_reason_causes(raw_reasons, phrases, limits, causes):
     for reason in raw_reasons:
         if reason in phrases:
             causes.append(phrases[reason].format(**limits))
+
+
+def _most_unchecked_cause(coverage, causes):
+    if coverage.get("most_packages_not_checked") is not True:
+        return
+    unchecked = _positive_int(coverage.get("non_registry_lockfile_dependency_count"))
+    causes.append(
+        f"{unchecked} packages come from a private registry, Git or a URL, more "
+        "than Skylos could check, so a pass would say little about these "
+        "dependencies. A private mirror of public packages does this"
+    )
 
 
 def _unresolved_lockfile_cause(coverage, causes, details):

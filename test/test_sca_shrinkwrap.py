@@ -414,7 +414,8 @@ def test_only_selected_source_controls_manifest_registry_identity(
     result = sca.scan_dependencies(tmp_path)
     assert result.receipt["complete"] is not private_selected
     assert result.receipt["manifest_source_conflict_count"] == int(private_selected)
-    assert result.receipt["unresolved_lockfile_dependency_count"] == int(
+    assert result.receipt["unresolved_lockfile_dependency_count"] == 0
+    assert result.receipt["non_registry_lockfile_dependency_count"] == int(
         private_selected
     )
     assert len(osv.queries) == (0 if private_selected else 1)

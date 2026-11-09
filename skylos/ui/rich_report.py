@@ -1142,7 +1142,11 @@ def _render_sca(console: Console, limit, items, root_path=None, *, verbose=False
 
 
 def _render_sca_packages(console: Console, root_path, limit, advisories):
-    from skylos.reporting.sca_summary import group_advisories, summary_footer
+    from skylos.reporting.sca_summary import (
+        group_advisories,
+        has_use_data,
+        summary_footer,
+    )
 
     groups = group_advisories(advisories)
     if not groups:
@@ -1154,17 +1158,23 @@ def _render_sca_packages(console: Console, root_path, limit, advisories):
     table.add_column("Package", overflow="fold")
     table.add_column("Installed", overflow="fold")
     table.add_column("Upgrade to", overflow="fold")
+    show_use = has_use_data(groups)
+    if show_use:
+        table.add_column("Use", overflow="fold")
     table.add_column("Advisories", overflow="fold")
     table.add_column("Location", overflow="fold")
     for group in show:
-        table.add_row(
+        cells = [
             escape(group.worst_severity),
             escape(group.name),
             escape(group.version),
             escape(group.fix_text()),
-            escape(f"{group.count}: {group.ids_text()}"),
-            escape(f"{_shorten_path(group.file, root_path)}:{group.line}"),
-        )
+        ]
+        if show_use:
+            cells.append(escape(group.use_text()))
+        cells.append(escape(f"{group.count}: {group.ids_text()}"))
+        cells.append(escape(f"{_shorten_path(group.file, root_path)}:{group.line}"))
+        table.add_row(*cells)
     console.print(table)
     if overflow:
         console.print(

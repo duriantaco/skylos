@@ -281,6 +281,7 @@ RULE_DOCS_ANCHORS = {
     "SKY-SCA-LIC001": "supply-chain",
     "SKY-SCA-SRC001": "supply-chain",
     "SKY-SCA-SRC003": "supply-chain",
+    "SKY-SCA-SRC004": "supply-chain",
     "SKY-SCA-UPG001": "supply-chain",
     "SKY-SCA-UPG002": "supply-chain",
     "SKY-T101": "typing-practice-rules-sky-t",

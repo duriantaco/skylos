@@ -26,6 +26,7 @@ from skylos.rules.sca.lockfile_types import (
     LockfileInventory,
     LockfileLimitError,
     LockfileParseError,
+    not_checked_source,
 )
 from skylos.rules.sca.npm_lockfile import _exact_version, _name, _source
 from skylos.rules.sca.package_sources import (
@@ -368,6 +369,20 @@ def _resolution_integrity(metadata) -> str | None:
     value = _resolution(metadata).get("integrity")
     if isinstance(value, str) and value.strip():
         return value.strip()
+    return None
+
+
+_PUBLIC_REGISTRY_HOSTS = frozenset({"registry.npmjs.org", "registry.yarnpkg.com"})
+
+
+def _external_source_kind(metadata):
+    resolution = _resolution(metadata)
+    if resolution.get("type") == "git" or "repo" in resolution:
+        return "git"
+    tarball = resolution.get("tarball")
+    if isinstance(tarball, str) and tarball.startswith(("http://", "https://")):
+        if urlsplit(tarball).hostname not in _PUBLIC_REGISTRY_HOSTS:
+            return "url"
     return None
 
 
@@ -1030,6 +1045,23 @@ def parse_pnpm_lock(
                     }
                 )
                 continue
+            source_kind = _external_source_kind(metadata)
+            label = _name(metadata.get("name")) or _key_alias(key, version)
+            if source_kind and label:
+                inventory.not_checked.append(
+                    not_checked_source(
+                        dict(problem, name=label), "non_registry_source", source_kind
+                    )
+                )
+                _add_source_record(
+                    inventory,
+                    metadata,
+                    label,
+                    _exact_version(metadata.get("version")),
+                    path,
+                    line,
+                )
+                continue
             inventory.unresolved.append(
                 dict(problem, reason="non_registry_source", source_type="unknown")
             )
@@ -1054,11 +1086,20 @@ def parse_pnpm_lock(
                     dict(problem, reason="local_package", source_type="local")
                 )
                 continue
+            if (
+                source_error == "non_registry_source"
+                and source_type != "local"
+                and "id" not in metadata
+                and "id" not in snapshot
+            ):
+                inventory.not_checked.append(
+                    not_checked_source(problem, source_error, source_type)
+                )
+                _add_source_record(inventory, metadata, name, exact, path, line)
+                continue
             inventory.unresolved.append(
                 dict(problem, reason=source_error, source_type=source_type)
             )
-            if source_error == "non_registry_source":
-                _add_source_record(inventory, metadata, name, exact, path, line)
             continue
         record_limitations = {}
         for entry in (metadata,) if metadata is snapshot else (metadata, snapshot):

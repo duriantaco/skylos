@@ -5,6 +5,25 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+NON_REGISTRY_REASONS = frozenset({"non_registry_source", "non_public_registry"})
+_RECEIPT_SOURCE_KINDS = {
+    "external": "url",
+    "non_registry": "url",
+    "file": "path",
+    "legacy": "registry",
+}
+
+
+def not_checked_source(problem: dict, reason: str, source_type: str) -> dict:
+    """A correctly read entry whose source has no public advisory identity."""
+    if source_type == "local":
+        return dict(problem, reason="local_package", source_type="local")
+    kind = _RECEIPT_SOURCE_KINDS.get(source_type, source_type)
+    if reason == "non_public_registry":
+        kind = "registry"
+    return dict(problem, reason=reason, source_type=kind)
+
+
 class LockfileParseError(ValueError):
     """A lockfile cannot be interpreted as a supported inventory."""
 

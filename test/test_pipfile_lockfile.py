@@ -109,7 +109,11 @@ def test_all_categories_versions_and_markers_are_preserved_without_invented_edge
 def test_nonpublic_or_direct_sources_are_explicit_gaps(sources, entry, reason):
     result = parse(document(sources=sources, default={"private-pkg": entry}))
     assert result.dependencies == []
-    assert result.unresolved[0]["reason"] == reason
+    bucket = result.unresolved
+    if reason != "invalid_package_source":
+        bucket = result.not_checked
+        assert result.unresolved == []
+    assert bucket[0]["reason"] == reason
     assert result.non_registry_names == ["private-pkg"]
     assert "secret" not in repr(result)
 

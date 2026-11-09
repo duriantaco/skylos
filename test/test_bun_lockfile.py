@@ -101,7 +101,8 @@ def test_git_and_private_registry_entries_are_not_queried():
     inventory = parse_bun_lock(Path("bun.lock"), text=text)
 
     assert inventory.dependencies == []
-    assert sorted(i["reason"] for i in inventory.unresolved) == [
+    assert inventory.unresolved == []
+    assert sorted(i["reason"] for i in inventory.not_checked) == [
         "non_registry_source",
         "non_registry_source",
         "non_registry_source",

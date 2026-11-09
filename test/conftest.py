@@ -292,6 +292,16 @@ def _no_installed_requirement_records(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_saved_osv_answers(monkeypatch, tmp_path_factory):
+    """Fake OSV responses must never reach the real user's saved answers,
+    and tests of failed requests must not wait out the retry delays."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path_factory.mktemp("xdg-cache")))
+    monkeypatch.setattr(
+        "skylos.rules.sca.vulnerability_scanner.OSV_RETRY_DELAYS", (0.0, 0.0)
+    )
+
+
+@pytest.fixture(autouse=True)
 def _isolate_cloud_uploads(monkeypatch, tmp_path_factory):
     """Keep upload retries fast and their side effects out of the checkout.
 

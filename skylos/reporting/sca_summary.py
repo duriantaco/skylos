@@ -16,6 +16,16 @@ _SEVERITY_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 _VERSION_TOKEN = re.compile(r"\d+|[A-Za-z]+")
 _END = (0, 1, "~")
 MAX_IDS_SHOWN = 3
+_TIER_RANK = {"used": 0, "imported": 1, "unknown": 2, "not_imported": 3, "unreachable": 4}
+_NOT_ANALYZED_RANK = 2
+_TIER_LABELS = {
+    "used": "called",
+    "imported": "imported",
+    "unknown": "unknown",
+    "not_imported": "no import found",
+    "unreachable": "not reached",
+}
+_LOWER_PRIORITY_TIERS = frozenset({"not_imported", "unreachable"})
 LICENSE_POLICY_RULE_ID = "SKY-SCA-LIC001"
 
 
@@ -103,6 +113,37 @@ class PackageAdvisories:
             for finding in self.findings
         )
 
+    @property
+    def tier(self) -> str | None:
+        """The strongest use any advisory shows. A finding with no tier
+        counts as not analyzed, so it can never lower the package's priority."""
+        best = None
+        best_rank = len(_TIER_RANK)
+        for finding in self.findings:
+            value = (finding.get("metadata") or {}).get("reachability_tier")
+            rank = _TIER_RANK.get(value, _NOT_ANALYZED_RANK)
+            if rank < best_rank:
+                best_rank = rank
+                best = None
+                if value in _TIER_RANK:
+                    best = value
+        return best
+
+    @property
+    def lower_priority(self) -> bool:
+        return self.tier in _LOWER_PRIORITY_TIERS
+
+    def use_text(self) -> str:
+        tier = self.tier
+        if tier is None:
+            return "not analyzed"
+        if tier == "used":
+            for finding in self.findings:
+                sites = (finding.get("metadata") or {}).get("reachability_call_sites")
+                if sites:
+                    return f"called at {sites[0]['file']}:{sites[0]['line']}"
+        return _TIER_LABELS[tier]
+
     def fix_text(self) -> str:
         if self.malicious:
             return "remove (malicious package)"
@@ -120,7 +161,8 @@ class PackageAdvisories:
 
 
 def group_advisories(findings: Iterable) -> list[PackageAdvisories]:
-    """One group per installed package, worst first, then most advisories."""
+    """One group per installed package: malware, then by severity with what
+    the code uses first. Packages with no sign of use sort last and stay listed."""
     groups: dict[tuple, PackageAdvisories] = {}
     for finding in findings or ():
         if not is_advisory(finding):
@@ -152,7 +194,10 @@ def group_advisories(findings: Iterable) -> list[PackageAdvisories]:
     return sorted(
         groups.values(),
         key=lambda g: (
+            not g.malicious,
+            g.lower_priority,
             _SEVERITY_RANK.get(g.worst_severity, 9),
+            _TIER_RANK.get(g.tier, _NOT_ANALYZED_RANK),
             -g.count,
             g.name.lower(),
             g.version,
@@ -163,8 +208,29 @@ def group_advisories(findings: Iterable) -> list[PackageAdvisories]:
 def summary_footer(groups: list[PackageAdvisories]) -> str:
     total = sum(group.count for group in groups)
     packages = len(groups)
-    return (
+    footer = (
         f"{total} advisor{'y' if total == 1 else 'ies'} in {packages} "
         f"package{'' if packages == 1 else 's'}. Every advisory, with its "
         "range and references: --format json (dependency_vulnerabilities)."
     )
+    tally = use_tally(groups)
+    if tally:
+        return f"{footer} Use: {tally}. The gate counts all of them."
+    return footer
+
+
+def has_use_data(groups: list[PackageAdvisories]) -> bool:
+    return any(group.tier is not None for group in groups)
+
+
+def use_tally(groups: list[PackageAdvisories]) -> str:
+    if not has_use_data(groups):
+        return ""
+    counts: dict[str, int] = {}
+    for group in groups:
+        label = "not analyzed"
+        if group.tier is not None:
+            label = _TIER_LABELS[group.tier]
+        counts[label] = counts.get(label, 0) + 1
+    order = [*_TIER_LABELS.values(), "not analyzed"]
+    return ", ".join(f"{counts[label]} {label}" for label in order if label in counts)

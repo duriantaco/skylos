@@ -189,7 +189,8 @@ def test_non_registry_coverage_keeps_known_cve_when_query_is_incomplete(
 def test_non_registry_receipt_count_survives_example_truncation(tmp_path, osv):
     _project(tmp_path, _SOURCES[0], count=30)
     result = sca.scan_dependencies(tmp_path)
-    assert result.receipt["status"] == "complete_with_non_registry_sources"
+    assert result.receipt["status"] == "incomplete"
+    assert result.receipt["most_packages_not_checked"] is True
     assert result.receipt["non_registry_lockfile_dependency_count"] == 30
     assert result.receipt["not_checked_lockfile_dependency_count"] == 30
     assert len(result.receipt["lockfile_not_checked"]) == 25

@@ -230,7 +230,7 @@ def test_url_source_credentials_are_not_copied_into_inventory_output():
 
     inventory = _parse(data)
 
-    assert inventory.unresolved
+    assert [entry["name"] for entry in inventory.not_checked] == ["private"]
     assert {dependency["name"] for dependency in inventory.dependencies} == {"shared"}
     serialized = json.dumps(vars(inventory))
     for marker in ("fixture-user", "fixture-password", "fixture-query"):

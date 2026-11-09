@@ -3,6 +3,7 @@
 import pytest
 
 from skylos.core.baseline import save_baseline
+from skylos.rules.sca import osv_answers
 from test.test_cli_sca_baseline import (
     local_baseline_environment as local_baseline_environment,
 )
@@ -238,6 +239,7 @@ def test_cli_pnpm_baseline_cannot_hide_an_advisory_failure(
     initial_exit, initial, _ = _run_cli(project, monkeypatch)
     assert initial_exit == 1
     save_baseline(project, initial)
+    osv_answers.store_path().unlink()
     osv.fail_details = True
 
     exit_code, result, sarif = _run_cli(project, monkeypatch, "--baseline", "--force")
@@ -248,6 +250,26 @@ def test_cli_pnpm_baseline_cannot_hide_an_advisory_failure(
     assert (
         result["analysis_summary"]["dependency_baseline"]["status"] == "scan_incomplete"
     )
+
+
+@pytest.mark.parametrize("version", [6, 9])
+def test_cli_pnpm_baseline_cannot_hide_findings_on_saved_answers(
+    project, monkeypatch, osv, version
+):
+    lockfile = _write_lockfile(project, _document(version))
+    initial_exit, initial, _ = _run_cli(project, monkeypatch)
+    assert initial_exit == 1
+    save_baseline(project, initial)
+    osv.fail_details = True
+
+    _exit_code, result, sarif = _run_cli(project, monkeypatch, "--baseline", "--force")
+
+    summary = result["analysis_summary"]
+    assert summary["sca_coverage"]["status"] == "complete_with_saved_answers"
+    assert summary["dependency_baseline"]["status"] == "scan_incomplete"
+    assert result.get("baseline_dependency_vulnerabilities", []) == []
+    assert result["dependency_vulnerabilities"]
+    _assert_matching_dependency_reports(result, sarif, lockfile)
 
 
 def test_cli_pnpm_workspace_local_code_does_not_stop_the_gate(
