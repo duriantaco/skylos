@@ -248,9 +248,28 @@ def _atomic_write_state(root, snapshot, text):
 
 
 def update_cleanup_state(
-    root: Path, scope: dict, plan: dict, *, disposition=None, receipt=None
+    root: Path,
+    scope: dict,
+    plan: dict,
+    *,
+    disposition=None,
+    receipt=None,
+    inventory=None,
 ) -> dict:
     """Reconcile only an identical scan scope and config, preserving uncertainty."""
+    if inventory is None:
+        inventory = plan.get("_inventory")
+    if inventory is None:
+        inventory = plan.get("tasks", []) + plan.get("advisories", [])
+    if not isinstance(inventory, list) or any(
+        not isinstance(task, dict)
+        or any(
+            not isinstance(task.get(key), str) or not task[key]
+            for key in ("id", "rule_id", "file")
+        )
+        for task in inventory
+    ):
+        raise ValueError("Cleanup reconciliation inventory is malformed")
     with _history_lock(root) as directory:
         state, snapshot = _snapshot_from_directory(directory)
         key = scope_identity(scope)
@@ -259,10 +278,7 @@ def update_cleanup_state(
         if not isinstance(records, dict):
             raise ValueError("Cleanup task history is malformed")
         now = datetime.now(timezone.utc).isoformat()
-        current = {
-            task["id"]: task
-            for task in plan.get("tasks", []) + plan.get("advisories", [])
-        }
+        current = {task["id"]: task for task in inventory}
         for task_id, task in current.items():
             record = records.setdefault(
                 task_id,

@@ -213,6 +213,7 @@ def _run_workflow(args, target, root, report, result, analyze_func):
     from skylos.cleanup_state import update_cleanup_state
 
     scope = _scope(target, root)
+    inventory = report.pop("_inventory", None)
     all_tasks = report.get("tasks", []) + report.get("advisories", [])
     for task in all_tasks:
         task["scope"] = scope
@@ -225,7 +226,9 @@ def _run_workflow(args, target, root, report, result, analyze_func):
             if args.restore
             else None
         )
-        bucket = update_cleanup_state(root, scope, report, disposition=disposition)
+        bucket = update_cleanup_state(
+            root, scope, report, disposition=disposition, inventory=inventory
+        )
         for task in all_tasks:
             task["state"] = bucket["tasks"].get(task["id"], {}).get("status", "open")
         report["state"] = {
@@ -267,7 +270,9 @@ def _run_workflow(args, target, root, report, result, analyze_func):
             report["execution"] = receipt
             if bucket is not None:
                 try:
-                    updated = update_cleanup_state(root, scope, report, receipt=receipt)
+                    updated = update_cleanup_state(
+                        root, scope, report, receipt=receipt, inventory=inventory
+                    )
                     report["state"]["tasks"] = updated["tasks"]
                 except (ValueError, OSError) as exc:
                     report.setdefault("limitations", []).append(

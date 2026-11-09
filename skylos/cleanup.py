@@ -51,14 +51,15 @@ def build_cleanup_plan(
     view, _visibility = prepare_advice_view(
         raw, project_root=root, all_advice=all_advice
     )
+    visible = {(category, id(row)) for category, row in iter_result_findings(view)}
     defaults = {
         id(row): rule
         for section, rule in _DEAD_RULES.items()
-        for row in view.get(section, [])
+        for row in raw.get(section, [])
     }
-    tasks, advisories = [], []
+    observed = []
     anchor_cache, source_hashes = {}, {}
-    for category, finding in iter_result_findings(view):
+    for category, finding in iter_result_findings(raw):
         if category not in _SCOPE:
             continue
         item = _task(
@@ -69,11 +70,9 @@ def build_cleanup_plan(
             anchor_cache,
             source_hashes,
         )
-        (advisories if item["finding_type"] == "advice" else tasks).append(item)
-    for rows in (tasks, advisories):
-        rows.sort(key=_priority)
+        observed.append((item, (category, id(finding)) in visible))
     identities = {}
-    for item in tasks + advisories:
+    for item, _visible in observed:
         identities.setdefault(item["id"], []).append(item)
     for base_id, duplicates in identities.items():
         if len(duplicates) > 1:
@@ -81,8 +80,14 @@ def build_cleanup_plan(
                 sorted(duplicates, key=lambda row: (row["file"], row["line"]))
             ):
                 item["id"] = sha256(f"{base_id}:{ordinal}".encode()).hexdigest()
+    tasks, advisories = [], []
+    for item, is_visible in observed:
+        if is_visible:
+            (advisories if item["finding_type"] == "advice" else tasks).append(item)
+    for rows in (tasks, advisories):
+        rows.sort(key=_priority)
     limitations = _limitations(raw)
-    eligible = sum(category in _SCOPE for category, _ in iter_result_findings(raw))
+    eligible = len(observed)
     total = len(tasks) + len(advisories)
     limit = total if top is None else top
     return {
@@ -101,6 +106,15 @@ def build_cleanup_plan(
         "tasks": tasks[:limit],
         "advisories": advisories[:limit],
         "groups": _groups(tasks + advisories),
+        # Reconciliation observes detector inventory before presentation choices.
+        # Keep only local task metadata, never source or full finding evidence.
+        "_inventory": [
+            {
+                key: item[key]
+                for key in ("id", "rule_id", "file", "name", "source_sha256")
+            }
+            for item, _visible in observed
+        ],
         "limitations": limitations,
         "analysis_errors": deepcopy(raw["analysis_errors"]),
         "analysis_summary": deepcopy(raw["analysis_summary"]),
