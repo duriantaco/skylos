@@ -11,7 +11,11 @@ from skylos.llm.planner import (
     FixBatch,
     SEVERITY_PRIORITY,
 )
-from skylos.llm.executor import RemediationExecutor, VerifyResult
+from skylos.llm.executor import (
+    RemediationExecutor,
+    VerifyResult,
+    TestResult as ExecutionTestResult,
+)
 from skylos.llm.prompts import build_pr_description
 from skylos.remediation.regression_tests import RegressionTestCandidate
 
@@ -343,7 +347,9 @@ class TestRemediationExecutor:
     def test_run_tests_no_suite(self, tmp_path):
         executor = RemediationExecutor(project_root=tmp_path)
         result = executor.run_tests()
-        assert result.passed is True
+        assert result.passed is None
+        assert result.status == "skipped"
+        assert result.reason == "execution_disabled"
         assert "Test execution disabled" in result.output
 
     def test_run_tests_with_custom_cmd(self, tmp_path):
@@ -385,7 +391,8 @@ class TestRemediationExecutor:
         executor = RemediationExecutor(project_root=tmp_path)
         result = executor.run_tests()
 
-        assert result.passed is True
+        assert result.passed is None
+        assert result.status == "skipped"
         assert "Test execution disabled" in result.output
         assert not marker.exists()
 
@@ -768,11 +775,12 @@ class TestOrchestrator:
         )
         executor = MagicMock()
         executor.apply_fix.return_value = True
-        executor.run_tests.return_value = SimpleNamespace(passed=True)
+        executor.run_tests.return_value = ExecutionTestResult(passed=True)
         executor.verify_fix.return_value = VerifyResult(
             finding_resolved=False,
             verification_error="scan failed",
         )
+        executor.revert_fix.return_value = True
 
         agent = RemediationAgent()
         agent._process_batch(batch, fixer, executor, lambda _message: None)
@@ -824,7 +832,9 @@ class TestOrchestrator:
         agent = RemediationAgent()
         agent._process_batch(batch, fixer, executor, lambda _message: None)
 
-        assert batch.status == "fixed"
+        assert batch.status == "applied_unverified"
+        assert batch.verification["tests"]["status"] == "skipped"
+        assert batch.verification["static"]["status"] == "passed"
         assert len(batch.regression_tests) == 1
         generated = tmp_path / batch.regression_tests[0].test_file
         assert generated.exists()

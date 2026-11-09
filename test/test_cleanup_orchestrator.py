@@ -15,7 +15,11 @@ from skylos.llm.cleanup_orchestrator import (
     _build_fix_system_prompt,
     _build_fix_user_prompt,
 )
-from skylos.llm.executor import RemediationExecutor
+from skylos.llm.executor import (
+    RemediationExecutor,
+    VerifyResult,
+    TestResult as ExecutionTestResult,
+)
 
 
 class TestLoadStandards:
@@ -298,10 +302,17 @@ class TestFixApplication:
 
         mock_executor = MagicMock()
         mock_executor.apply_fix.return_value = True
-        mock_executor.run_tests.return_value = MagicMock(passed=True)
+        mock_executor.run_tests.return_value = ExecutionTestResult(passed=True)
+        mock_executor.verify_fix.return_value = VerifyResult(
+            finding_resolved=False,
+            static_status="passed",
+            resolution_reason="no_matching_static_finding",
+        )
 
         orch._apply_single_fix(item, mock_executor, lambda *a, **kw: None)
-        assert item.status == "applied"
+        assert item.status == "applied_unverified"
+        assert item.verification["tests"]["status"] == "passed"
+        assert item.verification["static"]["finding_resolution"]["status"] == "skipped"
         mock_executor.apply_fix.assert_called_once()
 
     def test_revert_on_test_failure(self, tmp_path):
@@ -333,6 +344,11 @@ class TestFixApplication:
         mock_executor.run_tests.return_value = MagicMock(
             passed=False, output="AssertionError"
         )
+        mock_executor.verify_fix.return_value = VerifyResult(
+            finding_resolved=False,
+            static_status="passed",
+        )
+        mock_executor.revert_fix.return_value = True
 
         orch._apply_single_fix(item, mock_executor, lambda *a, **kw: None)
         assert item.status == "reverted"
@@ -548,4 +564,7 @@ class TestOrchestration:
             "skipped",
             "total_analyzed_files",
             "items",
+            "verified",
+            "unverified",
+            "rollback_failed",
         }

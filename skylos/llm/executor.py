@@ -8,6 +8,7 @@ import subprocess
 import sys
 import shutil
 import stat
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -23,10 +24,32 @@ MAX_REMEDIATION_FILE_BYTES = 5_000_000
 
 @dataclass
 class TestResult:
-    passed: bool
+    # None means no tests ran; callers must not count it as a pass or failure.
+    passed: bool | None
     output: str = ""
     command: str = ""
     duration_s: float = 0.0
+    reason: str = ""
+    exit_code: int | None = None
+
+    @property
+    def status(self) -> str:
+        return (
+            "passed"
+            if self.passed is True
+            else "failed"
+            if self.passed is False
+            else "skipped"
+        )
+
+    def to_receipt(self) -> dict:
+        return {
+            "status": self.status,
+            "command": self.command,
+            "duration_s": self.duration_s,
+            "reason": self.reason,
+            "exit_code": self.exit_code,
+        }
 
 
 @dataclass
@@ -34,6 +57,26 @@ class VerifyResult:
     finding_resolved: bool
     remaining_rule_ids: list[str] = field(default_factory=list)
     verification_error: str = ""
+    static_status: str = "skipped"
+    new_findings: list[dict] = field(default_factory=list)
+    resolution_reason: str = ""
+
+    def to_receipt(self) -> dict:
+        return {
+            "status": self.static_status,
+            "finding_resolved": self.finding_resolved,
+            "remaining_rule_ids": self.remaining_rule_ids,
+            "new_findings": self.new_findings,
+            "error": self.verification_error,
+            "finding_resolution": {
+                "status": "passed"
+                if self.finding_resolved
+                else "failed"
+                if self.remaining_rule_ids
+                else "skipped",
+                "reason": self.resolution_reason,
+            },
+        }
 
 
 _SHELL_METACHAR_RE = re.compile(r"[;&|<>`$]")
@@ -89,10 +132,13 @@ class RemediationExecutor:
         if p is None:
             return False
         key = str(p)
-        original = self._backups.pop(key, None)
+        original = self._backups.get(key)
         if original is None:
             return False
-        return write_existing_text_no_symlink(p, original, encoding="utf-8")
+        restored = write_existing_text_no_symlink(p, original, encoding="utf-8")
+        if restored:
+            self._backups.pop(key, None)
+        return restored
 
     def revert_all(self):
         for fp in list(self._backups.keys()):
@@ -129,16 +175,22 @@ class RemediationExecutor:
     def run_tests(self, timeout: int = 300) -> TestResult:
         if not self.allow_test_execution:
             return TestResult(
-                passed=True,
+                passed=None,
                 output="Test execution disabled.",
                 command="",
+                reason="execution_disabled",
             )
 
         cmd = self.test_cmd
         if not cmd and self.auto_detect_tests:
             cmd = self._detect_test_command()
         if not cmd:
-            return TestResult(passed=True, output="No test suite detected.", command="")
+            return TestResult(
+                passed=None,
+                output="No test suite detected.",
+                command="",
+                reason="no_test_command",
+            )
 
         argv = self._safe_test_argv(cmd)
         if argv is None:
@@ -146,6 +198,7 @@ class RemediationExecutor:
                 passed=False,
                 output="Rejected test command containing shell syntax.",
                 command=cmd,
+                reason="rejected_command",
             )
 
         import time
@@ -166,6 +219,8 @@ class RemediationExecutor:
                 output=(result.stdout + result.stderr)[-5000:],
                 command=cmd,
                 duration_s=round(duration, 2),
+                reason="" if result.returncode == 0 else "nonzero_exit",
+                exit_code=result.returncode,
             )
         except subprocess.TimeoutExpired:
             duration = time.monotonic() - start
@@ -174,9 +229,12 @@ class RemediationExecutor:
                 output=f"Test suite timed out after {timeout}s",
                 command=cmd,
                 duration_s=round(duration, 2),
+                reason="timeout",
             )
         except OSError as e:
-            return TestResult(passed=False, output=str(e), command=cmd)
+            return TestResult(
+                passed=False, output=str(e), command=cmd, reason="execution_error"
+            )
 
     def _safe_test_argv(self, cmd: str) -> list[str] | None:
         if _SHELL_METACHAR_RE.search(cmd):
@@ -218,23 +276,110 @@ class RemediationExecutor:
 
         return None
 
-    def verify_fix(self, file_path: str, original_rule_ids: list[str]) -> VerifyResult:
+    def capture_static_report(self, file_path: str) -> dict:
+        """Capture comparable static evidence without registry or target execution."""
         import json as _json
+        import inspect
         from skylos.analyzer import analyze as run_analyze
+        from skylos.cleanup_execution import compare_cleanup_reports
+
+        path = self._safe_file_path(file_path)
+        if path is None:
+            raise ValueError("verification file is outside the project root or unsafe")
+        source = read_text_no_symlink(
+            path, max_bytes=MAX_REMEDIATION_FILE_BYTES, encoding="utf-8"
+        )
+        if source is None:
+            raise ValueError("verification source could not be safely read")
+        options = {
+            "conf": 0,
+            "enable_danger": True,
+            "enable_quality": True,
+            "enable_ai_defects": True,
+            "enable_secrets": True,
+            "enable_dependency_hallucinations": False,
+            "enable_sca": False,
+            "grep_verify": False,
+            "trace_file": False,
+        }
+        # Older native analyzers always include dead code and have no switch.
+        # Keep their extra static analysis without passing an unsupported flag.
+        parameters = inspect.signature(run_analyze).parameters
+        if "enable_dead_code" in parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        ):
+            options["enable_dead_code"] = False
+        raw = run_analyze(file_path, **options)
+        result = _json.loads(raw) if isinstance(raw, str) else deepcopy(raw)
+        if (
+            read_text_no_symlink(
+                path, max_bytes=MAX_REMEDIATION_FILE_BYTES, encoding="utf-8"
+            )
+            != source
+        ):
+            raise ValueError("verification source changed during analysis")
+        summary = result.get("analysis_summary") if isinstance(result, dict) else None
+        required = {"security", "quality", "ai_defects", "secrets"}
+        categories = (
+            summary.get("grade_categories") if isinstance(summary, dict) else None
+        )
+        if not isinstance(categories, list) or not required.issubset(categories):
+            raise ValueError(
+                "static verification is missing required analyzer coverage"
+            )
+        # A self-comparison validates completeness without claiming a fix occurred.
+        check = compare_cleanup_reports(
+            result,
+            result,
+            project_root=self.project_root,
+            required_categories=("security", "quality", "ai_defects", "secrets"),
+        )
+        if check["status"] != "passed":
+            raise ValueError(
+                "; ".join(check.get("limitations", []))
+                or "static verification incomplete"
+            )
+        result["_verification_sources"] = {
+            path.relative_to(self.project_root).as_posix(): source
+        }
+        return result
+
+    def verify_fix(
+        self,
+        file_path: str,
+        original_rule_ids: list[str],
+        *,
+        before_report: dict | None = None,
+    ) -> VerifyResult:
+        from skylos.cleanup_execution import compare_cleanup_reports
 
         try:
-            raw = run_analyze(
-                file_path,
-                conf=0,
-                enable_danger=True,
-                enable_quality=True,
-                enable_ai_defects=True,
-                enable_secrets=True,
-            )
-            if isinstance(raw, str):
-                result = _json.loads(raw)
-            else:
-                result = raw
+            result = self.capture_static_report(file_path)
+            if before_report is not None:
+                comparison = compare_cleanup_reports(
+                    before_report,
+                    result,
+                    project_root=self.project_root,
+                    required_categories=(
+                        "security",
+                        "quality",
+                        "ai_defects",
+                        "secrets",
+                    ),
+                    before_sources=before_report.get("_verification_sources"),
+                    after_sources=result.get("_verification_sources"),
+                )
+                if comparison["status"] != "passed":
+                    return VerifyResult(
+                        finding_resolved=False,
+                        verification_error="; ".join(comparison.get("limitations", []))
+                        or "new high-risk static findings after remediation",
+                        static_status="failed"
+                        if comparison["status"] == "failed"
+                        else "skipped",
+                        new_findings=comparison.get("new_findings", []),
+                    )
         except Exception as exc:
             return VerifyResult(
                 finding_resolved=False,
@@ -242,7 +387,7 @@ class RemediationExecutor:
             )
 
         remaining = set()
-        for key in ("danger", "quality", "secrets"):
+        for key in ("danger", "quality", "secrets", "ai_defects"):
             findings = result.get(key)
             if not isinstance(findings, list):
                 continue
@@ -253,9 +398,23 @@ class RemediationExecutor:
                 if rid in original_rule_ids:
                     remaining.add(rid)
 
+        original_detected = bool(original_rule_ids)
+        if before_report is not None and original_rule_ids:
+            before_ids = {
+                finding.get("rule_id")
+                for key in ("danger", "quality", "secrets", "ai_defects")
+                for finding in before_report.get(key, [])
+                if isinstance(finding, dict)
+            }
+            original_detected = set(original_rule_ids).issubset(before_ids)
+
         return VerifyResult(
-            finding_resolved=len(remaining) == 0,
+            # Standards-only LLM findings have no deterministic rule identity.
+            # A clean regression check cannot prove that their requested fix worked.
+            finding_resolved=original_detected and len(remaining) == 0,
             remaining_rule_ids=sorted(remaining),
+            static_status="failed" if remaining else "passed",
+            resolution_reason="" if original_detected else "no_matching_static_finding",
         )
 
     def create_branch(self, prefix: str = "skylos/fix") -> str:
@@ -340,7 +499,9 @@ def _write_new_text_no_symlink(path: Path, text: str) -> bool:
 
     fd: int | None = None
     try:
-        fd = os.open(path, flags, 0o644)  # skylos: ignore[SKY-D215] path was contained by _safe_new_project_file
+        fd = os.open(
+            path, flags, 0o644
+        )  # skylos: ignore[SKY-D215] path was contained by _safe_new_project_file
         stat_result = os.fstat(fd)
         if not stat.S_ISREG(stat_result.st_mode):
             return False
