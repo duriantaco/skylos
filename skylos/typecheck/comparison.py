@@ -5,6 +5,7 @@ from __future__ import annotations
 import configparser
 import difflib
 import hashlib
+import json
 import math
 import os
 import re
@@ -16,6 +17,7 @@ from collections import Counter
 from pathlib import Path, PurePosixPath
 
 from skylos.core.git_safety import read_only_git_command, read_only_git_environment
+from skylos.core.safe_cache_io import load_project_json_cache, save_project_json_cache
 from skylos.typecheck.adapters import discover_checker, run_project_checker
 
 _MAX_FILES = 20_000
@@ -418,6 +420,45 @@ def _finish(report: dict, target_files, root: Path) -> dict:
     return report
 
 
+BASELINE_CACHE_SCHEMA = 1
+
+
+def _baseline_cache_path(comparison, root: Path, report: dict) -> Path:
+    key = json.dumps(
+        [
+            BASELINE_CACHE_SCHEMA,
+            comparison.base_sha,
+            root.relative_to(comparison.root).as_posix(),
+            report.get("checker"),
+            report.get("config_fingerprints"),
+            report.get("executable_fingerprint"),
+        ],
+        sort_keys=True,
+    )
+    name = hashlib.sha256(key.encode("utf-8")).hexdigest()[:32] + ".json"
+    return Path(".skylos") / "cache" / "type-baseline" / name
+
+
+def _load_baseline(comparison, root: Path, report: dict) -> list[dict] | None:
+    payload = load_project_json_cache(
+        comparison.root, _baseline_cache_path(comparison, root, report)
+    )
+    diagnostics = payload.get("diagnostics")
+    if not isinstance(diagnostics, list):
+        return None
+    if not all(isinstance(diagnostic, dict) for diagnostic in diagnostics):
+        return None
+    return diagnostics
+
+
+def _store_baseline(comparison, root: Path, report: dict, baseline: dict) -> None:
+    save_project_json_cache(
+        comparison.root,
+        _baseline_cache_path(comparison, root, report),
+        {"diagnostics": baseline.get("diagnostics", [])},
+    )
+
+
 def run_type_check(
     path,
     *,
@@ -426,11 +467,15 @@ def run_type_check(
     timeout_seconds=120,
     comparison=None,
     target_files=None,
+    baseline_cache=False,
 ) -> dict:
     """Run an installed checker; classify origins only against comparable code.
 
     Without a baseline every current error blocks. A baseline uses Git object
     reads and a temporary source snapshot, never a checkout in the user's repo.
+    ``baseline_cache`` reuses an earlier baseline for the same base commit, checker
+    and configuration. An agent can write that file, so only per-edit feedback
+    asks for it; the final verdict always recomputes.
     """
     started = time.monotonic()
     root = _project_root(Path(path))
@@ -522,75 +567,88 @@ def run_type_check(
                     reason="No current diagnostics; checker configuration and dependencies match",
                 )
             else:
-                from skylos.done.preexisting import link_node_modules
-
-                with tempfile.TemporaryDirectory(
-                    prefix="skylos-type-baseline-"
-                ) as directory:
-                    tree = Path(directory) / comparison.root.name
-                    tree.mkdir()
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise ValueError("Type checking exceeded its time budget")
-                    _snapshot(comparison, tree, timeout_seconds=remaining)
-                    linked = link_node_modules(comparison.root, tree)
-                    if linked.workspace_missing:
-                        raise ValueError(
-                            "Installed workspace dependencies are unavailable in the baseline"
-                        )
-                    baseline_root = tree / root.relative_to(comparison.root)
-                    baseline_plan = discover_checker(
-                        baseline_root, report.get("checker")
-                    )
-                    if baseline_plan.get("config_fingerprints") != plan.get(
-                        "config_fingerprints"
-                    ):
-                        raise ValueError(
-                            "Baseline checker configuration could not be reproduced"
-                        )
-                    state["base_run"] = True
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise ValueError("Type checking exceeded its time budget")
-                    baseline = run_project_checker(
-                        baseline_root,
-                        checker=report["checker"],
-                        timeout_seconds=remaining,
-                        executable_override=report.get("executable"),
-                    )
-                    if not baseline.get("complete"):
-                        raise ValueError(
-                            "Baseline checker did not complete: "
-                            + baseline.get("summary", "unknown result")
-                        )
-                    if baseline.get("executable_fingerprint") != report.get(
-                        "executable_fingerprint"
-                    ):
-                        raise ValueError(
-                            "The installed checker changed during comparison"
-                        )
-                    if sources_before != _source_inventory(inventory_root):
-                        raise ValueError(
-                            "Project sources changed during baseline comparison"
-                        )
-                    after_plan = discover_checker(root, checker)
-                    if any(
-                        plan.get(key) != after_plan.get(key)
-                        for key in ("config_fingerprints", "executable_fingerprint")
-                    ):
-                        raise ValueError(
-                            "Checker configuration or executable changed during baseline comparison"
-                        )
-                    _attribute(
-                        report["diagnostics"],
-                        baseline.get("diagnostics", []),
-                        comparison,
-                        root,
-                    )
+                cached = None
+                if baseline_cache:
+                    cached = _load_baseline(comparison, root, report)
+                if cached is not None:
+                    _attribute(report["diagnostics"], cached, comparison, root)
                     state.update(
                         status="complete",
-                        reason="Compared using the same checker, configuration and installed dependencies",
+                        baseline_cached=True,
+                        reason="Compared using a cached baseline for the same base commit",
                     )
+                else:
+                    from skylos.done.preexisting import link_node_modules
+
+                    with tempfile.TemporaryDirectory(
+                        prefix="skylos-type-baseline-"
+                    ) as directory:
+                        tree = Path(directory) / comparison.root.name
+                        tree.mkdir()
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise ValueError("Type checking exceeded its time budget")
+                        _snapshot(comparison, tree, timeout_seconds=remaining)
+                        linked = link_node_modules(comparison.root, tree)
+                        if linked.workspace_missing:
+                            raise ValueError(
+                                "Installed workspace dependencies are unavailable in the baseline"
+                            )
+                        baseline_root = tree / root.relative_to(comparison.root)
+                        baseline_plan = discover_checker(
+                            baseline_root, report.get("checker")
+                        )
+                        if baseline_plan.get("config_fingerprints") != plan.get(
+                            "config_fingerprints"
+                        ):
+                            raise ValueError(
+                                "Baseline checker configuration could not be reproduced"
+                            )
+                        state["base_run"] = True
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise ValueError("Type checking exceeded its time budget")
+                        baseline = run_project_checker(
+                            baseline_root,
+                            checker=report["checker"],
+                            timeout_seconds=remaining,
+                            executable_override=report.get("executable"),
+                        )
+                        if not baseline.get("complete"):
+                            raise ValueError(
+                                "Baseline checker did not complete: "
+                                + baseline.get("summary", "unknown result")
+                            )
+                        if baseline.get("executable_fingerprint") != report.get(
+                            "executable_fingerprint"
+                        ):
+                            raise ValueError(
+                                "The installed checker changed during comparison"
+                            )
+                        if sources_before != _source_inventory(inventory_root):
+                            raise ValueError(
+                                "Project sources changed during baseline comparison"
+                            )
+                        after_plan = discover_checker(root, checker)
+                        if any(
+                            plan.get(key) != after_plan.get(key)
+                            for key in ("config_fingerprints", "executable_fingerprint")
+                        ):
+                            raise ValueError(
+                                "Checker configuration or executable changed during baseline comparison"
+                            )
+                        if baseline_cache:
+                            _store_baseline(comparison, root, report, baseline)
+                        _attribute(
+                            report["diagnostics"],
+                            baseline.get("diagnostics", []),
+                            comparison,
+                            root,
+                        )
+                        state.update(
+                            status="complete",
+                            reason="Compared using the same checker, configuration and installed dependencies",
+                        )
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
             state.update(status="incomplete", reason=str(exc))
     report["escape_guard"] = {

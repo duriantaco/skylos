@@ -1098,6 +1098,24 @@ def _definition_module_and_class(defn):
     return ".".join(parts[:-2]), parts[-2]
 
 
+def analysis_root_for_target(target: Path) -> Path:
+    """The root the analyzer reports relative paths from for one scan target.
+
+    Mirrors the single-path branch of ``Skylos.analyze``: a file is replaced
+    by its folder, then the root is resolved upward to the project.
+    """
+    raw = Path(target).expanduser()
+    if raw.is_symlink():
+        root = Path(os.path.abspath(raw))
+    else:
+        root = raw.resolve()
+    if not root.is_dir():
+        root = root.parent
+    if root.exists():
+        return _resolve_analysis_root(root)
+    return root
+
+
 def _resolve_analysis_root(path_like: Path) -> Path:
     current = path_like.resolve()
     if not current.is_dir():
@@ -5433,8 +5451,15 @@ class Skylos:
                         f for f in files if str(f).endswith((".py", ".pyi", ".pyw"))
                     ]
                     if py_files:
+                        dep_kwargs = {}
+                        if _verification_should_discover_workspace(path):
+                            dep_kwargs["repository_files"] = discover_source_files(
+                                project_root,
+                                set(PYTHON_SIGNATURE_SUFFIXES),
+                                exclude_folders=exclude_folders,
+                            )
                         dep_findings = scan_python_dependency_hallucinations(
-                            project_root, py_files
+                            project_root, py_files, **dep_kwargs
                         )
                         unverified = getattr(dep_findings, "unverified_imports", {})
                         if unverified:

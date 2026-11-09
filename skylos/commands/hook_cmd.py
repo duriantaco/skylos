@@ -26,6 +26,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from stat import S_ISREG
 from typing import Any, Callable, Sequence
 
 from skylos.commands.agent_standards_policy import (
@@ -33,7 +34,12 @@ from skylos.commands.agent_standards_policy import (
     AgentStandardsPolicyError,
     load_agent_standards_policy,
 )
-from skylos.commands.hook_policy import dedupe_by_line
+from skylos.commands.hook_policy import (
+    HALLUCINATION_RULES,
+    HOOK_VERIFY_RULES,
+    dedupe_by_line,
+    finding_touches_ranges,
+)
 
 EVENTS = (
     "session-start",
@@ -70,6 +76,10 @@ DISABLE_ENV = "SKYLOS_HOOKS_DISABLE"
 
 MAX_STDIN_BYTES = 8_000_000
 MAX_SCAN_BYTES = 2_000_000
+MAX_SHELL_EDIT_FILES = 25
+MAX_STOP_SHELL_FILES = 200
+MAX_DIRTY_LISTING_BYTES = 8_000_000
+SHELL_BASELINE_KEY = "shell_baseline"
 # Total file text one shell command may make pre-bash read.
 MAX_SHELL_READ_BYTES = 8_000_000
 MAX_LOG_BYTES = 512_000
@@ -132,6 +142,8 @@ class HookDeps:
     standards_policy: AgentStandardsPolicy | None = None
     # cwd -> the directory git runs hooks from (None: unknown). Tests stub it.
     hooks_dir: Callable[[Path], Path | None] | None = None
+    # The project type checker runner (skylos.typecheck.run_type_check). Tests stub it.
+    type_check: Callable[..., dict[str, Any]] | None = None
 
 
 @dataclass
@@ -380,9 +392,22 @@ def run_recheck(argv: list[str], *, stdout=None, deps: HookDeps | None = None) -
                         f for f in findings if _finding_key(f, lines) in introduced
                     ]
             blocking.extend(f for f in findings if f.get("blocking", True))
+        type_problems, type_notes = _recheck_types(
+            root, files, state, deps, line_range, session_mode
+        )
+    blocking.extend(type_problems)
+    notes += sum(1 for note in type_notes if not note.get("file_level"))
+    unfinished = [note["message"] for note in type_notes if note.get("file_level")]
     blocking = dedupe_by_line(blocking)
     note_text = f" ({notes} non-blocking note(s) in these files)" if notes else ""
     if not blocking:
+        if unfinished:
+            stdout.write(
+                f"Skylos: no other blocking issues in {checked} file(s){note_text}. "
+                + " ".join(unfinished)
+                + "\n"
+            )
+            return 0
         stdout.write(
             f"Skylos: no blocking issues in {checked} file(s){note_text}. "
             "The hook will not block on these files.\n"
@@ -393,11 +418,49 @@ def run_recheck(argv: list[str], *, stdout=None, deps: HookDeps | None = None) -
             blocking,
             root,
             header=f"Skylos: {len(blocking)} blocking issue(s) still open{note_text}:",
-            footer="",
+            footer=" ".join(unfinished),
         )
         + "\n"
     )
     return 1
+
+
+def _recheck_types(root, files, state, deps, line_range, session_mode):
+    """Apply the post-edit type policy, so a recheck cannot report a false all-clear."""
+    from skylos.commands.hook_type_check import recheck_type_check
+
+    typed = []
+    for raw in files:
+        path = _abs_path(raw, Path.cwd())
+        if path is not None and path.suffix.lower() in CODE_SUFFIXES:
+            typed.append(path)
+    problems, notes = recheck_type_check(
+        root,
+        _latest_done_session(state),
+        typed,
+        {},
+        deps.type_check,
+        whole_project=session_mode,
+    )
+    if line_range is None:
+        return problems, notes
+    low, high = line_range
+    problems = [f for f in problems if low <= f["line"] <= high]
+    notes = [f for f in notes if f.get("file_level") or low <= f["line"] <= high]
+    return problems, notes
+
+
+def _latest_done_session(state: dict[str, Any]) -> str | None:
+    latest = None
+    latest_updated = -1
+    for session_id, session in state["sessions"].items():
+        if not isinstance(session, dict) or "done_base" not in session:
+            continue
+        updated = _int(session.get("updated"))
+        if updated >= latest_updated:
+            latest = session_id
+            latest_updated = updated
+    return latest
 
 
 def _parse_range(value: str) -> tuple[int, int]:
@@ -658,6 +721,7 @@ def _fail_open_message(event: str, reason: str) -> str:
 
 def _handle_session_start(payload, root, client, deps, record):
     record["outcome"] = "captured" if record.get("done_configured") else "skip"
+    _remember_dirty_files(payload, root)
     return _allow_output("session-start", client)
 
 
@@ -668,23 +732,54 @@ def _handle_session_start(payload, root, client, deps, record):
 
 def _handle_post_edit(payload, root, client, deps, record):
     edited = _edited_files(payload, root, client)
+    return _verify_edits(edited, payload, root, client, deps, record)
+
+
+def _handle_post_shell(payload, root, client, deps, record):
+    """A Bash command can rewrite a file without any Edit or Write hook firing."""
+    edits = _shell_edits(payload, root, limit=MAX_SHELL_EDIT_FILES)
+    if not edits.files:
+        record["outcome"] = "skip"
+        return _allow_output("post-bash", client)
+    record["shell_edits"] = len(edits.files)
+    extra_notes = []
+    if edits.remaining:
+        from skylos.commands.hook_type_check import _note
+
+        extra_notes.append(
+            _note(
+                edits.files[0].path,
+                f"{edits.remaining} more file(s) changed by that command "
+                "are checked when you stop.",
+            )
+        )
+    return _verify_edits(
+        edits.files, payload, root, client, deps, record, extra_notes=extra_notes
+    )
+
+
+def _verify_edits(
+    edited, payload, root, client, deps, record, *, extra_notes=(), run_types=True
+):
     record["files"] = len(edited)
     if not edited:
         record["outcome"] = "skip"
         return _allow_output("post-edit", client)
 
     problems: list[dict[str, Any]] = []
-    notes: list[dict[str, Any]] = []
+    notes: list[dict[str, Any]] = list(extra_notes)
     session_updates: dict[str, dict[str, Any]] = {}
     for item in edited:
         checked = _check_file(item.path, root, deps)
         if checked is None:
             continue
         findings, lines, stat_key = checked
+        text = "\n".join(lines)
         in_range = [
             f
             for f in findings
-            if f.get("file_level") or _in_ranges(f["line"], item.ranges)
+            if f.get("file_level")
+            or finding_touches_ranges(f, item.ranges, item.path, text)
         ]
         blocking = [f for f in in_range if f.get("blocking", True)]
         rel = _rel(item.path, root)
@@ -697,6 +792,16 @@ def _handle_post_edit(payload, root, client, deps, record):
         notes.extend(f for f in in_range if not f.get("blocking", True))
 
     _update_session(_state_root(root), _session_id(payload), session_updates)
+    typed = [item.path for item in edited if item.path.suffix.lower() in CODE_SUFFIXES]
+    type_problems: list[dict[str, Any]] = []
+    if run_types and typed and record.get("done_configured"):
+        from skylos.commands.hook_type_check import post_edit_type_check
+
+        type_problems, type_notes = post_edit_type_check(
+            root, _session_id(payload), typed, record, deps.type_check
+        )
+        problems.extend(type_problems)
+        notes.extend(type_notes)
     problems = dedupe_by_line(problems)
     notes = [n for n in dedupe_by_line(notes) if not _same_line(n, problems)]
     record["findings"] = len(problems)
@@ -711,18 +816,164 @@ def _handle_post_edit(payload, root, client, deps, record):
             return _note_output(client, _format_notes(notes, root))
         return _allow_output("post-edit", client)
     record["outcome"] = "block"
+    where = "in the lines you just changed"
+    if type_problems:
+        where = "from this edit"
     reason = _format_problems(
         problems,
         root,
-        header=(
-            f"Skylos found {len(problems)} issue(s) in the lines you just "
-            "changed. Fix them before moving on:"
-        ),
+        header=f"Skylos found {len(problems)} issue(s) {where}. Fix them before moving on:",
         footer=_rerun_hint(problems, root),
     )
     if notes:
         reason += "\n" + _format_notes(notes, root)
     return _block_output(client, reason)
+
+
+# --------------------------------------------------------------------------
+# Files changed through the shell
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class ShellEdits:
+    files: list[EditedFile] = field(default_factory=list)
+    remaining: int = 0
+
+
+def _dirty_files(root: Path) -> dict[str, dict[str, Any]] | None:
+    """Tracked changes and untracked files with their identity; None outside Git."""
+    from skylos.reporting.attribution_evidence import _git
+
+    base = _git_root(root)
+    listed = _git(
+        base,
+        ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        limit=MAX_DIRTY_LISTING_BYTES,
+    )
+    if listed is None:
+        return None
+    entries = listed.split("\0")
+    dirty: dict[str, dict[str, Any]] = {}
+    index = 0
+    while index < len(entries):
+        entry = entries[index]
+        index += 1
+        if len(entry) < 4:
+            continue
+        status = entry[:2]
+        name = entry[3:]
+        if "R" in status or "C" in status:
+            index += 1
+        if "D" in status or name.startswith((".skylos/", ".git/")):
+            continue
+        path = base / name
+        try:
+            stat = path.lstat()
+            contained = path.resolve() == base.resolve() / name
+        except (OSError, RuntimeError):
+            continue
+        if not contained or not S_ISREG(stat.st_mode):
+            continue
+        if base != root and root not in path.parents:
+            continue
+        dirty[_rel(path, root)] = {
+            "path": path,
+            "stat": [stat.st_mtime_ns, stat.st_size],
+            "new": status == "??",
+        }
+    return dirty
+
+
+def _remember_dirty_files(payload, root: Path) -> None:
+    dirty = _dirty_files(root)
+    if dirty is not None:
+        _save_shell_baseline(payload, root, {r: d["stat"] for r, d in dirty.items()})
+
+
+def _save_shell_baseline(payload, root: Path, baseline: dict[str, Any]) -> None:
+    def mutate(session):
+        session[SHELL_BASELINE_KEY] = baseline
+
+    _mutate_session(_state_root(root), _session_id(payload), mutate)
+
+
+def _shell_edits(payload, root: Path, *, limit: int) -> ShellEdits:
+    """Files whose identity changed since the last look, oldest knowledge first.
+
+    The list Claude Code offers in ``bashEditDiff`` is documented as best effort and
+    not for enforcing a policy, so this compares Git's own view instead. Files beyond
+    ``limit`` stay unseen, so a later look still finds them.
+    """
+    state_root = _state_root(root)
+    session = _load_session_state(state_root)["sessions"].get(_session_id(payload))
+    if not isinstance(session, dict):
+        session = {}
+    dirty = _dirty_files(root)
+    if dirty is None:
+        return ShellEdits()
+    stats = {rel: item["stat"] for rel, item in dirty.items()}
+    baseline = session.get(SHELL_BASELINE_KEY)
+    if not isinstance(baseline, dict):
+        _save_shell_baseline(payload, root, stats)
+        return ShellEdits()
+    known = dict(baseline)
+    recorded = session.get("files")
+    if isinstance(recorded, dict):
+        for rel, info in recorded.items():
+            if isinstance(info, dict) and info.get("stat"):
+                known[rel] = info["stat"]
+    changed = sorted(rel for rel, stat in stats.items() if known.get(rel) != stat)
+    selected = changed[:limit]
+    known.update({rel: stats[rel] for rel in selected})
+    _save_shell_baseline(payload, root, known)
+    files = [
+        EditedFile(dirty[rel]["path"], _added_ranges(root, dirty[rel]))
+        for rel in selected
+    ]
+    return ShellEdits(
+        files=_keep_in_root(files, root),
+        remaining=len(changed) - len(selected),
+    )
+
+
+def _added_ranges(root: Path, item: dict[str, Any]) -> list[tuple[int, int]] | None:
+    from skylos.reporting.attribution_evidence import _git
+    from skylos.verify_change import parse_added_lines
+
+    if item["new"]:
+        return None
+    base = _git_root(root)
+    name = item["path"].relative_to(base).as_posix()
+    diff = _git(
+        base,
+        ["diff", "--unified=0", "--no-color", "--no-ext-diff", "HEAD", "--", name],
+        limit=MAX_DIRTY_LISTING_BYTES,
+    )
+    if diff is None:
+        return None
+    ranges = parse_added_lines(diff).get(name)
+    if ranges is None:
+        return []
+    return ranges
+
+
+def _validate_recorded_paths(root: Path, session_id: str, comparison) -> None:
+    """Tampered session state stays unfinished before anything else is analyzed."""
+    session = _load_session_state(_state_root(root))["sessions"].get(session_id)
+    recorded = session.get("files") if isinstance(session, dict) else None
+    if not isinstance(recorded, dict):
+        return
+    for rel, info in sorted(recorded.items()):
+        if isinstance(info, dict) and info.get("introduced"):
+            _recorded_edit_path(root, rel, comparison=comparison)
+
+
+def _absorb_shell_edits(payload, root: Path, deps) -> None:
+    """Stop's catch-all: a failed command, a subagent or another process left no event."""
+    edits = _shell_edits(payload, root, limit=MAX_STOP_SHELL_FILES)
+    if edits.files:
+        _verify_edits(edits.files, payload, root, "claude", deps, {}, run_types=False)
 
 
 def _same_line(finding: dict[str, Any], others: list[dict[str, Any]]) -> bool:
@@ -905,15 +1156,37 @@ def _check_file(path: Path, root: Path, deps: HookDeps):
         if findings and _is_ignored_env_file(path, root):
             # A gitignored .env file is exactly where the key should live.
             findings = []
+    elif _is_dependency_manifest(path):
+        findings = []
     else:
         return None
-    from skylos.commands.hook_policy import classify_findings
+    if suffix not in CODE_SUFFIXES and _is_dependency_manifest(path):
+        findings.extend(
+            finding
+            for finding in _verify_findings(path, root, deps)
+            if finding.get("rule_id") in HALLUCINATION_RULES
+        )
+    from skylos.commands.hook_policy import REGRESSION_RULES, classify_findings
 
     selected = (
         deps.standards_policy.enforce_rule_ids if deps.standards_policy else frozenset()
     )
     classify_findings(findings, path, text, enforce_quality_rule_ids=selected)
+    for finding in findings:
+        if finding.get("rule_id") in REGRESSION_RULES:
+            finding["file_level"] = True
     return findings, lines, stat_key
+
+
+def _is_dependency_manifest(path: Path) -> bool:
+    from skylos.rules.ai_defect.manifest_dependency_hallucination import (
+        _manifest_parsers,
+        _parser_for_manifest_path,
+    )
+
+    return (
+        path.name in _manifest_parsers() or _parser_for_manifest_path(path) is not None
+    )
 
 
 def _is_test_path(path: Path, root: Path) -> bool:
@@ -976,7 +1249,7 @@ def hook_verify(
             str(target),
             exclude_folders=list(parse_exclude_folders(use_defaults=True)),
             include_security_findings=True,
-            include_quality_rule_ids=include_quality_rule_ids,
+            include_quality_rule_ids=include_quality_rule_ids | HOOK_VERIFY_RULES,
             behavior_comparison=False,
         )
 
@@ -995,16 +1268,18 @@ def _verify_findings(path: Path, root: Path, deps: HookDeps) -> list[dict[str, A
         if selected:
             kwargs["include_quality_rule_ids"] = selected
         result = deps.verify(str(path), **kwargs)
+    report_root = _git_root(_resolve_quietly(path).parent)
     findings = []
     for raw in result.get("findings") or []:
         rng = raw.get("range") or {}
         file_name = str(rng.get("file") or "")
-        if file_name and Path(file_name).name != path.name:
+        if file_name and not _names_file(file_name, path, report_root):
             continue
         findings.append(
             {
                 "path": str(path),
                 "line": _int(rng.get("start_line")),
+                "col": rng.get("start_col"),
                 "rule_id": str(raw.get("rule_id") or ""),
                 "severity": str(raw.get("severity") or ""),
                 "message": str(raw.get("message") or ""),
@@ -1185,6 +1460,11 @@ def _read_scannable(path: Path) -> str | None:
 
 
 def _handle_pre_bash(payload, root, client, deps, record):
+    session = _load_session_state(_state_root(root))["sessions"].get(
+        _session_id(payload)
+    )
+    if not isinstance(session, dict) or SHELL_BASELINE_KEY not in session:
+        _remember_dirty_files(payload, root)
     tool_input = payload.get("tool_input")
     if not isinstance(tool_input, dict):
         tool_input = {}
@@ -2072,6 +2352,8 @@ def _handle_stop(payload, root, client, deps, record):
 def _recheck_recorded_edits(payload, root, deps, record, *, comparison=None):
     """Refresh the existing per-file guard before either kind of stop gate."""
     session_id = _session_id(payload)
+    _validate_recorded_paths(root, session_id, comparison)
+    _absorb_shell_edits(payload, root, deps)
     state = _load_session_state(_state_root(root))
     session = state.get("sessions", {}).get(session_id)
     if not isinstance(session, dict) or not session.get("files"):
@@ -2560,6 +2842,26 @@ def _keep_in_root(items: list[EditedFile], root: Path) -> list[EditedFile]:
     return kept
 
 
+def _names_file(file_name: str, path: Path, report_root: Path) -> bool:
+    """Whether a verify finding's ``range.file`` is the edited file itself.
+
+    ``report_root`` is the edited file's nearest Git root, or its own folder
+    outside Git. Use that one coordinate system: trying both would mistake
+    a Git-root ``app.py`` for a nested file of the same name.
+    """
+    candidate = Path(file_name)
+    if not candidate.is_absolute():
+        candidate = report_root / candidate
+    return _resolve_quietly(candidate) == _resolve_quietly(path)
+
+
+def _resolve_quietly(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return path
+
+
 def _rel(path: Path, root: Path) -> str:
     try:
         return path.relative_to(root).as_posix()
@@ -2666,11 +2968,7 @@ _HANDLERS = {
     "post-edit": _handle_post_edit,
     "pre-read": _handle_pre_read,
     "pre-bash": _handle_pre_bash,
-    "post-bash": lambda payload, root, client, deps, record: _allow_output(
-        "post-bash", client
-    ),
-    "post-failure": lambda payload, root, client, deps, record: _allow_output(
-        "post-failure", client
-    ),
+    "post-bash": _handle_post_shell,
+    "post-failure": _handle_post_shell,
     "stop": _handle_stop,
 }

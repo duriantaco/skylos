@@ -26,6 +26,9 @@ import re
 from pathlib import Path
 from typing import Any, Iterable
 
+from skylos.commands.hook_js_facts import JS_SUFFIXES, JsFacts
+from skylos.rules.danger.allowlist_guards import always_exits, not_in_terms
+
 HALLUCINATION_RULES = frozenset(
     {"SKY-D222", "SKY-D224", "SKY-D225", "SKY-L012", "SKY-L023"}
 )
@@ -53,8 +56,16 @@ ALWAYS_BLOCK_RULES = frozenset(
         "SKY-G210",  # Go InsecureSkipVerify
         "SKY-D232",  # JWT signature verification disabled / unsafe algorithm
         "SKY-D246",  # JS/TS JWT decode without verification
+        "SKY-L011",
+        "SKY-D349",
+        "SKY-D346",
     }
 )
+SQL_RULES = frozenset({"SKY-D211", "SKY-D217", "SKY-D281"})
+CREDENTIAL_RULES = frozenset({"SKY-L014"})
+REGRESSION_RULES = frozenset({"SKY-L021"})
+ADVISORY_SECURITY_RULES = frozenset({"SKY-D207", "SKY-D250"})
+HOOK_VERIFY_RULES = CREDENTIAL_RULES | REGRESSION_RULES | ADVISORY_SECURITY_RULES
 # (c) code / command execution: block unless every argument is a constant.
 NON_CONSTANT_BLOCK_RULES = frozenset(
     {
@@ -73,6 +84,7 @@ TAINT_RULES = frozenset(
         "SKY-D215",  # path traversal
         "SKY-D216",  # SSRF
         "SKY-D217",  # raw SQL execution
+        "SKY-D228",
         "SKY-D230",  # open redirect
         "SKY-D234",  # mass assignment
         "SKY-D235",  # remote command execution sink
@@ -116,16 +128,67 @@ def classify_findings(
     enforce_quality_rule_ids: frozenset[str] = frozenset(),
 ) -> None:
     """Set ``blocking`` (bool) and ``why`` on each finding, in place."""
-    facts: _SourceFacts | None = None
-    need_ast = path.suffix.lower() in {".py", ".pyi", ".pyw"} and any(
-        _needs_ast(f) for f in findings
-    )
-    if need_ast and text is not None:
-        facts = _SourceFacts.parse(text)
+    facts: _SourceFacts | JsFacts | None = None
+    suffix = path.suffix.lower()
+    if text is not None and any(_needs_ast(f) for f in findings):
+        if suffix in {".py", ".pyi", ".pyw"}:
+            facts = _SourceFacts.parse(text)
+        elif suffix in JS_SUFFIXES:
+            facts = JsFacts(path, text)
     for finding in findings:
         blocking, why = _decide(finding, facts, path, enforce_quality_rule_ids)
         finding["blocking"] = blocking
         finding["why"] = why
+
+
+def finding_touches_ranges(
+    finding: dict[str, Any],
+    ranges: list[tuple[int, int]] | None,
+    path: Path,
+    text: str,
+) -> bool:
+    """Whether a finding sits on the lines an edit added.
+
+    A security sink is reported on the first line of its statement, so an edit
+    to an inner line of a multi-line call counts too. Secrets and other findings
+    keep their exact line: an edit beside an old literal does not own that literal.
+    """
+    if ranges is None:
+        return True
+    line = int(finding.get("line") or 0)
+    if any(start <= line <= end for start, end in ranges):
+        return True
+    if not ranges or str(finding.get("category") or "") != "security":
+        return False
+    span = _statement_span(path, text, line)
+    if span is None:
+        return False
+    return any(start <= span[1] and end >= span[0] for start, end in ranges)
+
+
+def _statement_span(path: Path, text: str, line: int) -> tuple[int, int] | None:
+    suffix = path.suffix.lower()
+    if suffix in JS_SUFFIXES:
+        return JsFacts(path, text).statement_span(line)
+    if suffix not in {".py", ".pyi", ".pyw"}:
+        return None
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError):
+        return None
+    simple = (
+        ast.Assign,
+        ast.AnnAssign,
+        ast.AugAssign,
+        ast.Expr,
+        ast.Return,
+        ast.Raise,
+        ast.Assert,
+    )
+    for node in ast.walk(tree):
+        if isinstance(node, simple) and node.lineno == line and node.end_lineno:
+            return node.lineno, node.end_lineno
+    return None
 
 
 def _needs_ast(finding: dict[str, Any]) -> bool:
@@ -135,24 +198,28 @@ def _needs_ast(finding: dict[str, Any]) -> bool:
 
 def _decide(
     finding: dict[str, Any],
-    facts: "_SourceFacts | None",
+    facts: "_SourceFacts | JsFacts | None",
     path: Path,
     enforce_quality_rule_ids: frozenset[str],
 ) -> tuple[bool, str]:
     rule = str(finding.get("rule_id") or "")
     category = str(finding.get("category") or "")
-    if category == "secret" or rule.startswith("SKY-S"):
+    if category == "secret" or rule.startswith("SKY-S") or rule in CREDENTIAL_RULES:
         return True, "secret"
     if rule in HALLUCINATION_RULES or finding.get("vibe") in HALLUCINATION_VIBES:
         return True, "hallucination"
     if rule in CONTRACT_RULES:
         return True, "contract"
+    if rule in REGRESSION_RULES:
+        return True, "security-regression"
+    if rule in ALWAYS_BLOCK_RULES:
+        return True, "dangerous-sink"
+    if rule == "SKY-D231" and "credential" in str(finding.get("message") or "").lower():
+        return True, "dangerous-sink"
     if category == "quality" and rule in enforce_quality_rule_ids:
         return True, "project-standard"
     if category != "security":
         return False, "note"
-    if rule in ALWAYS_BLOCK_RULES:
-        return True, "dangerous-sink"
     line = int(finding.get("line") or 0)
     if rule in NON_CONSTANT_BLOCK_RULES:
         if facts is None:
@@ -160,18 +227,34 @@ def _decide(
         if facts.call_has_non_constant_args(line):
             return True, "dangerous-sink"
         # A constant argument can still come from a real source below.
-        if facts.line_uses_untrusted(line):
+        if _uses_untrusted(facts, finding, line):
             return True, "untrusted-source"
         return False, "constant-argument"
     if rule in TAINT_RULES:
-        if facts is None:
+        if facts is None or isinstance(facts, JsFacts):
             if _non_python_evidence(finding):
                 return True, "untrusted-source"
+        if facts is None:
             return False, "no-source-evidence"
-        if facts.line_uses_untrusted(line):
+        if _uses_untrusted(facts, finding, line, sql=rule in SQL_RULES):
             return True, "untrusted-source"
+        if rule in SQL_RULES and _interpolates_parameter(facts, finding, line):
+            return True, "interpolated-sql"
         return False, "no-source-evidence"
     return False, "note"
+
+
+def _uses_untrusted(facts, finding: dict[str, Any], line: int, *, sql=False) -> bool:
+    """For SQL, a value proved to be in a fixed set is OWASP's answer for identifiers."""
+    if isinstance(facts, JsFacts):
+        return facts.line_uses_untrusted(line, finding.get("col"), sql=sql)
+    return facts.line_uses_untrusted(line, sql=sql)
+
+
+def _interpolates_parameter(facts, finding: dict[str, Any], line: int) -> bool:
+    if isinstance(facts, JsFacts):
+        return facts.line_interpolates_parameter(line, finding.get("col"))
+    return facts.line_interpolates_parameter(line)
 
 
 def _non_python_evidence(finding: dict[str, Any]) -> bool:
@@ -245,14 +328,58 @@ class _SourceFacts:
                 return True
         return False
 
-    def line_uses_untrusted(self, line: int) -> bool:
+    def line_uses_untrusted(self, line: int, *, sql: bool = False) -> bool:
         if self.tree is None:
             return False
         func = self._enclosing(line)
         untrusted, request_names = self._untrusted_names(func)
+        if sql and func is not None:
+            untrusted = untrusted - _proven_fixed_names(func, line, untrusted)
         for call in self._calls_on_line(line):
             for node in [*call.args, *(kw.value for kw in call.keywords)]:
                 if _references(node, untrusted, request_names):
+                    return True
+        return False
+
+    def line_interpolates_parameter(self, line: int) -> bool:
+        """Text built from a parameter reaches a call here: SQL strings, whatever the caller."""
+        if self.tree is None:
+            return False
+        func = self._enclosing(line)
+        if func is None:
+            return False
+        derived = {
+            param.arg
+            for param in _params(func)
+            if param.arg not in {"self", "cls"}
+            and not _is_scalar_annotation(param.annotation)
+        }
+        derived -= _proven_fixed_names(func, line, derived)
+        if not derived:
+            return False
+        built: set[str] = set()
+        assigns = [
+            node
+            for node in ast.walk(func)
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+        ]
+        for _ in range(4):
+            before = len(derived) + len(built)
+            for node in assigns:
+                value, targets = _assign_parts(node)
+                if value is None or _is_constant_lookup(value):
+                    continue
+                if _mentions_name(value, derived):
+                    derived.update(targets)
+                if _builds_text(value, derived) or _mentions_name(value, built):
+                    built.update(targets)
+            if len(derived) + len(built) == before:
+                break
+        for call in self._calls_on_line(line):
+            for argument in [*call.args, *(kw.value for kw in call.keywords)]:
+                if _builds_text(argument, derived):
+                    return True
+                if isinstance(argument, ast.Name) and argument.id in built:
                     return True
         return False
 
@@ -414,11 +541,117 @@ def _references(node: ast.AST, untrusted: set[str], request_names: set[str]) -> 
                 dotted.startswith(src + ".") for src in _SOURCE_ATTRS
             ):
                 return True
+            if _is_form_field(segments):
+                return True
         if isinstance(sub, ast.Call):
             name = _dotted(sub.func)
             if name in _SOURCE_CALLS or name.endswith(".parse_args"):
                 return True
     return False
+
+
+def _proven_fixed_names(func: ast.AST, line: int, tainted: set[str]) -> set[str]:
+    """Names a guard at the top of the function proved before ``line``, or a constant map produced."""
+    fixed: set[str] = set()
+    for statement in func.body:  # type: ignore[attr-defined]
+        if statement.lineno >= line:
+            break
+        if isinstance(statement, ast.If) and not statement.orelse:
+            if always_exits(statement.body):
+                fixed.update(_not_in_names(statement.test, tainted))
+    for node in ast.walk(func):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+            if _is_constant_lookup(node.value):
+                fixed.update(_assign_parts(node)[1])
+    return fixed
+
+
+def _not_in_names(test: ast.AST, tainted: set[str]) -> set[str]:
+    return {
+        name
+        for name, collection in not_in_terms(test)
+        if not _mentions_name(collection, tainted | {name})
+    }
+
+
+def _is_constant_lookup(value: ast.AST) -> bool:
+    """``ORDERS[key]`` or ``ORDERS.get(key)``: the result comes from the constant."""
+    if isinstance(value, ast.Subscript):
+        return isinstance(value.value, ast.Name) and value.value.id.isupper()
+    return (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Attribute)
+        and value.func.attr == "get"
+        and isinstance(value.func.value, ast.Name)
+        and value.func.value.id.isupper()
+    )
+
+
+_SCALAR_ANNOTATIONS = frozenset({"int", "float", "bool", "UUID", "Decimal"})
+
+
+def _is_scalar_annotation(annotation: ast.AST | None) -> bool:
+    """A type whose values cannot carry SQL text."""
+    if annotation is None:
+        return False
+    if isinstance(annotation, ast.Name):
+        return annotation.id in _SCALAR_ANNOTATIONS
+    if isinstance(annotation, ast.Attribute):
+        return annotation.attr in _SCALAR_ANNOTATIONS
+    if isinstance(annotation, ast.Subscript):
+        base = annotation.value
+        name = getattr(base, "id", None) or getattr(base, "attr", None)
+        if name == "Literal":
+            return True
+        if name == "Optional":
+            return _is_scalar_annotation(annotation.slice)
+        return False
+    if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+        sides = (annotation.left, annotation.right)
+        return all(
+            _is_scalar_annotation(side)
+            or (isinstance(side, ast.Constant) and side.value is None)
+            for side in sides
+        )
+    return False
+
+
+def _mentions_name(node: ast.AST, names: set[str]) -> bool:
+    return any(isinstance(sub, ast.Name) and sub.id in names for sub in ast.walk(node))
+
+
+def _builds_text(node: ast.AST, names: set[str]) -> bool:
+    """An f-string, ``+``, ``%`` or ``.format`` that puts one of ``names`` into text."""
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.JoinedStr):
+            for value in sub.values:
+                if isinstance(value, ast.FormattedValue) and _mentions_name(
+                    value.value, names
+                ):
+                    return True
+        elif isinstance(sub, ast.BinOp) and isinstance(sub.op, (ast.Add, ast.Mod)):
+            has_text = any(
+                isinstance(inner, ast.Constant) and isinstance(inner.value, str)
+                for inner in ast.walk(sub)
+            )
+            if has_text and _mentions_name(sub, names):
+                return True
+        elif (
+            isinstance(sub, ast.Call)
+            and isinstance(sub.func, ast.Attribute)
+            and sub.func.attr == "format"
+        ):
+            arguments = [*sub.args, *(kw.value for kw in sub.keywords)]
+            if any(_mentions_name(argument, names) for argument in arguments):
+                return True
+    return False
+
+
+def _is_form_field(segments: list[str]) -> bool:
+    """A submitted form value: ``form.q.data``, ``g.search_form.q.data``, ``form.cleaned_data``."""
+    if not segments or segments[-1] not in {"data", "cleaned_data"}:
+        return False
+    return any(seg == "form" or seg.endswith("_form") for seg in segments[:-1])
 
 
 _EXEC_SINKS = frozenset(

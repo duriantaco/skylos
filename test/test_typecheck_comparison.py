@@ -314,3 +314,99 @@ def test_warn_alias_is_counted_as_a_warning(project):
     assert result["warning_count"] == 1
     assert result["error_count"] == 0
     assert result["status"] == "pass"
+
+
+def _broken_caller(project):
+    (project / "api.ts").write_text('export function value(): string { return "x"; }\n')
+
+
+def _identities(report):
+    return sorted(
+        (d["file"], d["line"], d["code"], d["origin"]) for d in report["diagnostics"]
+    )
+
+
+def _count_runs(monkeypatch):
+    calls = []
+    real = checks.run_project_checker
+
+    def counting(*args, **kwargs):
+        calls.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(checks, "run_project_checker", counting)
+    return calls
+
+
+def test_cached_baseline_gives_the_same_labels_without_a_second_checker_run(
+    project, tsc, monkeypatch
+):
+    _broken_caller(project)
+    fresh = checks.run_type_check(project, checker="tsc", base_ref="HEAD")
+    calls = _count_runs(monkeypatch)
+
+    first = checks.run_type_check(
+        project, checker="tsc", base_ref="HEAD", baseline_cache=True
+    )
+    assert len(calls) == 2
+    second = checks.run_type_check(
+        project, checker="tsc", base_ref="HEAD", baseline_cache=True
+    )
+    assert len(calls) == 3
+
+    assert _identities(fresh) == _identities(first) == _identities(second)
+    assert {origin for *_, origin in _identities(second)} == {
+        "introduced",
+        "preexisting",
+    }
+    assert second["comparison"]["status"] == "complete"
+    assert second["comparison"]["baseline_cached"] is True
+
+
+def test_baseline_cache_is_ignored_unless_asked_for(project, tsc, monkeypatch):
+    _broken_caller(project)
+    checks.run_type_check(project, checker="tsc", base_ref="HEAD", baseline_cache=True)
+    calls = _count_runs(monkeypatch)
+
+    checks.run_type_check(project, checker="tsc", base_ref="HEAD")
+
+    assert len(calls) == 2
+
+
+def test_a_new_base_commit_does_not_reuse_the_old_baseline(project, tsc, monkeypatch):
+    _broken_caller(project)
+    checks.run_type_check(project, checker="tsc", base_ref="HEAD", baseline_cache=True)
+    git(project, "add", "api.ts")
+    git(
+        project,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "next",
+    )
+    (project / "caller.ts").write_text('export const answer: number = "again";\n')
+    calls = _count_runs(monkeypatch)
+
+    checks.run_type_check(project, checker="tsc", base_ref="HEAD", baseline_cache=True)
+
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("payload", ["[]", "{}", '{"diagnostics": "x"}', "not json"])
+def test_a_malformed_baseline_cache_is_a_miss(project, tsc, monkeypatch, payload):
+    _broken_caller(project)
+    checks.run_type_check(project, checker="tsc", base_ref="HEAD", baseline_cache=True)
+    folder = project / ".skylos" / "cache" / "type-baseline"
+    for cached in folder.glob("*.json"):
+        cached.write_text(payload)
+    calls = _count_runs(monkeypatch)
+
+    report = checks.run_type_check(
+        project, checker="tsc", base_ref="HEAD", baseline_cache=True
+    )
+
+    assert len(calls) == 2
+    assert report["comparison"]["status"] == "complete"

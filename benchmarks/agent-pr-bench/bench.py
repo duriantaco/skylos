@@ -44,6 +44,7 @@ def tool_objects(args) -> dict:
     bandit_bin = args.bandit or shutil.which("bandit") or ""
     objs = {
         "skylos": tools.Skylos(REPO_ROOT, python=args.skylos_python),
+        "skylos-hook": tools.SkylosHook(REPO_ROOT, python=args.skylos_python),
         "semgrep": tools.Semgrep(semgrep_bin, work / "semgrep-rules"),
         "bandit": tools.Bandit(bandit_bin),
         "sonarqube": tools.Sonar(),
@@ -128,6 +129,8 @@ def environment(args, objs: dict) -> dict:
             env[name] = tool.version()
         if name == "skylos":
             env["skylos_flags"] = " ".join(tools.Skylos.flags) + " --diff-base <base> --format json --no-upload"
+        if name == "skylos-hook":
+            env["skylos_hook_policy"] = "post-edit hook check per changed source file, changed ranges only, blocking findings scored"
         if name == "semgrep":
             manifest = tool.rules_dir / "manifest.json"
             env["semgrep_rules"] = json.loads(manifest.read_text()) if manifest.exists() else "not fetched"
@@ -158,7 +161,7 @@ def cmd_score(args) -> None:
     runs = {tuple(k.split("|", 1)): v for k, v in raw_runs.items() if k.split("|", 1)[0] in objs}
     normalized = normalize_all(work, workspaces, objs, raw_runs)
     labels = score.load_labels(LABELS)
-    tool_names = [t for t in ("skylos", "semgrep", "bandit", "sonarqube") if t in objs]
+    tool_names = [t for t in ("skylos", "skylos-hook", "semgrep", "bandit", "sonarqube") if t in objs]
     # A tool that was never run (e.g. SonarQube without a server) is reported
     # in the environment block but kept out of the metric tables.
     ran = [t for t in tool_names if any(r["status"] == "ok" for (tt, _), r in runs.items() if tt == t)]

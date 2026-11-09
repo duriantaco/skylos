@@ -1,0 +1,17 @@
+[project]
+name = "inventory"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["flask", "flask-cors", "requests"]
+
+[tool.mypy]
+strict = true
+ignore_missing_imports = true
+files = ["app"]
+
+[tool.skylos.done]
+test_command = ".venv/bin/python -m pytest -q tests"
+type_checker = "mypy"
+
+[tool.skylos.done.checks]
+type_check = "block"

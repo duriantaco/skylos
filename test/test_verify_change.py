@@ -743,6 +743,97 @@ def test_build_verify_change_response_filters_target_file_and_range(tmp_path):
     assert payload["target"]["range"] == {"start_line": 2, "end_line": 2}
 
 
+def test_build_verify_change_response_scopes_a_positional_file(tmp_path):
+    app = tmp_path / "pkg" / "app.py"
+    twin = tmp_path / "other" / "app.py"
+    manifest = tmp_path / "other" / "requirements.txt"
+    for path in (app, twin, manifest):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x = 1\n", encoding="utf-8")
+    result = {
+        "ai_defects": [
+            {
+                "rule_id": "SKY-L012",
+                "vibe_category": "hallucinated_reference",
+                "ai_likelihood": "high",
+                "file": str(app),
+                "line": 1,
+                "message": "app phantom",
+            },
+            {
+                "rule_id": "SKY-L012",
+                "vibe_category": "hallucinated_reference",
+                "ai_likelihood": "high",
+                "file": str(twin),
+                "line": 1,
+                "message": "twin phantom",
+            },
+            {
+                "rule_id": "SKY-D225",
+                "vibe_category": "dependency_hallucination",
+                "ai_likelihood": "high",
+                "file": str(manifest),
+                "line": 1,
+                "message": "manifest pin",
+            },
+        ]
+    }
+
+    scoped = build_verify_change_response(
+        result, project_root=app.parent, scan_target=app
+    )
+
+    assert [f["message"] for f in scoped["findings"]] == ["app phantom"]
+    assert scoped["target"]["file"] is None
+    assert scoped["target"]["path"] == str(app)
+
+    unscoped = build_verify_change_response(
+        result, project_root=tmp_path, scan_target=tmp_path
+    )
+
+    assert sorted(f["message"] for f in unscoped["findings"]) == [
+        "app phantom",
+        "manifest pin",
+        "twin phantom",
+    ]
+
+
+def test_verify_change_path_file_target_reports_only_that_file(tmp_path, monkeypatch):
+    import skylos.rules.ai_defect.manifest_dependency_hallucination as manifest_rules
+
+    monkeypatch.setattr(
+        manifest_rules,
+        "_status_checker",
+        lambda checker: lambda ecosystem, name, version, cache: "missing_version",
+    )
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "proj"\nversion = "0.1"\n', encoding="utf-8"
+    )
+    app = tmp_path / "pkg" / "app.py"
+    twin = tmp_path / "other" / "app.py"
+    manifest = tmp_path / "other" / "requirements.txt"
+    app.parent.mkdir()
+    twin.parent.mkdir()
+    phantom = "def handler(token):\n    return validate_token(token)\n"
+    app.write_text(phantom, encoding="utf-8")
+    twin.write_text(phantom, encoding="utf-8")
+    manifest.write_text("requests==99.0.0\n", encoding="utf-8")
+
+    scoped = verify_change_path(app, behavior_comparison=False)
+
+    assert scoped["status"] == "fail"
+    assert {f["rule_id"] for f in scoped["findings"]} == {"SKY-L012"}
+    assert {f["range"]["file"] for f in scoped["findings"]} == {"pkg/app.py"}
+
+    whole = verify_change_path(tmp_path, behavior_comparison=False)
+    reported = {(f["rule_id"], f["range"]["file"]) for f in whole["findings"]}
+
+    assert ("SKY-D225", "other/requirements.txt") in reported
+    assert ("SKY-L012", "other/app.py") in reported
+    assert ("SKY-L012", "pkg/app.py") in reported
+
+
 def test_parse_line_range_validation():
     assert parse_line_range("4:9") == (4, 9)
     assert parse_line_range("4-9") == (4, 9)
@@ -1525,6 +1616,26 @@ def test_verify_change_finds_security_for_relative_targets(tmp_path, monkeypatch
             "pkg/app.py",
             "app.py",
         }
+
+
+def test_verify_change_nested_file_in_a_project_keeps_its_secret(tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "proj"\nversion = "0.1"\n', encoding="utf-8"
+    )
+    nested = tmp_path / "pkg" / "run.py"
+    nested.parent.mkdir()
+    nested.write_text(_INJECTION_SOURCE + _secret_source(), "utf-8")
+
+    for target in (nested, nested.parent):
+        payload = verify_change_path(target, behavior_comparison=False)
+        assert {f["category"] for f in payload["findings"]} == {
+            "security",
+            "secret",
+        }, target
+        assert {f["range"]["file"] for f in payload["findings"]} == {
+            "pkg/run.py"
+        }, target
 
 
 def test_verify_change_stdin_payload_checks_security_by_default():

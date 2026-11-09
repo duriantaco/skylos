@@ -161,6 +161,13 @@ Skylos works out which lines the edit added:
 - **Codex:** from the `+` lines of the `apply_patch` envelope.
 - **Cursor:** from `edits[].new_string`.
 
+A file changed through the shell, such as `cat > run.py` or `sed -i`, gets the same
+check: Claude Code does not run an `Edit|Write` hook for those, so after every shell
+command Skylos compares Git's view of the changed files with what it last saw, and it
+looks once more at `stop` for anything a failed command, a subagent or another process
+changed. Work already uncommitted when the prompt arrives is not attributed to the
+agent.
+
 A `Write` that creates a new file counts as all new lines. Skylos then runs
 `skylos verify` on the file with security and secret checks on, and keeps only
 the findings on the changed lines. Existing debt elsewhere in the file is never
@@ -173,23 +180,60 @@ helper like `def load(path): return open(path).read()` is reported as path
 traversal. The hook does not block on that. It blocks only on:
 
 1. **Secrets** (SKY-S*).
-2. **Real untrusted input reaching a sink** (SKY-D211/212/215/216/217/230/...):
+2. **Real untrusted input reaching a sink** (SKY-D211/212/215/216/217/228/230/...):
    Skylos checks the enclosing function on the AST for a web-route, CLI or
    MCP-tool parameter (`@app.get`, `@router.post`, `@click.command`,
-   `@mcp.tool`, ...), `request.*` / a `Request`-typed parameter, `input()`,
+   `@mcp.tool`, ...), `request.*` / a `Request`-typed parameter, a submitted form
+   field (`form.q.data`, `form.cleaned_data`), `input()`,
    `sys.argv`, `os.environ`/`os.getenv`, `sys.stdin`, or `parse_args()`, and
-   follows simple assignments to the sink. For other languages it uses the
-   finding's `security_evidence.source`.
+   follows simple assignments to the sink. JS and TS get the same check:
+   `req.`/`request.`/`ctx.` query, body, params and headers, Hono's `c.req`,
+   NestJS `@Param`/`@Query`/`@Body` parameters, Next.js `searchParams` and
+   `formData`, and `process.argv`/`process.env`. A local named `query` or
+   `db.query(...)` is not a source. For other languages it uses the finding's
+   `security_evidence.source`. Raw SQL also blocks when an f-string, `+`, `%`,
+   `.format` or template literal builds it from a function parameter, wherever
+   the caller got the value. Constants, bound parameters, tagged templates,
+   numeric parameters and a helper passing through a complete `sql` argument do
+   not. Neither does a value a guard first proved to be in a fixed set, such as
+   `if sort not in COLUMNS: raise` or a lookup in a constant map, which is OWASP's
+   recommended handling for identifiers.
 3. **Sinks dangerous whatever the input:** unsafe deserialization
    (`pickle.loads`, SKY-D204/205/233), Trojan Source (SKY-D344), disabled TLS
-   verification (SKY-D210 / Go SKY-G210: `verify=False`, `InsecureSkipVerify`)
-   and disabled JWT verification (SKY-D232, JS/TS SKY-D246), which agents add
-   to silence an error, and
+   verification (SKY-D210 / Go SKY-G210: `verify=False`, `InsecureSkipVerify`),
+   disabled JWT verification (SKY-D232, JS/TS SKY-D246) and other disabled
+   security controls (SKY-L011), which agents add to silence an error,
+   server-side template injection (SKY-D349), Flask debug mode (SKY-D346),
+   a wildcard CORS origin with credentials (SKY-D231; a wildcard alone is a
+   note), and
    `eval`/`exec`/`os.system`/`shell=True`/`yaml.load` with a non-constant
    argument. `os.system("clear")` is not blocked.
 4. **Hallucinations:** nonexistent dependencies, versions, APIs and
-   references (SKY-D222/224/225, SKY-L012/L023), and violations of your own
-   AI contract (SKY-A105).
+   references (SKY-D222/224/225, SKY-L012/L023), including a dependency added
+   to a manifest such as `requirements.txt`, `pyproject.toml` or `package.json`,
+   and violations of your own AI contract (SKY-A105).
+5. **Type errors the edit introduced**, when the base commit's
+   `[tool.skylos.done.checks]` sets `type_check = "block"`: Skylos runs the project's
+   declared checker (mypy, Pyright, Pyrefly or tsc) with the project's own
+   configuration, compares against the session baseline, and blocks on
+   `introduced` and `unclassified` errors in the edited file or in an unchanged
+   caller the edit broke, plus net-new compiler suppressions and escapes (see
+   [Type checking](./type-checking.md#escapes-the-guard-blocks)). `preexisting`
+   errors are notes. `type_check = "advise"` makes every type diagnostic a
+   note. The post-edit run has a 60-second budget (or the configured
+   `type_check_timeout_seconds` when lower). A check that takes 15 seconds or
+   more still reports, then stops running per edit for that session, and the
+   full check runs at `stop` through Done, which decides the final verdict either
+   way. When the checker cannot finish, the agent gets a non-blocking note. A checker that is not installed is reported, never skipped
+   silently. `skylos hook recheck FILE` applies the same type policy, so a fixed
+   error clears and an open one still blocks.
+
+Hard-coded credentials (SKY-L014) block like secrets. A removed security
+control (SKY-L021: a dropped auth check or ownership test) blocks even when the
+edit only deleted lines, because deleting is how it happens. A sink on the first
+line of a multi-line call is on the changed lines when an inner line of that call
+changed, such as `options={"verify_signature": False}`. Weak hashes and insecure
+randomness (SKY-D207, SKY-D250) are always notes.
 
 Other findings on the changed lines are **notes**: Claude Code gets them as
 non-blocking `additionalContext`; they are not re-raised at `stop`.

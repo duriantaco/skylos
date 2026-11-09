@@ -345,7 +345,8 @@ skylos agent install-hooks --cursor   # Cursor (.cursor/hooks.json)
 ```
 
 - **After each edit:** verifies only the changed lines (security, secrets,
-  AI-code mistakes) and tells the agent what to fix.
+  AI-code mistakes, and the project's type checker when `type_check` is on)
+  and tells the agent what to fix.
 - **Before a file read:** blocks files that contain hard-coded secrets.
 - **Before a package install or one-shot run** (`pip`, `uvx`, `npx`,
   `pnpm dlx`, `bunx`, `go run pkg@v`, ...): blocks hallucinated or

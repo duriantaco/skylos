@@ -113,3 +113,47 @@ people running the CLI see the same result.
 Use [`--profile`](profiling.md) to investigate time spent inside Skylos's
 static scanner. The external type checker has its own `type_check.seconds`
 measurement; the scanner profile does not profile the compiler or application.
+
+## Escapes the guard blocks
+
+With a complete baseline comparison, Skylos blocks net-new ways of telling the
+compiler to look away, in production code. Existing ones, moved lines, tests and
+generated files are left alone.
+
+| Kind | Blocked when newly added |
+|---|---|
+| Suppression comments | `# type: ignore`, `# mypy: ignore-errors`, `# pyright: ignore`, `# pyrefly: ignore`, `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck` |
+| Unchecked assertions | `as any`, `<any>`, `as unknown as T`, `as never as T`, `as object as T`, `typing.cast(...)` |
+| Explicit `any` (TypeScript) | `: any`, `any[]`, `Record<string, any>` and every other written `any`, as in typescript-eslint's `no-explicit-any`. Declaration files are exempt |
+| Removed annotations (Python) | an existing parameter or return annotation dropped from a function that stays |
+
+A new bare Python `Any` on a variable, parameter or return is a warning, not a block:
+mypy's and basedpyright's strict modes both allow it, and basedpyright's recommended
+mode warns. `dict[str, Any]` is left alone. Weakening the checker's own settings in the
+working tree makes the comparison incomplete, so the check does not pass at stop.
+
+An intentional case needs a reviewed entry in the **base commit**. A session cannot
+add its own, and a reason written next to the code waives nothing:
+
+```toml
+[[tool.skylos.done.type_escape_allow]]
+file = "src/legacy/adapter.py"
+line = "value = vendor.call()  # type: ignore[attr-defined]"
+reason = "vendor stubs lag behind 3.2, see #123"
+```
+
+An entry matches that one file and exact line text, ignoring surrounding spaces, so
+moving the line keeps it and editing the line needs a fresh review. Accepted lines
+stay visible in the receipt with their reason. An entry without all three fields
+is ignored and named on the receipt.
+
+## In the agent loop
+
+With `type_check = "block"` or `"advise"` in the base commit's
+`[tool.skylos.done.checks]`, the post-edit agent hook runs the same checker on the
+file the agent just changed, with a 60-second budget, and the Stop hook repeats
+the full check through Done. A check that takes 15 seconds or more moves to Stop for
+the rest of the session, so a large project is not slowed on every edit. Introduced and unclassified errors block the edit
+in `block` mode; preexisting ones are notes; a check that cannot finish is a note
+and is retried at stop. `skylos hook recheck FILE` applies the same policy, so a
+fixed error clears and an open one still blocks. See [Agent hooks](./agent-hooks.md#post-edit).

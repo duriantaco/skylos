@@ -24,6 +24,14 @@ Layout:
 | `scripts/select_real_commits.py` | one-time corpus selection (read-only GitHub API) |
 | `tests/` | offline harness tests: `python3 -m pytest benchmarks/agent-pr-bench/tests` |
 
+`--tools skylos-hook` replays each workspace's changed files through the
+post-edit hook's own blocking policy (`harness/hook_driver.py`, one process per
+file, changed line ranges only) and scores the blocking findings against the
+same labels: a `skylos-hook` finding reuses the `skylos` label for the same
+rule, file and line (`score.LABEL_ALIASES`). Non-blocking notes and per-file
+wall times are kept as signals. This measures what an agent is told after an
+edit, not what a full scan reports.
+
 SonarQube: set `SONAR_HOST_URL`, `SONAR_TOKEN` and put `sonar-scanner` on
 `PATH` (or set `SONAR_SCANNER`). Without them the runner records
 `not run` and the tool is left out of the metric tables.

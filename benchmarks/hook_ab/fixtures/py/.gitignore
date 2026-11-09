@@ -1,0 +1,8 @@
+.venv
+node_modules
+.skylos/
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+*.db
+thumbs/

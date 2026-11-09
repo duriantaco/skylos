@@ -483,6 +483,12 @@ allow_preexisting_failures = false # true: verified already-failing tests stop b
 type_checker = "auto"              # supported repository type checker; no arbitrary commands
 type_check_timeout_seconds = 120    # 10 to 1800, only used when type_check is enabled
 
+# A reviewed compiler escape: this file, this exact line. See docs/type-checking.md.
+# [[tool.skylos.done.type_escape_allow]]
+# file = "src/legacy/adapter.py"
+# line = "value = vendor.call()  # type: ignore[attr-defined]"
+# reason = "vendor stubs lag behind 3.2, see #123"
+
 [tool.skylos.done.checks]
 tests_pass = "block"              # block | advise | shadow | off
 test_tampering = "block"

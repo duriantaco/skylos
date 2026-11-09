@@ -9,6 +9,7 @@ from skylos.rules.danger.danger_sql.sqlalchemy_provenance import (
 )
 from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
 from skylos.security.receiver_resolution import ReceiverResolver
+from skylos.rules.danger.allowlist_guards import always_exits, not_in_terms
 
 
 DB_MODULES = frozenset(
@@ -270,6 +271,55 @@ def is_parameterized_query(call: ast.Call, query_expr: ast.AST):
     return False
 
 
+def _static_sql_maps(tree: ast.AST) -> frozenset[str]:
+    """Module-level dicts of string literals that nothing in the file writes to."""
+    if not isinstance(tree, ast.Module):
+        return frozenset()
+    candidates: dict[str, int] = {}
+    for statement in tree.body:
+        if (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+        ):
+            name = statement.targets[0].id
+            value = statement.value
+            literal = (
+                isinstance(value, ast.Dict)
+                and bool(value.values)
+                and all(
+                    isinstance(item, ast.Constant) and isinstance(item.value, str)
+                    for item in value.values
+                )
+            )
+            if literal and name not in candidates:
+                candidates[name] = 1
+            elif name in candidates:
+                candidates[name] += 1
+            elif not literal:
+                candidates[name] = 2
+    written: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Delete)):
+            targets = getattr(node, "targets", None) or [getattr(node, "target", None)]
+            for target in targets:
+                if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name):
+                    written.add(target.value.id)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.attr
+            in {"update", "setdefault", "pop", "popitem", "clear", "__setitem__"}
+        ):
+            written.add(node.func.value.id)
+        elif isinstance(node, ast.Global):
+            written.update(node.names)
+    return frozenset(
+        name for name, count in candidates.items() if count == 1 and name not in written
+    )
+
+
 class _SQLFlowChecker(TaintVisitor):
     RULE_ID_SQLI = "SKY-D211"
     SEVERITY_CRITICAL = "CRITICAL"
@@ -298,6 +348,8 @@ class _SQLFlowChecker(TaintVisitor):
         self.sql_text_stack: list[dict[str, bool]] = [{}]
         self.sql_literal_stack: list[dict[str, str | None]] = [{}]
         self.builtin_names = builtin_references(tree, _TRUSTED_BUILTINS)
+        self.guard_bodies: list[list[ast.stmt]] = []
+        self.static_sql_maps = _static_sql_maps(tree)
         bindings = Counter(
             node.id
             for node in ast.walk(tree)
@@ -421,6 +473,8 @@ class _SQLFlowChecker(TaintVisitor):
             return isinstance(node.value, (str, int, float)) or node.value is None
         if isinstance(node, ast.Name):
             return self._is_sql_safe_name(node.id)
+        if self._is_static_map_lookup(node):
+            return True
         if isinstance(node, ast.JoinedStr):
             return all(
                 isinstance(value, ast.Constant)
@@ -764,7 +818,26 @@ class _SQLFlowChecker(TaintVisitor):
             or self.is_tainted(sql)
         )
 
+    def _is_static_map_lookup(self, node: ast.AST) -> bool:
+        """``QUERIES[key]`` or ``QUERIES.get(key)``: every value is a string in the source."""
+        base = None
+        if isinstance(node, ast.Subscript):
+            base = node.value
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and len(node.args) == 1
+            and not node.keywords
+        ):
+            base = node.func.value
+        if not isinstance(base, ast.Name) or base.id not in self.static_sql_maps:
+            return False
+        return not any(base.id in env for env in self.env_stack[1:])
+
     def is_tainted(self, node):
+        if self._is_static_map_lookup(node):
+            return False
         # Untrusted process input also reaches SQL text: sys.argv, sys.stdin,
         # os.environ / os.getenv (the same sources the hook policy accepts).
         if isinstance(node, (ast.Attribute, ast.Subscript)):
@@ -1008,20 +1081,24 @@ class _SQLFlowChecker(TaintVisitor):
         self._invalidate_sql_binding(node.name)
         self.sqlalchemy_text.record_name_binding(node.name)
         self.sqlalchemy_text.enter_function(node)
+        self.guard_bodies.append(node.body)
         try:
             self._record_passthrough_function(node)
             super().visit_FunctionDef(node)
         finally:
+            self.guard_bodies.pop()
             self.sqlalchemy_text.leave_scope()
 
     def visit_AsyncFunctionDef(self, node):
         self._invalidate_sql_binding(node.name)
         self.sqlalchemy_text.record_name_binding(node.name)
         self.sqlalchemy_text.enter_function(node)
+        self.guard_bodies.append(node.body)
         try:
             self._record_passthrough_function(node)
             super().visit_AsyncFunctionDef(node)
         finally:
+            self.guard_bodies.pop()
             self.sqlalchemy_text.leave_scope()
 
     def visit_ClassDef(self, node):
@@ -1128,6 +1205,19 @@ class _SQLFlowChecker(TaintVisitor):
             for child in branch:
                 self.visit(child)
         self._invalidate_branch_sql_bindings([*node.body, *node.orelse])
+        self._clear_allowlisted_names(node)
+
+    def _clear_allowlisted_names(self, node):
+        if node.orelse or not self.guard_bodies:
+            return
+        if not any(node is statement for statement in self.guard_bodies[-1]):
+            return
+        if not always_exits(node.body):
+            return
+        for name, collection in not_in_terms(node.test):
+            if not self.is_tainted(collection):
+                self.env_stack[-1][name] = False
+                self.sql_text_stack[-1][name] = True
 
     def visit_For(self, node):
         statements = [scope.copy() for scope in self.sql_statement_stack]

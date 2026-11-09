@@ -33,9 +33,10 @@ AWS_KEY_ID = "AKIAIOSFODNN7ABCDEFG"
 class FakeVerify:
     """Stands in for verify_change_path; findings keyed by file name."""
 
-    def __init__(self, findings_by_name=None, error=None):
+    def __init__(self, findings_by_name=None, error=None, file_paths=None):
         self.findings_by_name = findings_by_name or {}
         self.error = error
+        self.file_paths = file_paths or {}
         self.calls = []
 
     def __call__(self, target, **kwargs):
@@ -50,7 +51,10 @@ class FakeVerify:
                 "category": "security",
                 "message": message,
                 "suggested_fix": "Use subprocess.run([...]) without a shell.",
-                "range": {"file": name, "start_line": line},
+                "range": {
+                    "file": self.file_paths.get(name, name),
+                    "start_line": line,
+                },
             }
             for line, rule, message in self.findings_by_name.get(name, [])
         ]
@@ -234,6 +238,171 @@ def test_post_edit_caps_items_and_strips_secret_previews(tmp_path):
     assert "wJal" not in reason and "redacted" not in reason
 
 
+def _twin_verify(*files):
+    def verify(target, **kwargs):
+        findings = [
+            {
+                "rule_id": "SKY-S101",
+                "severity": "CRITICAL",
+                "category": "secret",
+                "message": f"Potential AWS key detected in {name}",
+                "suggested_fix": "Move the key to the environment.",
+                "range": {"file": name, "start_line": 1},
+            }
+            for name in files
+        ]
+        return {"status": "fail", "findings": findings}
+
+    return verify
+
+
+def test_post_edit_ignores_a_same_named_file_elsewhere(tmp_path):
+    edited = _write(tmp_path / "a" / "cli.py", "x = 1\n")
+    _write(tmp_path / "b" / "cli.py", "y = 2\n")
+    payload = {
+        "session_id": "s1",
+        "tool_name": "Write",
+        "tool_input": {"file_path": str(edited)},
+    }
+
+    code, out, text = _run(
+        tmp_path,
+        "post-edit",
+        payload,
+        client="claude",
+        deps=HookDeps(verify=_twin_verify("b/cli.py")),
+    )
+
+    assert code == 0 and text == ""
+
+
+def test_post_edit_blocks_only_on_the_edited_file(tmp_path):
+    edited = _write(tmp_path / "a" / "cli.py", "x = 1\n")
+    _write(tmp_path / "b" / "cli.py", "y = 2\n")
+    payload = {
+        "session_id": "s1",
+        "tool_name": "Write",
+        "tool_input": {"file_path": str(edited)},
+    }
+
+    _, out, _ = _run(
+        tmp_path,
+        "post-edit",
+        payload,
+        client="claude",
+        deps=HookDeps(verify=_twin_verify("b/cli.py", "a/cli.py")),
+    )
+
+    assert out["decision"] == "block"
+    assert "Skylos found 1 issue(s)" in out["reason"]
+    assert "a/cli.py" in out["reason"]
+    assert "b/cli.py" not in out["reason"]
+
+
+@pytest.mark.parametrize("report_target", [False, True])
+def test_post_edit_distinguishes_git_root_file_from_nested_twin(
+    tmp_path, report_target
+):
+    edited = _write(tmp_path / "pkg" / "app.py", "x = 1\n")
+    _write(tmp_path / "app.py", "y = 2\n")
+    reported = ["app.py"] + (["pkg/app.py"] if report_target else [])
+    payload = {
+        "session_id": "s1",
+        "tool_name": "Write",
+        "tool_input": {"file_path": str(edited)},
+    }
+
+    code, out, text = _run(
+        tmp_path,
+        "post-edit",
+        payload,
+        client="claude",
+        deps=HookDeps(verify=_twin_verify(*reported)),
+    )
+
+    assert code == 0
+    if report_target:
+        assert out["decision"] == "block"
+        assert "Skylos found 1 issue(s)" in out["reason"]
+        assert "pkg/app.py:1" in out["reason"]
+        assert "detected in pkg/app.py" in out["reason"]
+        assert "detected in app.py" not in out["reason"]
+    else:
+        assert text == ""
+
+
+@pytest.mark.parametrize("gitfile", [False, True])
+def test_post_edit_uses_the_edited_files_nested_git_root(tmp_path, gitfile):
+    nested = tmp_path / "nested"
+    edited = _write(nested / "pkg" / "app.py", "x = 1\n")
+    _write(nested / "app.py", "y = 2\n")
+    if gitfile:
+        _write(nested / ".git", "gitdir: ../worktree-metadata\n")
+    else:
+        (nested / ".git").mkdir()
+    payload = {
+        "session_id": "s1",
+        "tool_name": "Write",
+        "tool_input": {"file_path": str(edited)},
+    }
+
+    _, out, _ = _run(
+        tmp_path,
+        "post-edit",
+        payload,
+        client="claude",
+        deps=HookDeps(verify=_twin_verify("app.py", "pkg/app.py")),
+    )
+
+    assert out["decision"] == "block"
+    assert "Skylos found 1 issue(s)" in out["reason"]
+    assert "nested/pkg/app.py:1" in out["reason"]
+    assert "detected in pkg/app.py" in out["reason"]
+    assert "detected in app.py" not in out["reason"]
+
+
+@pytest.mark.parametrize("reported,expected_count", [("app.py", 1), ("pkg/app.py", 0)])
+def test_verify_findings_outside_git_uses_only_the_files_folder(
+    tmp_path, reported, expected_count
+):
+    edited = _write(tmp_path / "pkg" / "app.py", "x = 1\n")
+
+    findings = hook_cmd._verify_findings(
+        edited, tmp_path, HookDeps(verify=_twin_verify(reported))
+    )
+
+    assert len(findings) == expected_count
+    if findings:
+        assert findings[0]["path"] == str(edited)
+
+
+def test_post_edit_scopes_reports_through_a_symlinked_project_path(tmp_path):
+    root = tmp_path / "real"
+    _write(root / "pkg" / "app.py", "x = 1\n")
+    _write(root / "app.py", "y = 2\n")
+    alias = tmp_path / "alias"
+    alias.symlink_to(root, target_is_directory=True)
+    payload = {
+        "session_id": "s1",
+        "tool_name": "Write",
+        "tool_input": {"file_path": str(alias / "pkg" / "app.py")},
+    }
+
+    _, out, _ = _run(
+        alias,
+        "post-edit",
+        payload,
+        client="claude",
+        deps=HookDeps(verify=_twin_verify("app.py", "pkg/app.py")),
+    )
+
+    assert out["decision"] == "block"
+    assert "Skylos found 1 issue(s)" in out["reason"]
+    assert "pkg/app.py:1" in out["reason"]
+    assert "detected in pkg/app.py" in out["reason"]
+    assert "detected in app.py" not in out["reason"]
+
+
 def test_post_edit_non_code_file_runs_secret_scan(tmp_path):
     cfg = _write(
         tmp_path / "config" / "settings.yaml", f"aws_secret_access_key: {AWS_SECRET}\n"
@@ -293,7 +462,8 @@ def test_post_edit_codex_apply_patch(tmp_path):
         {
             "app.py": [(5, "SKY-D212", "app issue"), (9, "SKY-D3", "untouched")],
             "new.py": [(2, "SKY-D203", "new file issue")],
-        }
+        },
+        file_paths={"new.py": "pkg/new.py"},
     )
     payload = {
         "session_id": "c1",

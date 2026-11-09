@@ -680,17 +680,20 @@ def _absolutize_secret_paths(
 ) -> None:
     """Secrets report files relative to the analyzer's discovery root.
 
-    That root is the scanned directory, or the parent of a scanned file, which
-    is not necessarily the verify project root used to match findings.
+    The analyzer resolves that root upward from the scan target to the
+    project (nearest pyproject.toml, package.json, setup.py or .git), so for
+    a nested file or folder it is neither the file's folder nor the verify
+    project root used to match findings.
     """
     secrets = analysis_result.get("secrets")
     if not isinstance(secrets, list):
         return
+    from skylos.analyzer import analysis_root_for_target
+
     try:
-        resolved = scan_target.resolve()
+        base = analysis_root_for_target(scan_target)
     except OSError:
         return
-    base = resolved if resolved.is_dir() else resolved.parent
     for finding in secrets:
         if not isinstance(finding, dict):
             continue
