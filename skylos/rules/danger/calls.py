@@ -2358,7 +2358,6 @@ _WEAK_RANDOM_SECURITY_KEYWORDS = {
     "apikey",
     "auth",
     "cookie",
-    "cnonce",
     "credential",
     "csrf",
     "jwt",

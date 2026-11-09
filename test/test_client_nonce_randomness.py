@@ -200,6 +200,40 @@ def test_ambiguous_builtin_does_not_gain_nonce_finding(tmp_path, binding):
     assert not [row for row in visitor.findings if row["rule_id"] == "SKY-D250"]
 
 
+@pytest.mark.parametrize(
+    "case", [case for case in CASES if case != "rebound_secrets_is_not_proof"]
+)
+def test_standalone_checker_keeps_bounded_nonce_precision(tmp_path, case):
+    from skylos.rules.danger.danger import _DangerousCallsChecker
+
+    code, expected = CASES[case]
+    path = tmp_path / "client.py"
+    path.write_text(code)
+    findings = []
+    _DangerousCallsChecker(path, findings, tmp_path).visit(ast.parse(code))
+    rows = [row for row in findings if row["rule_id"] == "SKY-D250"]
+    assert bool(rows) is expected
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "range = object()\n",
+        "def replace():\n    global range\n    range = object()\n",
+        "namespace = globals()\nnamespace['range'] = object()\n",
+    ],
+)
+def test_standalone_nonce_proof_rejects_ambiguous_builtins(tmp_path, binding):
+    from skylos.rules.danger.danger import _DangerousCallsChecker
+
+    code = CASES["literal_digit_index"][0] + binding
+    path = tmp_path / "client.py"
+    path.write_text(code)
+    findings = []
+    _DangerousCallsChecker(path, findings, tmp_path).visit(ast.parse(code))
+    assert not [row for row in findings if row["rule_id"] == "SKY-D250"]
+
+
 def test_all_nonce_provider_probes_leave_shared_effect_budget_unchanged(tmp_path):
     from skylos.rules.danger.calls import _client_nonce_material_reaches_return
     from skylos.rules.danger.import_proof import _effects, provider_binding_is_stable

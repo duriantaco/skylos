@@ -43,6 +43,7 @@ from .calls import (
     _qualified_name_from_call as qualified_name_from_call,
     _weak_random_has_security_context,
     _weak_random_call_name,
+    _client_nonce_material_reaches_return,
     _yaml_load_without_safeloader,
     _ruamel_unsafe_type,
     track_import_aliases,
@@ -232,6 +233,12 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                 if opts and opts.get("weak_random"):
                     if not _weak_random_has_security_context(
                         node, self._current_symbol()
+                    ) and not _client_nonce_material_reaches_return(
+                        node,
+                        {
+                            "filename": self.file_path,
+                            "project_root": self._project_root,
+                        },
                     ):
                         continue
 
