@@ -1189,6 +1189,29 @@
           ]
         }
       }
+    },
+    {
+      "id": "typing-protocol-attributes",
+      "path": "fixtures/typing_protocol_attributes.py",
+      "description": "Attributes declared on a typing.Protocol are contract members, not dead code.",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Distilled from the PEP 544 protocol examples in the CPython typing documentation."
+      },
+      "expect": {
+        "absent": {
+          "unused_variables": [
+            "table_name"
+          ]
+        },
+        "present": {
+          "unused_variables": [
+            "stale_store_name",
+            "LOAD"
+          ]
+        }
+      }
     }
   ]
 }

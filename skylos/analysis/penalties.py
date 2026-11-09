@@ -1443,6 +1443,14 @@ def _check_protocol_abc(def_obj, analyzer, framework):
             if part in protocol_classes:
                 return _suppress(def_obj, "Protocol class member")
 
+    if def_obj.type == "variable" and "." in def_obj.name:
+        owner = getattr(def_obj, "python_class_owner", None)
+        if owner:
+            owner_class = str(owner[0]).rsplit(".", 1)[-1]
+            protocol_classes = getattr(framework, "protocol_classes", set())
+            if owner_class in protocol_classes:
+                return _suppress(def_obj, "Protocol class member")
+
     if def_obj.type == "method" and "." in def_obj.name:
         parts = def_obj.name.split(".")
         method_name = parts[-1]
