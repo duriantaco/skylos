@@ -1,0 +1,207 @@
+id: SKY-SCA-SRC004
+title: Package moved to a source this repository did not use
+family: supply-chain
+severity: HIGH
+languages: [npm, pnpm, Yarn, Bun, uv, Poetry, Pipfile, Cargo, Composer, Bundler and pub lockfiles]
+gate:
+  full: not_run
+  diff: counted
+  note: >-
+    Counts toward `max_dependency_vulnerabilities`, which is 0 by default, so
+    one finding fails `--gate`. It only runs in diff scans.
+run_with: >-
+  `skylos . --sca --diff origin/main` on a pull request
+
+what_it_is: >-
+  A pull request changes a lockfile so that a package comes from a private
+  registry, Git or a URL that this repository did not use for it. Skylos
+  reports the package and the new source.
+
+why_it_matters: >-
+  Skylos lists private and Git packages as "not checked" and carries on,
+  because no public advisory database covers them. Without this rule, a pull
+  request could repoint a trusted package at an attacker's server and nothing
+  would notice: the name and version look the same, and the only change is one
+  `resolved` line that reviewers rarely read.
+
+how_skylos_decides:
+  - >-
+    Runs with `--sca` when the scan has a diff base (`--diff` or
+    `--diff-base`). It reads both sides of every changed lockfile as data and
+    never installs anything.
+  - >-
+    It collects the packages each side lists as not checked because of a
+    private registry, Git or URL source. Local path and workspace packages do
+    not count.
+  - >-
+    A package is reported when the base branch did not list it as non-public,
+    or when it now comes from a host the base branch did not use for it.
+  - >-
+    Names are compared across every lockfile on the base branch, so moving a
+    lockfile to another folder is not a new source.
+  - >-
+    A package matching `internal_packages` under `[tool.skylos.supply_chain]`
+    is skipped. In CI that setting is read from the base commit, so a pull
+    request cannot exempt itself.
+
+source_refs:
+  - path: skylos/rules/sca/supply_chain_diff.py
+    symbol: "def new_source_findings("
+  - path: skylos/rules/sca/supply_chain_diff.py
+    symbol: "def _non_public_sources("
+    note: which entries count as non-public, and their hosts.
+  - path: test/test_sca_trust.py
+    symbol: "def test_lockfile_repointed_at_an_unknown_host_is_blocked("
+
+flagged_example:
+  setup: git_diff
+  expect_file: package-lock.json
+  expect_line: 15
+  base_files:
+    - filename: package-lock.json
+      language: json
+      code: |
+        {
+          "name": "shop",
+          "version": "1.0.0",
+          "lockfileVersion": 3,
+          "requires": true,
+          "packages": {
+            "": {
+              "name": "shop",
+              "version": "1.0.0",
+              "dependencies": {
+                "ms": "2.1.3"
+              }
+            },
+            "node_modules/ms": {
+              "version": "2.1.3",
+              "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+              "integrity": "sha512-6FlzubTLZG3J2a=="
+            }
+          }
+        }
+  files:
+    - filename: package-lock.json
+      language: json
+      code: |
+        {
+          "name": "shop",
+          "version": "1.0.0",
+          "lockfileVersion": 3,
+          "requires": true,
+          "packages": {
+            "": {
+              "name": "shop",
+              "version": "1.0.0",
+              "dependencies": {
+                "ms": "2.1.3"
+              }
+            },
+            "node_modules/ms": {
+              "version": "2.1.3",
+              "resolved": "https://packages.evil.example/ms-2.1.3.tgz",
+              "integrity": "sha512-6FlzubTLZG3J2a=="
+            }
+          }
+        }
+
+not_flagged_example:
+  setup: git_diff
+  base_files:
+    - filename: package-lock.json
+      language: json
+      code: |
+        {
+          "name": "shop",
+          "version": "1.0.0",
+          "lockfileVersion": 3,
+          "requires": true,
+          "packages": {
+            "": {
+              "name": "shop",
+              "version": "1.0.0",
+              "dependencies": {
+                "ms": "2.1.3"
+              }
+            },
+            "node_modules/ms": {
+              "version": "2.1.3",
+              "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+              "integrity": "sha512-6FlzubTLZG3J2a=="
+            }
+          }
+        }
+  files:
+    - filename: package-lock.json
+      language: json
+      code: |
+        {
+          "name": "shop",
+          "version": "1.0.0",
+          "lockfileVersion": 3,
+          "requires": false,
+          "packages": {
+            "": {
+              "name": "shop",
+              "version": "1.0.0",
+              "dependencies": {
+                "ms": "2.1.3"
+              }
+            },
+            "node_modules/ms": {
+              "version": "2.1.3",
+              "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+              "integrity": "sha512-6FlzubTLZG3J2a=="
+            }
+          }
+        }
+  why: >-
+    The lockfile changed, but `ms` still comes from the public registry.
+
+fix:
+  explanation: >-
+    If you didn't mean to change the source, restore the original `resolved`
+    URL and reinstall from a clean lockfile. If the package really is yours,
+    list it in `internal_packages` on the target branch first, in its own pull
+    request.
+  language: json
+  filename: package-lock.json
+  code: |
+    {
+      "name": "shop",
+      "version": "1.0.0",
+      "lockfileVersion": 3,
+      "requires": true,
+      "packages": {
+        "": {
+          "name": "shop",
+          "version": "1.0.0",
+          "dependencies": {
+            "ms": "2.1.3"
+          }
+        },
+        "node_modules/ms": {
+          "version": "2.1.3",
+          "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+          "integrity": "sha512-6FlzubTLZG3J2a=="
+        }
+      }
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Adding your own private package for the first time is reported. That is
+      intended: list it in `internal_packages` on the target branch.
+    - >-
+      A package moved between private indexes in `uv.lock`, `poetry.lock` or
+      `Pipfile.lock` is not reported, because those lockfiles don't give Skylos
+      the host.
+  suppress:
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-SCA-SRC004"]` turns the rule off for the
+        project.
+
+related: [SKY-SCA-SRC001, SKY-SCA-SRC003, SKY-SCA-INT001]

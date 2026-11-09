@@ -64,11 +64,45 @@ version.
 | SKY-SCA-AGE001 | HIGH | a locked version younger than `min_release_age_hours`; scans check it only when you set the value |
 | SKY-SCA-LIC001 | HIGH (configurable) | a licence on your deny list, or missing from your allow list |
 | SKY-SCA-HRD001 | HIGH | a change that weakens install hardening (diff scans only) |
+| SKY-SCA-SRC004 | HIGH | a pull request points a package at a private, Git or URL source this repository did not use for it, or at a new host (diff scans only) |
 
 Malware is always CRITICAL. Dependency findings count toward
 `max_dependency_vulnerabilities`, which is 0 by default; the built-in gate
 lists SKY-SCA-SRC003 and SKY-SCA-UPG002 without counting them (a gate
 policy pulled from Skylos Cloud counts them).
+
+### Private and Git packages
+
+Advisory databases don't cover packages from a private registry, Git or a URL,
+so Skylos lists them as **not checked** and still checks every public package.
+The status is `complete_with_non_registry_sources` with `complete: false`: the
+scan never claims those packages are clean. A pull request that introduces such
+a source is reported as SKY-SCA-SRC004, and packages in `internal_packages` on
+the target branch are exempt.
+
+The scan still stops with exit 2 when at least 5 packages are not checked and
+they outnumber the packages it could check, which is what a private mirror of
+public packages looks like. It also stops on contradictory records: a tarball on
+the public registry that doesn't match its package, a pnpm alternate `id`, or an
+unrecorded Yarn `virtual:` peer.
+
+### When OSV can't be reached
+
+A failed request is retried within a 20-second budget. After that, Skylos reuses
+the last good answer for that exact package version, up to 7 days old, from
+`osv-answers.json` in the user cache. Live answers always win, and a file inside
+the scanned repository is never read. The status is
+`complete_with_saved_answers` with `complete: false`, so baselines and required
+coverage refuse the scan, while known vulnerabilities still fail the gate. A
+package with no saved answer leaves the scan incomplete (exit 2).
+
+### How each package is used
+
+PyPI advisories carry `metadata.reachability_tier`, shown in a **Use** column:
+`called at app.py:4`, `imported`, `unknown`, `no import found` or `not reached`.
+Packages sort by severity and, within a severity, by use. Nothing is hidden and
+the gate counts every advisory: a package can run without an import, as a
+command-line tool does.
 
 ## Upgrade review
 
@@ -91,6 +125,11 @@ A package new to the project is compared with its previous release; an
 install hook there is reported as UPG002. A changed package that could not
 be reviewed makes the scan incomplete (exit 2). Changes in requirements
 files, `pdm.lock` and `pylock.toml` are listed as not reviewed.
+
+The same flag also runs **SKY-SCA-API001** (MEDIUM, advice only) for Python: it
+reads both releases without installing them and names your lines that use
+something removed. This check also reads `requirements*.txt` `==` pins. Anything
+it cannot read says "could not check", and it never says an upgrade is safe.
 
 ## Agent, editor and MCP settings
 
