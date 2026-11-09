@@ -177,3 +177,23 @@ def test_native_protocol_header_reads_binding_before_class_name(tmp_path, name):
         f"from typing import Protocol{alias}\nclass {name}({name}):\n    field: str\n"
     )
     assert len(_visitor(tmp_path, source).protocol_class_decls) == 1
+
+
+@pytest.mark.parametrize("call", ["configure()", "alias = configure\nalias()"])
+def test_called_local_function_applies_provider_member_writes(tmp_path, call):
+    source = (
+        "import typing\nclass Ordinary: pass\ndef configure():\n"
+        "    typing.Protocol = Ordinary\n"
+        + call
+        + "\nclass Repo(typing.Protocol):\n    stale = 1\n"
+    )
+    assert not _visitor(tmp_path, source).protocol_class_decls
+
+
+def test_called_local_slot_replacement_preserves_captured_native_class(tmp_path):
+    source = (
+        "import typing\nNative = typing.Protocol\nclass Ordinary: pass\n"
+        "def configure():\n    typing.Protocol = Ordinary\nconfigure()\n"
+        "class Repo(Native):\n    field: str\n"
+    )
+    assert len(_visitor(tmp_path, source).protocol_class_decls) == 1

@@ -15,6 +15,7 @@ _PROTOCOLS = {module + ".Protocol" for module in _MODULES}
 _SCOPES = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 _MEMBER = "$member:"
 _INVALID = "$invalid:"
+_FUNCTION = "$function:"
 _UNKNOWN = "?"
 _SETTERS = {"setattr", "delattr", "builtins.setattr", "builtins.delattr"}
 
@@ -73,6 +74,8 @@ class _ProtocolFlow(ValueFlow):
         if not isinstance(node, ast.Call):
             return
         functions = self.value(node.func)
+        for function in functions:
+            self._local_function_effects(function)
         if functions and functions <= _SETTERS and len(node.args) >= 2:
             owners = self.value(node.args[0])
             member = node.args[1]
@@ -97,6 +100,37 @@ class _ProtocolFlow(ValueFlow):
                 self._weak(_INVALID + module, {_UNKNOWN})
         for argument in [*node.args, *(keyword.value for keyword in node.keywords)]:
             self._invalidate(self.value(argument))
+
+    def _local_function_effects(self, identity):
+        summary = self.index.function_effects.get(identity)
+        if summary is None:
+            return
+        function, writes = summary
+        scope = self.index.scope(function)
+        while isinstance(scope, ast.ClassDef):
+            scope = self.index.scope(scope)
+        for root, attributes, global_name in writes:
+            owner_scope = self.index.tree if global_name else scope
+            engine = self.index.active_flows.get(id(owner_scope))
+            if engine is None:
+                cached = self.index.flows.get(id(owner_scope))
+                engine = cached[0] if cached is not None else None
+            if engine is None:
+                continue
+            owners = engine._current(root)
+            for attribute in attributes[:-1]:
+                resolved = set()
+                for owner in owners:
+                    name = owner + "." + attribute
+                    resolved.update(
+                        engine._current(_MEMBER + name) if owner in _MODULES else {name}
+                    )
+                owners = resolved
+            for owner in owners:
+                if owner in _MODULES:
+                    self._weak(_MEMBER + owner + "." + attributes[-1], {_UNKNOWN})
+                else:
+                    self._invalidate({owner})
 
     def _assign(self, target, labels, value_node=None):
         if isinstance(target, ast.Attribute):
@@ -177,6 +211,8 @@ class _ProtocolFlow(ValueFlow):
                 snapshot[name] = snapshot.get(name, frozenset()) | self._current(name)
             prior_name = self._current(node.name)
             result = super()._statement(node)
+            if isinstance(node, ast.FunctionDef) and not node.decorator_list:
+                self._bind(node.name, {_FUNCTION + str(id(node))})
             if isinstance(node, ast.ClassDef):
                 self._overlays.append({node.name: prior_name})
                 try:
@@ -206,6 +242,8 @@ class _ProtocolIndex:
         self.filename = filename
         self.parents = {}
         self.flows = {}
+        self.active_flows = {}
+        self.function_effects = {}
         self.reads = {}
         self.remaining = 200000
         self.read_work = 0
@@ -230,15 +268,33 @@ class _ProtocolIndex:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 local, declared = _scope_bindings(node)
                 self.mutable_outer.update(declared)
+                globals_ = {
+                    name
+                    for part in _scope_children(node)
+                    if isinstance(part, ast.Global)
+                    for name in part.names
+                }
+                writes = []
                 for part in _scope_children(node):
                     if isinstance(part, ast.Attribute) and isinstance(
                         part.ctx, (ast.Store, ast.Del)
                     ):
+                        attributes = [part.attr]
                         owner = part.value
                         while isinstance(owner, ast.Attribute):
+                            attributes.append(owner.attr)
                             owner = owner.value
                         if isinstance(owner, ast.Name) and owner.id not in local:
                             self.mutable_outer.add(owner.id)
+                            writes.append(
+                                (
+                                    owner.id,
+                                    tuple(reversed(attributes)),
+                                    owner.id in globals_,
+                                )
+                            )
+                if isinstance(node, ast.FunctionDef) and not node.decorator_list:
+                    self.function_effects[_FUNCTION + str(id(node))] = node, writes
 
     def scope(self, node):
         node = self.parents.get(id(node))
@@ -310,7 +366,11 @@ class _ProtocolIndex:
                 return labels
 
         engine = _ProtocolFlow(scope, self, outer, min(60000, self.remaining))
-        results = engine.run(self.watched.get(id(scope), ()))
+        self.active_flows[id(scope)] = engine
+        try:
+            results = engine.run(self.watched.get(id(scope), ()))
+        finally:
+            self.active_flows.pop(id(scope), None)
         self.remaining -= engine._steps
         if results is not None and self.complete:
             self.flows[id(scope)] = engine, results
