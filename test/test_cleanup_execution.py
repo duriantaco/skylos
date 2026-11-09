@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from copy import deepcopy
 from hashlib import sha256
+import ast
+import inspect
 import json
 import shlex
 import subprocess
 import sys
+import textwrap
 
 import pytest
 
@@ -154,12 +157,25 @@ def test_l038_revalidates_builtin_and_preserves_format_spec_and_comments(tmp_pat
     )
     edit = plan_cleanup_edit(task, tmp_path)
     assert edit["_replacement"] == source.replace("{str(value):>10}", "{value!s:>10}")
-    # Execute only these trusted test fixtures to check the particular rewrite.
-    original, rewritten = {}, {}
-    exec(source, original)
-    exec(edit["_replacement"], rewritten)
+
+    def original(value: object) -> str:
+        return f"result {str(value):>10}"
+
+    def rewritten(value: object) -> str:
+        return f"result {value!s:>10}"
+
+    # Bind the generated return expressions to directly defined test functions.
+    # The complete-source assertion above separately preserves the comment.
+    for candidate, reference in ((source, original), (edit["_replacement"], rewritten)):
+        candidate_return = ast.parse(candidate).body[0].body[0]
+        reference_return = (
+            ast.parse(textwrap.dedent(inspect.getsource(reference))).body[0].body[0]
+        )
+        assert ast.dump(candidate_return, include_attributes=False) == ast.dump(
+            reference_return, include_attributes=False
+        )
     for value in [1, None, "abc", ["x"]]:
-        assert original["render"](value) == rewritten["render"](value)
+        assert original(value) == rewritten(value)
 
 
 def test_l038_refuses_shadowed_builtin_and_ruff_disabled_rule(tmp_path):

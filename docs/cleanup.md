@@ -20,6 +20,8 @@ skylos cleanup . --from-report findings.json --format json
 The path supplied with `--from-report` defines the root used to display paths.
 Use the same root as the original scan. Saved output is explicitly labeled
 `source: saved_report`; it does not verify current files.
+The selected report may be outside the source root, but must be a regular
+UTF-8 file up to 512 MB; symlinks and special files are rejected.
 
 Review one task and its callers, make a focused change, run the project's
 relevant checks, then scan the same scope again. Dead-code candidates require

@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Any, Callable, TextIO
 
 from skylos.core.cli_shared import quiet_analyzer_logs
+from skylos.core.safe_cache_io import read_text_no_symlink
+
+MAX_SAVED_REPORT_BYTES = 512_000_000
 
 
 def _positive_int(value: str) -> int:
@@ -36,7 +39,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--from-report",
         metavar="REPORT",
-        help="Read an existing Skylos analyzer JSON report instead of scanning.",
+        help="Read a regular UTF-8 analyzer JSON file up to 512 MB instead of scanning.",
     )
     parser.add_argument("--format", choices=("human", "json"), default="human")
     parser.add_argument(
@@ -157,7 +160,15 @@ def run_cleanup_command(
             return 0
 
         if args.from_report:
-            raw = Path(args.from_report).expanduser().read_text(encoding="utf-8")
+            # The operator explicitly chooses the report, which may live outside
+            # the scanned project. It is data only and cannot authorize edits.
+            raw = read_text_no_symlink(
+                Path(args.from_report).expanduser(), max_bytes=MAX_SAVED_REPORT_BYTES
+            )
+            if raw is None:
+                raise ValueError(
+                    "Saved report must be a readable regular UTF-8 file up to 512 MB, without a symlink"
+                )
         else:
             raw = _scan(target, root, analyze_func)
 

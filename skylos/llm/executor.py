@@ -148,7 +148,9 @@ class RemediationExecutor:
         destination = self._safe_new_project_file(candidate.test_file)
         if destination is None:
             return False
-        return _write_new_text_no_symlink(destination, candidate.content)
+        return _write_new_text_no_symlink(
+            destination, candidate.content, project_root=self.project_root
+        )
 
     def _safe_new_project_file(self, file_path: str) -> Path | None:
         raw = Path(file_path)
@@ -492,30 +494,113 @@ class RemediationExecutor:
             return None
 
 
-def _write_new_text_no_symlink(path: Path, text: str) -> bool:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-
-    fd: int | None = None
+def _write_new_text_no_symlink(path: Path, text: str, *, project_root: Path) -> bool:
+    """Create a new project file through pinned, no-follow directory handles."""
+    if (
+        os.name != "posix"
+        or not hasattr(os, "O_DIRECTORY")
+        or not hasattr(os, "O_NOFOLLOW")
+        or any(
+            operation not in os.supports_dir_fd
+            for operation in (os.open, os.stat, os.unlink)
+        )
+    ):
+        return False
     try:
-        fd = os.open(
-            path, flags, 0o644
-        )  # skylos: ignore[SKY-D215] path was contained by _safe_new_project_file
-        stat_result = os.fstat(fd)
-        if not stat.S_ISREG(stat_result.st_mode):
+        root = Path(project_root)
+        candidate = Path(path)
+        if not root.is_absolute() or ".." in root.parts:
+            return False
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        relative = candidate.relative_to(root)
+        if not relative.parts or ".." in relative.parts:
+            return False
+    except (TypeError, ValueError):
+        return False
+
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        directory_flags |= os.O_CLOEXEC
+        flags |= os.O_CLOEXEC
+    directory_fds: list[int] = []
+    directory_links: list[tuple[int, str, int]] = []
+    fd: int | None = None
+    created: os.stat_result | None = None
+    completed = False
+
+    def directories_unchanged() -> bool:
+        for parent_fd, component, child_fd in directory_links:
+            named = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+            held = os.fstat(child_fd)
+            if not stat.S_ISDIR(named.st_mode) or (named.st_dev, named.st_ino) != (
+                held.st_dev,
+                held.st_ino,
+            ):
+                return False
+        return True
+
+    try:
+        directory_fds.append(os.open(os.sep, directory_flags))
+        for component in (*root.parts[1:], *relative.parts[:-1]):
+            parent_fd = directory_fds[-1]
+            child_fd = os.open(  # skylos: ignore[SKY-D215] single component, pinned parent and O_NOFOLLOW directory
+                component, directory_flags, dir_fd=parent_fd
+            )
+            directory_fds.append(child_fd)
+            directory_links.append((parent_fd, component, child_fd))
+        if not directories_unchanged():
+            return False
+        fd = os.open(  # skylos: ignore[SKY-D215] root-contained basename, pinned no-follow parents and exclusive create
+            relative.name, flags, 0o644, dir_fd=directory_fds[-1]
+        )
+        created = os.fstat(fd)
+        if (
+            not stat.S_ISREG(created.st_mode)
+            or created.st_nlink != 1
+            or not directories_unchanged()
+        ):
             return False
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             fd = None
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
+            held = os.fstat(handle.fileno())
+            named = os.stat(
+                relative.name, dir_fd=directory_fds[-1], follow_symlinks=False
+            )
+            if (
+                held.st_nlink != 1
+                or not stat.S_ISREG(named.st_mode)
+                or (named.st_dev, named.st_ino) != (held.st_dev, held.st_ino)
+                or not directories_unchanged()
+            ):
+                return False
+        completed = True
         return True
-    except (OSError, UnicodeError):
+    except (OSError, UnicodeError, ValueError):
         return False
     finally:
         if fd is not None:
             try:
                 os.close(fd)
+            except OSError:
+                pass
+        if not completed and created is not None and directory_fds:
+            try:
+                named = os.stat(
+                    relative.name, dir_fd=directory_fds[-1], follow_symlinks=False
+                )
+                if (named.st_dev, named.st_ino) == (created.st_dev, created.st_ino):
+                    os.unlink(  # skylos: ignore[SKY-D215] contained basename, pinned parent and owned inode
+                        relative.name, dir_fd=directory_fds[-1]
+                    )
+            except OSError:
+                pass
+        for directory_fd in reversed(directory_fds):
+            try:
+                os.close(directory_fd)
             except OSError:
                 pass

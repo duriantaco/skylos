@@ -55,9 +55,16 @@ def _relative(root: Path, file: str) -> Path:
 @contextmanager
 def _source_file(root: Path, relative: Path):
     """Open every path component without following project symlinks."""
+    # Keep containment at the file boundary: O_NOFOLLOW alone does not reject
+    # parent components or an absolute path that resets descriptor traversal.
+    root = _root_path(root)
+    relative = _relative(root, str(relative))
     if os.open not in os.supports_dir_fd or not hasattr(os, "O_NOFOLLOW"):
         raise ValueError("safe cleanup writes are unavailable on this platform")
-    directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    # The canonical user-selected project directory defines the authorized base.
+    directory = os.open(  # skylos: ignore[SKY-D215] authorized project root
+        root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    )
     source_fd = None
     try:
         for part in relative.parts[:-1]:
@@ -66,7 +73,9 @@ def _source_file(root: Path, relative: Path):
             )
             os.close(directory)
             directory = next_directory
-        source_fd = os.open(
+        # _relative rejects absolute escapes and parent components; each child
+        # is opened without following links under the held directory descriptor.
+        source_fd = os.open(  # skylos: ignore[SKY-D215] checked descriptor-relative path
             relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
         )
         metadata = os.fstat(source_fd)
