@@ -69,6 +69,12 @@ not inspect `.npmrc`, verify artifact integrity, or establish supply-chain trust
 
 ### uv source coverage
 
+If at least 5 packages are not checked this way and they outnumber the packages
+Skylos could check, the scan is incomplete and exits 2, with
+`most_packages_not_checked: true` in the receipt. A private mirror of public
+packages does this: passing would say little about the project's dependencies.
+Findings for the packages it could check are still reported.
+
 Skylos validates `uv.lock` source records before classifying them. Recognized
 Git, URL, path and private-index sources have no supported public package
 identity: they are **not checked**, never fetched or queried as public PyPI

@@ -864,6 +864,31 @@ def _upload_scan_root(base_dir, project_root):
     return os.path.join(base_dir, project_root)
 
 
+SCA_COVERAGE_PATH_LISTS = (
+    "lockfile_not_checked",
+    "lockfile_issues",
+    "unsupported_inputs",
+    "skipped_inputs",
+)
+
+
+def sca_coverage_for_upload(coverage: dict[str, Any]) -> dict[str, Any]:
+    """Dependency receipts name files by absolute local path; only the file
+    name leaves the machine."""
+    cleaned = dict(coverage)
+    for key in SCA_COVERAGE_PATH_LISTS:
+        entries = cleaned.get(key)
+        if not isinstance(entries, list):
+            continue
+        kept = []
+        for entry in entries:
+            if isinstance(entry, dict) and isinstance(entry.get("file"), str):
+                entry = {**entry, "file": entry["file"].replace("\\", "/").rsplit("/", 1)[-1]}
+            kept.append(entry)
+        cleaned[key] = kept
+    return cleaned
+
+
 def _prepare_report_upload(
     result_json,
     *,
@@ -1030,6 +1055,8 @@ def _prepare_report_upload(
             for key in UPLOAD_SUMMARY_KEYS
             if isinstance(analysis_summary.get(key), dict)
         }
+        if "sca_coverage" in coverage:
+            coverage["sca_coverage"] = sca_coverage_for_upload(coverage["sca_coverage"])
         if coverage:
             scan_summary.update(
                 {

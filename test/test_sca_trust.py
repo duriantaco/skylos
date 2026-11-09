@@ -8,6 +8,7 @@ import time
 import pytest
 from ca9.models import ApiUsageHit, Evidence, Verdict, VerdictResult, Vulnerability
 
+from skylos.api import sca_coverage_for_upload
 from skylos.cicd.workflow import generate_workflow
 from skylos.core.cloud_gate import cloud_ignores_unreachable_dependency
 from skylos.core.gate_incomplete import _blocking_sca_reason
@@ -238,6 +239,103 @@ def test_contradictory_source_still_stops_the_scan(tmp_path, entry):
 
     assert receipt["status"] == "incomplete"
     assert _blocking_sca_reason(receipt) is not None
+
+
+def _mirror_lock(private_count, public_count):
+    packages = {}
+    for index in range(private_count):
+        name = f"corp-{index}"
+        packages[f"node_modules/{name}"] = {
+            "version": "1.0.0",
+            "resolved": f"https://npm.corp.example/{name}/-/{name}-1.0.0.tgz",
+            "integrity": INTEGRITY,
+        }
+    for index in range(public_count):
+        name = f"pub-{index}"
+        packages[f"node_modules/{name}"] = {
+            "version": "1.0.0",
+            "resolved": f"https://registry.npmjs.org/{name}/-/{name}-1.0.0.tgz",
+            "integrity": INTEGRITY,
+        }
+    return npm_lock(packages)
+
+
+@pytest.mark.parametrize(
+    "private_count,public_count",
+    [(30, 0), (6, 1), (6, 5)],
+    ids=["everything behind a mirror", "nearly everything", "more unchecked than checked"],
+)
+def test_scan_stops_when_most_packages_went_unchecked(
+    monkeypatch, tmp_path, private_count, public_count
+):
+    (tmp_path / "package-lock.json").write_text(
+        _mirror_lock(private_count, public_count)
+    )
+
+    result = _scan(monkeypatch, Live(), tmp_path)
+    reason = _blocking_sca_reason(result.receipt)
+
+    assert result.receipt["status"] == "incomplete"
+    assert result.receipt["most_packages_not_checked"] is True
+    assert reason is not None
+    assert f"{private_count} packages come from a private registry" in reason.text
+
+
+def test_known_vulnerability_is_kept_when_most_packages_went_unchecked(
+    monkeypatch, tmp_path
+):
+    (tmp_path / "package-lock.json").write_text(_mirror_lock(6, 1))
+
+    result = _scan(monkeypatch, Live({"pub-0": ["GHSA-test-one"]}), tmp_path)
+
+    assert result.receipt["status"] == "incomplete"
+    assert [f["metadata"]["package_name"] for f in result] == ["pub-0"]
+
+
+@pytest.mark.parametrize(
+    "private_count,public_count",
+    [(4, 0), (4, 1), (6, 6), (6, 20)],
+    ids=["a few alone", "a few with public", "half", "a minority"],
+)
+def test_private_minority_stays_a_listed_limitation(
+    monkeypatch, tmp_path, private_count, public_count
+):
+    (tmp_path / "package-lock.json").write_text(
+        _mirror_lock(private_count, public_count)
+    )
+
+    result = _scan(monkeypatch, Live(), tmp_path)
+
+    assert result.receipt["status"] == NON_REGISTRY_COVERAGE_STATUS
+    assert "most_packages_not_checked" not in result.receipt
+    assert _blocking_sca_reason(result.receipt) is None
+
+
+def test_uploaded_receipt_names_files_without_local_paths():
+    coverage = {
+        "status": NON_REGISTRY_COVERAGE_STATUS,
+        "lockfile_not_checked": [
+            {
+                "name": "corp",
+                "reason": "non_public_registry",
+                "file": "/Users/someone/work/app/poetry.lock",
+            }
+        ],
+        "lockfile_issues": [{"file": "C:\\work\\app\\package-lock.json"}],
+        "unsupported_inputs": [{"file": "/home/runner/work/app/pom.xml"}],
+    }
+
+    uploaded = json.dumps(sca_coverage_for_upload(coverage))
+
+    assert "/Users/someone" not in uploaded and "runner" not in uploaded
+    assert "work" not in uploaded
+    cleaned = sca_coverage_for_upload(coverage)
+    assert cleaned["lockfile_not_checked"][0] == {
+        "name": "corp",
+        "reason": "non_public_registry",
+        "file": "poetry.lock",
+    }
+    assert cleaned["lockfile_issues"][0]["file"] == "package-lock.json"
 
 
 def _git(root, *args):
