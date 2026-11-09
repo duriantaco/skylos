@@ -46,6 +46,10 @@ shifts when the syntax anchor is unchanged. A finding that disappears is marked
 `not_reported`, not behavior-verified. Use `--no-state` for a stateless report.
 Saved reports cannot authorize edits or state changes.
 
+On platforms without the guarded filesystem operations needed for local
+history, use `--no-state` to build the queue. Deterministic edits also require
+those operations and remain unavailable there.
+
 Deterministic edits currently support conservative Python unused-function
 deletions (`SKY-U001`), allowlisted standard-library import deletions
 (`SKY-U002`) and freshly revalidated f-string conversion simplifications
@@ -128,8 +132,9 @@ advice from defects and orders work by recorded severity and purpose.
 Desloppify's
 [`merge_issues.py`](https://github.com/peteromallet/desloppify/blob/3a7735d531a96b6a226bfbdc9fd662b14195f857/desloppify/engine/_state/merge_issues.py)
 tracks reappearance and disappeared findings. Its out-of-scope verification
-branch illustrates why absence needs a comparable scan scope. Skylos's initial
-queue makes no resolution claim; Cloud already has coverage-qualified issue
+branch illustrates why absence needs a comparable scan scope. Skylos records
+absence as `not_reported`; explicit edit receipts separately record tests,
+rescan results and rollback. Cloud retains its coverage-qualified issue
 resolution. Desloppify's pinned
 [license](https://github.com/peteromallet/desloppify/blob/3a7735d531a96b6a226bfbdc9fd662b14195f857/LICENSE)
 is OSNL v0.2, another reason to keep this implementation independent.
@@ -142,9 +147,11 @@ reconciles a persistent finding ledger. Its
 [`domain-review` instructions](https://github.com/paslavskyi/anti-slop/blob/539ed54c1bb7efb9799cf3b88a5cde7dd30b4988/skills/domain-review/SKILL.md)
 delegate blocking versus follow-up judgment to the model. Its
 [`stop hook`](https://github.com/paslavskyi/anti-slop/blob/539ed54c1bb7efb9799cf3b88a5cde7dd30b4988/hooks/stop-hook.mjs)
-deduplicates using filenames and change counts. For future domain review,
-Skylos can use its parsed dependency graph, actual baseline comparisons and
-content digests rather than treating equal change counts as equal changes.
+deduplicates using filenames and change counts. Skylos's optional model review
+uses bounded Python excerpts and explicitly labeled candidate callers. A more
+complete domain review could use its full parsed dependency graph. Patch
+verification already uses comparable scans and source content rather than
+treating equal change counts as equal changes.
 
 Existing Skylos detectors already cover duplicate code, long functions,
 coupling, cohesion, broad or empty exception handlers, unfinished code and
@@ -153,11 +160,20 @@ and negative controls. A new name alone does not expand detection coverage.
 
 ## Cloud integration
 
-Cloud's existing Cleanup page now includes a **Cleanup tasks** panel above its
-removal workflow. It loads quality, AI-code and dead-code findings from the
-project's latest native code scan. Each task links to its source finding and
-existing issue history. Copy task includes the recorded source revision,
-finding identifiers, message and a bounded source excerpt for an agent.
+The Cloud Cleanup workspace loads quality, AI-code and dead-code findings from
+the project's latest native code scan. Choose a current task, move to the next,
+or review related work grouped by the existing issue, otherwise by rule and
+folder. These groups organize review without proving a shared root cause.
+Each task links to its source finding and existing issue history. Copy task
+includes the recorded source revision, finding identifiers, message and a
+bounded source excerpt for an agent.
+
+Where an existing shared issue is available, the workspace reuses its owner,
+work status and comments for outcome notes, subject to the member's role.
+Record the commit or PR, checks run, and reasons for deferral there. Changing
+work status does not resolve scanner findings; comparable follow-up scans
+remain necessary. Findings without shared history retain their source-scan
+review path.
 
 Upload through the existing scan flow; Cloud derives the queue from those
 saved findings rather than trusting a second task upload:
@@ -170,7 +186,8 @@ skylos . --quality --ai-defects --upload
 | --- | --- |
 | Pure task projection | `src/lib/cleanup-tasks.ts` over existing finding rows and group IDs |
 | Paginated source data | `src/lib/cleanup-task-data.ts` checks exact counts and bounds retrieval at 5,000 rows |
-| Render two queues and copy task context | `src/components/CleanupTaskQueue.tsx` in the project Cleanup page |
+| Select current/next work, review groups and copy context | `src/components/CleanupTaskQueue.tsx` in the project Cleanup page |
+| Shared ownership, work status and notes | Existing `AssignIssue` and `IssueComments` for the task's issue group |
 | Classify tasks | Reuse `finding-types.ts`; respect stored optional-advice marks when available |
 | Show new/existing state and verified progress | Reuse `finding-newness.ts`, `scan-comparison.ts` and `scan-coverage.ts` |
 | Retain constrained automated PRs | Keep eligibility in `cleanup-flow.ts` and `cleanup-prs/` independent from task visibility |
@@ -188,10 +205,11 @@ catalog is synchronized. The broader queue does not expand which findings
 qualify for automatic removal PRs. These changes are source integrations and
 require the normal Cloud deployment before appearing on the hosted site.
 
-Subsequent work can add bounded domain review as explicitly labeled advice,
-and benchmark truly missing detectors. Cloud's durable identities and verified
-scan lifecycle should own persistent progress; CLI observation IDs should not
-authorize Cloud resolutions or automated edits.
+Optional bounded model review already returns explicitly labeled advice.
+Broader cross-module review and additional detectors need separate evidence
+and benchmarks. Cloud's durable identities and comparable scan lifecycle own
+shared progress; CLI observation IDs do not authorize Cloud resolutions or
+automated edits.
 
 Positioning supported by the implementation: **“Evidence-based cleanup for
 AI-assisted code: find defects, prioritize cleanup, review fixes.”** Claims of
