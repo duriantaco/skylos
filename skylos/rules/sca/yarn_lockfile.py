@@ -21,6 +21,7 @@ from skylos.rules.sca.lockfile_types import (
     LockfileInventory,
     LockfileLimitError,
     LockfileParseError,
+    not_checked_source,
 )
 from skylos.rules.sca.npm_lockfile import _exact_version, _name, _source
 from skylos.rules.sca.package_sources import (
@@ -375,8 +376,22 @@ def parse_yarn_lock(
             locator = _descriptor(entry.get("resolution"))
             if locator:
                 non_registry.add(locator[0])
-        if error:
+        named_problem = dict(problem, name=grouped[0][0])
+        if error == "non_registry_source" and "@virtual:" in str(
+            entry.get("resolution")
+        ):
             inventory.unresolved.append(dict(problem, reason=error, source_type=source))
+        elif error == "non_registry_source":
+            inventory.not_checked.append(
+                not_checked_source(named_problem, error, source)
+            )
+        elif error == "unsupported_package_source" and source == "local":
+            inventory.not_checked.append(
+                not_checked_source(named_problem, error, source)
+            )
+        elif error:
+            inventory.unresolved.append(dict(problem, reason=error, source_type=source))
+        if error:
             if error == "non_registry_source":
                 _add_source_record(inventory, entry, grouped, version, path, problem["line"])
         markers = _metadata(entry, problem, inventory)

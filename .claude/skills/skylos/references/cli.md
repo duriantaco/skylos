@@ -48,7 +48,8 @@ Individual check flags:
   are `CRITICAL` with `metadata.malicious` and are never dev-only demoted.
   Supply-chain checks via `ca9.api`: `SKY-SCA-SRC001` dependency confusion
   (needs `[tool.skylos.supply_chain] internal_packages`), `SKY-SCA-SRC003`
-  unpinned Git / unhashed URL, `SKY-SCA-INT001` lockfile entry without
+  unpinned Git / unhashed URL, `SKY-SCA-SRC004` (diff scans) a package moved to
+  a source the repository did not use, `SKY-SCA-INT001` lockfile entry without
   integrity, `SKY-SCA-AGE001` (only with `min_release_age_hours`). Missing ca9
   is a note in `sca_coverage.supply_chain.notes`, not an error.
   `analysis_summary.dependency_inventory`, `supply_chain_posture`,

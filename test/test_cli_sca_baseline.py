@@ -10,6 +10,7 @@ import skylos.cli as cli
 from skylos.core.baseline import save_baseline
 from skylos.core.git_safety import read_only_git_environment
 from skylos.rules.sca import vulnerability_scanner as sca
+from skylos.rules.sca import osv_answers
 from test.test_cli_sca_sarif import (
     ADVISORY_ID,
     RULE_ID,
@@ -638,6 +639,7 @@ def test_cli_incomplete_advisory_lookup_preserves_known_finding_and_fails(
 ):
     _write_lockfile(project, kind)
     _capture_baseline(project, monkeypatch)
+    osv_answers.store_path().unlink()
     osv.fail_details = True
 
     exit_code, result, sarif = _run_cli(project, monkeypatch, "--baseline", *extra_args)

@@ -1690,6 +1690,9 @@ def _check_data_model_fields(def_obj, analyzer, framework):
         def_obj.type == "variable"
         and "." in def_obj.name
         and def_obj.name not in getattr(analyzer, "_module_variable_names", ())
+        # These visitors resolve reads against the declared member owner.
+        # A same-named field on another type is not a read of this field.
+        and not str(def_obj.filename).endswith((".dart", ".cs"))
     ):
         _, attr = def_obj.name.rsplit(".", 1)
         dotted_variable_counts = getattr(

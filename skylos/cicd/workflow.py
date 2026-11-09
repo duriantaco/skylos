@@ -34,6 +34,12 @@ PINNED_ACTIONS_CHECKOUT_PR_HEAD = (
 PINNED_ACTIONS_SETUP_PYTHON = (
     "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
 )
+PINNED_ACTIONS_CACHE_RESTORE = (
+    "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+)
+PINNED_ACTIONS_CACHE_SAVE = (
+    "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+)
 PINNED_ACTIONS_UPLOAD_ARTIFACT = (
     "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
 )
@@ -846,8 +852,28 @@ def generate_workflow(
         analysis_flags = " " + analysis_flags
     baseline_flag = " --baseline" if use_baseline else ""
     upgrade_flag = ""
+    answers_restore_step = ""
+    answers_save_step = ""
     if "--sca" in analysis_flags.split():
         upgrade_flag = " --review-upgrades"
+        answers_restore_step = f"""      - name: Restore saved OSV answers
+        continue-on-error: true
+        uses: {PINNED_ACTIONS_CACHE_RESTORE}
+        with:
+          path: ~/.cache/skylos/osv-answers.json
+          key: skylos-osv-answers-${{{{ github.run_id }}}}
+          restore-keys: skylos-osv-answers-
+
+"""
+        answers_save_step = f"""      - name: Save OSV answers
+        if: always()
+        continue-on-error: true
+        uses: {PINNED_ACTIONS_CACHE_SAVE}
+        with:
+          path: ~/.cache/skylos/osv-answers.json
+          key: skylos-osv-answers-${{{{ github.run_id }}}}
+
+"""
     # Pull requests compare with the target branch; merge groups with the
     # queue's base commit. Either way the scan is diff-scoped and its policy
     # comes from that base, never from the change.
@@ -1001,11 +1027,11 @@ jobs:
       - name: Install Skylos
         run: {gate_install_command}
 
-      - name: Run Skylos Analysis
+{answers_restore_step}      - name: Run Skylos Analysis
         run: |
 {analysis_run}{merge_group_step_env}
 {llm_step}{defend_step}
-      - name: Quality Gate
+{answers_save_step}      - name: Quality Gate
         if: always()
         run: |
 {gate_run}{merge_group_step_env}

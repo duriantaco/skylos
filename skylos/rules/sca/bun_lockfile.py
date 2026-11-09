@@ -27,6 +27,7 @@ from skylos.rules.sca.lockfile_types import (
     LockfileInventory,
     LockfileLimitError,
     LockfileParseError,
+    not_checked_source,
 )
 from skylos.rules.sca.npm_lockfile import _exact_version, _name
 
@@ -245,13 +246,12 @@ def parse_bun_lock(
             continue
         if resolution.startswith(_GIT_PREFIXES) or "://" in resolution:
             non_registry.add(name)
-            inventory.unresolved.append(
-                dict(
-                    problem,
-                    reason="non_registry_source",
-                    source_type="git"
-                    if resolution.startswith(_GIT_PREFIXES)
-                    else "external",
+            source_type = "external"
+            if resolution.startswith(_GIT_PREFIXES):
+                source_type = "git"
+            inventory.not_checked.append(
+                not_checked_source(
+                    dict(problem, name=name), "non_registry_source", source_type
                 )
             )
             continue
@@ -263,7 +263,14 @@ def parse_bun_lock(
         source, error = _registry_source(entry)
         if error:
             non_registry.add(name)
-            inventory.unresolved.append(dict(problem, reason=error, source_type=source))
+            if error == "non_registry_source":
+                inventory.not_checked.append(
+                    not_checked_source(dict(problem, name=name), error, source)
+                )
+            else:
+                inventory.unresolved.append(
+                    dict(problem, reason=error, source_type=source)
+                )
             continue
         is_direct = not _is_nested(key) and name in direct
         inventory.dependencies.append(

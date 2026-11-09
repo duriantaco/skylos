@@ -355,7 +355,7 @@ def test_pnpm_nonregistry_and_workspace_links_are_not_queried_as_public_packages
 
     assert _query_identities(osv) == {("example", "1.2.3", "npm")}
     assert result.receipt["complete"] is False
-    assert result.receipt["unresolved_lockfile_dependency_count"] >= 1
+    assert result.receipt["non_registry_lockfile_dependency_count"] >= 1
     assert result.receipt["manifest_source_conflict_count"] == 2
     assert "private.invalid" not in json.dumps(result.receipt)
     assert [item["metadata"]["package_name"] for item in result] == ["example"]
@@ -545,7 +545,7 @@ def test_pnpm_local_directories_and_links_do_not_make_scan_incomplete(tmp_path, 
     }
 
 
-def test_pnpm_git_dependency_still_makes_scan_incomplete(tmp_path, osv):
+def test_pnpm_git_dependency_limits_coverage_without_stopping_the_scan(tmp_path, osv):
     from test.test_pnpm_lockfile import VITE_V9
 
     _write_text_lockfile(
@@ -560,6 +560,7 @@ def test_pnpm_git_dependency_still_makes_scan_incomplete(tmp_path, osv):
     result = sca.scan_dependencies(tmp_path)
 
     assert result.receipt["complete"] is False
-    assert result.receipt["status"] == "incomplete"
-    assert result.receipt["unresolved_lockfile_dependency_count"] == 1
+    assert result.receipt["status"] == "complete_with_non_registry_sources"
+    assert result.receipt["unresolved_lockfile_dependency_count"] == 0
+    assert result.receipt["non_registry_lockfile_dependency_count"] == 1
     assert "pathe" not in {query["package"]["name"] for query in osv.queries}

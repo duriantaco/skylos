@@ -40,6 +40,10 @@ def reasons(inventory):
     return {issue["reason"] for issue in inventory.unresolved}
 
 
+def not_checked_reasons(inventory):
+    return {issue["reason"] for issue in inventory.not_checked}
+
+
 @pytest.mark.parametrize("version", [6, 9])
 def test_transitives_multiple_versions_and_all_environment_metadata(version):
     result = parse(
@@ -180,7 +184,7 @@ def test_private_alias_excludes_both_installed_and_real_names(version):
     )
     assert result.dependencies == []
     assert result.non_registry_names == ["actual", "alias"]
-    assert "non_registry_source" in reasons(result)
+    assert "non_registry_source" in not_checked_reasons(result)
 
 
 @pytest.mark.parametrize(
@@ -210,8 +214,46 @@ def test_private_alias_excludes_both_installed_and_real_names(version):
 def test_non_public_or_unproven_resolution_is_not_queried(resolution):
     result = parse(document(packages={"parent@1.0.0": {"resolution": resolution}}))
     assert result.dependencies == []
-    assert result.unresolved
+    assert result.unresolved or result.not_checked
     assert result.non_registry_names == ["parent"]
+
+
+@pytest.mark.parametrize(
+    "resolution",
+    [
+        {"tarball": "https://registry.npmjs.org/other/-/other-1.0.0.tgz"},
+        {"type": "directory", "directory": "packages/parent", "commit": "x"},
+        {"tarball": "file:vendor/parent.tgz", "registry": "https://x.invalid/"},
+        {"integrity": "fixture", "unexpected": "source"},
+        {},
+        None,
+    ],
+)
+def test_contradictory_or_malformed_resolution_still_stops_the_scan(resolution):
+    result = parse(document(packages={"parent@1.0.0": {"resolution": resolution}}))
+    assert result.dependencies == []
+    assert result.unresolved
+    assert not_checked_reasons(result) == set()
+
+
+@pytest.mark.parametrize(
+    "resolution",
+    [
+        {"tarball": "https://registry.example.invalid/parent/-/parent-1.0.0.tgz"},
+        {
+            "type": "git",
+            "repo": "https://example.invalid/parent.git",
+            "commit": "fixture",
+        },
+        {"integrity": "fixture", "registry": "https://private.example.invalid/"},
+    ],
+)
+def test_valid_private_resolution_is_listed_instead_of_stopping_the_scan(resolution):
+    result = parse(document(packages={"parent@1.0.0": {"resolution": resolution}}))
+    assert result.dependencies == []
+    assert result.unresolved == []
+    assert not_checked_reasons(result) == {"non_registry_source"}
+    assert result.not_checked[0]["name"] == "parent"
 
 
 @pytest.mark.parametrize(
@@ -250,6 +292,7 @@ def test_v9_snapshot_alternate_id_is_not_ignored():
     result = parse(document(snapshots={"parent@1.0.0": {"id": "alternate-identity"}}))
     assert result.dependencies == []
     assert reasons(result) == {"non_registry_source"}
+    assert result.not_checked == []
 
 
 def test_private_parent_keeps_public_children_and_their_importer_context():
@@ -941,8 +984,11 @@ def test_unproven_tarball_alias_stays_unresolved(resolution, version):
     assert ("zod", "4.4.3") not in {
         (dep["name"], dep["version"]) for dep in result.dependencies
     }
-    assert "non_registry_source" in reasons(result)
     assert "zod443" in result.non_registry_names
+    if "npm.example.invalid" in resolution:
+        assert "non_registry_source" in not_checked_reasons(result)
+    else:
+        assert "non_registry_source" in reasons(result)
 
 
 VITE_V9 = """\
@@ -1090,13 +1136,17 @@ def test_vite_patch_catalog_peer_workspace_and_string_libc_forms_resolve():
     assert by_name["sass-embedded-linux-x64"]["dependency_markers"]["libc"] == ["glibc"]
 
 
-def test_git_dependency_stays_unresolved_not_silently_unchecked():
+def test_git_dependency_is_listed_never_silently_unchecked():
     text = VITE_V9.replace(
         "  pathe@2.0.3:\n    resolution: {integrity: sha512-pa}\n",
         "  pathe@2.0.3:\n    resolution: {type: git, repo: 'https://github.com/x/pathe.git', commit: abc}\n",
     )
     result = parse_text(text)
-    assert reasons(result) == {"non_registry_source"}
+    assert [
+        entry["name"]
+        for entry in result.not_checked
+        if entry["reason"] == "non_registry_source"
+    ] == ["pathe"]
     assert "pathe" not in {dep["name"] for dep in result.dependencies}
     assert "pathe" in result.non_registry_names
 

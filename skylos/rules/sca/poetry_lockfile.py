@@ -23,6 +23,8 @@ from skylos.rules.sca.lockfile_types import (
     LockfileInventory,
     LockfileLimitError,
     LockfileParseError,
+    NON_REGISTRY_REASONS,
+    not_checked_source,
 )
 from skylos.rules.sca.package_sources import (
     MAX_SOURCE_RECORDS,
@@ -482,7 +484,10 @@ def parse_poetry_lock(
                     inventory.non_registry_names.append(name)
             if _version(version):
                 issue["version"] = version
-            inventory.unresolved.append(issue)
+            if name and reason in NON_REGISTRY_REASONS:
+                inventory.not_checked.append(not_checked_source(issue, reason, kind))
+            else:
+                inventory.unresolved.append(issue)
             if kind in {"git", "url"}:
                 _add_source_record(
                     inventory, package, name, version, kind, path, line, metadata

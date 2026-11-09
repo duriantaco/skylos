@@ -9,11 +9,25 @@ NON_REGISTRY_COVERAGE_STATUS = "complete_with_non_registry_sources"
 # pom.xml, ...). `complete` is false; `unsupported_inputs` names them. Not an
 # operational failure, so it never makes a scan exit 2 on its own.
 UNSUPPORTED_INPUTS_COVERAGE_STATUS = "complete_with_unsupported_inputs"
+SAVED_ANSWERS_COVERAGE_STATUS = "complete_with_saved_answers"
 NON_REGISTRY_LOCKFILE_NAMES = frozenset(
-    {"uv.lock", "Cargo.lock", "composer.lock", "Gemfile.lock", "pubspec.lock"}
+    {
+        "uv.lock",
+        "Cargo.lock",
+        "composer.lock",
+        "Gemfile.lock",
+        "pubspec.lock",
+        "package-lock.json",
+        "npm-shrinkwrap.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "poetry.lock",
+        "Pipfile.lock",
+        "bun.lock",
+    }
 )
 _NON_REGISTRY_NAME = re.compile(
-    r"[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?"
+    r"@?[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?"
 )
 
 

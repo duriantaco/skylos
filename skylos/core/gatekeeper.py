@@ -1133,6 +1133,7 @@ def sca_coverage_warnings(results):
     """Describe requested dependency checks without implying full coverage."""
     return (
         _sca_receipt_warnings(results)
+        + _saved_answer_warnings(results)
         + _upgrade_review_warnings(results)
         + _upgrade_api_warnings(results)
         + _workflow_audit_warnings(results)
@@ -1220,6 +1221,22 @@ def _upgrade_review_warnings(results):
             + more
         )
     return lines
+
+
+def _saved_answer_warnings(results):
+    saved = results
+    for key in ("analysis_summary", "sca_coverage", "query", "saved_answers"):
+        if not isinstance(saved, dict):
+            return []
+        saved = saved.get(key)
+    if not isinstance(saved, dict):
+        return []
+    return [
+        "SCA used saved answers: OSV.dev could not be reached, so "
+        f"{saved.get('package_count', 0)} packages were checked against answers "
+        f"up to {saved.get('oldest_age_hours', 0)} hours old. Advisories published "
+        "since then are missing; rerun when OSV.dev is reachable."
+    ]
 
 
 def _sca_receipt_warnings(results):

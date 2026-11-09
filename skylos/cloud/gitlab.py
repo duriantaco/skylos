@@ -174,6 +174,7 @@ def scan_receipt(result, *, analyzer_owned=False, full_scan=False) -> dict[str, 
                     "complete_with_unresolved_versions": True,
                     "no_supported_manifests": False,
                     "complete_with_non_registry_sources": False,
+                    "complete_with_saved_answers": False,
                 }
                 complete = complete and isinstance(status, str) and status in expected
                 if status == "complete_with_non_registry_sources":

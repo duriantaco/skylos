@@ -368,6 +368,8 @@ entfernen und alle Zugangsdaten zu rotieren, die eine Installation lesen
 konnte. Derselbe Scan prüft über die ca9-Engine die Lieferkette: Dependency
 Confusion für deine `internal_packages` (`SKY-SCA-SRC001`), Git-Abhängigkeiten
 ohne festen Commit und URL-Abhängigkeiten ohne Hash (`SKY-SCA-SRC003`),
+in Pull Requests ein Paket aus einer Quelle, die das Repository bisher nicht
+verwendet hat (`SKY-SCA-SRC004`),
 Lockfile-Einträge ohne Integritäts-Hash (`SKY-SCA-INT001`) und, wenn du
 `min_release_age_hours` setzt, Versionen jünger als dieses Fenster
 (`SKY-SCA-AGE001`). Das JSON enthält zusätzlich ein Paketinventar und eine

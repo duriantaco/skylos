@@ -1147,8 +1147,9 @@ demoted as dev-only, and tell you to remove the package and rotate the
 credentials installs could read. The same scan runs supply-chain checks
 through the ca9 engine: dependency confusion for your `internal_packages`
 (`SKY-SCA-SRC001`), Git dependencies not pinned to a commit and URL
-dependencies without a hash (`SKY-SCA-SRC003`), lockfile entries without an
-integrity hash (`SKY-SCA-INT001`), and, when you set `min_release_age_hours`,
+dependencies without a hash (`SKY-SCA-SRC003`), a pull request pointing a
+package at a source the repository did not use (`SKY-SCA-SRC004`), lockfile
+entries without an integrity hash (`SKY-SCA-INT001`), and, when you set `min_release_age_hours`,
 versions newer than that window (`SKY-SCA-AGE001`). JSON adds a package
 inventory and a supply-chain posture (lockfile committed, frozen CI installs,
 install scripts disabled, release-age cooldown, pinned actions, no

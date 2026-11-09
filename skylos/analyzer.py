@@ -3173,6 +3173,13 @@ class Skylos:
                 csharp_by_name[definition.name].append(definition)
                 csharp_by_simple[definition.simple_name].append(definition)
 
+        from skylos.deadcode.csharp_references import CSharpReferenceIndex
+
+        csharp_references = CSharpReferenceIndex(
+            csharp_by_name,
+            getattr(self, "_csharp_reference_context_by_file", {}),
+        )
+
         def _matching_type_members(
             type_name: str, member_name: str, ref_file: str
         ) -> list:
@@ -3220,6 +3227,14 @@ class Skylos:
                 progress_callback(i, total_refs or 1, Path("PHASE: mark refs"))
             ref_family = _source_family(ref_file)
 
+            if ref_family == "dart" and str(ref_file) in getattr(
+                self, "_dart_bound_files", ()
+            ):
+                # The project binder has resolved this file's references in
+                # its Dart library/import scope. Bare-name fallback would
+                # incorrectly credit private members in unrelated libraries.
+                continue
+
             if ref_family == "rust" and ref.startswith("@rust-import:"):
                 from skylos.visitors.languages.rust.import_bindings import (
                     mark_import_reference,
@@ -3229,6 +3244,8 @@ class Skylos:
                 continue
 
             if str(ref_file).endswith(_CSHARP_SOURCE_EXTS):
+                if csharp_references.mark(ref, ref_file):
+                    continue
                 if ref.startswith("@type:"):
                     type_name = ref[len("@type:") :]
                     matches = [
@@ -3259,6 +3276,7 @@ class Skylos:
                         matches = same_file or candidates
                     for definition in matches:
                         definition.references += 1
+                    csharp_references.mark_owners(matches, ref, ref_file)
                     continue
 
                 ref_name, separator, arity_text = ref.rpartition("#")
@@ -3290,6 +3308,7 @@ class Skylos:
                     matches = same_file or candidates
                 for definition in matches:
                     definition.references += 1
+                csharp_references.mark_owners(matches, ref, ref_file)
                 continue
 
             if ref.startswith("~method."):
@@ -4036,7 +4055,11 @@ class Skylos:
     def _build_def_call_graph(self, definitions=None):
         definitions = self.defs if definitions is None else definitions
         call_graph = defaultdict(set)
-        for defn in definitions.values():
+        dart_graph = getattr(self, "_dart_binding_call_graph", {})
+        for key, defn in definitions.items():
+            if str(defn.filename) in getattr(self, "_dart_bound_files", ()):
+                call_graph[key].update(dart_graph.get(key, ()))
+                continue
             calls = getattr(defn, "calls", None)
             if calls and isinstance(calls, (set, list, frozenset)):
                 call_graph[defn.name].update(calls)
@@ -4058,9 +4081,13 @@ class Skylos:
     def _entry_reachability_roots(self, definitions=None) -> set[str]:
         definitions = self.defs if definitions is None else definitions
         entry_points = set()
-        for defn in definitions.values():
+        for key, defn in definitions.items():
             if self._is_entry_reachability_root(defn):
-                entry_points.add(defn.name)
+                entry_points.add(
+                    key
+                    if str(defn.filename) in getattr(self, "_dart_bound_files", ())
+                    else defn.name
+                )
         return entry_points
 
     def _walk_call_graph(self, roots: set[str], call_graph) -> set[str]:
@@ -4962,6 +4989,8 @@ class Skylos:
         configuration_coverage = {}
         ruby_security_coverage = []
         swift_reflection_facts = {}
+        dart_bindings = {}
+        csharp_reference_context = {}
 
         injected = False
         if custom_rules_data and not os.getenv("SKYLOS_CUSTOM_RULES"):
@@ -5117,6 +5146,14 @@ class Skylos:
                     facts = getattr(framework_flags, "swift_reflection_facts", None)
                     if isinstance(facts, dict) and facts and not file_analysis_error:
                         swift_reflection_facts[str(file)] = facts
+                if str(file).endswith(_DART_SOURCE_EXTS):
+                    facts = getattr(test_flags, "dart_bindings", None)
+                    if isinstance(facts, dict) and not file_analysis_error:
+                        dart_bindings[str(file)] = facts
+                if str(file).endswith(_CSHARP_SOURCE_EXTS):
+                    context = getattr(test_flags, "csharp_reference_context", None)
+                    if isinstance(context, dict) and not file_analysis_error:
+                        csharp_reference_context[str(file)] = context
                 if effective_file_configs is not None:
                     effective_file_configs[str(Path(file).resolve())] = cfg
                     for worker_findings in (q_finds, d_finds, pro_finds):
@@ -6689,6 +6726,17 @@ class Skylos:
                     self.defs, swift_reflection_facts, scan_root=root
                 )
             )
+        self._dart_bound_files = set()
+        self._dart_binding_call_graph = {}
+        if dart_bindings:
+            from skylos.visitors.languages.dart.bindings import (
+                apply_dart_project_bindings,
+            )
+
+            binding_report = apply_dart_project_bindings(self.defs, dart_bindings, root)
+            self._dart_bound_files = set(binding_report.get("processed_files", ()))
+            self._dart_binding_call_graph = binding_report.get("call_graph", {})
+        self._csharp_reference_context_by_file = csharp_reference_context
         self._mark_refs(progress_callback=progress_callback, scan_root=root)
         self._mark_reflected_module_members(set(modmap.values()))
         self._mark_call_arg_method_refs()

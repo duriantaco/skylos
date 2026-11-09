@@ -13,6 +13,7 @@ from skylos.rules.sca.lockfile_types import (
     LockfileInventory,
     LockfileLimitError,
     LockfileParseError,
+    not_checked_source,
 )
 from skylos.rules.sca.package_sources import (
     MAX_SOURCE_RECORDS,
@@ -505,7 +506,13 @@ def parse_package_lock(
             problem["version"] = exact_version
         source_type, source_error = _source(entry, name)
         if source_error:
-            unresolved(source_error, source_type)
+            if source_error == "non_registry_source":
+                non_registry_names.update((name, installed_name))
+                inventory.not_checked.append(
+                    not_checked_source(problem, source_error, source_type)
+                )
+            else:
+                unresolved(source_error, source_type)
             _add_source_record(
                 inventory, entry, name, exact_version, source_type, path, line,
                 direct=location in direct,
