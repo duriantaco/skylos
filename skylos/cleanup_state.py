@@ -247,6 +247,39 @@ def _atomic_write_state(root, snapshot, text):
         ) from exc
 
 
+def mutate_cleanup_workspace(root: Path, scope: dict, callback):
+    """Atomically update one scoped workspace using trusted local code.
+
+    The callback receives the current bucket, not serialized code or source.
+    Exceptions leave the last complete state untouched; returned data is detached.
+    """
+    if not isinstance(scope, dict) or not callable(callback):
+        raise ValueError("Cleanup workspace requires a scope and a local callback")
+    expected_scope = deepcopy(scope)
+    key = scope_identity(expected_scope)
+    with _history_lock(root) as directory:
+        state, snapshot = _snapshot_from_directory(directory)
+        bucket = state["scopes"].setdefault(
+            key, {"scope": deepcopy(expected_scope), "tasks": {}}
+        )
+
+        def validate():
+            if (
+                not isinstance(bucket, dict)
+                or bucket.get("scope") != expected_scope
+                or not isinstance(bucket.get("tasks"), dict)
+            ):
+                raise ValueError("Cleanup workspace scope or task history is malformed")
+
+        validate()
+        result = deepcopy(callback(bucket))
+        validate()
+        _atomic_write_state(
+            root, snapshot, json.dumps(state, sort_keys=True, indent=2) + "\n"
+        )
+        return result
+
+
 def update_cleanup_state(
     root: Path,
     scope: dict,
