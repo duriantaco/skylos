@@ -513,7 +513,12 @@ def _load_module_facts(
     type_checking_dynamic: set[str] = set()
     type_checking_node_ids: dict[str, set[int]] = {}
     reasons: dict[str, str] = {}
-    use_index = active_module_facts_index() is not None
+    index = active_module_facts_index()
+    use_index = index is not None
+    if index is not None:
+        index.reference_targets.update(
+            str(modules[name]) for name in reference_modules if name in modules
+        )
     for module_name, file_path in modules.items():
         if use_index and module_name not in reference_modules:
             # Only reference modules need a tree; for the rest, membership in

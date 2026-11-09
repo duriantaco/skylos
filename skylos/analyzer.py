@@ -3836,6 +3836,7 @@ class Skylos:
         analysis_errors=None,
         include_review_proofs=False,
         review_config=None,
+        enable_dead_code=True,
     ):
         from skylos.reporting.result_builder import build_analysis_result
 
@@ -3871,6 +3872,7 @@ class Skylos:
             analysis_errors=analysis_errors,
             include_review_proofs=include_review_proofs,
             review_config=review_config,
+            enable_dead_code=enable_dead_code,
         )
 
     @releases_python_ast_cache
@@ -3901,6 +3903,9 @@ class Skylos:
         skip_generated=False,
         generated_keep_paths=None,
         all_advice=True,
+        enable_dead_code=True,
+        enable_repo_policy=True,
+        verification_files=None,
     ) -> str:
         if not isinstance(path, (str, list, tuple)):
             raise TypeError(
@@ -4073,7 +4078,7 @@ class Skylos:
                         *(["security"] if enable_danger else []),
                         *(["quality"] if enable_quality else []),
                         *(["ai_defects"] if enable_ai_defects else []),
-                        "dead_code",
+                        *(["dead_code"] if enable_dead_code else []),
                         *(["dependencies"] if enable_sca else []),
                         *(["secrets"] if enable_secrets else []),
                     ],
@@ -4088,6 +4093,11 @@ class Skylos:
                 },
                 "workspaces": workspace_inventory.to_dict(project_root),
             }
+            if not enable_dead_code:
+                result["analysis_summary"]["dead_code"] = {
+                    "enabled": False,
+                    "status": "not_enabled",
+                }
             if self._generated_file_scope is not None:
                 result["analysis_summary"]["generated_files"] = (
                     self._generated_file_scope.summary()
@@ -4223,7 +4233,10 @@ class Skylos:
                         )
 
                         manifest_findings = scan_manifest_dependency_hallucinations(
-                            no_source_manifest_root,
+                            project_root
+                            if verification_files is not None
+                            else no_source_manifest_root,
+                            target_files=verification_files,
                         )
                         for finding in manifest_findings:
                             if finding.get("rule_id") in project_ignore:
@@ -5498,6 +5511,7 @@ class Skylos:
 
                     manifest_findings = scan_manifest_dependency_hallucinations(
                         project_root,
+                        target_files=verification_files,
                     )
                     _extend_unsuppressed_ai_defect_findings(
                         manifest_findings,
@@ -5893,18 +5907,19 @@ class Skylos:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
 
-            try:
-                policy_findings = analyze_repo_policy(
-                    project_root,
-                    project_cfg,
-                    changed_files=requested_changed_files,
-                    exclude_folders=exclude_folders,
-                )
-                if policy_findings:
-                    all_quality.extend(policy_findings)
-            except Exception:
-                if os.getenv("SKYLOS_DEBUG"):
-                    logger.error(traceback.format_exc())
+            if enable_repo_policy:
+                try:
+                    policy_findings = analyze_repo_policy(
+                        project_root,
+                        project_cfg,
+                        changed_files=requested_changed_files,
+                        exclude_folders=exclude_folders,
+                    )
+                    if policy_findings:
+                        all_quality.extend(policy_findings)
+                except Exception:
+                    if os.getenv("SKYLOS_DEBUG"):
+                        logger.error(traceback.format_exc())
 
         all_sca = []
         if enable_sca:
@@ -6046,162 +6061,168 @@ class Skylos:
         self._param_method_refs = all_param_method_refs
         self._call_arg_types = all_call_arg_types
 
-        try:
-            from skylos.deadcode.java_fxml_refs import collect_java_fxml_refs
+        unused_ts_exports = []
+        if enable_dead_code:
+            try:
+                from skylos.deadcode.java_fxml_refs import collect_java_fxml_refs
 
-            java_fxml_refs = collect_java_fxml_refs(
-                Path(root),
-                files,
-                exclude_folders=exclude_folders,
-            )
-            self.refs.extend(java_fxml_refs)
-        except Exception:
-            if os.getenv("SKYLOS_DEBUG"):
-                logger.error("Java FXML liveness scan failed", exc_info=True)
+                java_fxml_refs = collect_java_fxml_refs(
+                    Path(root),
+                    files,
+                    exclude_folders=exclude_folders,
+                )
+                self.refs.extend(java_fxml_refs)
+            except Exception:
+                if os.getenv("SKYLOS_DEBUG"):
+                    logger.error("Java FXML liveness scan failed", exc_info=True)
 
-        self._browser_script_entry_files = set()
-        try:
-            from skylos.deadcode.browser_refs import collect_browser_script_entry_files
-
-            self._browser_script_entry_files = collect_browser_script_entry_files(
-                Path(root), files, exclude_folders=exclude_folders
-            )
-        except Exception:
-            if os.getenv("SKYLOS_DEBUG"):
-                logger.error("Browser script entry scan failed", exc_info=True)
-
-        try:
-            from skylos.deadcode.browser_refs import (
-                collect_browser_event_handler_refs,
-            )
-
-            browser_handler_refs = collect_browser_event_handler_refs(
-                Path(root),
-                files,
-                exclude_folders=exclude_folders,
-            )
-            self.refs.extend(browser_handler_refs)
-        except Exception:
-            if os.getenv("SKYLOS_DEBUG"):
-                logger.error(
-                    "Browser event handler liveness scan failed", exc_info=True
+            self._browser_script_entry_files = set()
+            try:
+                from skylos.deadcode.browser_refs import (
+                    collect_browser_script_entry_files,
                 )
 
-        for top_level_ref in all_top_level_refs:
-            defn = self.defs.get(top_level_ref)
-            if defn is not None:
-                _mark_evidence_ref(defn, "top_level_execution")
+                self._browser_script_entry_files = collect_browser_script_entry_files(
+                    Path(root), files, exclude_folders=exclude_folders
+                )
+            except Exception:
+                if os.getenv("SKYLOS_DEBUG"):
+                    logger.error("Browser script entry scan failed", exc_info=True)
 
-        if progress_callback:
-            progress_callback(0, 1, Path("PHASE: mark refs"))
-        self._mark_refs(progress_callback=progress_callback)
-        self._mark_reflected_module_members(set(modmap.values()))
-        self._mark_call_arg_method_refs()
-        mark_signature_contract_parameters(self.defs)
+            try:
+                from skylos.deadcode.browser_refs import (
+                    collect_browser_event_handler_refs,
+                )
 
-        if progress_callback:
-            progress_callback(0, 1, Path("PHASE: dead-code liveness"))
-        self._apply_dead_code_liveness(files)
+                browser_handler_refs = collect_browser_event_handler_refs(
+                    Path(root),
+                    files,
+                    exclude_folders=exclude_folders,
+                )
+                self.refs.extend(browser_handler_refs)
+            except Exception:
+                if os.getenv("SKYLOS_DEBUG"):
+                    logger.error(
+                        "Browser event handler liveness scan failed", exc_info=True
+                    )
 
-        if progress_callback:
-            progress_callback(0, 1, Path("PHASE: hierarchy refs"))
-        self._resolve_hierarchy_refs()
+            for top_level_ref in all_top_level_refs:
+                defn = self.defs.get(top_level_ref)
+                if defn is not None:
+                    _mark_evidence_ref(defn, "top_level_execution")
 
-        if progress_callback:
-            progress_callback(0, 1, Path("PHASE: heuristics"))
-        self._apply_heuristics()
+            if progress_callback:
+                progress_callback(0, 1, Path("PHASE: mark refs"))
+            self._mark_refs(progress_callback=progress_callback)
+            self._mark_reflected_module_members(set(modmap.values()))
+            self._mark_call_arg_method_refs()
+            mark_signature_contract_parameters(self.defs)
 
-        if progress_callback:
-            progress_callback(0, 1, Path("PHASE: exports"))
-        self._mark_exports()
+            if progress_callback:
+                progress_callback(0, 1, Path("PHASE: dead-code liveness"))
+            self._apply_dead_code_liveness(files)
 
-        from skylos.visitors.languages.csharp.reachability import (
-            demote_application_public_symbols,
-        )
+            if progress_callback:
+                progress_callback(0, 1, Path("PHASE: hierarchy refs"))
+            self._resolve_hierarchy_refs()
 
-        demote_application_public_symbols(
-            self.defs.values(),
-            project_root,
-            files,
-            analysis_scope=self._analysis_scope,
-            analysis_errors=analysis_errors,
-            exclude_folders=exclude_folders,
-        )
+            if progress_callback:
+                progress_callback(0, 1, Path("PHASE: heuristics"))
+            self._apply_heuristics()
 
-        self._demote_unconsumed_ts_exports(
-            files, exclude_folders, workspace_inventory=workspace_inventory
-        )
+            if progress_callback:
+                progress_callback(0, 1, Path("PHASE: exports"))
+            self._mark_exports()
 
-        if progress_callback:
-            progress_callback(0, 1, Path("PHASE: entry reachability"))
-        evidence_root_names = {
-            name
-            for name, defn in self.defs.items()
-            if getattr(defn, "type", None) in ("function", "method")
-            and _has_evidence_marker(defn, _ROOT_EVIDENCE_MARKERS)
-        }
-        self._apply_entry_reachability(evidence_root_names=evidence_root_names)
+            from skylos.visitors.languages.csharp.reachability import (
+                demote_application_public_symbols,
+            )
 
-        if progress_callback:
-            progress_callback(0, 1, Path("PHASE: transitive dead code"))
-        self._propagate_transitive_dead()
-        self._prepare_python_reachability(files, analysis_errors, module_names=modmap)
-        # Resolve library callbacks from surviving callers, so speculative
-        # callback cycles cannot become roots or consume ordinary references.
-        self._apply_external_protocol_liveness(files)
-        self._refresh_python_reachability()
-        if self._mark_discovered_subclasses():
+            demote_application_public_symbols(
+                self.defs.values(),
+                project_root,
+                files,
+                analysis_scope=self._analysis_scope,
+                analysis_errors=analysis_errors,
+                exclude_folders=exclude_folders,
+            )
+
+            self._demote_unconsumed_ts_exports(
+                files, exclude_folders, workspace_inventory=workspace_inventory
+            )
+
+            if progress_callback:
+                progress_callback(0, 1, Path("PHASE: entry reachability"))
+            evidence_root_names = {
+                name
+                for name, defn in self.defs.items()
+                if getattr(defn, "type", None) in ("function", "method")
+                and _has_evidence_marker(defn, _ROOT_EVIDENCE_MARKERS)
+            }
+            self._apply_entry_reachability(evidence_root_names=evidence_root_names)
+
+            if progress_callback:
+                progress_callback(0, 1, Path("PHASE: transitive dead code"))
+            self._propagate_transitive_dead()
+            self._prepare_python_reachability(
+                files, analysis_errors, module_names=modmap
+            )
+            # Resolve library callbacks from surviving callers, so speculative
+            # callback cycles cannot become roots or consume ordinary references.
+            self._apply_external_protocol_liveness(files)
             self._refresh_python_reachability()
-        self._suppress_standalone_orm_models()
+            if self._mark_discovered_subclasses():
+                self._refresh_python_reachability()
+            self._suppress_standalone_orm_models()
 
-        grep_verify_report = {
-            "enabled": bool(grep_verify),
-            "rescued_count": 0,
-        }
-        self._dead_code_scope_keys = _without_generated_definitions(
-            _changed_definition_keys(
+            grep_verify_report = {
+                "enabled": bool(grep_verify),
+                "rescued_count": 0,
+            }
+            self._dead_code_scope_keys = _without_generated_definitions(
+                _changed_definition_keys(
+                    self.defs,
+                    project_root,
+                    requested_changed_files,
+                ),
                 self.defs,
                 project_root,
-                requested_changed_files,
-            ),
-            self.defs,
-            project_root,
-            getattr(self, "_generated_file_scope", None),
-        )
-        self._grep_verify_report = grep_verify_report
-        if grep_verify:
-            grep_verify_report["project_cache_enabled"] = bool(grep_cache)
-            if progress_callback:
-                progress_callback(0, 1, Path("PHASE: grep verify"))
-            grep_verify_report["rescued_count"] = self._grep_verify(
-                use_project_cache=grep_cache
+                getattr(self, "_generated_file_scope", None),
             )
-            if grep_verify_report.get("complete") is False:
-                analysis_errors.append(
-                    _grep_verify_error_payload(
-                        project_root,
-                        grep_verify_report,
-                        getattr(self, "_grep_verify_incomplete_candidates", ()),
-                    )
+            self._grep_verify_report = grep_verify_report
+            if grep_verify:
+                grep_verify_report["project_cache_enabled"] = bool(grep_cache)
+                if progress_callback:
+                    progress_callback(0, 1, Path("PHASE: grep verify"))
+                grep_verify_report["rescued_count"] = self._grep_verify(
+                    use_project_cache=grep_cache
                 )
+                if grep_verify_report.get("complete") is False:
+                    analysis_errors.append(
+                        _grep_verify_error_payload(
+                            project_root,
+                            grep_verify_report,
+                            getattr(self, "_grep_verify_incomplete_candidates", ()),
+                        )
+                    )
 
-        dead_ts_files = self._find_dead_ts_files(
-            files, exclude_folders, workspace_inventory=workspace_inventory
-        )
-        _extend_unsuppressed_dead_file_findings(
-            dead_ts_files,
-            project_ignore=project_ignore,
-            per_file_ignore_lines=per_file_ignore_lines,
-            per_file_ignore_rules=per_file_ignore_rules,
-            unused_files=empty_files,
-            all_suppressed=all_suppressed,
-        )
+            dead_ts_files = self._find_dead_ts_files(
+                files, exclude_folders, workspace_inventory=workspace_inventory
+            )
+            _extend_unsuppressed_dead_file_findings(
+                dead_ts_files,
+                project_ignore=project_ignore,
+                per_file_ignore_lines=per_file_ignore_lines,
+                per_file_ignore_rules=per_file_ignore_rules,
+                unused_files=empty_files,
+                all_suppressed=all_suppressed,
+            )
 
-        unused_ts_exports = self._find_unused_ts_exports(
-            files,
-            exclude_folders,
-            workspace_inventory=workspace_inventory,
-        )
+            unused_ts_exports = self._find_unused_ts_exports(
+                files,
+                exclude_folders,
+                workspace_inventory=workspace_inventory,
+            )
 
         if enable_quality:
             from skylos.analysis.typing_scope import scope_typing_findings
@@ -6270,6 +6291,7 @@ class Skylos:
             analysis_errors=analysis_errors,
             include_review_proofs=include_review_proofs,
             review_config=project_cfg,
+            enable_dead_code=enable_dead_code,
         )
         if outside_diff_warnings:
             result["analysis_warnings"] = outside_diff_warnings
@@ -6457,6 +6479,9 @@ def analyze(
     skip_generated=False,
     generated_keep_paths=None,
     all_advice=True,
+    enable_dead_code=True,
+    enable_repo_policy=True,
+    verification_files=None,
 ) -> str:
     return Skylos().analyze(
         path,
@@ -6484,6 +6509,9 @@ def analyze(
         skip_generated=skip_generated,
         generated_keep_paths=generated_keep_paths,
         all_advice=all_advice,
+        enable_dead_code=enable_dead_code,
+        enable_repo_policy=enable_repo_policy,
+        verification_files=verification_files,
     )
 
 

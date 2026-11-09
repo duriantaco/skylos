@@ -4,6 +4,7 @@ import fnmatch
 import glob
 import json
 import os
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -468,6 +469,20 @@ def _discover_undeclared_packages(
 
 
 def discover_workspace_inventory(project_root: Path) -> WorkspaceInventory:
+    """Discover once per analyzer run, returning an independent inventory."""
+    from skylos.analysis.ast_cache import run_memo
+
+    root = project_root.resolve()
+    inventory = run_memo(
+        ("typescript-workspace-inventory", str(root)),
+        lambda: _discover_workspace_inventory(root),
+    )
+    # Consumers historically receive mutable dataclasses, lists and sets.
+    # Keep the shared snapshot private so a caller cannot alter a later pass.
+    return deepcopy(inventory)
+
+
+def _discover_workspace_inventory(project_root: Path) -> WorkspaceInventory:
     root = project_root.resolve()
 
     root_package_json = root / "package.json"

@@ -1527,6 +1527,7 @@ def plain_module_facts(file_path, module_name, local_modules):
         if facts is not None:
             return STATUS_OK, facts, token
 
+    index.rebuilt += 1
     source, tree = load_python_module(file_path, MODE_REPLACE)
     if source is None:
         index.store(file_path, token, module_name, status=STATUS_UNREADABLE)

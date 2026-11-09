@@ -523,11 +523,25 @@ def _quiet():
     previous = logging.root.manager.disable
     logging.disable(logging.CRITICAL)
     sink = io.StringIO()
+    diagnostic_stream = sys.stderr
     try:
         with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
             yield
     finally:
         logging.disable(previous)
+        # Normal analyzer output stays quiet. Explicit benchmark diagnostics
+        # must survive this boundary without entering the hook's JSON stdout.
+        if (
+            os.environ.get("SKYLOS_VERIFY_STATS") == "1"
+            and diagnostic_stream is not None
+            and not getattr(diagnostic_stream, "closed", False)
+        ):
+            for line in sink.getvalue().splitlines():
+                if line.startswith("SKYLOS_VERIFY_STATS="):
+                    try:
+                        print(line, file=diagnostic_stream)
+                    except (OSError, ValueError):
+                        break
 
 
 # --------------------------------------------------------------------------

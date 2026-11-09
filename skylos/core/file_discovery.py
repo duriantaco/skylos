@@ -139,11 +139,29 @@ def should_exclude_path(
     return _matches_candidates(
         file_path,
         root_path,
-        [
+        _policy_candidates(root_path, exclude_folders),
+    )
+
+
+def _policy_candidates(
+    root_path: Path, patterns: Sequence[str] | None
+) -> tuple[str, ...]:
+    """Share immutable pattern expansion within one analyzer run.
+
+    File discovery still checks each file's current identity and containment;
+    this caches only the policy expansion used by its separate callers.
+    """
+    from skylos.analysis.ast_cache import run_memo
+
+    selection = tuple(patterns or ())
+    key = ("discovery-policy-candidates", str(root_path.absolute()), selection)
+    return run_memo(
+        key,
+        lambda: tuple(
             candidate
-            for exclude_folder in exclude_folders
-            for candidate in _exclude_candidates(exclude_folder, root_path)
-        ],
+            for pattern in selection
+            for candidate in _exclude_candidates(pattern, root_path)
+        ),
     )
 
 
@@ -182,11 +200,7 @@ class _PathMatcher:
 
     def __init__(self, root_path: Path, patterns: Sequence[str] | None) -> None:
         self.root = root_path
-        self.candidates = [
-            candidate
-            for pattern in patterns or ()
-            for candidate in _exclude_candidates(pattern, root_path)
-        ]
+        self.candidates = _policy_candidates(root_path, patterns)
 
     def __call__(self, file_path: Path) -> bool:
         return _matches_candidates(file_path, self.root, self.candidates)
@@ -353,9 +367,7 @@ def discover_source_files(
             for file_path in [*git_files, *forced_includes]:
                 if file_path.suffix.lower() not in ext_set:
                     continue
-                resolved = _resolve_contained_source_file(
-                    file_path, target, resolver
-                )
+                resolved = _resolve_contained_source_file(file_path, target, resolver)
                 if resolved is None:
                     continue
                 if resolved in seen:
@@ -402,9 +414,7 @@ def discover_source_files(
                 file_path = base / filename
                 if file_path.suffix.lower() not in ext_set:
                     continue
-                resolved = _resolve_contained_source_file(
-                    file_path, target, resolver
-                )
+                resolved = _resolve_contained_source_file(file_path, target, resolver)
                 if resolved is None:
                     continue
                 if include_matcher(file_path):
