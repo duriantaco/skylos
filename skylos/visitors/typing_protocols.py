@@ -116,6 +116,32 @@ class _ProtocolFlow(ValueFlow):
             return
         super()._delete(target)
 
+    def _eager_class_effects(self, node, prior_name):
+        # A class body runs now, but its imports and ordinary names stay in
+        # the class namespace. Only shared provider capabilities flow back.
+        def outer(name):
+            if isinstance(self.scope, ast.ClassDef) and not name.startswith(
+                (_MEMBER, _INVALID)
+            ):
+                return self._outer(name)
+            return prior_name if name == node.name else self._current(name)
+
+        body = _ProtocolFlow(
+            node,
+            self.index,
+            outer,
+            min(60000, max(1, self.index.remaining - self._steps)),
+        )
+        result = body.run(())
+        self.index.remaining -= body._steps
+        if result is None or self.index.remaining <= 0:
+            for module in _MODULES:
+                self._weak(_INVALID + module, {_UNKNOWN})
+            return
+        for name, labels in body.state.names.items():
+            if name.startswith((_MEMBER, _INVALID)):
+                self._bind(name, labels)
+
     def _statement(self, node):
         self.position = getattr(node, "lineno", 0)
         if isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -149,15 +175,23 @@ class _ProtocolFlow(ValueFlow):
                 | {_MEMBER + protocol for protocol in _PROTOCOLS}
             ):
                 snapshot[name] = snapshot.get(name, frozenset()) | self._current(name)
+            prior_name = self._current(node.name)
             result = super()._statement(node)
             if isinstance(node, ast.ClassDef):
-                for base in node.bases:
-                    expression = base.value if isinstance(base, ast.Subscript) else base
-                    # Include effects elsewhere in the header before accepting
-                    # an earlier read of the provider capability.
-                    self._results[id(expression)] = self._results.get(
-                        id(expression), frozenset()
-                    ) | self.value(expression)
+                self._overlays.append({node.name: prior_name})
+                try:
+                    for base in node.bases:
+                        expression = (
+                            base.value if isinstance(base, ast.Subscript) else base
+                        )
+                        # Headers read the previous class-name binding, while
+                        # provider effects elsewhere in the header still apply.
+                        self._results[id(expression)] = self._results.get(
+                            id(expression), frozenset()
+                        ) | self.value(expression)
+                finally:
+                    self._overlays.pop()
+                self._eager_class_effects(node, prior_name)
                 for child in _scope_children(node):
                     if isinstance(child, (ast.Global, ast.Nonlocal)):
                         for name in child.names:

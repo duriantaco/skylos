@@ -125,3 +125,55 @@ def test_deferred_mutation_and_unrelated_class_keep_dead_members(
     assert any(
         row.get("simple_name", row["name"]) == name for row in result.get(section, [])
     )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "    typing.Protocol = Ordinary\n",
+        "    alias = typing\n    alias.Protocol = Ordinary\n",
+        "    configure(typing)\n",
+        "    setter = setattr\n    setter(typing, 'Protocol', Ordinary)\n",
+        "    typing.__dict__['Protocol'] = Ordinary\n",
+        "    class Nested:\n        typing.Protocol = Ordinary\n",
+    ],
+)
+def test_eager_class_body_provider_effects_reach_later_bases(tmp_path, body):
+    source = (
+        "import typing\nclass Ordinary: pass\nclass Configure:\n"
+        + body
+        + "class Repo(typing.Protocol):\n    stale = 1\n"
+    )
+    assert not _visitor(tmp_path, source).protocol_class_decls
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import typing\nNative = typing.Protocol\nclass Configure:\n    typing.Protocol = replacement\nclass Repo(Native):\n    field: str\n",
+        "import typing\nclass Repo(typing.Protocol):\n    field: str\nclass Configure:\n    typing.Protocol = replacement\n",
+        "import typing\nclass Namespace:\n    import random as typing\nclass Repo(typing.Protocol):\n    field: str\n",
+        "import typing\nclass Namespace:\n    typing = replacement\n    typing.Protocol = replacement\nclass Repo(typing.Protocol):\n    field: str\n",
+    ],
+)
+def test_eager_class_effects_preserve_captured_and_unrelated_bindings(tmp_path, source):
+    assert len(_visitor(tmp_path, source).protocol_class_decls) == 1
+
+
+def test_nested_eager_class_body_skips_outer_class_namespace(tmp_path):
+    source = (
+        "import typing\nclass Ordinary: pass\nclass Outer:\n"
+        "    typing = replacement\n    class Configure:\n"
+        "        typing.Protocol = Ordinary\n"
+        "class Repo(typing.Protocol):\n    stale = 1\n"
+    )
+    assert not _visitor(tmp_path, source).protocol_class_decls
+
+
+@pytest.mark.parametrize("name", ["Protocol", "P"])
+def test_native_protocol_header_reads_binding_before_class_name(tmp_path, name):
+    alias = "" if name == "Protocol" else " as P"
+    source = (
+        f"from typing import Protocol{alias}\nclass {name}({name}):\n    field: str\n"
+    )
+    assert len(_visitor(tmp_path, source).protocol_class_decls) == 1
