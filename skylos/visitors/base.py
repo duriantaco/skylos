@@ -970,6 +970,7 @@ class Visitor(ast.NodeVisitor):
         self._module_callable_bindings: dict[str, str] = {}
         self._in_protocol_class = False
         self.protocol_classes = set()
+        self.protocol_class_decls: set[tuple[str, int]] = set()
         self._in_overload = False
         self._in_abstractmethod = False
         self.namedtuple_classes = set()
@@ -1810,6 +1811,35 @@ class Visitor(ast.NodeVisitor):
         )
         return alias_line > latest_local_line
 
+    def _is_typing_protocol_base(
+        self, base_expr: ast.expr, current_definition: str | None = None
+    ) -> bool:
+        """True only for bases that resolve to typing(.extensions).Protocol.
+
+        A bare ``Protocol`` or ``asyncio.Protocol`` is a different class that
+        merely shares the name, so it must not turn its subclasses into
+        protocol declarations.
+        """
+        if isinstance(base_expr, ast.Name):
+            target = self.alias.get(base_expr.id)
+            if not target or not self._alias_binding_is_active(
+                base_expr.id, current_definition
+            ):
+                return False
+            return target in {"typing.Protocol", "typing_extensions.Protocol"}
+        if (
+            isinstance(base_expr, ast.Attribute)
+            and base_expr.attr == "Protocol"
+            and isinstance(base_expr.value, ast.Name)
+        ):
+            target = self.alias.get(base_expr.value.id)
+            if not target or not self._alias_binding_is_active(
+                base_expr.value.id, current_definition
+            ):
+                return False
+            return target in {"typing", "typing_extensions"}
+        return False
+
     def _is_numba_overload_decorator(
         self, name: str, current_definition: str | None = None
     ) -> bool:
@@ -2267,16 +2297,12 @@ class Visitor(ast.NodeVisitor):
         is_protocol = False
         for base in node.bases:
             base_expr = base.value if isinstance(base, ast.Subscript) else base
-            if isinstance(base_expr, ast.Name) and base_expr.id == "Protocol":
-                is_protocol = True
-            elif (
-                isinstance(base_expr, ast.Attribute)
-                and base_expr.attr == "Protocol"
-            ):
+            if self._is_typing_protocol_base(base_expr, cname):
                 is_protocol = True
 
         if is_protocol:
             self.protocol_classes.add(node.name)
+            self.protocol_class_decls.add((cname, node.lineno))
 
         base_qnames = []
 

@@ -1208,6 +1208,7 @@
         "present": {
           "unused_variables": [
             "stale_store_name",
+            "stale_transport_limit",
             "LOAD"
           ]
         }

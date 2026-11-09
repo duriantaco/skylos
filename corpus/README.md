@@ -21,8 +21,8 @@ Acceptance rules:
 
 ## Current coverage
 
-The manifest has 50 cases and 194 explicit expectations: 113 absence checks and
-81 presence checks. Presence includes 76 unused-symbol controls, two quality
+The manifest has 50 cases and 195 explicit expectations: 113 absence checks and
+82 presence checks. Presence includes 77 unused-symbol controls, two quality
 tokens, and three separately recorded policy controls. These are assertions,
 not a whole-repository precision or recall score.
 
