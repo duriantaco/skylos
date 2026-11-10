@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from functools import cached_property
 
 _SEVERITY_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 _VERSION_TOKEN = re.compile(r"\d+|[A-Za-z]+")
@@ -133,7 +134,32 @@ class PackageAdvisories:
     def lower_priority(self) -> bool:
         return self.tier in _LOWER_PRIORITY_TIERS
 
+    @cached_property
+    def npm_import_usage(self) -> dict | None:
+        if self.ecosystem != "npm" or self.malicious:
+            return None
+        from skylos.rules.sca.npm_import_usage import normalize_npm_import_usage
+
+        best = None
+        for finding in self.findings:
+            usage = normalize_npm_import_usage(finding["metadata"].get("import_usage"))
+            if usage is None:
+                continue
+            if usage["status"] == "imported":
+                return usage
+            if best is None or usage["reason"] == "type_only_import":
+                best = usage
+        return best
+
     def use_text(self) -> str:
+        usage = self.npm_import_usage
+        if usage is not None:
+            if usage["status"] == "imported":
+                site = next(site for site in usage["sites"] if not site["type_only"])
+                return f"JS/TS import at {site['file']}:{site['line']}"
+            if usage["reason"] == "type_only_import":
+                return "unknown (type-only import)"
+            return "unknown"
         tier = self.tier
         if tier is None:
             return "not analyzed"
@@ -220,7 +246,9 @@ def summary_footer(groups: list[PackageAdvisories]) -> str:
 
 
 def has_use_data(groups: list[PackageAdvisories]) -> bool:
-    return any(group.tier is not None for group in groups)
+    return any(
+        group.tier is not None or group.npm_import_usage is not None for group in groups
+    )
 
 
 def use_tally(groups: list[PackageAdvisories]) -> str:
@@ -229,8 +257,11 @@ def use_tally(groups: list[PackageAdvisories]) -> str:
     counts: dict[str, int] = {}
     for group in groups:
         label = "not analyzed"
-        if group.tier is not None:
+        usage = group.npm_import_usage
+        if usage is not None:
+            label = "JS/TS import observed" if usage["status"] == "imported" else "unknown"
+        elif group.tier is not None:
             label = _TIER_LABELS[group.tier]
         counts[label] = counts.get(label, 0) + 1
-    order = [*_TIER_LABELS.values(), "not analyzed"]
+    order = ["JS/TS import observed", *_TIER_LABELS.values(), "not analyzed"]
     return ", ".join(f"{counts[label]} {label}" for label in order if label in counts)
