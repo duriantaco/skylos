@@ -21,11 +21,15 @@ next to the dependency inventory.
 from __future__ import annotations
 
 import json
+import fnmatch
 import os
 import posixpath
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
+
+from packaging.version import InvalidVersion, Version
 
 from skylos.core.safe_cache_io import read_text_no_symlink
 
@@ -125,6 +129,8 @@ def _non_install_path(path: Path, root: Path) -> bool:
     except ValueError:
         return False
     return any(part.lower() in _NON_INSTALL_DIRS for part in parts)
+
+
 _SEGMENT_SPLIT_RE = re.compile(r"&&|\|\||;|\||\n")
 _PYTHON_PIP_RE = re.compile(r"^(?:python[0-9.]*|py)\s+-m\s+pip\s+")
 _NPMRC_TRUE_RE = re.compile(
@@ -156,9 +162,96 @@ def _normalized_name(ecosystem: str, name: str) -> str:
     return name
 
 
+def _inventory_package_source(
+    dependency: dict, policy, *, requirements_includes=False
+) -> str:
+    """Classify recorded source evidence; name/version alone cannot prove it."""
+    ecosystem = dependency.get("ecosystem")
+    if ecosystem not in {"npm", "PyPI"} or dependency.get("exact") is False:
+        return "unknown"
+    name = _normalized_name(ecosystem, str(dependency.get("name") or ""))
+    version = dependency.get("version")
+    if not isinstance(version, str):
+        return "unknown"
+    if ecosystem == "npm":
+        if not re.fullmatch(
+            r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", version
+        ):
+            return "unknown"
+    else:
+        try:
+            Version(version)
+        except InvalidVersion:
+            return "unknown"
+    target = name.strip().lower().replace("_", "-").replace(".", "-")
+    if any(
+        fnmatch.fnmatchcase(
+            target, pattern.strip().lower().replace("_", "-").replace(".", "-")
+        )
+        for pattern in policy.internal_packages
+    ):
+        return "private_registry"
+    source = dependency.get("source_kind") or dependency.get("source_type")
+    if source is not None and not isinstance(source, str):
+        return "unknown"
+    if source in {"git", "url", "path", "directory", "workspace", "local", "sdk"}:
+        return "non_registry"
+    if source == "registry_unspecified":
+        return "unknown"
+    if source not in {None, "registry", "npm_registry"}:
+        return "unknown"
+    if requirements_includes and "registry_mode" in dependency:
+        # The aggregate requirements record does not retain conflicting index
+        # options from every included file; it cannot prove a sole public index.
+        return "unknown"
+    registry = dependency.get("registry")
+    registries = dependency.get("registries")
+    if isinstance(registries, list) and len(registries) > 1:
+        return "unknown"
+    if not isinstance(registry, str) or not registry:
+        return "unknown"
+    try:
+        parsed = urlsplit(registry if "://" in registry else "https://" + registry)
+        if (
+            parsed.scheme != "https"
+            or parsed.username
+            or parsed.password
+            or parsed.port not in {None, 443}
+            or parsed.query
+            or parsed.fragment
+        ):
+            return "unknown"
+        host = (parsed.hostname or "").lower()
+    except ValueError:
+        return "unknown"
+    public_host = "registry.npmjs.org" if ecosystem == "npm" else "pypi.org"
+    if host != public_host:
+        return "private_registry"
+    if parsed.path.rstrip("/") not in ({""} if ecosystem == "npm" else {"", "/simple"}):
+        return "unknown"
+    if dependency.get("registry_mode") == "merged":
+        return "unknown"
+    for configured in policy.private_registries:
+        configured = str(configured).lower().rstrip("/")
+        if configured in {
+            host,
+            "https://" + host,
+            "https://" + host + parsed.path.rstrip("/"),
+        }:
+            return "private_registry"
+    return "public_registry"
+
+
 def dependency_inventory_summary(inventory, root: str | Path) -> dict:
     """The ``analysis_summary.dependency_inventory`` upload contract."""
     root_path = Path(root).resolve()
+    from skylos.supply_chain.policy import load_supply_chain_policy
+
+    policy = load_supply_chain_policy(root_path)
+    inventory_receipt = getattr(inventory, "receipt", None) or {}
+    requirements_includes = bool(
+        inventory_receipt.get("included_requirements_file_count")
+    )
     rows: dict[tuple, dict] = {}
     occurrences = getattr(inventory, "occurrences", None)
     if occurrences is None:
@@ -174,6 +267,9 @@ def dependency_inventory_summary(inventory, root: str | Path) -> dict:
         lockfile = "lockfile_version" in dependency
         direct = not lockfile or dependency.get("dependency_kind") == "direct"
         dev = dependency.get("dependency_dev") is True
+        source = _inventory_package_source(
+            dependency, policy, requirements_includes=requirements_includes
+        )
         key = (ecosystem_id, name, version, file)
         row = rows.get(key)
         if row is None:
@@ -186,9 +282,13 @@ def dependency_inventory_summary(inventory, root: str | Path) -> dict:
                 "file": file,
                 "_lockfile": lockfile,
             }
+            if source != "unknown":
+                rows[key]["source"] = source
             continue
         row["direct"] = row["direct"] or direct
         row["dev"] = row["dev"] and dev
+        if row.get("source", "unknown") != source:
+            row.pop("source", None)
     locked: dict[tuple, list[dict]] = {}
     for key, row in rows.items():
         if row["_lockfile"]:
@@ -278,7 +378,9 @@ class _Repository:
     def __init__(self, root: Path, inventory):
         self.root = root
         self.inventory = inventory
-        files = [path for path in _walk_files(root) if not _non_install_path(path, root)]
+        files = [
+            path for path in _walk_files(root) if not _non_install_path(path, root)
+        ]
         self.tracked = _git_tracked(root, files)
         self.untracked_lockfiles = []
         if self.tracked is not None:
@@ -896,7 +998,10 @@ def _pnpm_scripts(repo: _Repository, facts: _Facts) -> tuple[str, str]:
         if found and found[1].lower() == "true":
             allow_all = True
     if allow_all is True:
-        return FAIL, "pnpm: dangerouslyAllowAllBuilds runs every dependency build script"
+        return (
+            FAIL,
+            "pnpm: dangerouslyAllowAllBuilds runs every dependency build script",
+        )
     version = _manager_version(repo, "pnpm")
     npmrc = [
         path
@@ -906,7 +1011,10 @@ def _pnpm_scripts(repo: _Repository, facts: _Facts) -> tuple[str, str]:
     if version is None and npmrc:
         return PASS, f"pnpm: ignore-scripts=true in {repo.rel(npmrc[0])}"
     if version is None:
-        return UNKNOWN, "pnpm version unknown (pnpm 10+ blocks dependency scripts by default)"
+        return (
+            UNKNOWN,
+            "pnpm version unknown (pnpm 10+ blocks dependency scripts by default)",
+        )
     major = version[0]
     if major < 10:
         if npmrc:
@@ -1061,7 +1169,11 @@ def _npm_cooldown(repo: _Repository, facts: _Facts, manager: str):
                 f"pnpm {version[0]}: 1-day minimumReleaseAge by default",
                 "package.json",
             )
-        return False, "no minimumReleaseAge in pnpm-workspace.yaml", "pnpm-workspace.yaml"
+        return (
+            False,
+            "no minimumReleaseAge in pnpm-workspace.yaml",
+            "pnpm-workspace.yaml",
+        )
     if manager == "yarn":
         gate = facts.value("cooldown", "yarn")
         if gate is None:
@@ -1072,7 +1184,11 @@ def _npm_cooldown(repo: _Repository, facts: _Facts, manager: str):
             if found:
                 gate = found[1]
         if gate is not None:
-            return _positive(str(gate)), f"yarn: npmMinimalAgeGate {gate}", ".yarnrc.yml"
+            return (
+                _positive(str(gate)),
+                f"yarn: npmMinimalAgeGate {gate}",
+                ".yarnrc.yml",
+            )
         version = _manager_version(repo, "yarn")
         if version is not None and version >= (4, 15):
             return (
@@ -1370,11 +1486,17 @@ def build_supply_chain_summary(root: str | Path, scan_result) -> dict:
             ],
         }
     inventory_root = _repository_top(root)
-    for key, build in ((CI_INVENTORY_KEY, ci_inventory_block), (AGENT_HOOKS_KEY, agent_hooks_block)):
+    for key, build in (
+        (CI_INVENTORY_KEY, ci_inventory_block),
+        (AGENT_HOOKS_KEY, agent_hooks_block),
+    ):
         try:
             block, checks[key] = build(inventory_root, api)
         except Exception as exc:  # noqa: BLE001 - inventories never fail a scan
-            block, checks[key] = None, {"status": "failed", "error_type": type(exc).__name__}
+            block, checks[key] = (
+                None,
+                {"status": "failed", "error_type": type(exc).__name__},
+            )
         if block is not None:
             summary[key] = block
         if Path(inventory_root) != Path(root).resolve():
