@@ -314,3 +314,115 @@ def test_unused_parameters_are_hidden_by_default_with_a_count(tmp_path):
     assert parameter["confidence"] == 50
     assert parameter["confidence_factors"] == ["signature_parameter"]
     assert "dead_code_below_threshold" not in opted_in["analysis_summary"]
+
+
+def test_protocol_attribute_declarations_are_not_reported_dead(tmp_path):
+    _write(
+        tmp_path / "app.py",
+        "from typing import Protocol\n\n\n"
+        "class Repo(Protocol):\n"
+        "    table_name: str\n\n"
+        "    def read(self, key: str) -> str: ...\n\n\n"
+        "class Store:\n"
+        "    stale_store_name = 'x'\n\n\n"
+        "def load(repo: Repo, key: str) -> str:\n"
+        "    return repo.read(key)\n\n\n"
+        "LOAD = load\n",
+    )
+
+    result = _scan(tmp_path)
+    reported = {
+        item["full_name"]
+        for key in ("unused_functions", "unused_variables", "unused_classes")
+        for item in result.get(key) or []
+    }
+    whitelisted = {
+        item["name"]: item["reason"] for item in result.get("whitelisted") or []
+    }
+
+    assert "app.Repo.table_name" not in reported
+    assert whitelisted["table_name"] == "Protocol class member"
+    assert "app.Store.stale_store_name" in reported
+    assert "app.LOAD" in reported
+
+
+def test_protocol_member_exemption_ignores_same_named_module(tmp_path):
+    _write(
+        tmp_path / "Repo.py",
+        "from typing import Protocol\n\n\n"
+        "class Repo(Protocol):\n"
+        "    table_name: str\n\n\n"
+        "DEAD_MODULE_VAR = 1\n\n\n"
+        "def use(r: Repo) -> str:\n"
+        "    return r.table_name\n\n\n"
+        "USE = use\n",
+    )
+
+    result = _scan(tmp_path)
+    reported = {
+        item["full_name"]
+        for key in ("unused_functions", "unused_variables", "unused_classes")
+        for item in result.get(key) or []
+    }
+
+    assert "Repo.Repo.table_name" not in reported
+    assert "Repo.DEAD_MODULE_VAR" in reported
+    assert "Repo.USE" in reported
+
+
+def test_protocol_exemption_ignores_asyncio_protocol_subclasses(tmp_path):
+    _write(
+        tmp_path / "app.py",
+        "import asyncio\n\n\n"
+        "class Client(asyncio.Protocol):\n"
+        "    stale_connection_limit = 123\n\n"
+        "    def connection_made(self, transport):\n"
+        "        self.transport = transport\n\n\n"
+        "def build() -> Client:\n"
+        "    return Client()\n\n\n"
+        "BUILD = build\n",
+    )
+
+    result = _scan(tmp_path)
+    reported = {
+        item["full_name"]
+        for key in ("unused_functions", "unused_variables", "unused_classes")
+        for item in result.get(key) or []
+    }
+    whitelisted = {
+        item["name"]: item["reason"] for item in result.get("whitelisted") or []
+    }
+
+    assert "app.Client.stale_connection_limit" in reported
+    assert "Client" not in whitelisted
+
+
+def test_protocol_attribute_exemption_ignores_same_named_nested_class(tmp_path):
+    _write(
+        tmp_path / "app.py",
+        "from typing import Protocol\n\n\n"
+        "class Repo(Protocol):\n"
+        "    table_name: str\n\n\n"
+        "def factory():\n"
+        "    class Repo:\n"
+        "        stale = 1\n\n"
+        "    return Repo\n\n\n"
+        "def load(repo: Repo) -> str:\n"
+        "    return repo.table_name\n\n\n"
+        "FACTORY = factory\n"
+        "LOAD = load\n",
+    )
+
+    result = _scan(tmp_path)
+    reported = {
+        item["full_name"]
+        for key in ("unused_functions", "unused_variables", "unused_classes")
+        for item in result.get(key) or []
+    }
+    whitelisted = {
+        item["name"]: item["reason"] for item in result.get("whitelisted") or []
+    }
+
+    assert "app.Repo.table_name" not in reported
+    assert whitelisted["table_name"] == "Protocol class member"
+    assert "app.Repo.factory.stale" in reported
