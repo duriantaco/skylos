@@ -1018,6 +1018,7 @@ def _prepare_report_upload(
         done_receipt=_done_receipt_for_upload(
             result_json, commit_hash=commit, repo_root=git_root
         ),
+        cleanup_receipts=_cleanup_receipts_for_upload(base_dir, scan_root),
     )
     from skylos.api._scan_analysis import scan_analysis_metadata
 
@@ -1361,6 +1362,7 @@ def _build_report_metadata(
     quality_rule_classification=None,
     architecture_advisories=None,
     done_receipt=None,
+    cleanup_receipts=None,
 ) -> dict[str, Any]:
     metadata = {
         "commit_hash": commit_hash,
@@ -1396,6 +1398,12 @@ def _build_report_metadata(
         metadata["architecture_advisories"] = architecture_advisories
     if isinstance(done_receipt, dict):
         metadata["done_receipt"] = done_receipt
+    if isinstance(cleanup_receipts, list) and cleanup_receipts:
+        from skylos.cleanup_receipts import cleanup_receipt_batch
+
+        receipts = cleanup_receipt_batch(cleanup_receipts)
+        if receipts:
+            metadata["cleanup_receipts"] = receipts
     if project_id:
         metadata["project_id"] = project_id
     if scan_bundle_id:
@@ -1405,6 +1413,45 @@ def _build_report_metadata(
     if workspace_data:
         metadata["workspaces"] = workspace_data
     return metadata
+
+
+def _cleanup_receipts_for_upload(base_dir, scan_root):
+    """Read optional local observations only while preparing an explicit upload."""
+    from skylos.cleanup_receipts import cleanup_receipt_batch, load_cleanup_receipts
+
+    try:
+        base = Path(base_dir)
+        if base.is_symlink():
+            return []
+        base = base.resolve(strict=True)
+    except (OSError, ValueError, TypeError, RuntimeError):
+        return []
+    receipts, visited = [], set()
+    for value in (base, scan_root):
+        try:
+            candidate = Path(value)
+            if not candidate.is_absolute():
+                candidate = base / candidate
+            relative = candidate.relative_to(base)
+            current = base
+            unsafe = False
+            for part in relative.parts:
+                current = current / part
+                if current.is_symlink():
+                    unsafe = True
+                    break
+            if unsafe:
+                continue
+            candidate = candidate.resolve(strict=True)
+            candidate.relative_to(base)
+            if candidate in visited:
+                continue
+            visited.add(candidate)
+            receipts.extend(load_cleanup_receipts(candidate))
+        except (OSError, ValueError, TypeError, RuntimeError):
+            # Optional history must not reject a scan or change its findings.
+            continue
+    return cleanup_receipt_batch(receipts)
 
 
 def _done_receipt_for_upload(
