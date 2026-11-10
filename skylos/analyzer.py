@@ -2409,6 +2409,8 @@ class Skylos:
         reexport_context=None,
     ):
         self._ts_reexport_ref_counts = {}
+        self._ts_source_raw_imports = ts_raw_imports
+        self._ts_source_resolver = monorepo_resolver
         (
             self.ts_consumed_exports,
             self._ts_wildcard_edges,
@@ -2427,6 +2429,27 @@ class Skylos:
     ):
         if not hasattr(self, "ts_consumed_exports"):
             return
+        from skylos.visitors.languages.typescript.analysis import (
+            mark_source_data_ts_exports_consumed,
+        )
+
+        self._ts_source_read_edges = mark_source_data_ts_exports_consumed(
+            self.defs,
+            self.ts_consumed_exports,
+            files or [],
+            exclude_folders,
+            getattr(
+                self, "_ts_file_importers_of", getattr(self, "_ts_importers_of", {})
+            ),
+            getattr(
+                self, "_ts_file_wildcard_edges", getattr(self, "_ts_wildcard_edges", {})
+            ),
+            project_root=str(self._project_root),
+            workspace_inventory=workspace_inventory,
+            browser_entry_points=getattr(self, "_browser_script_entry_files", ()),
+            raw_imports=getattr(self, "_ts_source_raw_imports", {}),
+            monorepo_resolver=getattr(self, "_ts_source_resolver", None),
+        )
         mark_package_api_ts_exports_consumed(
             self.defs,
             self.ts_consumed_exports,
@@ -2469,6 +2492,7 @@ class Skylos:
             project_root=str(self._project_root),
             workspace_inventory=workspace_inventory,
             browser_entry_points=getattr(self, "_browser_script_entry_files", ()),
+            source_read_edges=getattr(self, "_ts_source_read_edges", {}),
         )
 
     def _find_unused_ts_exports(self, files, exclude_folders, workspace_inventory=None):

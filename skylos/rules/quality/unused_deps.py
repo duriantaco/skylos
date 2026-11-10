@@ -29,6 +29,8 @@ from skylos.core.python_requirements import (
     requirement_name,
 )
 from skylos.core.safe_cache_io import read_text_no_symlink
+from skylos.rules.quality._import_bindings import stable_module_imports
+from skylos.rules.quality._receivers import _scope_bindings
 
 RULE_ID = "SKY-U005"
 MAX_DEPENDENCY_MANIFEST_BYTES = 5_000_000
@@ -608,7 +610,221 @@ def _pytest_fixture_evidence(tree, aliases, *, test_module):
     return supplied - delegated, requested
 
 
-def _collect_usage_evidence(py_files, *, unresolved=None):
+def _find_spec_references(tree, filename, project_root=None):
+    """Native find_spec arguments that are literal or a finite local loop.
+
+    Nothing is imported. Unknown values, aliases of mutable lists, shadowed
+    providers and replaced finder attributes produce no positive evidence.
+    The existing unresolved-import policy is unchanged.
+    """
+    nodes = list(ast.walk(tree))
+    if len(nodes) > 50_000:
+        return set()
+    parents = {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
+    scopes = (
+        ast.Module,
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.Lambda,
+        ast.ClassDef,
+    )
+
+    def scope(node):
+        current = parents.get(id(node))
+        while current is not None and not isinstance(current, scopes):
+            current = parents.get(id(current))
+        return current
+
+    imports = stable_module_imports(tree)
+    aliases = {}
+    for name, binding in imports.items():
+        if binding.level or binding.module not in {"importlib", "importlib.util"}:
+            continue
+        origin = binding.module
+        if binding.member:
+            origin += "." + binding.member
+        elif not binding.alias:
+            origin = name
+        aliases[name] = origin
+    if not aliases:
+        return set()
+    # A source-local importlib package can replace the expected provider.
+    root = Path(project_root).resolve() if project_root is not None else filename.parent
+    directories = {filename.parent, root, root / "src"}
+    for directory in directories:
+        if (directory / "importlib.py").exists() or (
+            directory / "importlib" / "__init__.py"
+        ).exists():
+            return set()
+    binding_cache = {}
+
+    def local_names(owner):
+        if owner not in binding_cache:
+            if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                bound = _scope_bindings(owner).names.copy()
+                bound.update(
+                    arg.arg
+                    for arg in (
+                        *owner.args.posonlyargs,
+                        *owner.args.args,
+                        *owner.args.kwonlyargs,
+                    )
+                )
+                if owner.args.vararg:
+                    bound.add(owner.args.vararg.arg)
+                if owner.args.kwarg:
+                    bound.add(owner.args.kwarg.arg)
+            elif isinstance(owner, ast.Lambda):
+                bound = {
+                    arg.arg
+                    for arg in (
+                        *owner.args.posonlyargs,
+                        *owner.args.args,
+                        *owner.args.kwonlyargs,
+                    )
+                }
+                if owner.args.vararg:
+                    bound.add(owner.args.vararg.arg)
+                if owner.args.kwarg:
+                    bound.add(owner.args.kwarg.arg)
+            elif isinstance(owner, ast.ClassDef):
+                bound = _scope_bindings(owner).names
+            else:
+                bound = set()
+            binding_cache[owner] = bound
+        return binding_cache[owner]
+
+    def native_name(node):
+        root = node
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if not isinstance(root, ast.Name) or root.id not in aliases:
+            return ""
+        owner = scope(root)
+        while owner is not None and owner is not tree:
+            if root.id in local_names(owner):
+                return ""
+            owner = scope(owner)
+        return _resolve_name(node, aliases)
+
+    invalid = set()
+    for node in nodes:
+        if isinstance(node, ast.Name) and node.id in aliases and native_name(node):
+            current = node
+            parent = parents.get(id(current))
+            while isinstance(parent, ast.Attribute) and parent.value is current:
+                current = parent
+                parent = parents.get(id(current))
+            if not (
+                isinstance(parent, ast.Call)
+                and parent.func is current
+                and native_name(current) == "importlib.util.find_spec"
+            ):
+                # Keyword arguments, aliases and containers can carry the
+                # mutable provider to code that replaces its finder.
+                invalid.add(aliases[node.id])
+        if isinstance(node, ast.Attribute) and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
+            name = native_name(node)
+            if name.startswith("importlib"):
+                invalid.add(name)
+        elif isinstance(node, ast.Call):
+            # Explicit namespace mutation and provider escapes cannot prove
+            # that a later attribute access still denotes the native finder.
+            for argument in node.args:
+                name = native_name(argument)
+                if name in {"importlib", "importlib.util", "importlib.util.find_spec"}:
+                    invalid.add(name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            name = native_name(node.value)
+            if name in {"importlib", "importlib.util", "importlib.util.find_spec"}:
+                invalid.add(name)
+    if any(
+        "importlib.util.find_spec" == item
+        or "importlib.util.find_spec".startswith(item + ".")
+        for item in invalid
+    ):
+        return set()
+
+    def values(node, owner, seen=frozenset()):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return {node.value}
+        if isinstance(node, (ast.Tuple, ast.List)) and len(node.elts) <= 64:
+            found = set()
+            for item in node.elts:
+                result = values(item, owner, seen)
+                if result is None:
+                    return None
+                found.update(result)
+            return found
+        if not isinstance(node, ast.Name) or node.id in seen or len(seen) > 8:
+            return None
+        stores = [
+            item
+            for item in nodes
+            if isinstance(item, ast.Name)
+            and item.id == node.id
+            and isinstance(item.ctx, (ast.Store, ast.Del))
+            and scope(item) is owner
+        ]
+        if len(stores) != 1:
+            return None
+        store = stores[0]
+        parent = parents.get(id(store))
+        if isinstance(parent, ast.For) and parent.target is store:
+            current = node
+            while current is not None and current is not parent:
+                current = parents.get(id(current))
+            if current is not parent:
+                return None
+            return values(parent.iter, owner, seen | {node.id})
+        if (
+            not isinstance(parent, (ast.Assign, ast.AnnAssign))
+            or parent.lineno >= node.lineno
+        ):
+            return None
+        if not isinstance(parent.value, (ast.List, ast.Tuple)):
+            return None
+        # Lists are mutable: permit only the uniquely assigned loop iterable,
+        # not an alias, a container method or an argument to unknown code.
+        for reference in nodes:
+            if not isinstance(reference, ast.Name) or reference.id != node.id:
+                continue
+            if scope(reference) is not owner or isinstance(reference.ctx, ast.Store):
+                continue
+            container = parents.get(id(reference))
+            if not isinstance(container, ast.For) or container.iter is not reference:
+                return None
+        return values(parent.value, owner, seen | {node.id})
+
+    found = set()
+    for call in nodes:
+        if (
+            not isinstance(call, ast.Call)
+            or native_name(call.func) != "importlib.util.find_spec"
+        ):
+            continue
+        first = (
+            call.args[0]
+            if call.args
+            else next(
+                (item.value for item in call.keywords if item.arg == "name"), None
+            )
+        )
+        candidates = values(first, scope(call))
+        if candidates:
+            found.update(
+                reference
+                for value in candidates
+                if (reference := _module_reference(value))
+            )
+    return found
+
+
+def _collect_usage_evidence(py_files, *, unresolved=None, project_root=None):
     """Collect exact import paths without executing sources.
 
     A from-import names its child, not every distribution below its namespace:
@@ -659,6 +875,12 @@ def _collect_usage_evidence(py_files, *, unresolved=None):
                         paths.add(full)
                         aliases[alias.asname or alias.name] = full
         pytest_aliases = _pytest_aliases(tree)
+        # A dependency explicitly probed through the native module finder is
+        # part of the project's declared interface even without a direct
+        # import (for example a backend supplied to an installed wrapper).
+        # This is exact exposure evidence, not blanket transitive-package use.
+        if "find_spec" in src:
+            paths |= _find_spec_references(tree, Path(fp), project_root)
         for node in ast.walk(tree):
             if isinstance(node, ast.Attribute):
                 provider = _PYTEST_MARKER_PROVIDERS.get(
@@ -1184,7 +1406,7 @@ def scan_unused_dependencies(repo_root, py_files, location_root=None, *, coverag
 
     unresolved = []
     used_paths, used_plugins, _ = _collect_usage_evidence(
-        py_files, unresolved=unresolved
+        py_files, unresolved=unresolved, project_root=repo_root
     )
     pytest_modules, pytest_distributions, _ = _collect_pytest_usage(
         repo_root, unresolved=unresolved

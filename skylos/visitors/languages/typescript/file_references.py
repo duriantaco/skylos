@@ -281,6 +281,46 @@ def _command_paths(command):
     if not tokens or not isinstance(tokens[0], str):
         return
     runner = os.path.basename(tokens[0])
+    if runner == "npx":
+        # npx is a package launcher, not itself a JavaScript runtime. Only a
+        # known runtime command (and, if supplied, its matching package) proves
+        # which following operand is a script. Arbitrary npx tools take data.
+        position, package = 1, None
+        while position < len(tokens):
+            option = tokens[position]
+            if not isinstance(option, str):
+                return
+            if option in {"--yes", "-y", "--no", "--no-install", "--quiet", "-q"}:
+                position += 1
+            elif option.startswith("--package="):
+                if package is not None:
+                    return
+                package = option.partition("=")[2]
+                position += 1
+            elif option in {"--package", "-p"}:
+                if package is not None or position + 1 >= len(tokens):
+                    return
+                package = tokens[position + 1]
+                position += 2
+            elif option == "--":
+                position += 1
+                break
+            elif option.startswith("-"):
+                return
+            else:
+                break
+        if position >= len(tokens) or tokens[position] not in _SCRIPT_RUNNERS:
+            return
+        runner = tokens[position]
+        if package is not None and (
+            not isinstance(package, str)
+            or re.fullmatch(
+                re.escape(runner) + r"(?:@[A-Za-z0-9_.+^~<>=|*-]+)?", package
+            )
+            is None
+        ):
+            return
+        tokens = tokens[position:]
     if runner not in _SCRIPT_RUNNERS:
         return
     position = 1
@@ -308,7 +348,17 @@ def _command_paths(command):
                 yield tokens[position]
             position += 1
             continue
-        if token in {"--conditions", "--inspect-port", "--title"}:
+        if token in {
+            "--conditions",
+            "--inspect-port",
+            "--title",
+            "--project",
+            "-P",
+            "--tsconfig",
+            "--compiler",
+            "--compiler-options",
+            "-O",
+        }:
             position += 1
             continue
         if token.startswith("-"):

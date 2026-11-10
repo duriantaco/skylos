@@ -2434,6 +2434,7 @@ def find_dead_ts_files(
     project_root: str | None = None,
     workspace_inventory=None,
     browser_entry_points=None,
+    source_read_edges=None,
 ):
     exclude_root = _resolve_exclude_root(files, project_root)
     ts_files = set()
@@ -2455,6 +2456,10 @@ def find_dead_ts_files(
     for reexporter, sources in wildcard_edges.items():
         for src in sources:
             norm_importers[os.path.realpath(src)].add(os.path.realpath(reexporter))
+    for target, consumers in (source_read_edges or {}).items():
+        norm_importers[os.path.realpath(target)].update(
+            os.path.realpath(consumer) for consumer in consumers
+        )
 
     entry_points = _discover_ts_reachability_entry_files(
         files,
@@ -2510,6 +2515,121 @@ def find_dead_ts_files(
             }
         )
     return dead_files
+
+
+def mark_source_data_ts_exports_consumed(
+    defs,
+    consumed_exports,
+    files,
+    exclude_folders,
+    importers_of,
+    wildcard_edges,
+    *,
+    project_root,
+    workspace_inventory=None,
+    browser_entry_points=None,
+    raw_imports=None,
+    monorepo_resolver=None,
+):
+    """Source text consumers preserve exact public exports, not whole folders.
+
+    A read in an unreferenced function adds no edge; a referenced owner in a
+    dead file cannot rescue another file. Reading source as data does not prove
+    its functions execute, but removing an exported declaration changes that
+    consumed data and is not supported by an unused-function claim.
+    """
+    from .source_reads import collect_ts_source_reads
+
+    exclude_root = _resolve_exclude_root(files, project_root)
+    js_files = _analysed_ts_files(files, exclude_folders, exclude_root)
+    if not js_files:
+        return {}
+    # Import presence alone is not execution of the imported function. Follow
+    # existing source call facts from explicit roots, through exact named
+    # import bindings. Ambiguous same-name declarations are not proof.
+    by_name = defaultdict(list)
+    for defn in defs.values():
+        if defn.type in {"function", "import"}:
+            by_name[(os.path.realpath(str(defn.filename)), defn.simple_name)].append(
+                defn
+            )
+    definitions = {
+        key: values[0] for key, values in by_name.items() if len(values) == 1
+    }
+    live = {
+        key
+        for key, defn in definitions.items()
+        if any(
+            name in defn.heuristic_refs
+            for name in ("top_level_execution", "framework_root")
+        )
+    }
+    import_targets = defaultdict(set)
+    for importer, imports in (raw_imports or {}).items():
+        importer = os.path.realpath(str(importer))
+        for record in imports:
+            if record.get("type_only") or record.get("is_reexport"):
+                continue
+            target = resolve_ts_module(record["source"], importer, monorepo_resolver)
+            if target is None:
+                continue
+            for name in record.get("names", ()):
+                if name in {"*", "default"} or name.startswith("* as "):
+                    continue
+                parts = name.split(" as ")
+                remote, local = parts[0].strip(), parts[-1].strip()
+                key = (importer, local)
+                binding = definitions.get(key)
+                if (
+                    binding is not None
+                    and binding.type == "import"
+                    and binding.references > 0
+                ):
+                    import_targets[key].add((os.path.realpath(target), remote))
+    pending, work = list(live), 0
+    while pending and work < 200_000:
+        key = pending.pop()
+        work += 1
+        defn = definitions.get(key)
+        candidates = set(import_targets.get(key, ()))
+        if defn is not None:
+            candidates.update(
+                (key[0], call) for call in defn.calls if isinstance(call, str)
+            )
+        for candidate in candidates:
+            if candidate in definitions and candidate not in live:
+                live.add(candidate)
+                pending.append(candidate)
+    live_functions = defaultdict(set)
+    for filename, name in live:
+        if definitions[(filename, name)].type == "function":
+            live_functions[filename].add(name)
+    edges = collect_ts_source_reads(project_root, js_files, live_functions)
+    if not edges:
+        return {}
+    dead = {
+        os.path.realpath(row["file"])
+        for row in find_dead_ts_files(
+            files,
+            exclude_folders,
+            importers_of,
+            wildcard_edges,
+            project_root=project_root,
+            workspace_inventory=workspace_inventory,
+            browser_entry_points=browser_entry_points,
+            source_read_edges=edges,
+        )
+    }
+    consumed_files = {target for target, consumers in edges.items() if consumers - dead}
+    for defn in defs.values():
+        if defn.type == "import" or not defn.is_exported:
+            continue
+        if os.path.realpath(str(defn.filename)) not in consumed_files:
+            continue
+        consumed_exports.setdefault(str(defn.filename), set()).add(defn.simple_name)
+        defn.references = max(1, defn.references)
+        defn.heuristic_refs["source_text_read"] = 1.0
+    return edges
 
 
 def _has_opaque_ts_loads(source, root):
