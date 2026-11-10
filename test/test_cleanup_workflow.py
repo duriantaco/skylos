@@ -141,7 +141,10 @@ def test_authorized_passing_tests_and_same_scope_rescan_produce_verified_receipt
         return raw(tmp_path, present="import math" in file.read_text())
 
     _, plan = run([str(tmp_path)], scanner)
-    cmd = shlex.join([sys.executable, "-c", "pass"])
+    (tmp_path / "test_app.py").write_text(
+        "import app\n\ndef test_value():\n    assert app.value == 3\n"
+    )
+    cmd = shlex.join([sys.executable, "-m", "pytest", "-q", "test_app.py"])
     code, applied = run(
         [str(tmp_path), "--task", plan["tasks"][0]["id"], "--apply", "--test-cmd", cmd],
         scanner,
@@ -272,9 +275,6 @@ def test_actual_analyzer_patch_roundtrip(tmp_path):
 
 
 def test_policy_changed_by_authorized_check_cannot_verify_a_fix(tmp_path, monkeypatch):
-    import skylos.cleanup_execution as execution
-    from types import SimpleNamespace
-
     file = tmp_path / "app.py"
     file.write_text("import math\nvalue = 3\n")
 
@@ -287,9 +287,15 @@ def test_policy_changed_by_authorized_check_cannot_verify_a_fix(tmp_path, monkey
         (tmp_path / "pyproject.toml").write_text(
             '[tool.skylos]\nignore = ["SKY-U002"]\n'
         )
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return {
+            "status": "passed",
+            "returncode": 0,
+            "observed": True,
+            "evidence": "pytest_junit",
+            "count": 1,
+        }
 
-    monkeypatch.setattr(execution.subprocess, "run", changed_policy)
+    monkeypatch.setattr("skylos.cleanup_checks.run_cleanup_tests", changed_policy)
     code, report = run(
         [
             str(tmp_path),

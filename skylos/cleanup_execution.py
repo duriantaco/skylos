@@ -75,8 +75,12 @@ def _source_file(root: Path, relative: Path):
             directory = next_directory
         # _relative rejects absolute escapes and parent components; each child
         # is opened without following links under the held directory descriptor.
-        source_fd = os.open(  # skylos: ignore[SKY-D215] checked descriptor-relative path
-            relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+        source_fd = (
+            os.open(  # skylos: ignore[SKY-D215] checked descriptor-relative path
+                relative.name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                dir_fd=directory,
+            )
         )
         metadata = os.fstat(source_fd)
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
@@ -619,6 +623,7 @@ def apply_cleanup_edit(
     test_cmd: str | None = None,
     rescan: Callable[[], dict] | None = None,
     test_timeout: int = 300,
+    junit_xml: str | None = None,
 ) -> dict[str, Any]:
     """Apply only the reviewed deterministic edit and verify explicitly requested checks."""
     root = _root_path(root)
@@ -638,8 +643,10 @@ def apply_cleanup_edit(
     )
     argv = None
     if test_cmd is not None:
+        from skylos.cleanup_checks import validate_junit_path
         from skylos.llm.executor import RemediationExecutor
 
+        validate_junit_path(junit_xml)
         argv = RemediationExecutor(project_root=root)._safe_test_argv(test_cmd)
         if not argv:
             raise ValueError(
@@ -649,32 +656,43 @@ def apply_cleanup_edit(
     result = {
         "version": 1,
         "task_id": edit.get("task_id"),
+        "rule_id": _rule(task),
         "file": fresh["file"],
+        "source_sha256": fresh["source_sha256"],
+        "applied_sha256": fresh["applied_sha256"],
         "status": "applied_unverified",
         "applied": True,
         "rolled_back": False,
-        "tests": {"status": "skipped", "command": None},
+        "tests": {
+            "status": "skipped",
+            "command": None,
+            "evidence": "none",
+            "count": None,
+            "observed": False,
+            "exercised_change": None,
+        },
         "rescan": {"status": "skipped"},
+        "rollback": {"status": "skipped"},
         "limitations": [],
     }
-    failed = False
-    if argv is not None:
+    from skylos.cleanup_checks import compare_cleanup_behavior, run_cleanup_tests
+
+    result["behavior"] = compare_cleanup_behavior(
+        fresh["file"], fresh["_source"], fresh["_replacement"]
+    )
+    failed = result["behavior"]["status"] == "failed"
+    if argv is not None and not failed:
         try:
-            outcome = subprocess.run(
+            result["tests"] = run_cleanup_tests(
+                root,
                 argv,
-                cwd=root,
-                shell=False,
-                capture_output=True,
-                text=True,
+                file=fresh["file"],
+                before=fresh["_source"],
+                after=fresh["_replacement"],
                 timeout=test_timeout,
+                junit_xml=junit_xml,
             )
-            failed = outcome.returncode != 0
-            result["tests"] = {
-                "status": "failed" if failed else "passed",
-                "command": argv,
-                "returncode": outcome.returncode,
-                "output": (outcome.stdout + outcome.stderr)[-5000:],
-            }
+            failed = result["tests"]["status"] == "failed"
         except (OSError, subprocess.TimeoutExpired) as exc:
             result["tests"] = {
                 "status": "incomplete",
@@ -688,17 +706,29 @@ def apply_cleanup_edit(
             if isinstance(after, str):
                 after = json.loads(after)
             comparison_task = {**task, "_target_anchor": fresh["_target_anchor"]}
+            categories = {"quality", "ai_defects", "dead_code"}
+            baseline_categories = (
+                fresh["_baseline_report"]
+                .get("analysis_summary", {})
+                .get("grade_categories", [])
+            )
+            categories.update(
+                category
+                for category in ("security", "secrets")
+                if category in baseline_categories
+            )
             result["rescan"] = compare_cleanup_reports(
                 fresh["_baseline_report"],
                 after,
                 project_root=root,
                 task=comparison_task,
-                required_categories=("quality", "ai_defects", "dead_code"),
+                required_categories=tuple(sorted(categories)),
                 before_sources={fresh["file"]: fresh["_source"]},
                 after_sources={
                     fresh["file"]: _read_source(root, relative).decode("utf-8")
                 },
             )
+            result["rescan"]["checked_categories"] = sorted(categories)
             failed = failed or result["rescan"]["status"] == "failed"
         except (Exception, SystemExit) as exc:
             result["rescan"] = {"status": "incomplete", "error": str(exc)}
@@ -709,10 +739,14 @@ def apply_cleanup_edit(
             _replace_unchanged(root, relative, replacement, original)
             result["rolled_back"] = True
             result["applied"] = False
+            result["rollback"] = {"status": "passed"}
         except (OSError, ValueError) as exc:
+            result["rollback"] = {"status": "failed"}
             result["limitations"].append(f"Rollback was not applied: {exc}")
     elif (
-        result["tests"]["status"] == "passed" and result["rescan"]["status"] == "passed"
+        result["tests"]["status"] == "passed"
+        and result["tests"].get("observed") is True
+        and result["rescan"]["status"] == "passed"
     ):
         if _read_source(root, relative) == replacement:
             result["status"] = "verified"
@@ -726,6 +760,6 @@ def apply_cleanup_edit(
         result["status"] = "incomplete"
     else:
         result["limitations"].append(
-            "Verification requires both authorized passing tests and a complete comparable rescan."
+            "Verification requires observed passing tests (JUnit), not only a zero-exit command, and a complete comparable rescan."
         )
     return result

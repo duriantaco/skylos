@@ -8,7 +8,6 @@ import ast
 import inspect
 import json
 import shlex
-import subprocess
 import sys
 import textwrap
 
@@ -85,6 +84,13 @@ def _task(
 
 def _command(code):
     return f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}"
+
+
+def _passing_tests(root):
+    (root / "test_app.py").write_text(
+        "import app\n\ndef test_answer():\n    assert app.answer == 42\n"
+    )
+    return shlex.join([sys.executable, "-m", "pytest", "-q", "test_app.py"])
 
 
 def test_import_preview_reuses_codemod_and_writes_nothing(tmp_path):
@@ -283,12 +289,19 @@ def test_failed_explicit_test_rolls_back_exact_applied_bytes(tmp_path):
 def test_failed_test_preserves_a_user_change_instead_of_rollback(tmp_path, monkeypatch):
     edit = plan_cleanup_edit(_task(tmp_path), tmp_path)
 
-    def concurrent_edit(argv, **kwargs):
-        assert kwargs["shell"] is False
+    def concurrent_edit(root, argv, **kwargs):
+        assert root == tmp_path
+        assert argv == ["pytest", "-q"]
         (tmp_path / "app.py").write_text("preserve_this_edit = True\n")
-        return subprocess.CompletedProcess(argv, 1, "", "failure")
+        return {
+            "status": "failed",
+            "returncode": 1,
+            "observed": True,
+            "evidence": "pytest_junit",
+            "count": 1,
+        }
 
-    monkeypatch.setattr(subprocess, "run", concurrent_edit)
+    monkeypatch.setattr("skylos.cleanup_checks.run_cleanup_tests", concurrent_edit)
     receipt = apply_cleanup_edit(edit, tmp_path, test_cmd="pytest -q")
     assert receipt["status"] == "failed"
     assert receipt["rolled_back"] is False
@@ -322,7 +335,7 @@ def test_complete_rescan_and_authorized_tests_are_required_for_verified(tmp_path
     receipt = apply_cleanup_edit(
         edit,
         tmp_path,
-        test_cmd=_command("assert 1 + 1 == 2"),
+        test_cmd=_passing_tests(tmp_path),
         rescan=lambda: _report(tmp_path),
     )
     assert receipt["status"] == "verified"
@@ -337,6 +350,18 @@ def test_rescan_alone_does_not_claim_runtime_verification(tmp_path):
     assert receipt["status"] == "applied_unverified"
     assert receipt["rescan"]["status"] == "passed"
     assert receipt["tests"]["status"] == "skipped"
+
+
+def test_zero_exit_without_observed_tests_cannot_verify_a_cleanup(tmp_path):
+    edit = plan_cleanup_edit(_task(tmp_path), tmp_path)
+    receipt = apply_cleanup_edit(
+        edit, tmp_path, test_cmd=_command("pass"), rescan=lambda: _report(tmp_path)
+    )
+    assert receipt["status"] == "applied_unverified"
+    assert receipt["tests"]["returncode"] == 0
+    assert receipt["tests"]["evidence"] == "exit_code"
+    assert receipt["tests"]["observed"] is False
+    assert receipt["rescan"]["status"] == "passed"
 
 
 def test_new_high_risk_finding_rolls_back_but_existing_shift_does_not(tmp_path):
@@ -355,7 +380,7 @@ def test_new_high_risk_finding_rolls_back_but_existing_shift_does_not(tmp_path):
     receipt = apply_cleanup_edit(
         plan_cleanup_edit(task, tmp_path),
         tmp_path,
-        test_cmd=_command("pass"),
+        test_cmd=_passing_tests(tmp_path),
         rescan=lambda: after,
     )
     assert receipt["status"] == "verified"
