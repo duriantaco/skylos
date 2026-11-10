@@ -1,5 +1,7 @@
 from hashlib import sha256
 
+import pytest
+
 from skylos.cleanup_impact import build_cleanup_impact
 from skylos.cleanup_context import build_cleanup_context
 
@@ -85,3 +87,89 @@ def test_context_includes_resolved_importer_and_reaching_test_source(tmp_path):
     }
     assert result["suggested_tests"][0]["authorization"] == "suggestion_only"
     assert result["suggested_tests"][0]["selection"][-1] == "test_service.py"
+
+
+def test_unchanged_crlf_sources_keep_resolved_callers_and_tests(tmp_path):
+    task = _project(tmp_path)
+    for file in tmp_path.glob("*.py"):
+        file.write_bytes(file.read_bytes().replace(b"\n", b"\r\n"))
+    task["source_sha256"] = sha256((tmp_path / "service.py").read_bytes()).hexdigest()
+    result = build_cleanup_impact([task], tmp_path)
+    item = result["tasks"][0]
+    assert result["status"] == "complete" and result["limitations"] == []
+    assert item["resolution"] == "static_symbol"
+    assert {row["file"] for row in item["callers"]} == {"caller.py"}
+    assert {row["file"] for row in item["suggested_tests"]} == {"test_service.py"}
+
+
+@pytest.mark.parametrize(
+    "file,source",
+    [
+        ("service.py", b"def calculate(value):\r\n    return value + 1\r\n"),
+        (
+            "service.ts",
+            b"export function calculate(value: number) {\r\n    return value + 1;\r\n}\r\n",
+        ),
+    ],
+)
+def test_crlf_digest_matches_the_original_raw_source_snapshot(tmp_path, file, source):
+    (tmp_path / file).write_bytes(source)
+    task = {
+        "id": "task",
+        "file": file,
+        "line": 1,
+        "name": "calculate",
+        "source_sha256": sha256(source).hexdigest(),
+    }
+    result = build_cleanup_impact([task], tmp_path)
+    assert result["status"] == "complete" and result["limitations"] == []
+    assert result["tasks"][0]["resolution"] == "static_symbol"
+    assert (tmp_path / file).read_bytes() == source
+
+
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_stale_or_missing_selected_source_never_claims_complete_impact(
+    tmp_path, unavailable
+):
+    task = _project(tmp_path)
+    if unavailable:
+        (tmp_path / "service.py").unlink()
+    else:
+        (tmp_path / "service.py").write_text(
+            "def calculate(value):\n    return value + 2\n"
+        )
+    result = build_cleanup_impact([task], tmp_path)
+    assert result["status"] == "partial"
+    assert any("service.py" in note for note in result["limitations"])
+    item = result["tasks"][0]
+    assert item["resolution"] == (
+        "source_unavailable" if unavailable else "stale_source"
+    )
+    assert item["callers"] == item["possible_callers"] == item["suggested_tests"] == []
+
+
+def test_source_becoming_unreadable_after_extraction_remains_partial(
+    tmp_path, monkeypatch
+):
+    from skylos import cleanup_impact
+
+    task = _project(tmp_path)
+    original = cleanup_impact.read_project_text_no_symlink
+    reads = 0
+
+    def unavailable_on_recheck(root, file, **kwargs):
+        nonlocal reads
+        if file == "service.py":
+            reads += 1
+            if reads == 2:
+                return None
+        return original(root, file, **kwargs)
+
+    monkeypatch.setattr(
+        cleanup_impact, "read_project_text_no_symlink", unavailable_on_recheck
+    )
+    result = build_cleanup_impact([task], tmp_path)
+    assert result["status"] == "partial"
+    assert "Graph source changed during analysis" in result["limitations"]
+    assert result["tasks"][0]["resolution"] == "stale_source"
+    assert result["tasks"][0]["callers"] == result["tasks"][0]["suggested_tests"] == []

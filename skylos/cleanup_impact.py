@@ -44,7 +44,9 @@ def build_cleanup_impact(
     used, symbol_count = 0, 0
     for path in paths[:max_files]:
         relative = path.relative_to(root).as_posix()
-        source = read_project_text_no_symlink(root, relative, max_bytes=MAX_FILE_BYTES)
+        source = read_project_text_no_symlink(
+            root, relative, max_bytes=MAX_FILE_BYTES, newline=""
+        )
         if source is None:
             limitations.append(f"Graph source unavailable: {relative}")
             continue
@@ -96,11 +98,17 @@ def build_cleanup_impact(
             "possible_callers": [],
             "suggested_tests": [],
         }
-        if (
+        if task["file"] not in digests:
+            item["resolution"] = "source_unavailable"
+            limitations.append(
+                f"Task source unavailable or outside the bounded graph: {task['file']}"
+            )
+        elif (
             task.get("source_sha256")
             and digests.get(task["file"]) != task["source_sha256"]
         ):
             item["resolution"] = "stale_source"
+            limitations.append(f"Task source differs from its scan: {task['file']}")
         elif matches:
             smallest = matches[0]["end"] - matches[0]["start"]
             exact = [
@@ -128,7 +136,9 @@ def build_cleanup_impact(
     # Catch an editor changing a source after extraction. Relationships from a
     # moving snapshot cannot support a current-source assertion.
     for relative, digest in digests.items():
-        current = read_project_text_no_symlink(root, relative, max_bytes=MAX_FILE_BYTES)
+        current = read_project_text_no_symlink(
+            root, relative, max_bytes=MAX_FILE_BYTES, newline=""
+        )
         if current is None or sha256(current.encode("utf-8")).hexdigest() != digest:
             limitations.append("Graph source changed during analysis")
             for item in results:
