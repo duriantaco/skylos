@@ -55,7 +55,14 @@ def _state_directory(root: Path, *, create=False):
     root = Path(root)
     if root.is_symlink():
         raise ValueError("Cleanup history root is unsafe")
-    directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    root = root.resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError("Cleanup history root must be a directory")
+    # The caller-selected canonical project directory is the authorized base,
+    # never a task/report path. Only fixed children are opened beneath its fd.
+    directory = os.open(  # skylos: ignore[SKY-D215] authorized project root
+        root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    )
     try:
         for component in (".skylos", "cache"):
             if create:
