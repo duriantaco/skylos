@@ -74,9 +74,12 @@ skylos cleanup . --context --format json
 skylos cleanup . --review --provider anthropic --model YOUR_MODEL
 ```
 
-`--context` adds bounded Python source excerpts, imports and candidate callers
-while respecting scan exclusions. Name matches are labeled candidates rather
-than proven call edges. Other languages retain their scanner evidence.
+`--context` adds bounded Python and TypeScript/JavaScript excerpts, static
+graph relationships and suggested test files while respecting scan exclusions.
+It reuses Skylos's graph parser and impact queries. Source-resolved relationships
+stay separate from simple-name candidates, and neither proves runtime reachability.
+Suggested test selections never authorize execution. Graph coverage and budget
+limits remain visible; other languages retain their scanner evidence.
 `--review` sends that context to the configured model and returns separately
 labeled subjective advice with source citations. It requires the LLM extra and
 provider configuration, may incur provider charges, and never authorizes edits.
