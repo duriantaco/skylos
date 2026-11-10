@@ -286,6 +286,11 @@ def _print_sca_packages(console: Console, groups, *, root_path=None, limit=None)
                 (f"  {location}", "dim"),
             )
         )
+        from skylos.rules.sca.threat_intel import package_risk_text
+
+        threat = package_risk_text(group.findings)
+        if threat:
+            console.print(Text("    " + threat, style="dim"))
     if len(shown) < len(groups):
         console.print(
             Text(f"  ... and {len(groups) - len(shown)} more packages", style="dim")

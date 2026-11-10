@@ -898,7 +898,7 @@ def _run_scan_command(
     sys = cli_module.sys
     upload_report = cli_module.upload_report
 
-    if getattr(args, "scan_publisher_changes", False):
+    if getattr(args, "scan_publisher_changes", False) or getattr(args, "sca_threat_intel", False):
         args.sca = True
     if getattr(args, "no_upload", False):
         # --no-upload always wins over --upload, with or without --gate.
@@ -1188,6 +1188,25 @@ def _run_scan_command(
             except Exception as e:
                 if args.verbose:
                     console.print(f"[warn]SCA scan error: {e}[/warn]")
+
+        if getattr(args, "sca_threat_intel", False):
+            from skylos.rules.sca.threat_intel import enrich_with_threat_context
+
+            threat_receipt = enrich_with_threat_context(
+                result.get("dependency_vulnerabilities") or [], project_root
+            )
+            result.setdefault("analysis_summary", {})["sca_threat_intel"] = threat_receipt
+            if not machine_output and threat_receipt.get("status") in {"partial", "unknown"}:
+                if threat_receipt.get("reason") == "ca9_threat_context_unavailable_requires_0_9_0":
+                    console.print(
+                        "[warn]EPSS/CISA KEV context unavailable: install ca9>=0.9.0 "
+                        "when released. CVEs and gate decisions are unchanged.[/warn]"
+                    )
+                else:
+                    console.print(
+                        "[warn]EPSS/CISA KEV context is partly stale or unknown; "
+                        "check the provider dates. CVEs and gate decisions are unchanged.[/warn]"
+                    )
 
         if getattr(args, "scan_publisher_changes", False):
             try:

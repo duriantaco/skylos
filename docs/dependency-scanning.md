@@ -5,6 +5,56 @@ known vulnerabilities in exact package versions. `-a` also enables SCA.
 Lockfiles are parsed as data: Skylos does not install dependencies, run package
 scripts, synchronize environments, or execute workspace code for SCA.
 
+## Optional EPSS and CISA KEV context
+
+```bash
+skylos . --sca-threat-intel --format json
+skylos . --sca --sca-threat-intel --format rich
+```
+
+`--sca-threat-intel` implies `--sca` and explicitly enables additional provider
+lookups. `-a` and `--sca` alone do not enable them. Every supported ecosystem's
+advisories are enriched after CVE aliases are resolved. Only canonical CVE IDs
+are sent to FIRST's EPSS API; CISA's public KEV catalog is downloaded separately.
+Repository source, package names, and credentials are not sent to these providers.
+
+This requires the additive `ca9.api.threat_context` capability in ca9 0.9.0.
+Publish that ca9 release before rolling out the integration. Older installations
+keep their CVE findings, attach explicit unknown context and show an availability
+warning; upgrading is optional for scans without this flag. Skylos does not enable
+ca9's legacy threat-intelligence confidence boost.
+
+Finding metadata adds `risk_context` with `schema_version: 1` and up to 16 sorted,
+deduplicated CVEs. Each has `cve_id`, `epss` (`status`, `score`, `percentile`,
+`score_date`, `retrieved_at`) and `kev` (`status`, `in_catalog`, `date_added`,
+`due_date`, `catalog_date`, `retrieved_at`). Status is `current`, `stale`, or
+`unknown`; unavailable values are `null`, and a real zero EPSS score stays zero.
+`false` KEV membership requires a validated current catalog, never a failed request.
+
+Both the provider date and individual retrieval time must be within 7 days for
+current context. Cache entries refresh after 24 hours; failed refreshes keep dated
+scores and positive KEV entries as stale. Missing or stale negative membership is
+unknown. ca9 uses verified HTTPS, no redirects, bounded responses and an atomic
+cache outside scanned source. The whole CLI enrichment has a 15-second network
+budget; further CVEs use cache-only lookup and retain explicit unknown statuses
+when no data is available. At most 16 lookup batches can use the network.
+
+Rich and pretty package rows show EPSS and KEV context with stale/unknown labels;
+individual details, JSON, SARIF and Cloud uploads preserve the dated records.
+`analysis_summary.sca_threat_intel` reports provider status counts separately
+from `sca_coverage`. Context never changes advisory IDs, severity, confidence,
+listing, reachability, default package ordering, or local and Cloud gate decisions.
+
+Cloud's CVE monitoring also uses an explicit source classification in uploaded
+dependency inventory rows. `source: "public_registry"` requires an exact npm/PyPI
+version and recorded supported public registry evidence. Private registries and
+configured internal package names are classified `private_registry`; conflicting,
+merged or unspecified registries remain unknown. Git/path declarations and
+unresolved versions never acquire a public identity. Missing `source` in older
+uploads means unknown. Monitoring can report that coverage gap until a new scan
+supplies the evidence; a plain name and version do not establish public origin.
+This records manifest/lockfile evidence and does not attest installed artifacts.
+
 For packages reported inside a built container image, use the separate
 [`skylos ingest trivy` workflow](./container-image-reports.md). It imports an
 existing Trivy vulnerability report without running a scanner or container;

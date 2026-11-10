@@ -226,12 +226,24 @@ def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
         "receiver_resolution",
     }
     compact = {key: metadata[key] for key in keep_keys if key in metadata}
+    from skylos.rules.sca.threat_intel import finding_cves, normalize_risk_context
+
+    risk_context = normalize_risk_context(
+        metadata.get("risk_context"), allowed_cves=finding_cves({"metadata": metadata})
+    )
+    if risk_context is not None:
+        compact["risk_context"] = risk_context
     verification = _compact_verification(metadata.get("verification"))
     if verification:
         compact["verification"] = verification
     aliases = metadata.get("aliases")
     if isinstance(aliases, list):
         compact["aliases"] = aliases[:5]
+        if risk_context:
+            compact["aliases"] = list(compact["aliases"])
+            for row in risk_context["cves"]:
+                if row["cve_id"] not in compact["aliases"]:
+                    compact["aliases"].append(row["cve_id"])
     return compact or None
 
 
