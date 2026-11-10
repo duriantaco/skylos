@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "evaluation_date": "2026-11-10",
+  "scanner_baseline_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+  "selection": "Purposive exploratory cohort of five publicly documented AI-assisted projects; not a representative or matched-control benchmark.",
+  "repositories": [
+    {
+      "repository": "mdkess/claude-game",
+      "revision": "8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "archive_url": "https://codeload.github.com/mdkess/claude-game/tar.gz/8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "archive_sha256": "45e69d93c67ef0fa6df89a255292d25e382c0d97d1b4e3dce3c2ac80b51728b8",
+      "snapshot_sha256": "644fe776038da3d08f6bc7f2251b8f25da167db1a5ec8610182ff97730ba37b6",
+      "archive_files": 89,
+      "archive_bytes": 1459336,
+      "provenance_url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/README.md",
+      "provenance_note": "Owner README describes the game as built entirely by Claude Code; self-reported."
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "revision": "9c0d23cf414e538167f8880963f120b1b80db578",
+      "archive_url": "https://codeload.github.com/Teygeta/audio-rag/tar.gz/9c0d23cf414e538167f8880963f120b1b80db578",
+      "archive_sha256": "4787811a455fed15a2ef496659f4466f086d8033cc5b2d2904628d8d46827d9c",
+      "snapshot_sha256": "54fdb9d649725eae353da64305645eca8786a9aeb248139db909ef54cb0ea988",
+      "archive_files": 17,
+      "archive_bytes": 45459,
+      "provenance_url": "https://github.com/Teygeta/audio-rag",
+      "provenance_note": "Owner repository description calls it vibe coded for fun; tool and exact AI percentage unspecified. Archived."
+    },
+    {
+      "repository": "simonw/files-to-prompt",
+      "revision": "1b234ff6dccb2ca3e56b5c256696558fb85306dc",
+      "archive_url": "https://codeload.github.com/simonw/files-to-prompt/tar.gz/1b234ff6dccb2ca3e56b5c256696558fb85306dc",
+      "archive_sha256": "f6cfa1f378c07faecf122f13d76da7277c44d899ba1bce6bf6f514ba09d96663",
+      "snapshot_sha256": "a2d6bb9e2d2af6707fe5d8c27a697792033949e27a8b385e41e2823471aeedcd",
+      "archive_files": 10,
+      "archive_bytes": 46175,
+      "provenance_url": "https://simonwillison.net/2024/Apr/8/files-to-prompt/",
+      "provenance_note": "Owner documents building the initial tool almost entirely with Claude 3 Opus. The evaluated 0.6 snapshot also includes later human maintenance/contributions."
+    },
+    {
+      "repository": "jagadish-k/video-gif-creator",
+      "revision": "d7a3000eeb4bc25a68dc143755cd5f3f320be4e0",
+      "archive_url": "https://codeload.github.com/jagadish-k/video-gif-creator/tar.gz/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0",
+      "archive_sha256": "2767ecac4fb5469009f6b80e8db6390b6d09602af655300f754f17f64c76939f",
+      "snapshot_sha256": "cd65b6d995dde61cfe327e8b2a4612f477b368496409985c53d9ea74e753cb56",
+      "archive_files": 34,
+      "archive_bytes": 207537,
+      "provenance_url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/README.md#L3",
+      "provenance_note": "Owner README explicitly describes AI-assisted development with Claude Code; self-reported."
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "archive_url": "https://codeload.github.com/balbonits/coding-interview-reviewer/tar.gz/9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "archive_sha256": "0925fb5ed38e773951bc5eec5437912fce6f611b515e84a228e612b44d85129e",
+      "snapshot_sha256": "12c4d542ae2b5f7e5806f4ddc164d50c234d7847221fd9f129a06a25ecd001c5",
+      "archive_files": 294,
+      "archive_bytes": 1455082,
+      "provenance_url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/README.md#L194",
+      "provenance_note": "Owner README explicitly describes collaboration with Claude Code; self-reported. Intentional exercise source assets require separate review."
+    }
+  ]
+}

@@ -55,7 +55,14 @@ def _state_directory(root: Path, *, create=False):
     root = Path(root)
     if root.is_symlink():
         raise ValueError("Cleanup history root is unsafe")
-    directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    root = root.resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError("Cleanup history root must be a directory")
+    # The caller-selected canonical project directory is the authorized base,
+    # never a task/report path. Only fixed children are opened beneath its fd.
+    directory = os.open(  # skylos: ignore[SKY-D215] authorized project root
+        root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    )
     try:
         for component in (".skylos", "cache"):
             if create:
@@ -247,10 +254,62 @@ def _atomic_write_state(root, snapshot, text):
         ) from exc
 
 
+def mutate_cleanup_workspace(root: Path, scope: dict, callback):
+    """Atomically update one scoped workspace using trusted local code.
+
+    The callback receives the current bucket, not serialized code or source.
+    Exceptions leave the last complete state untouched; returned data is detached.
+    """
+    if not isinstance(scope, dict) or not callable(callback):
+        raise ValueError("Cleanup workspace requires a scope and a local callback")
+    expected_scope = deepcopy(scope)
+    key = scope_identity(expected_scope)
+    with _history_lock(root) as directory:
+        state, snapshot = _snapshot_from_directory(directory)
+        bucket = state["scopes"].setdefault(
+            key, {"scope": deepcopy(expected_scope), "tasks": {}}
+        )
+
+        def validate():
+            if (
+                not isinstance(bucket, dict)
+                or bucket.get("scope") != expected_scope
+                or not isinstance(bucket.get("tasks"), dict)
+            ):
+                raise ValueError("Cleanup workspace scope or task history is malformed")
+
+        validate()
+        result = deepcopy(callback(bucket))
+        validate()
+        _atomic_write_state(
+            root, snapshot, json.dumps(state, sort_keys=True, indent=2) + "\n"
+        )
+        return result
+
+
 def update_cleanup_state(
-    root: Path, scope: dict, plan: dict, *, disposition=None, receipt=None
+    root: Path,
+    scope: dict,
+    plan: dict,
+    *,
+    disposition=None,
+    receipt=None,
+    inventory=None,
 ) -> dict:
     """Reconcile only an identical scan scope and config, preserving uncertainty."""
+    if inventory is None:
+        inventory = plan.get("_inventory")
+    if inventory is None:
+        inventory = plan.get("tasks", []) + plan.get("advisories", [])
+    if not isinstance(inventory, list) or any(
+        not isinstance(task, dict)
+        or any(
+            not isinstance(task.get(key), str) or not task[key]
+            for key in ("id", "rule_id", "file")
+        )
+        for task in inventory
+    ):
+        raise ValueError("Cleanup reconciliation inventory is malformed")
     with _history_lock(root) as directory:
         state, snapshot = _snapshot_from_directory(directory)
         key = scope_identity(scope)
@@ -259,10 +318,7 @@ def update_cleanup_state(
         if not isinstance(records, dict):
             raise ValueError("Cleanup task history is malformed")
         now = datetime.now(timezone.utc).isoformat()
-        current = {
-            task["id"]: task
-            for task in plan.get("tasks", []) + plan.get("advisories", [])
-        }
+        current = {task["id"]: task for task in inventory}
         for task_id, task in current.items():
             record = records.setdefault(
                 task_id,

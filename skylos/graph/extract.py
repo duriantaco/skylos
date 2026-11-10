@@ -139,6 +139,11 @@ def extract_file(root: str, path: str, module: str) -> dict:
     except OSError as exc:
         return {"path": path, "error": f"could not read: {exc.strerror or exc}"}
     source = raw.decode("utf-8", "replace")
+    return extract_source(root, path, module, source)
+
+
+def extract_source(root: str, path: str, module: str, source: str) -> dict:
+    """Extract graph facts from a caller's bounded source snapshot, without rereading it."""
     digest = code_hash(source)
     if other_language(path):
         try:

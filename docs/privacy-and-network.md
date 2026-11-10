@@ -92,6 +92,15 @@ server uses `SKYLOS_CLOUD_URL`).
 
 ## Other hosts
 
+Explicit scan uploads can also include up to 20 valid cleanup outcome receipts
+from local cleanup history at the Git root and selected upload root. These carry
+task/rule/attempt IDs, repository-relative paths, source hashes, scanner/config
+digests, recorded revisions, test counts/status and rescan/rollback limits.
+They exclude test commands, stdout, arbitrary errors, source excerpts and stored
+model advice. Loading or uploading an old receipt never binds it to a later
+commit. `skylos cleanup` itself does not upload a report; `--no-state` prevents
+that cleanup operation from persisting a receipt. See [Cleanup](cleanup.md).
+
 | Host | When | Sends | Turn it off |
 |:---|:---|:---|:---|
 | OSV (`api.osv.dev`) | dependency checks: `--sca`, `-a`, `--select SKY-SCA-*`, `--scan-publisher-changes`, config `sca_enabled` or required `sca` coverage, `skylos suite`, `skylos baseline --sca`, `skylos compare --sca` | package names and versions from your lockfiles and manifests | don't enable dependency checks |
@@ -103,7 +112,7 @@ server uses `SKYLOS_CLOUD_URL`).
 | None: a local file | dependency checks save OSV's last good answers to `osv-answers.json` in `$XDG_CACHE_HOME/skylos` or `~/.cache/skylos`, used only when OSV cannot be reached | nothing leaves the machine; the file lists package names, versions and public advisories | delete the file, or run without `--sca` |
 | deps.dev | `skylos sbom --license-lookup` | package names and versions | leave out `--license-lookup` |
 | PyPI (`pypi.org`, `files.pythonhosted.org`), npm registry, Go module proxy, JSR | checks for packages that don't exist and made-up package APIs: `--ai-defects`, `-a`, config `ai_defects_enabled`; always in `skylos agent scan`, `skylos agent pre-commit`, `skylos baseline`, `skylos suite`, `skylos review` and `skylos verify` on a path; `skylos done` (the `unknown_imports` check, on by default as advice); the agent hook on package-install commands; MCP `validate_code_change` | package names (and ranged reads of public wheel files) | `skylos verify --no-dependency-hallucinations`; `unknown_imports = "off"` under `[tool.skylos.done.checks]`; MCP `check_dependencies=false`; remove the hook |
-| The model provider you configure (default OpenAI) | `skylos agent ...` commands, `skylos . --verify-security`, `skylos debt --with-agent`, MCP remediation and verification tools | code excerpts and prompts | don't run LLM commands; `--base-url` on `skylos agent` commands points them at a local model |
+| The model provider you configure (default OpenAI) | `skylos agent ...` commands, `skylos cleanup --review`, `skylos . --verify-security`, `skylos debt --with-agent`, MCP remediation and verification tools | code excerpts and prompts; cleanup review also includes bounded task and static graph context | don't run LLM commands; `--base-url` on agent and cleanup review commands points them at a local model |
 | `api.typesafe.ai` | `skylos agent verify --jev-precheck`, `--jev-judge`, `--jev-only`, `skylos agent scan --dead-code-review jev-llm`, with `TYPESAFE_API_KEY` set | the dead-code candidates to judge | unset `TYPESAFE_API_KEY` |
 | Your agent endpoint | `skylos agent test` | test scenarios. Only loopback addresses unless `--allow-remote` | — |
 | `raw.githubusercontent.com` or the URL you give | `skylos rules install <pack or URL>` | nothing | — |
