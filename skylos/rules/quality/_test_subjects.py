@@ -42,6 +42,8 @@ from skylos.rules.quality._pytest_collection import (
     pytest_collection_config,
 )
 from skylos.rules.quality._receivers import _parameters, _scope_bindings
+from skylos.rules.quality._test_collection_state import uncertain_collection_names
+from skylos.rules.quality._test_flow import unreachable_test_nodes
 
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 _SCOPES = (*_FUNCTIONS, ast.ClassDef, ast.Lambda)
@@ -448,9 +450,16 @@ def _select(module, context):
     config, pytest_file = selection
     bindings = _scope_bindings(module)
     aliases, blocked = _aliases(module, bindings)
+    blocked |= uncertain_collection_names(module, config, bindings)
+    for name in blocked:
+        aliases[name] = ()
     if _module_markers(_marker_scope(module), aliases):
         return ()
-    pytest_aliases = _pytest_aliases(module, bindings)
+    pytest_aliases = {
+        name: evidence
+        for name, evidence in _pytest_aliases(module, bindings).items()
+        if name not in blocked
+    }
     classes = {
         node.name: node
         for node in module.body
@@ -477,7 +486,7 @@ def _select(module, context):
                 function,
                 name,
                 framework,
-                frozenset(_dead_nodes(function)),
+                frozenset(_dead_nodes(function)) | unreachable_test_nodes(function),
                 fixture_backed
                 or inherited_fixture
                 or _fixture_marked(function.decorator_list, aliases),
@@ -535,8 +544,12 @@ def _select(module, context):
                 )
             )
             for method in node.body:
-                if _collectable_function(
-                    method, node.body, method_config, class_bindings, class_aliases
+                if (
+                    isinstance(method, _FUNCTIONS)
+                    and f"{node.name}.{method.name}" not in blocked
+                    and _collectable_function(
+                        method, node.body, method_config, class_bindings, class_aliases
+                    )
                 ):
                     add(
                         method,
