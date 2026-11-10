@@ -37,6 +37,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("path", nargs="?", default=".", metavar="PATH")
     parser.add_argument(
+        "--diff",
+        metavar="BASE",
+        help="Show tasks in files changed since BASE's merge base; analyze the full Git project.",
+    )
+    parser.add_argument(
         "--from-report",
         metavar="REPORT",
         help="Read a regular UTF-8 analyzer JSON file up to 512 MB instead of scanning.",
@@ -134,17 +139,32 @@ def run_cleanup_command(
         parser.error(
             "--review is a separate advisory step; run it before selecting a patch"
         )
+    if args.diff is not None and (args.from_report or args.history):
+        parser.error(
+            "--diff requires a live scan and cannot be combined with --from-report or --history"
+        )
     stdout = stdout if stdout is not None else sys.stdout
     root = None
     try:
         target = Path(args.path).expanduser().resolve(strict=True)
-        if args.task and Path(args.path).expanduser().is_symlink():
+        if (args.task or args.diff is not None) and Path(
+            args.path
+        ).expanduser().is_symlink():
             raise ValueError(
                 "Cleanup patches require a direct source path, not a symlink"
             )
         root = target.parent if target.is_file() else target
         if not root.is_dir():
             raise ValueError("PATH must be a directory or source file")
+        selection = None
+        scope = None
+        if args.diff is not None:
+            from skylos.cleanup_diff import resolve_cleanup_diff
+
+            selection = resolve_cleanup_diff(target, args.diff)
+            root = selection.context.root
+            target = root
+            scope = {**_scope(target, root), **selection.scope_binding()}
 
         if args.history:
             from skylos.cleanup_state import load_cleanup_state
@@ -170,7 +190,13 @@ def run_cleanup_command(
                     "Saved report must be a readable regular UTF-8 file up to 512 MB, without a symlink"
                 )
         else:
-            raw = _scan(target, root, analyze_func)
+            raw = _scan(target, root, analyze_func, selection=selection)
+        if selection is not None:
+            selection.assert_head_unchanged()
+            if {**_scope(target, root), **selection.scope_binding()} != scope:
+                raise ValueError(
+                    "Project configuration changed during cleanup; the scan is not comparable"
+                )
 
         from skylos.cleanup import build_cleanup_plan
 
@@ -181,7 +207,16 @@ def run_cleanup_command(
             top=None,
             all_advice=args.all_advice,
         )
-        _run_workflow(args, target, root, report, result, analyze_func)
+        _run_workflow(
+            args,
+            target,
+            root,
+            report,
+            result,
+            analyze_func,
+            selection=selection,
+            scope=scope,
+        )
     except (Exception, SystemExit) as exc:
         report = {
             "schema_version": 1,
@@ -208,17 +243,21 @@ def run_cleanup_command(
     return 2 if report["status"] == "incomplete" else 0
 
 
-def _run_workflow(args, target, root, report, result, analyze_func):
+def _run_workflow(
+    args, target, root, report, result, analyze_func, *, selection=None, scope=None
+):
     from hashlib import sha256
     from skylos.cleanup_state import update_cleanup_state
 
-    scope = _scope(target, root)
+    scope = scope if scope is not None else _scope(target, root)
     inventory = report.pop("_inventory", None)
     all_tasks = report.get("tasks", []) + report.get("advisories", [])
     for task in all_tasks:
         task["scope"] = scope
     bucket = None
     if not args.no_state and not args.from_report:
+        if selection is not None:
+            selection.assert_head_unchanged()
         disposition = (
             {"id": args.defer, "status": "deferred", "reason": args.reason}
             if args.defer
@@ -236,6 +275,11 @@ def _run_workflow(args, target, root, report, result, analyze_func):
             "scope_id": sha256(json.dumps(scope, sort_keys=True).encode()).hexdigest(),
             "tasks": bucket["tasks"],
         }
+    if selection is not None:
+        from skylos.cleanup_diff import select_cleanup_diff
+
+        select_cleanup_diff(report, selection, inventory)
+        all_tasks = report["tasks"] + report["advisories"]
     if args.task:
         from skylos.cleanup_execution import plan_cleanup_edit, apply_cleanup_edit
 
@@ -257,17 +301,34 @@ def _run_workflow(args, target, root, report, result, analyze_func):
         if args.apply:
 
             def rescan():
-                if _scope(target, root) != scope:
+                current_scope = _scope(target, root)
+                if selection is not None:
+                    selection.assert_head_unchanged()
+                    current_scope.update(selection.scope_binding())
+                if current_scope != scope:
                     raise ValueError(
                         "Project configuration changed during checks; the rescan is not comparable"
                     )
-                raw = _scan(target, root, analyze_func)
+                raw = _scan(target, root, analyze_func, selection=selection)
+                if selection is not None:
+                    selection.assert_head_unchanged()
+                current_scope = _scope(target, root)
+                if selection is not None:
+                    current_scope.update(selection.scope_binding())
+                if current_scope != scope:
+                    raise ValueError(
+                        "Project configuration changed during checks; the rescan is not comparable"
+                    )
                 return json.loads(raw) if isinstance(raw, str) else raw
 
             receipt = apply_cleanup_edit(
                 edit, root, test_cmd=args.test_cmd, rescan=rescan
             )
+            if selection is not None:
+                receipt["baseline"] = selection.baseline()
             report["execution"] = receipt
+            if receipt["status"] == "incomplete":
+                report["status"] = "incomplete"
             if bucket is not None:
                 try:
                     updated = update_cleanup_state(
@@ -279,10 +340,16 @@ def _run_workflow(args, target, root, report, result, analyze_func):
                         f"Edit receipt retained, but history could not be saved: {exc}"
                     )
                     report["status"] = "incomplete"
-            if receipt["status"] == "incomplete":
-                report["status"] = "incomplete"
+    limit = 1 if args.next else args.top
+    displayed = {}
+    for section in ("tasks", "advisories"):
+        displayed[section] = [
+            task for task in report[section] if task.get("state") != "deferred"
+        ][:limit]
+    if args.next and displayed["tasks"]:
+        displayed["advisories"] = []
     selected = sorted(
-        (task for task in all_tasks if task.get("state") != "deferred"),
+        displayed["tasks"] + displayed["advisories"],
         key=lambda task: 0 if task["finding_type"] == "defect" else 1,
     )
     if (args.context or args.review) and selected:
@@ -316,7 +383,6 @@ def _run_workflow(args, target, root, report, result, analyze_func):
             "advice": [],
             "reason": "No open cleanup tasks are available for model review.",
         }
-    limit = 1 if args.next else args.top
     for section in ("tasks", "advisories"):
         rows = [
             task for task in report.get(section, []) if task.get("state") != "deferred"
@@ -366,7 +432,7 @@ def _review_adapter(args):
     return create_llm_adapter(config)
 
 
-def _scan(target: Path, root: Path, analyze_func):
+def _scan(target: Path, root: Path, analyze_func, *, selection=None):
     from skylos.config import load_config, resolve_config_file_path
     from skylos.constants import parse_exclude_folders
 
@@ -410,21 +476,24 @@ def _scan(target: Path, root: Path, analyze_func):
         contextlib.redirect_stdout(io.StringIO()),
         contextlib.redirect_stderr(io.StringIO()),
     ):
-        raw = analyze_func(
-            str(target),
-            exclude_folders=excluded,
-            enable_quality=True,
-            enable_ai_defects=True,
-            enable_danger=False,
-            enable_secrets=False,
-            enable_dependency_hallucinations=False,
-            enable_sca=False,
-            grep_verify=False,
-            trace_file=False,
-            config_file=config_file,
-            all_advice=False,
-            **review_options,
-        )
+        from skylos.cleanup_diff import cleanup_diff_environment
+
+        with cleanup_diff_environment(selection):
+            raw = analyze_func(
+                str(target),
+                exclude_folders=excluded,
+                enable_quality=True,
+                enable_ai_defects=True,
+                enable_danger=False,
+                enable_secrets=False,
+                enable_dependency_hallucinations=False,
+                enable_sca=False,
+                grep_verify=False,
+                trace_file=False,
+                config_file=config_file,
+                all_advice=False,
+                **review_options,
+            )
         result = json.loads(raw) if isinstance(raw, str) else raw
         return apply_trusted_review_decisions(result, review_root)
 
@@ -447,6 +516,12 @@ def _emit(stdout: TextIO, output_format: str, report: dict[str, Any]) -> None:
     if report.get("history") is not None:
         stdout.write(json.dumps(report["history"], indent=2) + "\n")
         return
+    if report.get("selection"):
+        selection = report["selection"]
+        stdout.write(
+            f"Selection: files changed since {_plain(selection['base'])} "
+            f"(comparison {_plain(selection['merge_base_sha'][:12])}); findings may predate the change.\n"
+        )
     if report.get("edit"):
         stdout.write(_plain(report["edit"].get("message", "Patch preview")) + "\n")
         stdout.write(
@@ -492,7 +567,10 @@ def _emit(stdout: TextIO, output_format: str, report: dict[str, Any]) -> None:
         )
     for limitation in report.get("limitations", []):
         stdout.write(f"\nCoverage: {_plain(limitation)}\n")
-    stdout.write(
-        "\nNext: review one task, make a focused change, run your checks, "
-        "then rerun skylos cleanup.\n"
-    )
+    if report.get("selection"):
+        stdout.write("\nNext: " + _plain(report["next_step"]) + "\n")
+    else:
+        stdout.write(
+            "\nNext: review one task, make a focused change, run your checks, "
+            "then rerun skylos cleanup.\n"
+        )
