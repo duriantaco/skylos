@@ -158,6 +158,7 @@ def run_cleanup_command(
         )
     stdout = stdout if stdout is not None else sys.stdout
     root = None
+    report = None
     try:
         target = Path(args.path).expanduser().resolve(strict=True)
         if (args.task or args.diff is not None) and Path(
@@ -242,29 +243,39 @@ def run_cleanup_command(
             scope=scope,
         )
     except (Exception, SystemExit) as exc:
-        report = {
-            "schema_version": 1,
-            "tool": "cleanup",
-            "status": "incomplete",
-            "project_root": str(root) if root is not None else None,
-            "scope": ["quality", "ai_defects", "dead_code"],
-            "tasks": [],
-            "advisories": [],
-            "counts": {
-                "tasks": 0,
-                "advisories": 0,
-                "shown_tasks": 0,
-                "shown_advisories": 0,
-                "optional_advice": 0,
-            },
-            "limitations": [f"Cleanup queue could not be built: {exc}"],
-            "next_step": "Resolve the input or scan error, then rerun skylos cleanup.",
-        }
+        if isinstance(report, dict) and report.get("execution"):
+            report["status"] = "incomplete"
+            report.setdefault("limitations", []).append(
+                f"Edit receipt retained, but a later cleanup step failed: {exc}"
+            )
+        else:
+            report = _incomplete_report(root, exc)
     report["source"] = "saved_report" if args.from_report else "live_scan"
     _emit(stdout, args.format, report)
     if report.get("execution", {}).get("status") == "failed":
         return 1
     return 2 if report["status"] == "incomplete" else 0
+
+
+def _incomplete_report(root, exc):
+    return {
+        "schema_version": 1,
+        "tool": "cleanup",
+        "status": "incomplete",
+        "project_root": str(root) if root is not None else None,
+        "scope": ["quality", "ai_defects", "dead_code"],
+        "tasks": [],
+        "advisories": [],
+        "counts": {
+            "tasks": 0,
+            "advisories": 0,
+            "shown_tasks": 0,
+            "shown_advisories": 0,
+            "optional_advice": 0,
+        },
+        "limitations": [f"Cleanup queue could not be built: {exc}"],
+        "next_step": "Resolve the input or scan error, then rerun skylos cleanup.",
+    }
 
 
 def _run_workflow(
@@ -400,6 +411,10 @@ def _run_workflow(
             )
         )
         context = build_cleanup_context(selected[:5], root, exclude_folders=exclusions)
+        if report.get("execution"):
+            context["limitations"].append(
+                "Context was read after the edit; original finding locations may have shifted or disappeared."
+            )
         report["context"] = context
         if args.review:
             if not context["files"]:
@@ -644,6 +659,11 @@ def _emit(stdout: TextIO, output_format: str, report: dict[str, Any]) -> None:
         stdout.write(
             "\nSource context (bounded; graph relationships are static observations):\n"
         )
+        after_edit = bool(report.get("execution"))
+        if after_edit:
+            stdout.write(
+                "Read after edit; original finding locations may have shifted or disappeared.\n"
+            )
         selected = {
             task["file"]: int(task.get("line") or 1) for task in tasks + advisories
         }
@@ -655,7 +675,7 @@ def _emit(stdout: TextIO, output_format: str, report: dict[str, Any]) -> None:
             for line, text in enumerate(row["source"].splitlines(), row["start_line"]):
                 if focus - 2 <= line <= focus + 2:
                     stdout.write(
-                        f"  {line:>5} {'>' if line == focus else ' '} {_plain(text)}\n"
+                        f"  {line:>5} {'>' if line == focus and not after_edit else ' '} {_plain(text)}\n"
                     )
         for row in context.get("suggested_tests", [])[:5]:
             stdout.write(

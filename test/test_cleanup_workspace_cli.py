@@ -165,6 +165,51 @@ def test_human_context_points_to_the_reported_source_line(tmp_path):
     assert "SKY-U002" in text
 
 
+@pytest.mark.parametrize("state_args", [[], ["--no-state"]])
+def test_context_failure_after_apply_preserves_execution_receipt(
+    tmp_path, monkeypatch, state_args
+):
+    source = tmp_path / "app.py"
+    source.write_text("import math\nimport statistics\nvalue = 3\n")
+    task = _run(tmp_path)["tasks"][0]["id"]
+
+    def broken_context(*_args, **_kwargs):
+        raise RuntimeError("context unavailable")
+
+    monkeypatch.setattr("skylos.cleanup_context.build_cleanup_context", broken_context)
+    output = io.StringIO()
+    code = run_cleanup_command(
+        [
+            str(tmp_path),
+            "--task",
+            task,
+            "--apply",
+            "--context",
+            *state_args,
+            "--format",
+            "json",
+        ],
+        stdout=output,
+        analyze_func=lambda *_a, **_kw: {
+            **_raw(tmp_path),
+            "unused_imports": [
+                row
+                for row in _raw(tmp_path)["unused_imports"]
+                if row["name"] in source.read_text()
+            ],
+        },
+    )
+    report = json.loads(output.getvalue())
+    assert code == 2
+    assert report["status"] == "incomplete"
+    assert report["execution"]["status"] == "applied_unverified"
+    assert report["execution"]["applied"] is True
+    assert report["execution"]["rescan"]["status"] == "passed"
+    assert report["edit"]["patch"]
+    assert "import math" not in source.read_text()
+    assert any("receipt retained" in row for row in report["limitations"])
+
+
 @pytest.mark.parametrize(
     "args",
     [
