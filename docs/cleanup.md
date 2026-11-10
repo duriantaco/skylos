@@ -246,6 +246,11 @@ explicit edits and honest check receipts. This round does not add an opaque
 "slop score", infer AI authorship or claim complete subjective architecture
 review.
 
+The [five-repository exploratory evaluation](../benchmarks/cleanup/2026-11-10/README.md)
+records actual scans of documented AI-assisted projects, source-reviewed
+examples, false positives and coverage limits. Its selected manual sample is
+not a precision/recall estimate; target source was not edited or executed.
+
 ## Cloud integration
 
 The Cloud Cleanup workspace loads quality, AI-code and dead-code findings from

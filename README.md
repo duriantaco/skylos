@@ -483,6 +483,9 @@ Cloud's Cleanup tasks panel groups saved findings and connects existing issue
 ownership, work status and outcome notes. Explicit scan uploads can include bounded
 CLI outcome receipts, displayed as client claims. See [Cleanup](./docs/cleanup.md) for
 supported edits, receipts, exclusions and limits.
+See the [five-repository exploratory evaluation](./benchmarks/cleanup/2026-11-10/README.md)
+for actual findings, reviewed false positives and coverage limits on documented
+AI-assisted projects.
 
 ## Common Workflows
 

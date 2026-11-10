@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "scanner_before_fix": "744e3fd293afaa554a226f5225ee6df4764aa674",
+  "scanner_after_fix": "5e50217d5dcd9f7cc9caf9581dc651e4784d729b",
+  "method": "Ten new independent cleanup scans after the focused call-order identity fix; same unmodified snapshots and standardized offline/serial configuration.",
+  "focused_regression_tests_passed": 243,
+  "repositories": [
+    {
+      "repository": "mdkess/claude-game",
+      "revision": "8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "same_default_task_ids_across_fresh_modes": true,
+      "snapshot_unchanged": true,
+      "modes": [
+        {
+          "mode": "default",
+          "same_counts_as_baseline": true,
+          "same_status_as_baseline": true,
+          "blocked_events": [],
+          "changed_existing_files": [],
+          "new_files": []
+        },
+        {
+          "mode": "all-advice",
+          "same_counts_as_baseline": true,
+          "same_status_as_baseline": true,
+          "blocked_events": [],
+          "changed_existing_files": [],
+          "new_files": []
+        }
+      ]
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "revision": "9c0d23cf414e538167f8880963f120b1b80db578",
+      "same_default_task_ids_across_fresh_modes": true,
+      "snapshot_unchanged": true,
+      "modes": [
+        {
+          "mode": "default",
+          "same_counts_as_baseline": true,
+          "same_status_as_baseline": true,
+          "blocked_events": [],
+          "changed_existing_files": [],
+          "new_files": []
+        },
+        {
+          "mode": "all-advice",
+          "same_counts_as_baseline": true,
+          "same_status_as_baseline": true,
+          "blocked_events": [],
+          "changed_existing_files": [],
+          "new_files": []
+        }
+      ]
+    },
+    {
+      "repository": "simonw/files-to-prompt",
+      "revision": "1b234ff6dccb2ca3e56b5c256696558fb85306dc",
+      "same_default_task_ids_across_fresh_modes": true,
+      "snapshot_unchanged": true,
+      "modes": [
+        {
+          "mode": "default",
+          "same_counts_as_baseline": true,
+          "same_status_as_baseline": true,
+          "blocked_events": [],
+          "changed_existing_files": [],
+          "new_files": []
+        },
+        {
+          "mode": "all-advice",
+          "same_counts_as_baseline": true,
+          "same_status_as_baseline": true,
+          "blocked_events": [],
+          "changed_existing_files": [],
+          "new_files": []
+        }
+      ]
+    },
+    {
+      "repository": "jagadish-k/video-gif-creator",
+      "revision": "d7a3000eeb4bc25a68dc143755cd5f3f320be4e0",
+      "same_default_task_ids_across_fresh_modes": true,
+      "snapshot_unchanged": true,
+      "modes": [
+        {
+          "mode": "default",
+          "same_counts_as_baseline": true,
+          "same_status_as_baseline": true,
+          "blocked_events": [],
+          "changed_existing_files": [],
+          "new_files": []
+        },
+        {
+          "mode": "all-advice",
+          "same_counts_as_baseline": true,
+          "same_status_as_baseline": true,
+          "blocked_events": [],
+          "changed_existing_files": [],
+          "new_files": []
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "same_default_task_ids_across_fresh_modes": true,
+      "snapshot_unchanged": true,
+      "modes": [
+        {
+          "mode": "default",
+          "same_counts_as_baseline": true,
+          "same_status_as_baseline": true,
+          "blocked_events": [],
+          "changed_existing_files": [],
+          "new_files": []
+        },
+        {
+          "mode": "all-advice",
+          "same_counts_as_baseline": true,
+          "same_status_as_baseline": true,
+          "blocked_events": [],
+          "changed_existing_files": [],
+          "new_files": []
+        }
+      ]
+    }
+  ]
+}
