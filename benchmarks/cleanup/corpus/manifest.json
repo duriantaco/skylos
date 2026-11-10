@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "kind": "curated-independent-reproductions",
+  "fixture_license": "Apache-2.0",
+  "parts": ["python_tests.json", "code_patterns.json"],
+  "limitations": [
+    "Development fixtures informed by external corpora; not an independent real-repository accuracy benchmark.",
+    "Pattern labels do not establish AI authorship.",
+    "A control is clean only for its specified pattern and mapped rules.",
+    "No target code, tests, model reviews, fixes or uploads are run."
+  ]
+}

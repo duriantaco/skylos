@@ -1,0 +1,199 @@
+{
+  "schema_version": 1,
+  "kind": "historical-repair-references",
+  "included_in_detection_totals": false,
+  "notes": [
+    "Source and regression-test blobs were fetched and their SHA256 and Git blob SHA1 verified.",
+    "No upstream source or implementation is vendored here; these pinned references are separate from independently authored development fixtures.",
+    "Reference tests describe the historical behavior but were not executed in this evaluation."
+  ],
+  "cases": [
+    {
+      "id": "bugsjs-express-25-jsonp-object-callback",
+      "language": "javascript",
+      "title": "JSONP query callback must be a string before string replacement",
+      "issue_url": "https://github.com/expressjs/express/issues/2104",
+      "pattern": {
+        "family": "missing_input_type_guard",
+        "candidate_kind": "contextual_type_flow",
+        "observable_before": "this.req.query yields a callback value that may be an object; if(callback) proves only truthiness, and the selected branch calls callback.replace without a string proof.",
+        "fixed_negative_control": "After normalizing arrays, callback && typeof callback === 'string' dominates callback.replace; object values leave the JSON response unchanged.",
+        "static_requirements": [
+          "Track the query-derived callback binding through the optional Array.isArray extraction.",
+          "Do not treat a truthiness guard as a string type guard.",
+          "Distinguish a recognized string-method receiver from an arbitrary object with a legitimate replace method."
+        ],
+        "not_a_general_rule": "Do not flag every replace call without a local typeof check; known string sources and valid caller/type contracts are negative controls.",
+        "correctness_evidence": "Original maintainer fix explicitly says the callback parameter can be an object; the separate regression test supplies that object-shaped query.",
+        "runtime_confirmation_performed": false,
+        "current_skylos_expectation": "Not run or asserted; classify any detector result separately from this historical oracle."
+      },
+      "caveats": [
+        "The semantic type obligation comes from query/parser behavior and the regression test; syntax alone does not prove every arbitrary callback object invalid.",
+        "This historical defect is not evidence of AI authorship.",
+        "The fixed negative control changes intended behavior; it is not a preserve-all-old-behavior refactor."
+      ],
+      "evaluation_status": "reference-only: not scanned or executed by this corpus runner",
+      "corpus": {
+        "corpus": "BugsJS",
+        "corpus_revision": "7abbad3e4df12cd5294110bb5db11b7d5bc758a6",
+        "metadata_url": "https://github.com/BugsJS/bug-dataset/blob/7abbad3e4df12cd5294110bb5db11b7d5bc758a6/Projects/Express/Express_bugs.csv#L26",
+        "category": "incomplete feature implementation --> missing input validation --> missing type check",
+        "fix_pattern_codes": [
+          "IF-CC"
+        ]
+      },
+      "before": {
+        "repository": "BugsJS/express",
+        "revision": "c99fa6a19268e87b300c1775f90814a23095f199",
+        "path": "lib/response.js",
+        "url": "https://github.com/BugsJS/express/blob/c99fa6a19268e87b300c1775f90814a23095f199/lib/response.js",
+        "git_blob_sha": "31c79c0d5b550305d60bae6826821cd66d3be17f",
+        "sha256": "30b6ebed0260ffb0102b2b369042bb80eb66606fbeb1b6e952551c54c477f034",
+        "regions": [
+          {
+            "start_line": 227,
+            "end_line": 248,
+            "role": "Query-derived value, truthiness-only guard, optional array extraction and unguarded string replace",
+            "url": "https://github.com/BugsJS/express/blob/c99fa6a19268e87b300c1775f90814a23095f199/lib/response.js#L227-L248"
+          }
+        ]
+      },
+      "after": {
+        "repository": "BugsJS/express",
+        "revision": "18166cbabf924678ccf9b62e9458817bbf191a94",
+        "path": "lib/response.js",
+        "url": "https://github.com/BugsJS/express/blob/18166cbabf924678ccf9b62e9458817bbf191a94/lib/response.js",
+        "git_blob_sha": "cbfc79f711bf92154bd2ce306c2c7304621d8afb",
+        "sha256": "b6b0b6b445853fd2ab6cdde7e3aa54d0239f2f34fd1aaeee5471f4b89f593fa0",
+        "regions": [
+          {
+            "start_line": 227,
+            "end_line": 252,
+            "role": "Array normalization happens before a string type guard that dominates replace; nonstrings retain JSON fallback",
+            "url": "https://github.com/BugsJS/express/blob/18166cbabf924678ccf9b62e9458817bbf191a94/lib/response.js#L227-L252"
+          }
+        ]
+      },
+      "regression_test": {
+        "repository": "BugsJS/express",
+        "revision": "1110205bbf4474522c0d77e8fc39761aeadfdf0c",
+        "path": "test/res.jsonp.js",
+        "url": "https://github.com/BugsJS/express/blob/1110205bbf4474522c0d77e8fc39761aeadfdf0c/test/res.jsonp.js",
+        "git_blob_sha": "dfd891d3949a9beeef2a589f66e485e4f10211b2",
+        "sha256": "340a1352e04e51ae80b366a524ef545de6590e30456927ef6c7cca03e7a8731f",
+        "regions": [
+          {
+            "start_line": 40,
+            "end_line": 54,
+            "role": "Object-shaped callback query must be ignored; JSON content type and body must survive",
+            "url": "https://github.com/BugsJS/express/blob/1110205bbf4474522c0d77e8fc39761aeadfdf0c/test/res.jsonp.js#L40-L54"
+          }
+        ]
+      },
+      "license": {
+        "identifier": "MIT",
+        "url": "https://github.com/BugsJS/express/blob/18166cbabf924678ccf9b62e9458817bbf191a94/LICENSE",
+        "revision": "18166cbabf924678ccf9b62e9458817bbf191a94",
+        "redistribution_note": "Preserve the copyright and full MIT notice when copying source or derived snippets."
+      }
+    },
+    {
+      "id": "bugsjs-express-24-options-error-forwarding",
+      "language": "javascript",
+      "title": "OPTIONS response failures must reach the error continuation",
+      "issue_url": "https://github.com/expressjs/express/issues/2494",
+      "pattern": {
+        "family": "exception_not_forwarded_to_error_callback",
+        "candidate_kind": "contextual_control_flow",
+        "observable_before": "The callback has old(err) as its existing error continuation, but the no-error response-writing path invokes res.set(...).send(...) without converting a thrown error into that continuation.",
+        "fixed_negative_control": "The same response work moves into a helper whose catch(err) calls next(err), and the completion callback supplies old as next.",
+        "static_requirements": [
+          "Resolve the wrapped completion callback and its prior error continuation.",
+          "Model response-writing operations as possibly throwing under the known headers-already-sent trigger.",
+          "Follow the catch binding into the callback argument; a catch that discards or substitutes the error is not this negative control."
+        ],
+        "not_a_general_rule": "Do not require try/catch around every call. The obligation is specific to this callback boundary and its error-continuation contract.",
+        "correctness_evidence": "Original maintainer fix says an OPTIONS response-handler error caused a crash and references issue2494; the separate test establishes the headers-already-sent trigger and expected downstream middleware response.",
+        "runtime_confirmation_performed": false,
+        "current_skylos_expectation": "Not run or asserted; this is a future contextual exception-flow oracle, not a claimed empty-catch detector case."
+      },
+      "caveats": [
+        "A missing local catch alone is not proof of a bug; callback ownership and the known failing response state matter.",
+        "No Node process, HTTP server, dependency or test was executed.",
+        "This historical defect is not evidence of AI authorship.",
+        "The fixed negative control forwards an exception instead of crashing; it is intentionally behavior-changing."
+      ],
+      "evaluation_status": "reference-only: not scanned or executed by this corpus runner",
+      "corpus": {
+        "corpus": "BugsJS",
+        "corpus_revision": "7abbad3e4df12cd5294110bb5db11b7d5bc758a6",
+        "metadata_url": "https://github.com/BugsJS/bug-dataset/blob/7abbad3e4df12cd5294110bb5db11b7d5bc758a6/Projects/Express/Express_bugs.csv#L25",
+        "category": "incomplete feature implementation --> error handling",
+        "fix_pattern_codes": [
+          "MD-ADD"
+        ]
+      },
+      "before": {
+        "repository": "BugsJS/express",
+        "revision": "4070dabe532ecb799445920cf9756eb6625a0254",
+        "path": "lib/router/index.js",
+        "url": "https://github.com/BugsJS/express/blob/4070dabe532ecb799445920cf9756eb6625a0254/lib/router/index.js",
+        "git_blob_sha": "488713915e96c278b6d1dc42e3973a6ab1188261",
+        "sha256": "8c46c3eddf1c66bf26190d7461c904bf1b22b409be8270c6a5eaecff3d88ddc7",
+        "regions": [
+          {
+            "start_line": 151,
+            "end_line": 159,
+            "role": "Default OPTIONS completion callback directly writes headers/body without forwarding synchronous response errors",
+            "url": "https://github.com/BugsJS/express/blob/4070dabe532ecb799445920cf9756eb6625a0254/lib/router/index.js#L151-L159"
+          }
+        ]
+      },
+      "after": {
+        "repository": "BugsJS/express",
+        "revision": "33508e0c756094f3cf465e29f78782102fa59bfb",
+        "path": "lib/router/index.js",
+        "url": "https://github.com/BugsJS/express/blob/33508e0c756094f3cf465e29f78782102fa59bfb/lib/router/index.js",
+        "git_blob_sha": "37e3083fb76bc983a76d1d3d7e8513ed32990e83",
+        "sha256": "3003d69b671eb342406138d7398ca15775f29a98284b963cd5ee8a714f451d32",
+        "regions": [
+          {
+            "start_line": 151,
+            "end_line": 157,
+            "role": "Completion callback passes its prior continuation into the response helper",
+            "url": "https://github.com/BugsJS/express/blob/33508e0c756094f3cf465e29f78782102fa59bfb/lib/router/index.js#L151-L157"
+          },
+          {
+            "start_line": 572,
+            "end_line": 581,
+            "role": "Response helper catches errors and forwards the same error to next",
+            "url": "https://github.com/BugsJS/express/blob/33508e0c756094f3cf465e29f78782102fa59bfb/lib/router/index.js#L572-L581"
+          }
+        ]
+      },
+      "regression_test": {
+        "repository": "BugsJS/express",
+        "revision": "3d8ae3df70cbe2fd1747f359ae3da167455d6e48",
+        "path": "test/app.options.js",
+        "url": "https://github.com/BugsJS/express/blob/3d8ae3df70cbe2fd1747f359ae3da167455d6e48/test/app.options.js",
+        "git_blob_sha": "30890c05519e2876337f40bb701c5cfd5acce701",
+        "sha256": "7275ef5b91ea9d616c1521c42ddd588e3f8396a581ee09435f42f82dc3f231b6",
+        "regions": [
+          {
+            "start_line": 75,
+            "end_line": 95,
+            "role": "Writing headers first triggers response-handler failure; downstream error middleware must receive it",
+            "url": "https://github.com/BugsJS/express/blob/3d8ae3df70cbe2fd1747f359ae3da167455d6e48/test/app.options.js#L75-L95"
+          }
+        ]
+      },
+      "license": {
+        "identifier": "MIT",
+        "url": "https://github.com/BugsJS/express/blob/33508e0c756094f3cf465e29f78782102fa59bfb/LICENSE",
+        "revision": "33508e0c756094f3cf465e29f78782102fa59bfb",
+        "redistribution_note": "Preserve the copyright and full MIT notice when copying source or derived snippets."
+      }
+    }
+  ]
+}

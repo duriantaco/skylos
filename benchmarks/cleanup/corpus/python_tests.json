@@ -1,0 +1,192 @@
+{
+  "schema_version": 1,
+  "description": "Four independently authored Python test-smell reproductions, each paired with a control. Reference licenses describe the upstream concept sources; no upstream implementation or fixture code was copied.",
+  "scope": "Static source examples, not an executed test suite or a claim of AI authorship. Target files are relative to each case path; case paths are relative to this corpus directory.",
+  "rule_mapping": "No direct standalone snapshot rule for these four specific test smells was identified in the current Skylos catalog. Empty rule_ids records an unmapped coverage target. Diff-aware assertion weakening and test deletion rules require separate change evidence and are not substituted for these static patterns.",
+  "cases": [
+    {
+      "id": "python-tests-meaningless-assertion-problematic",
+      "path": "fixtures/python_tests/meaningless_assertion_problematic",
+      "pair_id": "python-tests-meaningless-assertion",
+      "variant": "problematic",
+      "language": "python",
+      "pattern": "meaningless_assertion",
+      "rationale": "The test invokes the calculation but asserts only equality of two identical literals. That assertion cannot observe a wrong discounted total.",
+      "source": {
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/redundant_assertion",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "license": "Apache-2.0",
+        "kind": "independently-authored-reproduction"
+      },
+      "targets": [
+        {
+          "file": "test_meaningless_assertion_problematic.py",
+          "start_line": 7,
+          "end_line": 7,
+          "rule_ids": []
+        }
+      ]
+    },
+    {
+      "id": "python-tests-meaningless-assertion-control",
+      "path": "fixtures/python_tests/meaningless_assertion_control",
+      "pair_id": "python-tests-meaningless-assertion",
+      "variant": "control",
+      "language": "python",
+      "pattern": "meaningless_assertion",
+      "rationale": "The assertion compares the actual calculation result to the expected discounted total; changing the result can fail the test.",
+      "source": {
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/redundant_assertion",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "license": "Apache-2.0",
+        "kind": "independently-authored-reproduction"
+      },
+      "targets": [
+        {
+          "file": "test_meaningless_assertion_control.py",
+          "start_line": 6,
+          "end_line": 6,
+          "rule_ids": []
+        }
+      ]
+    },
+    {
+      "id": "python-tests-duplicated-assertion-problematic",
+      "path": "fixtures/python_tests/duplicated_assertion_problematic",
+      "pair_id": "python-tests-duplicated-assertion",
+      "variant": "problematic",
+      "language": "python",
+      "pattern": "duplicated_assertion",
+      "rationale": "Two adjacent assertions compare the same immutable local string to the same expected literal with no intervening operation. The second adds no check.",
+      "source": {
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/duplicate_assertion",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "license": "Apache-2.0",
+        "kind": "independently-authored-reproduction"
+      },
+      "targets": [
+        {
+          "file": "test_duplicated_assertion_problematic.py",
+          "start_line": 7,
+          "end_line": 8,
+          "rule_ids": []
+        }
+      ]
+    },
+    {
+      "id": "python-tests-duplicated-assertion-control",
+      "path": "fixtures/python_tests/duplicated_assertion_control",
+      "pair_id": "python-tests-duplicated-assertion",
+      "variant": "control",
+      "language": "python",
+      "pattern": "duplicated_assertion",
+      "rationale": "One assertion checks the computed label against its exact expected value, without repeating the same observation.",
+      "source": {
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/duplicate_assertion",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "license": "Apache-2.0",
+        "kind": "independently-authored-reproduction"
+      },
+      "targets": [
+        {
+          "file": "test_duplicated_assertion_control.py",
+          "start_line": 7,
+          "end_line": 7,
+          "rule_ids": []
+        }
+      ]
+    },
+    {
+      "id": "python-tests-empty-test-problematic",
+      "path": "fixtures/python_tests/empty_test_problematic",
+      "pair_id": "python-tests-empty-test",
+      "variant": "problematic",
+      "language": "python",
+      "pattern": "empty_test",
+      "rationale": "The collected test body is only pass: it neither invokes the normalization function nor checks its behavior. The empty test is not marked as a skipped or abstract test.",
+      "source": {
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/empty_test",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "license": "Apache-2.0",
+        "kind": "independently-authored-reproduction"
+      },
+      "targets": [
+        {
+          "file": "test_empty_test_problematic.py",
+          "start_line": 5,
+          "end_line": 6,
+          "rule_ids": []
+        }
+      ]
+    },
+    {
+      "id": "python-tests-empty-test-control",
+      "path": "fixtures/python_tests/empty_test_control",
+      "pair_id": "python-tests-empty-test",
+      "variant": "control",
+      "language": "python",
+      "pattern": "empty_test",
+      "rationale": "The test calls the normalization function on mixed-case padded input and checks the normalized value.",
+      "source": {
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/empty_test",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "license": "Apache-2.0",
+        "kind": "independently-authored-reproduction"
+      },
+      "targets": [
+        {
+          "file": "test_empty_test_control.py",
+          "start_line": 5,
+          "end_line": 6,
+          "rule_ids": []
+        }
+      ]
+    },
+    {
+      "id": "python-tests-fixed-sleep-polling-problematic",
+      "path": "fixtures/python_tests/fixed_sleep_polling_problematic",
+      "pair_id": "python-tests-fixed-sleep-polling",
+      "variant": "problematic",
+      "language": "python",
+      "pattern": "fixed_sleep_polling",
+      "rationale": "The test guesses that a worker will finish within a fixed sleep, then samples its completion flag once. The delay wastes time after early completion and does not synchronize with delayed completion.",
+      "source": {
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/sleepy",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "license": "Apache-2.0",
+        "kind": "independently-authored-reproduction"
+      },
+      "targets": [
+        {
+          "file": "test_fixed_sleep_polling_problematic.py",
+          "start_line": 9,
+          "end_line": 10,
+          "rule_ids": []
+        }
+      ]
+    },
+    {
+      "id": "python-tests-fixed-sleep-polling-control",
+      "path": "fixtures/python_tests/fixed_sleep_polling_control",
+      "pair_id": "python-tests-fixed-sleep-polling",
+      "variant": "control",
+      "language": "python",
+      "pattern": "fixed_sleep_polling",
+      "rationale": "The test waits for the completion event with a bounded timeout and asserts the wait result. It responds to actual completion instead of assuming a fixed delay was sufficient.",
+      "source": {
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/sleepy",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "license": "Apache-2.0",
+        "kind": "independently-authored-reproduction"
+      },
+      "targets": [
+        {
+          "file": "test_fixed_sleep_polling_control.py",
+          "start_line": 8,
+          "end_line": 8,
+          "rule_ids": []
+        }
+      ]
+    }
+  ]
+}

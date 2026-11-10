@@ -328,3 +328,12 @@ Positioning supported by the implementation: **“Evidence-based cleanup for
 AI-assisted code: find defects, prioritize cleanup, review fixes.”** Claims of
 AI authorship detection, universal architecture judgment or measured token
 savings would require evidence this feature does not provide.
+
+## Measuring pattern coverage
+
+The [cleanup pattern corpus](../benchmarks/cleanup/corpus/README.md) pairs
+problematic examples with controls and records exact source locations,
+provenance and mapped rules. Its runner separates detection, default queue
+visibility, false positives, unmapped patterns and incomplete scans. The
+initial examples are development fixtures, with historical repair references
+kept separately. They do not measure AI authorship or repair correctness.
