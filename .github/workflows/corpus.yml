@@ -44,7 +44,7 @@ jobs:
           echo "status=$status" >> "$GITHUB_OUTPUT"
           uv run python - <<'PY' | tee /tmp/corpus-summary.txt
           import json
-          from skylos.corpus_ci import format_summary
+          from skylos.benchmarks.corpus_ci import format_summary
 
           with open("corpus-guard-head.json", encoding="utf-8") as fh:
               print(format_summary(json.load(fh)))

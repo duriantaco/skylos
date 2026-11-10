@@ -251,6 +251,23 @@ records actual scans of documented AI-assisted projects, source-reviewed
 examples, false positives and coverage limits. Its selected manual sample is
 not a precision/recall estimate; target source was not edited or executed.
 
+## Corpus regression checks
+
+Cleanup patterns use the existing [Corpus Guard](../corpus/README.md), its
+[manifest](../corpus/manifest.json) and [runner](../scripts/corpus_ci.py):
+
+```bash
+python scripts/corpus_ci.py --manifest corpus/manifest.json
+```
+
+The cleanup-related additions cover two Python patterns in four cases:
+blocking HTTP calls inside async functions and mutation of a shared default
+argument. Each problematic case has a paired control, with expectations tied
+to a rule, file and line range. The runner analyzes isolated fixture copies
+without executing their code; incomplete analysis is an unscored failure.
+These are focused detector regression checks, not AI-authorship labels or a
+whole-repository accuracy estimate.
+
 ## Cloud integration
 
 The Cloud Cleanup workspace loads quality, AI-code and dead-code findings from
