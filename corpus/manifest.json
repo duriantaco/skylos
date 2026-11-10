@@ -1213,6 +1213,126 @@
           ]
         }
       }
+    },
+    {
+      "id": "cleanup-async-blocking-problematic",
+      "path": "fixtures/cleanup_async_blocking_problematic",
+      "description": "A synchronous HTTP request inside a coroutine blocks its event-loop thread.",
+      "paired_with": "cleanup-async-blocking-control",
+      "source": {
+        "repo": "https://github.com/astral-sh/ruff",
+        "url": "https://github.com/astral-sh/ruff/blob/25c2129f4ef1f0048b36c329502f57ee64ba6f53/crates/ruff_linter/src/rules/flake8_async/rules/blocking_http_call.rs",
+        "revision": "25c2129f4ef1f0048b36c329502f57ee64ba6f53",
+        "license": "MIT",
+        "notes": "Concept reference: Ruff ASYNC210 documentation at the pinned revision (MIT). This is an independently authored reproduction, with no upstream source copied; fixture code is original Skylos code under Apache-2.0."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {},
+        "present": {
+          "quality": [
+            {
+              "rule_id": "SKY-Q401",
+              "file": "app.py",
+              "start_line": 5,
+              "end_line": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "cleanup-async-blocking-control",
+      "path": "fixtures/cleanup_async_blocking_control",
+      "description": "The paired coroutine awaits an asynchronous HTTP client request.",
+      "paired_with": "cleanup-async-blocking-problematic",
+      "source": {
+        "repo": "https://github.com/astral-sh/ruff",
+        "url": "https://github.com/astral-sh/ruff/blob/25c2129f4ef1f0048b36c329502f57ee64ba6f53/crates/ruff_linter/src/rules/flake8_async/rules/blocking_http_call.rs",
+        "revision": "25c2129f4ef1f0048b36c329502f57ee64ba6f53",
+        "license": "MIT",
+        "notes": "Concept reference: Ruff ASYNC210 documentation at the pinned revision (MIT). This is an independently authored reproduction, with no upstream source copied; fixture code is original Skylos code under Apache-2.0."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {
+          "quality": [
+            {
+              "rule_id": "SKY-Q401",
+              "file": "app.py",
+              "start_line": 6,
+              "end_line": 6
+            }
+          ]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "cleanup-mutable-default-problematic",
+      "path": "fixtures/cleanup_mutable_default_problematic",
+      "description": "Mutating a default dictionary leaks badge assignments across calls that omit the mapping.",
+      "paired_with": "cleanup-mutable-default-control",
+      "source": {
+        "repo": "https://github.com/astral-sh/ruff",
+        "url": "https://github.com/astral-sh/ruff/blob/25c2129f4ef1f0048b36c329502f57ee64ba6f53/crates/ruff_linter/src/rules/flake8_bugbear/rules/mutable_argument_default.rs",
+        "revision": "25c2129f4ef1f0048b36c329502f57ee64ba6f53",
+        "license": "MIT",
+        "notes": "Concept reference: Ruff B006 documentation at the pinned revision (MIT). This is an independently authored reproduction, with no upstream source copied; fixture code is original Skylos code under Apache-2.0."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {},
+        "present": {
+          "quality": [
+            {
+              "rule_id": "SKY-L001",
+              "file": "app.py",
+              "start_line": 1,
+              "end_line": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "cleanup-mutable-default-control",
+      "path": "fixtures/cleanup_mutable_default_control",
+      "description": "A None default creates a fresh mapping for each call that omits it.",
+      "paired_with": "cleanup-mutable-default-problematic",
+      "source": {
+        "repo": "https://github.com/astral-sh/ruff",
+        "url": "https://github.com/astral-sh/ruff/blob/25c2129f4ef1f0048b36c329502f57ee64ba6f53/crates/ruff_linter/src/rules/flake8_bugbear/rules/mutable_argument_default.rs",
+        "revision": "25c2129f4ef1f0048b36c329502f57ee64ba6f53",
+        "license": "MIT",
+        "notes": "Concept reference: Ruff B006 documentation at the pinned revision (MIT). This is an independently authored reproduction, with no upstream source copied; fixture code is original Skylos code under Apache-2.0."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {
+          "quality": [
+            {
+              "rule_id": "SKY-L001",
+              "file": "app.py",
+              "start_line": 1,
+              "end_line": 1
+            }
+          ]
+        },
+        "present": {}
+      }
     }
   ]
 }

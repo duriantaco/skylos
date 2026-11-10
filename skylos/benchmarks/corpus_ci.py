@@ -102,12 +102,77 @@ def validate_manifest(
                         f"corpus case {case_id} {mode_name}.{category} must be a non-empty list"
                     )
                 for symbol in symbols:
+                    if isinstance(symbol, dict):
+                        _validate_location_expectation(symbol, case_path)
+                        continue
                     if not isinstance(symbol, str) or not symbol.strip():
                         raise ValueError(
                             f"corpus case {case_id} {mode_name}.{category} has an invalid symbol"
                         )
 
     return cases
+
+
+def _validate_location_expectation(expected: dict, case_path: Path) -> None:
+    from skylos.rules.catalog import get_rule_catalog
+
+    fields = {"rule_id", "file", "start_line", "end_line"}
+    if set(expected) != fields:
+        raise ValueError(
+            "location expectations require exactly rule_id/file/start_line/end_line"
+        )
+    if not isinstance(expected["rule_id"], str) or not expected["rule_id"].startswith(
+        "SKY-"
+    ):
+        raise ValueError("location expectation needs a SKY rule ID")
+    if expected["rule_id"] not in {entry["id"] for entry in get_rule_catalog()}:
+        raise ValueError("location expectation has an unknown rule ID")
+    filename = expected["file"]
+    if not isinstance(filename, str) or not filename or "\\" in filename:
+        raise ValueError("location expectation needs a relative POSIX file path")
+    relative = Path(filename)
+    if (
+        relative.is_absolute()
+        or ".." in relative.parts
+        or relative.as_posix() != filename
+    ):
+        raise ValueError("location expectation file must stay within its case")
+    if case_path.is_file() and relative != Path(case_path.name):
+        raise ValueError("single-file cases cannot expect findings in sibling files")
+    root = case_path if case_path.is_dir() else case_path.parent
+    source = (root / relative).resolve()
+    if not source.is_relative_to(root.resolve()) or not source.is_file():
+        raise ValueError("location expectation file must exist within its case")
+    start, end = expected["start_line"], expected["end_line"]
+    if type(start) is not int or type(end) is not int or not 1 <= start <= end:
+        raise ValueError("location expectation needs a positive ordered line range")
+    if end > len(source.read_text(encoding="utf-8").splitlines()):
+        raise ValueError("location expectation range exceeds its source file")
+
+
+def _finding_path(finding, analysis_root):
+    filename = finding.get("file") or finding.get("file_path")
+    if not isinstance(filename, str) or not filename:
+        return None
+    actual = Path(filename)
+    if actual.is_absolute():
+        try:
+            actual = actual.resolve().relative_to(analysis_root)
+        except ValueError:
+            return None
+    return actual.as_posix()
+
+
+def _expectation_matches(expected, finding, *, category, analysis_root):
+    if isinstance(expected, str):
+        return expected in _finding_tokens(finding, category=category)
+    line = finding.get("line")
+    return (
+        finding.get("rule_id") == expected["rule_id"]
+        and _finding_path(finding, analysis_root) == expected["file"]
+        and type(line) is int
+        and expected["start_line"] <= line <= expected["end_line"]
+    )
 
 
 def _finding_tokens(
@@ -164,7 +229,27 @@ def _analysis_path(case_path: Path):
 def run_case(case: dict[str, Any], manifest_path: str | Path) -> dict[str, Any]:
     manifest_root = Path(manifest_path).parent
     case_path = (manifest_root / case["path"]).resolve()
+    located_rules = {
+        expected["rule_id"]
+        for mode in ("absent", "present")
+        for expected_list in case.get("expect", {}).get(mode, {}).values()
+        for expected in expected_list
+        if isinstance(expected, dict)
+    }
     with _analysis_path(case_path) as analysis_path:
+        analysis_root = (
+            analysis_path if case_path.is_dir() else analysis_path.parent
+        ).resolve()
+        source_lines = {}
+        if located_rules:
+            for source in analysis_root.rglob("*"):
+                if source.is_file():
+                    try:
+                        source_lines[source.relative_to(analysis_root).as_posix()] = (
+                            len(source.read_text(encoding="utf-8").splitlines())
+                        )
+                    except (OSError, UnicodeError):
+                        continue
         result = _scan_case(analysis_path, scan=case.get("scan"))
     issues = analysis_issues(result, scanner="skylos")
     expect = case.get("expect", {})
@@ -182,6 +267,57 @@ def run_case(case: dict[str, Any], manifest_path: str | Path) -> dict[str, Any]:
                 issues.append(
                     f"{category} must be a list of finding objects with identities"
                 )
+                continue
+            located = [
+                expected
+                for mode in ("absent", "present")
+                for expected in expect.get(mode, {}).get(category, [])
+                if isinstance(expected, dict)
+            ]
+            if located and any(
+                not isinstance(finding.get("rule_id"), str)
+                or not finding["rule_id"].strip()
+                or (
+                    finding["rule_id"] in {item["rule_id"] for item in located}
+                    and (
+                        type(finding.get("line")) is not int
+                        or finding["line"] < 1
+                        or finding["line"]
+                        > source_lines.get(_finding_path(finding, analysis_root), 0)
+                    )
+                )
+                for finding in findings
+            ):
+                issues.append(
+                    f"{category} needs rule IDs and valid locations for mapped rules"
+                )
+    located_quality = any(
+        isinstance(expected, dict)
+        for mode in ("absent", "present")
+        for expected in expect.get(mode, {}).get("quality", [])
+    )
+    if located_quality:
+        from skylos.benchmarks.quality import _quality_analysis_issues
+
+        issues.extend(
+            issue
+            for issue in _quality_analysis_issues(case, case_path, result)
+            if issue not in issues
+        )
+        summary = (
+            result.get("analysis_summary", {}) if isinstance(result, Mapping) else {}
+        )
+        if not isinstance(summary, Mapping):
+            summary = {}
+        categories = summary.get("grade_categories")
+        if (
+            (case.get("scan") or {}).get("enable_quality") is not True
+            or not isinstance(categories, list)
+            or "quality" not in categories
+        ):
+            issues.append(
+                "quality analysis must be enabled and recorded for location expectations"
+            )
 
     source_summary = (
         result.get("analysis_summary", {}) if isinstance(result, Mapping) else {}
@@ -224,18 +360,19 @@ def run_case(case: dict[str, Any], manifest_path: str | Path) -> dict[str, Any]:
         expectations = expect.get(mode, {}) or {}
         for category, symbols in expectations.items():
             findings = result.get(category, []) or []
-            finding_tokens = [
-                _finding_tokens(finding, category=category) for finding in findings
-            ]
-
             for symbol in symbols:
                 checked_count += 1
                 matched = sorted(
                     {
                         token
-                        for tokens in finding_tokens
-                        if symbol in tokens
-                        for token in tokens
+                        for finding in findings
+                        if _expectation_matches(
+                            symbol,
+                            finding,
+                            category=category,
+                            analysis_root=analysis_root,
+                        )
+                        for token in _finding_tokens(finding, category=category)
                     }
                 )
 
@@ -245,7 +382,9 @@ def run_case(case: dict[str, Any], manifest_path: str | Path) -> dict[str, Any]:
                             case_id=case["id"],
                             category=category,
                             mode=mode,
-                            expected=symbol,
+                            expected=json.dumps(symbol, sort_keys=True)
+                            if isinstance(symbol, dict)
+                            else symbol,
                             found=matched,
                         )
                     )
@@ -255,7 +394,9 @@ def run_case(case: dict[str, Any], manifest_path: str | Path) -> dict[str, Any]:
                             case_id=case["id"],
                             category=category,
                             mode=mode,
-                            expected=symbol,
+                            expected=json.dumps(symbol, sort_keys=True)
+                            if isinstance(symbol, dict)
+                            else symbol,
                             found=[],
                         )
                     )

@@ -21,9 +21,9 @@ Acceptance rules:
 
 ## Current coverage
 
-The manifest has 50 cases and 195 explicit expectations: 113 absence checks and
-82 presence checks. Presence includes 77 unused-symbol controls, two quality
-tokens, and three separately recorded policy controls. These are assertions,
+The manifest has 54 cases and 199 explicit expectations: 115 absence checks and
+84 presence checks. Presence includes 77 unused-symbol controls, four quality
+expectations, and three separately recorded policy controls. These are assertions,
 not a whole-repository precision or recall score.
 
 All 46 original absence-only cases now include real unused-symbol controls.
@@ -43,6 +43,28 @@ Two unreferenced helper functions remain in `dead_code_abstentions`, and a helpe
 in a test file remains `whitelisted`. Their source is still unreferenced; the
 manifest records those existing reporting policies separately and also includes
 actual unused-symbol findings. None is counted as a detector fix.
+
+Two Python quality pairs cover blocking HTTP inside an async function
+(`SKY-Q401`) and mutation of a shared mutable default (`SKY-L001`). Their
+counterparts await an asynchronous request and allocate a fresh list per call.
+They use the existing corpus runner and CI; all earlier cases and expected
+answers are retained. Existing exception-handler cases remain in the
+[quality benchmark](../benchmarks/quality/manifest.json).
+
+These pairs use a location expectation such as:
+
+```json
+{"rule_id": "SKY-L001", "file": "app.py", "start_line": 1, "end_line": 1}
+```
+
+Place it in a category list under `expect.present` or `expect.absent`, alongside
+existing symbol strings if needed. One finding must match all four fields.
+The file is a canonical POSIX path relative to the case directory, and the
+inclusive line range must exist in that source. Single-file cases can check
+only that selected file. Unknown rule IDs, mistyped fields and invalid ranges
+are rejected. Quality location checks also require enabled, recorded quality
+analysis and positive language coverage. Malformed mapped finding locations
+are unscored failures rather than passing absence checks.
 
 ## Validity and execution
 
