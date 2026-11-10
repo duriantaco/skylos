@@ -45,6 +45,44 @@ history. A finding in a changed file may predate the change: this selection
 does not establish that every finding was introduced by the diff. Saved
 reports cannot supply a diff baseline.
 
+## Python test-quality checks
+
+Quality scans and the default cleanup scan include these bounded Python checks:
+
+| Rule | What the finding identifies | Review action |
+| --- | --- | --- |
+| `SKY-L040` | A literal-only assertion condition that is always true | Check an observed result or expected behavior. |
+| `SKY-L041` | A collected test body containing only a docstring, `pass` or `...` | Review fixture/setup checks, then implement the behavior the test names. |
+| `SKY-L042` | An adjacent repeated `assert` over proven plain values, including a builtin `len()` result | Check another property or review whether the repeated check adds evidence. |
+| `SKY-L043` | A fixed positive sleep immediately followed by a positive check of a locally created `threading.Event` | Consider a bounded wait on the completion signal and assert its result. |
+
+```bash
+skylos . --quality --format concise
+skylos cleanup . --context
+```
+
+The task names the test, marks its source line, explains the pattern and retains
+structured evidence in CLI JSON. These are low-severity review findings. They
+do not identify AI authorship or prove a production defect, and no deterministic
+edit is enabled for them. Make the intended change manually, run the relevant
+tests, then rescan the same scope.
+
+The checks reuse static test collection and Done's literal/skip semantics.
+Helpers, skipped/xfail tests, fixtures, golden source data and uncertain wrappers
+are excluded where their test role cannot be established. Empty-body review
+abstains when fixture inputs, setup hooks, autouse declarations or an ancestor
+`conftest.py` may supply checks. Runtime expressions and self-comparisons are
+not treated as constant assertions. Repeated calls, properties, subscripts and
+unknown application-return values are outside duplicate-assertion proof.
+The sleep check leaves explicit waits, timing tests, expected failures and
+uncertain or patched Event bindings for separate review.
+
+Done's diff checks still separately detect removed, skipped or gutted existing
+tests. These snapshot checks preserve that behavior and add review of the
+selected source even without a Git baseline. Cloud displays their messages,
+locations and source snippets through ordinary uploaded quality findings;
+the full CLI evidence object is not a stored Cloud proof receipt.
+
 ## Review, apply and check one task
 
 ```bash

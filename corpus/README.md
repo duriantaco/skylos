@@ -21,8 +21,8 @@ Acceptance rules:
 
 ## Current coverage
 
-The manifest has 54 cases and 199 explicit expectations: 115 absence checks and
-84 presence checks. Presence includes 77 unused-symbol controls, four quality
+The manifest has 62 cases and 207 explicit expectations: 119 absence checks and
+88 presence checks. Presence includes 77 unused-symbol controls, eight quality
 expectations, and three separately recorded policy controls. These are assertions,
 not a whole-repository precision or recall score.
 
@@ -65,6 +65,16 @@ only that selected file. Unknown rule IDs, mistyped fields and invalid ranges
 are rejected. Quality location checks also require enabled, recorded quality
 analysis and positive language coverage. Malformed mapped finding locations
 are unscored failures rather than passing absence checks.
+
+Four additional Python test-quality pairs cover literal-true assertions, empty
+test bodies, adjacent repeated checks over known plain values, and fixed sleeps
+before an Event completion check (`SKY-L040`–`SKY-L043`). Controls retain runtime
+assertions, asserting helpers, distinct checks and explicit bounded waits.
+The corpus establishes detector behavior for these independently authored
+examples; it does not measure AI authorship, repair correctness or broad
+real-project accuracy. The standard cleanup command is also exercised against
+these pairs in `test/test_cleanup_test_quality.py`, including default visibility,
+source evidence, source integrity and refusal of unsupported automatic edits.
 
 ## Validity and execution
 

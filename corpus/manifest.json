@@ -1333,6 +1333,238 @@
         },
         "present": {}
       }
+    },
+    {
+      "id": "test-quality-constant-assertion-problematic",
+      "path": "fixtures/test_quality_constant_assertion_problematic",
+      "paired_with": "test-quality-constant-assertion-control",
+      "description": "A literal-true assertion does not check a runtime result; the counterpart checks an actual function result.",
+      "source": {
+        "repo": "https://github.com/JetBrains-Research/PyNose",
+        "license": "Apache-2.0",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/redundant_assertion",
+        "notes": "Independently authored reproduction of the named test-quality concept; fixture code inherits Skylos Apache-2.0. External fixture annotations are references, not imported detector logic or independent accuracy labels."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            {
+              "rule_id": "SKY-L040",
+              "file": "test_case.py",
+              "start_line": 2,
+              "end_line": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-constant-assertion-control",
+      "path": "fixtures/test_quality_constant_assertion_control",
+      "paired_with": "test-quality-constant-assertion-problematic",
+      "description": "A literal-true assertion does not check a runtime result; the counterpart checks an actual function result.",
+      "source": {
+        "repo": "https://github.com/JetBrains-Research/PyNose",
+        "license": "Apache-2.0",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/redundant_assertion",
+        "notes": "Independently authored reproduction of the named test-quality concept; fixture code inherits Skylos Apache-2.0. External fixture annotations are references, not imported detector logic or independent accuracy labels."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {
+          "quality": [
+            {
+              "rule_id": "SKY-L040",
+              "file": "test_case.py",
+              "start_line": 6,
+              "end_line": 6
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-empty-test-problematic",
+      "path": "fixtures/test_quality_empty_test_problematic",
+      "paired_with": "test-quality-empty-test-control",
+      "description": "A placeholder-only test body merits review; the counterpart delegates to an asserting helper.",
+      "source": {
+        "repo": "https://github.com/JetBrains-Research/PyNose",
+        "license": "Apache-2.0",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/empty_test",
+        "notes": "Independently authored reproduction of the named test-quality concept; fixture code inherits Skylos Apache-2.0. External fixture annotations are references, not imported detector logic or independent accuracy labels."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            {
+              "rule_id": "SKY-L041",
+              "file": "test_case.py",
+              "start_line": 1,
+              "end_line": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-empty-test-control",
+      "path": "fixtures/test_quality_empty_test_control",
+      "paired_with": "test-quality-empty-test-problematic",
+      "description": "A placeholder-only test body merits review; the counterpart delegates to an asserting helper.",
+      "source": {
+        "repo": "https://github.com/JetBrains-Research/PyNose",
+        "license": "Apache-2.0",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/empty_test",
+        "notes": "Independently authored reproduction of the named test-quality concept; fixture code inherits Skylos Apache-2.0. External fixture annotations are references, not imported detector logic or independent accuracy labels."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {
+          "quality": [
+            {
+              "rule_id": "SKY-L041",
+              "file": "test_case.py",
+              "start_line": 5,
+              "end_line": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-duplicate-assertion-problematic",
+      "path": "fixtures/test_quality_duplicate_assertion_problematic",
+      "paired_with": "test-quality-duplicate-assertion-control",
+      "description": "An adjacent repeated assertion over a proven builtin integer adds no distinct check; the counterpart checks another property.",
+      "source": {
+        "repo": "https://github.com/JetBrains-Research/PyNose",
+        "license": "Apache-2.0",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/duplicate_assertion",
+        "notes": "Independently authored reproduction of the named test-quality concept; fixture code inherits Skylos Apache-2.0. External fixture annotations are references, not imported detector logic or independent accuracy labels."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            {
+              "rule_id": "SKY-L042",
+              "file": "test_case.py",
+              "start_line": 8,
+              "end_line": 8
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-duplicate-assertion-control",
+      "path": "fixtures/test_quality_duplicate_assertion_control",
+      "paired_with": "test-quality-duplicate-assertion-problematic",
+      "description": "An adjacent repeated assertion over a proven builtin integer adds no distinct check; the counterpart checks another property.",
+      "source": {
+        "repo": "https://github.com/JetBrains-Research/PyNose",
+        "license": "Apache-2.0",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/duplicate_assertion",
+        "notes": "Independently authored reproduction of the named test-quality concept; fixture code inherits Skylos Apache-2.0. External fixture annotations are references, not imported detector logic or independent accuracy labels."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {
+          "quality": [
+            {
+              "rule_id": "SKY-L042",
+              "file": "test_case.py",
+              "start_line": 9,
+              "end_line": 9
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-sleep-completion-problematic",
+      "path": "fixtures/test_quality_sleep_completion_problematic",
+      "paired_with": "test-quality-sleep-completion-control",
+      "description": "A fixed delay before checking an Event can race with completion; the counterpart waits for an explicit signal with a bounded timeout.",
+      "source": {
+        "repo": "https://github.com/JetBrains-Research/PyNose",
+        "license": "Apache-2.0",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/sleepy",
+        "notes": "Independently authored reproduction of the named test-quality concept; fixture code inherits Skylos Apache-2.0. External fixture annotations are references, not imported detector logic or independent accuracy labels."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            {
+              "rule_id": "SKY-L043",
+              "file": "test_case.py",
+              "start_line": 9,
+              "end_line": 9
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-sleep-completion-control",
+      "path": "fixtures/test_quality_sleep_completion_control",
+      "paired_with": "test-quality-sleep-completion-problematic",
+      "description": "A fixed delay before checking an Event can race with completion; the counterpart waits for an explicit signal with a bounded timeout.",
+      "source": {
+        "repo": "https://github.com/JetBrains-Research/PyNose",
+        "license": "Apache-2.0",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/sleepy",
+        "notes": "Independently authored reproduction of the named test-quality concept; fixture code inherits Skylos Apache-2.0. External fixture annotations are references, not imported detector logic or independent accuracy labels."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {
+          "quality": [
+            {
+              "rule_id": "SKY-L043",
+              "file": "test_case.py",
+              "start_line": 8,
+              "end_line": 8
+            }
+          ]
+        }
+      }
     }
   ]
 }

@@ -1464,6 +1464,10 @@ uses project ignores, not inline comments, consistently across supported files.
 | L037 | LOW | Conditional returning bool literals | Python |
 | L038 | LOW | Conversion call inside f-string | Python |
 | L039 | LOW | Except clause that only re-raises | Python |
+| L040 | LOW | Constant assertion in test | Python; review |
+| L041 | LOW | Empty test body | Python; review |
+| L042 | LOW | Repeated test assertion | Python; review |
+| L043 | LOW | Sleep used for test synchronization | Python; review |
 
 SKY-L006 accepts an explicit `return None` next to value returns (PEP 8); only a
 bare `return` is inconsistent. SKY-L014 does not treat raw `${NAME}` or
@@ -1565,6 +1569,30 @@ name); an earlier re-raise that keeps a later handler away is not reported, nor
 is `except*`, nor clauses with a comment in them (a documented placeholder).
 
 ## Quality, Structure, Architecture, and Performance
+
+`SKY-L040`–`SKY-L043` add static Python test-quality review. They select directly
+declared pytest tests under configured collection or proven unittest bases,
+reuse existing literal/skip semantics and share the parsed module. They preserve
+Done's separate diff-based checks for removed, skipped or gutted tests.
+
+`SKY-L040` reports only bounded literal-only assertions whose condition is true;
+runtime names, calls, self-comparisons and overloaded values are not constant
+proof. `SKY-L041` reports docstring/pass/ellipsis-only bodies and abstains when
+fixture inputs, usefixtures/autouse declarations, setup hooks or an ancestor
+conftest may supply checks. Helpers and expected-exception bodies remain valid.
+
+`SKY-L042` reports the second adjacent identical `assert` only with proof of
+plain local values, including a builtin `len()` result. Unknown application
+returns, property/subscript reads, different messages and intervening mutations
+are excluded. `SKY-L043` requires stable standard-library bindings, a local
+single-assignment Event, a fixed positive sleep and an immediately following
+positive completion check. Explicit waits, timing tests, expected failures,
+unknown escapes and patched objects stay quiet.
+
+These LOW Review findings retain a rule, test name, source location, explanation
+and evidence. They appear in the default cleanup queue and require manual
+review; no automatic test rewrite, runtime proof or AI-authorship inference is
+provided. See [cleanup test-quality checks](docs/cleanup.md#python-test-quality-checks).
 
 | ID | Severity | Name | Languages / Scope | Threshold / Notes |
 |:---|:---|:---|:---|:---|

@@ -63,6 +63,14 @@ from skylos.rules.quality.slop import (
     ReraiseOnlyHandlerRule,
 )
 from skylos.rules.quality.structure import ArgCountRule, FunctionLengthRule
+from skylos.rules.quality.test_assertions import (
+    ConstantTestAssertionRule,
+    EmptyTestRule,
+)
+from skylos.rules.quality.test_reliability import (
+    DuplicateTestAssertionRule,
+    SleepSynchronizationRule,
+)
 from skylos.rules.quality.unreachable import UnreachableCodeRule
 from skylos.rules.secrets import SECRET_CONFIG_SUFFIXES
 from skylos.rules.vibe_dictionary import build_vibe_dictionary
@@ -171,6 +179,10 @@ LINTER_RULE_NODE_TYPES = {
     BooleanLiteralConditionalRule: (ast.Module,),
     FormattedConversionCallRule: (ast.Module,),
     ReraiseOnlyHandlerRule: (ast.Module,),
+    ConstantTestAssertionRule: (ast.Module,),
+    EmptyTestRule: (ast.Module,),
+    DuplicateTestAssertionRule: (ast.Module,),
+    SleepSynchronizationRule: (ast.Module,),
     DangerousCallsRule: (ast.Module, ast.Import, ast.ImportFrom, ast.Assign, ast.Call),
 }
 
@@ -252,6 +264,10 @@ def _build_builtin_quality_rules(cfg: dict) -> list:
         ("SKY-L037", BooleanLiteralConditionalRule),
         ("SKY-L038", FormattedConversionCallRule),
         ("SKY-L039", ReraiseOnlyHandlerRule),
+        ("SKY-L040", ConstantTestAssertionRule),
+        ("SKY-L041", EmptyTestRule),
+        ("SKY-L042", DuplicateTestAssertionRule),
+        ("SKY-L043", SleepSynchronizationRule),
     ]
 
     q_rules = [factory() for rule_id, factory in specs if _enabled(cfg, rule_id)]
