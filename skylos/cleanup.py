@@ -51,7 +51,7 @@ def build_cleanup_plan(
     view, _visibility = prepare_advice_view(
         raw, project_root=root, all_advice=all_advice
     )
-    visible = {(category, id(row)) for category, row in iter_result_findings(view)}
+    visible = {(category, id(row)) for category, row in _iter_cleanup_findings(view)}
     defaults = {
         id(row): rule
         for section, rule in _DEAD_RULES.items()
@@ -59,7 +59,7 @@ def build_cleanup_plan(
     }
     observed = []
     anchor_cache, source_hashes = {}, {}
-    for category, finding in iter_result_findings(raw):
+    for category, finding in _iter_cleanup_findings(raw):
         if category not in _SCOPE:
             continue
         item = _task(
@@ -201,6 +201,51 @@ def _limitations(result):
     return reasons
 
 
+def _calls_identity(finding):
+    # Native call metadata is serialized from a set. Only this top-level list
+    # is unordered; evidence, traces and other lists retain their full order.
+    calls = finding.get("calls")
+    if isinstance(calls, list) and all(isinstance(call, str) for call in calls):
+        return {**finding, "calls": sorted(calls)}
+    return finding
+
+
+def _iter_cleanup_findings(result):
+    """Match report mirrors using call-set order, then yield original rows."""
+    from skylos.reporting.rollups import FINDING_SECTIONS
+
+    projected = dict(result)
+    originals = {}
+
+    def rows(values):
+        projected_rows = []
+        for finding in values:
+            normalized = _calls_identity(finding)
+            originals[id(normalized)] = finding
+            projected_rows.append(normalized)
+        return projected_rows
+
+    for section in (
+        *dict(FINDING_SECTIONS),
+        "circular_dependencies",
+        "publisher_change_findings",
+        "code_health",
+    ):
+        if section in result:
+            projected[section] = rows(result[section])
+    metrics = result.get("architecture_metrics")
+    if isinstance(metrics, dict):
+        projected["architecture_metrics"] = {
+            **metrics,
+            "advisories": [
+                {**group, "signals": rows(group["signals"])}
+                for group in metrics.get("advisories", [])
+            ],
+        }
+    for category, finding in iter_result_findings(projected):
+        yield category, originals[id(finding)]
+
+
 def _task(finding, category, root, default_rule, anchor_cache, source_hashes):
     rule = str(finding.get("rule_id") or finding.get("id") or default_rule)
     file = str(finding.get("file") or finding.get("file_path") or "?")
@@ -233,7 +278,11 @@ def _task(finding, category, root, default_rule, anchor_cache, source_hashes):
             sha256(source.encode("utf-8")).hexdigest() if source is not None else None
         )
     source_sha256 = source_hashes[file]
-    identity = {"finding": finding, "file": file, "category": category}
+    identity = {
+        "finding": _calls_identity(finding),
+        "file": file,
+        "category": category,
+    }
     if source_anchor:
         identity = {
             "file": file,
