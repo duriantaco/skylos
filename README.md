@@ -466,16 +466,26 @@ retain local task history, and preview a supported patch before applying it:
 
 ```bash
 skylos cleanup . --next
+skylos cleanup . --diff origin/main --context
 skylos cleanup . --task TASK_ID
 skylos cleanup . --task TASK_ID --apply --test-cmd "pytest -q test/test_orders.py"
+skylos cleanup . --create-plan imports --plan-task TASK_ID
+skylos cleanup . --plan imports
 ```
 
 Source edits require `--apply`; tests run only with `--test-cmd`. A change stays
 `applied_unverified` when tests were skipped. `--context` adds bounded source
-context; optional `--review` sends it to your configured model as advisory review.
+context with marked source lines, graph relationships and suggested tests.
+Verification requires observed passing tests and a comparable rescan; an exit-zero
+command alone is insufficient. Named plans preserve explicit ordering and manual
+completion. Optional `--review` stores cited model advice with source freshness.
 Cloud's Cleanup tasks panel groups saved findings and connects existing issue
-ownership, work status and outcome notes. See [Cleanup](./docs/cleanup.md) for
+ownership, work status and outcome notes. Explicit scan uploads can include bounded
+CLI outcome receipts, displayed as client claims. See [Cleanup](./docs/cleanup.md) for
 supported edits, receipts, exclusions and limits.
+See the [five-repository exploratory evaluation](./benchmarks/cleanup/2026-11-10/README.md)
+for actual findings, reviewed false positives and coverage limits on documented
+AI-assisted projects.
 
 ## Common Workflows
 

@@ -1,0 +1,278 @@
+{
+  "schema_version": 1,
+  "repositories": [
+    {
+      "repository": "mdkess/claude-game",
+      "revision": "8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "analyzed_files": 71,
+      "analyzed_loc": 7363,
+      "default_status": "incomplete",
+      "default_queue": {
+        "advisories": 3,
+        "deferred_advisories": 0,
+        "deferred_tasks": 0,
+        "optional_advice": 50,
+        "shown_advisories": 3,
+        "shown_tasks": 188,
+        "tasks": 188
+      },
+      "all_advice_queue": {
+        "advisories": 53,
+        "deferred_advisories": 0,
+        "deferred_tasks": 0,
+        "optional_advice": 0,
+        "shown_advisories": 53,
+        "shown_tasks": 188,
+        "tasks": 188
+      },
+      "default_finding_types": {
+        "review": 188,
+        "advice": 3
+      },
+      "default_task_rules": {
+        "SKY-L007": 2,
+        "SKY-T103": 2,
+        "SKY-E003": 8,
+        "SKY-U001": 25,
+        "SKY-U004": 3,
+        "SKY-U003": 142,
+        "SKY-E004": 6
+      },
+      "canonical_raw_categories": {
+        "quality": 57,
+        "dead_code": 184
+      },
+      "analysis_error_count": 0,
+      "default_elapsed_seconds": 3.569,
+      "blocked_execution_or_network_events": 0,
+      "source_files_changed": 0,
+      "files_added": 0,
+      "ai_api_verification": {
+        "state": "incomplete",
+        "completed_checks": [
+          "typescript_local_api_surface"
+        ],
+        "unsupported_languages": [
+          "shell"
+        ],
+        "skipped_references": 0,
+        "external_references_not_verified": 87
+      }
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "revision": "9c0d23cf414e538167f8880963f120b1b80db578",
+      "analyzed_files": 14,
+      "analyzed_loc": 823,
+      "default_status": "ready",
+      "default_queue": {
+        "advisories": 8,
+        "deferred_advisories": 0,
+        "deferred_tasks": 0,
+        "optional_advice": 19,
+        "shown_advisories": 8,
+        "shown_tasks": 7,
+        "tasks": 7
+      },
+      "all_advice_queue": {
+        "advisories": 27,
+        "deferred_advisories": 0,
+        "deferred_tasks": 0,
+        "optional_advice": 0,
+        "shown_advisories": 27,
+        "shown_tasks": 7,
+        "tasks": 7
+      },
+      "default_finding_types": {
+        "review": 7,
+        "advice": 8
+      },
+      "default_task_rules": {
+        "SKY-U005": 2,
+        "SKY-U003": 3,
+        "SKY-U002": 2
+      },
+      "canonical_raw_categories": {
+        "quality": 29,
+        "dead_code": 5
+      },
+      "analysis_error_count": 0,
+      "default_elapsed_seconds": 1.774,
+      "blocked_execution_or_network_events": 0,
+      "source_files_changed": 0,
+      "files_added": 0,
+      "ai_api_verification": {
+        "state": "complete",
+        "completed_checks": [
+          "python_local_api_reference"
+        ],
+        "unsupported_languages": [],
+        "skipped_references": 0,
+        "external_references_not_verified": 0
+      }
+    },
+    {
+      "repository": "simonw/files-to-prompt",
+      "revision": "1b234ff6dccb2ca3e56b5c256696558fb85306dc",
+      "analyzed_files": 4,
+      "analyzed_loc": 670,
+      "default_status": "ready",
+      "default_queue": {
+        "advisories": 4,
+        "deferred_advisories": 0,
+        "deferred_tasks": 0,
+        "optional_advice": 12,
+        "shown_advisories": 4,
+        "shown_tasks": 1,
+        "tasks": 1
+      },
+      "all_advice_queue": {
+        "advisories": 16,
+        "deferred_advisories": 0,
+        "deferred_tasks": 0,
+        "optional_advice": 0,
+        "shown_advisories": 16,
+        "shown_tasks": 1,
+        "tasks": 1
+      },
+      "default_finding_types": {
+        "review": 1,
+        "advice": 4
+      },
+      "default_task_rules": {
+        "SKY-L008": 1
+      },
+      "canonical_raw_categories": {
+        "quality": 17
+      },
+      "analysis_error_count": 0,
+      "default_elapsed_seconds": 1.337,
+      "blocked_execution_or_network_events": 0,
+      "source_files_changed": 0,
+      "files_added": 0,
+      "ai_api_verification": {
+        "state": "complete",
+        "completed_checks": [
+          "python_local_api_reference"
+        ],
+        "unsupported_languages": [],
+        "skipped_references": 0,
+        "external_references_not_verified": 0
+      }
+    },
+    {
+      "repository": "jagadish-k/video-gif-creator",
+      "revision": "d7a3000eeb4bc25a68dc143755cd5f3f320be4e0",
+      "analyzed_files": 20,
+      "analyzed_loc": 1416,
+      "default_status": "ready",
+      "default_queue": {
+        "advisories": 3,
+        "deferred_advisories": 0,
+        "deferred_tasks": 0,
+        "optional_advice": 19,
+        "shown_advisories": 3,
+        "shown_tasks": 6,
+        "tasks": 6
+      },
+      "all_advice_queue": {
+        "advisories": 22,
+        "deferred_advisories": 0,
+        "deferred_tasks": 0,
+        "optional_advice": 0,
+        "shown_advisories": 22,
+        "shown_tasks": 6,
+        "tasks": 6
+      },
+      "default_finding_types": {
+        "review": 6,
+        "advice": 3
+      },
+      "default_task_rules": {
+        "SKY-L007": 1,
+        "SKY-E003": 2,
+        "SKY-U001": 2,
+        "SKY-E004": 1
+      },
+      "canonical_raw_categories": {
+        "quality": 23,
+        "dead_code": 5
+      },
+      "analysis_error_count": 0,
+      "default_elapsed_seconds": 0.882,
+      "blocked_execution_or_network_events": 0,
+      "source_files_changed": 0,
+      "files_added": 0,
+      "ai_api_verification": {
+        "state": "complete",
+        "completed_checks": [
+          "typescript_local_api_surface"
+        ],
+        "unsupported_languages": [],
+        "skipped_references": 0,
+        "external_references_not_verified": 36
+      }
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "analyzed_files": 180,
+      "analyzed_loc": 14233,
+      "default_status": "incomplete",
+      "default_queue": {
+        "advisories": 52,
+        "deferred_advisories": 0,
+        "deferred_tasks": 0,
+        "optional_advice": 167,
+        "shown_advisories": 52,
+        "shown_tasks": 161,
+        "tasks": 161
+      },
+      "all_advice_queue": {
+        "advisories": 219,
+        "deferred_advisories": 0,
+        "deferred_tasks": 0,
+        "optional_advice": 0,
+        "shown_advisories": 219,
+        "shown_tasks": 161,
+        "tasks": 161
+      },
+      "default_finding_types": {
+        "review": 161,
+        "advice": 52
+      },
+      "default_task_rules": {
+        "SKY-T105": 4,
+        "SKY-T103": 1,
+        "SKY-L007": 11,
+        "SKY-U002": 6,
+        "SKY-E003": 84,
+        "SKY-U001": 37,
+        "SKY-U004": 6,
+        "SKY-U003": 4,
+        "SKY-E004": 2,
+        "SKY-Q402": 6
+      },
+      "canonical_raw_categories": {
+        "quality": 241,
+        "dead_code": 139
+      },
+      "analysis_error_count": 0,
+      "default_elapsed_seconds": 5.449,
+      "blocked_execution_or_network_events": 0,
+      "source_files_changed": 0,
+      "files_added": 0,
+      "ai_api_verification": {
+        "state": "incomplete",
+        "completed_checks": [
+          "typescript_local_api_surface"
+        ],
+        "unsupported_languages": [
+          "shell"
+        ],
+        "skipped_references": 6,
+        "external_references_not_verified": 284
+      }
+    }
+  ]
+}

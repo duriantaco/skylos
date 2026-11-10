@@ -1,0 +1,1892 @@
+{
+  "schema_version": 1,
+  "selection": "All default tasks for audio-rag, files-to-prompt and video-gif-creator; purposive rule/scope samples for the larger game and Next.js app; 16 selected advisories. Not a precision/recall sample.",
+  "verdict_definitions": {
+    "supported": "Source supports the narrow finding or contextual review opportunity; not runtime proof or necessarily a bug.",
+    "intentional": "Reported pattern is deliberate and does not justify an automatic change.",
+    "false_positive": "Source contradicts the implied unused/removal interpretation.",
+    "uncertain": "Insufficient evidence for a useful or safe change."
+  },
+  "counts": {
+    "default": {
+      "uncertain": 1,
+      "false_positive": 5,
+      "supported": 25,
+      "intentional": 10
+    },
+    "advice": {
+      "supported": 8,
+      "intentional": 5,
+      "uncertain": 3
+    }
+  },
+  "findings": [
+    {
+      "repository": "Teygeta/audio-rag",
+      "revision": "9c0d23cf414e538167f8880963f120b1b80db578",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "4bbd921112dedc261a222636c2488878b2b6ea08c7c1059f0484d3bec8952130",
+      "queue_sample": "default",
+      "rule_id": "SKY-U005",
+      "file": "setup.py",
+      "line": 9,
+      "name": "pydub",
+      "finding_type": "review",
+      "scope": "build_config",
+      "verdict": "uncertain",
+      "reason": "No operational pydub import or AudioSegment call was found; audio conversion uses FFmpeg directly. However, the documented setup verifier explicitly requires the pydub module via importlib.util.find_spec over a string list. Removing only this declaration can therefore make that existing check fail in a clean environment. This could be a redundant historical dependency plus a stale verifier entry, but source inspection alone does not establish that intent or authorize removal.",
+      "references": [
+        {
+          "file": "setup.py",
+          "start_line": 8,
+          "end_line": 18,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/setup.py#L8"
+        },
+        {
+          "file": "verify_setup.py",
+          "start_line": 15,
+          "end_line": 28,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/verify_setup.py#L15"
+        },
+        {
+          "file": "transcription_pipeline/transcriber.py",
+          "start_line": 55,
+          "end_line": 96,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/transcription_pipeline/transcriber.py#L55"
+        },
+        {
+          "file": "README.md",
+          "start_line": 50,
+          "end_line": 54,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/README.md#L50"
+        }
+      ]
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "revision": "9c0d23cf414e538167f8880963f120b1b80db578",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "8a50be27f2ec6be84999f7f3bdd4097168967b2bddbad8cd257027829f83a967",
+      "queue_sample": "default",
+      "rule_id": "SKY-U005",
+      "file": "setup.py",
+      "line": 11,
+      "name": "chromadb",
+      "finding_type": "review",
+      "scope": "build_config",
+      "verdict": "false_positive",
+      "reason": "Treating chromadb as an unused dependency is not supported: ChromaDB is the documented active storage backend, accessed through langchain_chroma.Chroma in indexing, retrieval, verification and deletion. The setup verifier also explicitly checks chromadb with find_spec. The detector's narrow observation that no direct chromadb import exists is accurate, but indirect backend use makes an unused-dependency removal interpretation misleading. Whether the explicit declaration is redundant with the wrapper package's transitive dependency metadata was not evaluated and is not equivalent to unused functionality.",
+      "references": [
+        {
+          "file": "setup.py",
+          "start_line": 11,
+          "end_line": 15,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/setup.py#L11"
+        },
+        {
+          "file": "rag_system/indexer.py",
+          "start_line": 43,
+          "end_line": 50,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/rag_system/indexer.py#L43"
+        },
+        {
+          "file": "rag_system/retriever.py",
+          "start_line": 17,
+          "end_line": 24,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/rag_system/retriever.py#L17"
+        },
+        {
+          "file": "rag_system/cleaner.py",
+          "start_line": 19,
+          "end_line": 30,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/rag_system/cleaner.py#L19"
+        },
+        {
+          "file": "verify_setup.py",
+          "start_line": 15,
+          "end_line": 28,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/verify_setup.py#L15"
+        },
+        {
+          "file": "README.md",
+          "start_line": 1,
+          "end_line": 3,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/README.md#L1"
+        }
+      ]
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "revision": "9c0d23cf414e538167f8880963f120b1b80db578",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "84c358a101b115a39e88993835cfb297730977f463332a36e9af201428818118",
+      "queue_sample": "default",
+      "rule_id": "SKY-U003",
+      "file": "rag_system/indexer.py",
+      "line": 11,
+      "name": "GOOGLE_API_KEY",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "This module reads the Google key into a global binding but never consumes that binding. Its embedding construction uses OPENAI_API_KEY. Other modules independently call getenv for the Google key; no importer of indexer.GOOGLE_API_KEY was found. The supported claim is a redundant binding in this snapshot, not an authentication defect or proof that Google integration is globally unused.",
+      "references": [
+        {
+          "file": "rag_system/indexer.py",
+          "start_line": 9,
+          "end_line": 17,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/rag_system/indexer.py#L9"
+        },
+        {
+          "file": "rag_system/indexer.py",
+          "start_line": 19,
+          "end_line": 71,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/rag_system/indexer.py#L19"
+        },
+        {
+          "file": "app_query.py",
+          "start_line": 10,
+          "end_line": 25,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/app_query.py#L10"
+        }
+      ]
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "revision": "9c0d23cf414e538167f8880963f120b1b80db578",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "e4d6323f784731481fd8f4ecfa57123c8bddb7527bf5f4f80814058784a512dd",
+      "queue_sample": "default",
+      "rule_id": "SKY-U003",
+      "file": "rag_system/indexer.py",
+      "line": 45,
+      "name": "db",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "intentional",
+      "reason": "The returned db object is not referenced after assignment, so the narrow unused-binding observation is true. The right-hand side deliberately creates and persists indexed documents; the call is the function's purpose, and upload entry points invoke it for that effect. A cosmetic change could discard only the binding, but deleting this statement would remove indexing. This is not counted as dead functionality or a demonstrated behavior bug.",
+      "references": [
+        {
+          "file": "rag_system/indexer.py",
+          "start_line": 43,
+          "end_line": 52,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/rag_system/indexer.py#L43"
+        },
+        {
+          "file": "app_upload.py",
+          "start_line": 35,
+          "end_line": 52,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/app_upload.py#L35"
+        }
+      ]
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "revision": "9c0d23cf414e538167f8880963f120b1b80db578",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "b54acffec5d2fd5baa8a6e6c1085cbec91a463a8791374f20c90666cfb4ab0b1",
+      "queue_sample": "default",
+      "rule_id": "SKY-U003",
+      "file": "setup_project.py",
+      "line": 23,
+      "name": "activate_script",
+      "finding_type": "review",
+      "scope": "build_config",
+      "verdict": "supported",
+      "reason": "Both platform branches build activate_script, but the function never reads it. The adjacent comment explains that activation is avoided by selecting the virtual environment's Python or pip executable directly. That executable is what subsequent command rewriting uses. Removing the unused string construction is supported; changing subprocess execution is outside this finding.",
+      "references": [
+        {
+          "file": "setup_project.py",
+          "start_line": 19,
+          "end_line": 39,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/setup_project.py#L19"
+        }
+      ]
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "revision": "9c0d23cf414e538167f8880963f120b1b80db578",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "a8af1bd67dcf4f9030394e46e88511825e7b925c08998b4fcdf783cf54ffcc19",
+      "queue_sample": "default",
+      "rule_id": "SKY-U002",
+      "file": "transcription_pipeline/utils.py",
+      "line": 1,
+      "name": "os",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "The entire 24-line module contains no use of os, no __all__, and no evident re-export contract. Its only helper uses subprocess and float. This supports an unused standard-library import cleanup in the inspected snapshot; no edit or behavior check was performed.",
+      "references": [
+        {
+          "file": "transcription_pipeline/utils.py",
+          "start_line": 1,
+          "end_line": 24,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/transcription_pipeline/utils.py#L1"
+        },
+        {
+          "file": "transcription_pipeline/transcriber.py",
+          "start_line": 1,
+          "end_line": 12,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/transcription_pipeline/transcriber.py#L1"
+        }
+      ]
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "revision": "9c0d23cf414e538167f8880963f120b1b80db578",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "00c14fb91b170e65e9d6c1b8432d6e75b269b994ba5be5976669aa3a03704161",
+      "queue_sample": "default",
+      "rule_id": "SKY-U002",
+      "file": "transcription_pipeline/utils.py",
+      "line": 3,
+      "name": "json",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "The complete module has no use of json. ffprobe is configured to emit a bare duration string, which is parsed directly with float rather than JSON decoding. No re-export evidence was found. This supports an unused import cleanup, not a correctness defect.",
+      "references": [
+        {
+          "file": "transcription_pipeline/utils.py",
+          "start_line": 1,
+          "end_line": 24,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/transcription_pipeline/utils.py#L1"
+        }
+      ]
+    },
+    {
+      "repository": "simonw/files-to-prompt",
+      "revision": "1b234ff6dccb2ca3e56b5c256696558fb85306dc",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "45a29f55dd363c240c65d6f02e104587f57eceead78726a54202dff259e61947",
+      "queue_sample": "default",
+      "rule_id": "SKY-L008",
+      "file": "files_to_prompt/cli.py",
+      "line": 309,
+      "name": "open",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "The output handle is explicitly closed on the normal path at 333-334, so an always-unclosed claim would be wrong. However, no with or try/finally protects the span after open: path validation, output writing and process_path can raise before close. In particular, a missing path read from stdin reaches the explicit BadArgumentUsage branch after the handle has been opened. The exception-path ownership gap supports the cleanup review. Existing output tests cover normal success only in the inspected excerpt; no test was executed and no live leak was measured.",
+      "references": [
+        {
+          "file": "files_to_prompt/cli.py",
+          "start_line": 299,
+          "end_line": 313,
+          "url": "https://github.com/simonw/files-to-prompt/blob/1b234ff6dccb2ca3e56b5c256696558fb85306dc/files_to_prompt/cli.py#L299"
+        },
+        {
+          "file": "files_to_prompt/cli.py",
+          "start_line": 318,
+          "end_line": 334,
+          "url": "https://github.com/simonw/files-to-prompt/blob/1b234ff6dccb2ca3e56b5c256696558fb85306dc/files_to_prompt/cli.py#L318"
+        },
+        {
+          "file": "tests/test_files_to_prompt.py",
+          "start_line": 294,
+          "end_line": 324,
+          "url": "https://github.com/simonw/files-to-prompt/blob/1b234ff6dccb2ca3e56b5c256696558fb85306dc/tests/test_files_to_prompt.py#L294"
+        }
+      ]
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "revision": "9c0d23cf414e538167f8880963f120b1b80db578",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "8a0859cf85e00abe20dcd42165fa1a98ae4cc0c101a8d53a7e48b448b3feb553",
+      "queue_sample": "advice",
+      "rule_id": "SKY-Q301",
+      "file": "rag_system/cleaner.py",
+      "line": 87,
+      "name": "interactive_main",
+      "finding_type": "advice",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "The interactive loop combines document rendering, truncation, selection, keyboard dispatch and nested deletion confirmation. Its numerous decision points support a complexity advisory. This is an intentional interactive state machine with a potential maintainability tradeoff, not evidence of a faulty UI or AI-caused bug. The reported numeric complexity of 18 was not independently recomputed.",
+      "references": [
+        {
+          "file": "rag_system/cleaner.py",
+          "start_line": 87,
+          "end_line": 166,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/rag_system/cleaner.py#L87"
+        }
+      ]
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "revision": "9c0d23cf414e538167f8880963f120b1b80db578",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "4b13f9de381c76399c9f2f1385e571e34d69b8215d3c1415e369d3ea39e22e7f",
+      "queue_sample": "advice",
+      "rule_id": "SKY-Q302",
+      "file": "app_upload.py",
+      "line": 7,
+      "name": "run_upload_flow",
+      "finding_type": "advice",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "Success handling nests selected-file, conversion, transcription, generated-title and rename handling. The visible nesting supports a suggestion to consider early returns. Those branches also express successive prerequisites and fallbacks; this is not a demonstrated failure and any refactor must preserve temporary-file cleanup and both indexing paths.",
+      "references": [
+        {
+          "file": "app_upload.py",
+          "start_line": 7,
+          "end_line": 63,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/app_upload.py#L7"
+        }
+      ]
+    },
+    {
+      "repository": "simonw/files-to-prompt",
+      "revision": "1b234ff6dccb2ca3e56b5c256696558fb85306dc",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "28a0647c9ada2bb15cf12b12be2da8d743377c6fadcdc4393c3ee6bdafded373",
+      "queue_sample": "advice",
+      "rule_id": "SKY-Q301",
+      "file": "files_to_prompt/cli.py",
+      "line": 101,
+      "name": "process_path",
+      "finding_type": "advice",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "The function handles single files and directory traversal, hidden-file policy, gitignore, ignore patterns, extensions, formatting and decode errors. Multiple list-comprehension predicates and nested branches support a complexity advisory. It is a cohesive file-selection workflow, so splitting is a tradeoff rather than a correctness requirement. The reported numeric complexity of 28 was not independently recomputed.",
+      "references": [
+        {
+          "file": "files_to_prompt/cli.py",
+          "start_line": 101,
+          "end_line": 172,
+          "url": "https://github.com/simonw/files-to-prompt/blob/1b234ff6dccb2ca3e56b5c256696558fb85306dc/files_to_prompt/cli.py#L101"
+        }
+      ]
+    },
+    {
+      "repository": "simonw/files-to-prompt",
+      "revision": "1b234ff6dccb2ca3e56b5c256696558fb85306dc",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "eec96ce333273ccbc46f0de481b8a7f24cb4a39562754cb88f1f3a43391d6cec",
+      "queue_sample": "advice",
+      "rule_id": "SKY-C304",
+      "file": "files_to_prompt/cli.py",
+      "line": 101,
+      "name": "process_path",
+      "finding_type": "advice",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "The function spans lines 101-172 with substantial executable selection and I/O logic, supporting the long-function advisory. This overlaps the complexity advisory on the same function; it must not be counted as an independent confirmed bug. The exact reported count of 68 code lines was not independently recomputed.",
+      "references": [
+        {
+          "file": "files_to_prompt/cli.py",
+          "start_line": 101,
+          "end_line": 172,
+          "url": "https://github.com/simonw/files-to-prompt/blob/1b234ff6dccb2ca3e56b5c256696558fb85306dc/files_to_prompt/cli.py#L101"
+        }
+      ]
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "revision": "9c0d23cf414e538167f8880963f120b1b80db578",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "b87d37b3a795c7e147283f23917770e91270ef3e4ced8c1012baf9dc125ff469",
+      "queue_sample": "advice",
+      "rule_id": "SKY-Q802",
+      "file": "rag_system/retriever.py",
+      "line": 1,
+      "name": "rag_system.retriever",
+      "finding_type": "advice",
+      "scope": "production",
+      "verdict": "intentional",
+      "reason": "This is a small concrete integration module containing one public retrieval function and a shared embedding object. A low abstractness score is expected for this design; introducing abstract classes solely to move a file-level I/A/D measurement would not establish an improvement. The reported graph-derived I/A/D numbers were not independently recomputed, and no harmful change ripple was demonstrated.",
+      "references": [
+        {
+          "file": "rag_system/retriever.py",
+          "start_line": 1,
+          "end_line": 27,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/rag_system/retriever.py#L1"
+        },
+        {
+          "file": "app_query.py",
+          "start_line": 6,
+          "end_line": 6,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/app_query.py#L6"
+        },
+        {
+          "file": "app_query.py",
+          "start_line": 38,
+          "end_line": 42,
+          "url": "https://github.com/Teygeta/audio-rag/blob/9c0d23cf414e538167f8880963f120b1b80db578/app_query.py#L38"
+        }
+      ]
+    },
+    {
+      "repository": "simonw/files-to-prompt",
+      "revision": "1b234ff6dccb2ca3e56b5c256696558fb85306dc",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "191decdbc81c8dc574906916a8db1d8e0dbeb34a8b3ee783a0e94bda54bb490d",
+      "queue_sample": "advice",
+      "rule_id": "SKY-C303",
+      "file": "files_to_prompt/cli.py",
+      "line": 248,
+      "name": "cli",
+      "finding_type": "advice",
+      "scope": "production",
+      "verdict": "intentional",
+      "reason": "The eleven required Python parameters are the callback contract for eleven Click argument/option inputs, not evidence of eleven opaque positional arguments supplied by application callers. Click decorators bind those inputs and the package exposes this callback as its console entry point. Signature reduction needs to preserve the framework contract; the measurement alone is not a cleanup requirement.",
+      "references": [
+        {
+          "file": "files_to_prompt/cli.py",
+          "start_line": 188,
+          "end_line": 260,
+          "url": "https://github.com/simonw/files-to-prompt/blob/1b234ff6dccb2ca3e56b5c256696558fb85306dc/files_to_prompt/cli.py#L188"
+        },
+        {
+          "file": "pyproject.toml",
+          "start_line": 22,
+          "end_line": 23,
+          "url": "https://github.com/simonw/files-to-prompt/blob/1b234ff6dccb2ca3e56b5c256696558fb85306dc/pyproject.toml#L22"
+        }
+      ]
+    },
+    {
+      "repository": "simonw/files-to-prompt",
+      "revision": "1b234ff6dccb2ca3e56b5c256696558fb85306dc",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "ff3cb7c885482ee71c5a2c14b374f07dabe99d8c3b426093a8050c49c9305995",
+      "queue_sample": "advice",
+      "rule_id": "SKY-L029",
+      "file": "files_to_prompt/cli.py",
+      "line": 112,
+      "name": "process_path.line_numbers",
+      "finding_type": "advice",
+      "scope": "production",
+      "verdict": "intentional",
+      "reason": "The optional boolean parameter allows positional calls, but its observed caller passes a descriptively named line_numbers variable originating from the documented Click option. No ambiguous literal True/False call or misuse was found. Keyword-only conversion could be a style improvement if callers change together; it is not a demonstrated bug or safe independent signature edit.",
+      "references": [
+        {
+          "file": "files_to_prompt/cli.py",
+          "start_line": 101,
+          "end_line": 113,
+          "url": "https://github.com/simonw/files-to-prompt/blob/1b234ff6dccb2ca3e56b5c256696558fb85306dc/files_to_prompt/cli.py#L101"
+        },
+        {
+          "file": "files_to_prompt/cli.py",
+          "start_line": 234,
+          "end_line": 239,
+          "url": "https://github.com/simonw/files-to-prompt/blob/1b234ff6dccb2ca3e56b5c256696558fb85306dc/files_to_prompt/cli.py#L234"
+        },
+        {
+          "file": "files_to_prompt/cli.py",
+          "start_line": 318,
+          "end_line": 330,
+          "url": "https://github.com/simonw/files-to-prompt/blob/1b234ff6dccb2ca3e56b5c256696558fb85306dc/files_to_prompt/cli.py#L318"
+        }
+      ]
+    },
+    {
+      "repository": "simonw/files-to-prompt",
+      "revision": "1b234ff6dccb2ca3e56b5c256696558fb85306dc",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "5ca6cda172553316685e5dc4e3d6854969abea95d719be986eb4d0c08bd64306",
+      "queue_sample": "advice",
+      "rule_id": "SKY-P401",
+      "file": "files_to_prompt/cli.py",
+      "line": 117,
+      "name": "read",
+      "finding_type": "advice",
+      "scope": "production",
+      "verdict": "intentional",
+      "reason": "The unbounded file read is real, but concatenating complete source files is this tool's declared purpose, and the formatting pipeline receives complete content. Markdown fencing searches for backticks across the content and line numbering materializes line information. Large inputs can require memory, so limits or streaming are possible product changes; no excessive-memory incident or unintended read was demonstrated here.",
+      "references": [
+        {
+          "file": "files_to_prompt/cli.py",
+          "start_line": 114,
+          "end_line": 120,
+          "url": "https://github.com/simonw/files-to-prompt/blob/1b234ff6dccb2ca3e56b5c256696558fb85306dc/files_to_prompt/cli.py#L114"
+        },
+        {
+          "file": "files_to_prompt/cli.py",
+          "start_line": 46,
+          "end_line": 52,
+          "url": "https://github.com/simonw/files-to-prompt/blob/1b234ff6dccb2ca3e56b5c256696558fb85306dc/files_to_prompt/cli.py#L46"
+        },
+        {
+          "file": "files_to_prompt/cli.py",
+          "start_line": 87,
+          "end_line": 98,
+          "url": "https://github.com/simonw/files-to-prompt/blob/1b234ff6dccb2ca3e56b5c256696558fb85306dc/files_to_prompt/cli.py#L87"
+        },
+        {
+          "file": "README.md",
+          "start_line": 8,
+          "end_line": 10,
+          "url": "https://github.com/simonw/files-to-prompt/blob/1b234ff6dccb2ca3e56b5c256696558fb85306dc/README.md#L8"
+        }
+      ]
+    },
+    {
+      "repository": "jagadish-k/video-gif-creator",
+      "revision": "d7a3000eeb4bc25a68dc143755cd5f3f320be4e0",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "7ffd0d57341cb95ea2fa1ad785f6e55403eedf11cb076e3d7f8bbccb91060550",
+      "queue_sample": "default",
+      "rule_id": "SKY-L007",
+      "file": "src/hooks/useVideoMetadata.ts",
+      "line": 39,
+      "name": "catch",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "intentional",
+      "reason": "The catch is a documented best-effort fallback for browser-specific FPS extraction. FPS is optional and remains undefined when unsupported; ordinary metadata failures are handled by the outer catch. This is not an undocumented swallowed application error.",
+      "references": [
+        {
+          "file": "src/hooks/useVideoMetadata.ts",
+          "start_line": 31,
+          "end_line": 47,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/hooks/useVideoMetadata.ts#L31-L47"
+        },
+        {
+          "file": "src/hooks/useVideoMetadata.ts",
+          "start_line": 55,
+          "end_line": 60,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/hooks/useVideoMetadata.ts#L55-L60"
+        }
+      ]
+    },
+    {
+      "repository": "jagadish-k/video-gif-creator",
+      "revision": "d7a3000eeb4bc25a68dc143755cd5f3f320be4e0",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "0bbf8362e9ef97838753dc467de1f5d48d8294748e5d82a4252b60a14c003ad9",
+      "queue_sample": "default",
+      "rule_id": "SKY-E003",
+      "file": "src/components/GifGenerator.tsx",
+      "line": 1,
+      "name": "",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "The source file exports a GIF generator component but no source or configuration imports it. The reachable Editor implements its own settings and generation controls. Repository documentation also explicitly calls this component unused. This is an app-local dead-file candidate, not a demonstrated runtime defect.",
+      "references": [
+        {
+          "file": "src/components/GifGenerator.tsx",
+          "start_line": 14,
+          "end_line": 25,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/components/GifGenerator.tsx#L14-L25"
+        },
+        {
+          "file": "src/pages/Editor.tsx",
+          "start_line": 1,
+          "end_line": 11,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/pages/Editor.tsx#L1-L11"
+        },
+        {
+          "file": "src/pages/Editor.tsx",
+          "start_line": 98,
+          "end_line": 124,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/pages/Editor.tsx#L98-L124"
+        },
+        {
+          "file": "vibe-code-instructions.md",
+          "start_line": 169,
+          "end_line": 173,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/vibe-code-instructions.md#L169-L173"
+        }
+      ],
+      "overlap_group": "gif-generator-unused-file-and-symbol"
+    },
+    {
+      "repository": "jagadish-k/video-gif-creator",
+      "revision": "d7a3000eeb4bc25a68dc143755cd5f3f320be4e0",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "ce451d8bac8a8ce491e4b9384f88a08ed74587307f24ce29e0ae0b9188af9881",
+      "queue_sample": "default",
+      "rule_id": "SKY-U001",
+      "file": "src/components/GifGenerator.tsx",
+      "line": 14,
+      "name": "GifGenerator",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "GifGenerator has no source references outside its declaration and is absent from the live route/component import graph. Its callback and JSX references inside its own body do not make the component reachable. It is the same cleanup opportunity as the unused-file task.",
+      "references": [
+        {
+          "file": "src/components/GifGenerator.tsx",
+          "start_line": 14,
+          "end_line": 25,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/components/GifGenerator.tsx#L14-L25"
+        },
+        {
+          "file": "src/App.tsx",
+          "start_line": 1,
+          "end_line": 11,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/App.tsx#L1-L11"
+        },
+        {
+          "file": "src/pages/Editor.tsx",
+          "start_line": 1,
+          "end_line": 11,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/pages/Editor.tsx#L1-L11"
+        }
+      ],
+      "overlap_group": "gif-generator-unused-file-and-symbol"
+    },
+    {
+      "repository": "jagadish-k/video-gif-creator",
+      "revision": "d7a3000eeb4bc25a68dc143755cd5f3f320be4e0",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "3b5ac34c4c5183e63a570a16f787fa7ab5077a75b4e7048ecac4f660e48cc968",
+      "queue_sample": "default",
+      "rule_id": "SKY-E003",
+      "file": "src/utils/cn.ts",
+      "line": 1,
+      "name": "",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "cn.ts contains only the clsx/tailwind-merge helper and has no imports or calls from another source file. No dynamic source loader or package export entrypoint was found in this Vite app snapshot. This overlaps the unused cn symbol finding.",
+      "references": [
+        {
+          "file": "src/utils/cn.ts",
+          "start_line": 1,
+          "end_line": 6,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/utils/cn.ts#L1-L6"
+        },
+        {
+          "file": "src/main.tsx",
+          "start_line": 1,
+          "end_line": 10,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/main.tsx#L1-L10"
+        },
+        {
+          "file": "package.json",
+          "start_line": 5,
+          "end_line": 11,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/package.json#L5-L11"
+        }
+      ],
+      "overlap_group": "cn-unused-file-and-symbol"
+    },
+    {
+      "repository": "jagadish-k/video-gif-creator",
+      "revision": "d7a3000eeb4bc25a68dc143755cd5f3f320be4e0",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "855b0f04e445dd5efb621969c55bea8ca19b2a852c170d79292ea9e6a8882e08",
+      "queue_sample": "default",
+      "rule_id": "SKY-U001",
+      "file": "src/utils/cn.ts",
+      "line": 4,
+      "name": "cn",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "cn is declared and exported but never referenced outside its own module. The snapshot uses literal/template className strings instead. Removing or retaining this convenience helper is a maintenance decision, not a functional bug fix.",
+      "references": [
+        {
+          "file": "src/utils/cn.ts",
+          "start_line": 1,
+          "end_line": 6,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/utils/cn.ts#L1-L6"
+        },
+        {
+          "file": "src/pages/Editor.tsx",
+          "start_line": 130,
+          "end_line": 147,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/pages/Editor.tsx#L130-L147"
+        }
+      ],
+      "overlap_group": "cn-unused-file-and-symbol"
+    },
+    {
+      "repository": "jagadish-k/video-gif-creator",
+      "revision": "d7a3000eeb4bc25a68dc143755cd5f3f320be4e0",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "bb02655bae4da1c640200c091a5076d73e8adaeba3f11ba50dda939637ff2c47",
+      "queue_sample": "default",
+      "rule_id": "SKY-E004",
+      "file": "src/utils/gifOptimization.ts",
+      "line": 13,
+      "name": "estimateGifSize",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "estimateGifSize is used repeatedly within gifOptimization.ts, while Editor imports only the three higher-level helpers. The export can be made module-local in this app snapshot without deleting the implementation; no external package export contract was found. This is unnecessary public surface advice, not an unused function.",
+      "references": [
+        {
+          "file": "src/utils/gifOptimization.ts",
+          "start_line": 13,
+          "end_line": 28,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/utils/gifOptimization.ts#L13-L28"
+        },
+        {
+          "file": "src/utils/gifOptimization.ts",
+          "start_line": 48,
+          "end_line": 77,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/utils/gifOptimization.ts#L48-L77"
+        },
+        {
+          "file": "src/utils/gifOptimization.ts",
+          "start_line": 113,
+          "end_line": 145,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/utils/gifOptimization.ts#L113-L145"
+        },
+        {
+          "file": "src/pages/Editor.tsx",
+          "start_line": 11,
+          "end_line": 11,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/pages/Editor.tsx#L11-L11"
+        }
+      ]
+    },
+    {
+      "repository": "jagadish-k/video-gif-creator",
+      "revision": "d7a3000eeb4bc25a68dc143755cd5f3f320be4e0",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "6e820434e23f7f1c238374893a800c6d55237a3738ad682eb1a61546be720bf3",
+      "queue_sample": "advice",
+      "rule_id": "SKY-Q301",
+      "file": "src/pages/Editor.tsx",
+      "line": 13,
+      "name": "Editor",
+      "finding_type": "advice",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "Editor combines router state, several effects, conversion orchestration, settings mutation, error/progress handling and a large conditional UI. The source supports a maintainability review. The exact reported complexity number was not independently recomputed, and no functional defect or required refactor follows from a threshold alone.",
+      "references": [
+        {
+          "file": "src/pages/Editor.tsx",
+          "start_line": 13,
+          "end_line": 70,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/pages/Editor.tsx#L13-L70"
+        },
+        {
+          "file": "src/pages/Editor.tsx",
+          "start_line": 72,
+          "end_line": 124,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/pages/Editor.tsx#L72-L124"
+        },
+        {
+          "file": "src/pages/Editor.tsx",
+          "start_line": 130,
+          "end_line": 369,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/pages/Editor.tsx#L130-L369"
+        }
+      ]
+    },
+    {
+      "repository": "jagadish-k/video-gif-creator",
+      "revision": "d7a3000eeb4bc25a68dc143755cd5f3f320be4e0",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "1737ef9808b75e3415cad34762b8c11883a32cca5d36557b049a7bc56342015f",
+      "queue_sample": "advice",
+      "rule_id": "SKY-Q802",
+      "file": "src/utils/timeFormatting.ts",
+      "line": 1,
+      "name": "src.utils.timeFormatting",
+      "finding_type": "advice",
+      "scope": "production",
+      "verdict": "uncertain",
+      "reason": "The file is a small cohesive collection of pure time formatting/parsing/range helpers used by two UI components. A concrete, stable utility naturally has no abstract classes. The I/A/D distance may describe that structure, but source inspection did not establish that extra abstraction or dependency restructuring would improve this app.",
+      "references": [
+        {
+          "file": "src/utils/timeFormatting.ts",
+          "start_line": 1,
+          "end_line": 55,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/utils/timeFormatting.ts#L1-L55"
+        },
+        {
+          "file": "src/components/VideoPlayer.tsx",
+          "start_line": 1,
+          "end_line": 2,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/components/VideoPlayer.tsx#L1-L2"
+        },
+        {
+          "file": "src/components/TimeRangeSelector.tsx",
+          "start_line": 1,
+          "end_line": 3,
+          "url": "https://github.com/jagadish-k/video-gif-creator/blob/d7a3000eeb4bc25a68dc143755cd5f3f320be4e0/src/components/TimeRangeSelector.tsx#L1-L3"
+        }
+      ]
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "revision": "8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "ca67be473ec5b7bc8a23ed39c992334177a165f1a349d8f6dc1d6ff8c0f1691e",
+      "queue_sample": "default",
+      "rule_id": "SKY-L007",
+      "file": "src/game/Game.ts",
+      "line": 328,
+      "name": "catch",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "The broad destroy catch silently suppresses any failure across ticker removal, parent cleanup, event listeners, renderers and PIXI destruction. A failure early in that sequence skips later cleanup, with no error report or per-resource continuation. The comment states silence but does not explain why incomplete cleanup is safe. Supported as a review prompt; no runtime failure was reproduced.",
+      "references": [
+        {
+          "file": "src/game/Game.ts",
+          "start_line": 274,
+          "end_line": 302,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/game/Game.ts#L274-L302"
+        },
+        {
+          "file": "src/game/Game.ts",
+          "start_line": 304,
+          "end_line": 330,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/game/Game.ts#L304-L330"
+        }
+      ]
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "revision": "8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "5a1f9449f3fc63a4592bf098441d29d882d2aef7f1ae4826cf754b46dbbb15aa",
+      "queue_sample": "default",
+      "rule_id": "SKY-L007",
+      "file": "src/game/core/ObjectPool.ts",
+      "line": 61,
+      "name": "catch",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "If reset or resetFn throws, the catch silently skips deactivation and return-to-pool, then active.clear drops tracking of every remaining active object. The callback can therefore fail cleanup without leaving an observable failure. This supports review of the failure path, although ObjectPool itself currently has no repository consumers.",
+      "references": [
+        {
+          "file": "src/game/core/ObjectPool.ts",
+          "start_line": 49,
+          "end_line": 66,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/game/core/ObjectPool.ts#L49-L66"
+        }
+      ],
+      "overlap_group": "unused-object-pool-and-its-failure-path"
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "revision": "8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "6394ec4141057a632641754e751a2f059d0ddae1e97fadd3a2ea0c5ba5f58a00",
+      "queue_sample": "default",
+      "rule_id": "SKY-T103",
+      "file": "src/tests/setup.ts",
+      "line": 6,
+      "name": "number",
+      "finding_type": "review",
+      "scope": "tests",
+      "verdict": "intentional",
+      "reason": "The double assertion is in a Vitest browser-API shim: requestAnimationFrame is implemented with setTimeout, while TypeScript sees both DOM and Node timer types. The cast adapts an environment-specific handle, not unchecked application input. Runtime validity was not tested, but the context does not justify treating this as a production validation defect.",
+      "references": [
+        {
+          "file": "src/tests/setup.ts",
+          "start_line": 1,
+          "end_line": 10,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/tests/setup.ts#L1-L10"
+        },
+        {
+          "file": "vitest.config.ts",
+          "start_line": 4,
+          "end_line": 8,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/vitest.config.ts#L4-L8"
+        },
+        {
+          "file": "tsconfig.json",
+          "start_line": 3,
+          "end_line": 4,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/tsconfig.json#L3-L4"
+        },
+        {
+          "file": "package.json",
+          "start_line": 24,
+          "end_line": 25,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/package.json#L24-L25"
+        }
+      ],
+      "overlap_group": "raf-timer-test-type-bridge"
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "revision": "8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "12656fe53a775e258de1bd63a4deaf17f62d7b292b7d48b194315894d3fd3f7f",
+      "queue_sample": "default",
+      "rule_id": "SKY-T103",
+      "file": "src/tests/setup.ts",
+      "line": 10,
+      "name": "NodeJS.Timeout",
+      "finding_type": "review",
+      "scope": "tests",
+      "verdict": "intentional",
+      "reason": "The cancelAnimationFrame mock reverses the timer-handle bridge used by the requestAnimationFrame mock. This assertion belongs to the same deliberate test compatibility shim, not production user-data narrowing. A better typed shim is possible, but the finding alone is not evidence of a broken cast.",
+      "references": [
+        {
+          "file": "src/tests/setup.ts",
+          "start_line": 5,
+          "end_line": 10,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/tests/setup.ts#L5-L10"
+        },
+        {
+          "file": "vitest.config.ts",
+          "start_line": 4,
+          "end_line": 8,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/vitest.config.ts#L4-L8"
+        }
+      ],
+      "overlap_group": "raf-timer-test-type-bridge"
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "revision": "8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "05fce1a1657e4eefdffa0687cdd8815b250b95a7f33909bb9a5c5509644c19ed",
+      "queue_sample": "default",
+      "rule_id": "SKY-E003",
+      "file": "src/components/ui/EconomicBonuses.tsx",
+      "line": 1,
+      "name": "",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "EconomicBonuses.tsx has no in-repository imports or JSX consumers. The live GameUI renders UnifiedTopBar, which already contains the gold-per-wave and interest display. No Next route naming or dynamic loader makes this ui file an entrypoint.",
+      "references": [
+        {
+          "file": "src/components/ui/EconomicBonuses.tsx",
+          "start_line": 1,
+          "end_line": 23,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/components/ui/EconomicBonuses.tsx#L1-L23"
+        },
+        {
+          "file": "src/components/GameUI.tsx",
+          "start_line": 1,
+          "end_line": 6,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/components/GameUI.tsx#L1-L6"
+        },
+        {
+          "file": "src/components/GameUI.tsx",
+          "start_line": 48,
+          "end_line": 58,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/components/GameUI.tsx#L48-L58"
+        },
+        {
+          "file": "src/components/ui/UnifiedTopBar.tsx",
+          "start_line": 90,
+          "end_line": 98,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/components/ui/UnifiedTopBar.tsx#L90-L98"
+        }
+      ],
+      "overlap_group": "economic-bonuses-unused-file-and-symbol"
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "revision": "8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "b255213bbeb97afe33c9ca475b8788f250293bede0e552f24047ffcfd2eed19e",
+      "queue_sample": "default",
+      "rule_id": "SKY-U001",
+      "file": "src/components/ui/EconomicBonuses.tsx",
+      "line": 6,
+      "name": "EconomicBonuses",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "The exported EconomicBonuses function has no references outside its own file. Its UI responsibility exists in the reachable UnifiedTopBar instead. This duplicates the corresponding unused-file opportunity and must not be counted as a second independent defect.",
+      "references": [
+        {
+          "file": "src/components/ui/EconomicBonuses.tsx",
+          "start_line": 6,
+          "end_line": 23,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/components/ui/EconomicBonuses.tsx#L6-L23"
+        },
+        {
+          "file": "src/components/ui/UnifiedTopBar.tsx",
+          "start_line": 90,
+          "end_line": 98,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/components/ui/UnifiedTopBar.tsx#L90-L98"
+        }
+      ],
+      "overlap_group": "economic-bonuses-unused-file-and-symbol"
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "revision": "8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "0ca623c91f82aa8cbfe02f5b08cebae9aba53f87d425928d3a91be5be44503ce",
+      "queue_sample": "default",
+      "rule_id": "SKY-U004",
+      "file": "src/game/core/ObjectPool.ts",
+      "line": 6,
+      "name": "ObjectPool",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "ObjectPool is exported but has no source consumers, constructors, subclass references or imports in this app snapshot. A game architecture document lists the file, which does not execute or instantiate the class. This is an unused implementation candidate, not proof that object pooling is unnecessary for all future work.",
+      "references": [
+        {
+          "file": "src/game/core/ObjectPool.ts",
+          "start_line": 6,
+          "end_line": 20,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/game/core/ObjectPool.ts#L6-L20"
+        },
+        {
+          "file": "src/game/README.md",
+          "start_line": 8,
+          "end_line": 14,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/game/README.md#L8-L14"
+        }
+      ],
+      "overlap_group": "unused-object-pool-and-its-failure-path"
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "revision": "8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "3f611e0c71b102852f860f83fdc1f7adddb8d59b2222d69fb1e6851b00e638a4",
+      "queue_sample": "default",
+      "rule_id": "SKY-U003",
+      "file": "src/game/core/constants.ts",
+      "line": 44,
+      "name": "PROJECTILE_RADIUS",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "PROJECTILE_RADIUS is an exported object constant whose only occurrence in application/test source is its declaration. No namespace lookup or dynamic import of this constants module was found. This supports an app-local unused variable candidate; no deletion or typecheck was performed.",
+      "references": [
+        {
+          "file": "src/game/core/constants.ts",
+          "start_line": 43,
+          "end_line": 48,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/game/core/constants.ts#L43-L48"
+        }
+      ]
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "revision": "8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "8d4a719a1012657196b33a1f3a65ba36ba73a0ae94c6bbd4622b38e963b63f9e",
+      "queue_sample": "default",
+      "rule_id": "SKY-U003",
+      "file": "src/game/core/constants.ts",
+      "line": 59,
+      "name": "WAVE_DURATION_SECONDS",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "WAVE_DURATION_SECONDS has no source reference outside its exported declaration. It is a distinct unused scalar constant candidate, not evidence that the current wave system is malfunctioning.",
+      "references": [
+        {
+          "file": "src/game/core/constants.ts",
+          "start_line": 58,
+          "end_line": 61,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/game/core/constants.ts#L58-L61"
+        }
+      ]
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "revision": "8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "f1812bf6ff3826c84e08162ac587bd8ad950d9de51733578064f5821568b6b83",
+      "queue_sample": "default",
+      "rule_id": "SKY-U001",
+      "file": "src/game/renderers/BaseRenderer.ts",
+      "line": 72,
+      "name": "getSprite",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "The public BaseRenderer.getSprite member has no call sites in source/tests, including subclasses. EnemyRenderer instead accesses the protected sprites map directly. This is a supported unused member candidate for this private app, subject to checking future/public API commitments before removal.",
+      "references": [
+        {
+          "file": "src/game/renderers/BaseRenderer.ts",
+          "start_line": 69,
+          "end_line": 74,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/game/renderers/BaseRenderer.ts#L69-L74"
+        },
+        {
+          "file": "src/game/renderers/EnemyRenderer.ts",
+          "start_line": 21,
+          "end_line": 35,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/game/renderers/EnemyRenderer.ts#L21-L35"
+        },
+        {
+          "file": "package.json",
+          "start_line": 2,
+          "end_line": 4,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/package.json#L2-L4"
+        }
+      ]
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "revision": "8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "edc5c7fa31f5edc2ded3a68a0288d60d441b69fd7f97eb6a1456fb3cddfa6e1d",
+      "queue_sample": "default",
+      "rule_id": "SKY-E004",
+      "file": "src/game/systems/WaveDefinitions.ts",
+      "line": 18,
+      "name": "ENEMY_ICONS",
+      "finding_type": "review",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "ENEMY_ICONS is consumed internally by wave definitions and procedural generation, but no other module imports it. Removing only its export would narrow the app-local API without removing needed data. Its internal references mean the constant itself is not dead.",
+      "references": [
+        {
+          "file": "src/game/systems/WaveDefinitions.ts",
+          "start_line": 18,
+          "end_line": 31,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/game/systems/WaveDefinitions.ts#L18-L31"
+        },
+        {
+          "file": "src/game/systems/WaveDefinitions.ts",
+          "start_line": 140,
+          "end_line": 172,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/game/systems/WaveDefinitions.ts#L140-L172"
+        }
+      ]
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "revision": "8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "79952c182d1054210423339710be9785f9a7da01bd521821162c0968c64da476",
+      "queue_sample": "default",
+      "rule_id": "SKY-E003",
+      "file": "src/simulator/run-simulator.ts",
+      "line": 1,
+      "name": "",
+      "finding_type": "review",
+      "scope": "tests",
+      "verdict": "false_positive",
+      "reason": "run-simulator.ts is an explicit command-line entrypoint invoked by test-simulator.sh, and README documents that wrapper. It is supposed to run directly rather than be imported. Calling the file unused because no TypeScript module imports it misses a repository shell-to-TypeScript execution edge.",
+      "references": [
+        {
+          "file": "src/simulator/run-simulator.ts",
+          "start_line": 1,
+          "end_line": 12,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/simulator/run-simulator.ts#L1-L12"
+        },
+        {
+          "file": "src/simulator/run-simulator.ts",
+          "start_line": 42,
+          "end_line": 47,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/simulator/run-simulator.ts#L42-L47"
+        },
+        {
+          "file": "test-simulator.sh",
+          "start_line": 32,
+          "end_line": 33,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/test-simulator.sh#L32-L33"
+        },
+        {
+          "file": "README.md",
+          "start_line": 197,
+          "end_line": 206,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/README.md#L197-L206"
+        }
+      ]
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "revision": "8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "134ca4524a7ff50420e0ae2742b22a8a66ca24670443dcec5214372281aeb778",
+      "queue_sample": "advice",
+      "rule_id": "SKY-Q301",
+      "file": "src/game/renderers/EnemyRenderer.ts",
+      "line": 206,
+      "name": "updateFlashEffect",
+      "finding_type": "advice",
+      "scope": "production",
+      "verdict": "supported",
+      "reason": "The flash method has nested lifetime/state checks, shape dispatch, overlay creation, drawing and cleanup branches, so complexity review is reasonable. Its only apparent call is commented out in render; maintainers should first decide whether to remove or restore this dormant feature rather than automatically split it. The exact metric was not independently recomputed.",
+      "references": [
+        {
+          "file": "src/game/renderers/EnemyRenderer.ts",
+          "start_line": 27,
+          "end_line": 39,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/game/renderers/EnemyRenderer.ts#L27-L39"
+        },
+        {
+          "file": "src/game/renderers/EnemyRenderer.ts",
+          "start_line": 206,
+          "end_line": 253,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/game/renderers/EnemyRenderer.ts#L206-L253"
+        },
+        {
+          "file": "src/game/renderers/EnemyRenderer.ts",
+          "start_line": 261,
+          "end_line": 298,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/src/game/renderers/EnemyRenderer.ts#L261-L298"
+        }
+      ]
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "revision": "8b02fe3de81755536d8cb7376fc47db093a8ae00",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "0ff0884fea3fe556fdcc8a0752052b982790faa8a600cbb79a2de2c744f7f6c3",
+      "queue_sample": "advice",
+      "rule_id": "SKY-R103",
+      "file": ".",
+      "line": 1,
+      "name": "skylos-gate-policy",
+      "finding_type": "advice",
+      "scope": "build_config",
+      "verdict": "intentional",
+      "reason": "The snapshot does not configure a Skylos gate, but adopting a particular scanner policy is an optional repository workflow choice. Existing package scripts already expose lint, build and test commands. This is tool-adoption advice, not an application defect or evidence that the project has no quality checks.",
+      "references": [
+        {
+          "file": "package.json",
+          "start_line": 5,
+          "end_line": 12,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/package.json#L5-L12"
+        },
+        {
+          "file": "vitest.config.ts",
+          "start_line": 4,
+          "end_line": 8,
+          "url": "https://github.com/mdkess/claude-game/blob/8b02fe3de81755536d8cb7376fc47db093a8ae00/vitest.config.ts#L4-L8"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "da211086800aa0f5eb1ea08be79f24f315876a5b6ddd7fea7d57bfac5bdbbae9",
+      "queue_sample": "default",
+      "rule_id": "SKY-T105",
+      "file": "app/interview/[sessionId]/page.tsx",
+      "line": 385,
+      "name": "{               message?: { content?: string };             }",
+      "finding_type": "review",
+      "scope": "production_app",
+      "verdict": "supported",
+      "reason": "The asserted NDJSON shape is not checked at runtime. The route forwards Ollama response bytes, and the client concatenates any truthy message.content without checking that it is a string. This is a supported boundary-validation review opportunity; no malformed live response or security exploit was executed or established.",
+      "references": [
+        {
+          "file": "app/interview/[sessionId]/page.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/app/interview/[sessionId]/page.tsx#L375-L405"
+        },
+        {
+          "file": "app/api/ai/interview/route.ts",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/app/api/ai/interview/route.ts#L44-L56"
+        },
+        {
+          "file": "lib/ollama.ts",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/lib/ollama.ts#L27-L54"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "8cd3fadd934df43dea4bd93900a38a7a3f33de647f2b521b6d662715d6522680",
+      "queue_sample": "default",
+      "rule_id": "SKY-T103",
+      "file": "app/interview/[sessionId]/page.tsx",
+      "line": 474,
+      "name": "FormEvent",
+      "finding_type": "review",
+      "scope": "production_app",
+      "verdict": "intentional",
+      "reason": "This keyboard shortcut deliberately reuses the submit handler. The handler reads only preventDefault from the event, which the keyboard event already supports; it does not read form-only state. Extracting a parameterless submit action would remove the cast, but this site is not evidence of a runtime type-validation bug.",
+      "references": [
+        {
+          "file": "app/interview/[sessionId]/page.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/app/interview/[sessionId]/page.tsx#L462-L475"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "815de354de0702f8ed44ac49a1e40a91180eea6a4d2a44479bee2ef37f3b44ba",
+      "queue_sample": "default",
+      "rule_id": "SKY-L007",
+      "file": "components/FloatingChat.tsx",
+      "line": 105,
+      "name": "catch",
+      "finding_type": "review",
+      "scope": "production_component",
+      "verdict": "intentional",
+      "reason": "This catch ignores failure to remove a stale optional localStorage session pointer after the persisted session was already found missing. Ignoring unavailable browser storage preserves the in-memory chat fallback. A short explanatory comment may help, but treating it as an ordinary discarded application failure would overstate the finding.",
+      "references": [
+        {
+          "file": "components/FloatingChat.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/components/FloatingChat.tsx#L88-L107"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "e1ff7c7bb9cba3d3fda471f303d3bc4ed54becc2bcd9d0099b640f4ba8e45a84",
+      "queue_sample": "default",
+      "rule_id": "SKY-T105",
+      "file": "components/NewsFeed.tsx",
+      "line": 18,
+      "name": "CachedNews",
+      "finding_type": "review",
+      "scope": "production_component",
+      "verdict": "supported",
+      "reason": "loadCache checks age but neither items nor fetchedAt shape. An object with missing/invalid fetchedAt can bypass the expiry comparison and then cached.items is installed into state that is later used with .map. A small cache schema guard is a concrete review target. This was established from source, not by running the UI.",
+      "references": [
+        {
+          "file": "components/NewsFeed.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/components/NewsFeed.tsx#L9-L23"
+        },
+        {
+          "file": "components/NewsFeed.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/components/NewsFeed.tsx#L54-L59"
+        },
+        {
+          "file": "components/NewsFeed.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/components/NewsFeed.tsx#L166-L182"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "d39c040020c6ab7172dfd2d8f545aa3e4e97c4039ace978264675117ae6e438d",
+      "queue_sample": "default",
+      "rule_id": "SKY-L007",
+      "file": "components/ThemeToggle.tsx",
+      "line": 19,
+      "name": "catch",
+      "finding_type": "review",
+      "scope": "production_component",
+      "verdict": "intentional",
+      "reason": "The theme is already changed in React state and the document before persistence is attempted. localStorage is an optional preference cache that can be unavailable; silently retaining the working visual toggle is a reasonable best-effort policy. This is not a demonstrated broken error path.",
+      "references": [
+        {
+          "file": "components/ThemeToggle.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/components/ThemeToggle.tsx#L13-L20"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "31e99b4a588a0a4f155cabc9cd60479ffb8117dce75434d6e3ab752b54013264",
+      "queue_sample": "default",
+      "rule_id": "SKY-T105",
+      "file": "lib/exercises.ts",
+      "line": 48,
+      "name": "ExerciseMeta",
+      "finding_type": "review",
+      "scope": "production_library",
+      "verdict": "supported",
+      "reason": "The unchecked ExerciseMeta assertion is real. listExercises subsequently sorts by title.localeCompare and pages read tags and difficulty, so malformed operator-authored metadata would not be rejected at this boundary. A runtime schema is a supported robustness improvement, but no invalid committed meta.json or current user-visible failure was demonstrated; this is lower priority than an external-data boundary.",
+      "references": [
+        {
+          "file": "lib/exercises.ts",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/lib/exercises.ts#L24-L32"
+        },
+        {
+          "file": "lib/exercises.ts",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/lib/exercises.ts#L43-L59"
+        },
+        {
+          "file": "app/exercises/[slug]/page.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/app/exercises/[slug]/page.tsx#L54-L59"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "28629f56f4ae1952c212d33c5afc778219a14d8bcaec960173ee100ced395237",
+      "queue_sample": "default",
+      "rule_id": "SKY-U002",
+      "file": "components/CaptureForm.tsx",
+      "line": 9,
+      "name": "CaptureType",
+      "finding_type": "review",
+      "scope": "production_component",
+      "verdict": "supported",
+      "reason": "CaptureType is imported as a type but is not referenced elsewhere in this module. FormState derives from Capture instead. A repository-wide text-reference check found the type used in lib/captures.ts, but its import into this component is unnecessary. This is a bounded cleanup candidate rather than permission to run an edit.",
+      "references": [
+        {
+          "file": "components/CaptureForm.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/components/CaptureForm.tsx#L4-L14"
+        },
+        {
+          "file": "lib/captures.ts",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/lib/captures.ts#L1-L6"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "9dfbbe36284c2ecc6ee667ce2ed2f7ff8dd41ed25a154a73ae39075b382fe324",
+      "queue_sample": "default",
+      "rule_id": "SKY-U001",
+      "file": "lib/aiCourses.ts",
+      "line": 11,
+      "name": "listAiCourses",
+      "finding_type": "review",
+      "scope": "production_library",
+      "verdict": "supported",
+      "reason": "The exported listAiCourses fetch wrapper has no other text reference in the snapshot. Consumers import generate/get/delete or the AiCourse type; the courses page reads through its server-side data path. As a private application helper rather than a Next route convention, it is a plausible unused API surface to remove after maintainer review. Static inspection does not establish safety against unknown external consumers.",
+      "references": [
+        {
+          "file": "lib/aiCourses.ts",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/lib/aiCourses.ts#L1-L20"
+        },
+        {
+          "file": "app/courses/page.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/app/courses/page.tsx#L1-L7"
+        },
+        {
+          "file": "app/courses/ai/[id]/page.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/app/courses/ai/[id]/page.tsx#L11-L15"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "636ce727a4eceedd6aef2174f246f9125316295045c51f312c3c0891b25e05bd",
+      "queue_sample": "default",
+      "rule_id": "SKY-E004",
+      "file": "lib/exercises.ts",
+      "line": 16,
+      "name": "TEMPLATE_EXT",
+      "finding_type": "review",
+      "scope": "production_library",
+      "verdict": "supported",
+      "reason": "The mapping is used by getExercise in the same module, but no other module imports this exported binding. The verification script defines its own separate mapping. Removing only the export modifier is a reasonable surface-area cleanup; deleting the mapping would be wrong.",
+      "references": [
+        {
+          "file": "lib/exercises.ts",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/lib/exercises.ts#L16-L22"
+        },
+        {
+          "file": "lib/exercises.ts",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/lib/exercises.ts#L62-L72"
+        },
+        {
+          "file": "scripts/verify-exercises.mjs",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/scripts/verify-exercises.mjs#L323-L329"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "1c90e9281429ca2a197c845737e29e12be485e652a3cd1b4483543f6f4ee514f",
+      "queue_sample": "default",
+      "rule_id": "SKY-Q402",
+      "file": "lib/ollama.ts",
+      "line": 191,
+      "name": "chatWithTools",
+      "finding_type": "review",
+      "scope": "production_library",
+      "verdict": "intentional",
+      "reason": "Each status update is awaited immediately before the corresponding tool handler. Tool results are appended in order to shared conversation state, and no independence or side-effect commutativity proof exists for handlers. The finding is appropriately conditional review advice; this code is not a justified parallelization fix.",
+      "references": [
+        {
+          "file": "lib/ollama.ts",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/lib/ollama.ts#L124-L130"
+        },
+        {
+          "file": "lib/ollama.ts",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/lib/ollama.ts#L180-L202"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "13da843d7414498615cc9ba8ee881b37a863411e16283f6f0ec5ba9f37171929",
+      "queue_sample": "default",
+      "rule_id": "SKY-Q402",
+      "file": "scripts/verify-exercises.mjs",
+      "line": 407,
+      "name": "runExercise",
+      "finding_type": "review",
+      "scope": "test_build_harness",
+      "verdict": "intentional",
+      "reason": "beforeEach hooks must finish before the test body, and afterEach must finish before the next test. The harness installs global test functions and cleans React DOM between tests. Parallelizing this loop without redesign would change test isolation and ordering, so the sequential await is part of the harness contract.",
+      "references": [
+        {
+          "file": "scripts/verify-exercises.mjs",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/scripts/verify-exercises.mjs#L378-L409"
+        },
+        {
+          "file": "scripts/verify-exercises.mjs",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/scripts/verify-exercises.mjs#L417-L419"
+        },
+        {
+          "file": "package.json",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/package.json#L13-L15"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "f557e457917fabbbaa067be20b24e4293f4cfe3837b5645222f8c91649e0ba0d",
+      "queue_sample": "default",
+      "rule_id": "SKY-E003",
+      "file": "content/exercises/two-sum/starter.js",
+      "line": 1,
+      "name": "",
+      "finding_type": "review",
+      "scope": "exercise_starter_content",
+      "verdict": "false_positive",
+      "reason": "This file is live exercise data, not an ordinary application module. getExercise reads starter.<ext> as UTF-8 and passes it to Sandpack as the active source file. Lack of a normal import does not make it unused; its unfinished body is intentional learner scaffolding.",
+      "references": [
+        {
+          "file": "content/exercises/two-sum/starter.js",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/content/exercises/two-sum/starter.js#L1-L8"
+        },
+        {
+          "file": "lib/exercises.ts",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/lib/exercises.ts#L62-L75"
+        },
+        {
+          "file": "app/exercises/[slug]/page.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/app/exercises/[slug]/page.tsx#L97-L103"
+        },
+        {
+          "file": "components/ExerciseSandbox.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/components/ExerciseSandbox.tsx#L229-L249"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "00c3453cef70d29a6dd64489f5536652c5de42b5bf2b5c6ac1a3052f085eefa1",
+      "queue_sample": "default",
+      "rule_id": "SKY-E003",
+      "file": "content/exercises/two-sum/tests.js",
+      "line": 1,
+      "name": "",
+      "finding_type": "review",
+      "scope": "exercise_test_content",
+      "verdict": "false_positive",
+      "reason": "These tests are loaded through fs.readFile and supplied to Sandpack. The verification script also rewrites their starter import and dynamically imports a generated runnable path. The static no-import graph misses both consumers; deleting the file would remove exercise verification.",
+      "references": [
+        {
+          "file": "content/exercises/two-sum/tests.js",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/content/exercises/two-sum/tests.js#L1-L17"
+        },
+        {
+          "file": "lib/exercises.ts",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/lib/exercises.ts#L68-L75"
+        },
+        {
+          "file": "components/ExerciseSandbox.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/components/ExerciseSandbox.tsx#L229-L249"
+        },
+        {
+          "file": "scripts/verify-exercises.mjs",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/scripts/verify-exercises.mjs#L368-L389"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "0fb74aa37459084a56a170ea6eff2b0c6d48bb7f0054ec51b16fd425c45379a3",
+      "queue_sample": "default",
+      "rule_id": "SKY-U001",
+      "file": "content/exercises/two-sum/solution.js",
+      "line": 1,
+      "name": "twoSum",
+      "finding_type": "review",
+      "scope": "exercise_solution_content",
+      "verdict": "false_positive",
+      "reason": "The exported reference solution is loaded as text for the reveal-solution UI. In addition, the verification harness rewrites the exercise tests to import solution.js and runs the generated module. The function has real indirect consumers even though the static application import graph reports none.",
+      "references": [
+        {
+          "file": "content/exercises/two-sum/solution.js",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/content/exercises/two-sum/solution.js#L1-L11"
+        },
+        {
+          "file": "lib/exercises.ts",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/lib/exercises.ts#L68-L75"
+        },
+        {
+          "file": "components/ExerciseSandbox.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/components/ExerciseSandbox.tsx#L255-L267"
+        },
+        {
+          "file": "scripts/verify-exercises.mjs",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/scripts/verify-exercises.mjs#L368-L389"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "0f1a3dbf8a2d20179c207f4733d40de35d9cb830492faecc0d2f5e2b558f7c54",
+      "queue_sample": "default",
+      "rule_id": "SKY-U002",
+      "file": "content/exercises/use-toggle/starter.jsx",
+      "line": 1,
+      "name": "useState",
+      "finding_type": "review",
+      "scope": "exercise_starter_content",
+      "verdict": "intentional",
+      "reason": "useState and useCallback are deliberately supplied for the learner to implement the documented useToggle signature. They are currently unused because the starter body is intentionally empty. Removing the import as ordinary dead application code would degrade the teaching scaffold, even though the unused-import pattern itself is mechanically present.",
+      "references": [
+        {
+          "file": "content/exercises/use-toggle/starter.jsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/content/exercises/use-toggle/starter.jsx#L1-L11"
+        },
+        {
+          "file": "lib/exercises.ts",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/lib/exercises.ts#L68-L75"
+        },
+        {
+          "file": "components/ExerciseSandbox.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/components/ExerciseSandbox.tsx#L229-L237"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "9f085584b5d3554833b1b6e09f74717e918b690334891c14d5aad0820b0bc6d7",
+      "queue_sample": "advice",
+      "rule_id": "SKY-Q802",
+      "file": "components/MdxComponents.tsx",
+      "line": 1,
+      "name": "components.MdxComponents",
+      "finding_type": "advice",
+      "scope": "production_component",
+      "verdict": "uncertain",
+      "reason": "The metric describes a concrete, stable renderer map, but the code is an idiomatic MDXComponents object used by several content pages. No harmful change propagation or missing architectural abstraction was demonstrated. The numeric I/A/D signal is not evidence that adding abstraction or splitting this map improves this application.",
+      "references": [
+        {
+          "file": "components/MdxComponents.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/components/MdxComponents.tsx#L1-L18"
+        },
+        {
+          "file": "components/MdxComponents.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/components/MdxComponents.tsx#L54-L78"
+        },
+        {
+          "file": "app/exercises/[slug]/page.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/app/exercises/[slug]/page.tsx#L85-L87"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "2c753afabfe7e1b4d254d2a17bdd3570a985b794c622df6535f524a0206b9d0c",
+      "queue_sample": "advice",
+      "rule_id": "SKY-C304",
+      "file": "app/interview/[sessionId]/page.tsx",
+      "line": 70,
+      "name": "InterviewSessionPage",
+      "finding_type": "advice",
+      "scope": "production_app",
+      "verdict": "supported",
+      "reason": "This Next page component spans hundreds of source lines and combines session state, streaming chat, speech, sandbox controls and rendering. The size signal supports a maintainability review and extraction of cohesive helpers/components. It is a framework entry point, not dead code, and exceeding the threshold is not itself a correctness defect.",
+      "references": [
+        {
+          "file": "app/interview/[sessionId]/page.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/app/interview/[sessionId]/page.tsx#L70-L97"
+        },
+        {
+          "file": "app/interview/[sessionId]/page.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/app/interview/[sessionId]/page.tsx#L334-L405"
+        },
+        {
+          "file": "app/interview/[sessionId]/page.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/app/interview/[sessionId]/page.tsx#L818-L839"
+        },
+        {
+          "file": "app/interview/[sessionId]/page.tsx",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/app/interview/[sessionId]/page.tsx#L875-L879"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "7bc402ef0b9d6afdd9b4f82c18e2352f1c125ea5f21e1733d0c671a8938195bd",
+      "queue_sample": "advice",
+      "rule_id": "SKY-C304",
+      "file": "scripts/verify-exercises.mjs",
+      "line": 323,
+      "name": "runExercise",
+      "finding_type": "advice",
+      "scope": "test_build_harness",
+      "verdict": "supported",
+      "reason": "runExercise combines reading and transforming content, generated-file lifecycle, dynamic loading, global test setup, test execution and reporting in one function. The long-function advisory is a defensible maintainability prompt, while any refactor must preserve sequential hooks, global isolation and cleanup. It is an intentional live build/test entry path, not unused application code.",
+      "references": [
+        {
+          "file": "scripts/verify-exercises.mjs",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/scripts/verify-exercises.mjs#L323-L389"
+        },
+        {
+          "file": "scripts/verify-exercises.mjs",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/scripts/verify-exercises.mjs#L394-L438"
+        },
+        {
+          "file": "scripts/verify-exercises.mjs",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/scripts/verify-exercises.mjs#L458-L459"
+        }
+      ]
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "revision": "9b5689881e324f0c8d6c07423ba86bc5b3782430",
+      "scanner_revision": "744e3fd293afaa554a226f5225ee6df4764aa674",
+      "task_id": "cfe4932ae5d966a9cd8f2eca2bbb13f4fab81f5d5635293cfabbea374d947434",
+      "queue_sample": "advice",
+      "rule_id": "SKY-Q301",
+      "file": "app/api/quiz/generate/route.ts",
+      "line": 21,
+      "name": "POST",
+      "finding_type": "advice",
+      "scope": "production_api_route",
+      "verdict": "uncertain",
+      "reason": "The route has real branching across topic, interview-note, note and exercise sources, with explicit input/not-found errors. A dispatcher/helper refactor could be useful, but these are domain-required cases and no incorrect branch or measured maintenance failure was demonstrated. This supports optional review, not a claim the Next POST entry point is slop or defective.",
+      "references": [
+        {
+          "file": "app/api/quiz/generate/route.ts",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/app/api/quiz/generate/route.ts#L21-L49"
+        },
+        {
+          "file": "app/api/quiz/generate/route.ts",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/app/api/quiz/generate/route.ts#L51-L94"
+        },
+        {
+          "file": "app/api/quiz/generate/route.ts",
+          "start_line": 1,
+          "end_line": 1,
+          "url": "https://github.com/balbonits/coding-interview-reviewer/blob/9b5689881e324f0c8d6c07423ba86bc5b3782430/app/api/quiz/generate/route.ts#L96-L114"
+        }
+      ]
+    }
+  ]
+}

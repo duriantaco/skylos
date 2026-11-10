@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from hashlib import sha256
 import json
 from pathlib import Path
 
@@ -13,33 +14,54 @@ from skylos.core.safe_cache_io import read_project_text_no_symlink
 def build_cleanup_context(
     tasks, root: Path, *, exclude_folders=(), max_files=12, max_chars=32_000
 ):
+    from skylos.cleanup_impact import SUFFIXES, build_cleanup_impact
+
+    impact = build_cleanup_impact(tasks, root, exclude_folders=exclude_folders)
+    dependencies = dict(impact["source_hashes"])
     selected = {task["file"] for task in tasks}
+    related = {}
+    suggested_tests = {}
+    for item in impact["tasks"]:
+        for row in item["callers"] + item["suggested_tests"]:
+            related.setdefault(row["file"], row["line"])
+        for row in item["suggested_tests"]:
+            suggested_tests.setdefault(row["id"], row)
     names = {str(task.get("name", "")).rsplit(".", 1)[-1] for task in tasks} - {""}
-    paths = discover_source_files(root, {".py"}, exclude_folders=exclude_folders)
+    paths = discover_source_files(root, SUFFIXES, exclude_folders=exclude_folders)
     paths.sort(
         key=lambda path: (
             path.relative_to(root).as_posix() not in selected,
+            path.relative_to(root).as_posix() not in related,
             path.as_posix(),
         )
     )
-    files, callers, imports, limitations = [], [], [], []
+    files, callers, imports = [], [], []
+    limitations = list(impact["limitations"])
     used = 0
     examined = 0
     for path in paths[:250]:
         relative = path.relative_to(root).as_posix()
-        source = read_project_text_no_symlink(root, relative, max_bytes=2_000_000)
+        source = read_project_text_no_symlink(
+            root, relative, max_bytes=2_000_000, newline=""
+        )
         if source is None:
             limitations.append(f"Source unavailable: {relative}")
             continue
         examined += 1
-        try:
-            tree = ast.parse(source)
-        except (SyntaxError, ValueError, RecursionError):
-            limitations.append(f"Python context could not be parsed: {relative}")
-            continue
+        digest = sha256(source.encode("utf-8")).hexdigest()
+        if relative in dependencies and dependencies[relative] != digest:
+            raise ValueError("Graph source changed while gathering cleanup context")
+        dependencies[relative] = digest
+        tree = None
+        if path.suffix == ".py":
+            try:
+                tree = ast.parse(source)
+            except (SyntaxError, ValueError, RecursionError):
+                limitations.append(f"Python context could not be parsed: {relative}")
+                continue
         hits = []
         module_imports = []
-        for node in ast.walk(tree):
+        for node in ast.walk(tree) if tree is not None else ():
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 module_imports.append(ast.get_source_segment(source, node) or "")
             if isinstance(node, ast.Call):
@@ -61,7 +83,7 @@ def build_cleanup_context(
                         }
                     )
         callers.extend(hits[:20])
-        if relative not in selected and not hits:
+        if relative not in selected and relative not in related and not hits:
             continue
         if len(files) >= max_files or used >= max_chars:
             limitations.append(
@@ -71,7 +93,7 @@ def build_cleanup_context(
         lines = source.splitlines()
         focus = next(
             (int(task.get("line") or 1) for task in tasks if task["file"] == relative),
-            hits[0]["line"] if hits else 1,
+            related.get(relative, hits[0]["line"] if hits else 1),
         )
         start = max(0, focus - 16)
         excerpt = "\n".join(lines[start : start + 65])[: min(5000, max_chars - used)]
@@ -87,21 +109,36 @@ def build_cleanup_context(
         imports.append({"file": relative, "imports": module_imports[:30]})
     if len(paths) > 250:
         limitations.append(
-            "Caller search bounded to the first 250 discovered Python files"
+            "Caller search bounded to the first 250 discovered source files"
         )
-    unsupported = sorted(file for file in selected if Path(file).suffix != ".py")
+    unsupported = sorted(file for file in selected if Path(file).suffix not in SUFFIXES)
     if unsupported:
         limitations.append(
-            "Parsed context currently supports Python; other-language tasks retain scanner evidence only"
+            "Parsed context currently supports Python and TypeScript/JavaScript; other-language tasks retain scanner evidence only"
         )
     return {
         "version": 1,
         "files": files,
         "imports": imports,
         "candidate_callers": callers[:100],
+        "impact": impact,
+        "context_dependency_hashes": dependencies,
+        "suggested_tests": [
+            {
+                **row,
+                "selection": ["python", "-m", "pytest", "--", row["file"]]
+                if Path(row["file"]).suffix == ".py"
+                else None,
+                "runner": "pytest"
+                if Path(row["file"]).suffix == ".py"
+                else "project_test_runner",
+                "authorization": "suggestion_only",
+            }
+            for row in list(suggested_tests.values())[:30]
+        ],
         "examined_files": examined,
         "limitations": sorted(set(limitations)),
-        "caller_resolution": "Candidate name matches require binding and dynamic-use review; not proof of a call edge",
+        "caller_resolution": "Candidate name matches remain separate and require binding and dynamic-use review. Graph relationships are static observations, not runtime proof.",
     }
 
 
@@ -141,6 +178,17 @@ def review_cleanup_context(context, tasks, adapter):
         "source evidence and a bounded suggested change. Do not infer AI authorship or claim behavior "
         "is verified. Cite only supplied files and source lines. Empty advice is permitted."
     )
+    model_context = {
+        key: value
+        for key, value in context.items()
+        if key != "context_dependency_hashes"
+    }
+    if isinstance(model_context.get("impact"), dict):
+        model_context["impact"] = {
+            key: value
+            for key, value in model_context["impact"].items()
+            if key != "source_hashes"
+        }
     response = adapter.complete(
         system,
         json.dumps(
@@ -159,7 +207,7 @@ def review_cleanup_context(context, tasks, adapter):
                     }
                     for task in tasks
                 ],
-                "context": context,
+                "context": model_context,
             }
         ),
         response_format={

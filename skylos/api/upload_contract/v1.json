@@ -135,6 +135,23 @@
       ],
       "rule": "Cloud applies the workspace's agent-check settings (agent guardrails policy agent_checks) to the result again: a check the workspace blocks on raises the reported mode unless local loosening is allowed, and a required check that is missing or skipped counts as unfinished regardless of its reported mode. A readable receipt must identify the same full head commit as the upload and dirty must be false; an unavailable full upload commit, abbreviated or mismatched receipt head, or dirty head counts as incomplete. A fail or incomplete outcome fails the quality gate until a person overrides it; a pass never lifts a gate that failed for another reason. An absent or malformed result preserves compatibility: a malformed result is stored as unreadable and changes nothing. Signed summaries preserve receipt base/head/config/version and Cloud's binding; the checks are labeled client_claim, and verified CI upload identity does not attest that tests actually ran. Cloud keeps the first 20 findings per check and the first 20 unverified lines."
     },
+    "cleanup_receipts": {
+      "schema_version": 1,
+      "location": "optional top-level cleanup_receipts array on native Skylos SARIF, at most 20 receipts",
+      "fields": [
+        "schema_version: 1; attempt_id: UUID; task_id: 64 lowercase hex; rule_id: SKY-*; file: repository-relative path up to 500 characters; recorded_at: ISO8601 with timezone",
+        "source_sha256 and applied_sha256: 64 lowercase hex",
+        "scope: {target: . or repository-relative path, scanner_version: up to 40 version characters, config_digest: sha256:<64 lowercase hex>}",
+        "source_revision and outcome_revision: {head: full 40 lowercase hex or null, dirty: boolean or null}",
+        "status: verified, applied_unverified, failed or incomplete; applied: boolean; rolled_back: boolean. A verified claim requires applied=true, rolled_back=false, tests.status=passed, returncode=0, count>0, evidence=junit/pytest_junit/done, rescan.status=passed, new_findings_count=0, original_present=false and no failed optional behavior/rollback check",
+        "checks.tests: {status: passed, failed, skipped or incomplete; returncode: integer or null; evidence: none, exit_code, junit, pytest_junit or done; count: nonnegative integer or null; exercised_change: boolean or null}",
+        "checks.rescan: {status: passed, failed, skipped or incomplete; new_findings_count: nonnegative integer or null; original_present: boolean or null; checked_categories (optional): up to 5 values from quality, ai_defects, dead_code, security, secrets; absent means unknown, never inferred from limitations}",
+        "checks.rollback (optional): {status: passed, failed, skipped or incomplete}; checks.behavior (optional): {status: passed, failed, skipped or incomplete; model: python-source-effects-v1}",
+        "source_scan_id and source_finding_id (optional): UUID references supplied by the client, not authorization",
+        "limitations (optional): bounded subset of unbound_outcome, tests_not_observed, change_not_exercised, security_not_checked, stale_source, incomplete_scan, rollback_failed"
+      ],
+      "rule": "Display-only client claims, stored in scan JSON metadata. Never changes findings, quality gates, automated PR eligibility or issue resolution. Cloud reconstructs an allowlist and discards source text, commands, stdout, arbitrary errors, unknown fields and supplied binding. Absolute/traversal paths and malformed receipts are rejected without rejecting the scan; partial or truncated receipt metadata stays explicit. A reported clean outcome head can match the upload only when both full heads agree, the upload reports clean source, and scanner versions match. This is a head match, not independent verification of source hashes, test execution, test coverage or behavior. CI identity attests the uploader, not the recorded checks. A working-tree edit remains unbound and old checks must not be rebound to a later commit. No readable receipt by itself marks an issue fixed."
+    },
     "supply_chain": {
       "version": 1,
       "location": "runs[0].properties.summary of native Skylos SARIF (legacy and v2 core payloads) and summary of the compatibility payload; dependency_inventory, ci_inventory and agent_hooks are left out of the small report-init summary",

@@ -27,6 +27,28 @@ def _plan(task_id="first"):
     }
 
 
+def test_task_and_scope_paths_cannot_redirect_the_history_root(tmp_path):
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    plan = _plan()
+    plan["tasks"][0]["file"] = "../outside/app.py"
+    update_cleanup_state(
+        selected, {"target": str(outside), "project_root": str(outside)}, plan
+    )
+    assert (selected / STATE_PATH).is_file()
+    assert not (outside / ".skylos").exists()
+
+
+def test_regular_file_cannot_be_a_history_root(tmp_path):
+    selected = tmp_path / "selected.py"
+    selected.write_text("value = 1\n")
+    with pytest.raises(ValueError, match="directory"):
+        update_cleanup_state(selected, {"target": str(selected)}, _plan())
+    assert selected.read_text() == "value = 1\n"
+
+
 def test_real_interrupted_write_preserves_last_complete_history(tmp_path):
     pytest.importorskip("resource")
     script = """
