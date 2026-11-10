@@ -7,10 +7,19 @@ static analysis, preserves local review decisions and saves task history under
 `.skylos/cache/cleanup.json`. Source edits, tests and model review require their
 explicit options below.
 
+Detection comes from Skylos's existing rule engines. Cleanup organizes those
+findings and, for supported cases, previews an edit and checks its outcome.
+It is both a detection-backed work queue and an explicit cleanup workflow.
+Users see a concrete rule, file, line, explanation and action, rather than a
+generic label that code is "slop". JSON preserves the original finding evidence;
+`--context` shows nearby source with the reported line marked. Defects,
+contextual review and optional style advice retain their different purposes.
+
 ```bash
 skylos cleanup . --top 5
 skylos cleanup src --format json
 skylos cleanup . --all-advice
+skylos cleanup . --diff origin/main --context
 
 # Reuse a saved analyzer report without rescanning source.
 skylos . --quality --ai-defects --format json -o findings.json
@@ -26,8 +35,15 @@ UTF-8 file up to 512 MB; symlinks and special files are rejected.
 Review one task and its callers, make a focused change, run the project's
 relevant checks, then scan the same scope again. Dead-code candidates require
 checking entry points and dynamic use before removal. For changed-line checks
-and enforced regression gates, use the existing `--diff` scan and
+and enforced regression gates, use the regular `--diff` scan and
 [`skylos done`](done-gate.md) workflows.
+
+`cleanup --diff BASE` analyzes the full Git project, then displays tasks in
+changed files, including staged, unstaged and untracked source files. It pins
+the comparison commit and merge base and retains the full inventory in local
+history. A finding in a changed file may predate the change: this selection
+does not establish that every finding was introduced by the diff. Saved
+reports cannot supply a diff baseline.
 
 ## Review, apply and check one task
 
@@ -63,15 +79,57 @@ An applied patch receives separate test and rescan receipts. `verified` requires
 the explicitly requested tests to pass and a complete comparable rescan to
 remove the target without introducing new defects or high-severity review
 findings. This is evidence from those checks, not universal behavioral proof.
+Passing tests must be observed through fresh JUnit results; pytest generates
+these automatically. An opaque command that exits zero is insufficient.
+For another runner, add `--junit-report reports/tests.xml` and configure the
+authorized command to write that project-relative file. Test counts, evidence
+type and changed Python line exercise are recorded separately. Unrelated
+passing tests do not establish that the change ran; deletion-only edits and
+unavailable tracing leave that evidence unknown.
+
+Apply scans enable static security and secret checks before and after the
+edit, alongside quality, AI-code and dead-code checks. Dependency/network
+checks are not enabled. The receipt records the checked categories. A limited
+Python source-effect comparison may record modeled equivalence, differences
+or unknowns; it does not execute the program or prove runtime equivalence.
+
 Skipped tests produce `applied_unverified`; unavailable checks produce
 `incomplete`. Failed checks return exit `1` and attempt rollback only while
 the file still matches the applied patch, preserving intervening edits.
+
+TypeScript/TSX edits support only one explicit unused named `import type`
+binding from a same-directory local provider. A local supported tsconfig,
+another module marker and a self-contained structural type provider are
+required. Value/mixed imports, ambient declarations, extended or custom module
+resolution, ambiguous providers and uncertain use require manual review.
+Provider/configuration hashes and absent resolution alternatives are rechecked
+before applying and after checks. No compiler or package script runs by default.
+
+## Ordered local plans
+
+```bash
+skylos cleanup . --create-plan imports --plan-task FIRST_ID --plan-task SECOND_ID \
+  --prerequisite "Review public callers" --acceptance-check "pytest -q"
+skylos cleanup . --plan imports
+skylos cleanup . --plan imports --move-task SECOND_ID --before FIRST_ID
+skylos cleanup . --plan imports --complete-task FIRST_ID --note "Reviewed manually"
+skylos cleanup . --plans
+```
+
+Plans retain explicitly selected anchored tasks in the chosen order and scope.
+They currently require the syntax anchors supplied for Python tasks;
+TypeScript import edits can be selected directly with `--task`.
+Source changes make steps stale. A missing finding never completes a step;
+manual completion remains unverified and requires a note for stale steps.
+Prerequisites and acceptance checks are recorded text and never execute commands.
 
 ## Context and optional model review
 
 ```bash
 skylos cleanup . --context --format json
 skylos cleanup . --review --provider anthropic --model YOUR_MODEL
+skylos cleanup . --reviews
+skylos cleanup . --plan imports --promote-review REVIEW_ID
 ```
 
 `--context` adds bounded Python and TypeScript/JavaScript excerpts, static
@@ -80,10 +138,16 @@ It reuses Skylos's graph parser and impact queries. Source-resolved relationship
 stay separate from simple-name candidates, and neither proves runtime reachability.
 Suggested test selections never authorize execution. Graph coverage and budget
 limits remain visible; other languages retain their scanner evidence.
+Human context output marks the reported source line and shows nearby lines.
 `--review` sends that context to the configured model and returns separately
 labeled subjective advice with source citations. It requires the LLM extra and
 provider configuration, may incur provider charges, and never authorizes edits.
 It is a separate step from patch application. No model is called by default.
+Completed reviews persist locally with citations, model/provider provenance
+and source/context hashes, unless `--no-state` is selected. `--reviews` shows
+current or stale advice. Only an explicit promotion adds current advice to a
+named plan, where it stays labeled `review_advice`; it cannot create a scanner
+defect, authorize an edit or supply verification evidence.
 
 ## Queue behavior and limits
 
@@ -153,8 +217,9 @@ reconciles a persistent finding ledger. Its
 delegate blocking versus follow-up judgment to the model. Its
 [`stop hook`](https://github.com/paslavskyi/anti-slop/blob/539ed54c1bb7efb9799cf3b88a5cde7dd30b4988/hooks/stop-hook.mjs)
 deduplicates using filenames and change counts. Skylos's optional model review
-uses bounded Python excerpts and explicitly labeled candidate callers. A more
-complete domain review could use its full parsed dependency graph. Patch
+uses bounded source excerpts, its parsed dependency graph and separately
+labeled candidate callers. Dynamic and broader domain review still require
+additional evidence. Patch
 verification already uses comparable scans and source content rather than
 treating equal change counts as equal changes.
 
@@ -163,10 +228,27 @@ coupling, cohesion, broad or empty exception handlers, unfinished code and
 invented APIs. New detectors should address demonstrated gaps with positive
 and negative controls. A new name alone does not expand detection coverage.
 
+| Workflow gap | Skylos implementation in this round | Remaining limit |
+| --- | --- | --- |
+| Focus on active changes | Pinned `cleanup --diff BASE`, full-project detection, changed-file display | No claim that every displayed finding is newly introduced |
+| Review neighboring effects | Existing parsed graph, separate name candidates and suggested tests | Bounded static context; dynamic or external callers can remain unknown |
+| Keep ordered work | Named plans, explicit order, prerequisites and manual completion | Prose checks do not execute; manual completion does not verify behavior |
+| Retain subjective review | Cited local advice with model/provider and source freshness | Advisory judgments require human review and cannot create defects |
+| Check a supported edit | Observed test evidence, comparable rescan, exact-byte rollback | Passing checks are scoped evidence; broad refactors remain manual |
+| Broaden language edits | Conservative Python transforms and a narrow TypeScript type-import adapter | Most TypeScript/JavaScript and architecture changes remain review-only |
+| Share outcomes | Optional bounded CLI receipt metadata in existing uploads | Client claims remain separate from trusted scan resolution and gates |
+
+The differentiator is the connection between specific detector evidence,
+explicit edits and honest check receipts. This round does not add an opaque
+"slop score", infer AI authorship or claim complete subjective architecture
+review.
+
 ## Cloud integration
 
 The Cloud Cleanup workspace loads quality, AI-code and dead-code findings from
-the project's latest native code scan. Choose a current task, move to the next,
+the selected native code scan, defaulting to the latest available source.
+Choose a branch/source scan and an optional comparison source independently
+from an active removal PR's original workflow scan. Choose a current task, move to the next,
 or review related work grouped by the existing issue, otherwise by rule and
 folder. These groups organize review without proving a shared root cause.
 Each task links to its source finding and existing issue history. Copy task
@@ -187,6 +269,23 @@ saved findings rather than trusting a second task upload:
 skylos . --quality --ai-defects --upload
 ```
 
+Explicit uploads also attach up to 20 valid locally stored cleanup outcome
+receipts found at the Git root and selected upload root. For a cleanup rooted
+in a subdirectory, upload that same path to include its local receipts. These
+contain allowlisted identifiers, relative paths, source hashes,
+test/rescan status and coverage limits; test commands, logs and source excerpts
+are not included. A working-tree edit remains unbound to a commit. Committing
+later does not silently rebind earlier test evidence. Cloud displays these as
+client claims and never uses them alone to resolve findings or pass a gate.
+This optional field requires the corresponding Cloud deployment.
+
+Progress comparison requires complete raw inventories, compatible recorded
+scope/check coverage and trusted source scans with matching analyzer-config
+claims. Missing configuration, revision or coverage evidence shows
+`not_checked`, with unknown counts. A Done check-policy digest does not prove
+analyzer configuration equivalence. Comparable absence is labeled
+`not reported`; it is separate from behavioral verification and issue resolution.
+
 | Extension | Existing Cloud integration point |
 | --- | --- |
 | Pure task projection | `src/lib/cleanup-tasks.ts` over existing finding rows and group IDs |
@@ -194,13 +293,14 @@ skylos . --quality --ai-defects --upload
 | Select current/next work, review groups and copy context | `src/components/CleanupTaskQueue.tsx` in the project Cleanup page |
 | Shared ownership, work status and notes | Existing `AssignIssue` and `IssueComments` for the task's issue group |
 | Classify tasks | Reuse `finding-types.ts`; respect stored optional-advice marks when available |
-| Show new/existing state and verified progress | Reuse `finding-newness.ts`, `scan-comparison.ts` and `scan-coverage.ts` |
+| Select source scans and compare qualified progress | `CleanupSourceControls.tsx`, `cleanup-progress.ts`, existing newness and coverage helpers |
+| Display bounded CLI outcome claims | `cleanup-receipts.ts` and `CleanupReceipts.tsx` over scan JSON metadata |
 | Retain constrained automated PRs | Keep eligibility in `cleanup-flow.ts` and `cleanup-prs/` independent from task visibility |
 
 The panel retains available work from incomplete scans and clearly labels
 missing coverage, partial retrieval and upload failures. It never converts
 those states into an empty complete queue. An active removal PR keeps its
-original source scan; the task panel independently shows its labeled latest
+original source scan; the task panel independently shows its labeled selected
 scan. Suppressions and existing review history are retained. No database
 migration or additional model call is required.
 
