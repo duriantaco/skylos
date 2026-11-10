@@ -339,6 +339,13 @@ def _run_workflow(
             and key not in {"original_source", "applied_source", "baseline_report"}
         }
         if args.apply:
+            from skylos.cleanup_receipts import (
+                capture_cleanup_revision,
+                make_cleanup_receipt,
+                store_cleanup_receipt,
+            )
+
+            source_revision = capture_cleanup_revision(root)
 
             def rescan():
                 current_scope = _scope(target, root, verification=True)
@@ -374,6 +381,23 @@ def _run_workflow(
                 receipt["baseline"] = selection.baseline()
             report["execution"] = receipt
             if receipt["status"] == "incomplete":
+                report["status"] = "incomplete"
+            try:
+                envelope = make_cleanup_receipt(
+                    task,
+                    scope,
+                    receipt,
+                    project_root=root,
+                    source_revision=source_revision,
+                    edit=edit,
+                )
+                report["cleanup_receipt"] = envelope
+                if not args.no_state:
+                    store_cleanup_receipt(root, scope, envelope)
+            except (ValueError, OSError) as exc:
+                report.setdefault("limitations", []).append(
+                    f"Edit receipt retained, but its upload summary could not be saved: {exc}"
+                )
                 report["status"] = "incomplete"
             if bucket is not None:
                 try:

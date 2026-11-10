@@ -210,6 +210,104 @@ def test_context_failure_after_apply_preserves_execution_receipt(
     assert any("receipt retained" in row for row in report["limitations"])
 
 
+@pytest.mark.parametrize("state_args,stored_count", [([], 1), (["--no-state"], 0)])
+def test_apply_produces_a_bounded_receipt_and_respects_no_state(
+    tmp_path, state_args, stored_count
+):
+    from skylos.cleanup_receipts import load_cleanup_receipts
+
+    source = tmp_path / "app.py"
+    source.write_text("import math\nimport statistics\nvalue = 3\n")
+    task = _run(tmp_path)["tasks"][0]["id"]
+    output = io.StringIO()
+
+    def scan(*_args, **_kwargs):
+        report = _raw(tmp_path)
+        report["unused_imports"] = [
+            row for row in report["unused_imports"] if row["name"] in source.read_text()
+        ]
+        return report
+
+    code = run_cleanup_command(
+        [str(tmp_path), "--task", task, "--apply", *state_args, "--format", "json"],
+        stdout=output,
+        analyze_func=scan,
+    )
+    report = json.loads(output.getvalue())
+    assert code == 0, report
+    receipt = report["cleanup_receipt"]
+    assert receipt["outcome_revision"] == {"head": None, "dirty": True}
+    assert receipt["task_id"] == task
+    assert receipt["file"] == "app.py"
+    assert receipt["checks"]["tests"]["evidence"] == "none"
+    assert "unbound_outcome" in receipt["limitations"]
+    serialized = json.dumps(receipt)
+    assert str(tmp_path) not in serialized
+    assert "command" not in serialized and "output" not in serialized
+    assert "import math" not in serialized
+    assert len(load_cleanup_receipts(tmp_path)) == stored_count
+
+
+def test_custom_junit_option_reaches_checks_and_shared_receipt(tmp_path):
+    import shlex
+    import sys
+
+    source = tmp_path / "app.py"
+    source.write_text("import math\nimport statistics\nvalue = 3\n")
+    (tmp_path / "check.py").write_text(
+        "import app\nfrom pathlib import Path\nassert app.value == 3\n"
+        "Path('checks.xml').write_text('<testsuite><testcase name=\"value\" /></testsuite>')\n"
+    )
+    task = _run(tmp_path)["tasks"][0]["id"]
+
+    def scan(*_args, **_kwargs):
+        report = _raw(tmp_path)
+        report["unused_imports"] = [
+            row for row in report["unused_imports"] if row["name"] in source.read_text()
+        ]
+        return report
+
+    output = io.StringIO()
+    code = run_cleanup_command(
+        [
+            str(tmp_path),
+            "--task",
+            task,
+            "--apply",
+            "--test-cmd",
+            shlex.join([sys.executable, "check.py"]),
+            "--junit-report",
+            "checks.xml",
+            "--format",
+            "json",
+        ],
+        stdout=output,
+        analyze_func=scan,
+    )
+    report = json.loads(output.getvalue())
+    assert code == 0, report
+    assert report["execution"]["status"] == "verified"
+    assert report["cleanup_receipt"]["checks"]["tests"]["evidence"] == "junit"
+    assert report["cleanup_receipt"]["checks"]["tests"]["count"] == 1
+
+
+def test_initial_configuration_mutation_rejects_scan_before_history(tmp_path):
+    (tmp_path / "app.py").write_text("import math\n")
+
+    def scan(*_args, **_kwargs):
+        (tmp_path / "pyproject.toml").write_text('[tool.skylos]\nignore=["SKY-U002"]\n')
+        return _raw(tmp_path)
+
+    output = io.StringIO()
+    code = run_cleanup_command(
+        [str(tmp_path), "--format", "json"], stdout=output, analyze_func=scan
+    )
+    report = json.loads(output.getvalue())
+    assert code == 2
+    assert "configuration changed" in report["limitations"][0]
+    assert not (tmp_path / ".skylos/cache/cleanup.json").exists()
+
+
 @pytest.mark.parametrize(
     "args",
     [

@@ -148,6 +148,9 @@ and source/context hashes, unless `--no-state` is selected. `--reviews` shows
 current or stale advice. Only an explicit promotion adds current advice to a
 named plan, where it stays labeled `review_advice`; it cannot create a scanner
 defect, authorize an edit or supply verification evidence.
+Freshness covers captured excerpts and bounded context dependencies. It does
+not bind the entire Git revision; new or unexamined files can require a fresh
+review.
 
 ## Queue behavior and limits
 
