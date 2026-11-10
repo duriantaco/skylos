@@ -348,6 +348,9 @@ def _finding_table_cells(item, category, root_path=None, *, verbose=True):
         details.append(f"Fix: {metadata.get('fixed_version') or '-'}")
         if metadata.get("reachability_verdict"):
             details.append(f"Reachability: {metadata['reachability_verdict']}")
+        from skylos.rules.sca.threat_intel import risk_context_details
+
+        details.extend(risk_context_details(metadata.get("risk_context")))
     if category == "publisher_change_findings":
         details.append(
             f"Publisher: {metadata.get('previous_publisher') or '?'} → "
@@ -1169,6 +1172,11 @@ def _render_sca_packages(console: Console, root_path, limit, advisories):
     show_use = has_use_data(groups)
     if show_use:
         table.add_column("Use", overflow="fold")
+    from skylos.rules.sca.threat_intel import package_risk_text
+
+    show_threat = any(package_risk_text(group.findings) for group in groups)
+    if show_threat:
+        table.add_column("Threat context", overflow="fold")
     table.add_column("Advisories", overflow="fold")
     table.add_column("Location", overflow="fold")
     for group in show:
@@ -1180,6 +1188,8 @@ def _render_sca_packages(console: Console, root_path, limit, advisories):
         ]
         if show_use:
             cells.append(escape(group.use_text()))
+        if show_threat:
+            cells.append(escape(package_risk_text(group.findings) or "No CVE context"))
         cells.append(escape(f"{group.count}: {group.ids_text()}"))
         cells.append(escape(f"{_shorten_path(group.file, root_path)}:{group.line}"))
         table.add_row(*cells)

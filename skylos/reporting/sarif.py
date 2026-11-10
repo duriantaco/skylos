@@ -406,9 +406,22 @@ class SarifExporter:
                 if listing is not None and "listing" in metadata_input:
                     metadata_input["listing"] = dict(properties["listing"])
                 located_trace = metadata_input.pop("security_trace", None)
+                risk_context = metadata_input.pop("risk_context", None)
                 safe_metadata = _sanitize_sarif_payload(
                     metadata_input, max_items=metadata_items
                 )
+                if risk_context is not None:
+                    from skylos.rules.sca.threat_intel import finding_cves, normalize_risk_context
+
+                    safe_risk_context = normalize_risk_context(
+                        risk_context, allowed_cves=finding_cves({"metadata": metadata})
+                    )
+                    if safe_risk_context is not None:
+                        safe_metadata["risk_context"] = safe_risk_context
+                        if isinstance(safe_metadata.get("aliases"), list):
+                            for row in safe_risk_context["cves"]:
+                                if row["cve_id"] not in safe_metadata["aliases"]:
+                                    safe_metadata["aliases"].append(row["cve_id"])
                 if isinstance(located_trace, dict):
                     # A located trace has its own bounded graph budget. It must
                     # not consume listing, review or semantic-proof fields.

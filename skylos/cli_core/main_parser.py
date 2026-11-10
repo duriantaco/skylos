@@ -377,6 +377,14 @@ def build_main_parser(*, version: str) -> argparse.ArgumentParser:
         help="Scan dependencies for known vulnerabilities (CVEs) via OSV.dev.",
     )
     parser.add_argument(
+        "--sca-threat-intel",
+        action="store_true",
+        help=(
+            "Add dated EPSS/CISA KEV context to dependency CVEs (implies --sca; "
+            "requires ca9>=0.9.0). Optional provider lookups never change severity or gates."
+        ),
+    )
+    parser.add_argument(
         "--review-upgrades",
         action="store_true",
         dest="review_upgrades",

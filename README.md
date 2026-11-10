@@ -1174,6 +1174,10 @@ Git, path, SDK, private-registry and branch (`dev-*`) entries are listed as
 not checked and are never queried as public packages. See
 [Dependency scanning](./docs/dependency-scanning.md).
 
+Add `--sca-threat-intel` to opt in to dated EPSS and CISA KEV context
+(requires ca9 0.9.0). Missing or stale provider data stays explicit;
+the context does not change severity, confidence, or gate decisions.
+
 Malware advisories (`MAL-*`, CWE-506, such as the hijacked `chalk`, `debug`
 and `xrpl` releases) are `CRITICAL` with `metadata.malicious`, are never
 demoted as dev-only, and tell you to remove the package and rotate the
