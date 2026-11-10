@@ -21,9 +21,10 @@ Acceptance rules:
 
 ## Current coverage
 
-The manifest has 62 cases and 207 explicit expectations: 119 absence checks and
-88 presence checks. Presence includes 77 unused-symbol controls, eight quality
-expectations, and three separately recorded policy controls. These are assertions,
+The manifest has 71 cases and 232 explicit expectations: 133 absence checks and
+99 presence checks. Presence includes 79 unused-symbol controls, 14 quality
+expectations, three unused-file controls, and three separately recorded policy
+controls. These are assertions,
 not a whole-repository precision or recall score.
 
 All 46 original absence-only cases now include real unused-symbol controls.
@@ -75,6 +76,14 @@ examples; it does not measure AI authorship, repair correctness or broad
 real-project accuracy. The standard cleanup command is also exercised against
 these pairs in `test/test_cleanup_test_quality.py`, including default visibility,
 source evidence, source integrity and refusal of unsupported automatic edits.
+
+Nine cleanup audit cases protect loop reachability, collection metadata,
+debug f-string labels, shell-launched TypeScript entrypoints, source loaded as
+data, and finite native dependency probes. Reachable assertions, ordinary
+f-string fields, untouched sibling files/functions and an unrelated dependency
+remain positive controls. The earlier 62 case objects and expected answers are
+retained. Actual edit preservation, change-exercise evidence and rollback are
+tested separately in the cleanup tests; the corpus executes no target code.
 
 ## Validity and execution
 

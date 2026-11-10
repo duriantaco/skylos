@@ -68,6 +68,9 @@ edit is enabled for them. Make the intended change manually, run the relevant
 tests, then rescan the same scope.
 
 The checks reuse static test collection and Done's literal/skip semantics.
+Proven loop jumps and returns keep unreachable statements out of test-quality
+advice. Collection metadata changes apply to the affected test while preserving
+eligible sibling tests.
 Helpers, skipped/xfail tests, fixtures, golden source data and uncertain wrappers
 are excluded where their test role cannot be established. Empty-body review
 abstains when fixture inputs, setup hooks, autouse declarations or an ancestor
@@ -109,7 +112,8 @@ those operations and remain unavailable there.
 Deterministic edits currently support conservative Python unused-function
 deletions (`SKY-U001`), allowlisted standard-library import deletions
 (`SKY-U002`) and freshly revalidated f-string conversion simplifications
-(`SKY-L038`). Decorators, defaults, annotations, ambiguous anchors, local or
+(`SKY-L038`). Debug f-string fields retain their expression text in the output
+and require manual review. Decorators, defaults, annotations, ambiguous anchors, local or
 effectful imports and unsupported rules require manual review. The patch is
 bound to the exact source content; changed files must be rescanned.
 
@@ -121,9 +125,13 @@ Passing tests must be observed through fresh JUnit results; pytest generates
 these automatically. An opaque command that exits zero is insufficient.
 For another runner, add `--junit-report reports/tests.xml` and configure the
 authorized command to write that project-relative file. Test counts, evidence
-type and changed Python line exercise are recorded separately. Unrelated
-passing tests do not establish that the change ran; deletion-only edits and
-unavailable tracing leave that evidence unknown.
+type and changed Python line exercise are recorded separately. A Python
+replacement stays `applied_unverified` when tracing shows its changed lines
+were not exercised. Unknown exercise requires a completed bounded source-effect
+proof before the replacement can be verified. An affirmative tracing miss is
+never overridden by that model. Deletion-only edits have no replacement lines
+to trace; their verification is limited to the observed tests and comparable
+rescan, and the receipt records that limitation.
 
 Apply scans enable static security and secret checks before and after the
 edit, alongside quality, AI-code and dead-code checks. Dependency/network

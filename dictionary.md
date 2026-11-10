@@ -1563,7 +1563,10 @@ overloaded to return other values (numpy arrays, SQLAlchemy expressions).
 `False if a == b else True` and other negated comparisons of that kind are not
 reported: `a != b` need not be the opposite, and `not (a == b)` is itself a
 lint finding. SKY-L038 reports `{str(x)}`, `{repr(x)}` and `{ascii(x)}`
-fields, which `!s`, `!r` and `!a` replace. SKY-L039 reports the trailing except
+fields, which `!s`, `!r` and `!a` replace. Debug fields such as
+`{str(x)=:>8}` are excluded because changing the expression changes the displayed
+label. Source text must prove an ordinary field before a conversion is reported.
+SKY-L039 reports the trailing except
 clauses of a `try` whose only statement is `raise` (or `raise e` of the caught
 name); an earlier re-raise that keeps a later handler away is not reported, nor
 is `except*`, nor clauses with a comment in them (a documented placeholder).
