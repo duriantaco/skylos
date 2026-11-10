@@ -278,23 +278,10 @@ def plan_cleanup_edit(task: dict[str, Any], root: str | Path) -> dict[str, Any]:
     relative = _relative(
         root, str(task.get("file") or _finding(task).get("file") or "")
     )
-    if relative.suffix != ".py":
-        raise ValueError(
-            "deterministic cleanup edits currently support Python .py files"
-        )
     original = _read_source(root, relative)
     if task.get("source_sha256") != _hash(original):
         raise ValueError("cleanup task is stale or has no source hash; scan again")
     source = original.decode("utf-8")
-    tree = ast.parse(source)
-    expected_anchor = task.get("source_anchor")
-    if (
-        not expected_anchor
-        or source_anchor_digest(_finding(task), root) != expected_anchor
-    ):
-        raise ValueError("cleanup source anchor is stale or unavailable")
-    target = _target_node(tree, task)
-    anchor = _unique_anchor(tree, target)
     baseline = task.get("_baseline_report", task.get("baseline_report"))
     if not isinstance(baseline, dict):
         raise ValueError("cleanup edits require their originating analyzer report")
@@ -316,82 +303,108 @@ def plan_cleanup_edit(task: dict[str, Any], root: str | Path) -> dict[str, Any]:
         raise ValueError(
             "task finding is absent or ambiguous in the originating report"
         )
-    if rule == "SKY-L038":
-        changed = _l038_edit(source, task, root, relative, target)
-    else:
-        from skylos.remediation.codemods import (
-            remove_unused_function_cst,
-            remove_unused_import_cst,
-        )
-
-        if rule == "SKY-U001":
-            # Definition-time decorators/default expressions can perform work
-            # even when no caller exists. Keep those cases for manual review.
-            if (
-                target.decorator_list
-                or target.args.defaults
-                or any(value is not None for value in target.args.kw_defaults)
-            ):
-                raise ValueError(
-                    "function has definition-time behavior; review manually"
-                )
-            arguments = [
-                *target.args.posonlyargs,
-                *target.args.args,
-                *target.args.kwonlyargs,
-            ]
-            arguments.extend(
-                arg
-                for arg in (target.args.vararg, target.args.kwarg)
-                if arg is not None
+    typescript_proof = None
+    if relative.suffix in {".ts", ".tsx"}:
+        if rule != "SKY-U002":
+            raise ValueError(
+                "TypeScript cleanup currently supports only unused type imports"
             )
-            if (
-                target.returns
-                or getattr(target, "type_params", ())
-                or any(arg.annotation for arg in arguments)
-            ):
-                raise ValueError(
-                    "function annotations require manual review before deletion"
-                )
-            transform = remove_unused_function_cst
+        from skylos.cleanup_typescript import plan_typescript_unused_import
+
+        typescript_proof = plan_typescript_unused_import(task, root, original)
+        changed = typescript_proof["replacement"]
+        anchor = typescript_proof["target_anchor"]
+    elif relative.suffix == ".py":
+        tree = ast.parse(source)
+        expected_anchor = task.get("source_anchor")
+        if (
+            not expected_anchor
+            or source_anchor_digest(_finding(task), root) != expected_anchor
+        ):
+            raise ValueError("cleanup source anchor is stale or unavailable")
+        target = _target_node(tree, task)
+        anchor = _unique_anchor(tree, target)
+        if rule == "SKY-L038":
+            changed = _l038_edit(source, task, root, relative, target)
         else:
-            allowed_modules = {
-                "typing",
-                "math",
-                "collections",
-                "itertools",
-                "functools",
-                "operator",
-                "re",
-                "sys",
-                "os",
-                "json",
-                "pathlib",
-            }
-            if not isinstance(target, ast.Import) or any(
-                alias.name.split(".")[0] not in allowed_modules
-                for alias in target.names
-            ):
-                raise ValueError(
-                    "import side effects require manual review; only standard-library import statements are supported"
+            from skylos.remediation.codemods import (
+                remove_unused_function_cst,
+                remove_unused_import_cst,
+            )
+
+            if rule == "SKY-U001":
+                # Definition-time decorators/default expressions can perform work
+                # even when no caller exists. Keep those cases for manual review.
+                if (
+                    target.decorator_list
+                    or target.args.defaults
+                    or any(value is not None for value in target.args.kw_defaults)
+                ):
+                    raise ValueError(
+                        "function has definition-time behavior; review manually"
+                    )
+                arguments = [
+                    *target.args.posonlyargs,
+                    *target.args.args,
+                    *target.args.kwonlyargs,
+                ]
+                arguments.extend(
+                    arg
+                    for arg in (target.args.vararg, target.args.kwarg)
+                    if arg is not None
                 )
-            imported_roots = {alias.name.split(".")[0] for alias in target.names}
-            if any(
-                path.name in imported_roots
-                or path.name.removesuffix(".py") in imported_roots
-                for path in root.rglob("*")
-            ):
-                raise ValueError(
-                    "a project module may shadow this standard-library import"
-                )
-            transform = remove_unused_import_cst
-        name = str(task.get("name") or _finding(task).get("name") or "")
-        changed, did_change = transform(source, name, target.lineno)
-        if not did_change:
-            raise ValueError("the existing codemod could not locate the finding")
+                if (
+                    target.returns
+                    or getattr(target, "type_params", ())
+                    or any(arg.annotation for arg in arguments)
+                ):
+                    raise ValueError(
+                        "function annotations require manual review before deletion"
+                    )
+                transform = remove_unused_function_cst
+            else:
+                allowed_modules = {
+                    "typing",
+                    "math",
+                    "collections",
+                    "itertools",
+                    "functools",
+                    "operator",
+                    "re",
+                    "sys",
+                    "os",
+                    "json",
+                    "pathlib",
+                }
+                if not isinstance(target, ast.Import) or any(
+                    alias.name.split(".")[0] not in allowed_modules
+                    for alias in target.names
+                ):
+                    raise ValueError(
+                        "import side effects require manual review; only standard-library import statements are supported"
+                    )
+                imported_roots = {alias.name.split(".")[0] for alias in target.names}
+                if any(
+                    path.name in imported_roots
+                    or path.name.removesuffix(".py") in imported_roots
+                    for path in root.rglob("*")
+                ):
+                    raise ValueError(
+                        "a project module may shadow this standard-library import"
+                    )
+                transform = remove_unused_import_cst
+            name = str(task.get("name") or _finding(task).get("name") or "")
+            changed, did_change = transform(source, name, target.lineno)
+            if not did_change:
+                raise ValueError("the existing codemod could not locate the finding")
+    else:
+        raise ValueError(
+            "Deterministic cleanup edits support Python and bounded TypeScript type imports"
+        )
     if changed == source:
         raise ValueError("cleanup edit would not change this source")
-    ast.parse(changed)
+    if relative.suffix == ".py":
+        ast.parse(changed)
     replacement = changed.encode("utf-8")
     return {
         "version": 1,
@@ -418,6 +431,8 @@ def plan_cleanup_edit(task: dict[str, Any], root: str | Path) -> dict[str, Any]:
         "_source": source,
         "_replacement": changed,
         "_target_anchor": anchor,
+        "_typescript_proof": typescript_proof,
+        "limitations": typescript_proof["limitations"] if typescript_proof else [],
         "_baseline_report": deepcopy(baseline),
     }
 
@@ -596,11 +611,17 @@ def compare_cleanup_reports(
     if task is not None:
         target_file = _relative(root, str(task["file"]))
         source = _read_source(root, target_file).decode("utf-8")
-        tree = ast.parse(source)
         anchor = task.get("_target_anchor")
         if not anchor:
             limitations.append("Original source anchor is unavailable.")
+        elif target_file.suffix in {".ts", ".tsx"}:
+            from skylos.cleanup_typescript import typescript_import_anchor_present
+
+            original_present = typescript_import_anchor_present(
+                source, anchor, file_path=target_file.as_posix()
+            )
         else:
+            tree = ast.parse(source)
             original_present = any(
                 _anchor(tree, node) == anchor for node in ast.walk(tree)
             )
@@ -636,6 +657,8 @@ def apply_cleanup_edit(
         "applied_sha256"
     ] != edit.get("applied_sha256"):
         raise ValueError("cleanup patch changed; preview it again")
+    if fresh.get("_typescript_proof") != edit.get("_typescript_proof"):
+        raise ValueError("TypeScript cleanup proof changed; preview it again")
     relative = _relative(root, fresh["file"])
     original, replacement = (
         fresh["_source"].encode("utf-8"),
@@ -652,6 +675,10 @@ def apply_cleanup_edit(
             raise ValueError(
                 "test command contains unsupported shell syntax or is empty"
             )
+    if fresh.get("_typescript_proof"):
+        from skylos.cleanup_typescript import revalidate_typescript_dependencies
+
+        revalidate_typescript_dependencies(root, fresh["_typescript_proof"])
     _replace_unchanged(root, relative, original, replacement)
     result = {
         "version": 1,
@@ -673,7 +700,7 @@ def apply_cleanup_edit(
         },
         "rescan": {"status": "skipped"},
         "rollback": {"status": "skipped"},
-        "limitations": [],
+        "limitations": list(fresh.get("limitations", [])),
     }
     from skylos.cleanup_checks import compare_cleanup_behavior, run_cleanup_tests
 
@@ -733,6 +760,13 @@ def apply_cleanup_edit(
         except (Exception, SystemExit) as exc:
             result["rescan"] = {"status": "incomplete", "error": str(exc)}
             result["limitations"].append("The comparable rescan could not complete.")
+    proof_incomplete = False
+    if fresh.get("_typescript_proof"):
+        try:
+            revalidate_typescript_dependencies(root, fresh["_typescript_proof"])
+        except (OSError, ValueError) as exc:
+            proof_incomplete = True
+            result["limitations"].append(str(exc))
     if failed:
         result["status"] = "failed"
         try:
@@ -743,6 +777,8 @@ def apply_cleanup_edit(
         except (OSError, ValueError) as exc:
             result["rollback"] = {"status": "failed"}
             result["limitations"].append(f"Rollback was not applied: {exc}")
+    elif proof_incomplete:
+        result["status"] = "incomplete"
     elif (
         result["tests"]["status"] == "passed"
         and result["tests"].get("observed") is True
