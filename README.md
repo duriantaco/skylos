@@ -476,13 +476,20 @@ skylos cleanup . --plan imports
 Source edits require `--apply`; tests run only with `--test-cmd`. A change stays
 `applied_unverified` when tests were skipped. `--context` adds bounded source
 context with marked source lines, graph relationships and suggested tests.
-Verification requires observed passing tests and a comparable rescan; an exit-zero
+Verification requires observed passing tests and a comparable rescan. Python
+replacements also need changed-line exercise or a bounded source-effect proof
+when exercise is unknown; unrelated passing tests leave them unverified. An exit-zero
 command alone is insufficient. Named plans preserve explicit ordering and manual
 completion. Optional `--review` stores cited model advice with source freshness.
 Cloud's Cleanup tasks panel groups saved findings and connects existing issue
 ownership, work status and outcome notes. Explicit scan uploads can include bounded
 CLI outcome receipts, displayed as client claims. See [Cleanup](./docs/cleanup.md) for
 supported edits, receipts, exclusions and limits.
+Python test-quality checks identify constant-true assertions, placeholder-only
+test bodies, adjacent repeated checks over proven plain values, and fixed sleeps
+used to guess Event completion. They appear as review tasks with source evidence
+and require a deliberate behavior check before editing. See
+[test-quality checks](./docs/cleanup.md#python-test-quality-checks) for scope and controls.
 See the [five-repository exploratory evaluation](./benchmarks/cleanup/2026-11-10/README.md)
 for actual findings, reviewed false positives and coverage limits on documented
 AI-assisted projects.

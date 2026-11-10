@@ -194,3 +194,21 @@ The defensible claim from this exercise is that cleanup finds concrete review
 opportunities and retains visible limits. It is not evidence of AI-authorship
 detection, universal “slop” detection, representative precision/recall or
 automatic repair of every finding.
+
+## Cleanup logic fix validation
+
+The original results and source-review classifications above remain the baseline.
+The [logic fix follow-up](logic-fixes-validation.json) records fresh static scans
+after correcting shell-launched entrypoints, exact source-data reads and finite
+native dependency probes. All five previously reviewed false positives are
+absent, while all 25 supported default-task samples remain reported. The two
+previous incomplete API coverage states remain incomplete. All six targets,
+including pinned asgiref, retain identical source bytes; no target code or tests
+ran and no network or model calls were made.
+
+These changes also remove other queue observations covered by the same source
+relationships. Those count changes are not additional independently reviewed
+defects or a precision estimate. The four new test-quality rules still emit no
+findings in this cohort. F-string edit preservation, affected-test evidence and
+rollback are checked with separate self-authored runtime fixtures, rather than
+by executing these external projects.

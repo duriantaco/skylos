@@ -1,0 +1,443 @@
+{
+  "schema_version": 1,
+  "method": "Static default cleanup scans of the same five documented AI-assisted snapshots plus pinned asgiref. No target installation, imports, tests, trace, model calls, registry queries or uploads. Snapshot pins for the original five are retained in manifest.json; asgiref is 03dcd190a363be6e501b2819803e70495200551c.",
+  "before_source_revision": "caac92ae75cae05aac081f979e8514c8510aa897",
+  "after_source_base": "825fc67f5bb264cd10db1efa57d640e6e131a20d",
+  "after_source_description": "Cleanup logic fixes in this PR. Exact changed production source hashes identify the tested source before publication.",
+  "source_sha256": {
+    "skylos/analyzer.py": "01c2052ce0b56b31348dc12803f697b7ad064369bbb3431977b7cad4dabad160",
+    "skylos/benchmarks/corpus_ci.py": "7384d0a5ee4f8678ff8f470f2077cda5ed7f6060214121c28d1386f0a5b3b33a",
+    "skylos/cleanup_execution.py": "df06f1b89bf2ff86dbcc7f6830be2262f09ecf40b0bdad6bf1d5644770b348ff",
+    "skylos/rules/quality/_test_collection_state.py": "3269208e47f83de6a86bfcf73f642d2bf4349860ef7b5e275c42168f11d09c9b",
+    "skylos/rules/quality/_test_flow.py": "291d714f6001c967e6d9185ebd62bd6579f793e4d7508bd14f5df6915a389e2c",
+    "skylos/rules/quality/_test_subjects.py": "3f677b591f1d54671aa43e7fcc7520ed60badd1fa4570774ec840fae7c8c8f0e",
+    "skylos/rules/quality/slop.py": "2ab267d345c0f3eeae0cecc94a9e74116dc0b5b908be3f5be0c89327e24067b5",
+    "skylos/rules/quality/unused_deps.py": "a998b46ddfb0eb3ebff2f20a68dd085de54490c651c2ccb7a660fe51bfc06332",
+    "skylos/visitors/languages/typescript/analysis.py": "5a696b27d32f0d545904cbd6dca0c3e5afe542ea0cf53f5bc6b1d1bbe4e4e82b",
+    "skylos/visitors/languages/typescript/file_references.py": "97116e23549ab037e4302637a5119708c1b6a7f01936550a42fe2f270b50e09c",
+    "skylos/visitors/languages/typescript/source_reads.py": "26ca2969342b633f34d53934c7402d250606c315b226d076dc2fd855dfb44797"
+  },
+  "repositories": [
+    {
+      "repository": "claude-game",
+      "status_before": "incomplete",
+      "status_after": "incomplete",
+      "default_tasks_before": 188,
+      "default_tasks_after": 187,
+      "analysis_errors_after": 0,
+      "new_test_quality_findings": 0,
+      "target_source_unchanged": true,
+      "blocked_execution_or_network_events": 0
+    },
+    {
+      "repository": "audio-rag",
+      "status_before": "ready",
+      "status_after": "ready",
+      "default_tasks_before": 7,
+      "default_tasks_after": 5,
+      "analysis_errors_after": 0,
+      "new_test_quality_findings": 0,
+      "target_source_unchanged": true,
+      "blocked_execution_or_network_events": 0
+    },
+    {
+      "repository": "files-to-prompt",
+      "status_before": "ready",
+      "status_after": "ready",
+      "default_tasks_before": 1,
+      "default_tasks_after": 1,
+      "analysis_errors_after": 0,
+      "new_test_quality_findings": 0,
+      "target_source_unchanged": true,
+      "blocked_execution_or_network_events": 0
+    },
+    {
+      "repository": "video-gif-creator",
+      "status_before": "ready",
+      "status_after": "ready",
+      "default_tasks_before": 6,
+      "default_tasks_after": 6,
+      "analysis_errors_after": 0,
+      "new_test_quality_findings": 0,
+      "target_source_unchanged": true,
+      "blocked_execution_or_network_events": 0
+    },
+    {
+      "repository": "coding-interview-reviewer",
+      "status_before": "incomplete",
+      "status_after": "incomplete",
+      "default_tasks_before": 161,
+      "default_tasks_after": 38,
+      "analysis_errors_after": 0,
+      "new_test_quality_findings": 0,
+      "target_source_unchanged": true,
+      "blocked_execution_or_network_events": 0
+    },
+    {
+      "repository": "asgiref",
+      "status_before": "ready",
+      "status_after": "ready",
+      "default_tasks_before": 4,
+      "default_tasks_after": 4,
+      "analysis_errors_after": 0,
+      "new_test_quality_findings": 0,
+      "target_source_unchanged": true,
+      "blocked_execution_or_network_events": 0
+    }
+  ],
+  "reviewed_findings": [
+    {
+      "repository": "Teygeta/audio-rag",
+      "rule_id": "SKY-U005",
+      "file": "setup.py",
+      "name": "chromadb",
+      "previous_verdict": "false_positive",
+      "queue_sample": "default",
+      "still_reported": false
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "rule_id": "SKY-U003",
+      "file": "rag_system/indexer.py",
+      "name": "GOOGLE_API_KEY",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "rule_id": "SKY-U003",
+      "file": "setup_project.py",
+      "name": "activate_script",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "rule_id": "SKY-U002",
+      "file": "transcription_pipeline/utils.py",
+      "name": "os",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "rule_id": "SKY-U002",
+      "file": "transcription_pipeline/utils.py",
+      "name": "json",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "simonw/files-to-prompt",
+      "rule_id": "SKY-L008",
+      "file": "files_to_prompt/cli.py",
+      "name": "open",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "rule_id": "SKY-Q301",
+      "file": "rag_system/cleaner.py",
+      "name": "interactive_main",
+      "previous_verdict": "supported",
+      "queue_sample": "advice",
+      "still_reported": true
+    },
+    {
+      "repository": "Teygeta/audio-rag",
+      "rule_id": "SKY-Q302",
+      "file": "app_upload.py",
+      "name": "run_upload_flow",
+      "previous_verdict": "supported",
+      "queue_sample": "advice",
+      "still_reported": true
+    },
+    {
+      "repository": "simonw/files-to-prompt",
+      "rule_id": "SKY-Q301",
+      "file": "files_to_prompt/cli.py",
+      "name": "process_path",
+      "previous_verdict": "supported",
+      "queue_sample": "advice",
+      "still_reported": true
+    },
+    {
+      "repository": "simonw/files-to-prompt",
+      "rule_id": "SKY-C304",
+      "file": "files_to_prompt/cli.py",
+      "name": "process_path",
+      "previous_verdict": "supported",
+      "queue_sample": "advice",
+      "still_reported": true
+    },
+    {
+      "repository": "jagadish-k/video-gif-creator",
+      "rule_id": "SKY-E003",
+      "file": "src/components/GifGenerator.tsx",
+      "name": "",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "jagadish-k/video-gif-creator",
+      "rule_id": "SKY-U001",
+      "file": "src/components/GifGenerator.tsx",
+      "name": "GifGenerator",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "jagadish-k/video-gif-creator",
+      "rule_id": "SKY-E003",
+      "file": "src/utils/cn.ts",
+      "name": "",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "jagadish-k/video-gif-creator",
+      "rule_id": "SKY-U001",
+      "file": "src/utils/cn.ts",
+      "name": "cn",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "jagadish-k/video-gif-creator",
+      "rule_id": "SKY-E004",
+      "file": "src/utils/gifOptimization.ts",
+      "name": "estimateGifSize",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "jagadish-k/video-gif-creator",
+      "rule_id": "SKY-Q301",
+      "file": "src/pages/Editor.tsx",
+      "name": "Editor",
+      "previous_verdict": "supported",
+      "queue_sample": "advice",
+      "still_reported": true
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "rule_id": "SKY-L007",
+      "file": "src/game/Game.ts",
+      "name": "catch",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "rule_id": "SKY-L007",
+      "file": "src/game/core/ObjectPool.ts",
+      "name": "catch",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "rule_id": "SKY-E003",
+      "file": "src/components/ui/EconomicBonuses.tsx",
+      "name": "",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "rule_id": "SKY-U001",
+      "file": "src/components/ui/EconomicBonuses.tsx",
+      "name": "EconomicBonuses",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "rule_id": "SKY-U004",
+      "file": "src/game/core/ObjectPool.ts",
+      "name": "ObjectPool",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "rule_id": "SKY-U003",
+      "file": "src/game/core/constants.ts",
+      "name": "PROJECTILE_RADIUS",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "rule_id": "SKY-U003",
+      "file": "src/game/core/constants.ts",
+      "name": "WAVE_DURATION_SECONDS",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "rule_id": "SKY-U001",
+      "file": "src/game/renderers/BaseRenderer.ts",
+      "name": "getSprite",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "rule_id": "SKY-E004",
+      "file": "src/game/systems/WaveDefinitions.ts",
+      "name": "ENEMY_ICONS",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "rule_id": "SKY-E003",
+      "file": "src/simulator/run-simulator.ts",
+      "name": "",
+      "previous_verdict": "false_positive",
+      "queue_sample": "default",
+      "still_reported": false
+    },
+    {
+      "repository": "mdkess/claude-game",
+      "rule_id": "SKY-Q301",
+      "file": "src/game/renderers/EnemyRenderer.ts",
+      "name": "updateFlashEffect",
+      "previous_verdict": "supported",
+      "queue_sample": "advice",
+      "still_reported": true
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "rule_id": "SKY-T105",
+      "file": "app/interview/[sessionId]/page.tsx",
+      "name": "{               message?: { content?: string };             }",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "rule_id": "SKY-T105",
+      "file": "components/NewsFeed.tsx",
+      "name": "CachedNews",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "rule_id": "SKY-T105",
+      "file": "lib/exercises.ts",
+      "name": "ExerciseMeta",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "rule_id": "SKY-U002",
+      "file": "components/CaptureForm.tsx",
+      "name": "CaptureType",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "rule_id": "SKY-U001",
+      "file": "lib/aiCourses.ts",
+      "name": "listAiCourses",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "rule_id": "SKY-E004",
+      "file": "lib/exercises.ts",
+      "name": "TEMPLATE_EXT",
+      "previous_verdict": "supported",
+      "queue_sample": "default",
+      "still_reported": true
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "rule_id": "SKY-E003",
+      "file": "content/exercises/two-sum/starter.js",
+      "name": "",
+      "previous_verdict": "false_positive",
+      "queue_sample": "default",
+      "still_reported": false
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "rule_id": "SKY-E003",
+      "file": "content/exercises/two-sum/tests.js",
+      "name": "",
+      "previous_verdict": "false_positive",
+      "queue_sample": "default",
+      "still_reported": false
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "rule_id": "SKY-U001",
+      "file": "content/exercises/two-sum/solution.js",
+      "name": "twoSum",
+      "previous_verdict": "false_positive",
+      "queue_sample": "default",
+      "still_reported": false
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "rule_id": "SKY-C304",
+      "file": "app/interview/[sessionId]/page.tsx",
+      "name": "InterviewSessionPage",
+      "previous_verdict": "supported",
+      "queue_sample": "advice",
+      "still_reported": true
+    },
+    {
+      "repository": "balbonits/coding-interview-reviewer",
+      "rule_id": "SKY-C304",
+      "file": "scripts/verify-exercises.mjs",
+      "name": "runExercise",
+      "previous_verdict": "supported",
+      "queue_sample": "advice",
+      "still_reported": false
+    }
+  ],
+  "reviewed_default_supported_count": 25,
+  "reviewed_default_supported_retained": 25,
+  "previously_reviewed_false_positives": 5,
+  "previously_reviewed_false_positives_remaining": 0,
+  "limitations": [
+    "The original purposive source-review sample is not a precision or recall estimate.",
+    "Removed queue observations overlap and are not counts of independently confirmed defects.",
+    "The game and interview repository retain their previous incomplete API coverage states.",
+    "Zero new test-quality findings does not establish test quality or absence of other defects.",
+    "This real-source replay did not apply edits or execute target tests; self-authored cleanup runtime tests are separate."
+  ]
+}

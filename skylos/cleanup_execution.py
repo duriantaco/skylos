@@ -244,6 +244,12 @@ def _l038_edit(
     if len(matches) != 1:
         raise ValueError("the simplification detector no longer proves this rewrite")
     conversion = matches[0]["value"][-1]
+    # Python AST offsets count UTF-8 bytes; LibCST positions count characters.
+    source_line = source.splitlines(keepends=True)[target.lineno - 1]
+    target_column = len(
+        source_line.encode("utf-8")[: target.col_offset].decode("utf-8")
+    )
+    target_identity = ast.dump(target, include_attributes=False)
 
     class Rewrite(cst.CSTTransformer):
         METADATA_DEPENDENCIES = (PositionProvider,)
@@ -253,11 +259,23 @@ def _l038_edit(
             position = self.get_metadata(PositionProvider, call)
             if (
                 position.start.line != target.lineno
-                or position.start.column != target.col_offset
+                or position.start.column != target_column
             ):
                 return updated
             if not isinstance(call, cst.Call) or len(call.args) != 1:
                 return updated
+            try:
+                expression = ast.parse(cst.Module([]).code_for_node(call), mode="eval")
+            except (SyntaxError, ValueError, RecursionError) as exc:
+                raise ValueError(
+                    "CST conversion call identity could not be checked"
+                ) from exc
+            if ast.dump(expression.body, include_attributes=False) != target_identity:
+                raise ValueError(
+                    "CST expression differs from the selected conversion call"
+                )
+            if getattr(original, "equal", None) is not None:
+                raise ValueError("debug f-string labels require manual review")
             return updated.with_changes(
                 expression=updated.expression.args[0].value, conversion=conversion
             )
@@ -702,7 +720,11 @@ def apply_cleanup_edit(
         "rollback": {"status": "skipped"},
         "limitations": list(fresh.get("limitations", [])),
     }
-    from skylos.cleanup_checks import compare_cleanup_behavior, run_cleanup_tests
+    from skylos.cleanup_checks import (
+        changed_lines,
+        compare_cleanup_behavior,
+        run_cleanup_tests,
+    )
 
     result["behavior"] = compare_cleanup_behavior(
         fresh["file"], fresh["_source"], fresh["_replacement"]
@@ -792,7 +814,36 @@ def apply_cleanup_edit(
             result["status"] = "incomplete"
             result["limitations"].append("The source changed during verification.")
         else:
-            result["status"] = "verified"
+            python_replacement = relative.suffix == ".py" and bool(
+                changed_lines(fresh["_source"], fresh["_replacement"])
+            )
+            exercised = result["tests"].get("exercised_change")
+            behavior = result["behavior"]
+            modeled = (
+                behavior.get("status") == "passed"
+                and behavior.get("model") == "python-source-effects-v1"
+                and behavior.get("functions")
+                and all(
+                    check.get("status") == "equivalent"
+                    for check in behavior["functions"]
+                )
+                and not behavior.get("limitations")
+            )
+            if python_replacement and (
+                exercised is False or (exercised is not True and not modeled)
+            ):
+                result["status"] = "applied_unverified"
+                result["limitations"].append(
+                    "Observed tests did not exercise the changed lines."
+                    if exercised is False
+                    else "Changed-line exercise is unknown and no bounded behavior proof was established."
+                )
+            else:
+                result["status"] = "verified"
+                if relative.suffix == ".py" and not python_replacement:
+                    result["limitations"].append(
+                        "Deletion-only edits have no replacement lines to trace; verification is limited to observed tests and the comparable static rescan."
+                    )
     elif (
         result["tests"]["status"] == "incomplete"
         or result["rescan"]["status"] == "incomplete"

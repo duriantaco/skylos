@@ -1333,6 +1333,562 @@
         },
         "present": {}
       }
+    },
+    {
+      "id": "test-quality-constant-assertion-problematic",
+      "path": "fixtures/test_quality_constant_assertion_problematic",
+      "paired_with": "test-quality-constant-assertion-control",
+      "description": "A literal-true assertion does not check a runtime result; the counterpart checks an actual function result.",
+      "source": {
+        "repo": "https://github.com/JetBrains-Research/PyNose",
+        "license": "Apache-2.0",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/redundant_assertion",
+        "notes": "Independently authored reproduction of the named test-quality concept; fixture code inherits Skylos Apache-2.0. External fixture annotations are references, not imported detector logic or independent accuracy labels."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            {
+              "rule_id": "SKY-L040",
+              "file": "test_case.py",
+              "start_line": 2,
+              "end_line": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-constant-assertion-control",
+      "path": "fixtures/test_quality_constant_assertion_control",
+      "paired_with": "test-quality-constant-assertion-problematic",
+      "description": "A literal-true assertion does not check a runtime result; the counterpart checks an actual function result.",
+      "source": {
+        "repo": "https://github.com/JetBrains-Research/PyNose",
+        "license": "Apache-2.0",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/redundant_assertion",
+        "notes": "Independently authored reproduction of the named test-quality concept; fixture code inherits Skylos Apache-2.0. External fixture annotations are references, not imported detector logic or independent accuracy labels."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {
+          "quality": [
+            {
+              "rule_id": "SKY-L040",
+              "file": "test_case.py",
+              "start_line": 6,
+              "end_line": 6
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-empty-test-problematic",
+      "path": "fixtures/test_quality_empty_test_problematic",
+      "paired_with": "test-quality-empty-test-control",
+      "description": "A placeholder-only test body merits review; the counterpart delegates to an asserting helper.",
+      "source": {
+        "repo": "https://github.com/JetBrains-Research/PyNose",
+        "license": "Apache-2.0",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/empty_test",
+        "notes": "Independently authored reproduction of the named test-quality concept; fixture code inherits Skylos Apache-2.0. External fixture annotations are references, not imported detector logic or independent accuracy labels."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            {
+              "rule_id": "SKY-L041",
+              "file": "test_case.py",
+              "start_line": 1,
+              "end_line": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-empty-test-control",
+      "path": "fixtures/test_quality_empty_test_control",
+      "paired_with": "test-quality-empty-test-problematic",
+      "description": "A placeholder-only test body merits review; the counterpart delegates to an asserting helper.",
+      "source": {
+        "repo": "https://github.com/JetBrains-Research/PyNose",
+        "license": "Apache-2.0",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/empty_test",
+        "notes": "Independently authored reproduction of the named test-quality concept; fixture code inherits Skylos Apache-2.0. External fixture annotations are references, not imported detector logic or independent accuracy labels."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {
+          "quality": [
+            {
+              "rule_id": "SKY-L041",
+              "file": "test_case.py",
+              "start_line": 5,
+              "end_line": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-duplicate-assertion-problematic",
+      "path": "fixtures/test_quality_duplicate_assertion_problematic",
+      "paired_with": "test-quality-duplicate-assertion-control",
+      "description": "An adjacent repeated assertion over a proven builtin integer adds no distinct check; the counterpart checks another property.",
+      "source": {
+        "repo": "https://github.com/JetBrains-Research/PyNose",
+        "license": "Apache-2.0",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/duplicate_assertion",
+        "notes": "Independently authored reproduction of the named test-quality concept; fixture code inherits Skylos Apache-2.0. External fixture annotations are references, not imported detector logic or independent accuracy labels."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            {
+              "rule_id": "SKY-L042",
+              "file": "test_case.py",
+              "start_line": 8,
+              "end_line": 8
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-duplicate-assertion-control",
+      "path": "fixtures/test_quality_duplicate_assertion_control",
+      "paired_with": "test-quality-duplicate-assertion-problematic",
+      "description": "An adjacent repeated assertion over a proven builtin integer adds no distinct check; the counterpart checks another property.",
+      "source": {
+        "repo": "https://github.com/JetBrains-Research/PyNose",
+        "license": "Apache-2.0",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/duplicate_assertion",
+        "notes": "Independently authored reproduction of the named test-quality concept; fixture code inherits Skylos Apache-2.0. External fixture annotations are references, not imported detector logic or independent accuracy labels."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {
+          "quality": [
+            {
+              "rule_id": "SKY-L042",
+              "file": "test_case.py",
+              "start_line": 9,
+              "end_line": 9
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-sleep-completion-problematic",
+      "path": "fixtures/test_quality_sleep_completion_problematic",
+      "paired_with": "test-quality-sleep-completion-control",
+      "description": "A fixed delay before checking an Event can race with completion; the counterpart waits for an explicit signal with a bounded timeout.",
+      "source": {
+        "repo": "https://github.com/JetBrains-Research/PyNose",
+        "license": "Apache-2.0",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/sleepy",
+        "notes": "Independently authored reproduction of the named test-quality concept; fixture code inherits Skylos Apache-2.0. External fixture annotations are references, not imported detector logic or independent accuracy labels."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            {
+              "rule_id": "SKY-L043",
+              "file": "test_case.py",
+              "start_line": 9,
+              "end_line": 9
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-sleep-completion-control",
+      "path": "fixtures/test_quality_sleep_completion_control",
+      "paired_with": "test-quality-sleep-completion-problematic",
+      "description": "A fixed delay before checking an Event can race with completion; the counterpart waits for an explicit signal with a bounded timeout.",
+      "source": {
+        "repo": "https://github.com/JetBrains-Research/PyNose",
+        "license": "Apache-2.0",
+        "revision": "081e5f9dcc416da4a290bcc5102ce46f104afefa",
+        "url": "https://github.com/JetBrains-Research/PyNose/tree/081e5f9dcc416da4a290bcc5102ce46f104afefa/plugin/src/test/resources/org/jetbrains/research/pynose/plugin/inspections/data/sleepy",
+        "notes": "Independently authored reproduction of the named test-quality concept; fixture code inherits Skylos Apache-2.0. External fixture annotations are references, not imported detector logic or independent accuracy labels."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {
+          "quality": [
+            {
+              "rule_id": "SKY-L043",
+              "file": "test_case.py",
+              "start_line": 8,
+              "end_line": 8
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-flow-reachable",
+      "path": "fixtures/test_quality_flow_reachable",
+      "paired_with": "test-quality-flow-unreachable",
+      "description": "Conditional loop exits preserve reachable constant, repeated-assertion and Event synchronization findings.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "revision": "825fc67f5bb264cd10db1efa57d640e6e131a20d",
+        "notes": "Independently authored regression and reachable/collection controls for the cleanup logic audit. Source is analyzed statically; fixture code is never executed."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            {
+              "rule_id": "SKY-L040",
+              "file": "test_case.py",
+              "start_line": 9,
+              "end_line": 9
+            },
+            {
+              "rule_id": "SKY-L042",
+              "file": "test_case.py",
+              "start_line": 18,
+              "end_line": 18
+            },
+            {
+              "rule_id": "SKY-L043",
+              "file": "test_case.py",
+              "start_line": 26,
+              "end_line": 26
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-flow-unreachable",
+      "path": "fixtures/test_quality_flow_unreachable",
+      "paired_with": "test-quality-flow-reachable",
+      "description": "Unconditional loop exits leave later weak-test patterns unreachable; no weak-test advice should be emitted for them.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "revision": "825fc67f5bb264cd10db1efa57d640e6e131a20d",
+        "notes": "Independently authored regression and reachable/collection controls for the cleanup logic audit. Source is analyzed statically; fixture code is never executed."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {
+          "quality": [
+            {
+              "rule_id": "SKY-L040",
+              "file": "test_case.py",
+              "start_line": 8,
+              "end_line": 8
+            },
+            {
+              "rule_id": "SKY-L042",
+              "file": "test_case.py",
+              "start_line": 16,
+              "end_line": 16
+            },
+            {
+              "rule_id": "SKY-L043",
+              "file": "test_case.py",
+              "start_line": 23,
+              "end_line": 23
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-collection-mutation",
+      "path": "fixtures/test_quality_collection_mutation",
+      "paired_with": "test-quality-collection-live",
+      "description": "Opted-out and namespace-removed functions are not collected tests.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "revision": "825fc67f5bb264cd10db1efa57d640e6e131a20d",
+        "notes": "Independently authored regression and reachable/collection controls for the cleanup logic audit. Source is analyzed statically; fixture code is never executed."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {
+          "quality": [
+            {
+              "rule_id": "SKY-L040",
+              "file": "test_case.py",
+              "start_line": 2,
+              "end_line": 2
+            },
+            {
+              "rule_id": "SKY-L040",
+              "file": "test_case.py",
+              "start_line": 9,
+              "end_line": 9
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "test-quality-collection-live",
+      "path": "fixtures/test_quality_collection_live",
+      "paired_with": "test-quality-collection-mutation",
+      "description": "Read-only metadata and namespace inspection preserve an ordinary collected test.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "revision": "825fc67f5bb264cd10db1efa57d640e6e131a20d",
+        "notes": "Independently authored regression and reachable/collection controls for the cleanup logic audit. Source is analyzed statically; fixture code is never executed."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            {
+              "rule_id": "SKY-L040",
+              "file": "test_case.py",
+              "start_line": 2,
+              "end_line": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "cleanup-fstring-debug-label",
+      "path": "fixtures/cleanup_fstring_debug_label",
+      "paired_with": "cleanup-fstring-ordinary-field",
+      "description": "Debug f-string expression text contributes to output and must not be claimed equivalent to a different expression label.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "revision": "825fc67f5bb264cd10db1efa57d640e6e131a20d",
+        "notes": "Independently authored source-preservation regression and ordinary-field control. These static expectations do not execute fixture code or establish repair equivalence."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {
+          "quality": [
+            {
+              "rule_id": "SKY-L038",
+              "file": "app.py",
+              "start_line": 2,
+              "end_line": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "cleanup-fstring-ordinary-field",
+      "path": "fixtures/cleanup_fstring_ordinary_field",
+      "paired_with": "cleanup-fstring-debug-label",
+      "description": "A literal prefix resembling a debug label does not suppress an ordinary equivalent f-string conversion.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "revision": "825fc67f5bb264cd10db1efa57d640e6e131a20d",
+        "notes": "Independently authored source-preservation regression and ordinary-field control. These static expectations do not execute fixture code or establish repair equivalence."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            {
+              "rule_id": "SKY-L038",
+              "file": "app.py",
+              "start_line": 2,
+              "end_line": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "typescript-npx-entrypoint",
+      "path": "fixtures/typescript_npx_entrypoint",
+      "description": "A known npx TypeScript runtime invokes its script operand; an unreferenced sibling remains dead.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "revision": "825fc67f5bb264cd10db1efa57d640e6e131a20d",
+        "notes": "Independently authored reduction of source-backed cleanup false positives. The native scanner reads fixture files without executing scripts, installing packages or importing target modules."
+      },
+      "scan": {
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {
+          "unused_files": [
+            {
+              "rule_id": "SKY-E003",
+              "file": "src/simulator.ts",
+              "start_line": 1,
+              "end_line": 1
+            }
+          ]
+        },
+        "present": {
+          "unused_files": [
+            {
+              "rule_id": "SKY-E003",
+              "file": "src/orphan.ts",
+              "start_line": 1,
+              "end_line": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "typescript-source-assets",
+      "path": "fixtures/typescript_source_assets",
+      "description": "Live native filesystem reads consume exact source assets and their public exports; unselected siblings and lookalike directories remain unused.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "revision": "825fc67f5bb264cd10db1efa57d640e6e131a20d",
+        "notes": "Independently authored reduction of source-backed cleanup false positives. The native scanner reads fixture files without executing scripts, installing packages or importing target modules."
+      },
+      "scan": {
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {
+          "unused_files": [
+            {
+              "rule_id": "SKY-E003",
+              "file": "content/exercises/one/starter.js",
+              "start_line": 1,
+              "end_line": 1
+            },
+            {
+              "rule_id": "SKY-E003",
+              "file": "content/exercises/one/solution.js",
+              "start_line": 1,
+              "end_line": 1
+            },
+            {
+              "rule_id": "SKY-E003",
+              "file": "content/exercises/one/tests.js",
+              "start_line": 1,
+              "end_line": 1
+            }
+          ],
+          "unused_functions": [
+            "starter",
+            "solution",
+            "tests"
+          ]
+        },
+        "present": {
+          "unused_files": [
+            {
+              "rule_id": "SKY-E003",
+              "file": "content/exercises/one/orphan.js",
+              "start_line": 1,
+              "end_line": 1
+            },
+            {
+              "rule_id": "SKY-E003",
+              "file": "other/exercises/one/solution.js",
+              "start_line": 1,
+              "end_line": 1
+            }
+          ],
+          "unused_functions": [
+            "orphan",
+            "unrelated"
+          ]
+        }
+      }
+    },
+    {
+      "id": "python-dependency-probe",
+      "path": "fixtures/python_dependency_probe",
+      "description": "A finite native importlib.util.find_spec loop is dependency exposure; an unrelated declared dependency still reports.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "revision": "825fc67f5bb264cd10db1efa57d640e6e131a20d",
+        "notes": "Independently authored reduction of source-backed cleanup false positives. The native scanner reads fixture files without executing scripts, installing packages or importing target modules."
+      },
+      "scan": {
+        "enable_quality": true,
+        "grep_verify": false
+      },
+      "expect": {
+        "absent": {
+          "quality": [
+            "backend-engine"
+          ]
+        },
+        "present": {
+          "quality": [
+            "retired-package"
+          ]
+        }
+      }
     }
   ]
 }

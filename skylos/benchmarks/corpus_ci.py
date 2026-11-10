@@ -179,7 +179,14 @@ def _finding_tokens(
     finding: dict[str, Any], *, category: str | None = None
 ) -> set[str]:
     symbol_category = category is not None and category.startswith("unused_")
-    keys = ("full_name", "simple_name", "name")
+    # A native unused-file finding identifies a path, not a Python symbol.
+    # Keep symbol categories strict so generic rule/type/value tokens cannot
+    # satisfy an unused-function or unused-import expectation.
+    keys = (
+        ("file", "file_path")
+        if category == "unused_files"
+        else ("full_name", "simple_name", "name")
+    )
     if not symbol_category:
         keys += ("rule_id", "type", "value")
     tokens: set[str] = set()

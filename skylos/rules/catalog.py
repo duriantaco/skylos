@@ -394,7 +394,9 @@ _RULES = (
         "SKY-L027", "Duplicate string literal", "quality", finding_type="advice"
     ),
     RuleCatalogEntry("SKY-L028", "Too many returns", "quality", finding_type="advice"),
-    RuleCatalogEntry("SKY-L029", "Unclear boolean argument", "quality", finding_type="advice"),
+    RuleCatalogEntry(
+        "SKY-L029", "Unclear boolean argument", "quality", finding_type="advice"
+    ),
     RuleCatalogEntry(
         "SKY-L030",
         "Broad exception with trivial handler",
@@ -443,6 +445,26 @@ _RULES = (
         "quality",
         "LOW",
         finding_type="advice",
+    ),
+    RuleCatalogEntry(
+        "SKY-L040",
+        "Constant assertion in test",
+        "quality",
+        "LOW",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-L041", "Empty test body", "quality", "LOW", finding_type="review"
+    ),
+    RuleCatalogEntry(
+        "SKY-L042", "Repeated test assertion", "quality", "LOW", finding_type="review"
+    ),
+    RuleCatalogEntry(
+        "SKY-L043",
+        "Sleep used for test synchronization",
+        "quality",
+        "LOW",
+        finding_type="review",
     ),
     RuleCatalogEntry(
         "SKY-P401", "Potential unbounded read", "quality", finding_type="advice"

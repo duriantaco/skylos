@@ -150,8 +150,14 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
     "SKY-Q406": [{"id": "CWE-252", "name": "Unchecked Return Value"}],
     "SKY-Q407": [{"id": "CWE-252", "name": "Unchecked Return Value"}],
     "SKY-D349": [
-        {"id": "CWE-1336", "name": "Improper Neutralization of Special Elements Used in a Template Engine"},
-        {"id": "CWE-94", "name": "Improper Control of Generation of Code ('Code Injection')"},
+        {
+            "id": "CWE-1336",
+            "name": "Improper Neutralization of Special Elements Used in a Template Engine",
+        },
+        {
+            "id": "CWE-94",
+            "name": "Improper Control of Generation of Code ('Code Injection')",
+        },
     ],
     "SKY-U005": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     # Unreachable
@@ -247,6 +253,13 @@ STANDARD_REFS: dict[str, list[str]] = {
     "SKY-L037": ["Python truth value testing and bool()"],
     "SKY-L038": ["PEP 498 f-string conversions (!s, !r, !a)"],
     "SKY-L039": ["Python try statement: exception propagation"],
+    "SKY-L040": ["Python assert statement", "pytest assertion checks"],
+    "SKY-L041": [
+        "pytest fixtures and test assertions",
+        "unittest setup and test methods",
+    ],
+    "SKY-L042": ["Python assertion evaluation semantics"],
+    "SKY-L043": ["Python threading.Event.wait and Event.is_set semantics"],
     "SKY-Q405": ["ESLint no-async-promise-executor"],
     "SKY-Q406": ["Array.forEach callback return semantics"],
     "SKY-Q407": ["Promise.all and Array.map result handling"],
