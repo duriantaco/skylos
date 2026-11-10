@@ -11,6 +11,7 @@ from collections import Counter
 from collections.abc import Mapping
 
 from skylos.analyzer import analyze
+from skylos.rules.config.terraform.scanner import SUPPORTED_RULES
 
 STATUSES = {"unsafe", "safe", "unknown", "not_applicable"}
 RULES = {"SKY-D400", "SKY-D401"}
@@ -91,6 +92,9 @@ def scan_case(path):
                 enable_secrets=False,
                 enable_ai_defects=False,
                 enable_sca=False,
+                # This manifest freezes the original two-policy profile. New
+                # policies have separate CLI/repository verification receipts.
+                project_config_overrides={"ignore": sorted(SUPPORTED_RULES - RULES)},
                 enable_dependency_hallucinations=False,
                 grep_verify=False,
                 grep_cache=False,

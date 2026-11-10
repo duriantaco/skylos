@@ -7,6 +7,7 @@ import sys
 import pytest
 
 from skylos.rules.config.terraform.scanner import scan_terraform
+from skylos.rules.config.terraform.high_risk import SUPPORTED_RULES as ADDITIONAL_RULES
 
 
 FIXTURES = Path(__file__).resolve().parents[1] / "benchmarks/cloud/fixtures"
@@ -30,9 +31,15 @@ FROZEN_CASES = [
 
 
 def _scan(root, **kwargs):
+    # These frozen contracts describe D400/D401, independently of new policies.
+    ignored = set(kwargs.pop("ignore", ()) or ()) | ADDITIONAL_RULES
     coverage, errors = {}, []
     findings = scan_terraform(
-        root, configuration_coverage=coverage, analysis_errors=errors, **kwargs
+        root,
+        ignore=ignored,
+        configuration_coverage=coverage,
+        analysis_errors=errors,
+        **kwargs,
     )
     return findings, coverage["terraform"], errors
 
@@ -486,11 +493,11 @@ def test_ignored_rule_cannot_emit_a_finding_or_a_safe_check():
 
 
 def test_unsupported_resource_identity_prevents_complete_coverage(tmp_path):
-    _write(tmp_path, 'resource "aws_s3_bucket" "bucket" {}\n')
+    _write(tmp_path, 'resource "aws_sqs_queue" "queue" {}\n')
     findings, coverage, errors = _scan(tmp_path)
     assert findings == errors == []
     assert coverage["unsupported_resource_count"] == 1
-    assert coverage["unsupported_resources"][0]["resource"] == "aws_s3_bucket.bucket"
+    assert coverage["unsupported_resources"][0]["resource"] == "aws_sqs_queue.queue"
     assert coverage["evaluation_status"] == "partial"
 
 

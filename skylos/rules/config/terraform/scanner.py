@@ -5,12 +5,12 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from skylos.rules.config.terraform.aws import (
-    SUPPORTED_RESOURCES,
-    SUPPORTED_RULES,
-    evaluate_project,
-)
+from skylos.rules.config.terraform import aws, high_risk
 from skylos.rules.config.terraform.model import load_project
+
+
+SUPPORTED_RULES = aws.SUPPORTED_RULES | high_risk.SUPPORTED_RULES
+SUPPORTED_RESOURCES = aws.SUPPORTED_RESOURCES | high_risk.SUPPORTED_RESOURCES
 
 
 def scan_terraform(
@@ -30,7 +30,12 @@ def scan_terraform(
         scan_paths=scan_paths,
         exclude_folders=exclude_folders,
     )
-    checks, findings = evaluate_project(project, ignore=ignore)
+    checks, findings = aws.evaluate_project(project, ignore=ignore)
+    additional_checks, additional_findings = high_risk.evaluate_project(
+        project, ignore=ignore
+    )
+    checks.extend(additional_checks)
+    findings.extend(additional_findings)
     errors = list(project.analysis_errors)
     module_calls = project.coverage.get("module_calls", [])
     discovery_errors = project.coverage.get("discovery_errors", [])
