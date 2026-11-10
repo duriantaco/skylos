@@ -317,6 +317,7 @@ def _copy_framework_metadata(framework_visitor, visitor) -> None:
         ("dataclass_fields", set()),
         ("first_read_lineno", {}),
         ("protocol_classes", set()),
+        ("protocol_class_decls", set()),
         ("namedtuple_classes", set()),
         ("enum_classes", set()),
         ("attrs_classes", set()),

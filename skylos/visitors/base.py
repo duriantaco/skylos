@@ -970,6 +970,8 @@ class Visitor(ast.NodeVisitor):
         self._module_callable_bindings: dict[str, str] = {}
         self._in_protocol_class = False
         self.protocol_classes = set()
+        self.protocol_class_decls: set[tuple[str, int]] = set()
+        self._typing_protocol_bases: set[int] = set()
         self._in_overload = False
         self._in_abstractmethod = False
         self.namedtuple_classes = set()
@@ -1126,6 +1128,9 @@ class Visitor(ast.NodeVisitor):
 
     def visit_Module(self, node: ast.Module) -> None:
         from skylos.rules.quality._protocols import type_checking_function_ids
+        from skylos.visitors.typing_protocols import typing_protocol_bases
+
+        self._typing_protocol_bases = typing_protocol_bases(node, self.file)
 
         namespace_modules = {"inspect", "sys", "builtins"}
         self._package_namespace_provider = self._is_package_initializer and any(
@@ -1810,6 +1815,16 @@ class Visitor(ast.NodeVisitor):
         )
         return alias_line > latest_local_line
 
+    def _is_typing_protocol_base(
+        self, base_expr: ast.expr, current_definition: str | None = None
+    ) -> bool:
+        """True only for bases that resolve to typing(.extensions).Protocol.
+
+        The reaching lexical import identifies the provider; the spelling
+        ``Protocol`` alone does not establish a typing contract.
+        """
+        return id(base_expr) in self._typing_protocol_bases
+
     def _is_numba_overload_decorator(
         self, name: str, current_definition: str | None = None
     ) -> bool:
@@ -2267,16 +2282,12 @@ class Visitor(ast.NodeVisitor):
         is_protocol = False
         for base in node.bases:
             base_expr = base.value if isinstance(base, ast.Subscript) else base
-            if isinstance(base_expr, ast.Name) and base_expr.id == "Protocol":
-                is_protocol = True
-            elif (
-                isinstance(base_expr, ast.Attribute)
-                and base_expr.attr == "Protocol"
-            ):
+            if self._is_typing_protocol_base(base_expr, cname):
                 is_protocol = True
 
         if is_protocol:
             self.protocol_classes.add(node.name)
+            self.protocol_class_decls.add((cname, node.lineno))
 
         base_qnames = []
 
