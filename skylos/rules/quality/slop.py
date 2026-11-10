@@ -55,6 +55,8 @@ class _ModuleFacts:
         self.filename = context.get("filename")
         self.project_root = context.get("project_root")
         self.source = context.get("source")
+        self._source_lines = None
+        self._source_byte_lines: dict[int, bytes] = {}
         self._comment_lines = None
         self._comments_read = False
         self.parents: dict[int, ast.AST] = {}
@@ -139,6 +141,17 @@ class _ModuleFacts:
             found.extend(self.by_type.get(kind, ()))
         found.sort(key=_position)
         return found
+
+    def source_line_bytes(self, index):
+        if not isinstance(self.source, str):
+            return None
+        if self._source_lines is None:
+            self._source_lines = self.source.splitlines(keepends=True)
+        if not 0 <= index < len(self._source_lines):
+            return None
+        if index not in self._source_byte_lines:
+            self._source_byte_lines[index] = self._source_lines[index].encode("utf-8")
+        return self._source_byte_lines[index]
 
     def parent(self, node):
         return self.parents.get(id(node))
@@ -525,6 +538,51 @@ def _negated_replacement(facts, test) -> tuple[str, str]:
     return "not", f"not ({_source(test)})"
 
 
+def _ordinary_conversion_field(facts, call) -> bool:
+    """Prove the call is followed by a normal field delimiter, not debug '='.
+
+    FormattedValue drops the debug marker from its AST. Source is necessary:
+    the neighboring literal label alone could also be ordinary string text.
+    """
+    if not isinstance(facts.source, str):
+        return False
+    line_index, column = call.end_lineno - 1, call.end_col_offset
+    comment = False
+    # Only trivia and wrapping parentheses can follow this complete AST call
+    # before a field delimiter. Bound inspection without copying the file tail.
+    budget = 4096
+    while budget > 0:
+        line = facts.source_line_bytes(line_index)
+        if line is None:
+            return False
+        if column >= len(line):
+            line_index, column = line_index + 1, 0
+            budget -= 1
+            continue
+        value = line[column]
+        column += 1
+        budget -= 1
+        if comment:
+            comment = value != 10
+            continue
+        if value in b" \t\r\n\f\v)":
+            continue
+        if value == 35:  # A PEP 701 comment can precede the delimiter.
+            comment = True
+            continue
+        if value == 92:
+            if line[column : column + 2] == b"\r\n":
+                column += 2
+                budget -= 2
+                continue
+            if line[column : column + 1] == b"\n":
+                column += 1
+                budget -= 1
+                continue
+        return value in (58, 125)  # ':' or '}', never debug '='.
+    return False
+
+
 class FormattedConversionCallRule(_SlopRule):
     """``str()``/``repr()``/``ascii()`` called inside an f-string field."""
 
@@ -546,7 +604,7 @@ class FormattedConversionCallRule(_SlopRule):
             ):
                 continue
             converter = facts.builtin_name(call.func, _CONVERSION_FLAGS)
-            if converter is None:
+            if converter is None or not _ordinary_conversion_field(facts, call):
                 continue
             flag = _CONVERSION_FLAGS[converter]
             argument = _short(call.args[0], 40)
