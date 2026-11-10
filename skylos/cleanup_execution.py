@@ -784,11 +784,15 @@ def apply_cleanup_edit(
         and result["tests"].get("observed") is True
         and result["rescan"]["status"] == "passed"
     ):
-        if _read_source(root, relative) == replacement:
-            result["status"] = "verified"
-        else:
+        try:
+            unchanged = _read_source(root, relative) == replacement
+        except (OSError, ValueError, UnicodeError):
+            unchanged = False
+        if not unchanged:
             result["status"] = "incomplete"
             result["limitations"].append("The source changed during verification.")
+        else:
+            result["status"] = "verified"
     elif (
         result["tests"]["status"] == "incomplete"
         or result["rescan"]["status"] == "incomplete"

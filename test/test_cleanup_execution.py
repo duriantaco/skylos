@@ -364,6 +364,33 @@ def test_zero_exit_without_observed_tests_cannot_verify_a_cleanup(tmp_path):
     assert receipt["rescan"]["status"] == "passed"
 
 
+def test_source_removed_after_rescan_preserves_the_incomplete_receipt(
+    tmp_path, monkeypatch
+):
+    import skylos.cleanup_execution as execution
+
+    edit = plan_cleanup_edit(_task(tmp_path), tmp_path)
+    compare = execution.compare_cleanup_reports
+
+    def concurrent_removal(*args, **kwargs):
+        result = compare(*args, **kwargs)
+        (tmp_path / "app.py").unlink()
+        return result
+
+    monkeypatch.setattr(execution, "compare_cleanup_reports", concurrent_removal)
+    receipt = apply_cleanup_edit(
+        edit,
+        tmp_path,
+        test_cmd=_passing_tests(tmp_path),
+        rescan=lambda: _report(tmp_path),
+    )
+    assert receipt["status"] == "incomplete"
+    assert receipt["tests"]["status"] == receipt["rescan"]["status"] == "passed"
+    assert receipt["rolled_back"] is False
+    assert not (tmp_path / "app.py").exists()
+    assert "source changed" in receipt["limitations"][-1]
+
+
 def test_new_high_risk_finding_rolls_back_but_existing_shift_does_not(tmp_path):
     high = {
         "rule_id": "SKY-L012",
