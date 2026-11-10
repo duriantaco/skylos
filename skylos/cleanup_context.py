@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from hashlib import sha256
 import json
 from pathlib import Path
 
@@ -16,6 +17,7 @@ def build_cleanup_context(
     from skylos.cleanup_impact import SUFFIXES, build_cleanup_impact
 
     impact = build_cleanup_impact(tasks, root, exclude_folders=exclude_folders)
+    dependencies = dict(impact["source_hashes"])
     selected = {task["file"] for task in tasks}
     related = {}
     suggested_tests = {}
@@ -39,11 +41,17 @@ def build_cleanup_context(
     examined = 0
     for path in paths[:250]:
         relative = path.relative_to(root).as_posix()
-        source = read_project_text_no_symlink(root, relative, max_bytes=2_000_000)
+        source = read_project_text_no_symlink(
+            root, relative, max_bytes=2_000_000, newline=""
+        )
         if source is None:
             limitations.append(f"Source unavailable: {relative}")
             continue
         examined += 1
+        digest = sha256(source.encode("utf-8")).hexdigest()
+        if relative in dependencies and dependencies[relative] != digest:
+            raise ValueError("Graph source changed while gathering cleanup context")
+        dependencies[relative] = digest
         tree = None
         if path.suffix == ".py":
             try:
@@ -114,6 +122,7 @@ def build_cleanup_context(
         "imports": imports,
         "candidate_callers": callers[:100],
         "impact": impact,
+        "context_dependency_hashes": dependencies,
         "suggested_tests": [
             {
                 **row,
@@ -169,6 +178,17 @@ def review_cleanup_context(context, tasks, adapter):
         "source evidence and a bounded suggested change. Do not infer AI authorship or claim behavior "
         "is verified. Cite only supplied files and source lines. Empty advice is permitted."
     )
+    model_context = {
+        key: value
+        for key, value in context.items()
+        if key != "context_dependency_hashes"
+    }
+    if isinstance(model_context.get("impact"), dict):
+        model_context["impact"] = {
+            key: value
+            for key, value in model_context["impact"].items()
+            if key != "source_hashes"
+        }
     response = adapter.complete(
         system,
         json.dumps(
@@ -187,7 +207,7 @@ def review_cleanup_context(context, tasks, adapter):
                     }
                     for task in tasks
                 ],
-                "context": context,
+                "context": model_context,
             }
         ),
         response_format={

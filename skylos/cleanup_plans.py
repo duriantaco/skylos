@@ -79,11 +79,11 @@ def _source_hash(root, file):
     return sha256(source.encode("utf-8")).hexdigest() if source is not None else None
 
 
-def _context_is_current(root, hashes):
+def _context_is_current(root, hashes, *, max_files=64):
     if (
         not isinstance(hashes, dict)
         or not hashes
-        or len(hashes) > 64
+        or len(hashes) > max_files
         or any(
             not isinstance(digest, str) or not _DIGEST.fullmatch(digest)
             for digest in hashes.values()
@@ -268,6 +268,10 @@ def _step_status(root, scope, step, tasks):
         hashes = step.get("context_source_hashes", {})
         if not _context_is_current(root, hashes):
             return "stale"
+        if "context_dependency_hashes" in step and not _context_is_current(
+            root, step["context_dependency_hashes"], max_files=512
+        ):
+            return "stale"
         return "current"
     task = tasks.get(step.get("task_id"))
     if task is None:
@@ -384,5 +388,9 @@ def _append_review_step(bucket, scope, name, review):
             "finding_type": "advice",
         }
     )
+    if "context_dependency_hashes" in review:
+        plan["steps"][-1]["context_dependency_hashes"] = deepcopy(
+            review["context_dependency_hashes"]
+        )
     plan["updated_at"] = _now()
     return plan

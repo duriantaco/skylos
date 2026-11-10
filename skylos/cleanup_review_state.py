@@ -110,6 +110,12 @@ def store_cleanup_review(
     if not isinstance(advice, list) or len(advice) > 10:
         raise ValueError("Cleanup review advice is malformed or oversized")
     excerpts, hashes, limitations = _context_sources(root, context)
+    has_dependencies = "context_dependency_hashes" in context
+    dependencies = deepcopy(context.get("context_dependency_hashes"))
+    if has_dependencies and not _context_is_current(root, dependencies, max_files=512):
+        raise ValueError(
+            "Cleanup review graph or caller evidence changed before storage"
+        )
     records = []
     for row in advice:
         if not isinstance(row, dict) or row.get("finding_type", "advice") != "advice":
@@ -155,12 +161,20 @@ def store_cleanup_review(
             "context_limitations": limitations,
             "coverage": "bounded",
         }
+        if has_dependencies:
+            record["context_dependency_hashes"] = deepcopy(dependencies)
         record["id"] = sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()
         records.append(record)
 
     def save(bucket):
         if not _context_is_current(root, hashes):
             raise ValueError("Cleanup review source changed before it could be stored")
+        if has_dependencies and not _context_is_current(
+            root, dependencies, max_files=512
+        ):
+            raise ValueError(
+                "Cleanup review graph or caller evidence changed before storage"
+            )
         stored = _reviews(bucket)
         now = _now()
         result = []
@@ -208,6 +222,10 @@ def _freshness(root, scope, record, *, revision=None):
     ):
         raise ValueError("Stored cleanup review has no source provenance")
     if not _context_is_current(root, hashes):
+        return "stale"
+    if "context_dependency_hashes" in record and not _context_is_current(
+        root, record["context_dependency_hashes"], max_files=512
+    ):
         return "stale"
     provenance = record.get("provenance")
     if not isinstance(provenance, dict):

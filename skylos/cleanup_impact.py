@@ -154,6 +154,7 @@ def build_cleanup_impact(
         "status": "partial" if limitations else "complete",
         "parsed_files": len(records),
         "discovered_files": len(paths),
+        "source_hashes": digests,
         "tasks": results,
         "limitations": sorted(set(limitations)),
         "assumptions": [
