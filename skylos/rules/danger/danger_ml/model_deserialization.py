@@ -4,6 +4,7 @@ import ast
 import sys
 
 from skylos.rules.danger.calls import _qualified_name_from_call, track_import_aliases
+from skylos.rules.danger.danger_ml.config_constructors import DataConstructorProof
 from skylos.rules.danger.taint import TaintVisitor
 
 
@@ -79,11 +80,15 @@ KERAS_LOAD_MODEL_CALLS = {
 
 
 class _ModelDeserializationChecker(TaintVisitor):
-    def __init__(self, file_path, findings):
+    def __init__(self, file_path, findings, *, tree=None, project_root=None):
         super().__init__(file_path, findings)
         self.aliases: dict[str, str] = {}
         self.remote_model_stack: list[set[str]] = [set()]
         self._emitted: set[tuple[int, int, str]] = set()
+        self._tree = tree
+        self._project_root = project_root
+        self._data_constructors = None
+        self._data_constructor_proof_failed = False
 
     def _push(self):
         super()._push()
@@ -135,9 +140,23 @@ class _ModelDeserializationChecker(TaintVisitor):
         name = _qualified_name_from_call(node, self.aliases)
         if name:
             self._check_model_load_call(node, name)
-        if _enables_remote_code(node):
+        if _enables_remote_code(node) and not self._is_data_constructor(node):
             self._append_remote_code_finding(node, name)
         self.generic_visit(node)
+
+    def _is_data_constructor(self, node: ast.Call) -> bool:
+        if self._data_constructor_proof_failed:
+            return False
+        try:
+            if self._data_constructors is None:
+                self._data_constructors = DataConstructorProof(
+                    self._tree, self.file_path, project_root=self._project_root
+                )
+            return self._data_constructors.is_data_call(node)
+        except Exception:
+            # An optional safety proof must never interrupt ML detection.
+            self._data_constructor_proof_failed = True
+            return False
 
     def _append_remote_code_finding(self, node: ast.Call, name: str | None) -> None:
         severity = "HIGH"
@@ -433,9 +452,11 @@ def _is_immutable_commit_revision(value: str) -> bool:
     )
 
 
-def scan(tree, file_path, findings):
+def scan(tree, file_path, findings, *, project_root=None):
     try:
-        checker = _ModelDeserializationChecker(file_path, findings)
+        checker = _ModelDeserializationChecker(
+            file_path, findings, tree=tree, project_root=project_root
+        )
         checker.visit(tree)
     except Exception as e:
         print(

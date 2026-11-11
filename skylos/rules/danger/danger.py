@@ -685,7 +685,7 @@ def scan_file_with_tree(
         scan_agent_tool_privilege(tree, file_path, findings)
         scan_llm_consumption(tree, file_path, findings)
         scan_llm(tree, file_path, findings)
-        scan_ml_model_load(tree, file_path, findings)
+        scan_ml_model_load(tree, file_path, findings, project_root=project_root)
         findings.extend(scan_secret_logging(tree, {"filename": file_path}))
         _PythonCommandExfilChecker(file_path, findings).visit(tree)
         return
@@ -730,7 +730,7 @@ def scan_file_with_tree(
     if _has_any(source_lower, _LLM_TOKENS):
         scan_llm(tree, file_path, findings)
     if _has_any(source_lower, _ML_MODEL_LOAD_TOKENS):
-        scan_ml_model_load(tree, file_path, findings)
+        scan_ml_model_load(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, ("print", "logging", "loguru")):
         findings.extend(scan_secret_logging(tree, {"filename": file_path}))
     if _has_any(
