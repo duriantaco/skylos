@@ -1523,12 +1523,13 @@ optional through `skylos[llm]` and agent commands.
 **Is Skylos free?**
 
 The Skylos CLI is free and open source (Apache-2.0). Skylos Cloud has a Free
-plan for one project and a Workspace plan. Your first workspace gets a 14-day
-Workspace trial with 50 credits, no card needed. Any credit pack (from $9 for
-50 credits) turns on Workspace for 12 months for up to 3 people. The Workspace
-pass ($990 once) has unlimited members. Prices are in USD, plus sales tax or
-VAT. Payments are one-time: nothing renews, and there are no seats or
-subscriptions. Credits never expire.
+plan for one project and a Workspace plan: $3,000 a year for any number of
+people and up to 10 projects. Growth is $12,000 a year, with up to 50 projects
+and single sign-on. Your first workspace gets a 14-day Workspace trial with 50
+credits, no card needed. Plans renew each year until you turn renewal off on
+Billing. Credit packs (from $9 for 50 credits) pay for AI actions and add
+credits only. There are no seats. Prices are in USD, plus sales tax or VAT.
+Credits never expire.
 
 **Does the MCP server need an account?**
 

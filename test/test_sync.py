@@ -1270,6 +1270,8 @@ def test_cmd_upgrade_on_free_plan_links_the_pricing_section(
     out = capsys.readouterr().out
     assert "Current plan: Free" in out
     assert "This needs the Workspace plan." in out
+    assert "paid by the year" in out
+    assert "credit pack" not in out.lower()
     assert "https://skylos.dev/#pricing" in out
     assert "skylos.dev/pricing" not in out
     assert not re.search(r"\bPro\b", out)
