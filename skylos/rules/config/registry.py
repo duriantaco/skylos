@@ -17,6 +17,7 @@ from skylos.rules.config.deployment.exposure import scan_deployment_exposure
 from skylos.rules.config.edge.docker_compose import scan_docker_compose
 from skylos.rules.config.edge.systemd import scan_systemd
 from skylos.rules.config.gpu.compatibility import scan_gpu_compatibility
+from skylos.rules.config.kubernetes import scan_kubernetes
 from skylos.rules.config.terraform.scanner import scan_terraform
 
 
@@ -128,6 +129,18 @@ def scan_config_files(
     findings: list[dict[str, Any]] = []
     findings.extend(
         scan_terraform(
+            root,
+            changed_files=changed_files,
+            ignore=ignore,
+            analysis_errors=analysis_errors,
+            required_rules=required_rules,
+            scan_paths=scan_paths,
+            configuration_coverage=configuration_coverage,
+            exclude_folders=exclude_folders,
+        )
+    )
+    findings.extend(
+        scan_kubernetes(
             root,
             changed_files=changed_files,
             ignore=ignore,
