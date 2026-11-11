@@ -844,6 +844,28 @@ def _iter_steps(data: dict[str, Any], *, is_workflow: bool) -> Iterator[dict[str
         yield from _steps_from_action(data)
 
 
+def _steps_with_paths(
+    data: dict[str, Any], *, is_workflow: bool
+) -> Iterator[tuple[dict[str, Any], tuple[Any, ...]]]:
+    """Each step with its original YAML path, including alias occurrences."""
+    if is_workflow:
+        sequences = (
+            (("jobs", job_id, "steps"), job.get("steps"))
+            for job_id, job in _jobs(data)
+        )
+    else:
+        runs = data.get("runs")
+        sequences = (
+            (("runs", "steps"), runs.get("steps") if isinstance(runs, dict) else None),
+        )
+    for prefix, steps in sequences:
+        if not isinstance(steps, list):
+            continue
+        for index, step in enumerate(steps):
+            if isinstance(step, dict):
+                yield step, (*prefix, index)
+
+
 def _steps_with_jobs(
     data: dict[str, Any], *, is_workflow: bool
 ) -> Iterator[tuple[dict[str, Any], dict[str, Any] | None]]:
@@ -2305,7 +2327,8 @@ def _scan_github_env_writes(
     rule_id = "SKY-D300"
     if rule_id in ignore:
         return
-    for step in _iter_steps(data, is_workflow=is_workflow):
+    source = _source_for_lines(lines)
+    for step, step_path in _steps_with_paths(data, is_workflow=is_workflow):
         run_body = step.get("run")
         if not isinstance(run_body, str):
             continue
@@ -2321,10 +2344,16 @@ def _scan_github_env_writes(
                         "GITHUB_ENV/GITHUB_PATH."
                     ),
                     file=path,
-                    line=_line_for_key(lines, "run"),
+                    line=(
+                        source.line_for_path((*step_path, "run"))
+                        if source is not None
+                        else None
+                    )
+                    or 1,
                     severity="MEDIUM",
                     value="github_env_write",
                 ),
+                yaml_only=True,
             )
 
 
