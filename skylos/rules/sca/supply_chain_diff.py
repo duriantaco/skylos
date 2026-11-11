@@ -1492,8 +1492,9 @@ def _new_source_finding(sides, path, entry, name, new_hosts) -> dict:
         where = ", ".join(sorted(new_hosts))
     message = (
         f"{name} in {path} now comes from {where}, which this repository did not "
-        "use for it. Advisory databases do not cover it, so Skylos cannot check "
-        "it. If it is yours, list it in internal_packages under "
+        "use for it. Review this source change even if advisory checks succeed. "
+        "The dependency coverage receipt says which packages were checked. "
+        "If it is yours, list it in internal_packages under "
         "[tool.skylos.supply_chain] on the target branch."
     )
     metadata = {

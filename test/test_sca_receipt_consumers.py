@@ -111,7 +111,7 @@ def test_known_source_kinds_remain_coverage_limits(kind):
     assert valid_non_registry_sca_receipt(coverage)
 
 
-def test_no_public_packages_is_operationally_complete_without_fabricated_batches():
+def test_no_public_packages_cannot_pass_without_any_public_queries():
     coverage = _coverage()
     coverage["queried_dependency_count"] = 0
     coverage["query"] = {
@@ -120,7 +120,9 @@ def test_no_public_packages_is_operationally_complete_without_fabricated_batches
         "requested_batches": 0,
         "failed_batches": 0,
     }
-    assert check_gate(_result(coverage), {}) == (True, [])
+    passed, reasons = check_gate(_result(coverage), {})
+    assert passed is False
+    assert any("incomplete" in reason.lower() for reason in reasons)
 
 
 _CONTRADICTIONS = [

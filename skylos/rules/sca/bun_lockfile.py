@@ -30,6 +30,7 @@ from skylos.rules.sca.lockfile_types import (
     not_checked_source,
 )
 from skylos.rules.sca.npm_lockfile import _exact_version, _name
+from skylos.rules.sca.npm_mirror_candidates import add_npm_mirror_candidate
 
 _MAX_BYTES = 10_000_000
 _MAX_DEPTH = 64
@@ -188,6 +189,25 @@ def _workspaces(data: dict, inventory: LockfileInventory):
     return direct, roots
 
 
+def _dependency_row(name, exact, path, line, version, key, direct, source):
+    is_direct = not _is_nested(key) and name in direct
+    return {
+        "name": name,
+        "version": exact,
+        "ecosystem": "npm",
+        "file": str(path),
+        "line": line,
+        "snippet": f"{name}@{exact}",
+        "lockfile_version": version,
+        "package_path": key,
+        "dependency_kind": "direct" if is_direct else "transitive",
+        "dependency_kinds": ["direct" if is_direct else "transitive"],
+        "dependency_sections": sorted(direct.get(name, ())) if is_direct else [],
+        "environment_scope": "all_recorded",
+        "source_type": source,
+    }
+
+
 def parse_bun_lock(
     path: Path, *, text: str | None = None, max_packages: int = 5000
 ) -> LockfileInventory:
@@ -198,6 +218,7 @@ def parse_bun_lock(
         raise LockfileParseError("lockfile cannot be read as bounded UTF-8 text")
     if len(text.encode("utf-8")) > _MAX_BYTES:
         raise LockfileLimitError("lockfile size exceeds limit")
+    source_text = text
     text = text.lstrip("\ufeff")
     try:
         data = json.loads(_strip_jsonc(text), object_pairs_hook=_no_duplicates)
@@ -264,33 +285,52 @@ def parse_bun_lock(
         if error:
             non_registry.add(name)
             if error == "non_registry_source":
-                inventory.not_checked.append(
-                    not_checked_source(dict(problem, name=name), error, source)
-                )
+                skipped = not_checked_source(dict(problem, name=name), error, source)
+                inventory.not_checked.append(skipped)
+                details = entry[2] if len(entry) > 2 else None
+                if (
+                    source == "external"
+                    and _SAFE_KEY.fullmatch(key)
+                    and isinstance(details, dict)
+                    and not any(
+                        details.get(field)
+                        for field in (
+                            "bundled",
+                            "inBundle",
+                            "bundleDependencies",
+                            "bundledDependencies",
+                        )
+                    )
+                ):
+                    candidate = _dependency_row(
+                        name, exact, path, line, version, key, direct, source
+                    )
+                    candidate["integrity"] = entry[3] if len(entry) > 3 else None
+                    parts = key.split("/")
+                    installed_name = (
+                        "/".join(parts[-2:])
+                        if len(parts) > 1 and parts[-2].startswith("@")
+                        else parts[-1]
+                    )
+                    candidate["installed_names"] = sorted(
+                        {name, installed_name} if _name(installed_name) else {name}
+                    )
+                    add_npm_mirror_candidate(
+                        inventory,
+                        path=path,
+                        text=source_text,
+                        occurrence_id=("bun", key),
+                        dependency=candidate,
+                        source_url=entry[1],
+                        not_checked=skipped,
+                    )
             else:
                 inventory.unresolved.append(
                     dict(problem, reason=error, source_type=source)
                 )
             continue
-        is_direct = not _is_nested(key) and name in direct
         inventory.dependencies.append(
-            {
-                "name": name,
-                "version": exact,
-                "ecosystem": "npm",
-                "file": str(path),
-                "line": line,
-                "snippet": f"{name}@{exact}",
-                "lockfile_version": version,
-                "package_path": key,
-                "dependency_kind": "direct" if is_direct else "transitive",
-                "dependency_kinds": ["direct" if is_direct else "transitive"],
-                "dependency_sections": sorted(direct.get(name, ()))
-                if is_direct
-                else [],
-                "environment_scope": "all_recorded",
-                "source_type": source,
-            }
+            _dependency_row(name, exact, path, line, version, key, direct, source)
         )
     inventory.non_registry_names = sorted(non_registry)
     return inventory

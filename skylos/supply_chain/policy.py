@@ -55,6 +55,7 @@ class SupplyChainPolicy:
     internal_packages: tuple[str, ...] = ()
     private_registries: tuple[str, ...] = ()
     trusted_registries: tuple[str, ...] = ()
+    npm_registry_mirrors: tuple[str, ...] = ()
     check_provenance: bool = True
     registries_from_cloud: bool = False
     sources: tuple[str, ...] = ()
@@ -94,14 +95,20 @@ def load_supply_chain_policy(root: str | Path | None) -> SupplyChainPolicy:
     return _combine(local, synced, tuple(sources))
 
 
-def _combine(local: _Layer, synced: _Layer, sources: tuple[str, ...]) -> SupplyChainPolicy:
+def _combine(
+    local: _Layer, synced: _Layer, sources: tuple[str, ...]
+) -> SupplyChainPolicy:
     lv = local.values
     sv = synced.values
     block_malware = _either_true(lv.get("block_malware"), sv.get("block_malware"), True)
     check_provenance = _either_true(
         lv.get("check_provenance"), sv.get("check_provenance"), True
     )
-    ages = [value for value in (lv.get("min_release_age_hours"), sv.get("min_release_age_hours")) if value is not None]
+    ages = [
+        value
+        for value in (lv.get("min_release_age_hours"), sv.get("min_release_age_hours"))
+        if value is not None
+    ]
     min_age = None
     if ages:
         min_age = max(ages)
@@ -112,12 +119,16 @@ def _combine(local: _Layer, synced: _Layer, sources: tuple[str, ...]) -> SupplyC
     trusted = lv.get("trusted_registries", ())
     if "trusted_registries" in sv:
         trusted = sv["trusted_registries"]
+    mirrors = lv.get("npm_registry_mirrors", ())
+    if "npm_registry_mirrors" in sv:
+        mirrors = sv["npm_registry_mirrors"]
     return SupplyChainPolicy(
         block_malware=block_malware,
         min_release_age_hours=min_age,
         internal_packages=internal,
         private_registries=tuple(private),
         trusted_registries=tuple(trusted),
+        npm_registry_mirrors=tuple(mirrors),
         check_provenance=check_provenance,
         registries_from_cloud="private_registries" in sv or "trusted_registries" in sv,
         sources=sources,
@@ -167,6 +178,17 @@ def _parse_layer(table: dict[str, Any], label: str) -> _Layer:
             problems.append(f"{label}: {key} must be a list of strings")
         else:
             values[key] = items
+    if "npm_registry_mirrors" in table:
+        from skylos.rules.sca.npm_mirror_policy import normalize_npm_mirror_prefixes
+
+        mirrors = normalize_npm_mirror_prefixes(table["npm_registry_mirrors"])
+        # An invalid operator value still replaces a repository value.
+        values["npm_registry_mirrors"] = mirrors or ()
+        if mirrors is None:
+            problems.append(
+                f"{label}: npm_registry_mirrors must be a list of at most 50 "
+                "HTTPS registry URL prefixes without credentials or query strings"
+            )
     return _Layer(values=values, problems=tuple(problems))
 
 

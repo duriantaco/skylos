@@ -306,9 +306,14 @@ def test_private_minority_stays_a_listed_limitation(
 
     result = _scan(monkeypatch, Live(), tmp_path)
 
-    assert result.receipt["status"] == NON_REGISTRY_COVERAGE_STATUS
-    assert "most_packages_not_checked" not in result.receipt
-    assert _blocking_sca_reason(result.receipt) is None
+    if public_count == 0:
+        assert result.receipt["status"] == "incomplete"
+        assert result.receipt["most_packages_not_checked"] is True
+        assert _blocking_sca_reason(result.receipt) is not None
+    else:
+        assert result.receipt["status"] == NON_REGISTRY_COVERAGE_STATUS
+        assert "most_packages_not_checked" not in result.receipt
+        assert _blocking_sca_reason(result.receipt) is None
 
 
 def test_uploaded_receipt_names_files_without_local_paths():

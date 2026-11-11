@@ -115,12 +115,59 @@ Unrelated nested projects retain their own manifest inventory.
 npm permits omitted or registry-relative `resolved` values; those retain
 `registry_unspecified` provenance. Even `registry.npmjs.org` is npm shorthand
 for the configured registry, not proof of package provenance. This scanner does
-not inspect `.npmrc`, verify artifact integrity, or establish supply-chain trust.
+not inspect `.npmrc`, download artifacts, or establish supply-chain trust.
+
+### Public npm packages through a private mirror
+
+Opt in to checking public npm artifacts recorded behind an HTTPS mirror:
+
+```toml
+[tool.skylos.supply_chain]
+npm_registry_mirrors = ["https://packages.example.com/npm/"]
+internal_packages = ["@company/*"]
+```
+
+During `--sca`, Skylos compares each eligible lock entry's exact package name,
+version and single strong integrity value with the corresponding public
+`registry.npmjs.org` version document. Only an exact `sha256`, `sha384` or
+`sha512` match establishes a public advisory identity. Configuring a mirror
+alone never makes a package public. Internal package patterns, including known
+installed aliases, take precedence. Existing `private_registries` and
+`trusted_registries` settings do not enable this feature.
+
+The mirror is never contacted. Skylos sends the eligible package name and
+version to the public npm registry, without registry credentials, and then
+queries OSV for verified public identities. Do not opt in for names you cannot
+disclose to the public registry; use `internal_packages` to exclude private
+names. Mirror URLs with credentials or query strings are ineligible. Prefixes
+match an exact HTTPS origin and path boundary. An operator-supplied synced
+mirror list replaces the repository list; in generated pull-request CI,
+`SKYLOS_POLICY_BASE` reads policy from the trusted base commit.
+
+Supported candidates come from npm lockfiles/shrinkwrap, pnpm, Yarn Classic,
+and Bun text locks when they record an eligible HTTPS source and strong SRI.
+Yarn Berry cache checksums are not artifact SRI and remain unchecked. Missing
+integrity, a different public artifact, unavailable metadata and unsupported
+records remain explicit coverage gaps. Static JS/TS import evidence for these
+mirror occurrences currently stays unknown. An integrity match describes the
+artifact declared by the lockfile; it does not verify installed bytes or prove
+that a mirror will serve those bytes.
+
+Public identity documents are cached outside the scanned repository for up to
+seven days in `$XDG_CACHE_HOME/skylos/npm-mirror-identities.json` or
+`~/.cache/skylos/npm-mirror-identities.json`. Verification is bounded to 5,000
+identities, 32 MiB of metadata and 120 seconds per scan; reaching a limit never
+converts unchecked entries into checked ones. Receipts include aggregate mirror
+verification counts. Advisory occurrence metadata identifies verified public
+artifacts without copying private source URLs. Separate source-change checks
+retain their original classification and redacted source details. Offline collection and `skylos sbom`
+remain offline and do not perform mirror verification.
 
 ### uv source coverage
 
-If at least 5 packages are not checked this way and they outnumber the packages
-Skylos could check, the scan is incomplete and exits 2, with
+If no public packages can be checked, or at least 5 packages are not checked
+this way and they outnumber the packages Skylos could check, the scan is
+incomplete and exits 2, with
 `most_packages_not_checked: true` in the receipt. A private mirror of public
 packages does this: passing would say little about the project's dependencies.
 Findings for the packages it could check are still reported.

@@ -69,14 +69,18 @@ def valid_non_registry_sca_receipt(coverage: object) -> bool:
         or coverage.get("complete") is not False
         or coverage.get("category_complete") is not False
         or coverage.get("limit_reasons")
+        or coverage.get("most_packages_not_checked")
     ):
         return False
     skipped = coverage.get("non_registry_lockfile_dependency_count")
     not_checked = coverage.get("not_checked_lockfile_dependency_count")
+    queried = coverage.get("queried_dependency_count")
     if (
         type(skipped) is not int
         or type(not_checked) is not int
         or not 0 < skipped <= not_checked
+        or type(queried) is not int
+        or queried <= 0
     ):
         return False
     for key in ("parse_error_count", "unresolved_lockfile_dependency_count"):

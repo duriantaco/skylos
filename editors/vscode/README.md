@@ -328,7 +328,15 @@ npm run compile
 npm run package
 ```
 
-Packaging pins `@azure/identity` to 4.12.0 under `@vscode/vsce` to keep MSAL
+Packaging uses `@vscode/vsce` 3.9.2 on Node 20. Overrides scoped to that
+packager version select `glob` 14.0.4 and `minimatch` 11.0.7 for the
+[glob cancellation advisory](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4)
+and [minimatch amplification advisory](https://github.com/advisories/GHSA-g3hv-75wg-m249).
+Review and remove these overrides when upgrading the packager to a release
+with patched dependency ranges. Verify its packaged file list as well as the
+compile and test commands when changing these versions.
+
+Packaging also pins `@azure/identity` to 4.12.0 under `@vscode/vsce` to keep MSAL
 on the unaffected 3.x line ([GHSA-xcx6-jx8p-x3h5](https://github.com/advisories/GHSA-xcx6-jx8p-x3h5)).
 Its `uuid` dependency is pinned to the patched CommonJS-compatible 11.1.1 release.
 Review this override when Azure Identity supports MSAL 7.1.0 or newer.
