@@ -12,6 +12,15 @@
 * **sbom:** refuse output paths named after supported Bun, Cargo, Composer, RubyGems, Pub, Gradle, NuGet, Maven, and setuptools dependency inputs.
 * **scale:** keep parallel danger-rule worker results picklable instead of retrying them in the parent process.
 
+## [5.6.0](https://github.com/duriantaco/skylos/compare/v5.5.0...v5.6.0) (2026-11-11)
+
+
+### Features
+
+* **cleanup:** detect weak Python tests ([#1207](https://github.com/duriantaco/skylos/issues/1207)) ([8c0cae3](https://github.com/duriantaco/skylos/commit/8c0cae300cbe8c3caa49d6e6ea0c0c90219d52d7))
+* **sca:** show static npm import evidence for JS/TS ([#1211](https://github.com/duriantaco/skylos/issues/1211)) ([baee55c](https://github.com/duriantaco/skylos/commit/baee55c9bf4426fcc5f25b15617369f1e0996ee3))
+* **security:** add high risk infra checks ([#1210](https://github.com/duriantaco/skylos/issues/1210)) ([f5a041f](https://github.com/duriantaco/skylos/commit/f5a041f817a1f42fda7d29d7c5efc081ba5a369d))
+
 ## [5.5.0](https://github.com/duriantaco/skylos/compare/v5.4.0...v5.5.0) (2026-11-10)
 
 
