@@ -501,11 +501,13 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.87.0",
-    "@vscode/vsce": "^3.9.2",
+    "@vscode/vsce": "3.9.2",
     "typescript": "^5.0.0"
   },
   "overrides": {
-    "@vscode/vsce": {
+    "@vscode/vsce@3.9.2": {
+      "glob": "14.0.4",
+      "minimatch": "11.0.7",
       "@azure/identity": "4.12.0",
       "@azure/msal-node": {
         "uuid": "11.1.1"
