@@ -2545,19 +2545,15 @@ def _names_a_setting(target, var_name: str, value: str) -> bool:
 
 
 def _resolved_builtin_getattr_calls(tree):
+    nodes = tuple(ast.walk(tree))
     parents = {
-        child: parent
-        for parent in ast.walk(tree)
-        for child in ast.iter_child_nodes(parent)
+        child: parent for parent in nodes for child in ast.iter_child_nodes(parent)
     }
-    if any(
-        isinstance(node, ast.Global) and "getattr" in node.names
-        for node in ast.walk(tree)
-    ):
+    if any(isinstance(node, ast.Global) and "getattr" in node.names for node in nodes):
         return set()
     scopes = {}
     resolved = set()
-    for call in ast.walk(tree):
+    for call in nodes:
         if (
             not isinstance(call, ast.Call)
             or not isinstance(call.func, ast.Name)
@@ -2689,10 +2685,10 @@ def _credential_literal_sources(
     ``resolver_callback`` before resolving imports. Each module's lexical
     tables are then constructed once, including for recursive re-exports.
     """
+    # Reuse only the read-only setup walk. Deferred scans traverse the live tree.
+    walk_nodes = tuple(ast.walk(tree))
     parents = {
-        child: parent
-        for parent in ast.walk(tree)
-        for child in ast.iter_child_nodes(parent)
+        child: parent for parent in walk_nodes for child in ast.iter_child_nodes(parent)
     }
     module_end_lineno = max((getattr(n, "lineno", 0) for n in parents), default=0) + 1
     scope_types = (
@@ -2721,7 +2717,7 @@ def _credential_literal_sources(
     locals_by_scope = {}
     global_names = {}
     nonlocal_names = {}
-    for owner in (n for n in ast.walk(tree) if isinstance(n, scope_types)):
+    for owner in (n for n in walk_nodes if isinstance(n, scope_types)):
         nodes = list(direct_nodes(owner))
         names = {
             n.id
@@ -2826,7 +2822,7 @@ def _credential_literal_sources(
             (statement, value, owner, conditional)
         )
 
-    for node in ast.walk(tree):
+    for node in walk_nodes:
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 remember(target, node.value, node)

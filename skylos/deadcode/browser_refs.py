@@ -313,6 +313,8 @@ def collect_browser_event_handler_refs(
 
     # Python strings count only in JavaScript-consuming positions, and only
     # for classic scripts that the project actually loads into a page.
+    if not scanned_scripts:
+        return refs
     names, patterns = _python_string_browser_names(root, source_files, source_cache)
     project_index = None
     if any(

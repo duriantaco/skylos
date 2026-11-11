@@ -75,20 +75,19 @@ def _declaration_calls(module, *, filename=None, project_root=None):
                     local = alias.asname or alias.name
                     for factory in _DECLARATION_FACTORIES[alias.name]:
                         candidates[f"{local}.{factory}"] = local
-    mutated = {
-        _dotted_name(child.value)
-        for child in ast.walk(module)
-        if isinstance(child, ast.Attribute)
-        and isinstance(child.ctx, (ast.Store, ast.Del))
-    }
-    shadowed = {
-        child.id
-        for child in ast.walk(module)
-        if isinstance(child, ast.Name) and isinstance(child.ctx, (ast.Store, ast.Del))
-    }
-    shadowed.update(
-        child.arg for child in ast.walk(module) if isinstance(child, ast.arg)
-    )
+    if not candidates:
+        return frozenset()
+    mutated = set()
+    shadowed = set()
+    for child in ast.walk(module):
+        if isinstance(child, ast.Attribute) and isinstance(
+            child.ctx, (ast.Store, ast.Del)
+        ):
+            mutated.add(_dotted_name(child.value))
+        if isinstance(child, ast.Name) and isinstance(child.ctx, (ast.Store, ast.Del)):
+            shadowed.add(child.id)
+        if isinstance(child, ast.arg):
+            shadowed.add(child.arg)
     return frozenset(
         name
         for name, local in candidates.items()
@@ -264,13 +263,17 @@ def _literal_value(value):
     )
 
 
-def _implementation_lines(module, source, declaration_calls=frozenset()):
+def _implementation_lines(
+    module, source, declaration_calls=frozenset(), *, code_line_numbers=None
+):
     """Keep real implementation, collapsing only source-proven declarations.
 
     A multiline literal is one data declaration, rather than hundreds of lines
     of executable logic. Scalar assignment lines keep their existing weight.
     """
-    lines = code_lines(module, source)
+    lines = (
+        code_lines(module, source) if code_line_numbers is None else code_line_numbers
+    )
     removed = set()
     pending = list(module.body)
     while pending:
@@ -509,12 +512,13 @@ class GodFileRule(SkylosRule):
         source = context.get("source")
         if not isinstance(source, str):
             source = _read_source(filename, context.get("project_root"))
-        code_line_count = len(code_lines(node, source))
+        code_line_numbers = code_lines(node, source)
+        code_line_count = len(code_line_numbers)
         declaration_calls = _declaration_calls(
             node, filename=filename, project_root=context.get("project_root")
         )
         implementation_line_count = _implementation_lines(
-            node, source, declaration_calls
+            node, source, declaration_calls, code_line_numbers=code_line_numbers
         )
 
         redundant = redundant_overload_definitions(node, filename=filename)
