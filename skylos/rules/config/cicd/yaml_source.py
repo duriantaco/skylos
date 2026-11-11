@@ -206,6 +206,34 @@ class YamlSource:
         self._expanded_sizes[node] = expanded_size
         return merged
 
+    def has_ambiguous_mappings(self) -> bool:
+        """Whether keys collide or depend on YAML merge behavior.
+
+        This is a proof check; parsing and source locations retain their
+        existing behavior even when a mapping is ambiguous.
+        """
+        return any(
+            any(key.tag == _MERGE_TAG for key, _value in pairs)
+            or len(pairs) != len(self._entries[node])
+            for node, pairs in self._pairs.items()
+        )
+
+    def has_literal_root_key(self, name: str) -> bool:
+        matches = [
+            index
+            for index, (key, _value) in enumerate(self._pairs[self._root])
+            if isinstance(key, ScalarNode) and key.value == name
+        ]
+        return (
+            len(matches) == 1
+            and (
+                self._root,
+                "key",
+                matches[0],
+            )
+            not in self._aliases
+        )
+
     def line_for_path(self, path: tuple[Any, ...], *, key: bool = True) -> int | None:
         """Return a one-based key/value line, or None when the path is absent."""
         node = self._root
