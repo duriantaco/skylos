@@ -123,16 +123,18 @@ def _mutations(modules):
         return None
 
     for module in modules:
+        # These phases only read the tree; enumerate it once per module.
+        nodes = tuple(ast.walk(module.tree))
         builtin_aliases = {
             alias.asname or "builtins"
-            for node in ast.walk(module.tree)
+            for node in nodes
             if isinstance(node, ast.Import)
             for alias in node.names
             if alias.name == "builtins"
         }
         if module.counts.get("__builtins__"):
             changed.add(module.name + ".*")
-        for node in ast.walk(module.tree):
+        for node in nodes:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 declarations = defaultdict(int)
                 for child in _own_nodes(node):
@@ -225,7 +227,7 @@ def _mutations(modules):
                 and node.func.value.func.id in {"globals", "locals"}
             ):
                 changed.add(module.name + ".*")
-        for node in ast.walk(module.tree):
+        for node in nodes:
             if not isinstance(node, ast.Subscript) or not isinstance(
                 node.ctx, (ast.Store, ast.Del)
             ):
@@ -244,6 +246,7 @@ def _mutations(modules):
                 owner = _qualified(base.value, module)
                 if owner:
                     changed.add(owner + ".*")
+        del nodes
     return changed
 
 
