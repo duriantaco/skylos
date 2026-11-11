@@ -15,6 +15,7 @@ from skylos.rules.sca.lockfile_types import (
     LockfileParseError,
     not_checked_source,
 )
+from skylos.rules.sca.npm_mirror_candidates import add_npm_mirror_candidate
 from skylos.rules.sca.package_sources import (
     MAX_SOURCE_RECORDS,
     SOURCE_GIT,
@@ -200,7 +201,9 @@ def _integrity(entry: dict) -> str | None:
     return None
 
 
-def _add_source_record(inventory, entry, name, version, source_type, path, line, *, direct):
+def _add_source_record(
+    inventory, entry, name, version, source_type, path, line, *, direct
+):
     if source_type not in ("git", "external"):
         return
     url = entry.get("resolved")
@@ -209,7 +212,11 @@ def _add_source_record(inventory, entry, name, version, source_type, path, line,
     kind = SOURCE_URL
     if source_type == "git":
         kind = SOURCE_GIT
-    if kind == SOURCE_URL and isinstance(url, str) and not url.startswith(("http://", "https://")):
+    if (
+        kind == SOURCE_URL
+        and isinstance(url, str)
+        and not url.startswith(("http://", "https://"))
+    ):
         return
     record = source_record(
         ecosystem="npm",
@@ -370,6 +377,63 @@ def _records(data: dict, version: int, max_packages: int) -> list[tuple]:
     return records
 
 
+def _dependency_row(
+    *,
+    name,
+    exact_version,
+    raw_version,
+    path,
+    line,
+    version,
+    location,
+    entry,
+    direct,
+    roots,
+    source_type,
+    edges,
+):
+    groups = {group for _, group in direct.get(location, [])}
+    for flag, group in (
+        ("dev", "devDependencies"),
+        ("optional", "optionalDependencies"),
+        ("devOptional", "devOptional"),
+        ("peer", "peerDependencies"),
+    ):
+        if entry.get(flag) is True:
+            groups.add(group)
+    if location in direct:
+        kind = "direct"
+    elif roots or location.split("/").count("node_modules") > 1:
+        kind = "transitive"
+    else:
+        kind = "unknown"
+    dependency = {
+        "name": name,
+        "version": exact_version,
+        "ecosystem": "npm",
+        "file": str(path),
+        "line": line,
+        "snippet": f"{name}@{raw_version} ({location})",
+        "lockfile_version": version,
+        "package_path": location,
+        "dependency_kind": kind,
+        "dependency_groups": sorted(groups),
+        "dependency_markers": {
+            field: entry[field] for field in ("os", "cpu", "engines") if field in entry
+        },
+        "dependency_optional": entry.get("optional") is True,
+        "dependency_dev": entry.get("dev") is True,
+        "source_type": source_type,
+        "dependencies": edges,
+        "registry": npm_registry_for(source_type),
+    }
+    if source_type == "npm_registry" and entry.get("inBundle") is not True:
+        dependency["integrity"] = _integrity(entry)
+    if location in direct:
+        dependency["dependency_roots"] = sorted({root for root, _ in direct[location]})
+    return dependency
+
+
 def parse_package_lock(
     path: Path, *, text: str | None = None, max_packages: int = 5000
 ) -> LockfileInventory:
@@ -508,13 +572,48 @@ def parse_package_lock(
         if source_error:
             if source_error == "non_registry_source":
                 non_registry_names.update((name, installed_name))
-                inventory.not_checked.append(
-                    not_checked_source(problem, source_error, source_type)
-                )
+                skipped = not_checked_source(problem, source_error, source_type)
+                inventory.not_checked.append(skipped)
+                if (
+                    source_type == "external"
+                    and exact_version is not None
+                    and entry.get("inBundle", False) is False
+                ):
+                    candidate = _dependency_row(
+                        name=name,
+                        exact_version=exact_version,
+                        raw_version=raw_version,
+                        path=path,
+                        line=line,
+                        version=version,
+                        location=location,
+                        entry=entry,
+                        direct=direct,
+                        roots=roots,
+                        source_type=source_type,
+                        edges=edges,
+                    )
+                    candidate["integrity"] = _integrity(entry)
+                    candidate["installed_names"] = sorted({name, installed_name})
+                    add_npm_mirror_candidate(
+                        inventory,
+                        path=path,
+                        text=text,
+                        occurrence_id=("npm", key),
+                        dependency=candidate,
+                        source_url=entry.get("resolved"),
+                        not_checked=skipped,
+                    )
             else:
                 unresolved(source_error, source_type)
             _add_source_record(
-                inventory, entry, name, exact_version, source_type, path, line,
+                inventory,
+                entry,
+                name,
+                exact_version,
+                source_type,
+                path,
+                line,
                 direct=location in direct,
             )
             continue
@@ -526,49 +625,20 @@ def parse_package_lock(
             )
             unresolved(reason, source_type)
             continue
-        groups = {group for _, group in direct.get(location, [])}
-        for flag, group in (
-            ("dev", "devDependencies"),
-            ("optional", "optionalDependencies"),
-            ("devOptional", "devOptional"),
-            ("peer", "peerDependencies"),
-        ):
-            if entry.get(flag) is True:
-                groups.add(group)
-        if location in direct:
-            kind = "direct"
-        elif roots or location.split("/").count("node_modules") > 1:
-            kind = "transitive"
-        else:
-            kind = "unknown"
-        dependency = {
-            "name": name,
-            "version": exact_version,
-            "ecosystem": "npm",
-            "file": str(path),
-            "line": line,
-            "snippet": f"{name}@{raw_version} ({location})",
-            "lockfile_version": version,
-            "package_path": location,
-            "dependency_kind": kind,
-            "dependency_groups": sorted(groups),
-            "dependency_markers": {
-                field: entry[field]
-                for field in ("os", "cpu", "engines")
-                if field in entry
-            },
-            "dependency_optional": entry.get("optional") is True,
-            "dependency_dev": entry.get("dev") is True,
-            "source_type": source_type,
-            "dependencies": edges,
-            "registry": npm_registry_for(source_type),
-        }
-        if source_type == "npm_registry" and entry.get("inBundle") is not True:
-            dependency["integrity"] = _integrity(entry)
-        if location in direct:
-            dependency["dependency_roots"] = sorted(
-                {root for root, _ in direct[location]}
-            )
+        dependency = _dependency_row(
+            name=name,
+            exact_version=exact_version,
+            raw_version=raw_version,
+            path=path,
+            line=line,
+            version=version,
+            location=location,
+            entry=entry,
+            direct=direct,
+            roots=roots,
+            source_type=source_type,
+            edges=edges,
+        )
         inventory.dependencies.append(dependency)
     inventory.non_registry_names = sorted(non_registry_names)
     inventory.workspace_paths = sorted(roots)

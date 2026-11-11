@@ -170,11 +170,12 @@ def test_cli_git_only_inventory_is_explicitly_unchecked_and_never_queries_osv(
 ):
     _sources(project, public=False)
     code, output, payload = _run(monkeypatch, capsys, mode, "--gate", "--strict")
-    assert code == 0
+    assert code == 2
     assert osv.queries == []
     if payload is not None:
         receipt = payload["analysis_summary"]["sca_coverage"]
-        assert receipt["status"] == "complete_with_non_registry_sources"
+        assert receipt["status"] == "incomplete"
+        assert receipt["most_packages_not_checked"] is True
         assert receipt["queried_dependency_count"] == 0
         assert receipt["complete"] is False
     else:

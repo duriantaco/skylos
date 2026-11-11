@@ -29,6 +29,7 @@ from skylos.rules.sca.lockfile_types import (
     not_checked_source,
 )
 from skylos.rules.sca.npm_lockfile import _exact_version, _name, _source
+from skylos.rules.sca.npm_mirror_candidates import add_npm_mirror_candidate
 from skylos.rules.sca.package_sources import (
     MAX_SOURCE_RECORDS,
     SOURCE_GIT,
@@ -390,9 +391,9 @@ def _add_source_record(inventory, metadata, name, version, path, line):
     resolution = _resolution(metadata)
     if resolution.get("type") == "git" or "repo" in resolution:
         kind, url, ref = SOURCE_GIT, resolution.get("repo"), resolution.get("commit")
-    elif isinstance(resolution.get("tarball"), str) and resolution["tarball"].startswith(
-        ("http://", "https://")
-    ):
+    elif isinstance(resolution.get("tarball"), str) and resolution[
+        "tarball"
+    ].startswith(("http://", "https://")):
         kind, url, ref = SOURCE_URL, resolution["tarball"], None
     else:
         return
@@ -747,6 +748,141 @@ def _contexts(adjacency, roots, records):
     return contexts, kinds
 
 
+def _dependency_row(
+    *,
+    name,
+    exact,
+    path,
+    line,
+    version,
+    display_key,
+    metadata,
+    snapshot,
+    usage,
+    kinds,
+    edges,
+    source_type,
+    record_limitations,
+):
+    groups = {group for _, group, _, _ in usage}
+    if any(optional for _, _, _, optional in usage) or snapshot.get("optional") is True:
+        groups.add("optionalDependencies")
+    if metadata.get("dev") is True:
+        groups.add("devDependencies")
+    markers = {
+        field: [metadata[field]]
+        if isinstance(metadata[field], str) and field != "engines"
+        else metadata[field]
+        for field in ("os", "cpu", "libc", "engines")
+        if field in metadata
+    }
+    if usage:
+        markers["pnpm_usage"] = [
+            {"root": root, "group": group, "dev": dev, "optional": optional}
+            for root, group, dev, optional in sorted(usage)
+        ]
+    dependency = {
+        "name": name,
+        "version": exact,
+        "ecosystem": "npm",
+        "file": str(path),
+        "line": line,
+        "snippet": display_key,
+        "lockfile_version": version,
+        "package_path": display_key,
+        "dependency_kind": "direct"
+        if "direct" in kinds
+        else "transitive"
+        if kinds
+        else "unknown",
+        "dependency_kinds": sorted(kinds) or ["unknown"],
+        "dependency_roots": sorted({root for root, _, _, _ in usage}),
+        "dependency_groups": sorted(groups),
+        "dependency_dev": all(dev for _, _, dev, _ in usage)
+        if usage
+        else metadata.get("dev") is True,
+        "dependency_optional": all(optional for _, _, _, optional in usage)
+        if usage
+        else snapshot.get("optional") is True,
+        "dependency_markers": markers,
+        "environment_scope": "all_recorded",
+        "source_type": source_type,
+        "dependencies": edges,
+        "integrity": _resolution_integrity(metadata),
+        "registry": npm_registry_for(source_type),
+    }
+    if "bundled_dependencies_not_enumerated" in record_limitations:
+        dependency["dependency_graph_complete"] = False
+    return dependency
+
+
+def _mirror_candidate(
+    inventory,
+    *,
+    name,
+    exact,
+    path,
+    text,
+    key,
+    line,
+    version,
+    display_key,
+    metadata,
+    snapshot,
+    usage,
+    kinds,
+    edges,
+    registry,
+    skipped,
+    installed_names,
+):
+    resolution = _resolution(metadata)
+    if (
+        "id" in metadata
+        or "id" in snapshot
+        or set(resolution) - {"tarball", "integrity", "registry"}
+        or metadata.get("inBundle") is True
+        or ("name" in metadata and metadata["name"] != name)
+        or ("version" in metadata and _exact_version(metadata["version"]) != exact)
+        or any(_metadata_problems(metadata))
+        or any(_metadata_problems(snapshot))
+    ):
+        return
+    source_url = resolution.get("tarball")
+    if source_url is None:
+        source_url = resolution.get("registry", registry)
+    limitations = {
+        limitation["reason"]
+        for entry in ((metadata,) if metadata is snapshot else (metadata, snapshot))
+        for limitation in _metadata_limitations(entry)
+    }
+    dependency = _dependency_row(
+        name=name,
+        exact=exact,
+        path=path,
+        line=line,
+        version=version,
+        display_key=display_key,
+        metadata=metadata,
+        snapshot=snapshot,
+        usage=usage,
+        kinds=kinds,
+        edges=edges,
+        source_type="external",
+        record_limitations=limitations,
+    )
+    dependency["installed_names"] = sorted({name, *installed_names})
+    add_npm_mirror_candidate(
+        inventory,
+        path=path,
+        text=text,
+        occurrence_id=("pnpm", key),
+        dependency=dependency,
+        source_url=source_url,
+        not_checked=skipped,
+    )
+
+
 def parse_pnpm_lock(
     path: Path, *, text: str | None = None, max_packages: int = 5000
 ) -> LockfileInventory:
@@ -1048,11 +1184,10 @@ def parse_pnpm_lock(
             source_kind = _external_source_kind(metadata)
             label = _name(metadata.get("name")) or _key_alias(key, version)
             if source_kind and label:
-                inventory.not_checked.append(
-                    not_checked_source(
-                        dict(problem, name=label), "non_registry_source", source_kind
-                    )
+                skipped = not_checked_source(
+                    dict(problem, name=label), "non_registry_source", source_kind
                 )
+                inventory.not_checked.append(skipped)
                 _add_source_record(
                     inventory,
                     metadata,
@@ -1061,6 +1196,27 @@ def parse_pnpm_lock(
                     path,
                     line,
                 )
+                exact = _exact_version(metadata.get("version"))
+                if source_kind == "url" and exact is not None:
+                    _mirror_candidate(
+                        inventory,
+                        name=label,
+                        exact=exact,
+                        path=path,
+                        text=text,
+                        key=key,
+                        line=line,
+                        version=version,
+                        display_key=display[key],
+                        metadata=metadata,
+                        snapshot=snapshot,
+                        usage=contexts[key],
+                        kinds=kinds[key],
+                        edges=edges_by_key[key],
+                        registry=data.get("registry"),
+                        skipped=skipped,
+                        installed_names=aliases_by_key[key],
+                    )
                 continue
             inventory.unresolved.append(
                 dict(problem, reason="non_registry_source", source_type="unknown")
@@ -1092,10 +1248,29 @@ def parse_pnpm_lock(
                 and "id" not in metadata
                 and "id" not in snapshot
             ):
-                inventory.not_checked.append(
-                    not_checked_source(problem, source_error, source_type)
-                )
+                skipped = not_checked_source(problem, source_error, source_type)
+                inventory.not_checked.append(skipped)
                 _add_source_record(inventory, metadata, name, exact, path, line)
+                if source_type == "external":
+                    _mirror_candidate(
+                        inventory,
+                        name=name,
+                        exact=exact,
+                        path=path,
+                        text=text,
+                        key=key,
+                        line=line,
+                        version=version,
+                        display_key=display[key],
+                        metadata=metadata,
+                        snapshot=snapshot,
+                        usage=contexts[key],
+                        kinds=kinds[key],
+                        edges=edges_by_key[key],
+                        registry=data.get("registry"),
+                        skipped=skipped,
+                        installed_names=aliases_by_key[key],
+                    )
                 continue
             inventory.unresolved.append(
                 dict(problem, reason=source_error, source_type=source_type)
@@ -1111,59 +1286,21 @@ def parse_pnpm_lock(
                     limitation["reason"], dict(problem, **limitation)
                 )
         inventory.limitations.extend(record_limitations.values())
-        usage = contexts[key]
-        groups = {group for _, group, _, _ in usage}
-        if (
-            any(optional for _, _, _, optional in usage)
-            or snapshot.get("optional") is True
-        ):
-            groups.add("optionalDependencies")
-        if metadata.get("dev") is True:
-            groups.add("devDependencies")
-        markers = {
-            field: [metadata[field]]
-            if isinstance(metadata[field], str) and field != "engines"
-            else metadata[field]
-            for field in ("os", "cpu", "libc", "engines")
-            if field in metadata
-        }
-        if usage:
-            markers["pnpm_usage"] = [
-                {"root": root, "group": group, "dev": dev, "optional": optional}
-                for root, group, dev, optional in sorted(usage)
-            ]
-        dependency = {
-            "name": name,
-            "version": exact,
-            "ecosystem": "npm",
-            "file": str(path),
-            "line": line,
-            "snippet": display[key],
-            "lockfile_version": version,
-            "package_path": display[key],
-            "dependency_kind": "direct"
-            if "direct" in kinds[key]
-            else "transitive"
-            if kinds[key]
-            else "unknown",
-            "dependency_kinds": sorted(kinds[key]) or ["unknown"],
-            "dependency_roots": sorted({root for root, _, _, _ in usage}),
-            "dependency_groups": sorted(groups),
-            "dependency_dev": all(dev for _, _, dev, _ in usage)
-            if usage
-            else metadata.get("dev") is True,
-            "dependency_optional": all(optional for _, _, _, optional in usage)
-            if usage
-            else snapshot.get("optional") is True,
-            "dependency_markers": markers,
-            "environment_scope": "all_recorded",
-            "source_type": source_type,
-            "dependencies": edges_by_key[key],
-            "integrity": _resolution_integrity(metadata),
-            "registry": npm_registry_for(source_type),
-        }
-        if "bundled_dependencies_not_enumerated" in record_limitations:
-            dependency["dependency_graph_complete"] = False
+        dependency = _dependency_row(
+            name=name,
+            exact=exact,
+            path=path,
+            line=line,
+            version=version,
+            display_key=display[key],
+            metadata=metadata,
+            snapshot=snapshot,
+            usage=contexts[key],
+            kinds=kinds[key],
+            edges=edges_by_key[key],
+            source_type=source_type,
+            record_limitations=record_limitations,
+        )
         inventory.dependencies.append(dependency)
     inventory.non_registry_names = sorted(non_registry_names)
     return inventory

@@ -198,7 +198,12 @@ def _inventory_package_source(
         return "non_registry"
     if source == "registry_unspecified":
         return "unknown"
-    if source not in {None, "registry", "npm_registry"}:
+    if source == "npm_registry_mirror":
+        from skylos.rules.sca.npm_mirrors import verified_mirror_dependency
+
+        if not verified_mirror_dependency(dependency):
+            return "unknown"
+    elif source not in {None, "registry", "npm_registry"}:
         return "unknown"
     if requirements_includes and "registry_mode" in dependency:
         # The aggregate requirements record does not retain conflicting index

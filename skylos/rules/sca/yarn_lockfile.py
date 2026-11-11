@@ -24,6 +24,7 @@ from skylos.rules.sca.lockfile_types import (
     not_checked_source,
 )
 from skylos.rules.sca.npm_lockfile import _exact_version, _name, _source
+from skylos.rules.sca.npm_mirror_candidates import add_npm_mirror_candidate
 from skylos.rules.sca.package_sources import (
     MAX_SOURCE_RECORDS,
     SOURCE_GIT,
@@ -313,6 +314,65 @@ def _metadata(entry, problem, inventory):
     return result
 
 
+def _dependency_row(
+    *,
+    name,
+    exact,
+    path,
+    data,
+    key,
+    version,
+    grouped,
+    markers,
+    usage,
+    kinds,
+    source,
+    edges,
+    records,
+):
+    markers["yarn_descriptors"] = [
+        f"{alias}@{_display_spec(spec)}" for alias, spec in grouped
+    ]
+    if usage:
+        markers["yarn_usage"] = [
+            {"root": root, "optional": optional} for root, optional in sorted(usage)
+        ]
+    return {
+        "name": name,
+        "version": exact,
+        "ecosystem": "npm",
+        "file": str(path),
+        "line": _line(data, key),
+        "snippet": f"{name}@{exact}",
+        "lockfile_version": version,
+        "package_path": _key(key),
+        "dependency_kind": "direct"
+        if "direct" in kinds
+        else "transitive"
+        if kinds
+        else "unknown",
+        "dependency_kinds": sorted(kinds) or ["unknown"],
+        "dependency_roots": sorted({root for root, _ in usage}),
+        "dependency_markers": markers,
+        "environment_scope": "all_recorded",
+        "source_type": source,
+        "dependencies": edges,
+        "integrity": _integrity(records[key], version),
+        "registry": npm_registry_for(source),
+    }
+
+
+def _classic_mirror_identity(entry, grouped):
+    identities = [_npm_reference(*descriptor) for descriptor in grouped]
+    if any(identity is None for identity in identities):
+        return None
+    names = {identity[0] for identity in identities}
+    exact = _exact_version(entry.get("version"))
+    if len(names) != 1 or exact is None or entry.get("inBundle") is True:
+        return None
+    return names.pop(), exact
+
+
 def parse_yarn_lock(
     path: Path, *, text: str | None = None, max_packages: int = 5000
 ) -> LockfileInventory:
@@ -334,6 +394,7 @@ def parse_yarn_lock(
     inventory.package_count = len(records)
     descriptors = {}
     information = {}
+    mirror_records = {}
     non_registry = set()
     roots = {}
     work = 0
@@ -382,9 +443,17 @@ def parse_yarn_lock(
         ):
             inventory.unresolved.append(dict(problem, reason=error, source_type=source))
         elif error == "non_registry_source":
-            inventory.not_checked.append(
-                not_checked_source(named_problem, error, source)
+            skipped = not_checked_source(named_problem, error, source)
+            inventory.not_checked.append(skipped)
+            # Berry's checksum describes Yarn's cache archive, not the npm
+            # tarball whose bytes the public registry's integrity identifies.
+            candidate_identity = (
+                _classic_mirror_identity(entry, grouped)
+                if version == 1 and source == "external"
+                else None
             )
+            if candidate_identity is not None:
+                mirror_records[key] = (*candidate_identity, skipped)
         elif error == "unsupported_package_source" and source == "local":
             inventory.not_checked.append(
                 not_checked_source(named_problem, error, source)
@@ -393,7 +462,9 @@ def parse_yarn_lock(
             inventory.unresolved.append(dict(problem, reason=error, source_type=source))
         if error:
             if error == "non_registry_source":
-                _add_source_record(inventory, entry, grouped, version, path, problem["line"])
+                _add_source_record(
+                    inventory, entry, grouped, version, path, problem["line"]
+                )
         markers = _metadata(entry, problem, inventory)
         information[key] = (identity, source, grouped, markers)
     inventory.workspace_paths = sorted(set(roots.values()))
@@ -489,42 +560,41 @@ def parse_yarn_lock(
             queue.append((target, root, target_optional, False))
 
     for key, (identity, source, grouped, markers) in information.items():
-        if identity is None:
+        mirror_record = mirror_records.get(key)
+        if identity is None and mirror_record is None:
             continue
-        name, exact = identity
-        markers["yarn_descriptors"] = [
-            f"{alias}@{_display_spec(spec)}" for alias, spec in grouped
-        ]
-        if usage[key]:
-            markers["yarn_usage"] = [
-                {"root": root, "optional": optional}
-                for root, optional in sorted(usage[key])
-            ]
-        inventory.dependencies.append(
-            {
-                "name": name,
-                "version": exact,
-                "ecosystem": "npm",
-                "file": str(path),
-                "line": _line(data, key),
-                "snippet": f"{name}@{exact}",
-                "lockfile_version": version,
-                "package_path": _key(key),
-                "dependency_kind": "direct"
-                if "direct" in kinds[key]
-                else "transitive"
-                if kinds[key]
-                else "unknown",
-                "dependency_kinds": sorted(kinds[key]) or ["unknown"],
-                "dependency_roots": sorted({root for root, _ in usage[key]}),
-                "dependency_markers": markers,
-                "environment_scope": "all_recorded",
-                "source_type": source,
-                "dependencies": edges[key],
-                "integrity": _integrity(records[key], version),
-                "registry": npm_registry_for(source),
-            }
+        name, exact = identity if identity is not None else mirror_record[:2]
+        dependency = _dependency_row(
+            name=name,
+            exact=exact,
+            path=path,
+            data=data,
+            key=key,
+            version=version,
+            grouped=grouped,
+            markers=dict(markers) if mirror_record is not None else markers,
+            usage=usage[key],
+            kinds=kinds[key],
+            source=source,
+            edges=edges[key],
+            records=records,
         )
+        if mirror_record is not None:
+            dependency["installed_names"] = sorted(
+                {name, *(alias for alias, _ in grouped)}
+            )
+            add_npm_mirror_candidate(
+                inventory,
+                path=path,
+                text=text,
+                occurrence_id=("yarn", key),
+                dependency=dependency,
+                source_url=records[key].get("resolved"),
+                not_checked=mirror_record[2],
+                allow_legacy_hash_fragment=True,
+            )
+        else:
+            inventory.dependencies.append(dependency)
     return inventory
 
 

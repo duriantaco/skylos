@@ -65,3 +65,10 @@ class LockfileInventory:
     limitations: list[dict] = field(default_factory=list)
     not_checked: list[dict] = field(default_factory=list)
     source_records: list[dict] = field(default_factory=list, repr=False)
+
+    def __post_init__(self):
+        # These inputs contain raw mirror URLs. Keep them outside the dataclass
+        # fields so asdict(), repr() and existing inventory serializers cannot
+        # publish them together with the public, redacted inventory contract.
+        self.npm_mirror_candidates = []
+        self.npm_mirror_candidate_limit_reached = False
