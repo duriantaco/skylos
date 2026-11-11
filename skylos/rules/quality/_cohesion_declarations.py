@@ -95,11 +95,13 @@ def declaration_method_ids(node: ast.Module | ast.ClassDef) -> set[int]:
             )
         return found
 
+    # These proof phases only read the tree, including alias fixed-point rounds.
+    nodes = tuple(ast.walk(node))
     complete_module = isinstance(node, ast.Module)
     module_shadow = "NotImplementedError" in bindings(node).names
     builtin_modules = {"__builtins__"}
     namespace_functions = {"exec", "eval", "globals"}
-    for item in ast.walk(node):
+    for item in nodes:
         if isinstance(item, ast.Import):
             builtin_modules.update(
                 alias.asname or alias.name
@@ -118,7 +120,7 @@ def declaration_method_ids(node: ast.Module | ast.ClassDef) -> set[int]:
     changed = True
     while changed:
         changed = False
-        for item in ast.walk(node):
+        for item in nodes:
             if not isinstance(item, (ast.Assign, ast.AnnAssign)):
                 continue
             value = item.value
@@ -132,7 +134,7 @@ def declaration_method_ids(node: ast.Module | ast.ClassDef) -> set[int]:
                     names.update(aliases)
     # A global write in another function or an explicit builtin mutation also
     # prevents claiming the exception still has its builtin identity.
-    for item in ast.walk(node):
+    for item in nodes:
         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
             found = bindings(item)
             if "NotImplementedError" in found.globals & found.names:
@@ -153,7 +155,12 @@ def declaration_method_ids(node: ast.Module | ast.ClassDef) -> set[int]:
             module_shadow = True
         elif isinstance(item, ast.Attribute) and isinstance(item.value, ast.Name):
             if item.value.id in builtin_modules and item.attr in {
-                "__dict__", "exec", "eval", "globals", "locals", "vars"
+                "__dict__",
+                "exec",
+                "eval",
+                "globals",
+                "locals",
+                "vars",
             }:
                 module_shadow = True
         elif isinstance(item, ast.Call) and any(

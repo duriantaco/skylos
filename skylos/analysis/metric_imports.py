@@ -14,10 +14,11 @@ from skylos.rules.quality._provider_context import project_local_provider
 class MetricImports:
     def __init__(self, module, providers, *, filename=None, project_root=None):
         self.module = module
+        # The phases below only read the tree. Reuse its traversal locally,
+        # preserving order and repeated nodes without retaining another index.
+        nodes = tuple(ast.walk(module))
         self.parents = {
-            child: parent
-            for parent in ast.walk(module)
-            for child in ast.iter_child_nodes(parent)
+            child: parent for parent in nodes for child in ast.iter_child_nodes(parent)
         }
         providers = {
             provider: symbols
@@ -82,7 +83,7 @@ class MetricImports:
             ast.GeneratorExp,
         )
         self.function_scopes = function_scopes + comprehension_scopes
-        for node in ast.walk(module):
+        for node in nodes:
             if isinstance(node, (ast.Module, ast.ClassDef, *function_scopes)):
                 if isinstance(node, ast.Lambda):
                     names = _parameters(node)
@@ -138,7 +139,7 @@ class MetricImports:
                 self.outside[node] = set(ast.walk(node.generators[0].iter))
 
         # An explicit write to a provider object destroys its imported identity.
-        for node in ast.walk(module):
+        for node in nodes:
             target = None
             if isinstance(node, ast.Attribute) and isinstance(
                 node.ctx, (ast.Store, ast.Del)
