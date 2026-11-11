@@ -5,6 +5,12 @@ The runner checks the normal Skylos analyzer on isolated fixture snapshots.
 It requires Terraform file and resource coverage; no application source file is
 added to make a configuration scan look complete.
 
+This manifest runs the original `SKY-D400`/`SKY-D401` policy profile explicitly.
+Other registered Terraform policies are excluded from this legacy corpus run;
+the default CLI continues to run them. The unchanged expected rows below prove
+only these two policies, rather than accuracy of the additional infrastructure
+checks. Those checks require their own CLI and real-repository verification.
+
 The first 16 cases cover two declaration policies:
 
 - `SKY-D400`: an AWS security-group ingress declaration allows worldwide TCP

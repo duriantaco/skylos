@@ -817,10 +817,36 @@ safe/unsafe/unknown/not-applicable checks are recorded under
 `analysis_summary.configuration_coverage.terraform`. Unknown is never a safe
 policy result. See [the cloud corpus](benchmarks/cloud/README.md).
 
+The additional AWS checks cover broad S3 canned ACLs and literal bucket policies,
+disabled bucket public-access protections, public RDS accessibility, explicitly
+disabled EBS encryption, optional EC2 metadata tokens, and worldwide database
+ingress. They report requested configuration for review. Account-level controls,
+ownership settings and network routing can change the effective deployment.
+No provider defaults or variable defaults are treated as observed cloud state.
+
+Kubernetes workload policies read literal YAML Pod specifications and standard
+workload templates, including init and ephemeral containers. They report
+privileged containers, host namespace sharing and mounted sensitive host paths.
+They do not render Helm charts, query a cluster or evaluate admission policies.
+Ambiguous YAML, unsupported workload kinds and unresolved mount relationships
+remain incomplete in `analysis_summary.configuration_coverage.kubernetes`;
+requiring a policy that cannot be evaluated produces an analysis error.
+Read-only mounts can still expose sensitive data or container-runtime sockets.
+
 | ID | Severity | Name | Provider |
 |:---|:---|:---|:---|
 | D400 | HIGH | Terraform AWS worldwide administrative ingress (TCP 22/3389, IPv4/IPv6, inline and standalone security-group rules) | Terraform / AWS |
 | D401 | HIGH | Terraform AWS new database storage encryption explicitly disabled (direct `aws_db_instance`; restores and replicas unresolved) | Terraform / AWS |
+| D402 | HIGH | Public or all-AWS-account S3 canned ACL requested | Terraform / AWS |
+| D403 | HIGH | Unconditional wildcard-principal S3 grant in a bounded literal JSON or literal `jsonencode` bucket policy | Terraform / AWS |
+| D404 | HIGH | One or more S3 bucket public-access-block protections explicitly disabled | Terraform / AWS |
+| D405 | HIGH | RDS `publicly_accessible` explicitly enabled | Terraform / AWS |
+| D406 | HIGH | New EBS volume encryption explicitly disabled; snapshot inheritance stays unknown | Terraform / AWS |
+| D407 | HIGH | EC2 instance or launch-template metadata tokens explicitly optional; disabled endpoint is exempt | Terraform / AWS |
+| D408 | HIGH | Worldwide TCP ingress on database/cache ports; inline and standalone security-group declarations | Terraform / AWS |
+| D409 | HIGH | Kubernetes container explicitly privileged | Kubernetes YAML |
+| D410 | HIGH | Kubernetes workload explicitly shares host PID, IPC or network namespace | Kubernetes YAML |
+| D411 | HIGH | Kubernetes container mounts a sensitive host directory or container-runtime socket | Kubernetes YAML |
 | D290 | HIGH | Dangerous trigger (`pull_request_target`, `workflow_run`). `issue_comment` counts only when a job that accounts without write access can start checks out pull request code (a `refs/pull/` ref, a step output assigned the pull request's head ref or SHA, `gh pr checkout`, a `git fetch` of a pull ref) and then runs it (a later command, `run:` step or local action) while holding a write or undeclared token, secrets, a write-capable `cache-mode` or a possibly self-hosted runner. Reach follows the job's `if:` and `needs`. Only a verified permission check stops outsiders: a known check action (actions-cool/check-user-permission with `error-if-missing: true`, prince-chrismc/check-actor-permissions-action, sushichop/action-repository-permission without `relax`, xt0rted/slash-command-action, lannonbr/repo-permission-check-action, skjnldsv/check-actor-permission, TheModdingInquisition/actions-team-membership, as their sources fail) that demands more than read access of the triggering account, or a script that looks the permission or association up and exits non-zero, with no `continue-on-error` and a later step that runs only on success; or a known check whose 'allowed' output the later step's `if:` requires. An action or step whose name or text only mentions permissions does not count, and a needed job gates only through such a failing check. `github.event.pull_request` and `github.head_ref` are empty on comment runs, so a checkout of them gets the default branch. | GitHub Actions |
 | D291 | MEDIUM-HIGH | Missing or excessive permissions. A job's own `permissions` replaces the workflow's, so workflow-level values are judged by the jobs that inherit them: missing permissions are one finding per workflow naming those jobs (none when every job declares its own), `read-all`/`write-all` need an inheriting job, and a workflow-level `X: write` needs two (with one it is already job-scoped). A job's own `read-all`/`write-all` is reported on that job | GitHub Actions |
 | D292 | HIGH (LOW for GitHub-owned) | Unpinned action or reusable workflow (not a full commit SHA). Valid same-repository job calls using `./.github/workflows/...` or `$/.github/workflows/...` already select the caller's commit and need no additional SHA pin. GitHub-owned `actions/*` and `github/*` at a tag or branch are LOW (GitHub runs the workflow and owns them); a path with `.`, `..` or empty segments gets no such discount. Every other owner, dynamic `${{ }}` refs and refs with no `@` are HIGH | GitHub Actions |

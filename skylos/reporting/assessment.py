@@ -121,6 +121,22 @@ def _coverage(result, scanned_checks):
         reasons.append("terraform_policy_coverage_incomplete")
         incomplete_checks.append("security")
         limited_checks.append("security")
+    kubernetes = (
+        configurations.get("kubernetes")
+        if isinstance(configurations, Mapping)
+        else None
+    )
+    if (
+        "security" in scanned_checks
+        and isinstance(kubernetes, Mapping)
+        and (
+            kubernetes.get("status") == "incomplete"
+            or kubernetes.get("evaluation_status") == "partial"
+        )
+    ):
+        reasons.append("kubernetes_policy_coverage_incomplete")
+        incomplete_checks.append("security")
+        limited_checks.append("security")
     ruby = summary.get("ruby_security_coverage")
     if (
         "security" in scanned_checks
