@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from skylos.core.safe_cache_io import read_project_text_no_symlink, read_text_no_symlink
+from skylos.rules.config.cicd.release_context import has_release_context
 from skylos.rules.config.cicd.runner_labels import runner_may_be_self_hosted
 from skylos.rules.config.cicd.template_injection import interpolates_untrusted
 from skylos.rules.config.cicd.workflow_references import local_workflow_reference
@@ -1705,6 +1706,28 @@ def _scan_persisted_checkout_credentials(
             )
 
 
+def _run_steps_with_paths(
+    data: dict[str, Any], *, is_workflow: bool
+) -> Iterator[tuple[dict[str, Any], dict[str, Any] | None, tuple[Any, ...]]]:
+    if is_workflow:
+        jobs = ((job_id, job, job.get("steps")) for job_id, job in _jobs(data))
+    else:
+        runs = data.get("runs")
+        jobs = ((None, None, runs.get("steps") if isinstance(runs, dict) else None),)
+    for job_id, job, steps in jobs:
+        if not isinstance(steps, list):
+            continue
+        for index, step in enumerate(steps):
+            if not isinstance(step, dict):
+                continue
+            path = (
+                ("jobs", job_id, "steps", index, "run")
+                if is_workflow
+                else ("runs", "steps", index, "run")
+            )
+            yield step, job, path
+
+
 def _scan_run_blocks(
     data: dict[str, Any],
     path: Path,
@@ -1716,8 +1739,9 @@ def _scan_run_blocks(
     root: Path | None = None,
 ) -> None:
     rule_id = "SKY-D294"
+    source = _source_for_lines(lines)
 
-    for step, job in _steps_with_jobs(data, is_workflow=is_workflow):
+    for step, job, run_path in _run_steps_with_paths(data, is_workflow=is_workflow):
         run_body = step.get("run")
         if not isinstance(run_body, str):
             continue
@@ -1728,6 +1752,12 @@ def _scan_run_blocks(
         ):
             if risk.rule_id in ignore:
                 continue
+            if (
+                risk.rule_id == "SKY-D340"
+                and is_workflow
+                and has_release_context(data, job, step, source)
+            ):
+                continue
             _add_finding(
                 findings,
                 lines,
@@ -1736,7 +1766,12 @@ def _scan_run_blocks(
                     name="github-actions-shell-command-risk",
                     message=risk.message,
                     file=path,
-                    line=_line_for_value(lines, run_body),
+                    line=(
+                        source.line_for_path(run_path)
+                        if risk.rule_id == "SKY-D340" and source is not None
+                        else None
+                    )
+                    or _line_for_value(lines, run_body),
                     severity=risk.severity,
                     value=risk.rule_id,
                 ),

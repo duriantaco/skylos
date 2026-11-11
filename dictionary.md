@@ -787,6 +787,18 @@ Skylos does not execute pytest or load `conftest.py` to resolve these values.
 | D358 | HIGH | Public Gradio launch without configured authentication | Python |
 | D359 | MEDIUM | Cached Flask external URL derived from the request host | Python |
 
+D340 recognizes explicit release intent in a GitHub Actions workflow when it
+runs only on the `release` event, including `types: [published]`. A publishing
+step also qualifies when its own `if`, or its enclosing job's `if`, requires
+`github.event_name == 'release'`. Additional `&&` conditions are supported;
+every branch of an `||` condition must require the release event. An unguarded
+workflow that also runs on push, pull request or manual events still reports
+D340. Workflow names, job names, tag names and comments do not establish release
+intent. This exception applies only to D340; other command and publish-job
+security checks still run. Standalone scripts and other command-scanning
+contexts retain their existing checks.
+Ambiguous YAML and unsupported conditions keep the warning.
+
 D355–D359 require review of deployment and input context. D356 records a
 cleartext transport choice; it does not establish that sensitive data is sent.
 D357 requires an identified input source, rather than reporting every plugin
