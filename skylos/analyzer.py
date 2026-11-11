@@ -303,6 +303,30 @@ def _supply_chain_summary(root, sca_findings) -> dict:
         return {}
 
 
+def _npm_import_usage_summary(root, findings, files, *, source_scope=None):
+    """Optional evidence must not affect advisory lookup or gate coverage."""
+    if not findings:
+        return {}
+    try:
+        from skylos.rules.sca.npm_import_usage import enrich_npm_import_usage
+
+        receipt = enrich_npm_import_usage(
+            findings,
+            root,
+            source_files=files,
+            inventory=getattr(findings, "inventory", None),
+            source_scope=source_scope,
+        )
+        return (
+            {"npm_import_usage": receipt}
+            if receipt["status"] != "not_applicable"
+            else {}
+        )
+    except Exception:
+        logger.debug("Could not collect npm import evidence", exc_info=True)
+        return {}
+
+
 def _license_policy_findings(
     project_root, project_cfg, project_ignore, suppressed=None
 ):
@@ -4847,6 +4871,12 @@ class Skylos:
                         result["analysis_summary"].update(
                             _supply_chain_summary(project_root, sca_findings)
                         )
+                        result["analysis_summary"].update(
+                            _npm_import_usage_summary(
+                                project_root, sca_findings, (),
+                                source_scope=self._analysis_scope,
+                            )
+                        )
                     except Exception as exc:
                         self._sca_coverage = {
                             "status": "incomplete",
@@ -6476,6 +6506,7 @@ class Skylos:
                     logger.error(traceback.format_exc())
 
         all_sca = []
+        npm_import_usage_summary = {}
         if enable_sca:
             if progress_callback:
                 progress_callback(0, 1, Path("PHASE: dependency vulnerability scan"))
@@ -6498,6 +6529,19 @@ class Skylos:
                     }
                 )
                 if sca_findings:
+                    usage_files = files
+                    if changed_files is not None:
+                        changed_paths = {
+                            os.path.abspath(scan_root / item) for item in changed_files
+                        }
+                        usage_files = [
+                            file for file in files
+                            if os.path.abspath(scan_root / file) in changed_paths
+                        ]
+                    npm_import_usage_summary = _npm_import_usage_summary(
+                        scan_root, sca_findings, usage_files,
+                        source_scope=self._analysis_scope,
+                    )
                     all_sca.extend(sca_findings)
                     try:
                         from skylos.rules.sca.reachability import (
@@ -6972,6 +7016,7 @@ class Skylos:
             include_review_proofs=include_review_proofs,
             review_config=project_cfg,
         )
+        result["analysis_summary"].update(npm_import_usage_summary)
         if enable_secrets:
             result["analysis_summary"]["secrets_files_scanned"] = len(
                 secret_checked_files

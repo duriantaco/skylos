@@ -925,12 +925,33 @@ shows about use of the package:
 
 Terminal output sorts packages by severity and, within a severity, what the code
 uses first. `no import found` and `not reached` sort last. Nothing is hidden and
-the gate counts every advisory: "no import found" is not proof of safety. Other
-ecosystems show `not analyzed`.
+the gate counts every advisory: "no import found" is not proof of safety.
 
 `reachability_verdict` keeps ca9's own verdict. It can change with GitHub
 availability, because ca9 reads fix commits; the tier does not, because a call to
 a listed API counts as use either way.
+
+### JS/TS imports for npm advisories
+
+With `--sca`, Skylos can show where selected JavaScript and TypeScript source
+imports a directly declared npm dependency. It matches the source import to
+the affected locked occurrence in a supported v2 or v3 `package-lock.json` or
+`npm-shrinkwrap.json`. It looks for static imports, re-exports, literal dynamic
+imports, and unshadowed bare `require()` calls.
+
+The package table shows `JS/TS import at path:line` when Skylos finds a match.
+JSON and SARIF include `metadata.import_usage` with the status, reason, and up to
+five source locations. Type-only imports, transitive dependencies without a
+direct match, unsupported lockfiles, and missing evidence remain `unknown`.
+Custom resolution can also leave an import unknown, including a matching
+TypeScript path alias, `baseUrl`, or an inherited TypeScript configuration.
+`analysis_summary.npm_import_usage` records the source selection and any scan
+limits. A file or changed-file scan only looks for evidence in its selected
+source.
+
+Runtime execution and vulnerable API calls are outside this analysis. The gate
+still evaluates every advisory at its original severity.
+Other ecosystems without usage analysis show `not analyzed`.
 
 ## CI
 

@@ -233,6 +233,17 @@ def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
     )
     if risk_context is not None:
         compact["risk_context"] = risk_context
+    if (
+        metadata.get("ecosystem") == "npm"
+        and metadata.get("vuln_id")
+        and metadata.get("malicious") is not True
+        and "import_usage" in metadata
+    ):
+        from skylos.rules.sca.npm_import_usage import normalize_npm_import_usage
+
+        import_usage = normalize_npm_import_usage(metadata["import_usage"])
+        if import_usage is not None:
+            compact["import_usage"] = import_usage
     verification = _compact_verification(metadata.get("verification"))
     if verification:
         compact["verification"] = verification

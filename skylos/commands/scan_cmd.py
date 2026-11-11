@@ -1171,6 +1171,11 @@ def _run_scan_command(
 
                 sca_findings = scan_dependencies(project_root)
                 if sca_findings:
+                    from skylos.analyzer import _npm_import_usage_summary
+
+                    result.setdefault("analysis_summary", {}).update(
+                        _npm_import_usage_summary(project_root, sca_findings, ())
+                    )
                     try:
                         from skylos.rules.sca.reachability import (
                             enrich_with_reachability,
