@@ -1500,6 +1500,25 @@ class TestMixedRepoIntegration:
 
         assert result["unused_files"] == []
 
+    def test_project_ignore_suppresses_e004(self, tmp_path):
+        from skylos.analyzer import analyze
+
+        _write(
+            tmp_path / "pyproject.toml",
+            '[tool.skylos]\nignore = ["SKY-E004"]\n',
+        )
+        _write(
+            tmp_path / "example.ts",
+            "export function helper(): number {\n"
+            "  return 42;\n"
+            "}\n\n"
+            "console.log(helper());\n",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0))
+
+        assert result.get("unused_exports", []) == []
+
     def test_inline_ignore_suppresses_e003_and_records_decision(self, tmp_path):
         from skylos.analyzer import analyze
 
