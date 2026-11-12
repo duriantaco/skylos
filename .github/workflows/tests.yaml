@@ -76,7 +76,26 @@ jobs:
           GOCACHE=/tmp/skylos-go-build GOPATH=/tmp/skylos-go-gopath go build -o skylos-go ./cmd/skylos-go
 
       - name: Install ripgrep for grep-verify backend tests
-        run: sudo apt-get install -y ripgrep
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
+            for attempt in 1 2 3; do
+              if sudo apt-get "${apt_options[@]}" update &&
+                 sudo apt-get "${apt_options[@]}" install --yes ripgrep; then
+                break
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                sleep 5
+              fi
+            done
+          fi
+          if ! command -v rg >/dev/null 2>&1; then
+            echo "::error::ripgrep is required for grep-verify backend tests"
+            exit 1
+          fi
+          rg --version
 
       - name: Create venv + install deps
         run: |
