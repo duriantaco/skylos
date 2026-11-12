@@ -3,7 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from time import perf_counter
 
+import pytest
+
 from skylos.visitors.languages.typescript import scan_typescript_file
+from skylos.visitors.languages.typescript import danger as ts_danger
 
 
 def _scan_ts_file(tmp_path: Path, filename: str, code: str) -> list[dict]:
@@ -411,6 +414,7 @@ function extract(entry: { fileName: string }) {
     assert "SKY-D215" not in _rule_ids(findings)
 
 
+@pytest.mark.runtime_budget
 def test_semicolonless_archive_alias_storm_does_not_dos_scan(tmp_path):
     aliases = "\n".join(
         f"    const alias{index} = entry.path" for index in range(1500)
@@ -431,3 +435,66 @@ function extract(entry) {{
 
     assert "SKY-D215" not in _rule_ids(findings)
     assert elapsed < 2.0
+
+
+def test_archive_without_write_sinks_skips_assignment_analysis(tmp_path, monkeypatch):
+    def unexpected_assignment_analysis(_source):
+        pytest.fail("Archive aliases cannot reach a write when no sink is present")
+
+    monkeypatch.setattr(
+        ts_danger, "iter_semicolon_assignments", unexpected_assignment_analysis
+    )
+    findings = _scan_ts_file(
+        tmp_path,
+        "archive.js",
+        '''const unzipper = require("unzipper");
+function extract(entry) {
+  const name = entry.path;
+  const copiedName = name;
+}
+''',
+    )
+
+    assert "SKY-D215" not in _rule_ids(findings)
+
+
+@pytest.mark.parametrize(
+    "write_call",
+    [
+        "fs.createWriteStream({destination})",
+        "createWriteStream({destination})",
+        "fs.writeFile({destination}, {content}, onWrite)",
+        "fs.writeFileSync({destination}, {content})",
+        "fs.promises.writeFile({destination}, {content})",
+        "writeFile({destination}, {content}, onWrite)",
+        "writeFileSync({destination}, {content})",
+    ],
+)
+@pytest.mark.parametrize("entry_is_destination", [True, False], ids=["path", "content"])
+def test_archive_write_sinks_distinguish_entry_path_from_content(
+    tmp_path, write_call, entry_is_destination
+):
+    call = write_call.format(
+        destination="destination" if entry_is_destination else '"/tmp/fixed.log"',
+        content='"data"' if entry_is_destination else "destination",
+    )
+    findings = _scan_ts_file(
+        tmp_path,
+        "archive.js",
+        f'''const fs = require("fs");
+const {{ createWriteStream, writeFile, writeFileSync }} = fs;
+const unzipper = require("unzipper");
+
+function extract(entry, onWrite) {{
+  const destination = entry.path;
+  {call};
+}}
+''',
+    )
+
+    archive_findings = [
+        finding for finding in findings if finding["rule_id"] == "SKY-D215"
+    ]
+    assert [(finding["line"], finding["severity"]) for finding in archive_findings] == (
+        [(7, "HIGH")] if entry_is_destination else []
+    )

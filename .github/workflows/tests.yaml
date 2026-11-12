@@ -103,9 +103,16 @@ jobs:
           uv pip install --python .venv/bin/python -e "${{ matrix.install_target }}"
           uv pip install --python .venv/bin/python pytest pytest-cov pytest-xdist
 
+      - name: Check runtime budgets without coverage
+        if: matrix.shard == 1
+        run: |
+          .venv/bin/python -m pytest -q -n 0 --no-cov -m runtime_budget \
+            test/test_yaml_safe_loader_fallbacks.py \
+            test/test_typescript_archive_security.py
+
       - name: Run tests with coverage
         run: |
-          .venv/bin/python -m pytest -q -n auto --dist loadfile --cov=skylos --cov-report=term-missing --cov-report=xml $(.venv/bin/python scripts/ci/test_shard.py ${{ matrix.shard }}/4)
+          .venv/bin/python -m pytest -q -m "not runtime_budget" -n auto --dist loadfile --cov=skylos --cov-report=term-missing --cov-report=xml $(.venv/bin/python scripts/ci/test_shard.py ${{ matrix.shard }}/4)
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe

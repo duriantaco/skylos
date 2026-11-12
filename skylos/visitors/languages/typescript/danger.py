@@ -3910,6 +3910,10 @@ def _check_archive_extraction_path_traversal(
     source_text = source_bytes.decode("utf-8", errors="replace")
     if not any(hint in source_text for hint in _ARCHIVE_LIBRARY_HINTS):
         return
+    # Every archive finding needs one of these exact sink tokens.  Skip alias
+    # propagation when the sink scanner cannot produce a write event.
+    if not any(token in source_text for token in _ARCHIVE_SINK_ARGS):
+        return
 
     for scope_lines, start_line in _iter_archive_scopes(root_node, source_text):
         scope_text = "\n".join(scope_lines)

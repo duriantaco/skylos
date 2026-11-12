@@ -193,6 +193,9 @@ extend-exclude = ["manual"]
 
 [tool.pytest.ini_options]
 testpaths = ["test"]
+markers = [
+    "runtime_budget: mandatory runtime checks run serially without coverage in CI",
+]
 norecursedirs = [
     "benchmarks",
     "corpus",

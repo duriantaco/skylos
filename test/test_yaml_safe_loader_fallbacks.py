@@ -301,6 +301,7 @@ def test_native_safe_loader_bindings_stay_quiet(tmp_path, analyzed_rows, case):
     assert case not in analyzed_rows
 
 
+@pytest.mark.runtime_budget
 def test_many_unresolved_loader_names_are_checked_in_bounded_time(
     tmp_path, monkeypatch
 ):
