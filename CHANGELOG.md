@@ -11,6 +11,7 @@
 * **sbom:** keep reachable transitive packages out of SPDX root direct-dependency relationships.
 * **sbom:** refuse output paths named after supported Bun, Cargo, Composer, RubyGems, Pub, Gradle, NuGet, Maven, and setuptools dependency inputs.
 * **scale:** keep parallel danger-rule worker results picklable instead of retrying them in the parent process.
+* **sca:** keep the npm mirror identity cache on disk and verify identities on hosts without a home directory.
 
 ## [5.6.0](https://github.com/duriantaco/skylos/compare/v5.5.0...v5.6.0) (2026-11-11)
 
