@@ -160,7 +160,7 @@ def build_analysis_result(
     _attach_empty_files(result, empty_files)
     _enrich_danger(result, enable_danger)
     _bucket_unused_definitions(result, unused)
-    _attach_unused_ts_exports(result, unused_ts_exports)
+    _attach_unused_ts_exports(result, unused_ts_exports, project_cfg)
     hidden_parameters = _hidden_parameter_count(analyzer, thr, evidence, project_cfg)
     if hidden_parameters:
         # Unused parameters are below the default threshold (callback and
@@ -575,7 +575,12 @@ def _bucket_unused_definitions(result, unused):
             result[bucket].append(item)
 
 
-def _attach_unused_ts_exports(result, unused_ts_exports):
+def _attach_unused_ts_exports(result, unused_ts_exports, project_cfg):
+    ignored = set((project_cfg or {}).get("ignore") or ())
+    if unused_ts_exports and ignored:
+        unused_ts_exports = [
+            item for item in unused_ts_exports if item.get("rule_id") not in ignored
+        ]
     if not unused_ts_exports:
         return
     result.setdefault("unused_exports", []).extend(unused_ts_exports)
