@@ -188,6 +188,65 @@ def _compact_verification(value: Any) -> dict[str, Any] | None:
     return compact
 
 
+_PROVENANCE_KEYS = ("sql_provenance", "redirect_provenance", "path_provenance")
+_PROVENANCE_CHAIN_KINDS = ("untrusted", "unknown", "incomplete", "operator")
+_PROVENANCE_CHAIN_LIMIT = 3
+_PROVENANCE_STEP_LIMIT = 16
+_PROVENANCE_TEXT_LIMIT = 300
+_REACHABILITY_KEYS = (
+    "reachability_verdict",
+    "reachability_reason",
+    "reachability_tier",
+    "reachability_imported_as",
+)
+_REACHABILITY_TEXT_LIMIT = 300
+_COMPACT_SNIPPET_LIMIT = 2000
+
+
+def _compact_provenance(record: Any) -> dict[str, Any] | None:
+    if not isinstance(record, dict):
+        return None
+    compact: dict[str, Any] = {}
+    for key in ("version", "status", "complete_project", "safety_proven"):
+        value = record.get(key)
+        if isinstance(value, (bool, int)):
+            compact[key] = value
+        elif isinstance(value, str) and value:
+            compact[key] = _truncate_upload_text(value, 64)
+    function = record.get("function")
+    if isinstance(function, str) and function:
+        compact["function"] = _truncate_upload_text(function, _PROVENANCE_TEXT_LIMIT)
+    for kind in _PROVENANCE_CHAIN_KINDS:
+        chains = record.get(kind)
+        if not isinstance(chains, list):
+            continue
+        kept = []
+        for chain in chains[:_PROVENANCE_CHAIN_LIMIT]:
+            if not isinstance(chain, list):
+                continue
+            kept.append(
+                [
+                    _truncate_upload_text(step, _PROVENANCE_TEXT_LIMIT)
+                    for step in chain[:_PROVENANCE_STEP_LIMIT]
+                    if isinstance(step, str)
+                ]
+            )
+        if kept:
+            compact[kind] = kept
+    return compact or None
+
+
+def _trace_step_locations(trace: Any) -> Any:
+    if not isinstance(trace, dict) or not isinstance(trace.get("steps"), list):
+        return trace
+    steps = []
+    for step in trace["steps"]:
+        if isinstance(step, dict) and "snippet" in step:
+            step = {key: value for key, value in step.items() if key != "snippet"}
+        steps.append(step)
+    return {**trace, "steps": steps}
+
+
 def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
     if not isinstance(metadata, dict):
         return None
@@ -224,8 +283,19 @@ def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
         "security_evidence",
         "security_trace",
         "receiver_resolution",
+        "source_status",
     }
     compact = {key: metadata[key] for key in keep_keys if key in metadata}
+    for key in _PROVENANCE_KEYS:
+        provenance = _compact_provenance(metadata.get(key))
+        if provenance is not None:
+            compact[key] = provenance
+    for key in _REACHABILITY_KEYS:
+        value = metadata.get(key)
+        if isinstance(value, (bool, int)):
+            compact[key] = value
+        elif isinstance(value, str) and value:
+            compact[key] = _truncate_upload_text(value, _REACHABILITY_TEXT_LIMIT)
     from skylos.rules.sca.threat_intel import finding_cves, normalize_risk_context
 
     risk_context = normalize_risk_context(
@@ -309,10 +379,20 @@ def _compact_upload_finding(
     if tool_rule_id:
         compact["tool_rule_id"] = str(tool_rule_id)[:100]
     if include_snippet and compact["category"] != "SECRET":
-        snippet = _truncate_upload_text(finding.get("snippet"), 240)
-        if snippet:
-            compact["snippet"] = snippet
+        snippet = finding.get("snippet")
+        if isinstance(snippet, str) and snippet:
+            compact["snippet"] = snippet[:_COMPACT_SNIPPET_LIMIT]
     metadata = _compact_finding_metadata(finding.get("metadata"))
+    if metadata is not None and not include_snippet and "security_trace" in metadata:
+        metadata["security_trace"] = _trace_step_locations(metadata["security_trace"])
+    if compact["category"] == "QUALITY":
+        from skylos.reporting.sarif import finding_measure
+
+        measure = finding_measure(finding)
+        if measure is not None:
+            if metadata is None:
+                metadata = {}
+            metadata["measure"] = measure
     from skylos.reporting.listing import listing_decision
 
     listing = listing_decision(finding)

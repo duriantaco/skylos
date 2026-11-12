@@ -439,13 +439,20 @@ class SarifExporter:
                     # A located trace has its own bounded graph budget. It must
                     # not consume listing, review or semantic-proof fields.
                     safe_trace = sanitize_bounded_payload(
-                        located_trace, max_depth=6, max_items=128,
+                        _trace_without_step_snippets(located_trace),
+                        max_depth=6, max_items=128,
                         max_text_length=500, max_nodes=4096,
                         neutralize_mentions=False,
                     )
                     safe_metadata["security_trace"] = safe_trace
                 if safe_metadata:
                     properties["skylos_metadata"] = safe_metadata
+
+            measure = None
+            if category == "QUALITY":
+                measure = finding_measure(finding)
+            if measure is not None:
+                properties.setdefault("skylos_metadata", {})["measure"] = measure
 
             evidence_input = dict(finding)
             if isinstance(metadata, dict) and "security_trace" in metadata:
@@ -496,6 +503,14 @@ class SarifExporter:
                 result_obj["locations"][0]["physicalLocation"]["region"]["snippet"] = {
                     "text": snippet_text
                 }
+
+            end_line = None
+            if category == "QUALITY":
+                end_line = finding_end_line(finding)
+            if end_line is not None and end_line > line_number:
+                result_obj["locations"][0]["physicalLocation"]["region"]["endLine"] = (
+                    end_line
+                )
 
             base_fingerprint = compute_partial_fingerprint(
                 rule_id,
@@ -606,6 +621,62 @@ class SarifExporter:
         return lines[line_number - 1]
 
 
+_MEASURE_TEXT_LENGTH = 200
+
+
+def _measure_scalar(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            return None
+        return value
+    if isinstance(value, str) and value:
+        return sanitize_untrusted_text(
+            value, max_length=_MEASURE_TEXT_LENGTH, neutralize_mentions=False
+        )
+    return None
+
+
+def finding_end_line(finding):
+    """Last line of the function or block a finding measures, when recorded."""
+    start = finding.get("line_number") or finding.get("line")
+    if type(start) is not int or start < 1:
+        return None
+    scope = finding.get("cognitive_scope")
+    if isinstance(scope, dict):
+        end = scope.get("end_line")
+        if type(end) is int and end >= start:
+            return end
+    length = finding.get("length")
+    if (
+        type(length) is int
+        and length >= 1
+        and finding.get("kind") in {"complexity", "nesting"}
+    ):
+        return start + length - 1
+    return None
+
+
+def finding_measure(finding):
+    """The measured value, its threshold and extent for a threshold finding."""
+    if "threshold" not in finding and "value" not in finding:
+        return None
+    measure = {}
+    for key in ("metric", "value", "threshold", "length"):
+        scalar = _measure_scalar(finding.get(key))
+        if scalar is not None:
+            measure[key] = scalar
+    end_line = finding_end_line(finding)
+    if end_line is not None:
+        measure["end_line"] = end_line
+    if "value" not in measure and "threshold" not in measure:
+        return None
+    return measure
+
+
 def _sarif_region(start_line, end_line=None):
     start = _positive_sarif_integer(start_line)
     region = {"startLine": start}
@@ -706,6 +777,21 @@ def _sarif_code_flows(
                         step.get("end_line"),
                     ),
                 }
+                region = location["physicalLocation"]["region"]
+                column = step.get("column")
+                if type(column) is int and column >= 0:
+                    region["startColumn"] = column + 1
+                snippet = step.get("snippet")
+                if isinstance(snippet, str) and snippet.strip():
+                    region["snippet"] = {
+                        "text": sanitize_untrusted_text(
+                            snippet,
+                            max_length=_MAX_SARIF_SNIPPET_LENGTH,
+                            markdown=False,
+                            preserve_newlines=True,
+                            neutralize_mentions=False,
+                        )
+                    }
         else:
             text = step
         if "physicalLocation" not in location:
@@ -732,6 +818,18 @@ def _sarif_code_flows(
     if isinstance(located, dict) and located.get("status") != "source_to_sink":
         flow["message"] = {"text": "Partial recorded static trace; unresolved steps are not runtime verification."}
     return [flow]
+
+
+def _trace_without_step_snippets(trace):
+    steps = trace.get("steps")
+    if not isinstance(steps, list):
+        return trace
+    bare = []
+    for step in steps:
+        if isinstance(step, dict) and "snippet" in step:
+            step = {key: value for key, value in step.items() if key != "snippet"}
+        bare.append(step)
+    return {**trace, "steps": bare}
 
 
 def _sanitize_sarif_payload(value, *, max_items=_MAX_SARIF_METADATA_ITEMS):
