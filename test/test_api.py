@@ -2531,6 +2531,8 @@ class TestVerifyReport(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertIn("all 20 of today's verification checks", result["error"])
         self.assertIn("Workspace", result["error"])
+        self.assertIn("start the Workspace plan on Billing", result["error"])
+        self.assertNotIn("credit pack", result["error"])
         self.assertNotIn("Pro", result["error"])
 
         resp.json.side_effect = ValueError("not json")

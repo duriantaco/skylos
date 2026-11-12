@@ -3492,8 +3492,8 @@ def _verification_limit_message(response) -> str:
         used = "today's verification checks"
     return (
         f"Verification limit reached: this Free workspace used {used}. "
-        "Try again tomorrow, or buy any credit pack on Billing to turn on "
-        "Workspace, which has no daily limit."
+        "Try again tomorrow, or start the Workspace plan on Billing, which "
+        "has no daily limit."
     )
 
 
