@@ -64,11 +64,11 @@ def _identity(name, version) -> tuple[str, str] | None:
 
 
 def _cache_directory(root: Path) -> Path | None:
-    base = os.environ.get("XDG_CACHE_HOME")
-    path = Path(base) if base else Path.home() / ".cache"
-    if not path.is_absolute():
-        return None
     try:
+        base = os.environ.get("XDG_CACHE_HOME")
+        path = Path(base) if base else Path.home() / ".cache"
+        if not path.is_absolute():
+            return None
         directory = (path / "skylos").resolve()
         scan_root = root.resolve()
         if directory.is_relative_to(scan_root):
@@ -127,7 +127,9 @@ def _save_cache(directory: Path | None, values):
         return
     try:
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with project_cache_lock(directory, CACHE_FILE, timeout_seconds=0.25) as owned:
+        with project_cache_lock(
+            directory, CACHE_FILE + ".lock", timeout_seconds=0.25
+        ) as owned:
             if not owned:
                 return
             entries = _load_cache(directory, int(time.time()))
