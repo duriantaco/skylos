@@ -20,6 +20,8 @@ _MAX_SARIF_METADATA_TEXT_LENGTH = 500
 _MAX_SARIF_METADATA_ITEMS = 32
 _MAX_SARIF_DEPENDENCY_METADATA_ITEMS = 64
 _MAX_SARIF_METADATA_NODES = 256
+_MAX_SARIF_SAME_NAME_DEFINITIONS = 3
+_MAX_SARIF_SAME_NAME_DEFINITION_BYTES = 256
 
 
 _MAX_SARIF_RELATED_LOCATIONS = 32
@@ -479,6 +481,9 @@ class SarifExporter:
             if dead_code_evidence is not None:
                 safe_dead_code_evidence = _sanitize_sarif_payload(dead_code_evidence)
                 if safe_dead_code_evidence:
+                    _keep_same_name_definitions(
+                        safe_dead_code_evidence, finding.get("dead_code_evidence")
+                    )
                     properties["skylos_dead_code_evidence"] = safe_dead_code_evidence
 
             result_obj = {
@@ -830,6 +835,50 @@ def _trace_without_step_snippets(trace):
             step = {key: value for key, value in step.items() if key != "snippet"}
         bare.append(step)
     return {**trace, "steps": bare}
+
+
+def _bounded_same_name_definitions(details):
+    if not isinstance(details, dict):
+        return []
+    definitions = details.get("same_name_definitions")
+    if not isinstance(definitions, (list, tuple)):
+        return []
+    kept = []
+    for definition in definitions:
+        if len(kept) >= _MAX_SARIF_SAME_NAME_DEFINITIONS:
+            break
+        if not isinstance(definition, str):
+            continue
+        text = _sanitize_sarif_payload(definition)
+        if not isinstance(text, str):
+            continue
+        encoded = text.encode("utf-8")[:_MAX_SARIF_SAME_NAME_DEFINITION_BYTES]
+        text = encoded.decode("utf-8", "ignore")
+        if text:
+            kept.append(text)
+    return kept
+
+
+def _keep_same_name_definitions(safe_evidence, raw_events):
+    if not isinstance(safe_evidence, dict) or not isinstance(raw_events, list):
+        return
+    safe_events = safe_evidence.get("events")
+    if not isinstance(safe_events, list):
+        return
+    raw_dict_events = [event for event in raw_events if isinstance(event, dict)]
+    for safe_event, raw_event in zip(safe_events, raw_dict_events):
+        if not isinstance(safe_event, dict):
+            continue
+        if safe_event.get("kind") != raw_event.get("kind"):
+            continue
+        safe_details = safe_event.get("details")
+        if not isinstance(safe_details, dict):
+            continue
+        if "same_name_definition_count" not in safe_details:
+            continue
+        definitions = _bounded_same_name_definitions(raw_event.get("details"))
+        if definitions:
+            safe_details["same_name_definitions"] = definitions
 
 
 def _sanitize_sarif_payload(value, *, max_items=_MAX_SARIF_METADATA_ITEMS):

@@ -5,6 +5,7 @@ import json
 import textwrap
 from pathlib import Path
 
+from skylos import api
 from skylos.analyzer import analyze
 from skylos.api._payloads import _compact_upload_finding
 from skylos.reporting.sarif import SarifExporter
@@ -489,3 +490,75 @@ def test_upload_shapes_stay_inside_the_upload_contract(tmp_path, monkeypatch):
             for location in flow["threadFlows"][0]["locations"]:
                 step_region = location["location"]["physicalLocation"]["region"]
                 assert len(step_region.get("snippet", {}).get("text", "")) <= limit
+
+
+def _same_name_details(sarif):
+    found = []
+    for result in sarif["runs"][0]["results"]:
+        uri = result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+        if not uri.endswith("a.py"):
+            continue
+        evidence = result["properties"]["skylos_dead_code_evidence"]
+        for event in evidence["events"]:
+            if event["kind"] == "no_static_references":
+                found.append(event["details"])
+    return found
+
+
+def test_sarif_and_core_upload_name_the_same_name_definitions(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(api, "get_git_info", lambda: ("a" * 40, "main", "actor", {}))
+    monkeypatch.setattr(api, "get_git_root", lambda: None)
+    monkeypatch.setattr(api, "detect_ai_code", lambda *_: {"detected": False})
+    monkeypatch.setattr(api, "_load_repo_link", lambda *_: {})
+    for module in ("a", "b", "c", "d", "e"):
+        _write(tmp_path, f"{module}.py", "def helper():\n    return 1\n")
+
+    result = _scan(tmp_path)
+    [finding] = [
+        item
+        for item in _named(result.get("unused_functions", []), "helper")
+        if item["file"].endswith("a.py")
+    ]
+    row = {
+        **finding,
+        "rule_id": "SKY-U001",
+        "category": "DEAD_CODE",
+        "file_path": "a.py",
+        "line_number": 1,
+    }
+    compact = _compact_upload_finding(row, include_snippet=False)
+    [compact_event] = [
+        event
+        for event in compact["metadata"]["dead_code_evidence"]["events"]
+        if event["kind"] == "no_static_references"
+    ]
+    expected = compact_event["details"]["same_name_definitions"]
+    assert [text.split(" ")[0] for text in expected] == ["b.py:1", "c.py:1", "d.py:1"]
+
+    [sarif_details] = _same_name_details(SarifExporter([row]).generate())
+    assert sarif_details["same_name_definitions"] == expected
+    assert sarif_details["same_name_definition_count"] == 4
+    assert sarif_details["searched_name"] == "helper"
+    assert sarif_details["files_searched"] == 5
+
+    prepared = api._prepare_report_upload(copy.deepcopy(result), analyzer_owned=True)
+    [core_details] = _same_name_details(prepared.core_payload)
+    assert core_details["same_name_definitions"] == expected
+    assert core_details["same_name_definition_count"] == 4
+
+    oversized = copy.deepcopy(row)
+    for event in oversized["dead_code_evidence"]:
+        if event["kind"] == "no_static_references":
+            event["details"]["same_name_definitions"] = [
+                f"{index}.py:1 function " + "é" * 400 for index in range(5)
+            ] + [{"not": "text"}]
+    [capped] = _same_name_details(SarifExporter([oversized]).generate())
+    assert len(capped["same_name_definitions"]) == 3
+    assert [text.split(" ")[0] for text in capped["same_name_definitions"]] == [
+        "0.py:1",
+        "1.py:1",
+        "2.py:1",
+    ]
+    for text in capped["same_name_definitions"]:
+        assert len(text.encode("utf-8")) <= 256
