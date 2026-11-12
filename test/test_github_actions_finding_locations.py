@@ -173,3 +173,47 @@ def test_embedded_script_comments_keep_existing_ignore_behavior():
     findings = []
     github_actions._add_finding(findings, lines, {"rule_id": "TEST-SCRIPT", "line": 2})
     assert findings == []
+
+
+def _scan_publish_step(text):
+    data, source = load_yaml_with_locations(text)
+    lines = github_actions._WorkflowLines(text, source)
+    findings = []
+    github_actions._scan_run_blocks(
+        data,
+        Path(".github/workflows/release.yml"),
+        lines,
+        findings,
+        set(),
+        is_workflow=True,
+    )
+    return [finding for finding in findings if finding["rule_id"] == "SKY-D340"]
+
+
+def test_d340_ignore_marker_inside_quoted_step_value_is_not_a_comment():
+    text = (
+        "on: push\n"
+        "jobs:\n"
+        "  publish:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        '      - name: "note: skylos: ignore[SKY-D340]"\n'
+        "        run: |\n"
+        "          twine upload dist/*\n"
+    )
+    assert [finding["line"] for finding in _scan_publish_step(text)] == [7]
+
+
+def test_d340_ignore_comment_above_run_still_suppresses():
+    text = (
+        "on: push\n"
+        "jobs:\n"
+        "  publish:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - name: Ship\n"
+        "        # skylos: ignore[SKY-D340]\n"
+        "        run: |\n"
+        "          twine upload dist/*\n"
+    )
+    assert _scan_publish_step(text) == []

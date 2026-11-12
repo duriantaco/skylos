@@ -11,6 +11,7 @@
 * **sbom:** keep reachable transitive packages out of SPDX root direct-dependency relationships.
 * **sbom:** refuse output paths named after supported Bun, Cargo, Composer, RubyGems, Pub, Gradle, NuGet, Maven, and setuptools dependency inputs.
 * **scale:** keep parallel danger-rule worker results picklable instead of retrying them in the parent process.
+* **cicd:** only treat a real YAML comment as a D340 inline ignore, so a marker inside a quoted step value no longer hides a publish finding.
 
 ## [5.6.0](https://github.com/duriantaco/skylos/compare/v5.5.0...v5.6.0) (2026-11-11)
 

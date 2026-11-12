@@ -1797,6 +1797,7 @@ def _scan_run_blocks(
                     severity=risk.severity,
                     value=risk.rule_id,
                 ),
+                yaml_only=risk.rule_id == "SKY-D340" and source is not None,
             )
     if rule_id not in ignore:
         _scan_template_injection(
