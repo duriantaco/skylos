@@ -12,6 +12,7 @@ from skylos.reporting.architecture_result import attach_circular_and_architectur
 from skylos.reporting.dead_code_result import (
     dead_code_candidate_decisions,
     dead_code_evidence,
+    dead_code_search_facts,
     definition_context,
     whitelisted_definitions,
 )
@@ -107,11 +108,13 @@ def build_analysis_result(
     calibrate_dead_code_confidence(
         analyzer.defs, getattr(analyzer, "_ts_demoted_exports", ())
     )
+    search = dead_code_search_facts(analyzer, path, files_searched=len(files or ()))
     ledger, evidence = dead_code_evidence(
         analyzer,
         path,
         pyproject_entrypoint_qnames,
         threshold=thr,
+        search=search,
     )
     unused, rescued, abstained = dead_code_candidate_decisions(
         analyzer,
@@ -119,6 +122,7 @@ def build_analysis_result(
         evidence,
         review_config=project_cfg,
         include_review_proofs=include_review_proofs,
+        search=search,
     )
     unused = _without_config_ignored_dead_code(unused, project_cfg)
     # Definitions in generated files (Django migrations) are already outside
