@@ -1767,6 +1767,9 @@ def _scan_run_blocks(
         run_body = step.get("run")
         if not isinstance(run_body, str):
             continue
+        run_line = None
+        if source is not None:
+            run_line = source.line_for_path(run_path)
         for risk in scan_shell_command(
             run_body,
             cwd_in_project=_run_starts_in_workspace(data, job, step),
@@ -1780,6 +1783,9 @@ def _scan_run_blocks(
                 and has_release_context(data, job, step, source)
             ):
                 continue
+            line = _line_for_value(lines, run_body)
+            if risk.rule_id == "SKY-D340" and run_line:
+                line = run_line
             _add_finding(
                 findings,
                 lines,
@@ -1788,16 +1794,11 @@ def _scan_run_blocks(
                     name="github-actions-shell-command-risk",
                     message=risk.message,
                     file=path,
-                    line=(
-                        source.line_for_path(run_path)
-                        if risk.rule_id == "SKY-D340" and source is not None
-                        else None
-                    )
-                    or _line_for_value(lines, run_body),
+                    line=line,
                     severity=risk.severity,
                     value=risk.rule_id,
                 ),
-                yaml_only=risk.rule_id == "SKY-D340" and source is not None,
+                yaml_only=line == run_line,
             )
     if rule_id not in ignore:
         _scan_template_injection(
