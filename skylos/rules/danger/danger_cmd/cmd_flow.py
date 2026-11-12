@@ -178,6 +178,46 @@ def _command_argument(node: ast.Call, keywords=("args", "cmd", "command")):
     return None
 
 
+def _return_facts(imports, function):
+    facts = []
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Return):
+            continue
+        called = None
+        target = node.value
+        if isinstance(node.value, ast.Call):
+            called = _qualified_name(node.value)
+            target = node.value.func
+        resolved = None
+        if called:
+            resolved = imports.resolved_import(function, called)
+        refs = _effects(imports.module).refs(target)
+        facts.append((called, resolved, frozenset(refs)))
+    return tuple(facts)
+
+
+def _module_factory_facts(parsed):
+    """Class and helper-return facts of one module, computed once per parsed tree.
+
+    The facts depend only on that module's source, so every file scanned in
+    the same process reuses them instead of re-deriving the whole project.
+    """
+    cached = getattr(parsed, "_skylos_cmd_factory_facts", None)
+    if cached is not None:
+        return cached
+    imports = UntrustedSourceIndex(parsed)
+    classes = []
+    functions = []
+    for node in ast.walk(parsed):
+        if isinstance(node, ast.ClassDef):
+            classes.append((node.name, id(node)))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            functions.append((node.name, id(node), _return_facts(imports, node)))
+    facts = (tuple(classes), tuple(functions))
+    parsed._skylos_cmd_factory_facts = facts
+    return facts
+
+
 class _CmdFlowChecker(TaintVisitor):
     resolve_sanitizer_imports = True
     OS_SYSTEM = "os.system"
@@ -591,54 +631,32 @@ class _CmdFlowChecker(TaintVisitor):
         if root:
             trees, complete = project_source_snapshot(root)
             if complete:
+                base = Path(root)
+                current = Path(self.file_path).resolve()
                 for path, parsed in trees.items():
-                    name = list(
-                        Path(path).relative_to(Path(root)).with_suffix("").parts
-                    )
+                    name = list(Path(path).relative_to(base).with_suffix("").parts)
                     if name[-1] == "__init__":
                         name.pop()
-                    modules.append(
-                        (
-                            ".".join(name),
-                            tree
-                            if Path(path).resolve() == Path(self.file_path).resolve()
-                            else parsed,
-                        )
-                    )
+                    member = parsed
+                    if Path(path) == current:
+                        member = tree
+                    modules.append((".".join(name), member))
         factories = set()
         helpers = []
         for module, parsed in modules:
-            imports = UntrustedSourceIndex(parsed)
-            for node in ast.walk(parsed):
-                if not isinstance(
-                    node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
-                ):
-                    continue
-                name = module + "." + node.name if module else node.name
-                if isinstance(node, ast.ClassDef):
-                    factories.add(name)
-                    factories.add(f"@class:{id(node)}")
-                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    helpers.append((module, name, node, imports))
+            classes, functions = _module_factory_facts(parsed)
+            prefix = ""
+            if module:
+                prefix = module + "."
+            for name, identity in classes:
+                factories.add(prefix + name)
+                factories.add(f"@class:{identity}")
+            for name, identity, returns in functions:
+                helpers.append((prefix + name, identity, returns))
         for _ in range(32):
             before = len(factories)
-            for module, name, function, imports in helpers:
-                for node in ast.walk(function):
-                    if not isinstance(node, ast.Return):
-                        continue
-                    called = (
-                        _qualified_name(node.value)
-                        if isinstance(node.value, ast.Call)
-                        else None
-                    )
-                    resolved = (
-                        imports.resolved_import(function, called) if called else None
-                    )
-                    refs = _effects(imports.module).refs(
-                        node.value.func
-                        if isinstance(node.value, ast.Call)
-                        else node.value
-                    )
+            for name, identity, returns in helpers:
+                for called, resolved, refs in returns:
                     if (
                         resolved in factories
                         or refs & factories
@@ -646,7 +664,7 @@ class _CmdFlowChecker(TaintVisitor):
                         or resolved == "types.new_class"
                     ):
                         factories.add(name)
-                        factories.add(f"@function:{id(function)}")
+                        factories.add(f"@function:{identity}")
             if len(factories) == before:
                 break
         return factories

@@ -3186,6 +3186,8 @@ class _Tracer:
         self.param_memo = {}
         self.attr_memo = {}
         self.global_memo = {}
+        self.import_memo = {}
+        self.import_cyclic = set()
         self.local_memo = {}
         self.limited = 0
         self.trace_memo = {}
@@ -3457,6 +3459,27 @@ class _Tracer:
         return self.trace(unit, scope, iterable, env)
 
     def _imported(self, unit, bind, name):
+        """Facts of an imported name, followed once per import binding.
+
+        A re-export chain never passes through ``trace``, so without its own
+        memo every reader re-walks the whole chain. A cycle settles through
+        the shared fixpoint; one that never reaches a value is reported as
+        not followed instead of as having no value.
+        """
+        key = ("import", id(unit), id(bind), name)
+        if key in self.depth_of:
+            self.import_cyclic.update(
+                active for active in self.depth_of if active[0] == "import"
+            )
+        facts = self._memoized(
+            self.import_memo, key, lambda: self._imported_uncached(unit, bind, name)
+        )
+        settled = key in self.import_memo and key in self.import_cyclic
+        if settled and facts.empty():
+            return self._limit(unit, bind.node, f"import cycle of `{name}` not followed")
+        return facts
+
+    def _imported_uncached(self, unit, bind, name):
         module, member, level = bind.value
         if member is None:
             return _Facts.leaf(UNKNOWN, _step(unit, bind.node, f"module object `{name}`"))
