@@ -411,6 +411,17 @@ counts only in a module that imports asyncpg, `databases` or peewee. A
 SQLAlchemy `text()` or pandas `read_sql` call is reported once, as D211 (no
 second D217 finding).
 
+Python D211 also reports a Cypher graph query passed to `.query()`,
+`.ro_query()`, `.run()`, `.execute_query()`, `.cypher()` or `.evaluate()` when
+an f-string or `str.format` value sits inside a quoted string of the query
+text (`{id: '{value}'}`), as MEDIUM: a quote or backslash in the value changes
+the query, whatever escaping helper wraps it. It makes no claim about where the
+value comes from (`source_status` is `unresolved`), and the text must begin as
+a Cypher statement, so prompts and shell commands that mention Cypher are not
+query text. A `$parameter`, a value proven constant, `int()`/`float()`
+output, a value outside quotes (such as a backtick label) and SQL text are not
+reported by this check.
+
 On every D211 sink, a quoted identifier may fill the query text where no
 quoted literal is open: psycopg2 `quote_ident`, or a function in the same
 module whose whole body returns its argument wrapped in `"` with every `"`
@@ -779,7 +790,7 @@ Skylos does not execute pytest or load `conftest.py` to resolve these values.
 | D345 | HIGH | Mutable Hugging Face artifact revision | Python |
 | D346 | HIGH | Flask debug mode enabled | Python |
 | D347 | MEDIUM | Unsafe logging config listener | Python |
-| D348 | HIGH | Insecure temporary filename | Python |
+| D348 | HIGH | Insecure temporary filename: `tempfile.mktemp()`, or `os.makedirs`/`Path.mkdir` with `exist_ok=True` on a fixed directory under the shared temp root. The root is a literal `/tmp` or `/var/tmp`, or `tempfile.gettempdir()`, followed through `os.path.join`, `Path(...) / "name"`, an f-string, a local name, a `self` attribute set in the same function, and an `a or default` or conditional default. Every component after the root must be a constant; a random, caller-supplied or otherwise unknown component is not reported | Python |
 | D349 | CRITICAL | Server-side template injection (request data compiled as Jinja template source; Java Velocity `evaluate`, FreeMarker `new Template(...)` source, `StringTemplateLoader.putTemplate`, Groovy `TemplateEngine.createTemplate`; PHP Drupal `inline_template` render arrays) | Python, Java, PHP |
 | D355 | HIGH | Jinja environment with omitted or explicitly disabled autoescape | Python |
 | D356 | MEDIUM | Cleartext outbound HTTP request | Python |
