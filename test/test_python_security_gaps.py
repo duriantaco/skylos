@@ -1,8 +1,11 @@
 """Concrete missing security checks and their safe lookalikes."""
 
+import time
+
 import pytest
 
 from skylos.rules.danger.danger import scan_ctx
+from skylos.rules.danger.python_security_gaps import mentions_graph_query
 
 
 def scan(tmp_path, code):
@@ -133,6 +136,7 @@ def test_shared_tmp_detection_survives_source_prefilter(
     tmp_path, source_present, code, expected
 ):
     import ast
+
     from skylos.rules.danger.danger import scan_file_with_tree
 
     path = tmp_path / "server.py"
@@ -475,6 +479,123 @@ def _graph_rows(findings):
 def test_graph_query_with_value_interpolated_inside_quotes(tmp_path, code, line):
     rows = _graph_rows(scan(tmp_path, code))
     assert [row["line"] for row in rows] == [line]
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "def find(graph, name):\n"
+        "    return graph.query(f\"MATCH(p:Person {{name: '{name}'}}) RETURN p\")\n",
+        "def find(graph, name):\n"
+        "    return graph.query(f\"MATCH  (p:Person {{name: '{name}'}}) RETURN p\")\n",
+        "def find(graph, name):\n"
+        '    return graph.query(f"""MATCH\n(p:Person {{name: \'{name}\'}}) RETURN p""")\n',
+        "def find(graph, name):\n"
+        "    return graph.query(f\"OPTIONAL MATCH(p:Person {{name: '{name}'}}) RETURN p\")\n",
+        "def add(graph, node):\n"
+        "    graph.query(f\"MERGE(n:Entity {{id: '{node}'}}) RETURN n\")\n",
+        "def add(graph, node):\n"
+        "    graph.query(f\"CREATE(n:Entity {{id: '{node}'}}) RETURN n\")\n",
+        "def find(graph, name):\n"
+        '    return graph.query(f"""MATCH(n {{id: \'{name}\'}}) RETURN n""")\n',
+    ],
+    ids=[
+        "no-space",
+        "two-spaces",
+        "line-break",
+        "optional-match",
+        "merge",
+        "create",
+        "triple-quoted",
+    ],
+)
+def test_graph_query_without_a_space_after_the_keyword_is_reported(tmp_path, code):
+    rows = _graph_rows(scan(tmp_path, code))
+    assert [row["line"] for row in rows] == [2]
+
+
+def test_graph_query_starting_on_the_line_after_the_quote_is_reported(tmp_path):
+    code = (
+        "def find(graph, name):\n"
+        '    return graph.query(f"""\n'
+        "MATCH (n:Person)\n"
+        "WHERE n.name = '{name}'\n"
+        "RETURN n\n"
+        '""")\n'
+    )
+    rows = _graph_rows(scan(tmp_path, code))
+    assert [row["line"] for row in rows] == [2]
+
+
+def test_graph_query_after_a_leading_clause_is_reported(tmp_path):
+    code = (
+        "def find(graph, name):\n"
+        '    return graph.query(f"""\n'
+        "WITH 1 AS one\n"
+        "MATCH (n:Person)\n"
+        "WHERE n.name = '{name}'\n"
+        "RETURN n\n"
+        '""")\n'
+    )
+    rows = _graph_rows(scan(tmp_path, code))
+    assert [row["line"] for row in rows] == [2]
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ('graph.query("MATCH(n) RETURN n")', True),
+        ("graph.query('''MERGE (n) RETURN n''')", True),
+        ('graph.query(f"""\nMATCH(n) RETURN n""")', True),
+        ('graph.query(f"""\nWITH 1 AS one\nMATCH (n:Person) RETURN n""")', True),
+        ('graph.query("""OPTIONAL\nMATCH (n) RETURN n""")', True),
+        ('graph.query("MATCH  (n) RETURN n")', True),
+        ("re.match (name, pattern)", False),
+        ("re.match(name, pattern)", False),
+        ("db.create(obj)", False),
+        ("def create (name):\n    return name", False),
+        ("def create(name):\n    return name", False),
+    ],
+    ids=[
+        "quoted-match",
+        "triple-quoted-merge",
+        "leading-line-break",
+        "leading-clause",
+        "optional-on-its-own-line",
+        "extra-spaces",
+        "re-match-call",
+        "re-match-call-no-space",
+        "method-create",
+        "create-call",
+        "create-definition",
+    ],
+)
+def test_graph_query_source_hint_matches_the_rule_keywords(source, expected):
+    assert mentions_graph_query(source) is expected
+
+
+def test_graph_query_source_hint_is_linear():
+    # The quoted form this replaces split one run of spaces between \s* and the
+    # negated class: 16k spaces took 2.8 s and every doubling cost four times
+    # more.  The current form answers in well under a millisecond.
+    source = "label = '" + " " * 16_000 + "'"
+    started = time.perf_counter()
+    assert mentions_graph_query(source) is False
+    assert time.perf_counter() - started < 0.5
+
+
+def test_ordinary_parenthesised_calls_do_not_start_the_scan(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "skylos.rules.danger.danger.scan_python_security_gaps",
+        lambda *args, **kwargs: calls.append(1),
+    )
+    path = tmp_path / "server.py"
+    path.write_text(
+        "import re\n\ndef create (name):\n    return re.match (name, 'pattern')\n"
+    )
+    scan_ctx(tmp_path, [path])
+    assert calls == []
 
 
 @pytest.mark.parametrize(
