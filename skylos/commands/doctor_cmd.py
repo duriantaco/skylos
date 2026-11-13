@@ -12,6 +12,7 @@ from rich.panel import Panel
 from skylos.cloud.plan_names import plan_display_name
 from skylos.config import load_config
 from skylos.constants import RIPGREP_INSTALL_URL
+from skylos.core.update_check import is_newer, latest_version, upgrade_notice
 
 
 RUST_ACCELERATION_BUILD_URL = (
@@ -81,6 +82,16 @@ def _doctor_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _skylos_version_report() -> dict:
+    current = str(skylos.__version__)
+    report = {"status": "ok", "version": current}
+    latest = latest_version()
+    if latest:
+        report["latest_version"] = latest
+        report["update_available"] = is_newer(latest, current)
+    return report
+
+
 def _doctor_json_report(py_ver: str, py_ok: bool, go_status: dict) -> dict:
     rust_available = _rust_available()
     llm_available = _llm_available()
@@ -100,7 +111,7 @@ def _doctor_json_report(py_ver: str, py_ok: bool, go_status: dict) -> dict:
                 "version": py_ver,
                 "minimum_version": "3.11",
             },
-            "skylos": {"status": "ok", "version": str(skylos.__version__)},
+            "skylos": _skylos_version_report(),
             "go_engine": _go_engine_json(go_status),
             "rust_acceleration": {
                 "status": "available" if rust_available else "unavailable",
@@ -189,7 +200,16 @@ def _print_runtime_status(
         f"  {'[green]OK[/green]' if py_ok else '[red]FAIL[/red]'}  Python {py_ver}"
         + ("" if py_ok else " [red](requires 3.11+)[/red]")
     )
-    console.print(f"  [green]OK[/green]  Skylos {skylos.__version__}")
+    latest = latest_version()
+    notice = upgrade_notice(str(skylos.__version__), latest)
+    if notice:
+        console.print(f"  [yellow]WARN[/yellow]  {notice}")
+    elif latest:
+        console.print(
+            f"  [green]OK[/green]  Skylos {skylos.__version__} [dim](latest release)[/dim]"
+        )
+    else:
+        console.print(f"  [green]OK[/green]  Skylos {skylos.__version__}")
     _print_availability(
         console,
         go_status.get("status") == "available",

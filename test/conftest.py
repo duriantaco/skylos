@@ -302,6 +302,13 @@ def _isolate_saved_osv_answers(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _no_release_lookup(monkeypatch):
+    """Tests must never ask PyPI which Skylos release is newest. Tests of the
+    update check remove this variable themselves."""
+    monkeypatch.setenv("SKYLOS_NO_TELEMETRY", "1")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_cloud_uploads(monkeypatch, tmp_path_factory):
     """Keep upload retries fast and their side effects out of the checkout.
 
