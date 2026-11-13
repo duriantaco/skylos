@@ -796,6 +796,18 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-L043": {
         "default": "Wait on an explicit completion signal with a bounded timeout instead of assuming a fixed delay is sufficient."
     },
+    "SKY-L044": {
+        "default": "Call the code under test and assert on the value it returns instead of values the test builds itself."
+    },
+    "SKY-L045": {
+        "default": "Replace the always-true condition with a check of the value the code is expected to produce."
+    },
+    "SKY-L046": {
+        "default": "Assert on the stored result, or remove the assignment if the call is only checked for not raising."
+    },
+    "SKY-L047": {
+        "default": "Remove the repeated test, or change it to cover the case its name describes."
+    },
     "SKY-P401": {
         "default": "Read in bounded chunks, or check the size before reading everything."
     },

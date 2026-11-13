@@ -67,6 +67,12 @@ from skylos.rules.quality.test_assertions import (
     ConstantTestAssertionRule,
     EmptyTestRule,
 )
+from skylos.rules.quality.test_effectiveness import (
+    AlwaysTrueAssertionRule,
+    DuplicateTestRule,
+    SelfContainedTestRule,
+    UncheckedTestResultRule,
+)
 from skylos.rules.quality.test_reliability import (
     DuplicateTestAssertionRule,
     SleepSynchronizationRule,
@@ -183,6 +189,10 @@ LINTER_RULE_NODE_TYPES = {
     EmptyTestRule: (ast.Module,),
     DuplicateTestAssertionRule: (ast.Module,),
     SleepSynchronizationRule: (ast.Module,),
+    SelfContainedTestRule: (ast.Module,),
+    AlwaysTrueAssertionRule: (ast.Module,),
+    UncheckedTestResultRule: (ast.Module,),
+    DuplicateTestRule: (ast.Module,),
     DangerousCallsRule: (ast.Module, ast.Import, ast.ImportFrom, ast.Assign, ast.Call),
 }
 
@@ -268,6 +278,10 @@ def _build_builtin_quality_rules(cfg: dict) -> list:
         ("SKY-L041", EmptyTestRule),
         ("SKY-L042", DuplicateTestAssertionRule),
         ("SKY-L043", SleepSynchronizationRule),
+        ("SKY-L044", SelfContainedTestRule),
+        ("SKY-L045", AlwaysTrueAssertionRule),
+        ("SKY-L046", UncheckedTestResultRule),
+        ("SKY-L047", DuplicateTestRule),
     ]
 
     q_rules = [factory() for rule_id, factory in specs if _enabled(cfg, rule_id)]

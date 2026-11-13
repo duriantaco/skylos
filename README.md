@@ -486,8 +486,10 @@ ownership, work status and outcome notes. Explicit scan uploads can include boun
 CLI outcome receipts, displayed as client claims. See [Cleanup](./docs/cleanup.md) for
 supported edits, receipts, exclusions and limits.
 Python test-quality checks identify constant-true assertions, placeholder-only
-test bodies, adjacent repeated checks over proven plain values, and fixed sleeps
-used to guess Event completion. They appear as review tasks with source evidence
+test bodies, adjacent repeated checks over proven plain values, fixed sleeps
+used to guess Event completion, tests that run no project code, assertions that
+cannot fail (`len(x) >= 0`, `assert (x == 1, "message")`), results stored and
+never checked, and copy-pasted tests. They appear as review tasks with source evidence
 and require a deliberate behavior check before editing. See
 [test-quality checks](./docs/cleanup.md#python-test-quality-checks) for scope and controls.
 See the [five-repository exploratory evaluation](./benchmarks/cleanup/2026-11-10/README.md)

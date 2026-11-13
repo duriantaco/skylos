@@ -55,6 +55,10 @@ Quality scans and the default cleanup scan include these bounded Python checks:
 | `SKY-L041` | A collected test body containing only a docstring, `pass` or `...` | Review fixture/setup checks, then implement the behavior the test names. |
 | `SKY-L042` | An adjacent repeated `assert` over proven plain values, including a builtin `len()` result | Check another property or review whether the repeated check adds evidence. |
 | `SKY-L043` | A fixed positive sleep immediately followed by a positive check of a locally created `threading.Event` | Consider a bounded wait on the completion signal and assert its result. |
+| `SKY-L044` | A test that reads only values it builds itself and pure builtins, so no project code can change its result | Call the code under test and assert on what it returns. |
+| `SKY-L045` | An assertion that is true for every value: `len(x) >= 0`, `x or True`, `assert (x == 1, "message")` | Assert on the value the code is expected to produce. |
+| `SKY-L046` | A test that ends by storing a result it never checks, with no assertion anywhere | Assert on the stored result. |
+| `SKY-L047` | A test with the same decorators, parameters and body as an earlier test | Remove the copy or make it cover another case. |
 
 ```bash
 skylos . --quality --format concise
