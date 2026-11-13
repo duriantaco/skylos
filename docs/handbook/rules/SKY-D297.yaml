@@ -1,0 +1,131 @@
+id: SKY-D297
+title: Reusable workflow gets every secret with secrets inherit
+family: ci-cd
+severity: HIGH
+severity_note: >-
+  The catalog lists HIGH, but the detector reports every finding as
+  MEDIUM.
+languages: [GitHub Actions workflows]
+gate:
+  full: counted
+
+what_it_is: >-
+  A job can call another workflow file, a reusable workflow, with `uses:`.
+  `secrets: inherit` hands that workflow every repository and organization
+  secret the caller can read. SKY-D297 reports each job that calls a
+  reusable workflow this way.
+
+why_it_matters: >-
+  The called workflow, and every action it runs, can read secrets it never
+  needed, such as a production deploy key or a package publish token. One
+  compromised action or a careless edit there then leaks all of them
+  instead of the one it was meant to use.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/deploy-staging.yml
+  expect_line: 12
+  code: |
+    name: Deploy to staging
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      deploy:
+        uses: ./.github/workflows/deploy.yml
+        with:
+          environment: staging
+        secrets: inherit
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/deploy-staging.yml
+  code: |
+    name: Deploy to staging
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      deploy:
+        uses: ./.github/workflows/deploy.yml
+        with:
+          environment: staging
+        secrets:
+          DEPLOY_TOKEN: ${{ secrets.STAGING_DEPLOY_TOKEN }}
+  why: >-
+    The job still passes secrets to the reusable workflow, but names the one
+    it needs. Every other secret stays out of the called workflow's reach.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows`.
+  - >-
+    Looks at jobs that call a reusable workflow with `uses:`, whether it is
+    a file in the same repository or one in another repository.
+  - >-
+    Reports the job when its `secrets` value is exactly `inherit`. A mapping
+    of named secrets is not reported.
+  - >-
+    The trigger and the called workflow are not read. One MEDIUM finding per
+    job, on the first line of the file that contains the word `secrets`.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_secrets_inherit("
+  - path: test/test_github_actions_security.py
+    symbol: "def test_github_actions_scanner_detects_extended_offline_risks("
+
+fix:
+  explanation: >-
+    Declare the secrets the reusable workflow needs under
+    `on.workflow_call.secrets` in that file, and pass exactly those from the
+    caller, each mapped to the secret it should receive.
+  filename: .github/workflows/deploy-staging.yml
+  code: |
+    name: Deploy to staging
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      deploy:
+        uses: ./.github/workflows/deploy.yml
+        with:
+          environment: staging
+        secrets:
+          DEPLOY_TOKEN: ${{ secrets.STAGING_DEPLOY_TOKEN }}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A reusable workflow in the same repository that really uses many
+      secrets is reported the same as an outside one.
+    - >-
+      The finding sits on the first line of the file that contains the word
+      `secrets`, which can be an earlier step that reads `secrets.NAME`, so a
+      marker next to `secrets: inherit` may not match it.
+    - >-
+      Calls to a reusable workflow in another repository can also get
+      SKY-D376, which reports secrets handed to outside code.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D297]` on the reported line or on the line
+        directly above it, one rule per marker. Check the reported line first:
+        it is not always the `secrets: inherit` line.
+      language: yaml
+      code: |
+        uses: ./.github/workflows/deploy.yml
+        # skylos: ignore[SKY-D297] same-repo workflow, reviewed with CODEOWNERS
+        secrets: inherit
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D297"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D376, SKY-D298, SKY-D299]

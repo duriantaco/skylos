@@ -1,0 +1,147 @@
+id: SKY-D323
+title: GitLab CI secret that does not name its ID token
+family: ci-cd
+severity: MEDIUM
+languages: [GitLab CI]
+gate:
+  full: counted
+
+what_it_is: >-
+  A GitLab job can fetch secrets from Vault or another secrets manager by
+  logging in with an ID token from `id_tokens:`. When the job has more
+  than one ID token, each entry under `secrets:` should say which one to
+  use with `token:`. SKY-D323 reports an entry that does not.
+
+why_it_matters: >-
+  Each ID token is made for one audience, such as AWS or Vault. If the
+  file does not say which one goes to Vault, a token meant for AWS can be
+  the one sent, and whoever runs or watches that Vault server receives a
+  token AWS will accept for your project's role.
+
+flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  expect_line: 14
+  code: |
+    stages: [deploy]
+
+    deploy-production:
+      stage: deploy
+      image: bitnami/kubectl:1.31.2
+      environment: production
+      timeout: 20 minutes
+      id_tokens:
+        AWS_ID_TOKEN:
+          aud: sts.amazonaws.com
+        VAULT_ID_TOKEN:
+          aud: https://vault.acme.example
+      secrets:
+        DATABASE_PASSWORD:
+          vault: production/db/password@ops
+          file: false
+      script:
+        - kubectl apply -f k8s/
+
+not_flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  code: |
+    stages: [deploy]
+
+    deploy-production:
+      stage: deploy
+      image: bitnami/kubectl:1.31.2
+      environment: production
+      timeout: 20 minutes
+      id_tokens:
+        VAULT_ID_TOKEN:
+          aud: https://vault.acme.example
+      secrets:
+        DATABASE_PASSWORD:
+          vault: production/db/password@ops
+          file: false
+      script:
+        - kubectl apply -f k8s/
+  why: >-
+    The secret names no token here either, but the job has only one ID
+    token, made for Vault, so there is nothing else GitLab could send.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). Reads every file named exactly
+    `.gitlab-ci.yml` in the scanned folder, skipping `.git`, `node_modules`,
+    `.venv`, `venv`, `build`, `dist` and cache folders. Files pulled in with
+    `include:` are not read, and a file PyYAML's safe loader cannot read
+    (for example one that uses `!reference`) is skipped.
+  - >-
+    Looks at every job, hidden `.template` jobs included, that has its own
+    `secrets:` mapping.
+  - >-
+    Counts the job's ID tokens (its own `id_tokens`, else the one under
+    `default:`). Fewer than two: nothing to report.
+  - >-
+    An entry under `secrets:` is ambiguous when no `token` key appears
+    anywhere inside it.
+  - >-
+    One MEDIUM finding per job, naming the first ambiguous entry, on the
+    first line of the file where that entry's name is written as a key.
+
+source_refs:
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _scan_secret_token_ambiguity("
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _secret_has_explicit_token("
+  - path: test/test_gitlab_ci_security.py
+    symbol: "def test_gitlab_ci_scanner_detects_ambiguous_secret_token"
+
+fix:
+  explanation: >-
+    Add `token:` to every entry under `secrets:`, pointing at the ID token
+    made for that secrets manager.
+  filename: .gitlab-ci.yml
+  code: |
+    stages: [deploy]
+
+    deploy-production:
+      stage: deploy
+      image: bitnami/kubectl:1.31.2
+      environment: production
+      timeout: 20 minutes
+      id_tokens:
+        AWS_ID_TOKEN:
+          aud: sts.amazonaws.com
+        VAULT_ID_TOKEN:
+          aud: https://vault.acme.example
+      secrets:
+        DATABASE_PASSWORD:
+          vault: production/db/password@ops
+          file: false
+          token: $VAULT_ID_TOKEN
+      script:
+        - kubectl apply -f k8s/
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Only the first ambiguous entry of a job is named; fix it and the next
+      one is reported.
+    - >-
+      If another job earlier in the file uses the same secret name as a key,
+      the finding points at that earlier line.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D323]` and a reason on the reported line,
+        or on the line directly above it. Skylos looks for that exact text,
+        so write one rule per marker, with the ID in upper case.
+      language: yaml
+      code: |
+        secrets:
+          # skylos: ignore[SKY-D323] both tokens have the same audience
+          DATABASE_PASSWORD:
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D323"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D319, SKY-D316, SKY-D310]

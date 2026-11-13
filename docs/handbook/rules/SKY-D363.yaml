@@ -1,0 +1,190 @@
+id: SKY-D363
+title: GitHub Actions obfuscated action path or expression
+family: ci-cd
+severity: MEDIUM
+severity_note: >-
+  MEDIUM for an action path with `.`, `..` or empty segments. LOW for an
+  expression that folds to a fixed value or only wraps another value.
+languages: [GitHub Actions workflows, composite actions]
+gate:
+  full: counted
+
+what_it_is: >-
+  A `uses:` path can contain `..` or `.` segments, and a `${{ … }}`
+  expression can hide a fixed value or a plain reference behind `format()`
+  or other functions. GitHub resolves both to something simpler than what
+  the file shows. SKY-D363 reports these spellings.
+
+why_it_matters: >-
+  Reviewers, allow lists and pinning rules match the text they see. A step
+  written as `actions/cache/restore/../save` reads like a cache restore but
+  runs `actions/cache/save`, which writes the cache; an action an allow list
+  would block can be slipped past it the same way.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/ci.yml
+  expect_line: 13
+  code: |
+    name: CI
+    on:
+      pull_request:
+    permissions:
+      contents: read
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - uses: actions/cache/restore/../save@5a3ec84eff668545956fd18022155c47e93e2684
+            with:
+              path: ~/.cache/pip
+              key: pip-${{ hashFiles('requirements.txt') }}
+          - run: python -m pip install -r requirements.txt
+          - run: python -m pytest
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/ci.yml
+  code: |
+    name: CI
+    on:
+      pull_request:
+    permissions:
+      contents: read
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+            with:
+              path: ~/.cache/pip
+              key: pip-${{ hashFiles('requirements.txt') }}
+          - run: python -m pip install -r requirements.txt
+          - run: python -m pytest
+  why: >-
+    An action in a subfolder of its repository, such as
+    `actions/cache/restore`, is normal. Only `.`, `..` and empty segments
+    make the path say something other than what runs.
+
+more_examples:
+  - flagged:
+      language: yaml
+      filename: .github/actions/npm-auth/action.yml
+      expect_line: 8
+      code: |
+        name: npm auth
+        description: Writes the npm token for later steps
+        runs:
+          using: composite
+          steps:
+            - shell: bash
+              env:
+                TOKEN: ${{ format('{0}', inputs.npm-token) }}
+              run: echo "//registry.npmjs.org/:_authToken=${TOKEN}" > ~/.npmrc
+    not_flagged:
+      language: yaml
+      filename: .github/actions/npm-auth/action.yml
+      code: |
+        name: npm auth
+        description: Writes the npm token for later steps
+        runs:
+          using: composite
+          steps:
+            - shell: bash
+              env:
+                TOKEN: ${{ inputs.npm-token }}
+              run: echo "//registry.npmjs.org/:_authToken=${TOKEN}" > ~/.npmrc
+      why: >-
+        The input is read directly. `format('{0}', x)` gives the same text as
+        `x`, so wrapping it only makes a search for `inputs.npm-token` miss
+        it; that finding is LOW.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows` and `action.yml` /
+    `action.yaml` composite actions.
+  - >-
+    Checks every job-level and step-level `uses:` that names a repository
+    (`owner/repo/path@ref`, not `./local`, not `docker://` and not one built
+    from `${{ … }}`). A path segment that is `.`, `..` or empty is reported
+    as MEDIUM, with the plain path GitHub resolves it to when there is one.
+  - >-
+    Reads every `${{ … }}` in the file, and `if:` conditions written without
+    one. It works out the parts that use no context (literals, operators and
+    `format`, `join`, `contains`, `startsWith`, `endsWith`, `case`,
+    `toJSON`, `fromJSON`). A part that always gives the same value is
+    reported as LOW, unless it is a plain literal or `fromJSON('…')` of a
+    literal, which is how lists and numbers are written.
+  - >-
+    Also reports `format('{0}', x)` and `fromJSON(toJSON(x))` as LOW: both
+    only give back `x`. An expression too large to work out within a fixed
+    budget is skipped.
+  - >-
+    Reports on the line of the `uses:` value or of the expression.
+
+source_refs:
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _audit_uses_paths("
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _path_oddities("
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _collect_foldings("
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _identity("
+  - path: test/test_github_actions_workflow_audits.py
+    symbol: "def test_constant_folding("
+
+fix:
+  explanation: >-
+    Write the action path GitHub really runs, and write fixed values and
+    references directly instead of wrapping them.
+  filename: .github/workflows/ci.yml
+  code: |
+    name: CI
+    on:
+      pull_request:
+    permissions:
+      contents: read
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+            with:
+              path: ~/.cache/pip
+              key: pip-${{ hashFiles('requirements.txt') }}
+          - run: python -m pip install -r requirements.txt
+          - run: python -m pytest
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A switch such as `if: ${{ !true }}`, used to pause a step for a while,
+      is reported as LOW.
+    - >-
+      `format('{0}', x)` used on purpose to turn a number into text is
+      reported.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D363]` and a reason on the reported line or
+        on the line directly above it, one rule per marker.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D363] paused until the 2.0 migration lands
+        if: ${{ !true }}
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D363"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D292, SKY-D307, SKY-D294]

@@ -1,0 +1,152 @@
+id: SKY-D295
+title: Job runs on a self-hosted runner
+family: ci-cd
+severity: HIGH
+languages: [GitHub Actions workflows]
+gate:
+  full: counted
+
+what_it_is: >-
+  A self-hosted runner is a machine you own that GitHub sends jobs to,
+  instead of a fresh virtual machine GitHub throws away after each job.
+  SKY-D295 reports every job whose `runs-on:` may pick such a runner, so a
+  person can check who is able to start that job.
+
+why_it_matters: >-
+  Code in a job runs on the runner with its network access and whatever the
+  last job left behind. If a pull request from a fork can reach the runner,
+  its author can install a backdoor that reads the secrets, caches and
+  build outputs of every later job, including your releases.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/gpu-tests.yml
+  expect_line: 9
+  code: |
+    name: GPU tests
+    on:
+      pull_request:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      gpu-tests:
+        runs-on: [self-hosted, linux, gpu]
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - run: pip install -e ".[test]" && pytest tests/gpu
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/unit-tests.yml
+  code: |
+    name: Unit tests
+    on:
+      pull_request:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      unit-tests:
+        strategy:
+          matrix:
+            os: [ubuntu-latest, macos-15, windows-2022]
+        runs-on: ${{ matrix.os }}
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - run: pip install -e ".[test]" && pytest tests/unit
+  why: >-
+    `runs-on` is an expression, but it reads a matrix written out in the
+    file, and every value in it is a GitHub-hosted label. Skylos expands the
+    matrix and finds no row that could reach a machine you own.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows`. Composite actions have
+    no `runs-on`, so they are not checked.
+  - >-
+    Skips a job without `runs-on` and a job that calls a reusable workflow
+    with `uses:`; the called workflow is checked on its own.
+  - >-
+    Reports the job when one of its labels is `self-hosted` (any case), when
+    `runs-on` names a runner `group`, or when it is empty, a mapping with
+    other keys than `labels`, or a label that is not text.
+  - >-
+    A label written as an expression `${{ … }}` counts, unless it is exactly
+    `${{ matrix.<name> }}` and every row of a matrix written in the file
+    gives labels from GitHub's list of hosted images, such as
+    `ubuntu-latest`, `windows-2022` or `macos-15`.
+  - >-
+    Any other fixed label, such as `gpu-large`, is not reported, because
+    only the `self-hosted` label proves a machine you own.
+  - >-
+    The trigger is not considered. One HIGH finding per job, on its
+    `runs-on` line.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_self_hosted_runners("
+  - path: skylos/rules/config/cicd/runner_labels.py
+    symbol: "def runner_may_be_self_hosted("
+  - path: skylos/rules/config/cicd/runner_labels.py
+    symbol: "_HOSTED_LABELS = frozenset("
+  - path: test/test_github_actions_runner_labels.py
+    symbol: "def test_literal_hosted_matrix("
+
+fix:
+  explanation: >-
+    Do not let pull requests reach a self-hosted runner. Run them on
+    GitHub-hosted runners, and keep the self-hosted job for events only
+    people with write access can cause, such as a push to `main`. Use
+    ephemeral runners, which take one job and are then destroyed, and record
+    that review next to `runs-on`.
+  filename: .github/workflows/gpu-tests.yml
+  code: |
+    name: GPU tests
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      gpu-tests:
+        # skylos: ignore[SKY-D295] ephemeral runner, pushes to main only
+        runs-on: [self-hosted, linux, gpu]
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - run: pip install -e ".[test]" && pytest tests/gpu
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A self-hosted job that only runs on `push`, `schedule` or
+      `workflow_dispatch` is reported the same as one that runs on pull
+      requests from forks, because the trigger is not read.
+    - >-
+      Missed: a self-hosted runner picked by a custom label alone, such as
+      `runs-on: gpu-large`, without the `self-hosted` label.
+    - >-
+      `runs-on: ${{ inputs.runner }}` and matrices built with `fromJSON()`
+      are reported, because Skylos cannot see which label they become.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D295]` as a YAML comment at the end of the
+        `runs-on` line or on its own line directly above it, one rule per
+        marker.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D295] ephemeral runner, pushes to main only
+        runs-on: [self-hosted, linux, gpu]
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D295"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D290, SKY-D294, SKY-D322]

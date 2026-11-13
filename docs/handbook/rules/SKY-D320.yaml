@@ -1,0 +1,173 @@
+id: SKY-D320
+title: GitLab CI release job restores a cache
+family: ci-cd
+severity: HIGH
+severity_note: >-
+  The catalog lists HIGH, but the detector reports every finding as MEDIUM.
+languages: [GitLab CI]
+gate:
+  full: counted
+
+what_it_is: >-
+  A GitLab `cache:` keeps files such as downloaded packages between jobs and
+  pipelines. SKY-D320 reports a job that releases or deploys and still
+  restores a cache, its own or one it inherits from `default:` or the top
+  of the file.
+
+why_it_matters: >-
+  Other jobs and pipelines write the same cache, and GitLab keeps a separate
+  one only for protected branches and tags. A job on a less trusted ref that
+  uses the same key can leave a tampered package in `.npm/`, and the release
+  job then installs it and ships it to your users.
+
+flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  expect_line: 16
+  code: |
+    stages: [test, release]
+
+    default:
+      image: node:22-bookworm
+      cache:
+        key:
+          files: [package-lock.json]
+        paths: [.npm/]
+
+    test:
+      stage: test
+      script:
+        - npm ci --cache .npm --prefer-offline
+        - npm test
+
+    publish:
+      stage: release
+      timeout: 15 minutes
+      rules:
+        - if: $CI_COMMIT_TAG
+      script:
+        - npm ci --cache .npm --prefer-offline
+        - npm publish
+
+not_flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  code: |
+    stages: [test, release]
+
+    default:
+      image: node:22-bookworm
+
+    test:
+      stage: test
+      cache:
+        key:
+          files: [package-lock.json]
+        paths: [.npm/]
+      script:
+        - npm ci --cache .npm --prefer-offline
+        - npm test
+
+    publish:
+      stage: release
+      timeout: 15 minutes
+      rules:
+        - if: $CI_COMMIT_TAG
+      script:
+        - npm ci
+        - npm publish
+  why: >-
+    Only the `test` job uses the cache. The `publish` job sets no cache and
+    inherits none, so it installs every package fresh from the registry.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). Reads every file named exactly
+    `.gitlab-ci.yml` in the scanned folder, skipping `.git`, `node_modules`,
+    `.venv`, `venv`, `build`, `dist` and cache folders. Files pulled in with
+    `include:` are not read, and a file PyYAML's safe loader cannot read
+    (for example one that uses `!reference`) is skipped.
+  - >-
+    Picks release-like jobs, hidden `.template` jobs excluded: the job name
+    contains `deploy`, `release` or `publish`; its `stage` is `deploy`,
+    `deployment`, `release`, `publish` or `production`; its `environment` is
+    `prod` or `production`; it has `release`, `id_tokens` or `identity`; or a
+    command starts with a publish or deploy tool such as `docker push`, `npm
+    publish`, `twine upload`, `cargo publish`, `helm upgrade`, `kubectl
+    apply` or `terraform apply`.
+  - >-
+    Takes the job's `cache` (its own, else from `default:`, else top-level).
+    Any value except `false`, `[]`, `{}` or none counts as on.
+  - >-
+    One MEDIUM finding per job, on the first line that contains the job
+    name followed by `:`.
+
+source_refs:
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _scan_release_cache("
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _is_release_like_job("
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _cache_enabled("
+  - path: test/test_gitlab_ci_security.py
+    symbol: "def test_gitlab_ci_scanner_detects_workflow_supply_chain_risks"
+
+fix:
+  explanation: >-
+    Turn the cache off in release and deploy jobs with `cache: []`, or give
+    them a key no other job writes. Pass build output to them as
+    `artifacts` from a job in the same pipeline.
+  filename: .gitlab-ci.yml
+  code: |
+    stages: [test, release]
+
+    default:
+      image: node:22-bookworm
+      cache:
+        key:
+          files: [package-lock.json]
+        paths: [.npm/]
+
+    test:
+      stage: test
+      script:
+        - npm ci --cache .npm --prefer-offline
+        - npm test
+
+    publish:
+      stage: release
+      timeout: 15 minutes
+      cache: []
+      rules:
+        - if: $CI_COMMIT_TAG
+      script:
+        - npm ci
+        - npm publish
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A cache with its own key that only release jobs write is reported the
+      same as a shared one.
+    - >-
+      A job is release-like by name alone, so `release-notes-preview` with
+      a cache is reported.
+    - >-
+      The flagged example also gets SKY-D340 for `npm publish`; that rule
+      is separate.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D320]` and a reason on the reported line,
+        or on the line directly above it. Skylos looks for that exact text,
+        so write one rule per marker, with the ID in upper case.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D320] cache key is written only by release jobs
+        publish:
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D320"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D308, SKY-D321, SKY-D340]

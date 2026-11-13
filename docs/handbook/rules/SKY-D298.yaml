@@ -1,0 +1,156 @@
+id: SKY-D298
+title: Workflow reads the whole secrets context
+family: ci-cd
+severity: HIGH
+severity_note: >-
+  The catalog lists HIGH, but the detector reports every finding as
+  MEDIUM.
+languages: [GitHub Actions workflows, composite actions]
+gate:
+  full: counted
+
+what_it_is: >-
+  GitHub normally sends a job only the secrets its expressions name, such
+  as `secrets.EU_TOKEN`. When an expression picks a secret by a computed
+  name (`secrets[format(...)]`) or turns all of them into JSON
+  (`toJSON(secrets)`), GitHub cannot tell which ones are needed and sends
+  every secret the workflow can read. SKY-D298 reports those expressions.
+
+why_it_matters: >-
+  Every step and action in the job then runs on a machine that holds all
+  of the repository's and organization's secrets, not just the deploy
+  token it needed. A compromised dependency or action in that job can read
+  the publish token, cloud keys and the rest.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/deploy.yml
+  expect_line: 20
+  code: |
+    name: Deploy
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      deploy:
+        runs-on: ubuntu-latest
+        strategy:
+          matrix:
+            region: [eu, us]
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - run: ./scripts/deploy.sh "$REGION"
+            env:
+              REGION: ${{ matrix.region }}
+              TOKEN: ${{ secrets[format('{0}_TOKEN', matrix.region)] }}
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/deploy.yml
+  code: |
+    name: Deploy
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      deploy:
+        runs-on: ubuntu-latest
+        strategy:
+          matrix:
+            region: [eu, us]
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - run: ./scripts/deploy.sh "$REGION"
+            env:
+              REGION: ${{ matrix.region }}
+              TOKEN: ${{ matrix.region == 'eu' && secrets.EU_TOKEN || secrets.US_TOKEN }}
+  why: >-
+    The token still depends on the region, but both possible secrets are
+    named in full. GitHub sends just those two, and Skylos only reports a
+    computed name or the whole context.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows` and `action.yml` /
+    `action.yaml` files.
+  - >-
+    Looks at every text value in the file: `run:` scripts, `env:`, `with:`
+    inputs, `if:` conditions and the rest. Keys are not read.
+  - >-
+    Reports a `${{ … }}` expression that contains `toJSON(secrets)`, or
+    `secrets[…]` whose index is not a quoted name, in any letter case.
+    `secrets['EU_TOKEN']` and `secrets.EU_TOKEN` are not reported.
+  - >-
+    One MEDIUM finding per value, on the first line of the file that
+    contains the value's first line.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_overprovisioned_secrets("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "OVERPROVISIONED_SECRETS_RE = re.compile("
+  - path: test/test_github_actions_security.py
+    symbol: "def test_github_actions_scanner_detects_extended_offline_risks("
+
+fix:
+  explanation: >-
+    Give each region a GitHub environment that holds its own `TOKEN`
+    secret, and let the job pick the environment. The step then names one
+    secret, and each environment can also require an approval.
+  filename: .github/workflows/deploy.yml
+  code: |
+    name: Deploy
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      deploy:
+        runs-on: ubuntu-latest
+        strategy:
+          matrix:
+            region: [eu, us]
+        environment: production-${{ matrix.region }}
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - run: ./scripts/deploy.sh "$REGION"
+            env:
+              REGION: ${{ matrix.region }}
+              TOKEN: ${{ secrets.TOKEN }}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A computed index whose possible names are all listed nearby, such as a
+      matrix of two regions, is reported the same as one fed from outside
+      input.
+    - >-
+      The finding sits on the first line of the file that contains the same
+      text, which can be an earlier copy of the expression.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D298]` on the reported line or on the line
+        directly above it, one rule per marker.
+      language: yaml
+      code: |
+        env:
+          # skylos: ignore[SKY-D298] repo holds only these two deploy tokens
+          TOKEN: ${{ secrets[format('{0}_TOKEN', matrix.region)] }}
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D298"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D297, SKY-D299, SKY-D362]

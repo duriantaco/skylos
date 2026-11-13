@@ -1,0 +1,224 @@
+id: SKY-D340
+title: Package or image published outside a release
+family: security
+severity: HIGH
+languages: [GitHub Actions workflows, GitLab CI, Shell, Dockerfile, Python, TypeScript/JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  Commands such as `npm publish`, `twine upload`, `cargo publish` and
+  `docker push` put a new version where your users install it from.
+  SKY-D340 reports such a command wherever it is written, unless a GitHub
+  Actions workflow shows that it only runs for a published GitHub release.
+
+why_it_matters: >-
+  A publish step in an ordinary CI job ships whatever reached the branch,
+  with no person deciding that this is a release. A bad merge, or anyone
+  who can push to that branch or change the workflow, puts code on every
+  machine that installs the next version, using your registry token.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/ci.yml
+  expect_line: 20
+  code: |
+    name: CI
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      test-and-publish:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+            with:
+              node-version: 22
+              registry-url: https://registry.npmjs.org
+          - run: npm ci --ignore-scripts
+          - run: npm test
+          - run: npm publish --access public
+            env:
+              NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/ci.yml
+  code: |
+    name: CI
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      test-and-publish:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+            with:
+              node-version: 22
+              registry-url: https://registry.npmjs.org
+          - run: npm ci --ignore-scripts
+          - run: npm test
+          - run: npm publish --dry-run --access public
+  why: >-
+    `npm publish --dry-run` packs the package and prints what would be
+    uploaded, without uploading anything. Skylos reads the last dry-run
+    setting before `--`, so `--dry-run false` or `--no-dry-run` would still
+    be reported.
+
+more_examples:
+  - flagged:
+      language: shell
+      filename: scripts/release.sh
+      expect_line: 5
+      code: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        rm -rf dist
+        python -m build
+        twine upload dist/*
+    not_flagged:
+      language: shell
+      filename: scripts/release.sh
+      code: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        rm -rf dist
+        python -m build
+        twine check --strict dist/*
+      why: >-
+        `twine check` only validates the built files on this machine. Shell
+        scripts get no release exception: any `twine upload` in a script is
+        reported, because Skylos cannot tell who runs the script.
+
+how_skylos_decides:
+  - >-
+    Reads shell commands in GitHub Actions `run:` steps, GitLab CI script
+    items, Dockerfile `RUN` instructions, `.sh`, `.bash`, `.zsh`, `.ksh` and
+    `.bats` files, fixed command strings in Python `os.system()`-style or
+    `shell=True` calls, and fixed strings passed to `child_process.exec()`
+    in TypeScript and JavaScript.
+  - >-
+    Splits each command at `;`, `&&`, `||` and `|`, not at line breaks, and
+    looks at how each part starts.
+  - >-
+    Reports a part that starts with `npm publish`, `pnpm publish`,
+    `yarn npm publish`, `cargo publish`, `maturin publish`, `twine upload`,
+    `gem push`, `helm push` or `docker push`, unless the last dry-run
+    setting asks for a dry run.
+  - >-
+    In a GitHub Actions workflow it skips the step when the workflow's only
+    trigger is `release` (with no other options than known activity
+    `types`), or when the step's or job's `if:` can only be true for
+    `github.event_name == 'release'`.
+  - >-
+    One HIGH finding per step, on its `run:` line in GitHub Actions and on
+    the command's line elsewhere.
+
+source_refs:
+  - path: skylos/security/command_guard_policy.py
+    symbol: "def _is_publish_command("
+  - path: skylos/security/command_guard_policy.py
+    symbol: "PUBLISH_COMMAND_PREFIXES = ("
+  - path: skylos/rules/config/cicd/release_context.py
+    symbol: "def has_release_context("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_run_blocks("
+  - path: test/test_github_actions_release_context.py
+    symbol: "def test_other_events_do_not_prove_release_intent("
+
+fix:
+  explanation: >-
+    Remove the publish step from the CI workflow and publish from a workflow
+    that only a published GitHub release starts. Give its job an
+    environment with required reviewers, so a person approves each upload.
+  filename: .github/workflows/release.yml
+  code: |
+    name: Release
+    on:
+      release:
+        types: [published]
+    permissions:
+      contents: read
+    jobs:
+      publish:
+        runs-on: ubuntu-latest
+        environment: npm
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+            with:
+              node-version: 22
+              registry-url: https://registry.npmjs.org
+          - run: npm ci --ignore-scripts
+          - run: npm publish --access public
+            env:
+              NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A publish on a tag push (`push: tags: ['v*']`), a common and reviewed
+      release setup, is reported: only the `release` event counts as release
+      intent. So is a publish in a workflow that also runs on other events,
+      unless its step or job `if:` requires the release event.
+    - >-
+      Missed: a publish command on a later line of a multi-line `run: |`
+      block (only the first line of each `;`/`&&` part is read), publishes
+      after `sudo`, `env` or a `NAME=value` prefix, `uv publish`, `poetry
+      publish`, `gh release upload` and publishing actions such as
+      `pypa/gh-action-pypi-publish`.
+    - >-
+      The flagged example and the fix also get SKY-D364 for the long-lived
+      `NPM_TOKEN`, a separate finding: npm offers trusted publishing, which
+      needs no stored token.
+  suppress:
+    - check: inline
+      text: >-
+        In a workflow the marker must be a real YAML comment: at the end of
+        the `run:` line or on its own line directly above it, one rule per
+        marker. In other files it goes on the reported line.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D340] main is protected and every merge is a release
+        - run: npm publish --access public
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: yaml
+          filename: .github/workflows/ci.yml
+          code: |
+            name: CI
+            on:
+              push:
+                branches: [main]
+            permissions:
+              contents: read
+            jobs:
+              publish:
+                runs-on: ubuntu-latest
+                steps:
+                  - name: "Publish (skylos: ignore[SKY-D340])"
+                    run: npm publish --access public
+      text: >-
+        A marker inside a quoted value, such as a step `name:` or the `run:`
+        text itself, is not a comment and does not silence the finding.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D340"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D374, SKY-D364, SKY-D371, SKY-D341]

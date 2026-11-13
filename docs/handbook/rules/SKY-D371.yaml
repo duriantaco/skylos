@@ -1,0 +1,284 @@
+id: SKY-D371
+title: Unpinned tool installed in a job that holds publish credentials
+family: ci-cd
+severity: HIGH
+severity_note: >-
+  HIGH when the job holds a publish credential or runs a publish command,
+  or can read all secrets (`secrets: inherit`, `toJSON(secrets)`) while
+  another job in the repository uses a publish secret. MEDIUM when it only
+  has `id-token: write`, or can read all secrets and no job names a
+  publish secret.
+languages: [GitHub Actions workflows, GitLab CI]
+gate:
+  full: listed
+  diff: counted
+  note: >-
+    A diff scan counts a finding whose rule, file and job name are not
+    among the merge base's findings, so a job that already had an unpinned
+    tool is not new when another is added. A baseline scan counts it like a
+    diff scan when the baseline's `rule_coverage` lists it.
+
+what_it_is: >-
+  A CI job that can publish packages, because it holds a registry token or
+  can mint an OIDC token, also installs a tool without an exact version,
+  such as `pip install twine`. Whatever release of that tool the registry
+  serves on the day runs with the job's publish credentials.
+
+why_it_matters: >-
+  If an attacker takes over the tool's package for a day, its next release
+  runs inside your release job and can read the registry token or request
+  an OIDC token, then publish a poisoned version of your package. LiteLLM's
+  PyPI token leaked this way from a CI job that installed a scanner without
+  a version.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/release.yml
+  expect_line: 17
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+    jobs:
+      pypi:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+            with:
+              python-version: "3.12"
+          - run: python -m pip install --upgrade pip build twine
+          - run: python -m build
+          - run: twine upload dist/*
+            env:
+              TWINE_USERNAME: __token__
+              TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/release.yml
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+    jobs:
+      build:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - run: python -m pip install --upgrade pip build
+          - run: python -m build
+          - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+            with:
+              name: dist
+              path: dist/
+      pypi:
+        needs: build
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+            with:
+              name: dist
+              path: dist/
+          - run: python -m pip install twine==6.1.0
+          - run: twine upload dist/*
+            env:
+              TWINE_USERNAME: __token__
+              TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+  why: >-
+    `build` is still installed without a version, but in a job with no
+    publish credential, no publish command and no `id-token`. The job that
+    holds the PyPI token installs `twine` at an exact version (`==6.1.0`).
+    pip upgrading itself is never counted.
+
+more_examples:
+  - flagged:
+      language: yaml
+      filename: .gitlab-ci.yml
+      expect_line: 13
+      code: |
+        stages: [build, publish]
+
+        publish:
+          stage: publish
+          image: python:3.12-slim
+          id_tokens:
+            PYPI_ID_TOKEN:
+              aud: pypi
+          rules:
+            - if: $CI_COMMIT_TAG
+          script:
+            - python -m pip install build==1.2.2
+            - python -m pip install twine
+            - python -m build
+            - twine upload dist/*
+    not_flagged:
+      language: yaml
+      filename: .gitlab-ci.yml
+      code: |
+        stages: [build, publish]
+
+        publish:
+          stage: publish
+          image: python:3.12-slim
+          id_tokens:
+            PYPI_ID_TOKEN:
+              aud: pypi
+          rules:
+            - if: $CI_COMMIT_TAG
+          script:
+            - python -m pip install build==1.2.2
+            - python -m pip install twine==6.1.0
+            - python -m build
+            - twine upload dist/*
+      why: >-
+        Both tools are pinned with `==` to one exact release, so a new
+        upload to PyPI does not change what this job runs.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). The `ca9` library reads every `*.yml`
+    and `*.yaml` file directly in `.github/workflows`, the local composite
+    actions those workflows call (`uses: ./path`), and `.gitlab-ci.yml`
+    with its local includes.
+  - >-
+    Picks the jobs that can publish: a job with `id-token: write` (or
+    GitLab `id_tokens:`), a publish credential (an environment variable
+    such as `NODE_AUTH_TOKEN` or `TWINE_PASSWORD` set from an expression,
+    or a secret whose name contains NPM, PYPI, TWINE, CARGO_REGISTRY,
+    CRATES_IO, RUBYGEMS, GEM_HOST or NUGET), or a publish command (`npm
+    publish`, `twine upload`, `uv publish`, `cargo publish`,
+    `pypa/gh-action-pypi-publish` and others). In GitHub Actions a job that
+    gets all secrets (`secrets: inherit`, `toJSON(secrets)`) counts too.
+  - >-
+    Lists the tools that job installs or fetches in its `run:` steps
+    (GitLab `script:`, `before_script:` and `after_script:`): `pip
+    install <name>`, `npm install <name>`, `npx`, `pnpm dlx`, `yarn dlx`,
+    `uvx`, `pipx`, `go install`, `cargo install`, `apt-get install`, `brew
+    install` and more, a `curl … | sh`, a downloaded file that is then run,
+    and `setup-*` actions whose version input is missing or floating
+    (`latest`, `stable`, `*`). GitHub's own `actions/setup-node`-style
+    runtime actions without a version input are skipped.
+  - >-
+    Counts a tool as pinned when it names one exact version (`==1.2.3` for
+    pip, `@1.2.3` for npm, a version for Go, Cargo or apt that is not
+    `latest` or a branch), when pip runs with `--require-hashes` or
+    `--hash`, or, for a downloaded file, when a checksum or signature check
+    follows. pip and npm upgrading themselves are skipped, and `npx` of a
+    tool listed in the repository's `package.json` is not a fetch.
+  - >-
+    Reports one finding per job, on the line of its first unpinned tool,
+    listing every unpinned tool and the credentials the job can reach.
+
+source_refs:
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "\"unpinned_tool_in_credentialed_job\": ("
+    note: >-
+      ca9 `audit_workflows` decides the rule (`ca9/ci/audit.py`
+      `_unpinned_tools`, tool parsing in `ca9/ci/shell.py`); this page was
+      checked against ca9 0.7.0.
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "def scan_agent_publish("
+  - path: skylos/core/gatekeeper.py
+    symbol: "FULL_SCAN_REPORT_ONLY_RULES = frozenset("
+
+fix:
+  explanation: >-
+    Pin every tool the publish job installs to one exact version (and, for
+    pip, hashes in a requirements file), or install and run the tool in a
+    separate job that holds no publish credentials and no `id-token`.
+  filename: .github/workflows/release.yml
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+    jobs:
+      pypi:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+            with:
+              python-version: "3.12"
+          - run: python -m pip install --upgrade pip build==1.2.2 twine==6.1.0
+          - run: python -m build
+          - run: twine upload dist/*
+            env:
+              TWINE_USERNAME: __token__
+              TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Operating-system packages count as tools: `apt-get install -y jq`
+      without `=version`, and every `brew install`, are reported in a
+      publish job, although the distribution signs them.
+    - >-
+      A version fixed outside the command, such as a constraints file
+      (`pip install -c constraints.txt twine`) or a version stored in a
+      shell variable defined in another step, is not seen.
+    - >-
+      The flagged example also gets SKY-D340 for `twine upload` and
+      SKY-D364 for the stored PyPI token. Both are separate findings about
+      the same job.
+  suppress:
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: yaml
+          filename: .github/workflows/release.yml
+          code: |
+            name: Release
+            on:
+              push:
+                tags: ["v*"]
+            permissions:
+              contents: read
+            jobs:
+              pypi:
+                runs-on: ubuntu-latest
+                steps:
+                  - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                    with:
+                      persist-credentials: false
+                  - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+                    with:
+                      python-version: "3.12"
+                  # skylos: ignore[SKY-D371] handbook check
+                  - run: python -m pip install --upgrade pip build twine
+                  - run: python -m build
+                  - run: twine upload dist/*
+                    env:
+                      TWINE_USERNAME: __token__
+                      TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+      text: >-
+        Skylos reads no inline marker for this rule; a `# skylos: ignore`
+        comment in the workflow does not hide it.
+    - check: baseline
+      text: >-
+        Accept a reviewed job with a baseline: `skylos baseline .`, then
+        `--baseline`. The entry matches the rule, file and job name, not the
+        line. In pull-request CI (`SKYLOS_POLICY_BASE`), the entry must also
+        be in the base commit's `.skylos/baseline.json`.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D371"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D364, SKY-D340, SKY-D372, SKY-D373, SKY-D341]

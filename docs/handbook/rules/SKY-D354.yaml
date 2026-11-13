@@ -1,0 +1,225 @@
+id: SKY-D354
+title: AI agent action version with a published advisory
+family: ci-cd
+severity: HIGH
+severity_note: >-
+  GitHub rates the run-gemini-cli advisory CRITICAL: Skylos reports it HIGH
+  when an event outsiders can cause reaches the step, MEDIUM otherwise.
+  The claude-code-action advisory is rated MEDIUM and is reported MEDIUM or
+  LOW the same way.
+languages: [GitHub Actions workflows]
+gate:
+  full: counted
+  note: >-
+    `skylos cicd risk-review` also marks a new HIGH finding of this rule as
+    "CI weakened", which needs a human approval.
+
+what_it_is: >-
+  A GitHub security advisory (GHSA) is a public notice that a release has a
+  vulnerability and which release fixes it. SKY-D354 reports AI agent
+  actions in a workflow that are pinned to a release with such an advisory.
+  The list of advisories ships with Skylos, so no network is needed.
+
+why_it_matters: >-
+  Both advisories let a pull request or issue take over the agent: before
+  the fixes, a pull request's `.mcp.json` could make Claude Code run code
+  and read the workflow's secrets, and Gemini CLI applied a pull request's
+  own settings and ignored tool limits. A pin to an old release keeps that
+  hole open after the fix ships.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/gemini-review.yml
+  expect_line: 18
+  code: |
+    name: Gemini review
+    on:
+      issue_comment:
+        types: [created]
+    permissions:
+      contents: read
+      pull-requests: write
+    jobs:
+      review:
+        if: >-
+          github.event.issue.pull_request &&
+          contains(github.event.comment.body, '@gemini-cli /review')
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - uses: google-github-actions/run-gemini-cli@v0.1.21
+            with:
+              gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+              prompt: Review this pull request and post your findings as comments.
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/gemini-review.yml
+  code: |
+    name: Gemini review
+    on:
+      issue_comment:
+        types: [created]
+    permissions:
+      contents: read
+      pull-requests: write
+    jobs:
+      review:
+        if: >-
+          github.event.issue.pull_request &&
+          contains(github.event.comment.body, '@gemini-cli /review')
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - uses: google-github-actions/run-gemini-cli@v0.1.22
+            with:
+              gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+              gemini_cli_version: 0.39.1
+              prompt: Review this pull request and post your findings as comments.
+  why: >-
+    It is still pinned to exact versions, but both are fixed releases: the
+    action from v0.1.22 and Gemini CLI itself from 0.39.1. Pinning the CLI
+    below 0.39.1 would be reported on the `gemini_cli_version` line.
+
+more_examples:
+  - flagged:
+      language: yaml
+      filename: .github/workflows/claude.yml
+      expect_line: 15
+      code: |
+        name: Claude
+        on:
+          issue_comment:
+            types: [created]
+        jobs:
+          claude:
+            if: contains(github.event.comment.body, '@claude')
+            runs-on: ubuntu-latest
+            permissions:
+              contents: write
+              issues: write
+              pull-requests: write
+            steps:
+              - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+              - uses: anthropics/claude-code-action@1b422b3517b51140e4484faab676c5e68b914866
+                with:
+                  anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+    not_flagged:
+      language: yaml
+      filename: .github/workflows/claude.yml
+      code: |
+        name: Claude
+        on:
+          issue_comment:
+            types: [created]
+        jobs:
+          claude:
+            if: contains(github.event.comment.body, '@claude')
+            runs-on: ubuntu-latest
+            permissions:
+              contents: write
+              issues: write
+              pull-requests: write
+            steps:
+              - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+              - uses: anthropics/claude-code-action@1ba15be4f0b0c9a026c0c7986668f8f2aa998440
+                with:
+                  anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+      why: >-
+        Both are full commit pins. Skylos looks each commit up in a table of
+        release commits: the flagged one is v1.0.73, the last affected
+        release, this one is v1.0.74, which has the fix.
+
+how_skylos_decides:
+  - >-
+    Finds `anthropics/claude-code-action` and
+    `google-github-actions/run-gemini-cli` steps in `.github/workflows` files.
+  - >-
+    Reads the version from the `@` reference: a tag such as `v1.0.73`, or a
+    full commit SHA found in a table of each release's commit that ships
+    with Skylos. Moving tags such as `v1`, branches and unknown commits are
+    not reported.
+  - >-
+    claude-code-action 1.0.0 to 1.0.73 has GHSA-8q5r-mmjf-575q (fixed in
+    1.0.74). run-gemini-cli before 0.1.22 has GHSA-wpqr-6v78-jr5g; on a
+    fixed action, a `gemini_cli_version` below 0.39.1 (or
+    `0.40.0-preview.2`) has it too.
+  - >-
+    HIGH (Gemini) or MEDIUM (Claude) when the workflow has a trigger that
+    outsiders can cause, such as `issue_comment` or `pull_request_target`,
+    and it reaches the step, even through an actor check; one step lower
+    otherwise.
+  - >-
+    One finding per advisory, on the `uses:` line or the
+    `gemini_cli_version` line. The inline marker must be a YAML comment.
+
+source_refs:
+  - path: skylos/rules/config/cicd/ai_agents.py
+    symbol: "def _report_advisories("
+  - path: skylos/rules/config/cicd/ai_agents.py
+    symbol: "_GEMINI_ADVISORY = ("
+  - path: skylos/rules/config/cicd/ai_agents.py
+    symbol: "def _release("
+  - path: skylos/rules/config/cicd/ai_agent_versions.py
+    symbol: "CLAUDE_CODE_ACTION_RELEASES: dict[str, str] = {"
+  - path: test/test_github_actions_ai_agents.py
+    symbol: "def test_known_advisory_versions("
+
+fix:
+  explanation: >-
+    Upgrade to a fixed release. If you pin actions by commit, as SKY-D292
+    asks, pin the commit of a fixed release and let Dependabot propose new
+    ones, so the pin does not freeze a vulnerable version.
+  filename: .github/workflows/gemini-review.yml
+  code: |
+    name: Gemini review
+    on:
+      issue_comment:
+        types: [created]
+    permissions:
+      contents: read
+      pull-requests: write
+    jobs:
+      review:
+        if: >-
+          github.event.issue.pull_request &&
+          contains(github.event.comment.body, '@gemini-cli /review')
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - uses: google-github-actions/run-gemini-cli@v0.1.22
+            with:
+              gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+              prompt: Review this pull request and post your findings as comments.
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Only these two advisories and these two actions are known; the table
+      is updated with Skylos releases, so a newer advisory is missed until
+      then. `claude-code-base-action`, CLI agents in `run:` blocks and
+      Claude v0 releases are not checked.
+    - >-
+      A commit that is not a release commit, for example a fork's, is
+      treated as unknown and not reported.
+  suppress:
+    - check: inline
+      text: >-
+        Put a YAML comment with exactly one rule at the end of the reported
+        line or on its own line directly above it.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D354] upgrade tracked in #482, workflow disabled
+        - uses: google-github-actions/run-gemini-cli@v0.1.21
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D354"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D350, SKY-D352, SKY-D292, SKY-D353]

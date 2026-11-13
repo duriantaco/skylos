@@ -1,0 +1,127 @@
+id: SKY-D322
+title: GitLab CI runner tag set from a variable
+family: ci-cd
+severity: MEDIUM
+languages: [GitLab CI]
+gate:
+  full: counted
+
+what_it_is: >-
+  GitLab sends a job to a runner whose tags match the job's `tags:` list.
+  SKY-D322 reports a tag built from a CI/CD variable, such as
+  `$RUNNER_TAG`, because the variable decides at run time which machine
+  runs the job.
+
+why_it_matters: >-
+  Variables can be set by whoever starts a pipeline with variables or a
+  trigger token. Setting `RUNNER_TAG=prod-deployer` can move a job onto a
+  privileged runner that holds production credentials or keeps state
+  between jobs, where its script then runs.
+
+flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  expect_line: 11
+  code: |
+    stages: [deploy]
+
+    variables:
+      RUNNER_TAG: shared-small
+
+    deploy-staging:
+      stage: deploy
+      image: bitnami/kubectl:1.31.2
+      timeout: 20 minutes
+      tags:
+        - $RUNNER_TAG
+      script:
+        - kubectl apply -f k8s/
+
+not_flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  code: |
+    stages: [deploy]
+
+    variables:
+      KUBE_NAMESPACE: staging
+
+    deploy-staging:
+      stage: deploy
+      image: bitnami/kubectl:1.31.2
+      timeout: 20 minutes
+      tags:
+        - shared-small
+      script:
+        - kubectl apply -n "$KUBE_NAMESPACE" -f k8s/
+  why: >-
+    A variable still steers the job, but only inside the script. The runner
+    tag is a fixed word, so the variable cannot pick the machine.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). Reads every file named exactly
+    `.gitlab-ci.yml` in the scanned folder, skipping `.git`, `node_modules`,
+    `.venv`, `venv`, `build`, `dist` and cache folders. Files pulled in with
+    `include:` are not read, and a file PyYAML's safe loader cannot read
+    (for example one that uses `!reference`) is skipped.
+  - >-
+    Reads the `tags` under `default:` and each job's own `tags`, hidden
+    `.template` jobs included. Tags a job gets through `extends:` are not
+    looked up.
+  - >-
+    Reports every tag that contains `$`, which covers `$NAME`, `${NAME}`
+    and tags with a variable inside a longer word.
+  - >-
+    One MEDIUM finding per tag, on the first line of the file that
+    contains the tag's text.
+
+source_refs:
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _scan_dynamic_tags("
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _default_block("
+
+fix:
+  explanation: >-
+    Write the runner tag as a fixed word. To use different runners for
+    different targets, write one job per target, each with its own fixed
+    tags and its own `rules:`.
+  filename: .gitlab-ci.yml
+  code: |
+    stages: [deploy]
+
+    deploy-staging:
+      stage: deploy
+      image: bitnami/kubectl:1.31.2
+      timeout: 20 minutes
+      tags:
+        - shared-small
+      script:
+        - kubectl apply -f k8s/
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A tag from a `parallel: matrix:` value that the file itself lists is
+      reported, although only those listed values can be used.
+    - >-
+      A variable only maintainers can set, such as a protected project
+      variable, is reported the same as one anyone can pass in.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D322]` and a reason on the reported line,
+        or on the line directly above it. Skylos looks for that exact text,
+        so write one rule per marker, with the ID in upper case.
+      language: yaml
+      code: |
+        tags:
+          # skylos: ignore[SKY-D322] values come from the matrix below
+          - $RUNNER_TAG
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D322"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D295, SKY-D317, SKY-D321]

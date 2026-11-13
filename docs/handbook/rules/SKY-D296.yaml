@@ -1,0 +1,157 @@
+id: SKY-D296
+title: Container image not pinned by digest
+family: ci-cd
+severity: HIGH
+severity_note: >-
+  HIGH for an image with no tag or the tag `latest`. MEDIUM for any other
+  tag, such as `node:20`, and for an image name built from an expression.
+languages: [GitHub Actions workflows, Docker and composite actions]
+gate:
+  full: counted
+
+what_it_is: >-
+  A tag such as `node:20` or `latest` is a movable name: whoever controls
+  the image can point it at new content at any time. Only a digest
+  (`@sha256:` followed by a hash of the image) always means the same bytes.
+  SKY-D296 reports images that a workflow or action runs without one.
+
+why_it_matters: >-
+  The job runs the image with its token, secrets and checkout. If the
+  publisher's registry account is taken over, or a tag is re-pushed by
+  mistake, your next run executes the new content without any change in
+  your repository to review.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/integration.yml
+  expect_line: 11
+  code: |
+    name: Integration tests
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      integration:
+        runs-on: ubuntu-latest
+        container:
+          image: node:20
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - run: npm ci --ignore-scripts && npm run test:integration
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/integration.yml
+  code: |
+    name: Integration tests
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      integration:
+        runs-on: ubuntu-latest
+        container:
+          image: >-
+            node:20@sha256:80b4246e696054e3f2b2a5e961b89190d2499487399f126d5ef2ee2174350883
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - run: npm ci --ignore-scripts && npm run test:integration
+  why: >-
+    The image still carries the readable tag `20`, but the `@sha256:` digest
+    after it decides what runs: Docker refuses any content whose hash does
+    not match. `>-` only lets the long value start on the next line.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows` and `action.yml` /
+    `action.yaml` files.
+  - >-
+    In a workflow, looks at each job's `container` (written as text or as
+    `image:`), the `image` of each `services` entry, and steps that use
+    `docker://<image>`. In an action, looks at `runs.image` when
+    `runs.using` is `docker`.
+  - >-
+    In every `run:` step, finds lines that start with `docker run` or
+    `docker pull` and takes the first word after the options as the image.
+  - >-
+    An image that contains `@sha256:` passes. Otherwise it is reported:
+    HIGH with no tag or the tag `latest`, MEDIUM with another tag or when
+    the name contains `${{ … }}`, because the value cannot be checked.
+  - >-
+    One finding per image, on the first line of the file that contains the
+    image text.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_container_images("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_image_value("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "DOCKER_CMD_RE = re.compile("
+  - path: test/test_github_actions_security.py
+    symbol: "def test_github_actions_scanner_detects_composite_action_risks("
+
+fix:
+  explanation: >-
+    Pin each image by digest and keep the tag in front of it so readers
+    still see the version. `docker buildx imagetools inspect node:20` prints
+    the digest. A dependency bot such as Renovate can update it later in a
+    reviewed pull request.
+  filename: .github/workflows/integration.yml
+  code: |
+    name: Integration tests
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      integration:
+        runs-on: ubuntu-latest
+        container:
+          image: >-
+            node:20@sha256:80b4246e696054e3f2b2a5e961b89190d2499487399f126d5ef2ee2174350883
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - run: npm ci --ignore-scripts && npm run test:integration
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A Docker action with `image: Dockerfile`, which GitHub builds from the
+      action's own repository, is reported as an unpinned HIGH image.
+    - >-
+      An image built earlier in the same job, as in `docker build -t app:ci .`
+      followed by `docker run app:ci`, is reported as a tagged image.
+    - >-
+      The finding sits on the first line of the file that contains the image
+      text, which can be an earlier mention of the same name.
+    - >-
+      Missed: `docker create`, `docker compose`, `sudo docker run`, `podman`
+      and images named in Compose files.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D296]` at the end of the reported line or
+        on the line directly above it, one rule per marker.
+      language: yaml
+      code: |
+        container:
+          # skylos: ignore[SKY-D296] image built and signed by our own pipeline
+          image: ghcr.io/acme/ci-runner:2026.11
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D296"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D292, SKY-D314, SKY-D301]

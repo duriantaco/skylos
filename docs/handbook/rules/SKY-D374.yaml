@@ -1,0 +1,280 @@
+id: SKY-D374
+title: Publish workflow started by workflow_dispatch or any-branch push
+family: ci-cd
+severity: HIGH
+severity_note: >-
+  HIGH when a publish job with no fixed environment can be started by
+  `workflow_dispatch`, a push to any branch, `repository_dispatch`, or an
+  issue, comment, discussion or `pull_request_target` event. MEDIUM when
+  such a job is reachable only through pushes to wildcard branch patterns
+  such as `release/*`. LOW when every reachable publish job runs in a
+  fixed environment.
+languages: [GitHub Actions workflows]
+gate:
+  full: listed
+  diff: counted
+  note: >-
+    A diff scan counts a finding whose rule and workflow file are not among
+    the merge base's findings, so adding a second route to a workflow that
+    was already reported is not new. A baseline scan counts it like a diff
+    scan when the baseline's `rule_coverage` lists it.
+
+what_it_is: >-
+  A workflow that publishes a package can also be started in a way that
+  lets the person starting it choose the code: `workflow_dispatch` runs
+  any branch they pick, and a `push` trigger without a branch filter runs
+  on every branch. The publish job has no condition that limits it to the
+  release branch or the release event.
+
+why_it_matters: >-
+  Anyone who can push a branch can then run the release job on their own
+  code and publish it under your package name. The Nx compromise in 2025
+  and the @subql release in 2026 used routes like these.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/release.yml
+  expect_line: 3
+  code: |
+    name: Release
+    on:
+      workflow_dispatch:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+    jobs:
+      publish:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+            with:
+              node-version: 22
+              registry-url: https://registry.npmjs.org
+          - run: npm ci
+          - run: npm publish --access public
+            env:
+              NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/release.yml
+  code: |
+    name: Release
+    on:
+      workflow_dispatch:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - run: npm ci
+          - run: npm test
+      publish:
+        needs: test
+        if: github.event_name == 'push'
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+            with:
+              node-version: 22
+              registry-url: https://registry.npmjs.org
+          - run: npm ci
+          - run: npm publish --access public
+            env:
+              NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  why: >-
+    `workflow_dispatch` is still there, so anyone with write access can
+    re-run the tests on a branch they choose. The publish job's
+    `if: github.event_name == 'push'` excludes that event, and the push
+    trigger only fires for `v*` tags.
+
+more_examples:
+  - flagged:
+      language: yaml
+      filename: .github/workflows/publish.yml
+      expect_line: 3
+      code: |
+        name: Publish crate
+        on:
+          push:
+            branches-ignore: [gh-pages]
+        permissions:
+          contents: read
+        jobs:
+          publish:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                with:
+                  persist-credentials: false
+              - run: cargo publish --locked
+                env:
+                  CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    not_flagged:
+      language: yaml
+      filename: .github/workflows/publish.yml
+      code: |
+        name: Publish crate
+        on:
+          push:
+            branches-ignore: [gh-pages]
+        permissions:
+          contents: read
+        jobs:
+          publish:
+            if: github.ref == 'refs/heads/main'
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                with:
+                  persist-credentials: false
+              - run: cargo publish --locked
+                env:
+                  CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      why: >-
+        The workflow still runs on a push to any branch, but the publish job
+        only runs when the ref is exactly `refs/heads/main`.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). The `ca9` library reads every `*.yml`
+    and `*.yaml` file directly in `.github/workflows` and the local
+    composite actions they call. GitLab CI is not checked: which variables
+    a branch can read is a server setting.
+  - >-
+    Finds the jobs that publish: a publish command (`npm publish`, `twine
+    upload`, `cargo publish` and others), a publish action, or a publish
+    credential such as `NODE_AUTH_TOKEN` or `CARGO_REGISTRY_TOKEN`.
+  - >-
+    Lists the workflow's risky routes: `workflow_dispatch`; `push` with no
+    filter, only `branches-ignore`, or `*`/`**` branch patterns; `push` to
+    other wildcard patterns; `repository_dispatch`; and
+    `pull_request_target`, `issue_comment`, `issues`, `discussion` and
+    `discussion_comment`. A local reusable workflow inherits its callers'
+    triggers. `push` with only `tags:` or exact branch names is not a route.
+  - >-
+    Keeps a route open for a publish job unless the job's `if:` (or the
+    publish step's `if:`) excludes the event (`github.event_name ==
+    'push'`, `github.event_name != 'workflow_dispatch'`) or, for routes
+    where the starter picks the ref, proves one branch (`github.ref ==
+    'refs/heads/main'`). Tag checks such as `startsWith(github.ref,
+    'refs/tags/')` and `github.ref_name` alone prove nothing.
+  - >-
+    Reports one finding per workflow, on the line of the first open route's
+    trigger, graded by the routes and by whether each exposed job names a
+    fixed `environment:`.
+
+source_refs:
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "\"publish_on_dispatch_or_any_branch\": ("
+    note: >-
+      ca9 `audit_workflows` decides the rule (`ca9/ci/audit.py`
+      `_publish_trigger`, guards in `ca9/ci/conditions.py`); this page was
+      checked against ca9 0.7.0.
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "def scan_agent_publish("
+  - path: skylos/core/gatekeeper.py
+    symbol: "FULL_SCAN_REPORT_ONLY_RULES = frozenset("
+
+fix:
+  explanation: >-
+    Publish only from protected refs. Remove `workflow_dispatch` from the
+    publish workflow, or guard the publish job with an event or branch
+    condition, and run it in an environment whose deployment-branch rules
+    or reviewers the registry can rely on.
+  filename: .github/workflows/release.yml
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+    jobs:
+      publish:
+        runs-on: ubuntu-latest
+        environment: npm
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+            with:
+              node-version: 22
+              registry-url: https://registry.npmjs.org
+          - run: npm ci
+          - run: npm publish --access public
+            env:
+              NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A dispatch-started publish job with a tag check (`if:
+      startsWith(github.ref, 'refs/tags/v')`) is reported HIGH, because a
+      tag check is not read as proof of a protected ref.
+    - >-
+      An environment lowers the finding to LOW but does not clear it, since
+      YAML cannot show whether the environment has reviewers or branch
+      rules.
+    - >-
+      The flagged example also gets SKY-D340 for `npm publish` and SKY-D364
+      for the stored npm token. They are separate findings.
+  suppress:
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: yaml
+          filename: .github/workflows/release.yml
+          code: |
+            name: Release
+            on:
+              workflow_dispatch:  # skylos: ignore[SKY-D374] handbook check
+              push:
+                tags: ["v*"]
+            permissions:
+              contents: read
+            jobs:
+              publish:
+                runs-on: ubuntu-latest
+                steps:
+                  - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                    with:
+                      persist-credentials: false
+                  - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+                    with:
+                      node-version: 22
+                      registry-url: https://registry.npmjs.org
+                  - run: npm ci
+                  - run: npm publish --access public
+                    env:
+                      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      text: >-
+        Skylos reads no inline marker for this rule; a `# skylos: ignore`
+        comment on the trigger does not hide it.
+    - check: baseline
+      text: >-
+        Accept a reviewed workflow with a baseline: `skylos baseline .`, then
+        `--baseline`. The entry matches the rule and workflow file, not the
+        line. In pull-request CI (`SKYLOS_POLICY_BASE`), the entry must also
+        be in the base commit's `.skylos/baseline.json`.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D374"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D373, SKY-D340, SKY-D290, SKY-D364]

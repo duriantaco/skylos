@@ -1,0 +1,133 @@
+id: SKY-D321
+title: GitLab CI release or OIDC job without a timeout
+family: ci-cd
+severity: MEDIUM
+severity_note: >-
+  The catalog lists MEDIUM, but the detector reports every finding as LOW.
+languages: [GitLab CI]
+gate:
+  full: counted
+
+what_it_is: >-
+  A GitLab job's `timeout:` says how long it may run before GitLab stops it.
+  SKY-D321 reports a job that releases, deploys or receives OIDC tokens and
+  sets no timeout, neither on the job nor under `default:`.
+
+why_it_matters: >-
+  Such a job then runs until the project's limit, which is one hour unless
+  someone raised it. A deploy that hangs, or a job an attacker has taken
+  over, keeps its deploy credentials and tokens usable for that whole time,
+  and holds back the next release.
+
+flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  expect_line: 3
+  code: |
+    stages: [deploy]
+
+    deploy-production:
+      stage: deploy
+      image: bitnami/kubectl:1.31.2
+      environment: production
+      rules:
+        - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      script:
+        - kubectl apply -f k8s/
+        - kubectl rollout status deployment/web
+
+not_flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  code: |
+    stages: [deploy]
+
+    default:
+      timeout: 20 minutes
+
+    deploy-production:
+      stage: deploy
+      image: bitnami/kubectl:1.31.2
+      environment: production
+      rules:
+        - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      script:
+        - kubectl apply -f k8s/
+        - kubectl rollout status deployment/web
+  why: >-
+    The job sets no timeout of its own, but it inherits the 20 minutes from
+    `default:`, and Skylos reads that.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). Reads every file named exactly
+    `.gitlab-ci.yml` in the scanned folder, skipping `.git`, `node_modules`,
+    `.venv`, `venv`, `build`, `dist` and cache folders. Files pulled in with
+    `include:` are not read, and a file PyYAML's safe loader cannot read
+    (for example one that uses `!reference`) is skipped.
+  - >-
+    Checks jobs that are release-like or have `id_tokens` / `identity`
+    (their own or from `default:`), hidden `.template` jobs excluded. A job
+    is release-like when its name contains `deploy`, `release` or
+    `publish`, its `stage` is `deploy`, `deployment`, `release`, `publish`
+    or `production`, its `environment` is `prod` or `production`, it has
+    `release`, or a command starts with a publish or deploy tool such as
+    `kubectl apply`, `helm upgrade`, `terraform apply` or `npm publish`.
+  - >-
+    Reports the job when neither it nor `default:` sets `timeout`. Any value
+    counts, however long; a top-level `timeout:` key is not read.
+  - >-
+    One LOW finding per job, on the first line that contains the job name
+    followed by `:`.
+
+source_refs:
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _scan_missing_timeouts("
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _is_release_like_job("
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _effective_job_value("
+
+fix:
+  explanation: >-
+    Give the job a timeout a little longer than its slowest normal run,
+    or set one for every job under `default:`.
+  filename: .gitlab-ci.yml
+  code: |
+    stages: [deploy]
+
+    deploy-production:
+      stage: deploy
+      image: bitnami/kubectl:1.31.2
+      environment: production
+      timeout: 15 minutes
+      rules:
+        - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      script:
+        - kubectl apply -f k8s/
+        - kubectl rollout status deployment/web --timeout=10m
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A project whose CI/CD settings set a short timeout is still reported;
+      Skylos reads only the file.
+    - >-
+      A job is release-like by name alone, so `release-notes-preview` without
+      a timeout is reported.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D321]` and a reason on the reported line,
+        or on the line directly above it. Skylos looks for that exact text,
+        so write one rule per marker, with the ID in upper case.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D321] project timeout is 15 minutes
+        deploy-production:
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D321"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D313, SKY-D319, SKY-D320]
