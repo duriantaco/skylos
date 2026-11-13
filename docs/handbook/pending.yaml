@@ -15,3 +15,11 @@ pending:
     reason: 'No page: no detector emits SKY-Q801. The ID appears only in the docstring
       of `skylos/analysis/architecture.py`, and dictionary.md lists it as reserved
       with no current finding, so no example can produce it.'
+  SKY-D378:
+    reason: 'No page yet: added on main by PR #1230 (incomplete path traversal defence)
+      after this handbook was built. Write and verify the page in the next handbook
+      update.'
+  SKY-D379:
+    reason: 'No page yet: added on main by PR #1230 (catastrophic regex backtracking)
+      after this handbook was built. Write and verify the page in the next handbook
+      update.'
