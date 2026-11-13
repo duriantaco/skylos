@@ -435,6 +435,10 @@ table.grid tr {
   break-after: avoid;
 }
 
+.keep-next {
+  break-after: avoid;
+}
+
 .steps li {
   margin-bottom: 4pt;
 }

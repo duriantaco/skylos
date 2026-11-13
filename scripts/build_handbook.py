@@ -1235,11 +1235,7 @@ def verification_targets(page: dict) -> list[dict]:
     ]
     fix = page["fix"]
     if fix.get("filename"):
-        fix_example = {
-            "language": fix.get("language") or page["flagged_example"].get("language"),
-            "filename": fix["filename"],
-            "code": fix["code"],
-        }
+        fix_example = fix_check_example(page["flagged_example"], fix)
         if fix.get("scan_flags") is not None:
             fix_example["scan_flags"] = fix["scan_flags"]
         targets.append(target("fix", fix_example, False))
@@ -1254,6 +1250,28 @@ def verification_targets(page: dict) -> list[dict]:
             manual = page_manual
         item["manual"] = manual or ""
     return targets
+
+
+def fix_check_example(flagged: dict, fix: dict) -> dict:
+    language = fix.get("language") or flagged.get("language")
+    fixed = {"filename": fix["filename"], "code": fix["code"], "language": language}
+    if "files" not in flagged:
+        return {"language": language, "filename": fix["filename"], "code": fix["code"]}
+    files = []
+    replaced = False
+    for entry in flagged["files"]:
+        if entry["filename"] == fix["filename"]:
+            files.append(fixed)
+            replaced = True
+            continue
+        files.append(entry)
+    if not replaced:
+        files.append(fixed)
+    example = {"language": flagged.get("language"), "files": files}
+    for key in ("setup", "base_files"):
+        if key in flagged:
+            example[key] = flagged[key]
+    return example
 
 
 def target(kind: str, example: dict, should_flag: bool, baseline: bool = False) -> dict:
@@ -1928,10 +1946,23 @@ def print_pdf(chrome: str, html_path: Path, pdf_path: Path, extra_args=()) -> No
         result = subprocess.run(
             command, capture_output=True, text=True, timeout=300, check=False
         )
+        if pdf_path.is_file() and result.returncode != 0:
+            if printed_completely(pdf_path, result.stderr):
+                return
         if result.returncode != 0 or not pdf_path.is_file():
             raise BuildError(
                 f"Chrome could not print the PDF: {result.stderr.strip()[-600:]}"
             )
+
+
+def printed_completely(pdf_path: Path, stderr: str) -> bool:
+    if "bytes written to file" not in stderr:
+        return False
+    with pdf_path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        handle.seek(max(0, handle.tell() - 1024))
+        tail = handle.read()
+    return b"%%EOF" in tail
 
 
 def pdf_destinations(data: bytes) -> tuple[dict[str, int], int]:
@@ -2461,11 +2492,11 @@ class Book:
                 "</tr>"
             )
         coverage = ""
-        if self.mode == "pilot":
+        if self.mode == "pilot" and len(rule_ids) < total:
             coverage = (
-                f'<p class="family-coverage">This pilot covers {len(rule_ids)} of the '
-                f"{total} rules in this family. The rest are listed as not yet written "
-                "in the coverage report.</p>"
+                f'<p class="family-coverage">This edition covers {len(rule_ids)} of '
+                f"the {total} rules in this family. The rest are listed as not yet "
+                "written in the coverage report.</p>"
             )
         intro = self.markdown(family["intro"])
         return (  # skylos: ignore[SKY-D228] joins HTML fragments this module escaped
@@ -2829,6 +2860,7 @@ class Book:
         content = f"<p>{self.inline(fix['explanation'])}</p>"
         if not fix.get("code"):
             return self.section("Fix", content)
+        content = f'<p class="keep-next">{self.inline(fix["explanation"])}</p>'
         language = fix.get("language") or page["flagged_example"].get("language")
         if not fix.get("filename"):
             return self.section("Fix", content + self.plain_code(fix["code"], language))

@@ -17,7 +17,7 @@ file and prints that to PDF with headless Chrome.
 | `cloud/capture/` | Scripts that seed a local Cloud with fictional data and retake the screenshots (see its README). |
 | `img/cloud/*.png` | The guide's screenshots. |
 | `pending.yaml` | Catalog rules that have no page yet, each with a reason. |
-| `batches.json` | The unwritten rules split into six batches for parallel writing. |
+| `batches.json` | The unwritten rules split into batches, one per family, for parallel writing. |
 | `handbook.css` | Page style (A4, `@page` margins, footer page numbers). |
 
 The rule list itself comes from `skylos/rules/catalog.py`. Every catalog rule
@@ -121,7 +121,10 @@ skylos . <flags> --no-upload --format json --output <file>
   example's `scan_flags` replaces all of them.
 - A flagged example passes when the rule ID is reported (and, with
   `expect_line`, reported on that line). A not-flagged example, and a fix
-  that has a `filename`, pass when the rule ID is not reported. Exit code 2,
+  that has a `filename`, pass when the rule ID is not reported. A fix is
+  checked inside the flagged example: when that example has several files,
+  or a `git_diff` setup, the fix replaces the file of the same name (or is
+  added) and the other files and the base commit stay. Exit code 2,
   any entry in the scan's `analysis_errors` (a file or check that was not
   analysed) or missing JSON fails the check, so an example Skylos could not
   read never passes as "not reported".
@@ -319,8 +322,8 @@ flags when a rule needs a different invocation.
 
 ## Writing pages in parallel
 
-`batches.json` splits every rule without a page into six batches. A batch
-writer:
+`batches.json` splits every rule without a page into batches, one per
+family. A batch writer:
 
 - works in its own worktree branched from the handbook branch;
 - adds only `rules/<RULE-ID>.yaml` files for its own rules, one file per
@@ -330,6 +333,11 @@ writer:
   fine; the entry is removed after merging);
 - checks each page with its own output path, as shown under Build, and runs
   `python -m pytest -q test/test_handbook_coverage.py` before handing over.
+
+To try an example by hand, write it to a folder outside this repository (or
+run `git init` in it first) and put this checkout first on `PYTHONPATH`.
+Inside the repository, Skylos treats the repository root as the project and
+scans its files instead of yours.
 
 ## Keeping the book current
 
