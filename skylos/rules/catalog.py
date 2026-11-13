@@ -467,6 +467,22 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-L044", "Test runs no project code", "quality", "LOW", finding_type="review"
+    ),
+    RuleCatalogEntry(
+        "SKY-L045",
+        "Test assertion always true",
+        "quality",
+        "LOW",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-L046", "Test result never checked", "quality", "LOW", finding_type="review"
+    ),
+    RuleCatalogEntry(
+        "SKY-L047", "Duplicate test", "quality", "LOW", finding_type="review"
+    ),
+    RuleCatalogEntry(
         "SKY-P401", "Potential unbounded read", "quality", finding_type="advice"
     ),
     RuleCatalogEntry(

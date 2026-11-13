@@ -1526,6 +1526,10 @@ uses project ignores, not inline comments, consistently across supported files.
 | L041 | LOW | Empty test body | Python; review |
 | L042 | LOW | Repeated test assertion | Python; review |
 | L043 | LOW | Sleep used for test synchronization | Python; review |
+| L044 | LOW | Test runs no project code | Python; review |
+| L045 | LOW | Test assertion always true | Python; review |
+| L046 | LOW | Test result never checked | Python; review |
+| L047 | LOW | Duplicate test | Python; review |
 
 SKY-L006 accepts an explicit `return None` next to value returns (PEP 8); only a
 bare `return` is inconsistent. SKY-L014 does not treat raw `${NAME}` or
@@ -1649,6 +1653,48 @@ are excluded. `SKY-L043` requires stable standard-library bindings, a local
 single-assignment Event, a fixed positive sleep and an immediately following
 positive completion check. Explicit waits, timing tests, expected failures,
 unknown escapes and patched objects stay quiet.
+
+`SKY-L044`–`SKY-L047` report tests that pass whether or not the project works.
+They use the same test selection. `SKY-L044` reports a test in which every name
+it reads is one the test bound itself or a pure builtin (`len`, `sum`,
+`sorted`, `str`, ...) that still resolves to the builtin: for example
+`model = "gpt-4"; assert model == "gpt-4"`, or logic re-implemented inside the
+test. Nothing from the project can change its result. A parameter (fixture),
+decorator, import, module-level name, a `self` attribute other than a standard
+`unittest` assertion, a nested function, `raise`, or a builtin that can reach
+outside the test (`open`, `eval`, `print`, `getattr`) leaves the test alone. A
+test with no assertion at all is also left alone when fixtures, setup hooks or
+a `conftest.py` may supply its checks. Placeholder bodies stay `SKY-L041` and
+literal-only assertions stay `SKY-L040`.
+
+`SKY-L045` reports an assertion that is true for every value of the names in
+it, which `SKY-L040` cannot prove because the condition is not literal-only: a
+non-empty tuple (`assert (x == 1, "message")`), list, set or dict display,
+`x or True`, `len(x) >= 0` with the builtin `len`, `isinstance(x, object)`,
+`x is x`, and `self.assertTrue(True)` or `self.assertEqual` on equal literals.
+`x == x` is not reported, because it can be false (NaN, a custom `__eq__`),
+nor is a comparison of two displays.
+
+`SKY-L046` reports a test that ends by storing a call's result in a name it
+never reads, when neither the test nor a function it calls in the same file
+asserts, raises, expects an exception or has a name that says it checks
+(`assert`, `check`, `expect`, `verify`, `raises`, `fail`, `match`,
+`snapshot`, ...). A call whose result is not kept (`run()`), a name starting
+with `_`, an `xfail` test and a test using a `benchmark` or snapshot fixture
+are left alone.
+
+`SKY-L047` reports a test whose decorators, parameters and body (docstring
+aside) repeat an earlier test of the same module or class under another name.
+Tests whose name selects recorded data (`vcr`, cassette and snapshot fixtures or
+markers), bodies that call nothing, and a second definition under the same
+name are not reported.
+
+`skylos verify` and the agent edit hook report `SKY-L044` and `SKY-L045` as
+AI-code defects (`vacuous_test`); the hook passes them back to the agent as
+notes and does not block the edit. Measured 2026-11-13 on eight open-source
+repositories not used while writing the checks (56,596 collected tests): 32
+findings, all 32 correct on review by one reviewer. None of these checks finds a test that calls project code and
+asserts the wrong value; `skylos done` (`SKY-A120`) runs the tests for that.
 
 These LOW Review findings retain a rule, test name, source location, explanation
 and evidence. They appear in the default cleanup queue and require manual

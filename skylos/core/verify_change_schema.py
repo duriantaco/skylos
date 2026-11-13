@@ -30,6 +30,7 @@ AI_VIBE_CATEGORIES = {
     "public_api_surface_drift",
     "mirrored_dependency_bump",
     "guardrail_tamper",
+    "vacuous_test",
 }
 
 AI_RULE_DEFAULTS = {
@@ -49,6 +50,8 @@ AI_RULE_DEFAULTS = {
     "SKY-D224": ("api_signature_hallucination", "high"),
     "SKY-D225": ("dependency_hallucination", "high"),
     "SKY-L023": ("hallucinated_reference", "high"),
+    "SKY-L044": ("vacuous_test", "medium"),
+    "SKY-L045": ("vacuous_test", "medium"),
 }
 
 FINDING_SECTIONS = (
@@ -112,6 +115,9 @@ SUGGESTED_FIX_BY_VIBE = {
     "guardrail_tamper": (
         "Undo the AI-reviewer setting change or remove the suppression marker, or "
         "have a person approve it in a separate change."
+    ),
+    "vacuous_test": (
+        "Call the code under test and assert on the value it is expected to produce."
     ),
     "security_vulnerability": (
         "Remove the unsafe sink or validate, escape, or parameterize the untrusted input."
