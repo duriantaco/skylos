@@ -1,0 +1,341 @@
+id: SKY-SCA-UPG002
+title: Dependency upgrade adds code worth reviewing
+family: supply-chain
+severity: MEDIUM
+languages: [package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, yarn.lock, bun.lock, uv.lock, poetry.lock, Pipfile.lock]
+gate:
+  full: not_run
+  diff: listed
+  note: >-
+    The built-in gate reports it without counting it: it asks for a look, it
+    does not block. A gate policy pulled from Skylos Cloud counts it toward
+    `max_dependency_vulnerabilities`. It only runs in diff scans with
+    `--review-upgrades`.
+run_with: >-
+  `skylos . --sca --review-upgrades --diff origin/main` on a pull request; the
+  workflow `skylos setup` writes turns this on
+
+what_it_is: >-
+  A pull request adds an npm or PyPI package to a lockfile, or moves one to a
+  new version. SKY-SCA-UPG002 reports a new release that contains code
+  worth reading before it is installed: an install script, a changed
+  install script, network or process calls when the package is imported,
+  more obfuscated code, a new native binary, or a different publisher.
+
+why_it_matters: >-
+  These changes are common in honest releases, so they do not block. They
+  are also what a compromised release looks like, and the lockfile diff
+  shows only a version number. The finding names the file to read, so the
+  check takes minutes instead of a full audit.
+
+flagged_example:
+  language: json
+  setup: git_diff
+  expect_file: package-lock.json
+  expect_line: 18
+  scan_flags: ["--sca", "--review-upgrades", "--diff=HEAD"]
+  base_files:
+    - filename: package-lock.json
+      code: |
+        {
+          "name": "shop",
+          "version": "1.0.0",
+          "lockfileVersion": 3,
+          "requires": true,
+          "packages": {
+            "": {
+              "name": "shop",
+              "version": "1.0.0",
+              "dependencies": {
+                "ms": "2.1.3"
+              }
+            },
+            "node_modules/ms": {
+              "version": "2.1.3",
+              "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+              "license": "MIT"
+            }
+          }
+        }
+  files:
+    - filename: package-lock.json
+      code: |
+        {
+          "name": "shop",
+          "version": "1.0.0",
+          "lockfileVersion": 3,
+          "requires": true,
+          "packages": {
+            "": {
+              "name": "shop",
+              "version": "1.0.0",
+              "dependencies": {
+                "ms": "2.1.3"
+              },
+              "devDependencies": {
+                "esbuild": "0.24.0"
+              }
+            },
+            "node_modules/esbuild": {
+              "version": "0.24.0",
+              "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.24.0.tgz",
+              "dev": true,
+              "hasInstallScript": true,
+              "license": "MIT"
+            },
+            "node_modules/ms": {
+              "version": "2.1.3",
+              "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+              "license": "MIT"
+            }
+          }
+        }
+
+not_flagged_example:
+  language: json
+  setup: git_diff
+  scan_flags: ["--sca", "--review-upgrades", "--diff=HEAD"]
+  base_files:
+    - filename: package-lock.json
+      code: |
+        {
+          "name": "shop",
+          "version": "1.0.0",
+          "lockfileVersion": 3,
+          "requires": true,
+          "packages": {
+            "": {
+              "name": "shop",
+              "version": "1.0.0",
+              "dependencies": {
+                "ms": "2.1.3"
+              }
+            },
+            "node_modules/ms": {
+              "version": "2.1.3",
+              "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+              "license": "MIT"
+            }
+          }
+        }
+  files:
+    - filename: package-lock.json
+      code: |
+        {
+          "name": "shop",
+          "version": "1.0.0",
+          "lockfileVersion": 3,
+          "requires": true,
+          "packages": {
+            "": {
+              "name": "shop",
+              "version": "1.0.0",
+              "dependencies": {
+                "ms": "2.1.3"
+              },
+              "devDependencies": {
+                "picocolors": "1.1.1"
+              }
+            },
+            "node_modules/ms": {
+              "version": "2.1.3",
+              "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+              "license": "MIT"
+            },
+            "node_modules/picocolors": {
+              "version": "1.1.1",
+              "resolved": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
+              "dev": true,
+              "license": "ISC"
+            }
+          }
+        }
+  why: >-
+    The pull request also adds a new development dependency, but
+    `picocolors` is plain library code: no install script, nothing that
+    reaches the network or starts a process when it is imported.
+
+more_examples:
+  - flagged:
+      language: json
+      setup: git_diff
+      expect_file: package-lock.json
+      expect_line: 18
+      scan_flags: ["--sca", "--review-upgrades", "--diff=HEAD"]
+      base_files:
+        - filename: package-lock.json
+          code: |
+            {
+              "name": "shop",
+              "version": "1.0.0",
+              "lockfileVersion": 3,
+              "requires": true,
+              "packages": {
+                "": {
+                  "name": "shop",
+                  "version": "1.0.0",
+                  "dependencies": {
+                    "ms": "2.1.3"
+                  },
+                  "devDependencies": {
+                    "esbuild": "0.24.0"
+                  }
+                },
+                "node_modules/esbuild": {
+                  "version": "0.24.0",
+                  "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.24.0.tgz",
+                  "dev": true,
+                  "hasInstallScript": true,
+                  "license": "MIT"
+                },
+                "node_modules/ms": {
+                  "version": "2.1.3",
+                  "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+                  "license": "MIT"
+                }
+              }
+            }
+      files:
+        - filename: package-lock.json
+          code: |
+            {
+              "name": "shop",
+              "version": "1.0.0",
+              "lockfileVersion": 3,
+              "requires": true,
+              "packages": {
+                "": {
+                  "name": "shop",
+                  "version": "1.0.0",
+                  "dependencies": {
+                    "ms": "2.1.3"
+                  },
+                  "devDependencies": {
+                    "esbuild": "0.24.2"
+                  }
+                },
+                "node_modules/esbuild": {
+                  "version": "0.24.2",
+                  "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.24.2.tgz",
+                  "dev": true,
+                  "hasInstallScript": true,
+                  "license": "MIT"
+                },
+                "node_modules/ms": {
+                  "version": "2.1.3",
+                  "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+                  "license": "MIT"
+                }
+              }
+            }
+    not_flagged:
+      language: json
+      setup: git_diff
+      scan_flags: ["--sca", "--review-upgrades", "--diff=HEAD"]
+      base_files:
+        - filename: package-lock.json
+          code: |
+            {
+              "name": "shop",
+              "version": "1.0.0",
+              "lockfileVersion": 3,
+              "requires": true,
+              "packages": {
+                "": {
+                  "name": "shop",
+                  "version": "1.0.0",
+                  "dependencies": {
+                    "ms": "2.1.2"
+                  }
+                },
+                "node_modules/ms": {
+                  "version": "2.1.2",
+                  "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.2.tgz",
+                  "license": "MIT"
+                }
+              }
+            }
+      files:
+        - filename: package-lock.json
+          code: |
+            {
+              "name": "shop",
+              "version": "1.0.0",
+              "lockfileVersion": 3,
+              "requires": true,
+              "packages": {
+                "": {
+                  "name": "shop",
+                  "version": "1.0.0",
+                  "dependencies": {
+                    "ms": "2.1.3"
+                  }
+                },
+                "node_modules/ms": {
+                  "version": "2.1.3",
+                  "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+                  "license": "MIT"
+                }
+              }
+            }
+      why: >-
+        A patch upgrade of `ms` changes code but adds nothing that runs on
+        install or at import. The flagged upgrade of `esbuild` changes
+        `install.js`, the script npm runs after installing it.
+
+how_skylos_decides:
+  - >-
+    Runs with `--sca --review-upgrades` in a diff scan. Each npm and PyPI
+    version that changed in a lockfile is paired with the version the base
+    branch locked; a package new to the project has no old version.
+  - >-
+    The `ca9` library downloads the releases and compares their files as
+    text and syntax trees. It never installs, imports or runs them.
+  - >-
+    The warning list: new network or process calls at import time, more
+    obfuscated code, a new native binary, a different publisher, a changed
+    install script and a changed native binary.
+  - >-
+    For a package new to the project there is nothing to compare with, so
+    `ca9` reviews the release on its own: an install script or a nested
+    start-up module is a warning here, and the strong signals that would be
+    SKY-SCA-UPG001 on an upgrade (a `.pth` file with code, decode-and-run
+    code, a Git dependency) are reported under this rule too, with a
+    message saying there was no earlier version.
+  - >-
+    A change on the block list for an upgraded package is SKY-SCA-UPG001
+    instead. A changed package that could not be reviewed stops the scan
+    as incomplete.
+
+source_refs:
+  - path: skylos/rules/sca/supply_chain_diff.py
+    symbol: "def _upgrade_finding("
+    note: a warn list, or any list on a new package, is UPG002.
+  - path: skylos/rules/sca/supply_chain_diff.py
+    symbol: "def upgrade_findings("
+  - path: skylos/core/gatekeeper.py
+    symbol: "REPORT_ONLY_DEPENDENCY_RULES = frozenset("
+
+fix:
+  explanation: >-
+    Read the file the message names. For `esbuild`, `install.js` downloads
+    the platform binary, which is expected; for a package that has no
+    reason to touch the network at install, ask why before merging. With
+    pnpm or Bun, allow install scripts only for packages you have reviewed
+    (`allowBuilds`, `trustedDependencies`).
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Most findings are honest changes, such as a build tool that fetches
+      its binary. That is why the rule only lists them.
+    - >-
+      Behaviour both releases share is not reported, so a package that
+      always called the network at import is not flagged again.
+  suppress:
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-SCA-UPG002"]` turns the rule off. In
+        pull-request CI the setting is read from the base branch.
+
+related: [SKY-SCA-UPG001, SKY-SCA-API001, SKY-SCA-HRD001]

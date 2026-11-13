@@ -1,0 +1,130 @@
+id: SKY-SCA-AGE001
+title: Dependency version younger than the release-age window
+family: supply-chain
+severity: HIGH
+languages: [requirements*.txt, pyproject.toml, uv.lock, poetry.lock, Pipfile.lock, package.json, npm, pnpm, Yarn and Bun lockfiles]
+gate:
+  full: counted
+  opt_in: >-
+    `min_release_age_hours` under `[tool.skylos.supply_chain]`; scans skip
+    the check until it is set to a number above 0.
+  note: >-
+    Counts toward `max_dependency_vulnerabilities`, which is 0 by default, so
+    one finding fails `--gate`.
+
+what_it_is: >-
+  A release-age window is a waiting period: a new package version is not
+  used until it has been public for a set number of hours. SKY-SCA-AGE001
+  reports an npm or PyPI version in your manifests or lockfiles that was
+  published more recently than your `min_release_age_hours`.
+
+why_it_matters: >-
+  When a maintainer account is taken over, the attacker publishes a new
+  version, and most such versions are found and removed within hours. A
+  project that installs the newest version straight away runs that code;
+  one that waits a day or two usually never sees it.
+
+flagged_example:
+  language: text
+  expect_file: requirements.txt
+  expect_line: 1
+  verify:
+    mode: manual
+    reason: >-
+      The result depends on the day of the scan: Skylos asks the PyPI or npm
+      registry when the version was published, so a pinned version is
+      reported only during its first hours.
+  files:
+    - filename: requirements.txt
+      code: |
+        requests==2.32.5
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.0.0"
+        dependencies = ["requests==2.32.5"]
+
+        [tool.skylos.supply_chain]
+        min_release_age_hours = 72
+
+not_flagged_example:
+  language: text
+  files:
+    - filename: requirements.txt
+      code: |
+        requests==2.32.4
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.0.0"
+        dependencies = ["requests==2.32.4"]
+
+        [tool.skylos.supply_chain]
+        min_release_age_hours = 72
+  why: >-
+    The same window, but the pinned version was published long before it.
+    Skylos looked up its publish time on PyPI and found it older than 72
+    hours.
+
+how_skylos_decides:
+  - >-
+    Runs with `--sca`, and only when `min_release_age_hours` under
+    `[tool.skylos.supply_chain]` is set above 0 (the most is one year). A
+    gate policy pulled from Skylos Cloud can raise the value but not lower
+    it, and in pull-request CI it is read from the base commit.
+  - >-
+    Skylos hands every pinned npm and PyPI version to the `ca9` library,
+    which reads the publish time from the npm registry or PyPI's JSON API.
+    These lookups are the only network requests this rule makes.
+  - >-
+    On PyPI a release's time is its newest upload: a wheel added today to an
+    old release makes the release new again.
+  - >-
+    A version younger than the window is reported, with its age and, when
+    one exists, the newest version that is old enough.
+  - >-
+    The coding-agent install hook uses the same setting, with a default of
+    48 hours when it is not set; scans have no default.
+
+source_refs:
+  - path: skylos/rules/sca/supply_chain.py
+    symbol: "def _checks("
+    note: the age check runs only when the policy sets a window.
+  - path: skylos/rules/sca/supply_chain.py
+    symbol: "\"network\": age is not None,"
+  - path: skylos/supply_chain/policy.py
+    symbol: "def scan_release_age_hours("
+  - path: skylos/supply_chain/policy.py
+    symbol: "DEFAULT_HOOK_RELEASE_AGE_HOURS = 48"
+    note: the install hook's default; scans have none.
+  - path: test/test_sca_supply_chain.py
+    symbol: "def test_release_age_is_reported_only_when_the_policy_sets_a_window("
+
+fix:
+  explanation: >-
+    Pin the newest version that is older than the window (the message
+    names it), or wait until the new version has aged. If you need the new
+    version at once, for example for a security fix, read its changes
+    first.
+  language: text
+  filename: requirements.txt
+  code: |
+    requests==2.32.4
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A security release you want quickly is reported like any other new
+      version during the window.
+  suppress:
+    - text: >-
+        Like the other dependency rules `ca9` decides, it is not hidden by
+        `[tool.skylos] ignore` in a full scan, and dependency baselines hold
+        only known vulnerabilities. Wait out the window, or set
+        `min_release_age_hours = 0` to stop the check.
+
+related: [SKY-SCA-UPG001, SKY-SCA-UPG002, SKY-SCA-SRC003]

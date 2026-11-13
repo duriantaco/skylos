@@ -1,0 +1,265 @@
+id: SKY-S102
+title: Secret exposed to code that runs in the browser
+family: secrets
+severity: HIGH
+severity_note: >-
+  A server-only environment variable read in browser code is HIGH. A
+  hardcoded secret found in a browser-loaded file keeps the severity
+  SKY-S101 gave it, so a provider key such as a Stripe secret key is
+  reported as CRITICAL.
+languages: [TypeScript/JavaScript, HTML, Vue, Svelte, Astro, and any file the secrets scan reads under a public folder]
+gate:
+  full: blocks
+  note: Any secret fails the gate, whatever the limits.
+
+what_it_is: >-
+  Code that runs in the browser is downloaded by every visitor, so anything
+  in it is public. SKY-S102 reports a secret, or a reference to a
+  server-only environment variable such as `process.env.STRIPE_SECRET_KEY`,
+  in a file that is bundled for or served to the browser.
+
+why_it_matters: >-
+  A bundler copies the value into the JavaScript it ships, and anyone can
+  read it with the browser's developer tools. A Stripe secret key or a
+  database URL found this way lets a stranger charge cards, read customer
+  data or delete records.
+
+fragments:
+  STRIPE_SECRET_DEMO: ["sk_live_", "51HandbookDemo0nly"]
+  STRIPE_PUBLISHABLE_DEMO: ["pk_live_", "51HandbookDemo0nly"]
+
+flagged_example:
+  language: tsx
+  filename: app/checkout/PayButton.tsx
+  expect_line: 5
+  code: |
+    "use client";
+
+    import { useState } from "react";
+
+    const stripeKey = process.env.STRIPE_SECRET_KEY;
+
+    export function PayButton({ amount }: { amount: number }) {
+      const [busy, setBusy] = useState(false);
+
+      async function pay() {
+        setBusy(true);
+        await fetch("https://api.stripe.com/v1/payment_intents", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${stripeKey}` },
+          body: new URLSearchParams({ amount: String(amount), currency: "usd" }),
+        });
+        setBusy(false);
+      }
+
+      return <button disabled={busy} onClick={pay}>Pay</button>;
+    }
+
+not_flagged_example:
+  language: tsx
+  filename: app/checkout/PayButton.tsx
+  code: |
+    "use client";
+
+    import { loadStripe } from "@stripe/stripe-js";
+
+    const stripe = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!);
+
+    export function PayButton({ clientSecret }: { clientSecret: string }) {
+      async function pay() {
+        const client = await stripe;
+        await client?.confirmPayment({ clientSecret, confirmParams: {} });
+      }
+
+      return <button onClick={pay}>Pay</button>;
+    }
+  why: >-
+    The component still runs in the browser, but it reads a publishable key,
+    which Stripe designs to be public. The `NEXT_PUBLIC_` prefix says the
+    value is meant for the browser, and the rest of the name has no word
+    such as `SECRET`, `TOKEN` or `PASSWORD`. `KEY` alone is not enough under
+    a public prefix.
+
+more_examples:
+  - flagged:
+      language: html
+      filename: static/checkout/index.html
+      expect_line: 9
+      code: |
+        <!doctype html>
+        <html>
+          <head>
+            <script src="https://js.stripe.com/v3/"></script>
+          </head>
+          <body>
+            <button id="pay">Pay</button>
+            <script>
+              const stripe = Stripe("{{STRIPE_SECRET_DEMO}}");
+            </script>
+          </body>
+        </html>
+    not_flagged:
+      language: html
+      filename: static/checkout/index.html
+      code: |
+        <!doctype html>
+        <html>
+          <head>
+            <script src="https://js.stripe.com/v3/"></script>
+          </head>
+          <body>
+            <button id="pay">Pay</button>
+            <script>
+              const stripe = Stripe("{{STRIPE_PUBLISHABLE_DEMO}}");
+            </script>
+          </body>
+        </html>
+      why: >-
+        A publishable key (`pk_live_…`) is not a secret, so no secret
+        pattern matches it. The secret key in the flagged page is a SKY-S101
+        match that Skylos reports as SKY-S102, CRITICAL, because the file
+        sits under `static/`.
+
+how_skylos_decides:
+  - >-
+    Runs the secrets scan (`--secrets` or `-a`) and decides for each file
+    whether the browser loads it. A path containing `/public/`, `/static/`,
+    `/assets/`, `/.next/static/`, `/build/client/`, `/dist/client/` or
+    `/out/` always counts.
+  - >-
+    Otherwise, server paths do not count: `pages/api/`, `route.ts` and the other
+    `route.*` files under `app/`, files with `.server.` in the name, and
+    server output such as `.next/server/` or `dist/server/`.
+  - >-
+    Otherwise a file counts when it is named `client.*`, `browser.*`,
+    `*.client.*` or `*.browser.*` and is a JavaScript, TypeScript, Vue,
+    Svelte, Astro or HTML file; when its path contains `/frontend/`,
+    `/client/`, `/dist/`, `/build/`, `/assets/`, `/.next/` or `/out/`; or
+    when it is a JavaScript or TypeScript file whose first statement is the
+    `"use client"` directive.
+  - >-
+    In such a file, every SKY-S101 finding (a hardcoded key or password) is
+    renamed SKY-S102 and keeps its severity.
+  - >-
+    In JavaScript and TypeScript files it also parses the code and reports
+    each read of `process.env.NAME`, `import.meta.env.NAME` and their
+    aliases and destructured forms, as HIGH, when the name looks sensitive:
+    it contains `SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, `PRIVATE`,
+    `CREDENTIAL`, `AUTH` or `KEY`, or is `DATABASE_URL`, `DB_URL`,
+    `MONGODB_URI`, `MONGO_URI` or `REDIS_URL`.
+  - >-
+    Under a public prefix (`NEXT_PUBLIC_`, `REACT_APP_`, `VITE_`,
+    `NUXT_PUBLIC_`, `EXPO_PUBLIC_`, `PUBLIC_`), `KEY` and `AUTH` no longer
+    count, so `NEXT_PUBLIC_MAPS_KEY` is quiet while
+    `NEXT_PUBLIC_API_SECRET` is reported.
+  - >-
+    When the file is too large or too broken to parse completely and a
+    sensitive name appears, it reports that the analysis was incomplete
+    instead of staying silent.
+
+source_refs:
+  - path: skylos/rules/secrets.py
+    symbol: "def _client_exposure_context_with_status("
+    note: which files the browser loads.
+  - path: skylos/rules/secrets.py
+    symbol: "def _is_named_client_context("
+  - path: skylos/rules/secrets.py
+    symbol: "def _use_client_directive_status("
+  - path: skylos/rules/secrets.py
+    symbol: "def _is_sensitive_client_env_name("
+    note: which variable names count, with and without a public prefix.
+  - path: skylos/rules/secrets.py
+    symbol: "PUBLIC_CLIENT_ENV_PREFIXES = ("
+  - path: skylos/rules/secrets.py
+    symbol: "# S102: Client-side secret exposure"
+    note: renaming SKY-S101 findings and reporting env references.
+  - path: test/test_s102.py
+    symbol: "def test_use_client_hardcoded_secret_preserves_critical_severity_as_s102("
+
+fix:
+  explanation: >-
+    Keep the secret on the server. Move the call that needs it into a
+    server route or server action and let the browser call that route. If
+    a secret has already shipped in a bundle, revoke it.
+  filename: app/checkout/PayButton.tsx
+  language: tsx
+  code: |
+    "use client";
+
+    import { useState } from "react";
+
+    export function PayButton({ amount }: { amount: number }) {
+      const [busy, setBusy] = useState(false);
+
+      async function pay() {
+        setBusy(true);
+        await fetch("/api/checkout", {
+          method: "POST",
+          body: JSON.stringify({ amount }),
+        });
+        setBusy(false);
+      }
+
+      return <button disabled={busy} onClick={pay}>Pay</button>;
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Next.js only puts variables with the `NEXT_PUBLIC_` prefix into the
+      browser bundle, so `process.env.STRIPE_SECRET_KEY` in a client
+      component is usually `undefined` at run time rather than leaked. It
+      is still reported: the code is broken either way, and other bundlers
+      and build settings do inline it.
+    - >-
+      Any path that contains `/client/`, `/dist/`, `/build/` or
+      `/frontend/` counts as browser code, so a server-side package in a
+      folder named `client` can be reported.
+    - >-
+      A public variable whose name contains `SECRET` or `TOKEN` is reported
+      even when the value is meant to be public, such as a CAPTCHA site
+      token.
+  suppress:
+    - check:
+        kind: example
+        example:
+          language: tsx
+          filename: app/checkout/PayButton.tsx
+          code: |
+            "use client";
+
+            import { useState } from "react";
+
+            const stripeKey = process.env.STRIPE_SECRET_KEY; // skylos: ignore[SKY-S102] proxy
+
+            export function PayButton({ amount }: { amount: number }) {
+              const [busy, setBusy] = useState(false);
+
+              async function pay() {
+                setBusy(true);
+                await fetch("https://api.stripe.com/v1/payment_intents", {
+                  method: "POST",
+                  headers: { Authorization: `Bearer ${stripeKey}` },
+                  body: new URLSearchParams({ amount: String(amount), currency: "usd" }),
+                });
+                setBusy(false);
+              }
+
+              return <button disabled={busy} onClick={pay}>Pay</button>;
+            }
+      text: >-
+        Mark a reviewed line with a real comment on the same line. A marker
+        on the line above is not read.
+      language: tsx
+      code: |
+        const stripeKey = process.env.STRIPE_SECRET_KEY; // skylos: ignore[SKY-S102] proxy
+    - check: {kind: config, expect: reported}
+      text: >-
+        `[tool.skylos] ignore = ["SKY-S102"]` has no effect on the secrets
+        scan: its findings stay reported and still fail the gate.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts existing
+        findings by file and line. Revoke any secret that has shipped.
+
+related: [SKY-S101, SKY-D244]

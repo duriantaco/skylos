@@ -1,0 +1,254 @@
+id: SKY-SC001
+title: Route lost an auth guard its security contract requires
+family: security
+severity: HIGH
+severity_note: >-
+  HIGH by default. Each contract can set its own `severity` (LOW, MEDIUM,
+  HIGH or CRITICAL), and the finding uses it.
+languages: [Python (FastAPI)]
+cwe: [CWE-862]
+gate:
+  full: critical_blocks
+  note: >-
+    Reported under security (`danger`) and counted toward `max_high` and
+    `max_security`; a contract with `severity = "CRITICAL"` fails the gate on
+    its own. It compares the working tree with the base, so it only reports
+    while the guarded file has changes.
+run_with: >-
+  `skylos . --danger --diff origin/main` on a pull request, with
+  `[[tool.skylos.security_contracts]]` in `pyproject.toml`
+
+what_it_is: >-
+  A security contract is a promise you write down in `pyproject.toml`: this
+  FastAPI route must always depend on these guard functions, such as
+  `require_admin`. SKY-SC001 reports a change that removes one of those
+  guards from the route, or deletes the guarded route.
+
+why_it_matters: >-
+  Auth checks are often removed by accident: during a refactor, when a
+  route is copied, or by a coding agent "fixing" a failing test. The diff
+  looks small and the endpoint keeps working, now for anyone. A contract
+  makes that removal fail review instead of reaching production.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  expect_file: app/admin.py
+  expect_line: 9
+  base_files:
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.0.0"
+
+        [[tool.skylos.security_contracts]]
+        id = "admin-refunds"
+        framework = "fastapi"
+        file = "app/admin.py"
+        handler = "refund_order"
+        guards = ["require_admin"]
+    - filename: app/admin.py
+      code: |
+        from fastapi import APIRouter, Depends
+
+        from app.auth import require_admin
+
+        router = APIRouter(prefix="/admin")
+
+
+        @router.post("/orders/{order_id}/refund")
+        def refund_order(order_id: int, user=Depends(require_admin)):
+            return {"refunded": order_id}
+  files:
+    - filename: app/admin.py
+      code: |
+        from fastapi import APIRouter, Depends
+
+        from app.auth import require_admin
+
+        router = APIRouter(prefix="/admin")
+
+
+        @router.post("/orders/{order_id}/refund")
+        def refund_order(order_id: int):
+            return {"refunded": order_id}
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.0.0"
+
+        [[tool.skylos.security_contracts]]
+        id = "admin-refunds"
+        framework = "fastapi"
+        file = "app/admin.py"
+        handler = "refund_order"
+        guards = ["require_admin"]
+    - filename: app/admin.py
+      code: |
+        from fastapi import APIRouter, Depends
+
+        from app.auth import require_admin
+
+        router = APIRouter(prefix="/admin")
+
+
+        @router.post("/orders/{order_id}/refund")
+        def refund_order(order_id: int, user=Depends(require_admin)):
+            return {"refunded": order_id}
+  files:
+    - filename: app/admin.py
+      code: |
+        from fastapi import APIRouter, Depends
+
+        from app.auth import require_admin
+
+        router = APIRouter(prefix="/admin")
+
+
+        @router.post(
+            "/orders/{order_id}/refund", dependencies=[Depends(require_admin)]
+        )
+        def refund_order(order_id: int):
+            return {"refunded": order_id}
+  why: >-
+    The `user` parameter is gone, as in the flagged change, but the guard
+    moved into the decorator's `dependencies` list. The route still depends
+    on `require_admin`, so the contract holds.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` when `[[tool.skylos.security_contracts]]` entries
+    exist. Each needs `framework = "fastapi"`, a `file` inside the
+    repository, a `handler` function name and a non-empty `guards` list;
+    other entries are ignored.
+  - >-
+    Runs only for a contract whose file changed. It reads the file at the
+    base (the CI pull-request base, `SKYLOS_DIFF_BASE`, or `HEAD` for local
+    changes) and in the working tree.
+  - >-
+    In both versions it finds the function with that name that has a
+    FastAPI route decorator (`.get`, `.post`, `.put`, `.patch`, `.delete`,
+    `.head`, `.options`, `.websocket` on any object), and collects its guards:
+    `Depends(x)` in the decorator's `dependencies=[...]` and in parameter
+    defaults. A guard matches by its last name, so `auth.require_admin`
+    counts as `require_admin`.
+  - >-
+    Reports each contracted guard the base version had and the new version
+    lacks, on the route's line. If the guarded route was deleted, it reports
+    the old line. A guard the base never had is not reported.
+  - >-
+    A gate policy synced from Skylos Cloud can set contracts that
+    `pyproject.toml` cannot remove or ignore.
+
+source_refs:
+  - path: skylos/security/contracts.py
+    symbol: "def detect_security_contract_regressions("
+  - path: skylos/security/contracts.py
+    symbol: "def load_security_contracts("
+  - path: skylos/security/contracts.py
+    symbol: "def _collect_route_guards("
+  - path: skylos/config.py
+    symbol: 'rule_id for rule_id in restored.get("ignore", []) if rule_id != "SKY-SC001"'
+    note: a synced Cloud contract cannot be ignored from the repository.
+  - path: test/test_security_contracts.py
+    symbol: "def test_detect_security_contract_regression_for_removed_depends_guard("
+
+fix:
+  explanation: >-
+    Put the guard back, either as a `Depends` parameter or in the route's
+    `dependencies` list. If the route really should change owner, change
+    the contract in its own reviewed pull request.
+  filename: app/admin.py
+  code: |
+    from fastapi import APIRouter, Depends
+
+    from app.auth import require_admin
+
+    router = APIRouter(prefix="/admin")
+
+
+    @router.post("/orders/{order_id}/refund")
+    def refund_order(order_id: int, user=Depends(require_admin)):
+        return {"refunded": order_id}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Only FastAPI is supported, and only guards written as `Depends(...)`.
+      A guard applied by the router (`APIRouter(dependencies=[...])`), by
+      middleware or inside the function body is not seen, so a contract on
+      such a route never reports.
+    - >-
+      Renaming the handler function looks like deleting the route.
+  suppress:
+    - check: {kind: inline, expect: reported}
+      text: >-
+        The rule reads no inline marker: `# skylos: ignore[SKY-SC001]` on the
+        reported line does not hide the finding. Retire the contract instead,
+        in a reviewed change.
+    - check:
+        kind: example
+        example:
+          language: python
+          setup: git_diff
+          base_files:
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [project]
+                name = "shop"
+                version = "1.0.0"
+
+                [tool.skylos]
+                ignore = ["SKY-SC001"]
+
+                [[tool.skylos.security_contracts]]
+                id = "admin-refunds"
+                framework = "fastapi"
+                file = "app/admin.py"
+                handler = "refund_order"
+                guards = ["require_admin"]
+            - filename: app/admin.py
+              code: |
+                from fastapi import APIRouter, Depends
+
+                from app.auth import require_admin
+
+                router = APIRouter(prefix="/admin")
+
+
+                @router.post("/orders/{order_id}/refund")
+                def refund_order(order_id: int, user=Depends(require_admin)):
+                    return {"refunded": order_id}
+          files:
+            - filename: app/admin.py
+              code: |
+                from fastapi import APIRouter, Depends
+
+                from app.auth import require_admin
+
+                router = APIRouter(prefix="/admin")
+
+
+                @router.post("/orders/{order_id}/refund")
+                def refund_order(order_id: int):
+                    return {"refunded": order_id}
+      text: >-
+        `[tool.skylos] ignore = ["SKY-SC001"]` turns the check off, unless a
+        Skylos Cloud policy sets the contracts. Removing the contract entry
+        is the cleaner way to retire one.
+      language: toml
+      code: |
+        [tool.skylos]
+        ignore = ["SKY-SC001"]
+
+related: [SKY-DEP001, SKY-D241]

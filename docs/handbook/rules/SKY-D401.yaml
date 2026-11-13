@@ -1,0 +1,141 @@
+id: SKY-D401
+title: Terraform creates an RDS database with storage encryption turned off
+family: infrastructure
+severity: HIGH
+languages: [Terraform]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`; the rule never reports CRITICAL.
+
+what_it_is: >-
+  Amazon RDS can encrypt a database's disks, backups and snapshots. SKY-D401
+  reports a Terraform `aws_db_instance` that creates a new database with
+  `storage_encrypted = false`.
+
+why_it_matters: >-
+  An unencrypted database stays unencrypted: RDS cannot turn encryption on for
+  an existing instance, so fixing it later means a snapshot, an encrypted copy
+  and a migration. Unencrypted snapshots can also be shared or copied without
+  a key to stop them.
+
+flagged_example:
+  language: terraform
+  filename: main.tf
+  expect_line: 1
+  code: |
+    resource "aws_db_instance" "orders" {
+      identifier                  = "orders"
+      engine                      = "postgres"
+      engine_version              = "16.4"
+      instance_class              = "db.t3.medium"
+      allocated_storage           = 50
+      username                    = "orders"
+      manage_master_user_password = true
+      storage_encrypted           = false
+    }
+
+not_flagged_example:
+  language: terraform
+  filename: main.tf
+  code: |
+    resource "aws_db_instance" "orders" {
+      identifier                  = "orders"
+      engine                      = "postgres"
+      engine_version              = "16.4"
+      instance_class              = "db.t3.medium"
+      allocated_storage           = 50
+      username                    = "orders"
+      manage_master_user_password = true
+      storage_encrypted           = true
+      kms_key_id                  = aws_kms_key.rds.arn
+    }
+  why: >-
+    Encryption is requested explicitly, with a customer-managed key. The key's
+    ARN comes from another resource and stays unknown, but `storage_encrypted
+    = true` alone settles the rule.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (or `-a`). Reads `.tf` and `.tf.json` files, skipping
+    `.terraform`, `.git`, `node_modules`, `vendor`, `build`, `dist` and
+    virtual-environment folders, and parses them as HCL without running
+    Terraform or contacting AWS.
+  - >-
+    Resolves only literal values and `local` values of the same module. Input
+    variables, data sources, attributes of other resources and module outputs
+    stay unknown, and an unknown value never produces a finding.
+  - >-
+    Skips a resource with `count = 0` or an empty `for_each`, and needs the
+    official AWS provider (`hashicorp/aws`, which an `aws_` resource uses
+    unless another provider is configured).
+  - >-
+    Checks `aws_db_instance` resources.
+  - >-
+    Reports when `storage_encrypted` is the literal `false`. A database
+    restored or copied from elsewhere (`snapshot_identifier`,
+    `replicate_source_db`, `restore_to_point_in_time`, `s3_import`) is not
+    judged, because it inherits its encryption.
+  - >-
+    Reports HIGH on the `resource` line.
+
+source_refs:
+  - path: skylos/rules/config/terraform/aws.py
+    symbol: "def _storage("
+  - path: test/test_terraform_aws.py
+    symbol: "def test_encryption_requires_literal_direct_creation_evidence("
+  - path: skylos/rules/config/terraform/model.py
+    symbol: "def aws_provider_status("
+    note: only the official AWS provider counts.
+  - path: skylos/rules/config/terraform/model.py
+    symbol: "def instance_status("
+
+fix:
+  explanation: >-
+    Set `storage_encrypted = true`, ideally with your own KMS key. For a
+    database that already exists, take a snapshot, copy it with encryption and
+    restore from the copy.
+  filename: main.tf
+  language: terraform
+  code: |
+    resource "aws_db_instance" "orders" {
+      identifier                  = "orders"
+      engine                      = "postgres"
+      engine_version              = "16.4"
+      instance_class              = "db.t3.medium"
+      allocated_storage           = 50
+      username                    = "orders"
+      manage_master_user_password = true
+      storage_encrypted           = true
+      kms_key_id                  = aws_kms_key.rds.arn
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Leaving `storage_encrypted` out is not reported, although AWS then
+      creates an unencrypted database. Write the value explicitly.
+    - >-
+      Values that come from variables, modules or other resources are not
+      checked, because Skylos does not run Terraform: `cidr_blocks =
+      var.admin_cidrs` is not reported even when its default is `0.0.0.0/0`.
+    - >-
+      It judges the declaration only. It does not know what is deployed, and
+      other settings (account defaults, security groups, routing) can make the
+      real exposure smaller or larger.
+  suppress:
+    - check: {kind: inline, expect: reported}
+      text: >-
+        Terraform rules read no inline marker: `# skylos: ignore[SKY-D401]` on
+        the resource line does not hide the finding.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D401"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        declarations that exist today and reports new ones.
+
+related: [SKY-D405, SKY-D406]

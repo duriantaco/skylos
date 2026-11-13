@@ -1,0 +1,189 @@
+id: SKY-D223
+title: Undeclared third-party import
+family: supply-chain
+severity: MEDIUM
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Reported with the AI-code findings and counted toward `max_ai_defects`.
+    A MEDIUM finding does not fail the gate on its own unless
+    `block_ai_defect_severities` under `[tool.skylos.gate]` lists
+    `"MEDIUM"`.
+run_with: >-
+  `skylos . --ai-defects` (or `-a`); reads the code as it is, no diff needed
+
+what_it_is: >-
+  A Python file imports a third-party package that the project's manifest
+  (`pyproject.toml`, `requirements.txt`, `setup.cfg` or `setup.py`) does not
+  declare. SKY-D223 reports the import line and names the distribution
+  that would provide it.
+
+why_it_matters: >-
+  The code works on the machine where the package happens to be installed
+  and fails with `ModuleNotFoundError` in a clean install, a container or
+  CI. Coding agents often add an import without touching the manifest, and
+  the gap shows up only after release.
+
+flagged_example:
+  language: python
+  expect_file: app/config.py
+  expect_line: 4
+  files:
+    - filename: app/config.py
+      code: |
+        from pathlib import Path
+
+        import requests
+        import yaml
+
+
+        def load_settings(path: Path) -> dict:
+            with path.open() as handle:
+                return yaml.safe_load(handle)
+
+
+        def fetch_rates(url: str) -> dict:
+            return requests.get(url, timeout=10).json()
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "invoice-service"
+        version = "1.0.0"
+        dependencies = ["requests==2.32.3"]
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: app/config.py
+      code: |
+        from pathlib import Path
+
+        import requests
+        import yaml
+
+
+        def load_settings(path: Path) -> dict:
+            with path.open() as handle:
+                return yaml.safe_load(handle)
+
+
+        def fetch_rates(url: str) -> dict:
+            return requests.get(url, timeout=10).json()
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "invoice-service"
+        version = "1.0.0"
+        dependencies = ["requests==2.32.3", "PyYAML==6.0.2"]
+  why: >-
+    The import is `yaml` but the distribution is called `PyYAML`. Skylos
+    maps import names to the distributions that provide them, so a package
+    declared under its distribution name counts.
+
+how_skylos_decides:
+  - >-
+    Runs with `--ai-defects` on Python files. For each file it finds the
+    nearest manifest and reads the declared dependencies; nothing is
+    installed or imported from the scanned project.
+  - >-
+    Skips the standard library, the project's own modules and packages,
+    names starting with `_`, imports in `setup.py` of build tools such as
+    `setuptools`, and names listed in the `SKYLOS_PRIVATE_DEPS_ALLOW`
+    environment variable.
+  - >-
+    Looks the import up in the distributions installed next to Skylos. If
+    one of them provides it and none of those is declared, it reports
+    "Undeclared import 'yaml' (provided by: pyyaml)".
+  - >-
+    Otherwise it uses a built-in map of import names to distributions, and
+    then asks PyPI whether a project of that name exists. A package that
+    exists and is not declared is reported here; a name that no PyPI
+    project has is reported as SKY-D222 instead.
+  - >-
+    Does not report when the project has no manifest at all, when a
+    declared dependency or a lockfile edge provides the import, or when the
+    import is used only under `if TYPE_CHECKING:`.
+
+source_refs:
+  - path: skylos/rules/ai_defect/dependency_hallucination.py
+    symbol: "def scan_python_dependency_hallucinations("
+  - path: skylos/rules/ai_defect/dependency_hallucination.py
+    symbol: "def _classify_import_names("
+    note: the order of the skips and lookups.
+  - path: skylos/rules/ai_defect/dependency_hallucination.py
+    symbol: "def _classify_installed_import("
+  - path: skylos/rules/ai_defect/dependency_hallucination.py
+    symbol: "def _classify_registry_import("
+  - path: skylos/rules/ai_defect/dependency_hallucination.py
+    symbol: "def _load_private_allowlist("
+
+fix:
+  explanation: >-
+    Declare the package, with the version you tested, in the manifest the
+    project installs from. If the import was a mistake, remove it.
+  filename: pyproject.toml
+  language: toml
+  code: |
+    [project]
+    name = "invoice-service"
+    version = "1.0.0"
+    dependencies = ["requests==2.32.3", "PyYAML==6.0.2"]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      The installed-package lookup uses the Python that runs Skylos. A
+      package installed there under a different distribution name than the
+      one you declared can be reported as undeclared.
+    - >-
+      A private package that is installed by other means, such as a base
+      image, is reported. List it in `SKYLOS_PRIVATE_DEPS_ALLOW`
+      (comma-separated names) for the scan.
+    - >-
+      An import that Skylos cannot match to any distribution, for example a
+      module whose PyPI project has a different name, is still reported,
+      with "(possible import/dist name mismatch)" in the message.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed import on its own line.
+      language: python
+      code: |
+        import yaml  # skylos: ignore[SKY-D223] installed by the base image
+    - check: baseline
+      text: >-
+        Accept existing findings with `skylos baseline .`, then scan with
+        `--baseline`.
+    - check:
+        kind: example
+        example:
+          language: python
+          files:
+            - filename: app/config.py
+              code: |
+                from pathlib import Path
+
+                import yaml
+
+
+                def load_settings(path: Path) -> dict:
+                    with path.open() as handle:
+                        return yaml.safe_load(handle)
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [project]
+                name = "invoice-service"
+                version = "1.0.0"
+                dependencies = ["requests==2.32.3"]
+
+                [tool.skylos]
+                ignore = ["SKY-D223"]
+      text: >-
+        `ignore = ["SKY-D223"]` under `[tool.skylos]` turns the rule off for
+        the whole project.
+
+related: [SKY-D222, SKY-D225, SKY-U005]

@@ -1,0 +1,220 @@
+id: SKY-SCA-INT001
+title: Lockfile entry without an integrity hash
+family: supply-chain
+severity: MEDIUM
+languages: [package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, yarn.lock, uv.lock, poetry.lock]
+gate:
+  full: counted
+  note: >-
+    Counts toward `max_dependency_vulnerabilities`, which is 0 by default, so
+    one finding fails `--gate`.
+
+what_it_is: >-
+  A lockfile pins each package to an exact version and, normally, records a
+  hash of the file to download (the integrity hash). SKY-SCA-INT001 reports
+  a package from a public or private registry whose lockfile entry has no
+  such hash.
+
+why_it_matters: >-
+  The package manager compares the download with the recorded hash and
+  stops when they differ. Without a hash it installs whatever the registry,
+  a mirror or a network proxy hands it, so a tampered package goes in
+  silently.
+
+flagged_example:
+  language: json
+  filename: package-lock.json
+  expect_line: 20
+  code: |
+    {
+      "name": "shop",
+      "version": "1.0.0",
+      "lockfileVersion": 3,
+      "requires": true,
+      "packages": {
+        "": {
+          "name": "shop",
+          "version": "1.0.0",
+          "workspaces": ["packages/*"],
+          "dependencies": {
+            "ms": "2.1.3"
+          }
+        },
+        "node_modules/@shop/ui": {
+          "resolved": "packages/ui",
+          "link": true
+        },
+        "node_modules/ms": {
+          "version": "2.1.3",
+          "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz"
+        },
+        "packages/ui": {
+          "name": "@shop/ui",
+          "version": "1.0.0"
+        }
+      }
+    }
+
+not_flagged_example:
+  language: json
+  filename: package-lock.json
+  code: |
+    {
+      "name": "shop",
+      "version": "1.0.0",
+      "lockfileVersion": 3,
+      "requires": true,
+      "packages": {
+        "": {
+          "name": "shop",
+          "version": "1.0.0",
+          "workspaces": ["packages/*"],
+          "dependencies": {
+            "ms": "2.1.3"
+          }
+        },
+        "node_modules/@shop/ui": {
+          "resolved": "packages/ui",
+          "link": true
+        },
+        "node_modules/ms": {
+          "version": "2.1.3",
+          "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+          "integrity": "sha512-6FlzubTLZG3J2a=="
+        },
+        "packages/ui": {
+          "name": "@shop/ui",
+          "version": "1.0.0"
+        }
+      }
+    }
+  why: >-
+    `ms` now has its hash. The workspace entry `@shop/ui` has no hash either,
+    but it is a link to a folder in this repository, not a registry
+    download, so there is nothing to verify.
+
+more_examples:
+  - flagged:
+      language: toml
+      filename: uv.lock
+      expect_line: 5
+      code: |
+        version = 1
+        requires-python = ">=3.11"
+
+        [[package]]
+        name = "six"
+        version = "1.17.0"
+        source = { registry = "https://pypi.org/simple" }
+        sdist = { url = "https://files.pythonhosted.org/packages/six-1.17.0.tar.gz" }
+    not_flagged:
+      language: text
+      filename: requirements.txt
+      code: |
+        six==1.17.0
+      why: >-
+        A requirements file has no hash here either, but Skylos never reports
+        SKY-SCA-INT001 for requirements files: only lockfiles that always
+        record hashes are checked. Use `pip install --require-hashes` with
+        `--hash=sha256:…` pins if you need the same protection there.
+
+how_skylos_decides:
+  - >-
+    Runs with `--sca`. Skylos reads the manifests and lockfiles itself and
+    hands the npm and PyPI packages to the `ca9` library, which decides the
+    finding. This check needs no network, and nothing is installed.
+  - >-
+    Only these lockfiles are checked: `package-lock.json`,
+    `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock` and
+    `poetry.lock`. Requirements files and manifests such as `package.json`
+    are never reported.
+  - >-
+    The entry must come from a registry. Git, URL, local folder and
+    workspace entries are not registry downloads (Git and URL entries are
+    covered by SKY-SCA-SRC003).
+  - >-
+    In `uv.lock` the hash is the first `hash` of the `sdist` or of a wheel;
+    in `poetry.lock` it is the file hash listed for the package. An empty
+    value counts as missing.
+  - >-
+    Skylos checks every `ca9` finding against its own record of the entry
+    and drops one that does not match, so a newer `ca9` cannot report a
+    requirements file or an entry that has a hash.
+
+source_refs:
+  - path: skylos/rules/sca/supply_chain.py
+    symbol: "INTEGRITY_LOCKFILES = frozenset("
+  - path: skylos/rules/sca/supply_chain.py
+    symbol: "def _confirmed("
+    note: the record must be a registry entry from one of those lockfiles.
+  - path: skylos/rules/sca/supply_chain.py
+    symbol: "def evaluate_supply_chain("
+  - path: skylos/rules/sca/uv_lockfile.py
+    symbol: "def _artifact_hash("
+  - path: test/test_sca_supply_chain.py
+    symbol: "def test_requirements_without_hash_never_report_int001("
+
+fix:
+  explanation: >-
+    Regenerate the lockfile with the package manager (`npm install`,
+    `pnpm install`, `uv lock`, `poetry lock`) so it records every hash, and
+    commit the result. An entry that lost its hash after a hand edit or a
+    merge conflict is worth a closer look.
+  language: json
+  filename: package-lock.json
+  code: |
+    {
+      "name": "shop",
+      "version": "1.0.0",
+      "lockfileVersion": 3,
+      "requires": true,
+      "packages": {
+        "": {
+          "name": "shop",
+          "version": "1.0.0",
+          "workspaces": ["packages/*"],
+          "dependencies": {
+            "ms": "2.1.3"
+          }
+        },
+        "node_modules/@shop/ui": {
+          "resolved": "packages/ui",
+          "link": true
+        },
+        "node_modules/ms": {
+          "version": "2.1.3",
+          "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+          "integrity": "sha512-6FlzubTLZG3J2a=="
+        },
+        "packages/ui": {
+          "name": "@shop/ui",
+          "version": "1.0.0"
+        }
+      }
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Some private registries and mirrors serve packages without a hash, so
+      their lockfile entries have none. That is reported: the install really
+      cannot verify those files.
+    - >-
+      Skylos does not check that a recorded hash is correct; a wrong hash is
+      caught by the package manager at install time.
+    - >-
+      Bundled dependencies (`"inBundle": true` in `package-lock.json`) ship
+      inside their parent package and are not reported.
+  suppress:
+    - check: {kind: config, expect: reported}
+      text: >-
+        There is no way to silence one entry: regenerate the lockfile.
+        `[tool.skylos] ignore = ["SKY-SCA-INT001"]` does not hide it in a
+        full scan, and JSON lockfiles cannot hold an inline marker.
+    - check: {kind: baseline, expect: reported}
+      text: >-
+        A baseline does not hold it either. `skylos baseline .` saves
+        dependency findings only with `--sca`, and even then only known
+        vulnerabilities, so `--baseline` still reports this rule.
+
+related: [SKY-SCA-SRC003, SKY-SCA-SRC004, SKY-SCA-SRC001]

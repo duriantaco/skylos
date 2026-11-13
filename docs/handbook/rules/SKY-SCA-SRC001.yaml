@@ -1,0 +1,286 @@
+id: SKY-SCA-SRC001
+title: Possible dependency confusion
+family: supply-chain
+severity: CRITICAL
+severity_note: >-
+  CRITICAL for a direct dependency, HIGH for a transitive one (a package
+  that another dependency pulls in).
+languages: [requirements*.txt, pyproject.toml, uv.lock, poetry.lock, Pipfile.lock, package.json, npm, pnpm, Yarn and Bun lockfiles]
+gate:
+  full: counted
+  opt_in: >-
+    `internal_packages` under `[tool.skylos.supply_chain]`; without it the
+    rule does not run.
+  note: >-
+    Counts toward `max_dependency_vulnerabilities`, which is 0 by default, so
+    one finding fails `--gate`.
+
+what_it_is: >-
+  Dependency confusion is an attack on private package names: someone
+  publishes a package with the same name as your internal one on the public
+  registry, and the installer picks it up. SKY-SCA-SRC001 reports a package
+  that matches your internal name patterns but can be installed from a
+  registry that is not one of your private ones.
+
+why_it_matters: >-
+  The attacker's package runs its install script on developer machines and
+  CI runners as soon as it is installed. With pip's `--extra-index-url`, pip
+  looks at the public index too and takes the highest version, so a public
+  `acme-billing 99.0.0` wins over your private `2.0.0`.
+
+flagged_example:
+  language: text
+  expect_file: requirements.txt
+  expect_line: 2
+  files:
+    - filename: requirements.txt
+      code: |
+        --extra-index-url https://pypi.acme.example/simple
+        acme-billing==2.0.0
+        six==1.17.0
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.0.0"
+
+        [tool.skylos.supply_chain]
+        internal_packages = ["acme-*"]
+        private_registries = ["https://pypi.acme.example/simple"]
+
+not_flagged_example:
+  language: text
+  files:
+    - filename: requirements.txt
+      code: |
+        --index-url https://pypi.acme.example/simple
+        acme-billing==2.0.0
+        six==1.17.0
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.0.0"
+
+        [tool.skylos.supply_chain]
+        internal_packages = ["acme-*"]
+        private_registries = ["https://pypi.acme.example/simple"]
+  why: >-
+    The same internal package from the same private index, but
+    `--index-url` makes that index the only one pip reads (the index is
+    expected to mirror public packages such as `six`). Nobody can slip a
+    public `acme-billing` in front of it.
+
+more_examples:
+  - flagged:
+      language: json
+      expect_file: package-lock.json
+      expect_line: 16
+      files:
+        - filename: package-lock.json
+          code: |
+            {
+              "name": "shop",
+              "version": "1.0.0",
+              "lockfileVersion": 3,
+              "requires": true,
+              "packages": {
+                "": {
+                  "name": "shop",
+                  "version": "1.0.0",
+                  "dependencies": {
+                    "@acme/billing": "2.0.0",
+                    "ms": "2.1.3"
+                  }
+                },
+                "node_modules/@acme/billing": {
+                  "version": "2.0.0",
+                  "resolved": "https://registry.npmjs.org/@acme/billing/-/billing-2.0.0.tgz",
+                  "integrity": "sha512-6FlzubTLZG3J2a=="
+                },
+                "node_modules/ms": {
+                  "version": "2.1.3",
+                  "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+                  "integrity": "sha512-6FlzubTLZG3J2a=="
+                }
+              }
+            }
+        - filename: pyproject.toml
+          language: toml
+          code: |
+            [tool.skylos.supply_chain]
+            internal_packages = ["@acme/*"]
+            private_registries = ["https://npm.acme.example"]
+    not_flagged:
+      language: json
+      files:
+        - filename: package-lock.json
+          code: |
+            {
+              "name": "shop",
+              "version": "1.0.0",
+              "lockfileVersion": 3,
+              "requires": true,
+              "packages": {
+                "": {
+                  "name": "shop",
+                  "version": "1.0.0",
+                  "dependencies": {
+                    "@acme/billing": "2.0.0",
+                    "ms": "2.1.3"
+                  }
+                },
+                "node_modules/@acme/billing": {
+                  "version": "2.0.0",
+                  "resolved": "https://npm.acme.example/@acme/billing/-/billing-2.0.0.tgz",
+                  "integrity": "sha512-6FlzubTLZG3J2a=="
+                },
+                "node_modules/ms": {
+                  "version": "2.1.3",
+                  "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+                  "integrity": "sha512-6FlzubTLZG3J2a=="
+                }
+              }
+            }
+        - filename: pyproject.toml
+          language: toml
+          code: |
+            [tool.skylos.supply_chain]
+            internal_packages = ["@acme/*"]
+            private_registries = ["https://npm.acme.example"]
+      why: >-
+        The lockfile resolves `@acme/billing` from the declared private
+        registry. In the flagged lockfile it came from the public npm
+        registry, where anyone could have registered the `@acme` scope.
+
+how_skylos_decides:
+  - >-
+    Runs with `--sca`, and only when `internal_packages` under
+    `[tool.skylos.supply_chain]` lists name patterns such as `acme-*` or
+    `@acme/*`. In pull-request CI the policy is read from the base commit,
+    so a pull request cannot change it for itself.
+  - >-
+    Skylos reads manifests and lockfiles itself, records which registry
+    each npm and PyPI package comes from (the `--index-url` and
+    `--extra-index-url` lines of a requirements file, or the registry a
+    lockfile records), and hands the packages and the policy to the `ca9`
+    library, which decides the finding.
+  - >-
+    A package matching a pattern is reported when its registry is not in
+    `private_registries`, or when pip merges a private extra index with the
+    public one.
+  - >-
+    Skylos keeps a `ca9` finding only when it knows the package's registry
+    (or that indexes are merged) and the policy has patterns, so a looser
+    engine cannot report confusion without evidence.
+
+source_refs:
+  - path: skylos/rules/sca/supply_chain.py
+    symbol: "def _confirmed("
+    note: patterns configured, a registry entry, and a known registry.
+  - path: skylos/rules/sca/supply_chain.py
+    symbol: "def _options("
+    note: the policy lists handed to `ca9`.
+  - path: skylos/rules/sca/supply_chain.py
+    symbol: "def _severity("
+  - path: skylos/supply_chain/policy.py
+    symbol: "internal_packages: tuple[str, ...] = ()"
+  - path: test/test_sca_supply_chain.py
+    symbol: "def test_dependency_confusion_needs_internal_patterns_and_registry_evidence("
+
+fix:
+  explanation: >-
+    Install internal packages only from your private registry: an exclusive
+    `--index-url` (or `[[tool.uv.index]]` with `explicit = true`) in Python,
+    and a scoped registry such as `@acme:registry=https://npm.acme.example`
+    in `.npmrc` for npm. Also register your names or scope on the public
+    registry so nobody else can.
+  language: text
+  filename: requirements.txt
+  code: |
+    --index-url https://pypi.acme.example/simple
+    acme-billing==2.0.0
+    six==1.17.0
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Without `private_registries`, Skylos cannot tell your index is
+      private, so even an exclusive `--index-url` to it is reported. List
+      every private index in `private_registries`.
+    - >-
+      A requirements file that names no index is not reported, even for an
+      internal name, because pip may take its index from `pip.conf` or
+      `PIP_INDEX_URL`, which Skylos does not read.
+    - >-
+      A public package that happens to match a broad pattern such as
+      `acme*` is reported when it comes from the public registry. Make the
+      patterns as narrow as your naming allows.
+  suppress:
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: text
+          files:
+            - filename: requirements.txt
+              code: |
+                --extra-index-url https://pypi.acme.example/simple
+                acme-billing==2.0.0  # skylos: ignore[SKY-SCA-SRC001]
+                six==1.17.0
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [project]
+                name = "shop"
+                version = "1.0.0"
+
+                [tool.skylos.supply_chain]
+                internal_packages = ["acme-*"]
+                private_registries = ["https://pypi.acme.example/simple"]
+      text: >-
+        An inline marker on the requirement line is not read: the finding
+        stays reported.
+      language: text
+      code: |
+        acme-billing==2.0.0  # skylos: ignore[SKY-SCA-SRC001]
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: text
+          files:
+            - filename: requirements.txt
+              code: |
+                --extra-index-url https://pypi.acme.example/simple
+                acme-billing==2.0.0
+                six==1.17.0
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [project]
+                name = "shop"
+                version = "1.0.0"
+
+                [tool.skylos]
+                ignore = ["SKY-SCA-SRC001"]
+
+                [tool.skylos.supply_chain]
+                internal_packages = ["acme-*"]
+                private_registries = ["https://pypi.acme.example/simple"]
+      language: toml
+      code: |
+        [tool.skylos]
+        ignore = ["SKY-SCA-SRC001"]
+      text: >-
+        `[tool.skylos] ignore = ["SKY-SCA-SRC001"]` does not hide it in a
+        full scan. To stop checking a name, remove its pattern from
+        `internal_packages`.
+    - check: {kind: baseline, expect: reported}
+      text: >-
+        A baseline does not hold it: dependency baselines (`skylos baseline
+        . --sca`) save only known vulnerabilities.
+
+related: [SKY-SCA-SRC004, SKY-SCA-SRC003, SKY-SCA-INT001]

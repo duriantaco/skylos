@@ -19,38 +19,6 @@ pending:
       and `--verify` only reads reported findings. A page needs either a verify check
       for suppressed findings or a product decision to list SKY-D218. Draft kept outside
       the repository.'
-  SKY-D223:
-    reason: Not yet written.
-  SKY-D400:
-    reason: Not yet written.
-  SKY-D401:
-    reason: Not yet written.
-  SKY-D402:
-    reason: Not yet written.
-  SKY-D403:
-    reason: Not yet written.
-  SKY-D404:
-    reason: Not yet written.
-  SKY-D405:
-    reason: Not yet written.
-  SKY-D406:
-    reason: Not yet written.
-  SKY-D407:
-    reason: Not yet written.
-  SKY-D408:
-    reason: Not yet written.
-  SKY-D409:
-    reason: Not yet written.
-  SKY-D410:
-    reason: Not yet written.
-  SKY-D411:
-    reason: Not yet written.
-  SKY-DEP001:
-    reason: Not yet written.
-  SKY-DEP002:
-    reason: Not yet written.
-  SKY-DEP003:
-    reason: Not yet written.
   SKY-F101:
     reason: Not yet written.
   SKY-F102:
@@ -60,14 +28,6 @@ pending:
   SKY-G260:
     reason: Not yet written.
   SKY-G280:
-    reason: Not yet written.
-  SKY-GPU000:
-    reason: Not yet written.
-  SKY-GPU001:
-    reason: Not yet written.
-  SKY-GPU002:
-    reason: Not yet written.
-  SKY-GPU003:
     reason: Not yet written.
   SKY-P401:
     reason: Not yet written.
@@ -106,26 +66,6 @@ pending:
   SKY-R104:
     reason: Not yet written.
   SKY-R105:
-    reason: Not yet written.
-  SKY-S102:
-    reason: Not yet written.
-  SKY-SC001:
-    reason: Not yet written.
-  SKY-SCA-AGE001:
-    reason: Not yet written.
-  SKY-SCA-HRD001:
-    reason: Not yet written.
-  SKY-SCA-INT001:
-    reason: Not yet written.
-  SKY-SCA-LIC001:
-    reason: Not yet written.
-  SKY-SCA-SRC001:
-    reason: Not yet written.
-  SKY-SCA-SRC003:
-    reason: Not yet written.
-  SKY-SCA-UPG001:
-    reason: Not yet written.
-  SKY-SCA-UPG002:
     reason: Not yet written.
   SKY-T101:
     reason: Not yet written.

@@ -1,0 +1,156 @@
+id: SKY-D410
+title: Kubernetes pod shares the node's process, IPC or network namespace
+family: infrastructure
+severity: HIGH
+languages: [Kubernetes YAML]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`; the rule never reports CRITICAL.
+
+what_it_is: >-
+  Namespaces are how Linux keeps a container's processes, shared memory and
+  network separate from the host. SKY-D410 reports a Kubernetes pod spec that
+  sets `hostPID`, `hostIPC` or `hostNetwork` to `true`, which puts the pod in
+  the node's own namespace.
+
+why_it_matters: >-
+  With `hostPID` the pod sees and can signal every process on the node, and
+  can read their environment variables and secrets. With `hostNetwork` it can
+  reach services bound to the node's localhost and sniff its traffic. Each one
+  removes a wall an attacker would otherwise have to break.
+
+flagged_example:
+  language: yaml
+  filename: deploy/node-agent.yaml
+  expect_line: 15
+  code: |
+    apiVersion: apps/v1
+    kind: DaemonSet
+    metadata:
+      name: node-agent
+      namespace: monitoring
+    spec:
+      selector:
+        matchLabels:
+          app: node-agent
+      template:
+        metadata:
+          labels:
+            app: node-agent
+        spec:
+          hostPID: true
+          containers:
+            - name: agent
+              image: registry.example.com/node-agent:2.4.1
+
+not_flagged_example:
+  language: yaml
+  filename: deploy/node-agent.yaml
+  code: |
+    apiVersion: apps/v1
+    kind: DaemonSet
+    metadata:
+      name: node-agent
+      namespace: monitoring
+    spec:
+      selector:
+        matchLabels:
+          app: node-agent
+      template:
+        metadata:
+          labels:
+            app: node-agent
+        spec:
+          shareProcessNamespace: true
+          containers:
+            - name: agent
+              image: registry.example.com/node-agent:2.4.1
+  why: >-
+    `shareProcessNamespace` lets the containers of this pod see each other's
+    processes, for example for a debugging sidecar. It does not reach the
+    node's processes.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (or `-a`). Reads every `.yaml` and `.yml` file that
+    declares an `apiVersion` and a `kind`, skipping `.git`, `node_modules`,
+    build and virtual-environment folders. It never renders Helm templates or
+    Kustomize overlays and never contacts a cluster.
+  - >-
+    Checks the pod spec of `Pod`, `PodTemplate`, `ReplicationController`,
+    `Deployment`, `DaemonSet`, `ReplicaSet`, `StatefulSet`, `Job` and
+    `CronJob`, including items of a `v1` `List`. Values containing template
+    markers such as `{{` or `${` are treated as unknown and never reported.
+  - >-
+    Checks `hostPID`, `hostIPC` and `hostNetwork` in the pod spec.
+  - >-
+    Reports each one that is the boolean `true`, as its own finding, HIGH, on
+    that line. `false` or a missing value pass; a value that is not a boolean
+    is not judged.
+
+source_refs:
+  - path: skylos/rules/config/kubernetes/scanner.py
+    symbol: "def namespaces("
+  - path: skylos/rules/config/kubernetes/scanner.py
+    symbol: "_HOST_FLAGS = ("
+  - path: skylos/rules/config/kubernetes/scanner.py
+    symbol: "_WORKLOADS = {"
+    note: the workload kinds and where their pod spec sits.
+
+fix:
+  explanation: >-
+    Remove the flag. A monitoring agent that needs node metrics can usually
+    read them from `/proc` through a read-only mount, or from the kubelet's
+    metrics endpoint.
+  filename: deploy/node-agent.yaml
+  language: yaml
+  code: |
+    apiVersion: apps/v1
+    kind: DaemonSet
+    metadata:
+      name: node-agent
+      namespace: monitoring
+    spec:
+      selector:
+        matchLabels:
+          app: node-agent
+      template:
+        metadata:
+          labels:
+            app: node-agent
+        spec:
+          containers:
+            - name: agent
+              image: registry.example.com/node-agent:2.4.1
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Node-level agents such as CNI plugins, `kube-proxy` and some monitoring
+      agents need `hostNetwork` or `hostPID` by design.
+    - >-
+      `hostPort` on a container port also exposes the pod on the node, but it
+      is not a namespace setting and is not reported.
+    - >-
+      Helm chart templates are not rendered. A value written as `{{ .Values.x
+      }}` is not judged, and a template file that is not valid YAML on its own
+      (most are not) stops the scan as incomplete, exit 2, with a Kubernetes
+      parse error. Exclude the chart's `templates` folder and scan the output
+      of `helm template` instead.
+  suppress:
+    - check: {kind: inline, expect: reported}
+      text: >-
+        The Kubernetes rules read no inline marker: `# skylos:
+        ignore[SKY-D410]` on the reported line does not hide the finding.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D410"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        workloads that exist today and reports new ones.
+
+related: [SKY-D409, SKY-D411]

@@ -1,0 +1,187 @@
+id: SKY-D411
+title: Kubernetes container mounts a sensitive host path
+family: infrastructure
+severity: HIGH
+languages: [Kubernetes YAML]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`; the rule never reports CRITICAL.
+
+what_it_is: >-
+  A `hostPath` volume puts a file or folder of the node into the container.
+  SKY-D411 reports one that mounts the node's root, its system and credential
+  folders (`/etc`, `/proc`, `/sys`, `/var/lib/kubelet`), or the container
+  runtime's socket such as `/var/run/docker.sock`.
+
+why_it_matters: >-
+  Whoever can talk to the Docker or containerd socket can start a privileged
+  container on the node, so the mount is root on the node in one step. `/etc`
+  and `/var/lib/kubelet` hold the node's credentials and other pods' secrets.
+
+flagged_example:
+  language: yaml
+  filename: deploy/node-agent.yaml
+  expect_line: 19
+  code: |
+    apiVersion: apps/v1
+    kind: DaemonSet
+    metadata:
+      name: node-agent
+      namespace: monitoring
+    spec:
+      selector:
+        matchLabels:
+          app: node-agent
+      template:
+        metadata:
+          labels:
+            app: node-agent
+        spec:
+          containers:
+            - name: agent
+              image: registry.example.com/node-agent:2.4.1
+              volumeMounts:
+                - name: docker-sock
+                  mountPath: /var/run/docker.sock
+          volumes:
+            - name: docker-sock
+              hostPath:
+                path: /var/run/docker.sock
+                type: Socket
+
+not_flagged_example:
+  language: yaml
+  filename: deploy/node-agent.yaml
+  code: |
+    apiVersion: apps/v1
+    kind: DaemonSet
+    metadata:
+      name: node-agent
+      namespace: monitoring
+    spec:
+      selector:
+        matchLabels:
+          app: node-agent
+      template:
+        metadata:
+          labels:
+            app: node-agent
+        spec:
+          containers:
+            - name: agent
+              image: registry.example.com/node-agent:2.4.1
+              volumeMounts:
+                - name: logs
+                  mountPath: /var/log
+                  readOnly: true
+          volumes:
+            - name: logs
+              hostPath:
+                path: /var/log
+  why: >-
+    A log collector that mounts the node's `/var/log` is a common and narrower
+    `hostPath`. `/var/log` is not on the list of sensitive paths.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (or `-a`). Reads every `.yaml` and `.yml` file that
+    declares an `apiVersion` and a `kind`, skipping `.git`, `node_modules`,
+    build and virtual-environment folders. It never renders Helm templates or
+    Kustomize overlays and never contacts a cluster.
+  - >-
+    Checks the pod spec of `Pod`, `PodTemplate`, `ReplicationController`,
+    `Deployment`, `DaemonSet`, `ReplicaSet`, `StatefulSet`, `Job` and
+    `CronJob`, including items of a `v1` `List`. Values containing template
+    markers such as `{{` or `${` are treated as unknown and never reported.
+  - >-
+    For each `volumeMounts` entry of each container, finds the pod volume with
+    the same name. Only `hostPath` volumes count.
+  - >-
+    Works out the host path that is really mounted, including a `subPath`. A
+    path with a template marker, `..`, a `subPathExpr` or a volume name used
+    twice is not judged.
+  - >-
+    Reports `/`, any path inside or above `/etc`, `/proc`, `/sys` and
+    `/var/lib/kubelet` (so `/var/lib` counts too), and the Docker, containerd,
+    CRI-O, cri-dockerd, dockershim, k3s and Podman sockets under `/run` or
+    `/var/run`, or a folder that holds one.
+  - >-
+    Reports HIGH on the volume mount entry. `readOnly: true` does not remove
+    the finding: a read-only socket still accepts API calls.
+
+source_refs:
+  - path: skylos/rules/config/kubernetes/scanner.py
+    symbol: "def mount("
+  - path: skylos/rules/config/kubernetes/scanner.py
+    symbol: "def _sensitivity("
+  - path: skylos/rules/config/kubernetes/scanner.py
+    symbol: "_SOCKETS = tuple("
+  - path: skylos/rules/config/kubernetes/scanner.py
+    symbol: "_WORKLOADS = {"
+    note: the workload kinds and where their pod spec sits.
+
+fix:
+  explanation: >-
+    Do not give workloads the runtime socket. Build images in CI or with a
+    rootless builder, read container data through the Kubernetes API, and
+    mount only the narrow paths an agent needs, read-only.
+  filename: deploy/node-agent.yaml
+  language: yaml
+  code: |
+    apiVersion: apps/v1
+    kind: DaemonSet
+    metadata:
+      name: node-agent
+      namespace: monitoring
+    spec:
+      selector:
+        matchLabels:
+          app: node-agent
+      template:
+        metadata:
+          labels:
+            app: node-agent
+        spec:
+          containers:
+            - name: agent
+              image: registry.example.com/node-agent:2.4.1
+              volumeMounts:
+                - name: logs
+                  mountPath: /var/log
+                  readOnly: true
+          volumes:
+            - name: logs
+              hostPath:
+                path: /var/log
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Node agents such as log shippers that read `/var/lib/docker` containers
+      or monitoring agents that read `/proc` are reported. Accept reviewed
+      ones with a baseline.
+    - >-
+      `volumeDevices` (raw block devices) are not judged.
+    - >-
+      Helm chart templates are not rendered. A value written as `{{ .Values.x
+      }}` is not judged, and a template file that is not valid YAML on its own
+      (most are not) stops the scan as incomplete, exit 2, with a Kubernetes
+      parse error. Exclude the chart's `templates` folder and scan the output
+      of `helm template` instead.
+  suppress:
+    - check: {kind: inline, expect: reported}
+      text: >-
+        The Kubernetes rules read no inline marker: `# skylos:
+        ignore[SKY-D411]` on the reported mount does not hide the finding.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D411"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        workloads that exist today and reports new ones.
+
+related: [SKY-D409, SKY-D410, SKY-D331]

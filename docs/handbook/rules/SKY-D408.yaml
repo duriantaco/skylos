@@ -1,0 +1,162 @@
+id: SKY-D408
+title: Terraform security group opens a database port to the whole internet
+family: infrastructure
+severity: HIGH
+languages: [Terraform]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`; the rule never reports CRITICAL.
+
+what_it_is: >-
+  Database and cache servers listen on well-known ports. SKY-D408 reports a
+  Terraform security group rule that lets any address on the internet reach a
+  database or cache port: SQL Server 1433, Oracle 1521, MySQL 3306, PostgreSQL
+  5432, Redis 6379, Cassandra 9042, Elasticsearch 9200, Memcached 11211 or
+  MongoDB 27017 and 27018.
+
+why_it_matters: >-
+  Exposed databases and caches are found by automated scans and emptied or
+  held for ransom, often within hours. Redis, Memcached and Elasticsearch
+  frequently run without a password at all.
+
+flagged_example:
+  language: terraform
+  filename: main.tf
+  expect_line: 5
+  code: |
+    variable "vpc_id" {
+      type = string
+    }
+
+    resource "aws_security_group" "db" {
+      name   = "orders-db"
+      vpc_id = var.vpc_id
+
+      ingress {
+        description = "PostgreSQL"
+        from_port   = 5432
+        to_port     = 5432
+        protocol    = "tcp"
+        cidr_blocks = ["0.0.0.0/0"]
+      }
+    }
+
+not_flagged_example:
+  language: terraform
+  filename: main.tf
+  code: |
+    variable "vpc_id" {
+      type = string
+    }
+
+    resource "aws_security_group" "db" {
+      name   = "orders-db"
+      vpc_id = var.vpc_id
+
+      ingress {
+        description = "PostgreSQL from the VPC"
+        from_port   = 5432
+        to_port     = 5432
+        protocol    = "tcp"
+        cidr_blocks = ["10.0.0.0/16"]
+      }
+    }
+  why: >-
+    The same PostgreSQL rule, but only the VPC's private range can connect.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (or `-a`). Reads `.tf` and `.tf.json` files, skipping
+    `.terraform`, `.git`, `node_modules`, `vendor`, `build`, `dist` and
+    virtual-environment folders, and parses them as HCL without running
+    Terraform or contacting AWS.
+  - >-
+    Resolves only literal values and `local` values of the same module. Input
+    variables, data sources, attributes of other resources and module outputs
+    stay unknown, and an unknown value never produces a finding.
+  - >-
+    Skips a resource with `count = 0` or an empty `for_each`, and needs the
+    official AWS provider (`hashicorp/aws`, which an `aws_` resource uses
+    unless another provider is configured).
+  - >-
+    Checks the same resources as SKY-D400: `ingress` blocks of
+    `aws_security_group`, `aws_security_group_rule` with `type = "ingress"`,
+    and `aws_vpc_security_group_ingress_rule`.
+  - >-
+    A rule counts when its protocol is TCP or all (`-1`) and its port range
+    includes one of 1433, 1521, 3306, 5432, 6379, 9042, 9200, 11211, 27017 or
+    27018.
+  - >-
+    Reports when the merged source ranges cover every IPv4 or every IPv6
+    address. A rule open on all protocols is reported by both this rule and
+    SKY-D400.
+  - >-
+    Reports HIGH on the `resource` line.
+
+source_refs:
+  - path: skylos/rules/config/terraform/high_risk.py
+    symbol: "def _database_ingress("
+  - path: skylos/rules/config/terraform/high_risk.py
+    symbol: "DATABASE_PORTS = ("
+  - path: skylos/rules/config/terraform/aws.py
+    symbol: "def _world_sources("
+  - path: skylos/rules/config/terraform/model.py
+    symbol: "def aws_provider_status("
+    note: only the official AWS provider counts.
+  - path: skylos/rules/config/terraform/model.py
+    symbol: "def instance_status("
+
+fix:
+  explanation: >-
+    Allow the port only from the application's security group or the VPC
+    range, and keep the database in private subnets.
+  filename: main.tf
+  language: terraform
+  code: |
+    variable "vpc_id" {
+      type = string
+    }
+
+    resource "aws_security_group" "db" {
+      name   = "orders-db"
+      vpc_id = var.vpc_id
+
+      ingress {
+        description = "PostgreSQL from the VPC"
+        from_port   = 5432
+        to_port     = 5432
+        protocol    = "tcp"
+        cidr_blocks = ["10.0.0.0/16"]
+      }
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Databases on other ports, such as a PostgreSQL moved to 6432, are not
+      recognised.
+    - >-
+      Values that come from variables, modules or other resources are not
+      checked, because Skylos does not run Terraform: `cidr_blocks =
+      var.admin_cidrs` is not reported even when its default is `0.0.0.0/0`.
+    - >-
+      It judges the declaration only. It does not know what is deployed, and
+      other settings (account defaults, security groups, routing) can make the
+      real exposure smaller or larger.
+  suppress:
+    - check: {kind: inline, expect: reported}
+      text: >-
+        Terraform rules read no inline marker: `# skylos: ignore[SKY-D408]` on
+        the resource line does not hide the finding.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D408"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        declarations that exist today and reports new ones.
+
+related: [SKY-D400, SKY-D405]

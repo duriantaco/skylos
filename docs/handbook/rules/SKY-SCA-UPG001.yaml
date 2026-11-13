@@ -1,0 +1,256 @@
+id: SKY-SCA-UPG001
+title: Dependency upgrade adds install-time or import-time code
+family: supply-chain
+severity: CRITICAL
+languages: [package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, yarn.lock, bun.lock, uv.lock, poetry.lock, Pipfile.lock]
+gate:
+  full: not_run
+  diff: blocks
+  note: >-
+    In a diff scan one finding fails the gate on its own, whatever the
+    limits. It only runs in diff scans with `--review-upgrades`.
+run_with: >-
+  `skylos . --sca --review-upgrades --diff origin/main` on a pull request; the
+  workflow `skylos setup` writes turns this on
+
+what_it_is: >-
+  A pull request moves a locked npm or PyPI package to a new version, and
+  the new release adds code that runs by itself: an install script, a
+  `.pth` file or `sitecustomize` module that Python runs at start-up, or
+  code that decodes and executes a string. SKY-SCA-UPG001 names the
+  package, the versions and the new file.
+
+why_it_matters: >-
+  This is how most compromised releases work: the attacker publishes a new
+  version whose install hook steals tokens from the developer machine or CI
+  runner that installs it. The lockfile diff shows only a new version
+  number, so reviewers merge it without reading the package.
+
+flagged_example:
+  language: json
+  setup: git_diff
+  expect_file: package-lock.json
+  expect_line: 15
+  scan_flags: ["--sca", "--review-upgrades", "--diff=HEAD"]
+  base_files:
+    - filename: package-lock.json
+      code: |
+        {
+          "name": "shop",
+          "version": "1.0.0",
+          "lockfileVersion": 3,
+          "requires": true,
+          "packages": {
+            "": {
+              "name": "shop",
+              "version": "1.0.0",
+              "dependencies": {
+                "es5-ext": "^0.10.53"
+              }
+            },
+            "node_modules/es5-ext": {
+              "version": "0.10.53",
+              "resolved": "https://registry.npmjs.org/es5-ext/-/es5-ext-0.10.53.tgz",
+              "license": "ISC"
+            }
+          }
+        }
+  files:
+    - filename: package-lock.json
+      code: |
+        {
+          "name": "shop",
+          "version": "1.0.0",
+          "lockfileVersion": 3,
+          "requires": true,
+          "packages": {
+            "": {
+              "name": "shop",
+              "version": "1.0.0",
+              "dependencies": {
+                "es5-ext": "^0.10.53"
+              }
+            },
+            "node_modules/es5-ext": {
+              "version": "0.10.64",
+              "resolved": "https://registry.npmjs.org/es5-ext/-/es5-ext-0.10.64.tgz",
+              "hasInstallScript": true,
+              "license": "ISC"
+            }
+          }
+        }
+
+not_flagged_example:
+  language: json
+  setup: git_diff
+  scan_flags: ["--sca", "--review-upgrades", "--diff=HEAD"]
+  base_files:
+    - filename: package-lock.json
+      code: |
+        {
+          "name": "shop",
+          "version": "1.0.0",
+          "lockfileVersion": 3,
+          "requires": true,
+          "packages": {
+            "": {
+              "name": "shop",
+              "version": "1.0.0",
+              "dependencies": {
+                "es5-ext": "^0.10.52"
+              }
+            },
+            "node_modules/es5-ext": {
+              "version": "0.10.52",
+              "resolved": "https://registry.npmjs.org/es5-ext/-/es5-ext-0.10.52.tgz",
+              "license": "ISC"
+            }
+          }
+        }
+  files:
+    - filename: package-lock.json
+      code: |
+        {
+          "name": "shop",
+          "version": "1.0.0",
+          "lockfileVersion": 3,
+          "requires": true,
+          "packages": {
+            "": {
+              "name": "shop",
+              "version": "1.0.0",
+              "dependencies": {
+                "es5-ext": "^0.10.52"
+              }
+            },
+            "node_modules/es5-ext": {
+              "version": "0.10.53",
+              "resolved": "https://registry.npmjs.org/es5-ext/-/es5-ext-0.10.53.tgz",
+              "license": "ISC"
+            }
+          }
+        }
+  why: >-
+    The same package and the same kind of patch bump. Skylos downloaded both
+    releases and compared them: 0.10.53 changes code but adds nothing that
+    runs on install, at interpreter start-up or by decoding a string.
+
+more_examples:
+  - flagged:
+      language: toml
+      setup: git_diff
+      expect_file: uv.lock
+      expect_line: 5
+      scan_flags: ["--sca", "--review-upgrades", "--diff=HEAD"]
+      base_files:
+        - filename: uv.lock
+          code: |
+            version = 1
+            requires-python = ">=3.9"
+
+            [[package]]
+            name = "setuptools"
+            version = "49.0.0"
+            source = { registry = "https://pypi.org/simple" }
+      files:
+        - filename: uv.lock
+          code: |
+            version = 1
+            requires-python = ">=3.9"
+
+            [[package]]
+            name = "setuptools"
+            version = "50.0.0"
+            source = { registry = "https://pypi.org/simple" }
+    not_flagged:
+      language: toml
+      setup: git_diff
+      scan_flags: ["--sca", "--review-upgrades", "--diff=HEAD"]
+      base_files:
+        - filename: uv.lock
+          code: |
+            version = 1
+            requires-python = ">=3.9"
+
+            [[package]]
+            name = "setuptools"
+            version = "50.0.0"
+            source = { registry = "https://pypi.org/simple" }
+      files:
+        - filename: uv.lock
+          code: |
+            version = 1
+            requires-python = ">=3.9"
+
+            [[package]]
+            name = "setuptools"
+            version = "50.3.2"
+            source = { registry = "https://pypi.org/simple" }
+      why: >-
+        setuptools 50.0.0 already shipped `distutils-precedence.pth`, so
+        moving on to 50.3.2 adds no new start-up code. The flagged upgrade
+        from 49.0.0 is where that file first appeared: a `.pth` line that
+        starts with `import` runs every time Python starts.
+
+how_skylos_decides:
+  - >-
+    Runs with `--sca --review-upgrades` in a diff scan. It pairs each npm
+    and PyPI version that changed in a lockfile with the version the base
+    branch locked, and hands the pairs to the `ca9` library.
+  - >-
+    `ca9` downloads both releases from the registry and compares their
+    files as text and syntax trees. It never installs, imports or runs
+    them. Packages listed in `internal_packages` and packages from a private
+    registry are skipped, not looked up.
+  - >-
+    A behaviour is reported only when the old release did not have it. The
+    block list: a new `.pth` file with code, a new `sitecustomize` or
+    `usercustomize`, a new install hook, new decode-and-execute code, a new
+    Git or URL dependency, shipped agent or editor hook files, files that
+    shadow commands such as `node` or `git`, import-time code it cannot
+    inspect, contents it cannot attribute, and a download that does not
+    match the hash in the lockfile.
+  - >-
+    A package that is new to the project has no old release to compare
+    with, so what it ships is reported as SKY-SCA-UPG002 instead.
+  - >-
+    Any other changed package that could not be reviewed, for example
+    because its download failed, stops the scan as incomplete. Requirements
+    files, `pdm.lock` and `pylock.toml` are listed as not reviewed.
+
+source_refs:
+  - path: skylos/rules/sca/supply_chain_diff.py
+    symbol: "def upgrade_findings("
+  - path: skylos/rules/sca/supply_chain_diff.py
+    symbol: "def _upgrade_finding("
+    note: a block list on an upgrade is UPG001, on a new package UPG002.
+  - path: skylos/core/gatekeeper.py
+    symbol: "CHANGE_BLOCKING_RULES = frozenset("
+
+fix:
+  explanation: >-
+    Do not merge until someone has read the new code. Here es5-ext's
+    maintainer added a `postinstall` script that prints a message, which is
+    harmless; a compromised release looks the same in the lockfile. If the
+    change cannot be explained, keep the old version, and report the
+    release to the registry if it looks malicious.
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Legitimate changes are reported too, like the setuptools `.pth` file.
+      The rule says "read this before merging", not "this is malware".
+    - >-
+      Behaviour that both releases share is not reported, so a package that
+      always had an install script is not flagged again.
+  suppress:
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-SCA-UPG001"]` turns the rule off. In
+        pull-request CI the setting is read from the base branch.
+    - text: >-
+        A baseline cannot hold it: dependency baselines hold only known
+        vulnerabilities, and a pull request must not be able to excuse its
+        own upgrade.
+
+related: [SKY-SCA-UPG002, SKY-SCA-API001, SKY-SCA-HRD001, SKY-SCA-AGE001]

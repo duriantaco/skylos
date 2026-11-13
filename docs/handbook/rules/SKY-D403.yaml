@@ -1,0 +1,154 @@
+id: SKY-D403
+title: Terraform S3 bucket policy grants access to everyone
+family: infrastructure
+severity: HIGH
+languages: [Terraform]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`; the rule never reports CRITICAL.
+
+what_it_is: >-
+  A bucket policy is a JSON document that says who may do what with an S3
+  bucket. SKY-D403 reports a Terraform bucket policy with an `Allow` statement
+  for the principal `*` (anyone, signed in or not) and no conditions.
+
+why_it_matters: >-
+  Every object the statement covers can be read, or with write actions
+  overwritten or deleted, by anyone on the internet. A policy copied from a
+  static-website tutorial is a common way private files end up public.
+
+flagged_example:
+  language: terraform
+  filename: main.tf
+  expect_line: 1
+  code: |
+    resource "aws_s3_bucket_policy" "downloads" {
+      bucket = "shop-downloads"
+      policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [{
+          Effect    = "Allow"
+          Principal = "*"
+          Action    = "s3:GetObject"
+          Resource  = "arn:aws:s3:::shop-downloads/*"
+        }]
+      })
+    }
+
+not_flagged_example:
+  language: terraform
+  filename: main.tf
+  code: |
+    resource "aws_s3_bucket_policy" "downloads" {
+      bucket = "shop-downloads"
+      policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [{
+          Effect    = "Allow"
+          Principal = { AWS = "arn:aws:iam::123456789012:role/reporting" }
+          Action    = "s3:GetObject"
+          Resource  = "arn:aws:s3:::shop-downloads/*"
+        }]
+      })
+    }
+  why: >-
+    The same read grant goes to one IAM role in your own account, not to
+    everyone. Account IDs, role and user ARNs, and AWS service principals are
+    not public.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (or `-a`). Reads `.tf` and `.tf.json` files, skipping
+    `.terraform`, `.git`, `node_modules`, `vendor`, `build`, `dist` and
+    virtual-environment folders, and parses them as HCL without running
+    Terraform or contacting AWS.
+  - >-
+    Resolves only literal values and `local` values of the same module. Input
+    variables, data sources, attributes of other resources and module outputs
+    stay unknown, and an unknown value never produces a finding.
+  - >-
+    Skips a resource with `count = 0` or an empty `for_each`, and needs the
+    official AWS provider (`hashicorp/aws`, which an `aws_` resource uses
+    unless another provider is configured).
+  - >-
+    Checks `aws_s3_bucket_policy`. The policy must be a literal: a JSON string
+    or a `jsonencode({...})` of literal values. A policy built from a data
+    source or a variable is not judged.
+  - >-
+    Reports an `Allow` statement whose principal is `*` or `{ AWS = "*" }`,
+    whose actions are S3 actions such as `s3:GetObject`, `s3:PutObject`,
+    `s3:*` or `*`, and whose resources are `*` or this bucket.
+  - >-
+    A statement with a `Condition`, a `Deny`, a `NotPrincipal` or another
+    unsupported key makes the whole policy not judged.
+  - >-
+    Does not report when a public access block for the same bucket sets
+    `block_public_policy` or `restrict_public_buckets`.
+  - >-
+    Reports HIGH on the `resource` line.
+
+source_refs:
+  - path: skylos/rules/config/terraform/high_risk.py
+    symbol: "def _policy("
+  - path: skylos/rules/config/terraform/high_risk.py
+    symbol: "def _public_principal("
+  - path: skylos/rules/config/terraform/high_risk.py
+    symbol: "def _jsonencode("
+    note: reads `jsonencode` without evaluating it.
+  - path: skylos/rules/config/terraform/model.py
+    symbol: "def aws_provider_status("
+    note: only the official AWS provider counts.
+  - path: skylos/rules/config/terraform/model.py
+    symbol: "def instance_status("
+
+fix:
+  explanation: >-
+    Grant access to the roles or services that need it. For public downloads,
+    serve the bucket through CloudFront with origin access control and keep
+    the bucket itself private.
+  filename: main.tf
+  language: terraform
+  code: |
+    resource "aws_s3_bucket_policy" "downloads" {
+      bucket = "shop-downloads"
+      policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [{
+          Effect    = "Allow"
+          Principal = { AWS = "arn:aws:iam::123456789012:role/reporting" }
+          Action    = "s3:GetObject"
+          Resource  = "arn:aws:s3:::shop-downloads/*"
+        }]
+      })
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A public statement with any `Condition`, even a weak one, is not
+      reported, because Skylos does not evaluate conditions.
+    - >-
+      Values that come from variables, modules or other resources are not
+      checked, because Skylos does not run Terraform: `cidr_blocks =
+      var.admin_cidrs` is not reported even when its default is `0.0.0.0/0`.
+    - >-
+      It judges the declaration only. It does not know what is deployed, and
+      other settings (account defaults, security groups, routing) can make the
+      real exposure smaller or larger.
+  suppress:
+    - check: {kind: inline, expect: reported}
+      text: >-
+        Terraform rules read no inline marker: `# skylos: ignore[SKY-D403]` on
+        the resource line does not hide the finding.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D403"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        declarations that exist today and reports new ones.
+
+related: [SKY-D402, SKY-D404]

@@ -1,0 +1,299 @@
+id: SKY-DEP002
+title: Internet-facing Ingress reaches the Flask debugger
+family: infrastructure
+severity: HIGH
+languages: [Kubernetes YAML, Flask]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`.
+
+what_it_is: >-
+  `flask run --debug` turns on the Werkzeug debugger, a page that lets the
+  visitor run Python code on the server after an error. SKY-DEP002 reports a
+  Kubernetes deployment whose internet-facing Ingress routes to a container
+  started that way.
+
+why_it_matters: >-
+  Anyone who can trigger an error page, or guess the debugger PIN, gets a
+  Python console on the server with the app's secrets and network access.
+  Flask's own documentation says never to use it in production.
+
+flagged_example:
+  language: yaml
+  expect_file: deploy/api.yaml
+  expect_line: 19
+  files:
+    - filename: app/main.py
+      language: python
+      code: |
+        from flask import Flask
+
+        app = Flask(__name__)
+
+
+        @app.get("/orders")
+        def orders():
+            return {"orders": []}
+    - filename: deploy/api.yaml
+      code: |
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: api
+          namespace: prod
+        spec:
+          selector:
+            matchLabels:
+              app: api
+          template:
+            metadata:
+              labels:
+                app: api
+            spec:
+              containers:
+                - name: api
+                  image: ghcr.io/acme/api:1.4.0
+                  command: ["flask"]
+                  args: ["--app", "app.main:app", "run", "--debug",
+                         "--host", "0.0.0.0", "--port", "8000"]
+                  ports:
+                    - name: http
+                      containerPort: 8000
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: api
+          namespace: prod
+        spec:
+          selector:
+            app: api
+          ports:
+            - name: http
+              port: 80
+              targetPort: http
+        ---
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: api
+          namespace: prod
+          annotations:
+            skylos.dev/network-scope: external
+            skylos.dev/backend-protocol: http
+        spec:
+          rules:
+            - host: api.example.com
+              http:
+                paths:
+                  - path: /
+                    pathType: Prefix
+                    backend:
+                      service:
+                        name: api
+                        port:
+                          name: http
+
+not_flagged_example:
+  language: yaml
+  files:
+    - filename: app/main.py
+      language: python
+      code: |
+        from flask import Flask
+
+        app = Flask(__name__)
+
+
+        @app.get("/orders")
+        def orders():
+            return {"orders": []}
+    - filename: deploy/api.yaml
+      code: |
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: api
+          namespace: prod
+        spec:
+          selector:
+            matchLabels:
+              app: api
+          template:
+            metadata:
+              labels:
+                app: api
+            spec:
+              containers:
+                - name: api
+                  image: ghcr.io/acme/api:1.4.0
+                  command: ["flask"]
+                  args: ["--app", "app.main:app", "run", "--debug", "--no-debugger",
+                         "--host", "0.0.0.0", "--port", "8000"]
+                  ports:
+                    - name: http
+                      containerPort: 8000
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: api
+          namespace: prod
+        spec:
+          selector:
+            app: api
+          ports:
+            - name: http
+              port: 80
+              targetPort: http
+        ---
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: api
+          namespace: prod
+          annotations:
+            skylos.dev/network-scope: external
+            skylos.dev/backend-protocol: http
+        spec:
+          rules:
+            - host: api.example.com
+              http:
+                paths:
+                  - path: /
+                    pathType: Prefix
+                    backend:
+                      service:
+                        name: api
+                        port:
+                          name: http
+  why: >-
+    Debug mode is still on, but `--no-debugger` comes after `--debug` and
+    turns the interactive debugger off, so there is no code console. Debug
+    mode still reloads on file changes, which SKY-DEP003 reports.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (or `-a`). Reads Kubernetes YAML in the repository
+    and only works when an `Ingress` opts in with the annotations
+    `skylos.dev/network-scope: external` (or `internet`, `public`) and
+    `skylos.dev/backend-protocol: http`.
+  - >-
+    Follows one chain inside one YAML file: Ingress path, to the `Service` and
+    port it names, to the one workload the Service selects, to the one
+    container whose port the Service targets. The server must be started with
+    a literal `command` and `args` (`uvicorn`, `gunicorn`, `flask run`, or
+    `python -m` one of them) bound to `0.0.0.0` or `::` on that port.
+  - >-
+    Any missing, dynamic or ambiguous link (two matching workloads, a Helm
+    template value, HTTPS or gRPC backends, rewrite or snippet annotations)
+    makes it report nothing rather than guess.
+  - >-
+    For a `flask run` container, works out the debugger setting from the
+    literal flags: `--debug` turns it on, and a later `--no-debug` or
+    `--no-debugger` turns it off again.
+  - >-
+    Does not need the `source-file` or `required-guards` annotations.
+  - >-
+    Reports HIGH on the container's `args` line.
+
+source_refs:
+  - path: skylos/rules/config/deployment/exposure.py
+    symbol: 'BACKEND_PROTOCOL_ANNOTATION = "skylos.dev/backend-protocol"'
+  - path: skylos/rules/config/deployment/exposure.py
+    symbol: "EXTERNAL_SCOPE_VALUES = {"
+
+fix:
+  explanation: >-
+    Run Flask behind a production server such as Gunicorn, with no debug
+    flags.
+  filename: deploy/api.yaml
+  language: yaml
+  code: |
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: api
+      namespace: prod
+    spec:
+      selector:
+        matchLabels:
+          app: api
+      template:
+        metadata:
+          labels:
+            app: api
+        spec:
+          containers:
+            - name: api
+              image: ghcr.io/acme/api:1.4.0
+              command: ["gunicorn"]
+              args: ["app.main:app", "--workers", "2", "--bind", "0.0.0.0:8000"]
+              ports:
+                - name: http
+                  containerPort: 8000
+    ---
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: api
+      namespace: prod
+    spec:
+      selector:
+        app: api
+      ports:
+        - name: http
+          port: 80
+          targetPort: http
+    ---
+    apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: api
+      namespace: prod
+      annotations:
+        skylos.dev/network-scope: external
+        skylos.dev/backend-protocol: http
+    spec:
+      rules:
+        - host: api.example.com
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: api
+                    port:
+                      name: http
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Debug mode turned on through `FLASK_DEBUG=1` in the environment or
+      `app.run(debug=True)` in code is not read.
+    - >-
+      Without the two Ingress annotations the rule never runs. Keep them in a
+      protected place: removing them silences the rule.
+    - >-
+      Resources split across several YAML files, Helm charts and Kustomize
+      overlays are not joined or rendered. Scan rendered manifests.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the reported `args` line.
+      language: yaml
+      code: |
+        args: ["--app", "app.main:app", "run", "--debug"]  # skylos: ignore[SKY-DEP002]
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-DEP002"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        findings that exist today and reports new ones.
+
+related: [SKY-DEP003, SKY-DEP001]

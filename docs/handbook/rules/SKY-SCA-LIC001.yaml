@@ -1,0 +1,277 @@
+id: SKY-SCA-LIC001
+title: Dependency licence not allowed by your policy
+family: supply-chain
+severity: HIGH
+severity_note: >-
+  HIGH by default. `license_severity` in `[tool.skylos]` sets LOW, MEDIUM,
+  HIGH or CRITICAL for every finding of this rule.
+languages: [package-lock.json, npm-shrinkwrap.json, installed node_modules and Python packages]
+gate:
+  full: counted
+  opt_in: >-
+    `license_deny` or `license_allow` in `[tool.skylos]`; without either
+    the rule does not run.
+  note: >-
+    Counts toward `max_dependency_vulnerabilities`, which is 0 by default, so
+    one finding fails `--gate`.
+
+what_it_is: >-
+  A licence policy lists the open-source licences your project may or may
+  not ship. SKY-SCA-LIC001 reports a dependency whose declared licence is on
+  your deny list (`license_deny`), or missing from your allow list
+  (`license_allow`) when you set one.
+
+why_it_matters: >-
+  Some licences come with duties. The AGPL, for example, can require you to
+  publish the source of a network service that uses the code. Finding such
+  a package in a pull request is much cheaper than finding it during a
+  customer's or an acquirer's legal review.
+
+flagged_example:
+  language: json
+  expect_file: package-lock.json
+  expect_line: 15
+  files:
+    - filename: package-lock.json
+      code: |
+        {
+          "name": "shop",
+          "version": "1.0.0",
+          "lockfileVersion": 3,
+          "requires": true,
+          "packages": {
+            "": {
+              "name": "shop",
+              "version": "1.0.0",
+              "dependencies": {
+                "pm2": "5.4.2"
+              }
+            },
+            "node_modules/pm2": {
+              "version": "5.4.2",
+              "resolved": "https://registry.npmjs.org/pm2/-/pm2-5.4.2.tgz",
+              "integrity": "sha512-6FlzubTLZG3J2a==",
+              "license": "AGPL-3.0"
+            }
+          }
+        }
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.0.0"
+
+        [tool.skylos]
+        license_deny = ["GPL-*", "AGPL-*"]
+
+not_flagged_example:
+  language: json
+  files:
+    - filename: package-lock.json
+      code: |
+        {
+          "name": "shop",
+          "version": "1.0.0",
+          "lockfileVersion": 3,
+          "requires": true,
+          "packages": {
+            "": {
+              "name": "shop",
+              "version": "1.0.0",
+              "dependencies": {
+                "node-forge": "1.3.1"
+              }
+            },
+            "node_modules/node-forge": {
+              "version": "1.3.1",
+              "resolved": "https://registry.npmjs.org/node-forge/-/node-forge-1.3.1.tgz",
+              "integrity": "sha512-6FlzubTLZG3J2a==",
+              "license": "(BSD-3-Clause OR GPL-2.0)"
+            }
+          }
+        }
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.0.0"
+
+        [tool.skylos]
+        license_deny = ["GPL-*", "AGPL-*"]
+  why: >-
+    `node-forge` mentions the GPL, but its licence is a choice: BSD-3-Clause
+    **or** GPL-2.0. You can use it under BSD-3-Clause, which the policy
+    allows, so it is not a violation. `MIT AND GPL-3.0-only` would be.
+
+how_skylos_decides:
+  - >-
+    Runs with `--sca` (or `-a`) when `license_deny` or `license_allow` is set
+    in `[tool.skylos]`. It works offline.
+  - >-
+    Reads each package's declared licence from evidence it can read without
+    running anything: the `license` field of `package-lock.json` and
+    `npm-shrinkwrap.json` entries, an installed `node_modules` package whose
+    name and version match, and the metadata of an installed Python package
+    in the project's `.venv` or `venv` (`License-Expression`, then
+    `License`, then classifiers). Other ecosystems have no licence source.
+  - >-
+    Normalises the value to an SPDX identifier (the standard short licence
+    names such as `MIT` or `GPL-3.0-only`) without guessing: `Apache 2.0`
+    becomes `Apache-2.0`, the deprecated `AGPL-3.0` becomes `AGPL-3.0-only`,
+    and vague values such as `BSD` or `GPLv3` become `NOASSERTION`, which is
+    never reported.
+  - >-
+    A package is reported only when no choice under its licence expression
+    avoids the policy. The deny list wins over the allow list, and globs
+    such as `GPL-*` match the whole ID, so they do not match `LGPL-*`.
+  - >-
+    Skips packages listed in `license_exceptions` (`name` or
+    `name@version`).
+
+source_refs:
+  - path: skylos/rules/sca/licenses.py
+    symbol: "def evaluate_license_policy("
+  - path: skylos/rules/sca/licenses.py
+    symbol: "def _satisfiable("
+    note: a package passes when some choice under its expression is allowed.
+  - path: skylos/rules/sca/licenses.py
+    symbol: "def _collect_npm("
+  - path: skylos/rules/sca/licenses.py
+    symbol: "def python_metadata_license("
+  - path: skylos/analyzer.py
+    symbol: "def _license_policy_findings("
+
+fix:
+  explanation: >-
+    Replace the package with one under a licence your policy allows, or, if
+    your legal team accepts this one, add it to `license_exceptions` with
+    the reason recorded in the pull request.
+  language: toml
+  filename: pyproject.toml
+  code: |
+    [project]
+    name = "shop"
+    version = "1.0.0"
+
+    [tool.skylos]
+    license_deny = ["GPL-*", "AGPL-*"]
+    license_exceptions = ["pm2@5.4.2"]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      The licence a package declares in its metadata can differ from the
+      files it ships. Skylos reads only the declaration.
+    - >-
+      Python packages are checked only when they are installed in the
+      project's `.venv` or `venv`, or in the Python that runs Skylos, at
+      exactly the locked version. Without an installed copy their licence is
+      `NOASSERTION` and nothing is reported.
+    - >-
+      When a Skylos Cloud policy sets any `license_*` key, it replaces the
+      repository's values, and `pyproject.toml` cannot turn this rule off.
+  suppress:
+    - check:
+        kind: example
+        example:
+          language: json
+          files:
+            - filename: package-lock.json
+              code: |
+                {
+                  "name": "shop",
+                  "version": "1.0.0",
+                  "lockfileVersion": 3,
+                  "requires": true,
+                  "packages": {
+                    "": {
+                      "name": "shop",
+                      "version": "1.0.0",
+                      "dependencies": {
+                        "pm2": "5.4.2"
+                      }
+                    },
+                    "node_modules/pm2": {
+                      "version": "5.4.2",
+                      "resolved": "https://registry.npmjs.org/pm2/-/pm2-5.4.2.tgz",
+                      "integrity": "sha512-6FlzubTLZG3J2a==",
+                      "license": "AGPL-3.0"
+                    }
+                  }
+                }
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [project]
+                name = "shop"
+                version = "1.0.0"
+
+                [tool.skylos]
+                license_deny = ["GPL-*", "AGPL-*"]
+                license_exceptions = ["pm2@5.4.2"]
+      text: >-
+        To accept one package after review, list it in `license_exceptions`
+        as `name` or `name@version`. With the version, an upgrade is checked
+        again.
+      language: toml
+      code: |
+        license_exceptions = ["pm2@5.4.2"]
+    - check:
+        kind: example
+        example:
+          language: json
+          files:
+            - filename: package-lock.json
+              code: |
+                {
+                  "name": "shop",
+                  "version": "1.0.0",
+                  "lockfileVersion": 3,
+                  "requires": true,
+                  "packages": {
+                    "": {
+                      "name": "shop",
+                      "version": "1.0.0",
+                      "dependencies": {
+                        "pm2": "5.4.2"
+                      }
+                    },
+                    "node_modules/pm2": {
+                      "version": "5.4.2",
+                      "resolved": "https://registry.npmjs.org/pm2/-/pm2-5.4.2.tgz",
+                      "integrity": "sha512-6FlzubTLZG3J2a==",
+                      "license": "AGPL-3.0"
+                    }
+                  }
+                }
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [project]
+                name = "shop"
+                version = "1.0.0"
+
+                [tool.skylos]
+                license_deny = ["GPL-*", "AGPL-*"]
+                ignore = ["SKY-SCA-LIC001"]
+      text: >-
+        `ignore = ["SKY-SCA-LIC001"]` in `[tool.skylos]` turns the rule off
+        for the project.
+      language: toml
+      code: |
+        [tool.skylos]
+        license_deny = ["GPL-*", "AGPL-*"]
+        ignore = ["SKY-SCA-LIC001"]
+    - text: >-
+        In a file that allows `#` comments, such as `requirements.txt`,
+        `# skylos: ignore[SKY-SCA-LIC001]` on the line that declares the
+        package hides it. JSON lockfiles cannot hold comments; use
+        `license_exceptions` there.
+    - check: {kind: baseline, expect: reported}
+      text: >-
+        A baseline does not hold licence findings: an upgrade does not fix a
+        licence, so use `license_exceptions` instead.
+
+related: [SKY-SCA-SRC001, SKY-SCA-SRC003]

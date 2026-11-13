@@ -1,0 +1,122 @@
+id: SKY-D406
+title: Terraform creates an unencrypted EBS volume
+family: infrastructure
+severity: HIGH
+languages: [Terraform]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`; the rule never reports CRITICAL.
+
+what_it_is: >-
+  An EBS volume is a disk attached to an EC2 server. SKY-D406 reports a
+  Terraform `aws_ebs_volume` with `encrypted = false`.
+
+why_it_matters: >-
+  Snapshots of an unencrypted volume are unencrypted too, and they are easy to
+  copy or share by mistake. Encryption also cannot be switched on for an
+  existing volume; it has to be copied.
+
+flagged_example:
+  language: terraform
+  filename: main.tf
+  expect_line: 1
+  code: |
+    resource "aws_ebs_volume" "uploads" {
+      availability_zone = "eu-west-1a"
+      size              = 200
+      type              = "gp3"
+      encrypted         = false
+    }
+
+not_flagged_example:
+  language: terraform
+  filename: main.tf
+  code: |
+    resource "aws_ebs_volume" "uploads" {
+      availability_zone = "eu-west-1a"
+      size              = 200
+      type              = "gp3"
+      encrypted         = true
+      kms_key_id        = aws_kms_key.ebs.arn
+    }
+  why: >-
+    Encryption is requested explicitly, with a customer-managed key.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (or `-a`). Reads `.tf` and `.tf.json` files, skipping
+    `.terraform`, `.git`, `node_modules`, `vendor`, `build`, `dist` and
+    virtual-environment folders, and parses them as HCL without running
+    Terraform or contacting AWS.
+  - >-
+    Resolves only literal values and `local` values of the same module. Input
+    variables, data sources, attributes of other resources and module outputs
+    stay unknown, and an unknown value never produces a finding.
+  - >-
+    Skips a resource with `count = 0` or an empty `for_each`, and needs the
+    official AWS provider (`hashicorp/aws`, which an `aws_` resource uses
+    unless another provider is configured).
+  - >-
+    Checks `aws_ebs_volume` resources.
+  - >-
+    Reports when `encrypted` is the literal `false`. A volume made from a
+    snapshot (`snapshot_id`) is not judged, because it inherits the snapshot's
+    encryption, and neither is a `kms_key_id` without `encrypted = true`.
+  - >-
+    Reports HIGH on the `resource` line. An account that has EBS encryption by
+    default turned on may encrypt the volume anyway.
+
+source_refs:
+  - path: skylos/rules/config/terraform/high_risk.py
+    symbol: "def _ebs("
+  - path: skylos/rules/config/terraform/model.py
+    symbol: "def aws_provider_status("
+    note: only the official AWS provider counts.
+  - path: skylos/rules/config/terraform/model.py
+    symbol: "def instance_status("
+
+fix:
+  explanation: >-
+    Set `encrypted = true`, ideally with your own KMS key, and turn on EBS
+    encryption by default for the account (`aws_ebs_encryption_by_default`).
+  filename: main.tf
+  language: terraform
+  code: |
+    resource "aws_ebs_volume" "uploads" {
+      availability_zone = "eu-west-1a"
+      size              = 200
+      type              = "gp3"
+      encrypted         = true
+      kms_key_id        = aws_kms_key.ebs.arn
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Leaving `encrypted` out is not reported, although the volume is then
+      unencrypted unless the account default says otherwise.
+    - >-
+      Values that come from variables, modules or other resources are not
+      checked, because Skylos does not run Terraform: `cidr_blocks =
+      var.admin_cidrs` is not reported even when its default is `0.0.0.0/0`.
+    - >-
+      It judges the declaration only. It does not know what is deployed, and
+      other settings (account defaults, security groups, routing) can make the
+      real exposure smaller or larger.
+  suppress:
+    - check: {kind: inline, expect: reported}
+      text: >-
+        Terraform rules read no inline marker: `# skylos: ignore[SKY-D406]` on
+        the resource line does not hide the finding.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D406"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        declarations that exist today and reports new ones.
+
+related: [SKY-D401]

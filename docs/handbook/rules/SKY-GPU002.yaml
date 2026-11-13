@@ -1,0 +1,155 @@
+id: SKY-GPU002
+title: CUDA build leaves out a target GPU's architecture
+family: infrastructure
+severity: HIGH
+languages: [CMake, Makefile, Bazel, shell, Python build scripts, GPU target contract (YAML)]
+gate:
+  full: counted
+  note: >-
+    Reported under reliability. It counts toward `max_reliability`, which is 0
+    by default, so one finding fails `--gate`.
+  opt_in: >-
+    A `.skylos/gpu-targets.yml` contract in the repository.
+
+what_it_is: >-
+  CUDA code is compiled for specific GPU architectures, named by compute
+  capability (7.5 for a T4, 8.6 for an A10G). SKY-GPU002 reports a build whose
+  architecture list neither compiles for a target's compute capability nor
+  ships PTX, the portable form the driver can compile for newer GPUs.
+
+why_it_matters: >-
+  On the missing GPU the kernels fail to load with "no kernel image is
+  available for execution on the device". The build and tests pass on the
+  developer's GPU, so the break only shows up in production.
+
+flagged_example:
+  language: cmake
+  expect_file: CMakeLists.txt
+  expect_line: 3
+  files:
+    - filename: CMakeLists.txt
+      code: |
+        cmake_minimum_required(VERSION 3.24)
+        project(kernels LANGUAGES CXX CUDA)
+        set(CMAKE_CUDA_ARCHITECTURES 75-real)
+        add_library(kernels SHARED src/kernels.cu)
+    - filename: .skylos/gpu-targets.yml
+      language: yaml
+      code: |
+        version: 1
+        targets:
+          - name: inference-a10g
+            vendor: nvidia
+            compute_capability: "8.6"
+
+not_flagged_example:
+  language: cmake
+  files:
+    - filename: CMakeLists.txt
+      code: |
+        cmake_minimum_required(VERSION 3.24)
+        project(kernels LANGUAGES CXX CUDA)
+        set(CMAKE_CUDA_ARCHITECTURES 75)
+        add_library(kernels SHARED src/kernels.cu)
+    - filename: .skylos/gpu-targets.yml
+      language: yaml
+      code: |
+        version: 1
+        targets:
+          - name: inference-a10g
+            vendor: nvidia
+            compute_capability: "8.6"
+  why: >-
+    Without the `-real` suffix, CMake builds both machine code for 7.5 and PTX
+    for 7.5. The driver can compile that PTX for the newer 8.6 GPU, so the
+    target is covered.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (or `-a`), and only when the repository has a GPU
+    target contract: `.skylos/gpu-targets.yml` (or `.yaml`), version 1,
+    listing each target's `name`, `vendor: nvidia`, and its `driver`,
+    `compute_capability` and `platform` (`linux` or `windows`, optionally
+    `/amd64` or `/arm64`). Without the file nothing is checked, unless an
+    `SKY-GPU` rule is selected explicitly with `--select`.
+  - >-
+    Reads Dockerfiles, CMake files, Makefiles, Bazel files, shell scripts,
+    Python, C/C++/CUDA sources and YAML as text, skipping `build`, `dist`,
+    `node_modules`, caches and virtual environments. It never runs a build or
+    probes a GPU.
+  - >-
+    Reads `CMAKE_CUDA_ARCHITECTURES`, `TORCH_CUDA_ARCH_LIST`, `nvcc
+    -arch`/`--gpu-architecture` and `-gencode` settings.
+  - >-
+    Tells machine code (SASS) from PTX: a plain CMake number gives both,
+    `-real` gives only machine code, `-virtual` only PTX. Machine code covers
+    GPUs of the same major family at or above its version; PTX covers equal or
+    newer GPUs.
+  - >-
+    Text in `echo` lines and quoted examples is not build evidence. Dynamic or
+    conditional values, `native`, and several files that each set
+    architectures are reported as SKY-GPU000 instead.
+  - >-
+    Reports HIGH on the architecture line, naming the uncovered targets.
+
+source_refs:
+  - path: skylos/rules/config/gpu/compatibility.py
+    symbol: "def _architecture_evidence("
+  - path: skylos/rules/config/gpu/compatibility.py
+    symbol: "def _architecture_finding("
+  - path: test/test_gpu_compatibility.py
+    symbol: "def test_missing_compiled_compute_capability_is_reported("
+
+fix:
+  explanation: >-
+    Add the missing architecture (`75-real 86-real`) or keep a PTX entry that
+    covers it (`75`, or `75-real 86`).
+  filename: CMakeLists.txt
+  language: cmake
+  code: |
+    cmake_minimum_required(VERSION 3.24)
+    project(kernels LANGUAGES CXX CUDA)
+    set(CMAKE_CUDA_ARCHITECTURES 75-real 86)
+    add_library(kernels SHARED src/kernels.cu)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      PTX that is compiled at load time on the newer GPU is counted as
+      coverage, even though the first start is slower.
+  suppress:
+    - check:
+        kind: example
+        example:
+          language: cmake
+          files:
+            - filename: CMakeLists.txt
+              code: |
+                cmake_minimum_required(VERSION 3.24)
+                project(kernels LANGUAGES CXX CUDA)
+                set(CMAKE_CUDA_ARCHITECTURES 75-real  # skylos: ignore[SKY-GPU002] A10G image built separately)
+                add_library(kernels SHARED src/kernels.cu)
+            - filename: .skylos/gpu-targets.yml
+              language: yaml
+              code: |
+                version: 1
+                targets:
+                  - name: inference-a10g
+                    vendor: nvidia
+                    compute_capability: "8.6"
+      text: >-
+        Put the marker in a comment on the architecture line or the line above
+        it.
+      language: cmake
+      code: |
+        set(CMAKE_CUDA_ARCHITECTURES 75-real)  # skylos: ignore[SKY-GPU002] A10G separate
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-GPU002"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        findings that exist today and reports new ones.
+
+related: [SKY-GPU000, SKY-GPU003]

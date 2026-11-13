@@ -1,0 +1,297 @@
+id: SKY-DEP003
+title: Internet-facing Ingress routes to a server in reload mode
+family: infrastructure
+severity: MEDIUM
+languages: [Kubernetes YAML, Uvicorn, Gunicorn, Flask]
+gate:
+  full: counted
+  note: >-
+    Reported under reliability. It counts toward `max_reliability`, which is 0
+    by default, so one finding fails `--gate`.
+
+what_it_is: >-
+  Reload mode makes a development server watch its source files and restart
+  when they change. SKY-DEP003 reports a Kubernetes deployment whose
+  internet-facing Ingress routes to a Uvicorn, Gunicorn or Flask container
+  started with `--reload`, or with Flask debug mode, which reloads too.
+
+why_it_matters: >-
+  The file watcher costs CPU in every pod, and Uvicorn's reloader runs a
+  single worker process, so the service has less capacity than you think. Any
+  file change inside the container restarts it mid-request.
+
+flagged_example:
+  language: yaml
+  expect_file: deploy/api.yaml
+  expect_line: 19
+  files:
+    - filename: app/main.py
+      language: python
+      code: |
+        from fastapi import FastAPI
+
+        app = FastAPI()
+
+
+        @app.get("/orders")
+        def orders():
+            return {"orders": []}
+    - filename: deploy/api.yaml
+      code: |
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: api
+          namespace: prod
+        spec:
+          selector:
+            matchLabels:
+              app: api
+          template:
+            metadata:
+              labels:
+                app: api
+            spec:
+              containers:
+                - name: api
+                  image: ghcr.io/acme/api:1.4.0
+                  command: ["uvicorn"]
+                  args: ["app.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]
+                  ports:
+                    - name: http
+                      containerPort: 8000
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: api
+          namespace: prod
+        spec:
+          selector:
+            app: api
+          ports:
+            - name: http
+              port: 80
+              targetPort: http
+        ---
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: api
+          namespace: prod
+          annotations:
+            skylos.dev/network-scope: external
+            skylos.dev/backend-protocol: http
+        spec:
+          rules:
+            - host: api.example.com
+              http:
+                paths:
+                  - path: /
+                    pathType: Prefix
+                    backend:
+                      service:
+                        name: api
+                        port:
+                          name: http
+
+not_flagged_example:
+  language: yaml
+  files:
+    - filename: app/main.py
+      language: python
+      code: |
+        from fastapi import FastAPI
+
+        app = FastAPI()
+
+
+        @app.get("/orders")
+        def orders():
+            return {"orders": []}
+    - filename: deploy/api.yaml
+      code: |
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: api
+          namespace: prod
+        spec:
+          selector:
+            matchLabels:
+              app: api
+          template:
+            metadata:
+              labels:
+                app: api
+            spec:
+              containers:
+                - name: api
+                  image: ghcr.io/acme/api:1.4.0
+                  command: ["uvicorn"]
+                  args: ["app.main:app", "--workers", "2",
+                         "--host", "0.0.0.0", "--port", "8000"]
+                  ports:
+                    - name: http
+                      containerPort: 8000
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: api
+          namespace: prod
+        spec:
+          selector:
+            app: api
+          ports:
+            - name: http
+              port: 80
+              targetPort: http
+        ---
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: api
+          namespace: prod
+          annotations:
+            skylos.dev/network-scope: external
+            skylos.dev/backend-protocol: http
+        spec:
+          rules:
+            - host: api.example.com
+              http:
+                paths:
+                  - path: /
+                    pathType: Prefix
+                    backend:
+                      service:
+                        name: api
+                        port:
+                          name: http
+  why: >-
+    The same Uvicorn container behind the same public Ingress, started with
+    two worker processes instead of the reloader.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (or `-a`). Reads Kubernetes YAML in the repository
+    and only works when an `Ingress` opts in with the annotations
+    `skylos.dev/network-scope: external` (or `internet`, `public`) and
+    `skylos.dev/backend-protocol: http`.
+  - >-
+    Follows one chain inside one YAML file: Ingress path, to the `Service` and
+    port it names, to the one workload the Service selects, to the one
+    container whose port the Service targets. The server must be started with
+    a literal `command` and `args` (`uvicorn`, `gunicorn`, `flask run`, or
+    `python -m` one of them) bound to `0.0.0.0` or `::` on that port.
+  - >-
+    Any missing, dynamic or ambiguous link (two matching workloads, a Helm
+    template value, HTTPS or gRPC backends, rewrite or snippet annotations)
+    makes it report nothing rather than guess.
+  - >-
+    Reports a literal `--reload` on a Uvicorn, Gunicorn or `flask run`
+    command, and Flask debug mode (`--debug`) unless `--no-reload` follows.
+  - >-
+    Does not need the `source-file` or `required-guards` annotations.
+  - >-
+    Reports MEDIUM, as a reliability finding, on the container's `args` line.
+
+source_refs:
+  - path: skylos/rules/config/deployment/exposure.py
+    symbol: 'EXPOSURE_SCOPE_ANNOTATION = "skylos.dev/network-scope"'
+  - path: skylos/rules/config/deployment/exposure.py
+    symbol: "def scan_deployment_exposure("
+
+fix:
+  explanation: >-
+    Remove `--reload`; roll out code changes by building a new image. Set the
+    number of workers for the pod's CPU instead.
+  filename: deploy/api.yaml
+  language: yaml
+  code: |
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: api
+      namespace: prod
+    spec:
+      selector:
+        matchLabels:
+          app: api
+      template:
+        metadata:
+          labels:
+            app: api
+        spec:
+          containers:
+            - name: api
+              image: ghcr.io/acme/api:1.4.0
+              command: ["uvicorn"]
+              args: ["app.main:app", "--workers", "2",
+                     "--host", "0.0.0.0", "--port", "8000"]
+              ports:
+                - name: http
+                  containerPort: 8000
+    ---
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: api
+      namespace: prod
+    spec:
+      selector:
+        app: api
+      ports:
+        - name: http
+          port: 80
+          targetPort: http
+    ---
+    apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: api
+      namespace: prod
+      annotations:
+        skylos.dev/network-scope: external
+        skylos.dev/backend-protocol: http
+    spec:
+      rules:
+        - host: api.example.com
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: api
+                    port:
+                      name: http
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Reload turned on in code (`uvicorn.run(..., reload=True)`) or through
+      environment variables is not read.
+    - >-
+      Without the two Ingress annotations the rule never runs. Keep them in a
+      protected place: removing them silences the rule.
+    - >-
+      Resources split across several YAML files, Helm charts and Kustomize
+      overlays are not joined or rendered. Scan rendered manifests.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the reported `args` line.
+      language: yaml
+      code: |
+        args: ["app.main:app", "--reload"]  # skylos: ignore[SKY-DEP003]
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-DEP003"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        findings that exist today and reports new ones.
+
+related: [SKY-DEP002, SKY-DEP001]
