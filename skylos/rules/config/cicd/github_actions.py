@@ -1750,6 +1750,31 @@ def _run_steps_with_paths(
             yield step, job, path
 
 
+def _line_for_run_command(
+    lines: list[str],
+    source: YamlSource | None,
+    run_path: tuple[Any, ...],
+    run_body: str,
+    run_line: int | None,
+) -> int:
+    """Locate a command inside its own run value, never elsewhere in the file."""
+    if source is None or not run_line:
+        return _line_for_value(lines, run_body)
+    span = source.scalar_lines_for_path(run_path)
+    stripped = run_body.strip()
+    if span is None or not stripped:
+        return run_line
+    needle = stripped.splitlines()[0]
+    search_lines = lines
+    if isinstance(lines, _WorkflowLines):
+        search_lines = lines.parsed_lines
+    first, last = span
+    for lineno in range(first, min(last, len(search_lines)) + 1):
+        if needle in search_lines[lineno - 1]:
+            return lineno
+    return run_line
+
+
 def _scan_run_blocks(
     data: dict[str, Any],
     path: Path,
@@ -1767,6 +1792,9 @@ def _scan_run_blocks(
         run_body = step.get("run")
         if not isinstance(run_body, str):
             continue
+        run_line = None
+        if source is not None:
+            run_line = source.line_for_path(run_path)
         for risk in scan_shell_command(
             run_body,
             cwd_in_project=_run_starts_in_workspace(data, job, step),
@@ -1780,6 +1808,9 @@ def _scan_run_blocks(
                 and has_release_context(data, job, step, source)
             ):
                 continue
+            line = _line_for_run_command(lines, source, run_path, run_body, run_line)
+            if risk.rule_id == "SKY-D340" and run_line:
+                line = run_line
             _add_finding(
                 findings,
                 lines,
@@ -1788,15 +1819,11 @@ def _scan_run_blocks(
                     name="github-actions-shell-command-risk",
                     message=risk.message,
                     file=path,
-                    line=(
-                        source.line_for_path(run_path)
-                        if risk.rule_id == "SKY-D340" and source is not None
-                        else None
-                    )
-                    or _line_for_value(lines, run_body),
+                    line=line,
                     severity=risk.severity,
                     value=risk.rule_id,
                 ),
+                yaml_only=line == run_line,
             )
     if rule_id not in ignore:
         _scan_template_injection(
