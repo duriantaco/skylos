@@ -26,6 +26,9 @@ def scan(tmp_path, code):
         r"(.*a){12}$",
         r"^(\d+|\d+\.)+x",
         r"(a*)*b",
+        r"(a+)+b(c)\2",
+        r"^(\w+=\w+;?)*$",
+        r"(x+)+y|" + "|".join(f"word{index}" for index in range(400)),
     ],
 )
 def test_exponential_patterns_are_found(pattern):

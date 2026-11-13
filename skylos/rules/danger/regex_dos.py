@@ -23,14 +23,17 @@ except ImportError:
 
 RULE_ID = "SKY-D379"
 SEVERITY = "MEDIUM"
-_SIZES = (4, 6, 8, 12, 16, 24, 32)
+_SIZES = (2, 3, 4, 6, 8, 12, 16, 24, 32)
 _RUN_STEPS = 60_000
-_PATTERN_STEPS = 600_000
+_PATTERN_STEPS = 1_000_000
 _FILE_STEPS = 3_000_000
 _MAX_VERDICTS = 4_096
 _MAX_REPEATS = 8
-_MAX_PUMPS = 4
-_MAX_PATTERN_LENGTH = 2_000
+_MAX_PUMPS = 10
+_MAX_REJECTED = 4
+_MAX_NAMED = 4
+_MAX_PATTERN_LENGTH = 10_000
+_PUMP_WIDTHS = (1, 2, 3)
 _RECURSION_LIMIT = 6_000
 _SUFFIXES = ("\x00", "!", "")
 _PREFERRED = "a0 _-./:,;=<>\"'@#%&()[]{}|\\+*?^$~`\t\n"
@@ -293,8 +296,8 @@ def _sample(op, value):
     raise _Unsupported
 
 
-def _witness(items):
-    """A short text the items match."""
+def _witness(items, width=1):
+    """A short text the items match; unbounded repeats run ``width`` times."""
     parts = []
     for op, value in items:
         if op in (
@@ -305,19 +308,18 @@ def _witness(items):
         ):
             parts.append(_sample(op, value))
         elif op is _constants.SUBPATTERN:
-            parts.append(_witness(value[3]))
+            parts.append(_witness(value[3], width))
         elif op is _constants.BRANCH:
-            parts.append(_witness(value[1][0]))
-        elif op in (
-            _constants.MAX_REPEAT,
-            _constants.MIN_REPEAT,
-            _constants.POSSESSIVE_REPEAT,
-        ):
-            if value[0] > 64:
+            parts.append(_witness(value[1][0], width))
+        elif _is_repeat(op):
+            count = value[0]
+            if value[1] is _constants.MAXREPEAT:
+                count = max(count, width)
+            if count > 64:
                 raise _Unsupported
-            parts.append(_witness(value[2]) * value[0])
+            parts.append(_witness(value[2], width) * count)
         elif op is _constants.ATOMIC_GROUP:
-            parts.append(_witness(value))
+            parts.append(_witness(value, width))
         elif op in (_constants.AT, _constants.ASSERT, _constants.ASSERT_NOT):
             continue
         else:
@@ -350,7 +352,10 @@ def _unbounded_repeats(items, prefix, found):
         elif op is _constants.BRANCH:
             for alternative in value[1]:
                 _unbounded_repeats(alternative, before, found)
-        before += _witness([(op, value)])
+        try:
+            before += _witness([(op, value)])
+        except _Unsupported:
+            return
 
 
 def _shape(items, counts):
@@ -382,31 +387,41 @@ def _worth_measuring(tree):
     return counts["repeats"] >= 2 or counts["branches"] >= 1
 
 
-def _literal_chars(items, chars):
+def _literal_chars(items, chars, rejected):
+    """Characters the pattern names, and those a negated class refuses."""
     for op, value in items:
         if op is _constants.LITERAL:
             chars.append(chr(value))
+        elif op is _constants.NOT_LITERAL:
+            rejected.append(chr(value))
         elif op is _constants.IN:
+            target = chars
+            if value and value[0][0] is _constants.NEGATE:
+                target = rejected
             for inner, inner_value in value:
                 if inner is _constants.LITERAL:
-                    chars.append(chr(inner_value))
+                    target.append(chr(inner_value))
         elif _is_repeat(op):
-            _literal_chars(value[2], chars)
+            _literal_chars(value[2], chars, rejected)
         elif op is _constants.SUBPATTERN:
-            _literal_chars(value[3], chars)
+            _literal_chars(value[3], chars, rejected)
         elif op is _constants.ATOMIC_GROUP:
-            _literal_chars(value, chars)
+            _literal_chars(value, chars, rejected)
         elif op is _constants.BRANCH:
             for alternative in value[1]:
-                _literal_chars(alternative, chars)
+                _literal_chars(alternative, chars, rejected)
 
 
 def _pumps(body, flags, literals):
     """Texts one pass of a repeat body can match, most telling first."""
     pumps = []
-    whole = _witness(body)
-    if whole:
-        pumps.append(whole)
+    for width in _PUMP_WIDTHS:
+        try:
+            whole = _witness(body, width)
+        except _Unsupported:
+            break
+        if whole and whole not in pumps:
+            pumps.append(whole)
     for char in [*literals, *_PREFERRED[:3]]:
         if len(pumps) >= _MAX_PUMPS:
             break
@@ -415,7 +430,7 @@ def _pumps(body, flags, literals):
         run = _Run(char, flags, 200)
         try:
             matched = run.seq(body, 0, 0, lambda after: after == 1)
-        except _Budget:
+        except (_Budget, _Unsupported):
             matched = False
         if matched:
             pumps.append(char)
@@ -444,20 +459,20 @@ def _growth(tree, flags, mode, prefix, pump, suffix, spent):
         spent[0] += steps
         if previous is not None:
             degrees.append(_degree(previous, steps, previous_size, size))
-            if len(degrees) >= 2 and max(degrees) < _LINEAR_DEGREE:
+            if len(degrees) >= 4 and max(degrees) < _LINEAR_DEGREE:
                 return None
         previous = steps
         previous_size = size
-    if bound is not None and bound >= _EXPONENTIAL_DEGREE:
+    capped = bound is not None
+    if degrees and degrees[-1] >= _EXPONENTIAL_DEGREE:
+        if capped or (len(degrees) >= 2 and degrees[-2] >= _EXPONENTIAL_PREVIOUS):
+            return "exponential"
+    if capped and bound >= _EXPONENTIAL_DEGREE:
         if not degrees or degrees[-1] >= _EXPONENTIAL_PREVIOUS:
             return "exponential"
     if len(degrees) < 2:
         return None
-    last = degrees[-1]
-    before = degrees[-2]
-    if last >= _EXPONENTIAL_DEGREE and before >= _EXPONENTIAL_PREVIOUS:
-        return "exponential"
-    if last >= _POLYNOMIAL_DEGREE and before >= _POLYNOMIAL_PREVIOUS:
+    if degrees[-1] >= _POLYNOMIAL_DEGREE and degrees[-2] >= _POLYNOMIAL_PREVIOUS:
         return "polynomial"
     return None
 
@@ -502,9 +517,12 @@ def _analyze(tree, flags, mode, spent):
         return None
     repeats = []
     _unbounded_repeats(tree, "", repeats)
-    literals = []
-    _literal_chars(tree, literals)
-    literals = list(dict.fromkeys(literals))[:6]
+    named = []
+    rejected = []
+    _literal_chars(tree, named, rejected)
+    rejected = [char for char in dict.fromkeys(rejected) if not char.isspace()]
+    literals = [*rejected[:_MAX_REJECTED], *list(dict.fromkeys(named))[:_MAX_NAMED]]
+    literals = list(dict.fromkeys(literals))
     start = spent[0]
     polynomial = None
     tried = set()
@@ -517,7 +535,10 @@ def _analyze(tree, flags, mode, spent):
                 tried.add(shape)
                 if spent[0] - start > _PATTERN_STEPS:
                     return polynomial
-                growth = _growth(tree, flags, mode, prefix, pump, suffix, spent)
+                try:
+                    growth = _growth(tree, flags, mode, prefix, pump, suffix, spent)
+                except _Unsupported:
+                    continue
                 if growth is None:
                     continue
                 verdict = {
