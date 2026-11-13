@@ -664,6 +664,9 @@ def scan_file_with_tree(
             "url_for",
             "subprocess",
             "shlex",
+            "match (",
+            "merge (",
+            "create (",
         ),
     ):
         scan_python_security_gaps(tree, file_path, findings, project_root=project_root)

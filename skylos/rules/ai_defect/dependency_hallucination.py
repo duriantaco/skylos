@@ -3628,6 +3628,14 @@ def _literal_exec_imports(tree, nodes, *, depth=0, native_ast=False, budget=None
     imported_nodes = []
     if depth >= 4:
         return submodules, lines, ()
+    if not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "exec"
+        and node.args
+        for node in nodes
+    ):
+        return submodules, lines, ()
     if budget is None:
         budget = {"steps": 0, "parses": 0, "bytes": 0, "nodes": 0}
     parents = {

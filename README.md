@@ -745,7 +745,9 @@ it talks to Skylos Cloud:** `skylos cloud`, `--upload`, `skylos login`, `whoami`
 `sync`, `credits`, `upload`, `ingest claude-security`, `verify-verdict`,
 `feedback`, or the `--verify` scan option. A token on its own (`SKYLOS_TOKEN`, a saved
 `skylos login`, a CI OIDC token) never makes a command upload a scan,
-findings or a run summary. There is no update check and no analytics.
+findings or a run summary. There is no analytics. The only version lookup is
+an anonymous read of the public PyPI record for `skylos`, at most once a day,
+never in CI, and off with `SKYLOS_NO_TELEMETRY=1`.
 
 - `--ai-review` and `--verify-security` never send anything to Skylos Cloud
   by themselves. They send the flagged file (comments removed) and the rule's

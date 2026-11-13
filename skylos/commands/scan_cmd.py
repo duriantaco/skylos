@@ -511,6 +511,34 @@ def _changed_file_scope_options(args, config, changed_files):
 _REMOVED_COMMANDS = frozenset({"city", "run"})
 
 
+def _terminal_output() -> bool:
+    import sys
+
+    try:
+        return sys.stdout.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _start_update_check() -> None:
+    if not _terminal_output():
+        return
+    from skylos.core.update_check import refresh_in_background
+
+    refresh_in_background()
+
+
+def _print_upgrade_notice(console) -> None:
+    if not _terminal_output():
+        return
+    import skylos
+    from skylos.core.update_check import upgrade_notice
+
+    notice = upgrade_notice(str(skylos.__version__))
+    if notice:
+        console.print(f"[dim]{notice}[/dim]")
+
+
 def _command_names() -> list[str]:
     from skylos.cli_core.dispatch import EARLY_COMMAND_HANDLERS
 
@@ -601,6 +629,7 @@ def run_scan_command(
     if base == "auto":
         base = cli_module.auto_diff_base_ref()
     previous_diff = os.environ.get("SKYLOS_DIFF_BASE")
+    _start_update_check()
     try:
         with base_policy_context(
             cli_module._resolve_main_project_root(args.path), base
@@ -2519,6 +2548,7 @@ def _run_scan_command(
                 and not args.tui
             ),
         )
+        _print_upgrade_notice(console)
 
     if (
         getattr(args, "diff", None)

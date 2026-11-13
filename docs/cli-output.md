@@ -1487,3 +1487,16 @@ The TUI uses a category sidebar plus a selectable finding list and detail pane. 
 - GitHub Actions annotations: `skylos . --format github`
 - GitLab merge request reports: `skylos . --format gitlab -o gl-code-quality-report.json`
 - Deep interactive investigation: `skylos . --tui`
+
+## Upgrade notice
+
+`skylos doctor` compares the installed version with the newest release on
+PyPI and prints the upgrade command when one is available;
+`skylos doctor --format json` makes no request and adds `latest_version` and
+`update_available` to `checks.skylos` when an earlier lookup stored them. A scan printed to a terminal ends with the same one-line
+notice. The lookup is a single anonymous read of the public PyPI record for
+`skylos`; nothing about your project is sent. A scan never waits for it: the
+answer is kept for a day under `~/.cache/skylos` and refreshed in the
+background. JSON and other machine output, piped output and CI runs never
+print the notice or make the request, and `SKYLOS_NO_TELEMETRY=1` turns it
+off everywhere.

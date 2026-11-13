@@ -362,3 +362,251 @@ def test_weak_slug_flow_respects_reaching_assignments(tmp_path, replacement, exp
         bool([f for f in scan(tmp_path, code) if f["rule_id"] == "SKY-D250"])
         == expected
     )
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "import os, tempfile\n"
+        "os.makedirs(os.path.join(tempfile.gettempdir(), 'myapp/sessions'), exist_ok=True)\n",
+        "import os\nfrom tempfile import gettempdir as tmp\n"
+        "base = os.path.join(tmp(), 'myapp')\n"
+        "os.makedirs(base, mode=0o700, exist_ok=True)\n",
+        "import tempfile\nfrom pathlib import Path\n"
+        "(Path(tempfile.gettempdir()) / 'myapp' / 'cache').mkdir(parents=True, exist_ok=True)\n",
+        "import os, tempfile\n"
+        "class Store:\n"
+        "    def __init__(self, storage_dir=None):\n"
+        "        self.storage_dir = storage_dir or os.path.join(tempfile.gettempdir(), 'myapp')\n"
+        "        os.makedirs(self.storage_dir, exist_ok=True)\n",
+        "import os, tempfile\n"
+        "def open_store(root=None):\n"
+        "    target = root if root else os.path.join(tempfile.gettempdir(), 'myapp')\n"
+        "    os.makedirs(target, exist_ok=True)\n",
+        "import os, tempfile\n"
+        "os.makedirs(f'{tempfile.gettempdir()}/myapp', exist_ok=True)\n",
+    ],
+)
+def test_fixed_directory_under_system_temp_root(tmp_path, code):
+    findings = scan(tmp_path, code)
+    assert len([f for f in findings if f["rule_id"] == "SKY-D348"]) == 1
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "import tempfile\ntempfile.mkdtemp(prefix='myapp')\n",
+        "import os, tempfile, uuid\n"
+        "os.makedirs(os.path.join(tempfile.gettempdir(), uuid.uuid4().hex), exist_ok=True)\n",
+        "import os, tempfile\n"
+        "def make(name):\n"
+        "    os.makedirs(os.path.join(tempfile.gettempdir(), name), exist_ok=True)\n",
+        "import os, tempfile\n"
+        "os.makedirs(os.path.join(tempfile.gettempdir(), 'myapp'))\n",
+        "import os, tempfile\n"
+        "os.makedirs(os.path.join(tempfile.gettempdir(), 'myapp'), exist_ok=False)\n",
+        "import os\n"
+        "os.makedirs(os.path.join(os.path.expanduser('~'), '.myapp'), exist_ok=True)\n",
+        "import os\n"
+        "def gettempdir():\n    return os.path.expanduser('~/.private')\n"
+        "os.makedirs(os.path.join(gettempdir(), 'myapp'), exist_ok=True)\n",
+        "import os, tempfile\n"
+        "os.makedirs(os.path.join(tempfile.gettempdir(), 'myapp', '/srv/data'), exist_ok=True)\n",
+        "import os, tempfile\n"
+        "class Store:\n"
+        "    def __init__(self, storage_dir):\n"
+        "        self.storage_dir = os.path.join(tempfile.gettempdir(), 'myapp')\n"
+        "        self.storage_dir = storage_dir\n"
+        "        os.makedirs(self.storage_dir, exist_ok=True)\n",
+        "import os, tempfile\n"
+        "class Store:\n"
+        "    def __init__(self):\n"
+        "        self.storage_dir = os.path.join(tempfile.gettempdir(), 'myapp')\n"
+        "        self.relocate()\n"
+        "        os.makedirs(self.storage_dir, exist_ok=True)\n"
+        "    def relocate(self):\n"
+        "        self.storage_dir = os.path.expanduser('~/.myapp')\n",
+        "import os, tempfile\nos.makedirs(tempfile.gettempdir(), exist_ok=True)\n",
+    ],
+)
+def test_private_or_unknown_temp_paths_stay_quiet(tmp_path, code):
+    assert not [f for f in scan(tmp_path, code) if f["rule_id"] == "SKY-D348"]
+
+
+def _graph_rows(findings):
+    return [
+        f
+        for f in findings
+        if f["rule_id"] == "SKY-D211" and "graph query" in f["message"]
+    ]
+
+
+@pytest.mark.parametrize(
+    "code, line",
+    [
+        (
+            "def add(graph, node):\n"
+            "    graph.query(f\"MERGE (n:Entity {{id: '{node.id}'}}) RETURN n\")\n",
+            2,
+        ),
+        (
+            'def esc(v):\n    return str(v).replace("\'", "\\\\\'")\n'
+            "def link(session, a, b):\n"
+            "    session.run(\n"
+            "        f\"MATCH (a {{id: '{esc(a)}'}}), \"\n"
+            "        f\"(b {{id: '{esc(b)}'}}) \"\n"
+            '        f"MERGE (a)-[:KNOWS]->(b)"\n'
+            "    )\n",
+            4,
+        ),
+        (
+            "def find(driver, name):\n"
+            "    cypher = f'MATCH (p:Person) WHERE p.name = \"{name}\" RETURN p'\n"
+            "    return driver.execute_query(cypher)\n",
+            3,
+        ),
+        (
+            "def find(graph, name):\n"
+            "    return graph.query(\"MATCH (p:Person {{name: '{}'}}) RETURN p\".format(name))\n",
+            2,
+        ),
+    ],
+)
+def test_graph_query_with_value_interpolated_inside_quotes(tmp_path, code, line):
+    rows = _graph_rows(scan(tmp_path, code))
+    assert [row["line"] for row in rows] == [line]
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "def add(graph, node):\n"
+        "    graph.query('MERGE (n:Entity {id: $id}) RETURN n', params={'id': node.id})\n",
+        "def add(graph, label, node):\n"
+        "    graph.query(f'MERGE (n:`{label}` {{id: $id}}) RETURN n', params={'id': node.id})\n",
+        "KIND = 'person'\n"
+        "def find(graph):\n"
+        "    graph.query(f\"MATCH (n {{kind: '{KIND}'}}) RETURN n\")\n",
+        "def page(graph, size):\n"
+        "    graph.query(f'MATCH (n:Entity) RETURN n LIMIT {int(size)}')\n",
+        "def find(cursor, name):\n"
+        "    cursor.query(f\"SELECT id FROM people WHERE name = '{name}'\")\n",
+        "def search(db, text):\n"
+        "    db.query(f\"SELECT id FROM docs WHERE MATCH (title) AGAINST ('{text}')\")\n",
+        "def describe(node):\n"
+        "    return f\"MERGE (n:Entity {{id: '{node.id}'}}) RETURN n\"\n",
+        "def log(logger, node):\n"
+        "    logger.info(f\"MERGE (n:Entity {{id: '{node.id}'}}) RETURN n\")\n",
+    ],
+)
+def test_parameterized_or_non_graph_queries_stay_quiet(tmp_path, code):
+    assert not _graph_rows(scan(tmp_path, code))
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "import tempfile\nfrom pathlib import Path\n"
+        "cache = Path(tempfile.gettempdir()) / 'myapp'\n"
+        "cache.mkdir(parents=True, exist_ok=True)\n",
+        "import tempfile\nfrom pathlib import Path\n"
+        "Path(tempfile.gettempdir(), 'myapp').mkdir(exist_ok=True)\n",
+        "from pathlib import Path\nPath('/tmp').joinpath('myapp').mkdir(exist_ok=True)\n",
+        "import os, tempfile\nos.makedirs(tempfile.gettempdir() + '/myapp', exist_ok=True)\n",
+        "import os, tempfile\n"
+        "os.makedirs(os.path.join(tempfile.gettempdir(), 'myapp'), 0o755, True)\n",
+    ],
+)
+def test_fixed_temp_directory_common_spellings(tmp_path, code):
+    findings = scan(tmp_path, code)
+    assert len([f for f in findings if f["rule_id"] == "SKY-D348"]) == 1
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "import os, uuid\n"
+        "class Store:\n"
+        "    def __init__(self):\n"
+        "        self.d = '/tmp/app'\n"
+        "        self.d += uuid.uuid4().hex\n"
+        "        os.makedirs(self.d, exist_ok=True)\n",
+        "import os, tempfile, uuid\n"
+        "d = os.path.join(tempfile.gettempdir(), 'app')\n"
+        "d += uuid.uuid4().hex\n"
+        "os.makedirs(d, exist_ok=True)\n",
+        "import os, tempfile\n"
+        "class Store:\n"
+        "    def __init__(self):\n"
+        "        self.d = '/tmp/app'\n"
+        "        me = self\n"
+        "        me.d = tempfile.mkdtemp()\n"
+        "        os.makedirs(self.d, exist_ok=True)\n",
+        "import os\n"
+        "def configure(target):\n    target.d = os.path.expanduser('~/.app')\n"
+        "class Store:\n"
+        "    def __init__(self):\n"
+        "        self.d = '/tmp/app'\n"
+        "        configure(target=self)\n"
+        "        os.makedirs(self.d, exist_ok=True)\n",
+        "import os, tempfile\n"
+        "class Store:\n"
+        "    def __init__(self):\n"
+        "        self.d = '/tmp/app'\n"
+        "        def fix():\n"
+        "            self.d = tempfile.mkdtemp()\n"
+        "        fix()\n"
+        "        os.makedirs(self.d, exist_ok=True)\n",
+        "import os\n"
+        "class Store:\n"
+        "    def __init__(self, **kw):\n"
+        "        self.d = '/tmp/app'\n"
+        "        self.__dict__.update(kw)\n"
+        "        os.makedirs(self.d, exist_ok=True)\n",
+        "import os\nos.makedirs('/tmp/', exist_ok=True)\n",
+    ],
+)
+def test_temp_directory_value_that_changed_stays_quiet(tmp_path, code):
+    assert not [f for f in scan(tmp_path, code) if f["rule_id"] == "SKY-D348"]
+
+
+def test_graph_query_keyword_of_the_neo4j_driver(tmp_path):
+    code = (
+        "def find(driver, name):\n"
+        "    return driver.execute_query(\n"
+        "        query_=f\"MATCH (p:Person {{name: '{name}'}}) RETURN p\"\n"
+        "    )\n"
+    )
+    assert [row["line"] for row in _graph_rows(scan(tmp_path, code))] == [2]
+
+
+def test_graph_query_finding_claims_no_source(tmp_path):
+    code = (
+        "def add(graph, node):\n"
+        "    graph.query(f\"MERGE (n:Entity {{id: '{node.id}'}}) RETURN n\")\n"
+    )
+    (row,) = _graph_rows(scan(tmp_path, code))
+    assert row["severity"] == "MEDIUM"
+    assert row["metadata"]["source_status"] == "unresolved"
+    assert row["metadata"]["audit_only"] is True
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "def ask(chain, question):\n"
+        "    chain.run(f\"Translate to Cypher like MATCH (p:Person) RETURN p. Question: '{question}'\")\n",
+        "def explain(engine, topic):\n"
+        "    engine.query(f'Explain what MATCH (n) RETURN n does for \"{topic}\"')\n",
+        "import subprocess\n"
+        "def seed(db):\n"
+        "    subprocess.run(f\"echo 'CREATE (n:Seed)' | cypher-shell -d '{db}'\", shell=True)\n",
+        "def touch(db, v):\n    db.run(f\"UPDATE t SET a='{v}' WHERE MATCH (b)\")\n",
+        "def page(graph, limit):\n"
+        '    graph.query(f"MATCH (n:User) // don\'t page\\n RETURN n LIMIT {limit}")\n',
+        "def find(graph, x):\n"
+        "    graph.query(f\"MATCH (n {{rank: '{x:d}'}}) RETURN n\")\n",
+    ],
+)
+def test_text_that_only_mentions_cypher_stays_quiet(tmp_path, code):
+    assert not _graph_rows(scan(tmp_path, code))

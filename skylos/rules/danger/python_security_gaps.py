@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import ast
 import ipaddress
+import re
+import string
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -34,6 +36,17 @@ _HTTP_CALLS = {
 } | {"urllib.request.urlopen", "urllib.request.Request"}
 _GRADIO_FACTORIES = {"gradio.Blocks", "gradio.Interface", "gradio.ChatInterface"}
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
+_GRAPH_QUERY_METHODS = frozenset(
+    {"query", "ro_query", "run", "execute_query", "cypher", "evaluate"}
+)
+_CYPHER_PATTERN = re.compile(
+    r"\b(?:MATCH|MERGE|CREATE)\s*\(\s*\w*\s*(?::|\)|\{)", re.IGNORECASE
+)
+_CYPHER_START = re.compile(
+    r"\s*(?:OPTIONAL\s+MATCH|MATCH|MERGE|CREATE|UNWIND|WITH|CALL)\b", re.IGNORECASE
+)
+_NUMERIC_FORMATS = frozenset("dfeEgGxXobn%")
+_NUMERIC_CONVERSIONS = frozenset({"int", "float", "bool", "len"})
 _UNKNOWN = object()
 
 
@@ -49,6 +62,8 @@ class _Checker(ast.NodeVisitor):
         self.bindings: dict[str, str | ast.AST | None] = {}
         self.container_values: dict[str, ast.AST] = {}
         self.path_arguments: dict[str, ast.AST] = {}
+        self.attribute_values: dict[str, ast.AST] = {}
+        self.augmented_names: set[str] = set()
         self.flask_apps: set[str] = set()
         self.flask_config_keys: set[str] = set()
         self.flask_instances: dict[str, int] = {}
@@ -158,6 +173,267 @@ class _Checker(ast.NodeVisitor):
                 return left + right
         return _UNKNOWN
 
+    def _temp_root(self, node, depth=0):
+        """The system-wide temporary directory itself, shared by every local user."""
+        if depth > 12 or node is None:
+            return False
+        if isinstance(node, ast.Call):
+            name = self._name(node.func)
+            if name == "tempfile.gettempdir":
+                return not node.args and not node.keywords
+            if name == "pathlib.Path" and len(node.args) == 1 and not node.keywords:
+                return self._temp_root(node.args[0], depth + 1)
+            return False
+        if isinstance(node, ast.Name):
+            if node.id in self.augmented_names:
+                return False
+            if node.id in self.path_arguments:
+                return self._temp_root(self.path_arguments[node.id], depth + 1)
+            value = self.bindings.get(node.id)
+            if isinstance(value, ast.AST):
+                return self._temp_root(value, depth + 1)
+            return False
+        value = self._literal(node)
+        return isinstance(value, str) and value.rstrip("/") in {"/tmp", "/var/tmp"}
+
+    def _fixed_relative_part(self, node):
+        value = self._literal(node)
+        return (
+            isinstance(value, str)
+            and bool(value.strip("/"))
+            and not value.startswith("/")
+            and ".." not in value.split("/")
+        )
+
+    def _under_temp_root(self, head, parts, depth):
+        if not parts or not all(self._fixed_relative_part(part) for part in parts):
+            return False
+        return self._temp_root(head, depth + 1) or self._shared_temp_path(
+            head, depth + 1
+        )
+
+    def _shared_temp_call(self, node, depth):
+        if any(isinstance(arg, ast.Starred) for arg in node.args) or node.keywords:
+            return False
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "joinpath":
+            return self._under_temp_root(node.func.value, node.args, depth)
+        name = self._name(node.func)
+        if name == "os.path.join" and node.args:
+            return self._under_temp_root(node.args[0], node.args[1:], depth)
+        if name == "pathlib.Path" and len(node.args) == 1:
+            return self._shared_temp_path(node.args[0], depth + 1)
+        if name == "pathlib.Path" and node.args:
+            return self._under_temp_root(node.args[0], node.args[1:], depth)
+        return False
+
+    def _shared_temp_text(self, head, tail, depth):
+        return (
+            self._temp_root(head, depth + 1)
+            and isinstance(tail, str)
+            and tail.startswith("/")
+            and self._fixed_relative_part(ast.Constant(tail.lstrip("/")))
+        )
+
+    def _shared_temp_path(self, node, depth=0):
+        """A fixed, guessable location below the shared temporary directory.
+
+        Every component after the temp root must be a known constant: a random,
+        caller-supplied or otherwise unknown component is not predictable and
+        is left alone.
+        """
+        if depth > 12 or node is None:
+            return False
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+            return any(
+                self._shared_temp_path(value, depth + 1) for value in node.values
+            )
+        if isinstance(node, ast.IfExp):
+            return self._shared_temp_path(
+                node.body, depth + 1
+            ) or self._shared_temp_path(node.orelse, depth + 1)
+        if isinstance(node, ast.Name):
+            if node.id in self.augmented_names:
+                return False
+            if node.id in self.path_arguments:
+                return self._shared_temp_path(self.path_arguments[node.id], depth + 1)
+            value = self.bindings.get(node.id)
+            if isinstance(value, ast.AST):
+                return self._shared_temp_path(value, depth + 1)
+            return False
+        if isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name):
+                value = self.attribute_values.get(f"{node.value.id}.{node.attr}")
+                return self._shared_temp_path(value, depth + 1)
+            return False
+        if isinstance(node, ast.Call):
+            return self._shared_temp_call(node, depth)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            return self._under_temp_root(node.left, [node.right], depth)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            if self._shared_temp_text(node.left, self._literal(node.right), depth):
+                return True
+        if isinstance(node, ast.JoinedStr):
+            if len(node.values) != 2:
+                return False
+            head, tail = node.values
+            return (
+                isinstance(head, ast.FormattedValue)
+                and head.conversion == -1
+                and head.format_spec is None
+                and isinstance(tail, ast.Constant)
+                and self._shared_temp_text(head.value, tail.value, depth)
+            )
+        value = self._literal(node)
+        return (
+            isinstance(value, str)
+            and value.startswith(("/tmp/", "/var/tmp/"))
+            and value.rstrip("/") not in {"/tmp", "/var/tmp"}
+        )
+
+    def _created_directory(self, node, name):
+        """``(path, exist_ok)`` of a directory-creating call, or None."""
+        exist_ok = None
+        if len(node.args) >= 3:
+            exist_ok = node.args[2]
+        path = None
+        for keyword in node.keywords:
+            if keyword.arg == "exist_ok":
+                exist_ok = keyword.value
+            elif keyword.arg == "name":
+                path = keyword.value
+        if name == "os.makedirs":
+            if node.args:
+                path = node.args[0]
+            return path, exist_ok
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "mkdir":
+            return node.func.value, exist_ok
+        return None
+
+    def _query_parts(self, node, depth=0):
+        """``(text, hole)`` pieces of an interpolated string, or None."""
+        if depth > 12:
+            return None
+        if isinstance(node, ast.Name):
+            value = self.bindings.get(node.id)
+            if isinstance(value, ast.AST):
+                return self._query_parts(value, depth + 1)
+            return None
+        if isinstance(node, ast.JoinedStr):
+            parts = []
+            for value in node.values:
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    parts.append((value.value, None))
+                elif isinstance(value, ast.FormattedValue):
+                    parts.append(("", value))
+                else:
+                    return None
+            return parts
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "format"
+            and not node.keywords
+            and not any(isinstance(arg, ast.Starred) for arg in node.args)
+        ):
+            template = self._literal(node.func.value)
+            if not isinstance(template, str):
+                return None
+            parts = []
+            position = 0
+            try:
+                fields = list(string.Formatter().parse(template))
+            except ValueError:
+                return None
+            for text, field, _spec, _conversion in fields:
+                parts.append((text, None))
+                if field is None:
+                    continue
+                if field == "":
+                    index = position
+                    position += 1
+                elif field.isdigit():
+                    index = int(field)
+                else:
+                    return None
+                if index >= len(node.args):
+                    return None
+                parts.append(("", node.args[index]))
+            return parts
+        return None
+
+    def _fixed_query_value(self, hole):
+        node = hole
+        if isinstance(hole, ast.FormattedValue):
+            spec = hole.format_spec
+            if (
+                isinstance(spec, ast.JoinedStr)
+                and len(spec.values) == 1
+                and isinstance(spec.values[0], ast.Constant)
+                and str(spec.values[0].value)[-1:] in _NUMERIC_FORMATS
+            ):
+                return True
+            node = hole.value
+        if self._literal(node) is not _UNKNOWN:
+            return True
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in _NUMERIC_CONVERSIONS
+            and self.bindings.get(node.func.id) is None
+        )
+
+    def _quoted_graph_value(self, node):
+        """An unknown value interpolated inside a quoted string of a Cypher query.
+
+        The text must begin as a Cypher statement, so prose, prompts and shell
+        commands that merely mention Cypher are not query text.
+        """
+        parts = self._query_parts(node)
+        if not parts or parts[0][1] is not None:
+            return False
+        text = "\x00".join(text for text, hole in parts if hole is None)
+        if not _CYPHER_START.match(parts[0][0]) or not _CYPHER_PATTERN.search(text):
+            return False
+        quote = None
+        escaped = False
+        comment = False
+        for text, hole in parts:
+            if hole is not None:
+                if quote in {"'", '"'} and not self._fixed_query_value(hole):
+                    return True
+                continue
+            for index, char in enumerate(text):
+                if comment:
+                    comment = char != "\n"
+                elif escaped:
+                    escaped = False
+                elif char == "\\" and quote in {"'", '"'}:
+                    escaped = True
+                elif quote is None and text[index : index + 2] == "//":
+                    comment = True
+                elif quote is None and char in {"'", '"', "`"}:
+                    quote = char
+                elif char == quote:
+                    quote = None
+        return False
+
+    def _root_name(self, node):
+        for _ in range(32):
+            if isinstance(node, (ast.Attribute, ast.Subscript, ast.Starred)):
+                node = node.value
+            elif isinstance(node, ast.Call):
+                node = node.func
+            else:
+                break
+        if isinstance(node, ast.Name):
+            return node.id
+        return None
+
+    def _forget_attributes(self, base):
+        prefix = base + "."
+        for key in [key for key in self.attribute_values if key.startswith(prefix)]:
+            del self.attribute_values[key]
+
     def _choices(self, node, depth=0):
         if depth > 12:
             return [None]
@@ -238,6 +514,10 @@ class _Checker(ast.NodeVisitor):
                 self._mapping(value) or self._name(value) or value
             )
             self.path_arguments.pop(target.id, None)
+            self.augmented_names.discard(target.id)
+            self._forget_attributes(target.id)
+            if isinstance(value, ast.Name):
+                self._forget_attributes(value.id)
             self.flask_apps.discard(target.id)
             self.flask_instances.pop(target.id, None)
             if isinstance(value, ast.Call) and self._name(value.func) == "flask.Flask":
@@ -256,6 +536,11 @@ class _Checker(ast.NodeVisitor):
             name = self._name(target)
             if name:
                 self.bindings[name] = None
+            if isinstance(target.value, ast.Name):
+                key = f"{target.value.id}.{target.attr}"
+                self.attribute_values.pop(key, None)
+                if value is not None:
+                    self.attribute_values[key] = value
         elif isinstance(target, ast.Subscript) and value is not None:
             if isinstance(target.value, ast.Name):
                 self._invalidate_mapping(target.value)
@@ -280,6 +565,18 @@ class _Checker(ast.NodeVisitor):
         self.visit(node.value)
         for target in node.targets:
             self._bind(target, node.value)
+
+    def visit_AugAssign(self, node):
+        self.generic_visit(node)
+        if isinstance(node.target, ast.Name):
+            self.augmented_names.add(node.target.id)
+            self.path_arguments.pop(node.target.id, None)
+        elif isinstance(node.target, ast.Attribute) and isinstance(
+            node.target.value, ast.Name
+        ):
+            self.attribute_values.pop(
+                f"{node.target.value.id}.{node.target.attr}", None
+            )
 
     def visit_AnnAssign(self, node):
         if node.value:
@@ -377,6 +674,10 @@ class _Checker(ast.NodeVisitor):
         outer = self.bindings.copy()
         outer_containers = self.container_values.copy()
         outer_paths = self.path_arguments.copy()
+        outer_attributes = self.attribute_values
+        self.attribute_values = {}
+        outer_augmented = self.augmented_names
+        self.augmented_names = set()
         outer_flask_apps = self.flask_apps.copy()
         outer_flask_instances = self.flask_instances.copy()
         for arg in [
@@ -409,6 +710,16 @@ class _Checker(ast.NodeVisitor):
         self.bindings = outer
         self.container_values = outer_containers
         self.path_arguments = outer_paths
+        self.attribute_values = outer_attributes
+        self.augmented_names = outer_augmented
+        if self.attribute_values:
+            for child in ast.walk(node):
+                if (
+                    isinstance(child, ast.Attribute)
+                    and isinstance(child.ctx, (ast.Store, ast.Del))
+                    and isinstance(child.value, ast.Name)
+                ):
+                    self.attribute_values.pop(f"{child.value.id}.{child.attr}", None)
         self.flask_apps = outer_flask_apps
         self.flask_instances = outer_flask_instances
 
@@ -467,14 +778,17 @@ class _Checker(ast.NodeVisitor):
         before = self.bindings.copy()
         before_containers = self.container_values.copy()
         before_paths = self.path_arguments.copy()
+        before_attributes = self.attribute_values.copy()
         for child in node.body:
             self.visit(child)
         body = self.bindings
         body_containers = self.container_values
         body_paths = self.path_arguments
+        body_attributes = self.attribute_values
         self.bindings = before.copy()
         self.container_values = before_containers.copy()
         self.path_arguments = before_paths.copy()
+        self.attribute_values = before_attributes.copy()
         for child in node.orelse:
             self.visit(child)
         other = self.bindings
@@ -492,6 +806,11 @@ class _Checker(ast.NodeVisitor):
             key: value
             for key, value in body_paths.items()
             if self.path_arguments.get(key) is value
+        }
+        self.attribute_values = {
+            key: value
+            for key, value in body_attributes.items()
+            if self.attribute_values.get(key) is value
         }
         self.bindings = {
             name: (
@@ -739,36 +1058,48 @@ class _Checker(ast.NodeVisitor):
                 "MEDIUM",
                 "External Flask URL is generated while building cached content; if Host comes from clients, validate it or configure SERVER_NAME before caching absolute links.",
             )
-        if name in {"os.makedirs", "pathlib.Path.mkdir"}:
-            path = (
-                node.args[0]
-                if name == "os.makedirs" and node.args
-                else kwargs.get("name")
-            )
-            if (
-                name == "pathlib.Path.mkdir"
-                and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Call)
-            ):
-                path = node.func.value.args[0] if node.func.value.args else None
-            elif (
-                name == "pathlib.Path.mkdir"
-                and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name)
-            ):
-                path = self.path_arguments.get(node.func.value.id)
-            value = self._literal(path)
-            if (
-                isinstance(value, str)
-                and value.startswith(("/tmp/", "/var/tmp/"))
-                and self._literal(kwargs.get("exist_ok")) is True
-            ):
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in _GRAPH_QUERY_METHODS
+            and (node.args or kwargs)
+        ):
+            query = kwargs.get("query") or kwargs.get("query_") or kwargs.get("cypher")
+            if node.args:
+                query = node.args[0]
+            if not isinstance(name, str) and self._quoted_graph_value(query):
                 self._emit(
                     node,
-                    "SKY-D348",
-                    "HIGH",
-                    "Predictable shared temporary directory accepts an existing path; use tempfile.mkdtemp or TemporaryDirectory to create a private directory.",
+                    "SKY-D211",
+                    "MEDIUM",
+                    "Review this graph query: a value is interpolated inside a quoted string of the Cypher text, so a quote or backslash in it changes the query. Its origin is unresolved; pass it as a query parameter.",
+                    {
+                        "evidence_kind": "python_graph_query_quoted_interpolation",
+                        "source": "interpolated value of unresolved origin",
+                        "sink": f"Cypher text passed to .{node.func.attr}()",
+                        "path": [
+                            "value is formatted into the query text",
+                            "inside a quoted string literal",
+                            f"reaches .{node.func.attr}()",
+                        ],
+                        "analysis_complete": False,
+                    },
                 )
+                self.findings[-1]["metadata"] = {
+                    "source_status": "unresolved",
+                    "audit_only": True,
+                }
+        created = self._created_directory(node, name)
+        if (
+            created is not None
+            and self._literal(created[1]) is True
+            and self._shared_temp_path(created[0])
+        ):
+            self._emit(
+                node,
+                "SKY-D348",
+                "HIGH",
+                "Predictable shared temporary directory accepts an existing path; use tempfile.mkdtemp or TemporaryDirectory to create a private directory.",
+            )
         self.generic_visit(node)
         if (
             isinstance(node.func, ast.Attribute)
@@ -777,9 +1108,19 @@ class _Checker(ast.NodeVisitor):
             and not node.keywords
         ):
             self._append_sequence(node.func.value, node.args[0])
+        receiver = None
+        if isinstance(node.func, ast.Attribute):
+            receiver = self._root_name(node.func.value)
+        if receiver:
+            self._forget_attributes(receiver)
+        for keyword in node.keywords:
+            if isinstance(keyword.value, ast.Name):
+                self._forget_attributes(keyword.value.id)
         for argument in node.args:
             self._invalidate_mapping(argument)
             self._invalidate_sequence(argument)
+            if isinstance(argument, ast.Name):
+                self._forget_attributes(argument.id)
         for keyword in node.keywords:
             if keyword.arg is not None:
                 self._invalidate_mapping(keyword.value)

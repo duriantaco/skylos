@@ -2,8 +2,9 @@
 
 Skylos scans run on your machine. This page lists every network request the
 CLI and the MCP server can make, what triggers each one, what it sends, and how
-to turn it off. Skylos has no update check, analytics, usage tracking or
-heartbeat.
+to turn it off. Skylos has no analytics, usage tracking or heartbeat. Its one
+version lookup reads the public PyPI record and sends nothing about you or
+your project; it is listed under [Other hosts](#other-hosts).
 
 ## The rule
 
@@ -114,6 +115,7 @@ that cleanup operation from persisting a receipt. See [Cleanup](cleanup.md).
 | None: a local file | explicit npm mirror verification caches public names, versions, integrity and verification timestamps for up to seven days in `npm-mirror-identities.json` under the same cache directory; repository-owned cache paths are refused | nothing leaves the machine; no private source URLs or credentials are stored | delete the file; leave `npm_registry_mirrors` empty to disable verification |
 | deps.dev | `skylos sbom --license-lookup` | package names and versions | leave out `--license-lookup` |
 | PyPI (`pypi.org`, `files.pythonhosted.org`), npm registry, Go module proxy, JSR | checks for packages that don't exist and made-up package APIs: `--ai-defects`, `-a`, config `ai_defects_enabled`; always in `skylos agent scan`, `skylos agent pre-commit`, `skylos baseline`, `skylos suite`, `skylos review` and `skylos verify` on a path; `skylos done` (the `unknown_imports` check, on by default as advice); the agent hook on package-install commands; MCP `validate_code_change` | package names (and ranged reads of public wheel files) | `skylos verify --no-dependency-hallucinations`; `unknown_imports = "off"` under `[tool.skylos.done.checks]`; MCP `check_dependencies=false`; remove the hook |
+| PyPI (`pypi.org`) | the upgrade notice: `skylos doctor` in text mode, and a scan printed to a terminal, at most once a day (the answer is kept under `~/.cache/skylos`); never in CI, with JSON or other machine output, or when output is piped | an anonymous `GET /pypi/skylos/json`: no token, no project data, no installed version | `SKYLOS_NO_TELEMETRY=1` |
 | The model provider you configure (default OpenAI) | `skylos agent ...` commands, `skylos cleanup --review`, `skylos . --verify-security`, `skylos debt --with-agent`, MCP remediation and verification tools | code excerpts and prompts; cleanup review also includes bounded task and static graph context | don't run LLM commands; `--base-url` on agent and cleanup review commands points them at a local model |
 | `api.typesafe.ai` | `skylos agent verify --jev-precheck`, `--jev-judge`, `--jev-only`, `skylos agent scan --dead-code-review jev-llm`, with `TYPESAFE_API_KEY` set | the dead-code candidates to judge | unset `TYPESAFE_API_KEY` |
 | Your agent endpoint | `skylos agent test` | test scenarios. Only loopback addresses unless `--allow-remote` | — |

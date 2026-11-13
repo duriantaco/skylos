@@ -369,11 +369,20 @@ parameter is followed through the scanned source (imports, assignments,
 calls, returns, constructor and dataclass bindings, aliases,
 `functools.partial`, executors, lambdas, containers and their local aliases,
 JSON/YAML decoding, Celery `delay`/`apply_async` and RQ `enqueue` arguments)
-to every caller that can be resolved. It is reported when a resolved chain
+to every caller that can be resolved. A method call on a receiver that cannot
+be resolved is followed only when every function of that name in the scanned
+project belongs to one class hierarchy, the name is not a method of a built-in
+container, string or file, and the project never calls it on an external
+object. It is reported when a resolved chain
 starts at request data, a route or MCP tool argument, a Django class-based
 view registered by a URL pattern or DRF router, a FastAPI `Depends`
 dependency of a resolved route, a function a deployment file names as a
-server or handler, standard input, a CGI request variable, a network response,
+server or handler, the `environ` of a WSGI callable or the `scope`/`receive`
+of an ASGI callable (the complete `(environ, start_response)` or
+`(scope, receive, send)` signature; only keys the client fills in, such as
+`PATH_INFO`, `QUERY_STRING`, `HTTP_*`, `wsgi.input`, `path`, `query_string`
+and `headers`, count, and objects the server or application stores under other
+keys do not), standard input, a CGI request variable, a network response,
 asyncio stream or `recv_into` buffer, a downloaded file's content or an
 archive member name; `metadata.path_provenance` lists the steps. A parameter
 named `request`/`req` counts as request data only in a module that imports a
@@ -410,6 +419,17 @@ names, a string-built query must also read as SQL, and a plain tainted query
 counts only in a module that imports asyncpg, `databases` or peewee. A
 SQLAlchemy `text()` or pandas `read_sql` call is reported once, as D211 (no
 second D217 finding).
+
+Python D211 also reports a Cypher graph query passed to `.query()`,
+`.ro_query()`, `.run()`, `.execute_query()`, `.cypher()` or `.evaluate()` when
+an f-string or `str.format` value sits inside a quoted string of the query
+text (`{id: '{value}'}`), as MEDIUM: a quote or backslash in the value changes
+the query, whatever escaping helper wraps it. It makes no claim about where the
+value comes from (`source_status` is `unresolved`), and the text must begin as
+a Cypher statement, so prompts and shell commands that mention Cypher are not
+query text. A `$parameter`, a value proven constant, `int()`/`float()`
+output, a value outside quotes (such as a backtick label) and SQL text are not
+reported by this check.
 
 On every D211 sink, a quoted identifier may fill the query text where no
 quoted literal is open: psycopg2 `quote_ident`, or a function in the same
@@ -779,7 +799,7 @@ Skylos does not execute pytest or load `conftest.py` to resolve these values.
 | D345 | HIGH | Mutable Hugging Face artifact revision | Python |
 | D346 | HIGH | Flask debug mode enabled | Python |
 | D347 | MEDIUM | Unsafe logging config listener | Python |
-| D348 | HIGH | Insecure temporary filename | Python |
+| D348 | HIGH | Insecure temporary filename: `tempfile.mktemp()`, or `os.makedirs`/`Path.mkdir` with `exist_ok=True` on a fixed directory under the shared temp root. The root is a literal `/tmp` or `/var/tmp`, or `tempfile.gettempdir()`, followed through `os.path.join`, `Path(...) / "name"`, an f-string, a local name, a `self` attribute set in the same function, and an `a or default` or conditional default. Every component after the root must be a constant; a random, caller-supplied or otherwise unknown component is not reported | Python |
 | D349 | CRITICAL | Server-side template injection (request data compiled as Jinja template source; Java Velocity `evaluate`, FreeMarker `new Template(...)` source, `StringTemplateLoader.putTemplate`, Groovy `TemplateEngine.createTemplate`; PHP Drupal `inline_template` render arrays) | Python, Java, PHP |
 | D355 | HIGH | Jinja environment with omitted or explicitly disabled autoescape | Python |
 | D356 | MEDIUM | Cleartext outbound HTTP request | Python |
