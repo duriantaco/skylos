@@ -806,6 +806,8 @@ Skylos does not execute pytest or load `conftest.py` to resolve these values.
 | D357 | HIGH | Untrusted input used as a dynamic Python import name | Python |
 | D358 | HIGH | Public Gradio launch without configured authentication | Python |
 | D359 | MEDIUM | Cached Flask external URL derived from the request host | Python |
+| D378 | MEDIUM | Incomplete path traversal defence: the code handles `..` itself and the value still reaches a file operation in the same function. Reported when `..` with a separator (`../`, `..\`) is removed with a single `replace`, which `....//` survives, or when `..` is rejected or removed and the value is then joined after a base directory (`os.path.join`, `Path(base, name)`, `base / name`), where an absolute path replaces the base | Python |
+| D379 | MEDIUM | Catastrophic regex backtracking: a pattern written as a string in a `re` call whose matching steps grow exponentially, or at least cubically, with the input length. The finding names the input shape that shows it | Python |
 
 D340 recognizes explicit release intent in a GitHub Actions workflow when it
 runs only on the `release` event, including `types: [published]`. A publishing
@@ -818,6 +820,26 @@ intent. This exception applies only to D340; other command and publish-job
 security checks still run. Standalone scripts and other command-scanning
 contexts retain their existing checks.
 Ambiguous YAML and unsupported conditions keep the warning.
+
+D378 needs no proof that the value is attacker-controlled: the defence in the
+code is the evidence that its author treats it as untrusted. It stays quiet when
+the function also resolves the path and checks containment (`is_relative_to`,
+`relative_to`, `commonpath`, or a normalized path with `startswith`), keeps only
+the file name (`basename`, `secure_filename`, `.name`), uses `safe_join`,
+rejects or strips a leading separator or an absolute path, validates the value
+with another call, pattern or allowlist, or removes the sequence in a `while`
+loop. Plain string concatenation after a base is not reported as an absolute
+path case, because it cannot replace the base.
+
+D379 parses each literal pattern and counts the steps of a backtracking matcher
+inside Skylos on generated inputs of growing length; nothing from the scanned
+project runs. It reports only measured growth, so a pattern that merely looks
+nested (`(\d+\.)+`) is not reported, and quadratic patterns are not reported.
+Patterns built at run time, unknown flags, back-references, look-behind and
+scoped inline flags give no verdict. `re.compile`, `re.match` and
+`re.fullmatch` are measured as one attempt from the start of the text; the
+other `re` functions as a search over every start position. It does not prove
+that attacker-controlled text reaches the pattern.
 
 D355–D359 require review of deployment and input context. D356 records a
 cleartext transport choice; it does not establish that sensitive data is sent.

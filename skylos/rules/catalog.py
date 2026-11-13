@@ -1400,6 +1400,22 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-D378",
+        "Incomplete path traversal defence",
+        "security",
+        "MEDIUM",
+        aliases=("weak path sanitizer", "dot-dot filter bypass"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D379",
+        "Catastrophic regex backtracking",
+        "security",
+        "MEDIUM",
+        aliases=("ReDoS", "regex denial of service"),
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-D510", "Prototype pollution", "security", "HIGH", finding_type="review"
     ),
     RuleCatalogEntry(
@@ -1944,6 +1960,8 @@ _SECURITY_RULE_CWES = {
     "SKY-D347": ("CWE-306",),
     "SKY-D348": ("CWE-377",),
     "SKY-D349": ("CWE-1336",),
+    "SKY-D378": ("CWE-22",),
+    "SKY-D379": ("CWE-1333",),
     "SKY-SC001": ("CWE-862",),
 }
 

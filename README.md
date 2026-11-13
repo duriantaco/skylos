@@ -545,7 +545,7 @@ AI-assisted projects.
 | Category | Examples | Why It Matters |
 |:---|:---|:---|
 | Dead code | unused functions, classes, imports, package entrypoints, route handlers | reduces maintenance cost without breaking dynamic frameworks |
-| Security flaws | SQL injection, XSS, SSRF, path traversal, command injection, unsafe deserialization | catches exploitable flows before code reaches main |
+| Security flaws | SQL injection, XSS, SSRF, path traversal, command injection, unsafe deserialization, slow regular expressions (ReDoS) | catches exploitable flows before code reaches main |
 | Secrets | API keys, tokens, private credentials, high-entropy strings | prevents credentials from leaking through commits and PRs |
 | CI/CD workflows | GitHub Actions and GitLab CI dangerous triggers, unpinned actions/includes, broad tokens, OIDC misuse, cache poisoning, mutable images | reduces CI/CD supply-chain risk before release jobs run |
 | Edge deployment config | Docker Compose privileged device access, host networking, systemd root services, broad capabilities, missing sandboxing | catches repo-controlled settings that turn app bugs into device compromise |
