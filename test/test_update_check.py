@@ -166,6 +166,24 @@ def test_doctor_reports_an_available_upgrade(cache, monkeypatch, capsys):
     assert "pip install -U skylos" in text
 
 
+def test_doctor_json_never_asks_the_network(cache, monkeypatch, capsys):
+    import skylos
+    from skylos.commands import doctor_cmd
+
+    _no_network(monkeypatch)
+    monkeypatch.setattr(skylos, "__version__", "5.6.0")
+
+    assert doctor_cmd.run_doctor_command(["--format", "json"]) == 0
+    report = json.loads(capsys.readouterr().out)["checks"]["skylos"]
+    assert report == {"status": "ok", "version": "5.6.0"}
+
+    _store(cache, "999.0.0", age=update_check.CACHE_SECONDS * 3)
+    assert doctor_cmd.run_doctor_command(["--format", "json"]) == 0
+    report = json.loads(capsys.readouterr().out)["checks"]["skylos"]
+    assert report["latest_version"] == "999.0.0"
+    assert report["update_available"] is True
+
+
 def test_doctor_stays_the_same_when_the_lookup_is_off(cache, monkeypatch, capsys):
     import skylos
     from skylos.commands import doctor_cmd

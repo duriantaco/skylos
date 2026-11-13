@@ -1474,8 +1474,8 @@ The TUI uses a category sidebar plus a selectable finding list and detail pane. 
 
 `skylos doctor` compares the installed version with the newest release on
 PyPI and prints the upgrade command when one is available;
-`skylos doctor --format json` adds `latest_version` and `update_available`
-to `checks.skylos`. A scan printed to a terminal ends with the same one-line
+`skylos doctor --format json` makes no request and adds `latest_version` and
+`update_available` to `checks.skylos` when an earlier lookup stored them. A scan printed to a terminal ends with the same one-line
 notice. The lookup is a single anonymous read of the public PyPI record for
 `skylos`; nothing about your project is sent. A scan never waits for it: the
 answer is kept for a day under `~/.cache/skylos` and refreshed in the

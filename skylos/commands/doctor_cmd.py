@@ -12,7 +12,12 @@ from rich.panel import Panel
 from skylos.cloud.plan_names import plan_display_name
 from skylos.config import load_config
 from skylos.constants import RIPGREP_INSTALL_URL
-from skylos.core.update_check import is_newer, latest_version, upgrade_notice
+from skylos.core.update_check import (
+    is_newer,
+    known_latest,
+    latest_version,
+    upgrade_notice,
+)
 
 
 RUST_ACCELERATION_BUILD_URL = (
@@ -85,7 +90,7 @@ def _doctor_parser() -> argparse.ArgumentParser:
 def _skylos_version_report() -> dict:
     current = str(skylos.__version__)
     report = {"status": "ok", "version": current}
-    latest = latest_version()
+    latest = known_latest()
     if latest:
         report["latest_version"] = latest
         report["update_available"] = is_newer(latest, current)

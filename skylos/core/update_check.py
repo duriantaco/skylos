@@ -123,6 +123,13 @@ def cached_latest() -> str | None:
     return record["latest"]
 
 
+def known_latest() -> str | None:
+    """The newest release already learned, without asking PyPI."""
+    if disabled():
+        return None
+    return cached_latest()
+
+
 def _cache_is_fresh() -> bool:
     record = _read_cache()
     return record is not None and time.time() - record["checked"] < CACHE_SECONDS
@@ -159,9 +166,7 @@ def refresh_in_background() -> threading.Thread | None:
 def upgrade_notice(current: str, latest: str | None = None) -> str | None:
     """One line telling the user to upgrade, or None when there is no need."""
     if latest is None:
-        if disabled():
-            return None
-        latest = cached_latest()
+        latest = known_latest()
     if latest is None or not is_newer(latest, str(current)):
         return None
     return (
