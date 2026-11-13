@@ -25,7 +25,10 @@ from .danger_logging import scan as scan_secret_logging
 from .pickle_provenance import safe_pickle_loads
 from .yaml_loader_provenance import yaml_loader_classes, yaml_load_call_name
 from .callable_bindings import callable_names
-from .python_security_gaps import scan as scan_python_security_gaps
+from .python_security_gaps import (
+    mentions_graph_query,
+    scan as scan_python_security_gaps,
+)
 from .regex_dos import scan as scan_regex_backtracking
 from skylos.rules.quality._test_code import is_python_test_file
 from .danger_fs.weak_path_defence import scan as scan_weak_path_defence
@@ -655,26 +658,27 @@ def scan_file_with_tree(
     tree, file_path, findings, *, source: str | None = None, project_root=None
 ):
     """Run taint-flow scanners on an already-parsed AST (no re-read/re-parse)."""
-    if source is None or _has_any(
-        source.lower(),
-        (
-            "jinja",
-            "requests",
-            "httpx",
-            "urllib",
-            "importlib",
-            "__import__",
-            "gradio",
-            "/tmp/",
-            "makedirs",
-            "mkdir",
-            "url_for",
-            "subprocess",
-            "shlex",
-            "match (",
-            "merge (",
-            "create (",
-        ),
+    if (
+        source is None
+        or _has_any(
+            source.lower(),
+            (
+                "jinja",
+                "requests",
+                "httpx",
+                "urllib",
+                "importlib",
+                "__import__",
+                "gradio",
+                "/tmp/",
+                "makedirs",
+                "mkdir",
+                "url_for",
+                "subprocess",
+                "shlex",
+            ),
+        )
+        or mentions_graph_query(source)
     ):
         scan_python_security_gaps(tree, file_path, findings, project_root=project_root)
     review = []

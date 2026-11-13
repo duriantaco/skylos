@@ -39,12 +39,35 @@ _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 _GRAPH_QUERY_METHODS = frozenset(
     {"query", "ro_query", "run", "execute_query", "cypher", "evaluate"}
 )
+_CYPHER_KEYWORDS = "MATCH|MERGE|CREATE"
 _CYPHER_PATTERN = re.compile(
-    r"\b(?:MATCH|MERGE|CREATE)\s*\(\s*\w*\s*(?::|\)|\{)", re.IGNORECASE
+    rf"\b(?:{_CYPHER_KEYWORDS})\s*\(\s*\w*\s*(?::|\)|\{{)", re.IGNORECASE
 )
 _CYPHER_START = re.compile(
-    r"\s*(?:OPTIONAL\s+MATCH|MATCH|MERGE|CREATE|UNWIND|WITH|CALL)\b", re.IGNORECASE
+    rf"\s*(?:OPTIONAL\s+MATCH|{_CYPHER_KEYWORDS}|UNWIND|WITH|CALL)\b", re.IGNORECASE
 )
+# danger.scan_file_with_tree sees source text instead of an AST, so it cannot
+# use _CYPHER_START/_CYPHER_PATTERN.  Keep the keyword set above shared and
+# look for the keyword-then-paren shape anywhere in the text: anchoring it to
+# an opening quote misses a query that starts on the following line or after
+# a leading clause such as WITH 1 AS one / OPTIONAL.  An escaped \n, \r or \t
+# in the source text counts as a break before the keyword and as whitespace
+# before the paren, since the string value holds a real one.  The lookbehinds
+# keep attribute, method and function definitions such as re.match(,
+# db.create( and def create( from starting the scan, and no part of the
+# pattern can backtrack over a run of spaces.
+_SOURCE_HINT = re.compile(
+    rf"(?:(?<![\w.])|(?<=\\[nrt]))(?<!def )"
+    rf"(?:{_CYPHER_KEYWORDS})(?:\s|\\[nrt])*\(",
+    re.IGNORECASE,
+)
+
+
+def mentions_graph_query(source: str) -> bool:
+    """True when source text may hold a Cypher query this module reports."""
+    return _SOURCE_HINT.search(source) is not None
+
+
 _NUMERIC_FORMATS = frozenset("dfeEgGxXobn%")
 _NUMERIC_CONVERSIONS = frozenset({"int", "float", "bool", "len"})
 _UNKNOWN = object()
