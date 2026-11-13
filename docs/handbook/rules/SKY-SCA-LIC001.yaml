@@ -50,7 +50,7 @@ flagged_example:
             "node_modules/pm2": {
               "version": "5.4.2",
               "resolved": "https://registry.npmjs.org/pm2/-/pm2-5.4.2.tgz",
-              "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+              "integrity": "sha256-9mFuFeUw7VUvnaotPOcZY5R8a8fJjJtk/T5nP9AmIsY=",
               "license": "AGPL-3.0"
             }
           }
@@ -86,7 +86,7 @@ not_flagged_example:
             "node_modules/node-forge": {
               "version": "1.3.1",
               "resolved": "https://registry.npmjs.org/node-forge/-/node-forge-1.3.1.tgz",
-              "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+              "integrity": "sha256-9mFuFeUw7VUvnaotPOcZY5R8a8fJjJtk/T5nP9AmIsY=",
               "license": "(BSD-3-Clause OR GPL-2.0)"
             }
           }
@@ -196,7 +196,7 @@ false_alarms_and_suppression:
                     "node_modules/pm2": {
                       "version": "5.4.2",
                       "resolved": "https://registry.npmjs.org/pm2/-/pm2-5.4.2.tgz",
-                      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+                      "integrity": "sha256-9mFuFeUw7VUvnaotPOcZY5R8a8fJjJtk/T5nP9AmIsY=",
                       "license": "AGPL-3.0"
                     }
                   }
@@ -241,7 +241,7 @@ false_alarms_and_suppression:
                     "node_modules/pm2": {
                       "version": "5.4.2",
                       "resolved": "https://registry.npmjs.org/pm2/-/pm2-5.4.2.tgz",
-                      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+                      "integrity": "sha256-9mFuFeUw7VUvnaotPOcZY5R8a8fJjJtk/T5nP9AmIsY=",
                       "license": "AGPL-3.0"
                     }
                   }
