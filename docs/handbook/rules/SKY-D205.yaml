@@ -1,0 +1,135 @@
+id: SKY-D205
+title: Unsafe pickle.loads deserialization
+family: security
+severity: CRITICAL
+languages: [Python]
+gate:
+  full: critical_blocks
+  note: >-
+    A `pickle.loads()` of fixed bytes is hidden from the default list but
+    still counted.
+cwe: [CWE-502]
+
+what_it_is: >-
+  `pickle.loads()` rebuilds Python objects from bytes, and the bytes can
+  tell it to call any importable function while doing so. SKY-D205 reports
+  `pickle.loads()` and `cloudpickle.loads()` calls on bytes that are not
+  proven to be plain data this code just pickled.
+
+why_it_matters: >-
+  Bytes from a cache, a message queue or a cookie are only as safe as
+  everyone who can write there. Anyone who can put a crafted value into
+  Redis can run commands on every worker that loads it.
+
+flagged_example:
+  language: python
+  filename: app/reports.py
+  expect_line: 12
+  code: |
+    import pickle
+
+    import redis
+
+    cache = redis.Redis()
+
+
+    def get_report(report_id: str):
+        blob = cache.get(f"report:{report_id}")
+        if blob is None:
+            return None
+        return pickle.loads(blob)
+
+not_flagged_example:
+  language: python
+  filename: app/health.py
+  code: |
+    import pickle
+
+
+    def pickle_self_check() -> bool:
+        """Startup check: this worker's pickle protocol round-trips plain data."""
+        blob = pickle.dumps({"job": "ping", "attempt": 1}, protocol=5)
+        return pickle.loads(blob) == {"job": "ping", "attempt": 1}
+  why: >-
+    `blob` was produced a line earlier by `pickle.dumps()` of a dict made
+    only of literals, so it cannot hold anything but that data. Skylos
+    proves such local round-trips and does not report them.
+
+how_skylos_decides:
+  - >-
+    Resolves call names through imports and assignments, including
+    `pickle.loads` stored in another name, and matches `pickle.loads` and
+    `cloudpickle.loads`.
+  - >-
+    Skips a `pickle.loads(x)` whose `x` is the result of `pickle.dumps()` on
+    built-in literal data (strings, numbers, lists, dicts, tuples of those)
+    in the same function, with no extra arguments. A mutable container
+    stored in a variable first, a parameter, an attribute or a loop breaks
+    the proof.
+  - >-
+    Reports everything else as CRITICAL. When the bytes passed to
+    `pickle.loads()` are fixed literals, the finding is marked low-risk:
+    hidden from the default list, still in JSON output and counted by the
+    gate.
+  - >-
+    `pickle.load()` on a file or stream is SKY-D204.
+
+source_refs:
+  - path: skylos/rules/danger/calls.py
+    symbol: "DANGEROUS_CALLS = {"
+    note: "`pickle.loads` and `cloudpickle.loads` entries."
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _call_findings("
+  - path: skylos/rules/danger/pickle_provenance.py
+    symbol: "def safe_pickle_loads("
+    note: the local round-trip proof.
+  - path: skylos/rules/danger/callable_bindings.py
+    symbol: "def callable_names("
+
+fix:
+  explanation: >-
+    Cache data in a format that cannot run code, such as JSON. If you need
+    pickle for speed, sign the bytes with an HMAC when writing and check the
+    signature before loading.
+  filename: app/reports.py
+  code: |
+    import json
+
+    import redis
+
+    cache = redis.Redis()
+
+
+    def get_report(report_id: str):
+        blob = cache.get(f"report:{report_id}")
+        if blob is None:
+            return None
+        return json.loads(blob)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A cache written and read only by your own service is still reported:
+      Skylos cannot see who else can write to Redis or disk.
+    - >-
+      `pickle.loads(pickle.dumps(obj))` used as a deep copy is reported when
+      `obj` is a parameter or an object of unknown type, because such
+      objects can define their own pickling hooks.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed call on its own line. A bare `# noqa` does not hide
+        a CRITICAL security finding.
+      language: python
+      code: |
+        return pickle.loads(blob)  # skylos: ignore[SKY-D205] blob is HMAC-checked above
+    - check: baseline
+      text: >-
+        Accept existing findings with `skylos baseline .`, then scan with
+        `--baseline`.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D205"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D204, SKY-D233, SKY-D265, SKY-D200]

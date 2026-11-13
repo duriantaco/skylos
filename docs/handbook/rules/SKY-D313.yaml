@@ -1,0 +1,165 @@
+id: SKY-D313
+title: Privileged job running outsiders' code has no timeout
+family: ci-cd
+severity: LOW
+languages: [GitHub Actions workflows]
+gate:
+  full: counted
+
+what_it_is: >-
+  A GitHub Actions job without `timeout-minutes` may run for 360 minutes,
+  GitHub's default limit. SKY-D313 reports such a job when it holds some
+  privilege and runs pull request code that someone without write access
+  to the repository can start.
+
+why_it_matters: >-
+  The pull request author decides how long their code runs. A test that
+  hangs, or a crypto miner hidden in a fork's change, keeps the runner busy
+  for six hours, using your minutes and holding the base repository's
+  context for all that time.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/fork-tests.yml
+  expect_line: 8
+  code: |
+    name: Fork PR tests
+    on:
+      pull_request_target:
+        types: [opened, synchronize]
+    permissions:
+      contents: read
+    jobs:
+      test:
+        name: Test the pull request
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              ref: ${{ github.event.pull_request.head.sha }}
+              persist-credentials: false
+          - uses: actions/setup-node@v4
+            with:
+              node-version: 22
+          - run: npm ci --ignore-scripts
+          - run: npm test
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/labeler.yml
+  code: |
+    name: Label
+    on:
+      pull_request_target:
+        types: [opened, synchronize]
+    permissions:
+      contents: read
+      pull-requests: write
+    jobs:
+      label:
+        name: Label by changed paths
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/labeler@v5
+            with:
+              sync-labels: true
+  why: >-
+    This job is privileged and has no timeout, but it never checks out the
+    pull request's code: the labeler only reads the list of changed files.
+    The author cannot make it run longer.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows`. Jobs that call a
+    reusable workflow, and jobs that set `timeout-minutes` to any value,
+    are skipped.
+  - >-
+    A job is privileged when the workflow is started by `release`, a tag
+    push, `pull_request_target` or `workflow_run`, or when the job's
+    effective `permissions:` grant any write scope, `id-token: write` and
+    `write-all` included.
+  - >-
+    The job must be reachable by an account without write access: one of
+    the workflow's `issues`, `issue_comment`, `pull_request_target`,
+    review, discussion or `workflow_run` triggers, for event types an
+    outsider can cause, that the job's `if:` and the jobs it `needs` do not
+    shut out. A recognised permission check in a needed job shuts them
+    out; one in the same job does not. `pull_request` and `push` never
+    count.
+  - >-
+    The job must run pull request code: an `actions/checkout` whose `ref`
+    or `repository` names the pull request head (`pull_request.head`,
+    `merge_commit_sha`, `github.head_ref`, `refs/pull/`), or a `run:` with
+    `gh pr checkout` or a `git fetch`, `checkout` or `pull` of a `pull/`
+    ref.
+  - >-
+    Reports LOW on the first line of the file that contains `<job-id>:`.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_privileged_job_timeouts("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _job_reads_pr_code("
+    note: what counts as running pull request code.
+  - path: skylos/rules/config/cicd/ai_agents.py
+    symbol: "def outsider_job_events("
+    note: which events reach the job from an account without write access.
+  - path: test/test_workflow_authorization_proofs.py
+    symbol: "SKY-D313"
+
+fix:
+  explanation: >-
+    Set `timeout-minutes` on the job, a little above its normal run time.
+    It limits how long the code can run; whether this job should run fork
+    code at all is a separate question (SKY-D290).
+  filename: .github/workflows/fork-tests.yml
+  code: |
+    name: Fork PR tests
+    on:
+      pull_request_target:
+        types: [opened, synchronize]
+    permissions:
+      contents: read
+    jobs:
+      test:
+        name: Test the pull request
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              ref: ${{ github.event.pull_request.head.sha }}
+              persist-credentials: false
+          - uses: actions/setup-node@v4
+            with:
+              node-version: 22
+          - run: npm ci --ignore-scripts
+          - run: npm test
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Any `timeout-minutes` on the job clears it, even `360` or an
+      expression. A timeout on each step does not count.
+    - >-
+      A job that runs fork code after a permission check in one of its own
+      steps is still reported, because only checks in jobs it `needs`
+      count.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D313] <reason>` on the job's line or on
+        the line directly above it, one rule per marker.
+      language: yaml
+      code: |
+        jobs:
+          # skylos: ignore[SKY-D313] runner pool enforces a 20-minute limit
+          test:
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D313"]` turns the rule off for the
+        whole project. A baseline also works, but it records the absolute
+        file path and line, so it stops matching when the checkout moves or
+        lines above the finding change.
+
+related: [SKY-D290, SKY-D295, SKY-D321]

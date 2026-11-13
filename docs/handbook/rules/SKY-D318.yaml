@@ -1,0 +1,151 @@
+id: SKY-D318
+title: GitLab CI Docker-in-Docker TLS disabled
+family: ci-cd
+severity: HIGH
+languages: [GitLab CI]
+gate:
+  full: counted
+
+what_it_is: >-
+  Docker-in-Docker (DinD) starts a Docker daemon as a service container next
+  to the job. By default it listens on port 2376 with TLS. SKY-D318 reports
+  a job that turns TLS off, with `DOCKER_TLS_CERTDIR: ""` or a
+  `DOCKER_HOST` on the plain-text port `tcp://docker:2375`.
+
+why_it_matters: >-
+  Without TLS the daemon accepts commands from anything that can reach it on
+  the network, with no certificate. On a shared runner host that can be
+  another job's container, which can then run privileged containers, read
+  your build or push its own image under your tag.
+
+flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  expect_line: 10
+  code: |
+    stages: [build]
+
+    build-image:
+      stage: build
+      image: docker:27.3
+      services:
+        - docker:27.3-dind
+      variables:
+        DOCKER_HOST: tcp://docker:2375
+        DOCKER_TLS_CERTDIR: ""
+      script:
+        - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" .
+
+not_flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  code: |
+    stages: [build]
+
+    build-image:
+      stage: build
+      image: docker:27.3
+      services:
+        - docker:27.3-dind
+      variables:
+        DOCKER_HOST: tcp://docker:2376
+        DOCKER_TLS_CERTDIR: "/certs"
+        DOCKER_TLS_VERIFY: "1"
+        DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
+      script:
+        - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" .
+  why: >-
+    The same Docker-in-Docker job with TLS on: the daemon writes its
+    certificates to `/certs`, and the client talks to port 2376 and checks
+    them.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). Reads every file named exactly
+    `.gitlab-ci.yml` in the scanned folder, skipping `.git`, `node_modules`,
+    `.venv`, `venv`, `build`, `dist` and cache folders. A subfolder scan of
+    a Git repository also reads the repository's top-level `.gitlab-ci.yml`.
+    Files pulled in with `include:` are not read.
+  - >-
+    Skips a file that PyYAML's safe loader cannot read, without a warning.
+    That includes every file that uses GitLab's `!reference` tag.
+  - >-
+    For every job, hidden `.template` jobs included, takes its `services`
+    (the job's own, else the `default:` ones, else the top-level ones). It
+    goes on only when one of them is a Docker-in-Docker image: the last
+    path part contains both `docker` and `dind`.
+  - >-
+    Merges the top-level `variables:` with the job's own. Variables set
+    under a service entry are not read.
+  - >-
+    Reports the job when `DOCKER_TLS_CERTDIR` is a string that is empty
+    after trimming, or `DOCKER_HOST` starts with `tcp://docker:2375` (in
+    any case). A `DOCKER_TLS_CERTDIR:` key with no value at all is not
+    reported.
+  - >-
+    One finding per job, HIGH, on the first line of the file that sets the
+    variable it found (`DOCKER_TLS_CERTDIR` when both are set).
+
+source_refs:
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _scan_dind_without_tls("
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _is_dind_image("
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _effective_variables("
+  - path: test/test_gitlab_ci_security.py
+    symbol: "def test_gitlab_ci_scanner_detects_workflow_supply_chain_risks"
+
+fix:
+  explanation: >-
+    Delete both variables, or set them to the TLS values. The official
+    `docker:dind` image creates certificates in `DOCKER_TLS_CERTDIR`
+    (`/certs` by default) and the `docker` client image picks them up. Use
+    the runner's `privileged` setting only on runners reserved for trusted
+    projects.
+  filename: .gitlab-ci.yml
+  code: |
+    stages: [build]
+
+    build-image:
+      stage: build
+      image: docker:27.3
+      services:
+        - docker:27.3-dind
+      variables:
+        DOCKER_TLS_CERTDIR: "/certs"
+      script:
+        - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" .
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A top-level `DOCKER_TLS_CERTDIR: ""` is reported for every job with a
+      DinD service, and every finding points at that one line.
+    - >-
+      Hidden `.template` jobs are checked as jobs.
+    - >-
+      Every example on this page is also a SKY-D314 finding: a DinD service
+      without a digest. That one is separate.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D318]` and a reason on the reported line,
+        or on the line directly above it. Skylos looks for that exact text,
+        so write one rule per marker, with the ID in upper case.
+      language: yaml
+      code: |
+        variables:
+          # skylos: ignore[SKY-D318] dedicated runner, one job per VM
+          DOCKER_TLS_CERTDIR: ""
+    - check: baseline
+      text: >-
+        A baseline hides the findings that exist today. Each entry records
+        the rule, the absolute file path and the line, so it stops matching
+        when the line moves or the checkout is at another path.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D318"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D314, SKY-D296]

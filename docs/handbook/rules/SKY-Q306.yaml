@@ -1,0 +1,255 @@
+id: SKY-Q306
+title: Cognitive complexity too high
+family: quality
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. Python reports MEDIUM for a score from 16
+  to 30 and HIGH above 30; TypeScript and JavaScript always report MEDIUM.
+languages: [Python, TypeScript, JavaScript]
+gate:
+  full: counted
+  note: >-
+    Listed only when SKY-Q301 or SKY-Q302 also reports the same function;
+    that function's metrics then share one entry, led by the most severe,
+    which the gate counts once. Otherwise it is hidden and counted only with
+    `--all-advice` or when the rule is named in `[tool.skylos.gate] rules`.
+
+what_it_is: >-
+  Cognitive complexity scores how hard a function is to follow. Each `if`,
+  loop, `except` handler or conditional costs 1 plus how deeply it is
+  nested, so a loop inside a loop inside an `if` costs far more than a flat
+  list of checks. SKY-Q306 reports a function scoring above 15.
+
+why_it_matters: >-
+  Deeply nested logic is where reviewers miss cases: which `break` leaves
+  which loop, which `else` belongs to which `if`. Bugs hide there and stay
+  hidden through code review.
+
+flagged_example:
+  language: python
+  filename: app/invoices.py
+  expect_line: 4
+  code: |
+    """Match bank payments to open invoices."""
+
+
+    def reconcile(payments, invoices, tolerance):
+        matched = []
+        for payment in payments:
+            if payment.status != "settled":
+                continue
+            for invoice in invoices:
+                if invoice.paid:
+                    continue
+                if invoice.customer_id == payment.customer_id:
+                    if abs(invoice.amount - payment.amount) <= tolerance:
+                        invoice.paid = True
+                        matched.append((payment.id, invoice.id))
+                        break
+                    elif payment.reference and payment.reference in invoice.number:
+                        invoice.flag_partial(payment.amount)
+                        break
+            else:
+                payment.mark_unmatched()
+        return matched
+
+not_flagged_example:
+  language: python
+  filename: app/invoices.py
+  code: |
+    """Match bank payments to open invoices."""
+
+
+    def reconcile(payments, invoices, tolerance):
+        matched = []
+        for payment in payments:
+            if payment.status != "settled":
+                continue
+            for invoice in invoices:
+                if invoice.paid or invoice.customer_id != payment.customer_id:
+                    continue
+                if abs(invoice.amount - payment.amount) <= tolerance:
+                    invoice.paid = True
+                    matched.append((payment.id, invoice.id))
+                    break
+                elif payment.reference and payment.reference in invoice.number:
+                    invoice.flag_partial(payment.amount)
+                    break
+            else:
+                payment.mark_unmatched()
+        return matched
+  why: >-
+    The same logic with the two inner checks joined into one guard clause.
+    The amount check moves up one nesting level and the score drops from 18
+    to 15; the rule reports only scores above 15.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/permissions.ts
+      expect_line: 4
+      code: |
+        type User = { id: string; roles: string[]; suspended: boolean };
+        type Doc = { ownerId: string; teamIds: string[]; archived: boolean };
+
+        export function canEdit(user: User, doc: Doc, teams: Map<string, string[]>) {
+          if (user.suspended || doc.archived) {
+            return false;
+          }
+          for (const role of user.roles) {
+            if (role === "admin") {
+              return true;
+            }
+            if (role === "editor") {
+              for (const teamId of doc.teamIds) {
+                const members = teams.get(teamId);
+                if (members && members.includes(user.id)) {
+                  if (doc.ownerId === user.id || role === "editor") {
+                    return true;
+                  }
+                }
+              }
+            }
+          }
+          return false;
+        }
+    not_flagged:
+      language: typescript
+      filename: src/region.ts
+      code: |
+        export function regionFor(country: string): string {
+          if (country === "US") {
+            return "us-east";
+          } else if (country === "CA") {
+            return "us-east";
+          } else if (country === "BR") {
+            return "sa-east";
+          } else if (country === "DE" || country === "FR") {
+            return "eu-central";
+          } else if (country === "GB" || country === "IE") {
+            return "eu-west";
+          } else if (country === "JP") {
+            return "ap-northeast";
+          } else if (country === "SG") {
+            return "ap-southeast";
+          } else if (country === "AU") {
+            return "ap-southeast-2";
+          } else if (country === "IN") {
+            return "ap-south";
+          } else {
+            return "us-east";
+          }
+        }
+      why: >-
+        A long, flat `else if` chain. Each `else if` and the final `else`
+        cost 1 whatever their position, and each `||` run costs 1: 12 in
+        all. (Its cyclomatic score is 10, at the SKY-Q301 limit.)
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python, TypeScript and JavaScript functions and
+    methods. The limit is 15 in both languages; there is no setting for it.
+  - >-
+    Python adds 1 plus the current nesting depth for each `if`, loop,
+    conditional expression, `except` handler and `match`; an `elif` costs 1
+    and an `else` (on an `if`, loop or `try`) costs 1. A run of the same
+    Boolean operator costs 1, and every switch between `and` and `or` costs
+    1 more.
+  - >-
+    Nested function bodies are included, one level deeper (a decorator
+    wrapper that only defines and returns its inner function does not add a
+    level); a lambda body is one level deeper. A class inside the function
+    starts again at depth 0. A nested function is also measured on its own.
+  - >-
+    TypeScript and JavaScript work the same way: `if`, loops, `switch`,
+    `catch` and ternaries cost 1 plus their depth, `else if` and `else` cost
+    1, each run of `&&`, `||` or `??` costs 1 plus 1 per change of operator,
+    and a labelled `break` or `continue` costs 1.
+  - >-
+    Python skips test code, `examples` and `benchmarks` folders, a top-level
+    `docs` folder and the root `setup.py`, as SKY-Q301 does. Minified
+    JavaScript is not scanned.
+  - >-
+    Reports on the function's first line. Python reports MEDIUM up to 30
+    and HIGH above; TS/JS report MEDIUM.
+
+source_refs:
+  - path: skylos/rules/quality/complexity.py
+    symbol: "def _cognitive_complexity("
+  - path: skylos/rules/quality/complexity.py
+    symbol: "class CognitiveComplexityRule"
+  - path: skylos/rules/quality/complexity.py
+    symbol: "def _is_wrapper_shape("
+    note: the decorator-wrapper exception.
+  - path: skylos/visitors/languages/typescript/quality.py
+    symbol: "def _cognitive_complexity("
+  - path: skylos/visitors/languages/typescript/quality.py
+    symbol: "cognitive_threshold: int = 15"
+  - path: skylos/analysis/file_processing.py
+    symbol: '("SKY-Q306", CognitiveComplexityRule)'
+    note: built without a configurable limit.
+  - path: skylos/reporting/advice_evidence.py
+    symbol: "CORROBORATING_PAIRS"
+  - path: test/test_complexity_advice_integration.py
+    symbol: "def test_single_trigger_keeps_its_metric_and_rule"
+
+fix:
+  explanation: >-
+    Move the inner search into its own function and use guard clauses
+    (`continue`, early `return`) instead of nested `if` blocks.
+  filename: app/invoices.py
+  code: |
+    """Match bank payments to open invoices."""
+
+
+    def _match_invoice(payment, invoices, tolerance):
+        for invoice in invoices:
+            if invoice.paid or invoice.customer_id != payment.customer_id:
+                continue
+            if abs(invoice.amount - payment.amount) <= tolerance:
+                invoice.paid = True
+                return invoice
+            if payment.reference and payment.reference in invoice.number:
+                invoice.flag_partial(payment.amount)
+                return None
+        payment.mark_unmatched()
+        return None
+
+
+    def reconcile(payments, invoices, tolerance):
+        matched = []
+        for payment in payments:
+            if payment.status != "settled":
+                continue
+            invoice = _match_invoice(payment, invoices, tolerance)
+            if invoice is not None:
+                matched.append((payment.id, invoice.id))
+        return matched
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A function that is one large but regular state machine, such as a
+      parser loop, can score high while being the clearest form for it.
+    - >-
+      Because nested function bodies count toward the outer function, a
+      function that defines several callbacks inline is scored for all of
+      them.
+    - >-
+      The limit of 15 cannot be changed; only ignoring the rule or a
+      finding helps.
+  suppress:
+    - check: inline
+      text: >-
+        On the `def` line (the reported line):
+      language: python
+      code: |
+        def reconcile(payments, invoices, tolerance):  # skylos: ignore[SKY-Q306] reviewed
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-Q306"]` turns the rule off for the
+        project. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-Q301, SKY-Q302, SKY-C304]

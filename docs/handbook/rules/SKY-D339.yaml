@@ -1,0 +1,163 @@
+id: SKY-D339
+title: Command changes the machine's persistent setup
+family: security
+severity: HIGH
+languages: [Shell, GitHub Actions, GitLab CI, Dockerfile, Python, TypeScript/JavaScript]
+gate:
+  full: counted
+cwe: [CWE-15]
+
+what_it_is: >-
+  Some commands change the machine for good, not just the current job:
+  shell startup files, cron jobs, system services, SSH `authorized_keys`,
+  global Git settings and package-manager config. SKY-D339 reports a script
+  or CI command that makes such a change.
+
+why_it_matters: >-
+  A line appended to `~/.zshrc` runs in every shell the developer opens from
+  then on, long after the script is forgotten. The same mechanism is how
+  malware keeps access: an extra key in `authorized_keys`, a cron entry or a
+  global Git hook path survives reboots and new checkouts.
+
+flagged_example:
+  language: shell
+  filename: scripts/dev-setup.sh
+  expect_line: 6
+  code: |
+    #!/usr/bin/env bash
+    # One-time setup for new developers.
+    set -euo pipefail
+
+    npm ci
+    echo "source $PWD/scripts/dev-env.sh" >> ~/.zshrc
+    echo "Open a new terminal to finish."
+
+not_flagged_example:
+  language: shell
+  filename: scripts/dev-setup.sh
+  code: |
+    #!/usr/bin/env bash
+    # One-time setup for new developers.
+    set -euo pipefail
+
+    npm ci
+    echo "To load the dev tools in every shell, add this line to ~/.zshrc:"
+    echo "  source $PWD/scripts/dev-env.sh"
+  why: >-
+    The script only prints the line and leaves the choice to the developer.
+    Mentioning `~/.zshrc` is not a write: Skylos needs a `>`, `>>` or
+    `tee -a` into the file.
+
+more_examples:
+  - flagged:
+      language: python
+      filename: tools/bootstrap.py
+      expect_line: 5
+      code: |
+        import subprocess
+
+
+        def install_hooks() -> None:
+            subprocess.run("git config --global core.hooksPath .githooks", shell=True)
+    not_flagged:
+      language: python
+      filename: tools/bootstrap.py
+      code: |
+        import subprocess
+
+
+        def install_hooks() -> None:
+            subprocess.run("git config core.hooksPath .githooks", shell=True)
+      why: >-
+        Without `--global` the setting is written to this repository's own
+        `.git/config` and affects only this checkout. With `--global`, every
+        repository on the machine would run hooks from whatever `.githooks`
+        folder it is in.
+
+how_skylos_decides:
+  - >-
+    Reads shell commands in `.sh`, `.bash`, `.zsh`, `.ksh` and `.bats` files,
+    GitHub Actions `run:` steps, GitLab CI script items, Dockerfile `RUN`
+    instructions, fixed command strings in Python `os.system()`-style calls
+    or `shell=True` calls, and fixed strings passed to `child_process.exec()`
+    in TypeScript and JavaScript.
+  - >-
+    Splits each command at `;`, `&&`, `||` and `|`, and reports these
+    command words (after `sudo`, `nohup`, `time`, `command` and `VAR=value`
+    prefixes): `crontab` with any arguments; `systemctl` or `launchctl` with
+    `enable`, `load` or `bootstrap`; `npm`, `pnpm`, `yarn`, `pip` or `pip3`
+    `config set` (also `python -m pip config set`); and `git config` with
+    `--global`.
+  - >-
+    Reports output redirected (`>`, `>>`, `>&`, `&>`) by any command into a
+    persistence file: shell startup files (`.bashrc`, `.bash_profile`,
+    `.bash_login`, `.profile`, `.zshrc`, `.zprofile`, `.zshenv`, `.zlogin`),
+    `authorized_keys`, `~/.ssh/rc` and `~/.ssh/environment`,
+    `/etc/profile*`, `/etc/environment`, `/etc/bash.bashrc`, `/etc/crontab`
+    and `/etc/cron*`, `/etc/sudoers*`, `/etc/ld.so.preload`,
+    `/etc/rc.local`, `/etc/init.d/`, systemd unit folders, autostart and fish
+    config folders, and Git hook folders outside the project.
+  - >-
+    Also reports `>`, `>>` or `tee -a` into a startup file under `~`,
+    `$HOME` or `${HOME}`, anywhere in the command text. A glob that could
+    name a persistence file counts, and `//`, `/./` and `..` in the path are
+    normalised first. Every finding is HIGH.
+
+source_refs:
+  - path: skylos/security/command_guard_policy.py
+    symbol: "def _is_persistent_mutation("
+  - path: skylos/security/command_guard_policy.py
+    symbol: "PERSISTENCE_FILE_NAMES = {"
+  - path: skylos/security/command_guard_policy.py
+    symbol: "def _is_persistence_target("
+  - path: skylos/security/command_guard_policy.py
+    symbol: "PROFILE_WRITE_RE = re.compile("
+  - path: test/test_shell_security.py
+    symbol: "def test_persistence_writes_are_reported_as_high"
+
+fix:
+  explanation: >-
+    Print the change and let the person decide, or keep it inside the
+    project: a project-level `.envrc` that `direnv` asks to approve, a repo
+    `git config` without `--global`, a service file installed by the system's
+    package, not by a build script.
+  filename: scripts/dev-setup.sh
+  code: |
+    #!/usr/bin/env bash
+    # One-time setup for new developers.
+    set -euo pipefail
+
+    npm ci
+    echo "To load the dev tools in every shell, add this line to ~/.zshrc:"
+    echo "  source $PWD/scripts/dev-env.sh"
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      CI and container builds are reported too, where nothing persists:
+      `git config --global user.email …` or
+      `git config --global --add safe.directory /app` in a job, and
+      `echo 'export PATH=…' >> ~/.bashrc` in a Dockerfile.
+    - >-
+      `crontab -l`, which only lists jobs, is reported like an install.
+    - >-
+      Missed: `tee` (without `-a`) or `sudo tee` writing a persistence file,
+      `install` or `cp` into one, and in a GitHub Actions `run: |` block, or
+      a multi-line GitLab item, a command word on a later line, because the
+      block is split only at `;`, `&&`, `||` and `|`, not at line breaks.
+  suppress:
+    - check: inline
+      text: >-
+        In a shell script, put the marker on the reported line as a real
+        comment. In GitHub Actions, GitLab CI and Dockerfiles the marker may
+        also sit on the line directly above, one rule per marker.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D339] ephemeral runner, needed for the release commit
+        - run: git config --global user.email "release-bot@acme.example"
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D339"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D338, SKY-D329, SKY-D365, SKY-D337]

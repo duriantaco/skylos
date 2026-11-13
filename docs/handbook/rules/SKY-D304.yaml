@@ -1,0 +1,144 @@
+id: SKY-D304
+title: Bot check on a spoofable actor
+family: ci-cd
+severity: MEDIUM
+severity_note: >-
+  The catalog lists MEDIUM, but the detector reports every finding as HIGH.
+languages: [GitHub Actions workflows]
+gate:
+  full: counted
+
+what_it_is: >-
+  `github.actor` is the account that caused the latest event, not the
+  author of the pull request. A condition such as
+  `github.actor == 'dependabot[bot]'` is often used to auto-approve or
+  auto-merge bot pull requests. SKY-D304 reports conditions that recognise
+  a bot through the actor.
+
+why_it_matters: >-
+  Published attacks get Dependabot to push to a branch the attacker
+  controls, so the event on the attacker's pull request names Dependabot as
+  its actor. The check passes, and a job with write access merges or runs
+  the attacker's code.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/automerge.yml
+  expect_line: 9
+  code: |
+    name: Dependabot auto-merge
+    on: pull_request_target
+    permissions:
+      contents: write
+      pull-requests: write
+    jobs:
+      automerge:
+        runs-on: ubuntu-latest
+        if: github.actor == 'dependabot[bot]'
+        steps:
+          - run: gh pr merge --auto --squash "$PR_URL"
+            env:
+              PR_URL: ${{ github.event.pull_request.html_url }}
+              GH_TOKEN: ${{ github.token }}
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/automerge.yml
+  code: |
+    name: Dependabot auto-merge
+    on: pull_request_target
+    permissions:
+      contents: write
+      pull-requests: write
+    jobs:
+      automerge:
+        runs-on: ubuntu-latest
+        if: github.event.pull_request.user.login == 'dependabot[bot]'
+        steps:
+          - run: gh pr merge --auto --squash "$PR_URL"
+            env:
+              PR_URL: ${{ github.event.pull_request.html_url }}
+              GH_TOKEN: ${{ github.token }}
+  why: >-
+    The condition checks who opened the pull request, which does not change
+    when someone else causes a later event on it. GitHub's Dependabot
+    documentation uses this check.
+
+how_skylos_decides:
+  - >-
+    Reads the `if:` of every job and step in workflow files (not composite
+    actions).
+  - >-
+    Reports a condition where `github.actor`, `github.triggering_actor`,
+    `github.actor_id`, or `github.event.pull_request.sender.login` or `.id`,
+    is followed later on the same line by `[bot]` or by one of the bot
+    account IDs 29110, 49699333, 27856297 or 29139614.
+  - >-
+    The comparison operator is not read, so `!=` is reported too. The bot
+    name must come after the context: `'dependabot[bot]' == github.actor`
+    is not reported, and neither is `github.event.sender.login`.
+  - >-
+    One HIGH finding per condition, on the first line of the file that
+    holds the condition's first line.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "BOT_CONDITION_RE = re.compile("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_conditions("
+  - path: test/test_github_actions_security.py
+    symbol: "def test_github_actions_scanner_detects_extended_offline_risks("
+
+fix:
+  explanation: >-
+    Check the author of the pull request instead of the actor. For
+    auto-merge, `dependabot/fetch-metadata` can also limit merges to patch
+    and minor updates.
+  filename: .github/workflows/automerge.yml
+  code: |
+    name: Dependabot auto-merge
+    on: pull_request_target
+    permissions:
+      contents: write
+      pull-requests: write
+    jobs:
+      automerge:
+        runs-on: ubuntu-latest
+        if: github.event.pull_request.user.login == 'dependabot[bot]'
+        steps:
+          - run: gh pr merge --auto --squash "$PR_URL"
+            env:
+              PR_URL: ${{ github.event.pull_request.html_url }}
+              GH_TOKEN: ${{ github.token }}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      `if: github.actor != 'dependabot[bot]'`, which skips a job for bot
+      pull requests and grants nothing, is reported.
+    - >-
+      `github.event.pull_request.sender` is not a field GitHub sends, so
+      that part of the pattern never matches real workflows, while the real
+      sender field, `github.event.sender.login`, is not checked.
+    - >-
+      The flagged example also gets SKY-D290 for its `pull_request_target`
+      trigger.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D304]` on the reported line or on the line
+        directly above it, one rule per marker.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D304] only skips the job for bot pull requests
+        if: github.actor != 'dependabot[bot]'
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D304"]` turns the rule off for the whole
+        project.
+    - check: baseline
+      text: >-
+        A baseline works, but it records the absolute file path and the line,
+        so it stops matching when the checkout moves or lines above shift.
+
+related: [SKY-D303, SKY-D290, SKY-D305]

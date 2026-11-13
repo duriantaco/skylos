@@ -1,0 +1,254 @@
+id: SKY-D230
+title: Open redirect
+family: security
+severity: HIGH
+languages: [Python, TypeScript/JavaScript, Go, Java, Kotlin, C#]
+gate:
+  full: counted
+cwe: [CWE-601]
+
+what_it_is: >-
+  An open redirect is a page that sends the browser to an address taken
+  from the request, such as the `?next=` parameter of a login form. SKY-D230
+  reports a redirect whose target request data can choose, including its
+  host.
+
+why_it_matters: >-
+  An attacker sends a real link to your site, such as
+  `https://shop.example/login?next=https://shop-example.evil/`. The victim
+  sees your domain, signs in, and lands on a copy of your site that asks for
+  their password or card again.
+
+flagged_example:
+  language: python
+  filename: app/auth.py
+  expect_line: 10
+  code: |
+    from flask import Flask, redirect, request, session
+
+    app = Flask(__name__)
+
+
+    @app.post("/login")
+    def login():
+        session["user"] = request.form["user"]
+        next_url = request.args.get("next", "/")
+        return redirect(next_url)
+
+not_flagged_example:
+  language: python
+  filename: app/orders.py
+  code: |
+    from flask import Flask, redirect, request, url_for
+
+    app = Flask(__name__)
+
+
+    @app.post("/orders/reorder")
+    def reorder():
+        order_id = request.form["order_id"]
+        return redirect(url_for("order_detail", order_id=order_id))
+  why: >-
+    The request value only fills a parameter of `url_for()`, Flask's route
+    builder, which always returns a path on this site. Skylos treats a
+    target that starts with `url_for()` or Django's `reverse()` as internal.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/auth.ts
+      expect_line: 7
+      code: |
+        import express from "express";
+
+        const app = express();
+
+        app.get("/login/done", (req, res) => {
+          const next = String(req.query.next ?? "/");
+          res.redirect(next);
+        });
+    not_flagged:
+      language: typescript
+      filename: src/orders.ts
+      code: |
+        import express from "express";
+
+        const app = express();
+
+        app.get("/orders/:id", (req, res) => {
+          res.redirect(`/orders/${encodeURIComponent(req.params.id)}/summary`);
+        });
+      why: >-
+        The target starts with the fixed path `/orders/`, so the request
+        value can change which order page opens but never the site.
+  - flagged:
+      language: go
+      files:
+        - filename: main.go
+          code: |
+            package main
+
+            import "net/http"
+
+            func loginDone(w http.ResponseWriter, r *http.Request) {
+            	next := r.URL.Query().Get("next")
+            	http.Redirect(w, r, next, http.StatusFound)
+            }
+
+            func main() {
+            	http.HandleFunc("/login/done", loginDone)
+            }
+        - filename: go.mod
+          language: text
+          code: |
+            module example.com/login
+
+            go 1.22
+      expect_line: 7
+    not_flagged:
+      language: go
+      files:
+        - filename: main.go
+          code: |
+            package main
+
+            import "net/http"
+
+            func loginDone(w http.ResponseWriter, r *http.Request) {
+            	next := r.URL.Query().Get("next")
+            	http.Redirect(w, r, "/welcome?from="+next, http.StatusFound)
+            }
+
+            func main() {
+            	http.HandleFunc("/login/done", loginDone)
+            }
+        - filename: go.mod
+          language: text
+          code: |
+            module example.com/login
+
+            go 1.22
+      why: >-
+        The request value comes after a literal `?`, so it only lands in the
+        query string of a fixed path.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. Python: `redirect()`, `HttpResponseRedirect` and
+    `HttpResponsePermanentRedirect` are reported when the first argument
+    carries user data: `request.args.get(…)`, other `request.*` reads,
+    `input()` or a function parameter.
+  - >-
+    Python: `RedirectResponse`, the `HTTPFound` family and a `Location`
+    header (`headers={"Location": url}`, `response.headers["Location"] =
+    url`) need a value read from the request to reach the target; a plain
+    function parameter is not enough there.
+  - >-
+    Python skips a target that starts with `url_for()` or `reverse()`, a
+    fixed first path segment such as `"/orders/" + slug` (a slash and then a
+    letter or digit), or `"/?"` or `"/#"`. Inside an `if`, a name compared
+    with `==` to a string literal, or tested with `in` against a literal
+    list, tuple or set of strings, is clean in the branch where the test
+    proves it; so is the URL in the passing branch of Django's
+    `url_has_allowed_host_and_scheme()`. A `startswith("/")` or `netloc`
+    check does not count, because `//evil.example` passes both.
+  - >-
+    TypeScript and JavaScript: any `.redirect(x)` call whose first argument
+    is not a string, template literal or number is reported, unless `x`
+    starts with a fixed relative path or `scheme://host/`, or is built only
+    from fixed text and `process.env` values. Request data does not have to
+    be proven. Inside an Express, Koa, Next.js or similar handler, request
+    data that can choose the host through `res.redirect()`,
+    `NextResponse.redirect()`, `res.location()` or a `Location` header is
+    reported too, template literals included.
+  - >-
+    Go (from the Go engine as SKY-G220): request data in the target of
+    `http.Redirect`, Gin and Echo `c.Redirect` or Fiber `c.Redirect().To()`,
+    unless it comes after a literal `?` or `#`, or the value was parsed with
+    `url.Parse` and its scheme and host were checked before the redirect.
+  - >-
+    Java and Kotlin: request data reaching `sendRedirect()`, `RedirectView`,
+    Ktor `respondRedirect()` or a Spring `"redirect:" + value` view name,
+    unless a fixed prefix pins the host. C#: request data in `Redirect()` and
+    its variants or `Response.Redirect()`, unless guarded by
+    `Url.IsLocalUrl()`.
+
+source_refs:
+  - path: skylos/rules/danger/danger_redirect/redirect_flow.py
+    symbol: "def _check_legacy_redirect"
+    note: "`redirect()` and the Django redirect classes."
+  - path: skylos/rules/danger/danger_redirect/redirect_flow.py
+    symbol: "def _proven_open_redirect"
+    note: the newer sinks need request data, not a parameter.
+  - path: skylos/rules/danger/danger_redirect/redirect_flow.py
+    symbol: "def _narrow_literal_guard"
+    note: the literal allowlist and Django host checks.
+  - path: skylos/rules/danger/danger_redirect/redirect_flow.py
+    symbol: "def _fixed_local_prefix"
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "# --- Open redirect (SKY-D230) ---"
+    note: the syntactic `.redirect(x)` check.
+  - path: skylos/visitors/languages/typescript/express_taint.py
+    symbol: "def _redirect(self, node, callee, args)"
+  - path: skylos/engines/go/internal/analyzer/analyzer.go
+    symbol: "func (a *Analyzer) redirectTarget"
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: "def _report_spring_redirect"
+  - path: skylos/visitors/languages/kotlin/security.py
+    symbol: "def _process_redirect_call"
+  - path: test/test_redirect_flow.py
+    symbol: "def test_django_host_and_scheme_check_guards_only_its_passing_branch"
+
+fix:
+  explanation: >-
+    Only redirect to places you chose. Compare the value with a literal list
+    of allowed paths, build the target with `url_for()` or `reverse()`, or in
+    Django check it with `url_has_allowed_host_and_scheme()`. A
+    `startswith("/")` test is not enough: `//evil.example` starts with a
+    slash and leaves the site.
+  filename: app/auth.py
+  code: |
+    from flask import Flask, redirect, request, session
+
+    app = Flask(__name__)
+
+
+    @app.post("/login")
+    def login():
+        session["user"] = request.form["user"]
+        next_url = request.args.get("next", "/")
+        if next_url not in {"/", "/account", "/orders"}:
+            next_url = "/"
+        return redirect(next_url)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      In Python, an allowlist kept in a named constant, such as
+      `if next_url not in ALLOWED_PAGES:`, is not recognised; only a list,
+      tuple or set written in the test counts.
+    - >-
+      A Python helper such as `def back_to(page): return redirect(page)` is
+      reported, because function parameters count as user data for
+      `redirect()`.
+    - >-
+      In TypeScript and JavaScript, `res.redirect(settings.homeUrl)` is
+      reported even when the value comes from your own configuration: the
+      syntactic check does not look for request data.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the reported line and say why the target is safe.
+      language: python
+      code: |
+        return redirect(page)  # skylos: ignore[SKY-D230] page is one of our route names
+    - check: baseline
+      text: >-
+        Accept existing findings with `skylos baseline .`, then scan with
+        `--baseline`. Entries match by file and line.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D230"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D216, SKY-D226, SKY-D228]

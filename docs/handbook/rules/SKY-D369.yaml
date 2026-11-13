@@ -1,0 +1,150 @@
+id: SKY-D369
+title: MCP server package imitating a vendor
+family: supply-chain
+severity: MEDIUM
+languages: [MCP configuration files]
+gate:
+  full: listed
+  diff: counted
+  note: >-
+    A baseline scan counts it like a diff scan when the baseline's
+    `rule_coverage` lists it.
+
+what_it_is: >-
+  Attackers publish MCP servers under names that borrow a trusted brand,
+  such as `openai-mcp` or `claud-code`, so they look official in a config
+  file. SKY-D369 reports a committed MCP server whose npm or PyPI package
+  carries the name of an AI or MCP vendor but is not published under that
+  vendor's own scope or package names.
+
+why_it_matters: >-
+  The `postmark-mcp` package was not made by Postmark. After fifteen clean
+  releases, version 1.0.16 quietly copied every email the agent sent to the
+  attacker. A borrowed name is often the only hint before that happens.
+
+flagged_example:
+  language: json
+  filename: .mcp.json
+  expect_line: 3
+  code: |
+    {
+      "mcpServers": {
+        "postmark": {
+          "command": "npx",
+          "args": ["-y", "postmark-mcp@1.0.15"],
+          "env": { "POSTMARK_SERVER_TOKEN": "${POSTMARK_TOKEN}" }
+        }
+      }
+    }
+
+not_flagged_example:
+  language: json
+  filename: .mcp.json
+  code: |
+    {
+      "mcpServers": {
+        "github": {
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-github@2025.4.8"]
+        },
+        "api-docs": {
+          "command": "npx",
+          "args": ["-y", "openapi-mcp-server@1.2.0"]
+        }
+      }
+    }
+  why: >-
+    `@modelcontextprotocol` is the protocol project's own npm scope.
+    `openapi` is one letter away from `openai`, but it is an ordinary word,
+    and ca9 keeps a short list of such words (`openapi`, `openal`,
+    `openui`, `clause`) out of the look-alike check.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). The `ca9` library reads the same MCP
+    server blocks as SKY-D367 and works out the package each server
+    launches. Only npm and PyPI names are checked: `npx` and the other npm
+    launchers, `uvx`, `pipx run`, `deno run npm:…` and `python -m <module>`.
+    Docker images and local scripts are not.
+  - >-
+    Knows a short list of vendors and where their packages come from:
+    `anthropic` and `claude` (npm `@anthropic-ai`), `openai` and `chatgpt`
+    (`@openai`, `openai`), `gemini` (`@google`, `@google-cloud`,
+    `@google-labs`), `postmark` (`@activecampaign`, `postmark`) and
+    `modelcontextprotocol` (`@modelcontextprotocol`), plus a few official
+    PyPI names such as `anthropic` and `openai-agents`.
+  - >-
+    Reports a package whose name, with punctuation removed, contains a
+    vendor's brand when it is not one of that vendor's own packages
+    (`openai-mcp`, `@acme/claude-tools`). It also reports a word of five or
+    more letters that is one typo or one swapped pair away from a brand
+    (`claud`, `cloude`, `opneai`), apart from the few ordinary words above.
+  - >-
+    The version does not matter: a pinned look-alike is reported too.
+    Reports MEDIUM on the line of the server's name. Keeps the same files
+    as SKY-D365.
+  - >-
+    In the gate, a full scan lists the finding without counting it; a diff
+    scan counts a new one under the security limits.
+
+source_refs:
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "\"mcp_server_impersonation\": ("
+    note: >-
+      ca9 `agent_config` decides the match (`ca9/agent_config/impersonation.py`
+      holds the vendor list); this page was checked against ca9 0.7.0.
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "if rule_id in {\"SKY-D367\", \"SKY-D368\", \"SKY-D369\"}:"
+    note: the line falls back to the server name.
+  - path: skylos/core/gatekeeper.py
+    symbol: "FULL_SCAN_REPORT_ONLY_RULES = frozenset("
+
+fix:
+  explanation: >-
+    Check who published the package on its registry page. Switch to the
+    vendor's own server if one exists, or remove the entry. If you have
+    reviewed a third-party package and keep it, pin its exact version and
+    accept it with a baseline.
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A genuine community server that names the service it talks to, such
+      as an unofficial Gemini or Postmark client, is reported: ca9 knows only
+      each vendor's own scopes and names, not who else is trustworthy.
+    - >-
+      Brands outside the short vendor list, such as a cloud provider or a
+      database, are never checked.
+  suppress:
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: json
+          filename: .mcp.json
+          code: |
+            {
+              "mcpServers": {
+                // skylos: ignore[SKY-D369] handbook check
+                "postmark": {
+                  "command": "npx",
+                  "args": ["-y", "postmark-mcp@1.0.15"],
+                  "env": { "POSTMARK_SERVER_TOKEN": "${POSTMARK_TOKEN}" }
+                }
+              }
+            }
+      text: >-
+        Skylos reads no inline marker for this rule, even where the file
+        allows comments.
+    - check: baseline
+      text: >-
+        Accept a reviewed package with a baseline: `skylos baseline .`, then
+        `--baseline`. The entry matches the rule, file, server name and
+        command, not the line. In pull-request CI (`SKYLOS_POLICY_BASE`),
+        the entry must also be in the base commit's `.skylos/baseline.json`.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D369"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D367, SKY-D368, SKY-D222]

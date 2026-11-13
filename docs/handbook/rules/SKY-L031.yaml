@@ -1,0 +1,139 @@
+id: SKY-L031
+title: Missing network timeout
+family: logic
+severity: MEDIUM
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  MEDIUM.
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  `requests` waits for a server's answer as long as it takes unless you pass
+  `timeout=`. SKY-L031 reports a `requests`, `httpx` or `urlopen` call made
+  without a timeout, or with `timeout=None`.
+
+why_it_matters: >-
+  A server that accepts the connection and never answers holds the calling
+  thread forever. In a web worker or a queue consumer, a few such calls use
+  up every thread, and the whole service stops answering.
+
+flagged_example:
+  language: python
+  filename: app/billing.py
+  expect_line: 9
+  code: |
+    """Fetch invoices from the payment provider."""
+
+    import requests
+
+    API = "https://api.payments.example.com/v1"
+
+
+    def fetch_invoice(session_token: str, invoice_id: str) -> dict:
+        response = requests.get(
+            f"{API}/invoices/{invoice_id}",
+            headers={"Authorization": f"Bearer {session_token}"},
+        )
+        response.raise_for_status()
+        return response.json()
+
+not_flagged_example:
+  language: python
+  filename: app/billing.py
+  code: |
+    """Fetch invoices from the payment provider."""
+
+    import requests
+
+    from app.settings import PAYMENTS_TIMEOUT
+
+    API = "https://api.payments.example.com/v1"
+
+
+    def fetch_invoice(session_token: str, invoice_id: str) -> dict:
+        response = requests.get(
+            f"{API}/invoices/{invoice_id}",
+            headers={"Authorization": f"Bearer {session_token}"},
+            timeout=PAYMENTS_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json()
+  why: >-
+    The timeout comes from settings. Skylos cannot see its value, but any
+    `timeout=` other than a literal `None` counts as a timeout.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Skips test files: names that start
+    with `test_`, end in `_test.py`, or are `conftest.py`.
+  - >-
+    Matches the call by its written name: `requests.get`, `post`, `put`,
+    `patch`, `delete`, `head` and `options`, the same seven under `httpx.`,
+    `urllib.request.urlopen` and a bare `urlopen`. Add names with
+    `extra_network_timeout_calls` under `[tool.skylos.vibe]`.
+  - >-
+    Reports MEDIUM when the call has no `timeout=` keyword, or when it passes
+    `timeout=None`. Any other `timeout=` value, even a variable, counts as a
+    timeout.
+  - >-
+    The finding points at the line where the call starts.
+
+source_refs:
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "class MissingNetworkTimeoutRule"
+  - path: skylos/rules/vibe_dictionary.py
+    symbol: "NETWORK_TIMEOUT_CALLS = {"
+    note: the matched call names.
+  - path: test/test_vibe_rules.py
+    symbol: "class TestMissingNetworkTimeout"
+
+fix:
+  explanation: >-
+    Pass a timeout on every call. A `(connect, read)` pair lets a slow but
+    working server finish while a dead one fails fast.
+  filename: app/billing.py
+  code: |
+    """Fetch invoices from the payment provider."""
+
+    import requests
+
+    API = "https://api.payments.example.com/v1"
+
+
+    def fetch_invoice(session_token: str, invoice_id: str) -> dict:
+        response = requests.get(
+            f"{API}/invoices/{invoice_id}",
+            headers={"Authorization": f"Bearer {session_token}"},
+            timeout=(3.05, 10),
+        )
+        response.raise_for_status()
+        return response.json()
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      `httpx` functions already apply a five-second default timeout, so an
+      `httpx.get(url)` without `timeout=` does not hang forever; it is still
+      reported.
+    - >-
+      A timeout passed through `**kwargs`, or as the third positional
+      argument of `urlopen(url, data, timeout)`, is not seen, and the call is
+      reported.
+    - >-
+      Calls on a `Session` or `httpx.Client`, `requests.request(...)` and
+      `from requests import get` are not checked at all.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line where the call starts.
+      language: python
+      code: |
+        response = requests.get(  # skylos: ignore[SKY-L031] timeout set by the adapter
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L031"]` turns the rule off for the
+        project.
+
+related: [SKY-D216, SKY-Q401]

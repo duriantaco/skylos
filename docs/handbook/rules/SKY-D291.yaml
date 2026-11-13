@@ -1,0 +1,182 @@
+id: SKY-D291
+title: GitHub Actions missing or broad token permissions
+family: ci-cd
+severity: HIGH
+severity_note: >-
+  The catalog lists HIGH, but the detector grades each finding. HIGH: a
+  `write-all` grant, or a workflow-level `write` on `actions`,
+  `attestations`, `contents`, `deployments`, `id-token`, `issues`,
+  `packages`, `pages` or `pull-requests`. MEDIUM: no `permissions` at all, a
+  `read-all` grant, or `write` on any other scope.
+languages: [GitHub Actions workflows]
+gate:
+  full: counted
+
+what_it_is: >-
+  Every workflow job gets a `GITHUB_TOKEN`. Its `permissions:` block says
+  what that token may do. Without one, the job gets the repository's
+  default, which can be read-write. SKY-D291 reports workflows that leave
+  the token at the default, and grants that are broader than the jobs need.
+
+why_it_matters: >-
+  Any step can read the token: a compromised action, a dependency's install
+  script, or a test that runs pull request code. With write access it can
+  push commits, move release tags or approve its own changes, so one bad
+  dependency becomes a change to your default branch.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/ci.yml
+  expect_line: 1
+  code: |
+    name: CI
+    on:
+      push:
+        branches: [main]
+      pull_request:
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+          - run: make test
+      lint:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+          - run: make lint
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/ci.yml
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: write
+    jobs:
+      release:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+            with:
+              persist-credentials: false
+          - run: make dist
+          - run: gh release create "$GITHUB_REF_NAME" dist/*
+            env:
+              GH_TOKEN: ${{ github.token }}
+  why: >-
+    `contents: write` sits at the workflow level, but only one job inherits
+    it, so it is already as narrow as a job-level grant. Skylos reports a
+    workflow-level `write` only when two or more jobs inherit it.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows`. A job's own
+    `permissions:` replaces the workflow's completely, so workflow-level
+    values are judged only by the jobs that inherit them (jobs without
+    their own block).
+  - >-
+    No workflow-level `permissions:` and at least one job without its own:
+    one MEDIUM finding on line 1, naming those jobs. When every job
+    declares its own, nothing is reported.
+  - >-
+    Workflow-level `read-all` or `write-all` with at least one inheriting
+    job: MEDIUM for `read-all`, HIGH for `write-all`.
+  - >-
+    Workflow-level scopes set to `write` with two or more inheriting jobs:
+    one finding per write scope, graded by scope (see the severity note).
+    With one inheriting job it is not reported.
+  - >-
+    A job's own `read-all` (MEDIUM) or `write-all` (HIGH) is reported on
+    that job. A job's own list of scopes, writes included, is never
+    reported.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_permissions("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "WRITE_PERMISSION_SEVERITY = {"
+    note: severity per write scope.
+  - path: test/test_github_actions_security.py
+    symbol: "def test_missing_permissions_are_one_workflow_finding_naming_inheriting_jobs"
+
+fix:
+  explanation: >-
+    Declare a read-only default at the top and grant writes only on the job
+    that needs them.
+  filename: .github/workflows/ci.yml
+  code: |
+    name: CI
+    on:
+      push:
+        branches: [main]
+      pull_request:
+    permissions:
+      contents: read
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+          - run: make test
+      lint:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+          - run: make lint
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A missing block is reported even when the repository or organization
+      already sets the default token to read-only. Skylos cannot see that
+      setting.
+    - >-
+      `read-all` is reported, although it grants no write access, because it
+      reads more than most jobs need.
+  suppress:
+    - check:
+        kind: example
+        example:
+          language: yaml
+          filename: .github/workflows/ci.yml
+          code: |
+            # skylos: ignore[SKY-D291] org default token is read-only
+            name: CI
+            on:
+              push:
+                branches: [main]
+              pull_request:
+            jobs:
+              test:
+                runs-on: ubuntu-latest
+                steps:
+                  - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+                  - run: make test
+              lint:
+                runs-on: ubuntu-latest
+                steps:
+                  - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+                  - run: make lint
+      text: >-
+        Put `skylos: ignore[SKY-D291]` on the reported line or the line
+        directly above it. A missing block is always reported on line 1, so
+        that marker goes on the first line of the file.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D291] org default token is read-only
+        name: CI
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) also hides it. The
+        entry is the rule, the absolute file path and the line, so it stops
+        matching when the checkout moves to another path.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D291"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D293, SKY-D302, SKY-D290, SKY-D310]

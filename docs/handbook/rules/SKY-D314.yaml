@@ -1,0 +1,175 @@
+id: SKY-D314
+title: GitLab CI mutable container image
+family: ci-cd
+severity: HIGH
+severity_note: >-
+  HIGH for a Docker-in-Docker image (a name such as `docker:27-dind`).
+  Every other image without a tag, or tagged `latest`, is MEDIUM.
+languages: [GitLab CI]
+gate:
+  full: counted
+
+what_it_is: >-
+  Every GitLab CI job runs inside a container image, and can start extra
+  service containers next to it. SKY-D314 reports images that can change
+  under the same name: no tag, the `latest` tag, or a Docker-in-Docker
+  service that is not pinned by its digest (`@sha256:…`).
+
+why_it_matters: >-
+  Whoever can push to that image name decides what your job runs next time.
+  A Docker-in-Docker service runs privileged and receives everything the job
+  builds and pushes, so a replaced `docker:dind` image can plant code in
+  your release image or read the registry credentials.
+
+flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  expect_line: 15
+  code: |
+    stages: [test, build]
+
+    test:
+      stage: test
+      image: python:3.12-slim
+      script:
+        - pip install -r requirements.txt
+        - pytest
+
+    build-image:
+      stage: build
+      image: docker:27.3
+      timeout: 30 minutes
+      services:
+        - docker:27.3-dind
+      script:
+        - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" .
+        - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+
+not_flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  code: |
+    stages: [test]
+
+    test:
+      stage: test
+      image: python:3.12-slim
+      services:
+        - postgres:16.4
+      script:
+        - pip install -r requirements.txt
+        - pytest
+  why: >-
+    Both images carry a fixed version tag, which this rule accepts. It
+    reports only images with no tag, the `latest` tag, or Docker-in-Docker.
+    A tag can still be pushed again with new content, so a release job is
+    safer pinned by digest anyway.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). Reads every file named exactly
+    `.gitlab-ci.yml` in the scanned folder, skipping `.git`, `node_modules`,
+    `.venv`, `venv`, `build`, `dist` and cache folders. A subfolder scan of
+    a Git repository also reads the repository's top-level `.gitlab-ci.yml`.
+    Files pulled in with `include:` are not read.
+  - >-
+    Skips a file that PyYAML's safe loader cannot read, without a warning.
+    That includes every file that uses GitLab's `!reference` tag.
+  - >-
+    Collects the top-level `image` and `services`, those under `default:`,
+    and those of every job. A job is any top-level key that is not a GitLab
+    keyword and holds a mapping, hidden `.template` jobs included;
+    `extends:` is not followed.
+  - >-
+    An image name counts as mutable when it has no `@sha256:` digest and
+    either has no tag, has the tag `latest`, or is a Docker-in-Docker image
+    (the last path part contains both `docker` and `dind`), whatever its
+    tag. Any other tag, such as `python:3.12-slim`, passes.
+  - >-
+    Reports one finding per image and place (top level, default or job),
+    HIGH for Docker-in-Docker and MEDIUM otherwise, on the first line of
+    the file that contains the image name.
+
+source_refs:
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _scan_images("
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _is_mutable_image("
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _iter_jobs("
+    note: every non-keyword mapping is a job, hidden jobs included.
+  - path: skylos/rules/config/registry.py
+    symbol: "def _repository_ci_findings("
+    note: the repository's top-level .gitlab-ci.yml in subfolder scans.
+  - path: test/test_gitlab_ci_security.py
+    symbol: "def test_gitlab_ci_scanner_accepts_pinned_minimal_workflow"
+
+fix:
+  explanation: >-
+    Pin the image by digest. Keep the tag in front of the digest so readers
+    still see the version; GitLab pulls by the digest. Look the digest up
+    with `docker buildx imagetools inspect docker:27.3-dind` and update it
+    on purpose, for example through Renovate.
+  filename: .gitlab-ci.yml
+  code: |
+    stages: [test, build]
+
+    test:
+      stage: test
+      image: python:3.12-slim
+      script:
+        - pip install -r requirements.txt
+        - pytest
+
+    build-image:
+      stage: build
+      image: docker:27.3
+      timeout: 30 minutes
+      services:
+        - docker:27.3-dind@sha256:{{DIND_DIGEST}}
+      script:
+        - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" .
+        - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+
+fragments:
+  DIND_DIGEST:
+    - "9c8f3c6a0e1b5f4d2a7e8b9c0d1e2f3a"
+    - "4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e"
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      An image named only by a variable, such as `$CI_REGISTRY_IMAGE/builder`
+      or `$BUILD_IMAGE`, has no visible tag and is reported, even when the
+      variable always holds a digest.
+    - >-
+      Hidden `.template` jobs are checked as jobs, so an image in a template
+      is reported there, not in the jobs that extend it.
+    - >-
+      When the same image name appears in several places, every finding
+      points at its first line in the file.
+    - >-
+      The `docker push` line of the flagged example is also a SKY-D340
+      finding, about publishing from CI. That one is separate.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D314]` and a reason on the reported line,
+        or on the line directly above it. Skylos looks for that exact text,
+        so write one rule per marker, with the ID in upper case.
+      language: yaml
+      code: |
+        services:
+          # skylos: ignore[SKY-D314] internal mirror, rebuilt and scanned nightly
+          - docker:27.3-dind
+    - check: baseline
+      text: >-
+        A baseline hides the findings that exist today. Each entry records
+        the rule, the absolute file path and the line, so it stops matching
+        when the line moves or the checkout is at another path.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D314"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D296, SKY-D318, SKY-D315]

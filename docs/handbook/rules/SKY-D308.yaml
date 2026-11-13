@@ -1,0 +1,213 @@
+id: SKY-D308
+title: Release build restores a CI cache
+family: ci-cd
+severity: HIGH
+severity_note: >-
+  The catalog lists HIGH, but most findings are MEDIUM: a release or
+  tag-push workflow that restores a cache. HIGH is reserved for a job that
+  accounts without write access can start, where `cache-mode: write` (or
+  `write-only`) lets that run save cache entries.
+languages: [GitHub Actions workflows]
+gate:
+  full: counted
+
+what_it_is: >-
+  Caching actions such as `actions/cache` or `actions/setup-node` with
+  `cache: npm` restore files saved by earlier runs before the build starts.
+  SKY-D308 reports a release workflow that builds from such a cache, and a
+  job outsiders can start that is allowed to write the cache.
+
+why_it_matters: >-
+  A cache entry is shared state. If an attacker can get one poisoned entry
+  saved, for example a tampered `node_modules` from a workflow that runs pull
+  request code, the next tagged release restores it and ships the
+  attacker's code to every user of the package.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/release.yml
+  expect_line: 16
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+    jobs:
+      build:
+        name: Build
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - uses: actions/setup-node@v4
+            with:
+              node-version: 22
+              cache: npm
+          - run: npm ci --ignore-scripts
+          - run: npm run build
+          - uses: actions/upload-artifact@v4
+            with:
+              name: bundle
+              path: dist/
+              if-no-files-found: error
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/ci.yml
+  code: |
+    name: CI
+    on:
+      push:
+        branches: [main]
+      pull_request:
+    permissions:
+      contents: read
+    jobs:
+      test:
+        name: Test
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - uses: actions/setup-node@v4
+            with:
+              node-version: 22
+              cache: npm
+          - run: npm ci --ignore-scripts
+          - run: npm test
+  why: >-
+    The same cached setup in an ordinary CI workflow is fine. It is not a
+    release workflow (no `release` trigger and no tag push), and
+    `pull_request` runs cannot save entries that runs on `main` restore.
+    Caching speeds up tests; only the build you ship should start clean.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows`. Composite actions are
+    not checked for this rule.
+  - >-
+    Release check: a workflow is release-like when its `on:` includes
+    `release`, or a `push` with a `tags` filter. In such a workflow every
+    step is checked, whatever its job or `if:`. `actions/cache`,
+    `mozilla-actions/sccache-action` and `nix-community/cache-nix-action`
+    always count. Setup actions from a fixed list (`actions/setup-node`,
+    `setup-python`, `setup-java`, `setup-go`, `astral-sh/setup-uv`,
+    `ruby/setup-ruby` and others) count when a cache input such as `cache`,
+    `enable-cache`, `use-cache` or `bundler-cache` is present and is not a
+    literal false (`false`, `0`, `no`, `off`). Reported as MEDIUM on the
+    step's `uses:` line.
+  - >-
+    Default caches: in the same release-like workflows, a step that can run
+    on the release or tag-push event (its job's and its own `if:` allow
+    it) and uses an action that caches without being asked:
+    `actions/setup-go` v4 and later, `jdx/mise-action`,
+    `actions-rust-lang/setup-rust-toolchain`, `mlugg/setup-zig`,
+    `Swatinem/rust-cache`, `oven-sh/setup-bun`,
+    `gradle/actions/setup-gradle`, `ramsey/composer-install`,
+    `astral-sh/setup-uv` v5 to v9 on GitHub-hosted runners, and
+    `actions/setup-node` v5 and later after a checkout, when the root
+    `package.json` names npm as its package manager. The input that turns
+    each one off, or a job `cache-mode` other than `read` or `write`,
+    clears it. A version comes from the tag, or from a `# v5` comment after
+    a commit pin. MEDIUM.
+  - >-
+    Cache writes: a job that an account without write access can start
+    (`issues`, `issue_comment`, `pull_request_target`, discussion events,
+    or `workflow_run` after a fork-reachable workflow; not
+    `pull_request_review`) with `cache-mode: write` or `write-only` on the
+    job or workflow, or passed down by a local workflow that calls it. It
+    is reported only when a step those accounts reach checks out pull
+    request code, expands event text into its script, or downloads the
+    triggering run's artifacts. HIGH, on the `cache-mode` line.
+  - >-
+    In the release check, steps with the same `uses:` text report once, on
+    the first line that contains it.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_cache_poisoning("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _cache_action_enabled("
+    note: which actions and inputs count as an enabled cache.
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _audit_default_caches("
+    note: actions that cache by default, in `_DEFAULT_CACHES`.
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _audit_cache_writes("
+    note: the `cache-mode` write grant (HIGH).
+  - path: test/test_github_actions_workflow_audits.py
+    symbol: "SKY-D308"
+
+fix:
+  explanation: >-
+    Build releases from a clean state: drop the cache input in the release
+    workflow and keep caching in CI. From `actions/setup-node` v5, also set
+    `package-manager-cache: false`, because it caches npm by default. For
+    a job outsiders can start, use `cache-mode: read` and save caches from
+    a push-triggered workflow.
+  filename: .github/workflows/release.yml
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+    jobs:
+      build:
+        name: Build
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - uses: actions/setup-node@v4
+            with:
+              node-version: 22
+          - run: npm ci --ignore-scripts
+          - run: npm run build
+          - uses: actions/upload-artifact@v4
+            with:
+              name: bundle
+              path: dist/
+              if-no-files-found: error
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Any cache input that is not a literal false counts as on, so
+      `cache: ""` and `cache: ${{ inputs.cache }}` are reported although
+      `actions/setup-node` treats an empty value as no cache.
+    - >-
+      The release check covers every job in the workflow, including a test
+      job that ships nothing.
+    - >-
+      Some restores are missed: `actions/cache/restore` is not on the list,
+      and a release started by `workflow_dispatch` or a branch push is not
+      release-like.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D308] <reason>` on the reported `uses:`
+        line or on the line directly above it, one rule per marker. For the
+        default-cache and `cache-mode` findings the marker must be a real
+        YAML comment.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D308] cache key includes the lockfile hash
+        - uses: actions/setup-node@v4
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D308"]` turns the rule off for the
+        whole project. A baseline also works, but it records the absolute
+        file path and line, so it stops matching when the checkout moves or
+        lines above the finding change.
+
+related: [SKY-D290, SKY-D312, SKY-D364, SKY-D320]

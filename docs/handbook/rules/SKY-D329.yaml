@@ -1,0 +1,139 @@
+id: SKY-D329
+title: Broad destructive shell command
+family: security
+severity: HIGH
+languages: [Shell, GitHub Actions, GitLab CI, Dockerfile, Python, TypeScript/JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  Some shell commands wipe far more than intended when a path is wrong or a
+  variable is empty. SKY-D329 reports `rm -rf` of the root, the home folder,
+  the current folder, `.git` or a bare `$VAR/`, and `git reset --hard` and
+  `git clean -fdx`, which throw away uncommitted work.
+
+why_it_matters: >-
+  If `RELEASE_DIR` is empty, `rm -rf "$RELEASE_DIR"/*` becomes `rm -rf /*`
+  and deletes everything the user can write to. Scripts that coding agents
+  or CI run unattended have no one watching to stop them.
+
+flagged_example:
+  language: shell
+  filename: scripts/deploy.sh
+  expect_line: 6
+  code: |
+    #!/usr/bin/env bash
+    # Replace the previous release with the new build.
+    set -euo pipefail
+
+    RELEASE_DIR="$(cat .release-dir)"
+    rm -rf "$RELEASE_DIR"/*
+    tar -xzf release.tar.gz -C "$RELEASE_DIR"
+
+not_flagged_example:
+  language: shell
+  filename: scripts/deploy.sh
+  code: |
+    #!/usr/bin/env bash
+    # Replace the previous release with the new build.
+    set -euo pipefail
+
+    RELEASE_DIR="$(cat .release-dir)"
+    rm -rf "${RELEASE_DIR:?}"/*
+    tar -xzf release.tar.gz -C "$RELEASE_DIR"
+  why: >-
+    `${RELEASE_DIR:?}` makes the shell stop with an error when the variable
+    is empty or unset, so the command can never become `rm -rf /*`. Skylos's
+    empty-variable pattern matches only a bare `$VAR/`, `${VAR}/` or
+    `$VAR/*`.
+
+how_skylos_decides:
+  - >-
+    Reads shell commands in `.sh`, `.bash`, `.zsh`, `.ksh` and `.bats` files,
+    GitHub Actions `run:` steps, GitLab CI script items, Dockerfile `RUN`
+    instructions, fixed command strings in Python `os.system()`-style calls
+    or `shell=True` calls, and fixed strings passed to `child_process.exec()`
+    in TypeScript and JavaScript.
+  - >-
+    Finds `rm` with both a recursive and a force option in any spelling
+    (`-rf`, `-r -f`, `--recursive --force`, `/bin/rm -Rf`). It looks through
+    `sudo`, `env`, `xargs`, `nohup`, `exec`, `command` and `time`, into
+    `sh -c`/`bash -c` strings, `eval`, `find -exec`, `$(…)` and backticks,
+    and into the arguments of unknown programs such as `busybox rm`.
+    Arguments that `echo` or `printf` only print, and text after a `#`
+    comment, are ignored.
+  - >-
+    Reports when a target is `/` or any other absolute path, `~`, `$HOME`,
+    `.`, `..`, `*`, `./*`, `.git`, or a variable followed only by `/` or `/*`
+    (`$DIR/`, `${DIR}/*`), which an empty value turns into the root.
+  - >-
+    Skips relative paths such as `build` or `dist`, and package-manager
+    caches and scratch space: anything below `/tmp/`, `/var/tmp/`,
+    `/var/cache/`, `/var/lib/apt/lists/` or `/usr/local/share/.cache/`, and
+    `.cache` or `.npm` under `/root`, `~` or `$HOME`. A cache path that holds
+    `..`, a variable after the prefix, a backtick or `{` is reported, since it
+    can leave the cache.
+  - >-
+    Also reports `git reset --hard` and `git clean` whose short flags include
+    `f`, `d` and `x` together. Every finding is HIGH.
+
+source_refs:
+  - path: skylos/security/command_guard_exfil.py
+    symbol: "def _has_broad_rm("
+  - path: skylos/security/command_guard_exfil.py
+    symbol: "def _is_broad_rm_target("
+  - path: skylos/security/command_guard_exfil.py
+    symbol: "DISPOSABLE_ROOTS = ("
+  - path: skylos/security/command_guard_exfil.py
+    symbol: "DESTRUCTIVE_PATTERNS = ("
+  - path: test/test_shell_security.py
+    symbol: "def test_cache_and_temp_cleanup_is_not_broad_rm"
+
+fix:
+  explanation: >-
+    Make the target impossible to get wrong: guard variables with
+    `${VAR:?}`, delete a named sub-folder rather than a whole tree, and check
+    that the path is the one you expect before removing it.
+  filename: scripts/deploy.sh
+  code: |
+    #!/usr/bin/env bash
+    # Replace the previous release with the new build.
+    set -euo pipefail
+
+    RELEASE_DIR="$(cat .release-dir)"
+    case "$RELEASE_DIR" in
+      /srv/app/releases/?*) ;;
+      *) echo "refusing to clean '$RELEASE_DIR'" >&2; exit 1 ;;
+    esac
+    rm -rf "${RELEASE_DIR:?}"/*
+    tar -xzf release.tar.gz -C "$RELEASE_DIR"
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Any absolute path is reported, even a narrow one in a throwaway place,
+      such as `rm -rf /app/tests` in a Dockerfile build stage or
+      `rm -rf /usr/src/app` in a container.
+    - >-
+      `git reset --hard origin/main` and `git clean -ffdx` in a CI job that
+      starts from a fresh checkout are reported, though there is no local work
+      to lose there.
+    - >-
+      Only `rm` and the two `git` commands are checked: `find / -delete`,
+      Python `shutil.rmtree()` or Node `fs.rmSync()` are not part of this
+      rule.
+  suppress:
+    - check: inline
+      text: >-
+        In a shell script, put the marker on the reported line as a real
+        comment. In GitHub Actions, GitLab CI and Dockerfiles the marker may
+        also sit on the line directly above, one rule per marker.
+      language: shell
+      code: |
+        rm -rf /srv/build-cache/*  # skylos: ignore[SKY-D329] dedicated cache disk
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        commands that exist today and reports new ones.
+
+related: [SKY-D327, SKY-D339, SKY-D328]

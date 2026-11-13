@@ -1,0 +1,285 @@
+id: SKY-D228
+title: HTML response built from user input
+family: security
+severity: HIGH
+languages: [Python, TypeScript/JavaScript, Go, PHP, C#]
+gate:
+  full: counted
+cwe: [CWE-79]
+
+what_it_is: >-
+  A handler that builds an HTML response by pasting request text into a
+  string, without escaping it, lets the visitor write markup into the page.
+  SKY-D228 reports that string where it is returned or written to the
+  response.
+
+why_it_matters: >-
+  A link such as `/hello?name=<script>…</script>` runs that script for
+  whoever opens it, with their cookies and session. Sending such links to
+  staff is a common way to take over admin accounts.
+
+flagged_example:
+  language: python
+  filename: app/greet.py
+  expect_line: 9
+  code: |
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.get("/hello")
+    def hello():
+        name = request.args.get("name", "")
+        return f"<h1>Hello, {name}!</h1>"
+
+not_flagged_example:
+  language: python
+  filename: app/greet.py
+  code: |
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.get("/cart/badge")
+    def cart_badge():
+        count = int(request.args.get("count", "0"))
+        return f'<span class="badge">{count} items</span>'
+  why: >-
+    The request value goes through `int()` first. A number cannot carry
+    markup, so Skylos treats the result of `int()`, `float()`, `len()` and
+    similar built-ins as clean.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/server.ts
+      expect_line: 7
+      code: |
+        import express from "express";
+
+        const app = express();
+
+        app.get("/hello", (req, res) => {
+          const name = String(req.query.name ?? "");
+          res.send(`<h1>Hello, ${name}!</h1>`);
+        });
+    not_flagged:
+      language: typescript
+      filename: src/server.ts
+      code: |
+        import express from "express";
+
+        const app = express();
+
+        app.get("/hello", (req, res) => {
+          const name = String(req.query.name ?? "");
+          res.type("text/plain").send(`Hello, ${name}!`);
+        });
+      why: >-
+        The response type is set to `text/plain` before the send, so the
+        browser shows the name as text. Without that call, Express sends a
+        string as HTML, and Skylos would report it even with no tag in it.
+  - flagged:
+      language: go
+      files:
+        - filename: main.go
+          code: |
+            package main
+
+            import (
+            	"fmt"
+            	"net/http"
+            )
+
+            func hello(w http.ResponseWriter, r *http.Request) {
+            	name := r.URL.Query().Get("name")
+            	fmt.Fprintf(w, "<h1>Hello, %s!</h1>", name)
+            }
+
+            func main() {
+            	http.HandleFunc("/hello", hello)
+            }
+        - filename: go.mod
+          language: text
+          code: |
+            module example.com/greet
+
+            go 1.22
+      expect_line: 10
+    not_flagged:
+      language: go
+      files:
+        - filename: main.go
+          code: |
+            package main
+
+            import (
+            	"fmt"
+            	"net/http"
+            )
+
+            func hello(w http.ResponseWriter, r *http.Request) {
+            	name := r.URL.Query().Get("name")
+            	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+            	fmt.Fprintf(w, "Hello, %s!", name)
+            }
+
+            func main() {
+            	http.HandleFunc("/hello", hello)
+            }
+        - filename: go.mod
+          language: text
+          code: |
+            module example.com/greet
+
+            go 1.22
+      why: >-
+        A `text/plain` Content-Type is set on the same writer before the
+        write, so the response is not HTML.
+  - flagged:
+      language: php
+      filename: public/hello.php
+      expect_line: 3
+      code: |
+        <?php
+        $name = $_GET['name'] ?? '';
+        echo "<h1>Hello, " . $name . "!</h1>";
+    not_flagged:
+      language: php
+      filename: public/hello.php
+      code: |
+        <?php
+        $name = $_GET['name'] ?? '';
+        echo "<h1>Hello, " . htmlspecialchars($name, ENT_QUOTES, 'UTF-8') . "!</h1>";
+      why: >-
+        `htmlspecialchars()` escapes the name for HTML text and quoted
+        attributes, which is where it lands.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. Every language needs a value from outside the
+    program; Skylos never reports a string built only from constants.
+  - >-
+    Python: looks at each `return` whose value is an f-string, a `+` chain,
+    a `%` format or a `.format()` call whose text contains a real HTML tag
+    (`<h1`, `<div`, `<a`, `<script` and so on). Function parameters,
+    `request.*` and `input()` count as user data, and assignments carry it
+    to later names.
+  - >-
+    Python: tracks where each value lands in the HTML: element text needs
+    `<`, `>` and `&` escaped, a quoted attribute also needs quotes escaped,
+    and a link (`href`, `action`) also needs a safe scheme. `html.escape()`,
+    `markupsafe.escape()` and `Markup.escape()` escape quotes too;
+    `bleach.clean()` only makes text safe. An escaped value in an
+    `onclick`, a `style` attribute, a `<script>` block or an unquoted
+    attribute is still reported. Numbers from `int()`, `len()` and similar
+    are clean.
+  - >-
+    TypeScript and JavaScript: inside an Express, Fastify, Hapi, Koa,
+    NestJS, Next.js or Remix handler, reports request data sent with
+    `res.send()`, `res.write()` or `res.end()` in a string that contains an
+    HTML tag, and Koa `ctx.body` set to a value that starts with a tag or
+    with the request value. An Express, NestJS or Next.js pages-API
+    `res.send()` of request text is reported even without a tag, since
+    Express sends strings as HTML. It skips the write when a non-HTML
+    content type was set first (`res.type("text/plain")`, a `Content-Type`
+    header), and when the value is a whole request object or an object or
+    array literal (sent as JSON). `encodeURIComponent()`, numeric
+    conversion and a same-file helper that escapes `<` count as escaping.
+  - >-
+    Go (from the Go engine as SKY-G228): request data written with
+    `fmt.Fprint*`, `io.WriteString` or `w.Write` to an `http.ResponseWriter`
+    is reported unless a non-HTML Content-Type was set on that writer before
+    the write, or every write up to it starts with fixed text whose first
+    character is not `<` (Go then serves `text/plain`). Gin `c.Data`, Echo
+    `c.HTML` and `c.Blob`, and Fiber writes are reported when the content
+    type is HTML. `html.EscapeString`, the `html/template` escapers,
+    `url.QueryEscape`, `json.Marshal` and bluemonday policies count as
+    escaping; cookies do not count as user input.
+  - >-
+    PHP: request data in `echo`, `print`, `printf`, `die`/`exit`,
+    `print_r`, `var_dump` or a short `<?= ?>` tag, unless escaped for where
+    it lands (`htmlspecialchars`, `htmlentities`, WordPress `esc_html` and
+    `esc_attr`, Laravel `e()`; `strip_tags` and `wp_kses` only for element
+    text).
+    In Blade templates the same finding is reported as SKY-D226. C#:
+    request data passed to `Content(x, "text/html")` or `Response.Write(x)`
+    without encoding.
+
+source_refs:
+  - path: skylos/rules/danger/danger_web/xss_flow.py
+    symbol: "def visit_Return"
+    note: the Python check on returned HTML.
+  - path: skylos/rules/danger/danger_web/html_context.py
+    symbol: "def hole_requirements"
+    note: how much escaping each spot in the HTML needs.
+  - path: skylos/rules/danger/taint.py
+    symbol: "XSS_SANITIZERS = {"
+  - path: skylos/visitors/languages/typescript/express_taint.py
+    symbol: "def _response(self, node, callee, args)"
+  - path: skylos/visitors/languages/typescript/express_taint.py
+    symbol: "def _koa_body"
+  - path: skylos/engines/go/internal/analyzer/xss.go
+    symbol: "func (a *Analyzer) checkXSS"
+  - path: skylos/visitors/languages/go/go.py
+    symbol: '"SKY-G228": "SKY-D228"'
+  - path: skylos/visitors/languages/php/danger.py
+    symbol: "def check_output(node, tainted_vars)"
+  - path: skylos/visitors/languages/csharp/danger.py
+    symbol: "def _xss_sinks("
+  - path: test/test_xss_flow.py
+    symbol: "def test_rule_sky_d228"
+
+fix:
+  explanation: >-
+    Escape the value for the place it lands, or render it with a template
+    engine that escapes by default (Jinja, `html/template`, React). In
+    Python, `html.escape()` covers element text and quoted attributes; in Go
+    use `html.EscapeString`; in PHP `htmlspecialchars($v, ENT_QUOTES)`.
+  filename: app/greet.py
+  code: |
+    import html
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.get("/hello")
+    def hello():
+        name = request.args.get("name", "")
+        return f"<h1>Hello, {html.escape(name)}!</h1>"
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      In Python every function parameter counts as user data, so a helper
+      such as `def badge(label): return f"<b>{label}</b>"` is reported even
+      when every caller passes a constant.
+    - >-
+      A value escaped by a helper Skylos cannot see into (another module, or
+      a sanitizer it does not know) is reported.
+    - >-
+      Python only checks `return` values. HTML assigned to a variable and
+      passed to a response object, or plain text with no tag that Flask
+      still serves as HTML, is not reported.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the reported line and say why the value is safe.
+      language: python
+      code: |
+        return f"<b>{label}</b>"  # skylos: ignore[SKY-D228] label is a fixed enum value
+    - check: baseline
+      text: >-
+        Accept existing findings with `skylos baseline .`, then scan with
+        `--baseline`. Entries match by file and line, so they stop matching
+        when the line moves.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D228"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D226, SKY-D227, SKY-D230]

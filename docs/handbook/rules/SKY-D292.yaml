@@ -1,0 +1,203 @@
+id: SKY-D292
+title: GitHub Actions unpinned action
+family: ci-cd
+severity: HIGH
+severity_note: >-
+  HIGH for every owner except GitHub. An `actions/*` or `github/*` action at
+  a tag or branch is LOW, unless the reference has an expression or its path
+  has `.`, `..` or empty parts.
+languages: [GitHub Actions workflows, composite actions]
+gate:
+  full: counted
+  note: >-
+    A GitHub-owned action at a release tag, such as `actions/checkout@v4`,
+    is left out of the default listing, but the gate still counts it.
+
+what_it_is: >-
+  A step such as `uses: docker/build-push-action@v6` runs whatever code the
+  tag `v6` points to on the day the job runs. Tags and branches can be
+  moved by anyone who controls that repository. SKY-D292 reports every
+  action or reusable workflow that is not pinned to a full 40-character
+  commit SHA.
+
+why_it_matters: >-
+  When an action's maintainer account is taken over, the attacker moves the
+  tag to new code, and every workflow that uses the tag runs it on the next
+  push, with that job's token and secrets. In March 2025 the
+  tj-actions/changed-files tags were moved this way, and the new code wrote
+  secrets into the build logs of thousands of repositories.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/docker.yml
+  expect_line: 13
+  code: |
+    name: Docker image
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+      packages: write
+    jobs:
+      image:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+          - uses: docker/login-action@v3
+            with:
+              registry: ghcr.io
+              username: ${{ github.actor }}
+              password: ${{ github.token }}
+          - uses: docker/build-push-action@v6
+            with:
+              push: true
+              tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/ci.yml
+  code: |
+    name: CI
+    on: pull_request
+    permissions:
+      contents: read
+    jobs:
+      lint:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+          - uses: ./.github/actions/setup-toolchain
+          - run: make lint
+      test:
+        uses: ./.github/workflows/test.yml
+  why: >-
+    The checkout is pinned to a commit. `./.github/actions/setup-toolchain`
+    is an action in this repository and `./.github/workflows/test.yml` a
+    workflow in it: both run at the commit being built, so there is no tag
+    for anyone else to move.
+
+how_skylos_decides:
+  - >-
+    Reads `uses:` in workflow steps, in jobs that call a reusable workflow,
+    and in the steps of composite actions (`action.yml`).
+  - >-
+    Leaves alone references that start with `./` or `../` (code in this
+    repository), job calls of `./.github/workflows/<file>.yml` or
+    `$/.github/workflows/<file>.yml`, and `docker://` images that contain
+    `@`, such as an `@sha256:` digest.
+  - >-
+    Everything else needs `@` followed by exactly 40 hex characters. A
+    reference with `${{ … }}` or with no `@` at all is reported.
+  - >-
+    Grades severity by owner: `actions/*` and `github/*` at a tag or branch
+    are LOW, because GitHub publishes them; every other owner, and a
+    GitHub-owned path with `.`, `..` or empty parts, is HIGH. A LOW finding
+    whose ref is a version tag such as `v4` or `v4.2.2` is marked as low
+    risk, which hides it from the default listing.
+  - >-
+    Reports on the first line that contains the reference. The same
+    reference used in several places is one finding.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_uses("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _is_pinned_uses("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _unpinned_uses_severity("
+    note: LOW for GitHub-owned actions; the low-risk mark is in _unpinned_uses_finding.
+  - path: skylos/rules/config/cicd/workflow_references.py
+    symbol: "def local_workflow_reference("
+  - path: skylos/reporting/listing.py
+    symbol: "LOW_RISK_REASONS = {"
+
+fix:
+  explanation: >-
+    Pin each action to the commit SHA of the release you reviewed, and keep
+    the version in a comment so Dependabot or Renovate can update both.
+    Take the SHA from the action's own release page; the ones below show
+    the format.
+  filename: .github/workflows/docker.yml
+  code: |
+    name: Docker image
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+      packages: write
+    jobs:
+      image:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+          - uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+            with:
+              registry: ghcr.io
+              username: ${{ github.actor }}
+              password: ${{ github.token }}
+          - uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v6.9.0
+            with:
+              push: true
+              tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A pinned SHA is not checked against the action's repository: a SHA
+      from a fork, or one that is not a release, still passes.
+    - >-
+      `docker://image:tag` is reported here as well as by SKY-D296, which
+      covers container images.
+  suppress:
+    - check:
+        kind: example
+        example:
+          language: yaml
+          filename: .github/workflows/docker.yml
+          code: |
+            name: Docker image
+            on:
+              push:
+                branches: [main]
+            permissions:
+              contents: read
+              packages: write
+            jobs:
+              image:
+                runs-on: ubuntu-latest
+                steps:
+                  - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+                  # skylos: ignore[SKY-D292] handbook check
+                  - uses: docker/login-action@v3
+                    with:
+                      registry: ghcr.io
+                      username: ${{ github.actor }}
+                      password: ${{ github.token }}
+                  - uses: docker/build-push-action@v6  # skylos: ignore[SKY-D292] handbook check
+                    with:
+                      push: true
+                      tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
+      text: >-
+        Put `skylos: ignore[SKY-D292]` with a reason on the reported line or
+        the line directly above it; each reference needs its own marker.
+        Because one finding covers every use of the same reference, a marker
+        on its first use covers them all.
+      language: yaml
+      code: |
+        steps:
+          # skylos: ignore[SKY-D292] internal action, released by our own team
+          - uses: our-org/deploy-action@v3
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) also hides it. The
+        entry is the rule, the absolute file path and the line, so it stops
+        matching when lines above the reference move or the checkout is at
+        another path.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D292"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D296, SKY-D363, SKY-D354, SKY-D371]

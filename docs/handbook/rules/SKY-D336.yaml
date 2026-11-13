@@ -1,0 +1,139 @@
+id: SKY-D336
+title: Edge systemd service with broad capabilities or devices
+family: infrastructure
+severity: HIGH
+languages: [systemd units]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`; the detector never reports CRITICAL.
+
+what_it_is: >-
+  An edge or device systemd service that grants powerful Linux capabilities
+  such as `CAP_SYS_ADMIN`, allows every device with a `DeviceAllow=`
+  wildcard, or starts a `docker run --privileged` container. These settings
+  give a non-root process most of root's power.
+
+why_it_matters: >-
+  `CAP_SYS_ADMIN` alone lets a process mount filesystems, change namespaces
+  and often escape to full root. A camera daemon rarely needs it, so a bug
+  in that daemon becomes a takeover of the device.
+
+flagged_example:
+  language: ini
+  filename: camera-capture.service
+  expect_line: 7
+  code: |
+    [Unit]
+    Description=Camera capture
+
+    [Service]
+    User=camera
+    ExecStart=/opt/capture/bin/capture --device /dev/video0
+    AmbientCapabilities=CAP_SYS_ADMIN
+    DeviceAllow=/dev/video0 rw
+    NoNewPrivileges=true
+
+not_flagged_example:
+  language: ini
+  filename: camera-capture.service
+  code: |
+    [Unit]
+    Description=Camera capture
+
+    [Service]
+    User=camera
+    ExecStart=/opt/capture/bin/capture --device /dev/video0
+    CapabilityBoundingSet=~CAP_SYS_ADMIN CAP_SYS_MODULE
+    DeviceAllow=/dev/video0 rw
+    NoNewPrivileges=true
+  why: >-
+    `CAP_SYS_ADMIN` still appears, but after a leading `~`, which tells
+    systemd to remove these capabilities from the service. That is a
+    hardening setting, not a grant.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. Reads the same `*.service` files as SKY-D333 and
+    needs the same `[Service]` section and edge context (a device, camera,
+    GPU or robot word, or a `/dev/` path, somewhere in the unit). Unlike
+    SKY-D333 to SKY-D335, it does not need the service to run as root.
+  - >-
+    Reports `AmbientCapabilities=` or `CapabilityBoundingSet=` naming
+    `CAP_SYS_ADMIN`, `CAP_NET_ADMIN`, `CAP_SYS_MODULE`, `CAP_SYS_PTRACE`,
+    `CAP_SYS_RAWIO` or `CAP_DAC_OVERRIDE`. A bounding set that starts with
+    `~` is skipped.
+  - >-
+    Reports `DeviceAllow=` set to `*`, `/dev/*`, `char-*` or `block-*`
+    (or starting with one of those).
+  - >-
+    Reports an `Exec…=` line that runs `docker run` with `--privileged`.
+  - >-
+    Reports HIGH once per unit: on the first matching capability or
+    `DeviceAllow=` line, or, when there is none, on the `docker run` line.
+
+source_refs:
+  - path: skylos/rules/config/edge/systemd.py
+    symbol: "def _broad_privilege_entry("
+  - path: skylos/rules/config/edge/systemd.py
+    symbol: "DANGEROUS_CAPABILITIES = {"
+  - path: test/test_edge_systemd_security.py
+    symbol: "def test_edge_systemd_scanner_accepts_restrictive_capability_bounding_set"
+
+fix:
+  explanation: >-
+    Grant only the capability the program really uses (here real-time
+    scheduling) and keep `DeviceAllow=` to the one device.
+  filename: camera-capture.service
+  code: |
+    [Unit]
+    Description=Camera capture
+
+    [Service]
+    User=camera
+    ExecStart=/opt/capture/bin/capture --device /dev/video0
+    AmbientCapabilities=CAP_SYS_NICE
+    DeviceAllow=/dev/video0 rw
+    NoNewPrivileges=true
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A `CapabilityBoundingSet=` that lists only the dangerous capability
+      the service needs is reported even though it narrows the set.
+    - >-
+      Other broad grants, such as `CAP_SYS_BOOT`, `CAP_BPF` or
+      `PrivateDevices=no`, are not on the list and are not reported.
+    - >-
+      Units without a device context are never checked.
+  suppress:
+    - check:
+        kind: example
+        example:
+          language: ini
+          filename: camera-capture.service
+          code: |
+            [Unit]
+            Description=Camera capture
+
+            [Service]
+            User=camera
+            ExecStart=/opt/capture/bin/capture --device /dev/video0
+            # skylos: ignore[SKY-D336] vendor SDK mounts a debugfs node
+            AmbientCapabilities=CAP_SYS_ADMIN
+            DeviceAllow=/dev/video0 rw
+            NoNewPrivileges=true
+      text: >-
+        Put the marker on a comment line directly above the reported line.
+        systemd reads `#` only at the start of a line.
+      language: ini
+      code: |
+        # skylos: ignore[SKY-D336] vendor SDK mounts a debugfs node
+        AmbientCapabilities=CAP_SYS_ADMIN
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D336"]` turns the rule off for the
+        project.
+
+related: [SKY-D333, SKY-D330]

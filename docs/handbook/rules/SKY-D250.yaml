@@ -1,0 +1,180 @@
+id: SKY-D250
+title: Weak random numbers for security values
+family: security
+severity: MEDIUM
+severity_note: >-
+  Python, TypeScript/JavaScript and Go findings are MEDIUM. Java findings
+  are reported as HIGH.
+languages: [Python, TypeScript/JavaScript, Go, Java]
+gate:
+  full: counted
+cwe: [CWE-330]
+
+what_it_is: >-
+  General-purpose random generators, such as Python's `random` module,
+  `Math.random()`, Go's `math/rand` and `java.util.Random`, are built for
+  simulations and games, not secrets. SKY-D250 reports them where they make
+  a token, password, session ID or similar value.
+
+why_it_matters: >-
+  Their output can be predicted: after seeing a few values, or knowing
+  roughly when the process started, an attacker can compute the next
+  password-reset token or session ID and take over the account.
+
+flagged_example:
+  language: python
+  filename: app/tokens.py
+  expect_line: 8
+  code: |
+    import random
+    import string
+
+    ALPHABET = string.ascii_letters + string.digits
+
+
+    def make_reset_token() -> str:
+        return "".join(random.choice(ALPHABET) for _ in range(32))
+
+not_flagged_example:
+  language: python
+  filename: app/sampling.py
+  code: |
+    import random
+
+
+    def sample_orders_for_audit(orders: list, size: int = 20) -> list:
+        return random.sample(orders, min(size, len(orders)))
+
+
+    def retry_delay(attempt: int) -> float:
+        return random.uniform(0, 2**attempt)
+  why: >-
+    Picking orders to spot-check and adding jitter to a retry delay need no
+    secrecy. The function names hold no security word and the values do not
+    flow into a token, password, session or cookie, so Skylos stays quiet.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/auth/session.ts
+      expect_line: 2
+      code: |
+        export function createSessionToken(): string {
+          return Math.random().toString(36).slice(2) + Date.now().toString(36);
+        }
+    not_flagged:
+      language: typescript
+      filename: src/net/backoff.ts
+      code: |
+        export function retryDelayMs(attempt: number): number {
+          const jitter = Math.random() * 250;
+          return Math.min(30_000, 2 ** attempt * 100 + jitter);
+        }
+      why: >-
+        Neither the statement nor the enclosing function or variable names
+        mention a token, session, password or other security term.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. In Python it finds calls to the `random` module's
+    generators (`random()`, `randint()`, `randrange()`, `choice()`,
+    `choices()`, `sample()`, `randbytes()`, `getrandbits()`, `uniform()` and
+    the distribution functions such as `gauss()`), on the module, through an
+    import alias, or on a `random.Random()` object. Calls on
+    `random.SystemRandom()` or `secrets.SystemRandom()` are not reported, and
+    `random.shuffle()` is not on the list.
+  - >-
+    A Python call is reported only with security context: the enclosing
+    function's name contains a security word (`token`, `password`, `secret`,
+    `session`, `nonce`, `otp`, `salt`, `csrf`, `jwt`, `cookie`, `auth`,
+    `credential`, `signature`, `signing`, `api_key` and similar), or the value
+    flows into one.
+  - >-
+    The flow is followed through `str()`, slicing, formatting, joins,
+    comprehensions and up to four steps of local variables and module-level
+    helpers. It counts when the value is stored under a security-named
+    variable, attribute or dictionary key, passed as a security-named
+    keyword such as `otp=…`, stored in `session[...]`, set as a cookie
+    value, returned from a security-named function, or compared with a
+    request cookie.
+  - >-
+    In TypeScript and JavaScript it reports `Math.random()` when the
+    statement around it, or the name of an enclosing function, method or
+    variable, contains a security term such as `token`, `nonce`, `csrf`,
+    `session`, `secret`, `password`, `apikey`, `jwt`, `cookie`, `salt`,
+    `otp…`, `resetcode` or `magiclink`.
+  - >-
+    In Go every call into `math/rand` or `math/rand/v2` is reported (by the
+    Go engine as SKY-G209, shown as SKY-D250), whatever the value is used
+    for.
+  - >-
+    In Java it reports `Math.random()`, `new Random()` and `next…()` calls on
+    a `Random` (not `SecureRandom`) inside a method that mentions a token,
+    session or remember-me value or calls `getSession()`.
+
+source_refs:
+  - path: skylos/rules/danger/calls.py
+    symbol: "_WEAK_RANDOM_FUNCTIONS = ("
+  - path: skylos/rules/danger/calls.py
+    symbol: "class _RandomBindings"
+    note: which calls really are the `random` module; SystemRandom is not.
+  - path: skylos/rules/danger/calls.py
+    symbol: "_WEAK_RANDOM_SECURITY_KEYWORDS = {"
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _weak_random_value_reaches_security_use("
+  - path: skylos/rules/danger/calls.py
+    symbol: "_WEAK_RANDOM_FLOW_HOPS = 4"
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "def _math_random_requires_finding("
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "_RANDOM_SECURITY_TERMS = ("
+  - path: skylos/engines/go/internal/analyzer/analyzer.go
+    symbol: "// SKY-G209: Weak random number generator"
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: "def _method_has_security_token_context"
+
+fix:
+  explanation: >-
+    Make security values with a cryptographic generator: `secrets` in
+    Python (`token_urlsafe()`, `token_hex()`, `choice()`),
+    `crypto.randomBytes()` or `crypto.randomUUID()` in Node,
+    `crypto.getRandomValues()` in browsers, `crypto/rand` in Go and
+    `SecureRandom` in Java.
+  filename: app/tokens.py
+  code: |
+    import secrets
+
+
+    def make_reset_token() -> str:
+        return secrets.token_urlsafe(24)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Context is read from names, so a harmless value in a security-named
+      function is reported, such as `random.choice(COLORS)` inside
+      `render_session_banner()`.
+    - >-
+      Go reports every `math/rand` call, including retry jitter and test
+      data.
+    - >-
+      Missed: a weak random reset code built into a link in a function whose
+      name and variables carry no security word, such as
+      `f"/reset/{user.id}/{random.randint(0, 10**8)}"` in `reset_link()`.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line when the value really is not a secret.
+      language: python
+      code: |
+        hue = random.choice(PALETTE)  # skylos: ignore[SKY-D250] banner colour only
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D250"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D207, SKY-D252, SKY-D253]

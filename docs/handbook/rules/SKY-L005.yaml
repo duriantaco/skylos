@@ -1,0 +1,126 @@
+id: SKY-L005
+title: Unused exception variable
+family: logic
+severity: LOW
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  LOW.
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    This is advice that the default report does not list ("measurement"),
+    and unlisted advice is not counted. `--all-advice`, or naming the rule
+    in `[tool.skylos] select` or `[tool.skylos.gate] rules`, lists and
+    counts it.
+
+what_it_is: >-
+  `except SomeError as exc:` binds the exception to a name. When the
+  handler never reads that name, the binding does nothing.
+
+why_it_matters: >-
+  It is usually a sign that something was meant to happen with the error
+  and did not: it was not logged, not chained with `from exc`, not shown
+  to anyone. On its own the extra name is harmless.
+
+flagged_example:
+  language: python
+  filename: app/config.py
+  expect_line: 8
+  code: |
+    import json
+
+
+    def read_config(path):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                return json.load(handle)
+        except FileNotFoundError as exc:
+            return {}
+
+not_flagged_example:
+  language: python
+  filename: app/config.py
+  code: |
+    import json
+
+
+    class ConfigError(Exception):
+        pass
+
+
+    def read_config(path):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                return json.load(handle)
+        except json.JSONDecodeError as exc:
+            raise ConfigError(f"{path} is not valid JSON") from exc
+  why: >-
+    `from exc` reads the name, and chains the original error to the new
+    one so its traceback is kept.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Visits every `except` clause that
+    binds a name with `as`; the name `_` is skipped.
+  - >-
+    Looks for any read of the name inside the handler, nested functions and
+    lambdas included, or an augmented assignment such as `exc += ...`.
+  - >-
+    Also accepts a lookup by name through the namespace builtins:
+    `locals()["exc"]`, `vars().get("exc")` or
+    `"{exc}".format_map(locals())`. That proof is dropped when the module
+    rebinds `locals` or `vars`, uses a star import, or calls `exec`, `eval`
+    or `globals`.
+  - >-
+    Reports LOW on the `except` line when no read is found. The rule is
+    advice: the finding is in JSON output, but the terminal list shows it
+    only with `--all-advice`.
+
+source_refs:
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "class UnusedExceptVarRule"
+  - path: skylos/reporting/advice_policy.py
+    symbol: "def optional_advice_reason("
+    note: why the finding is not listed by default.
+  - path: test/test_quality_rules.py
+    symbol: "# --- SKY-L005: Unused Exception Variable ---"
+
+fix:
+  explanation: >-
+    Drop `as exc` when the error is deliberately ignored, or use the name:
+    log it, or chain it with `raise ... from exc`.
+  filename: app/config.py
+  code: |
+    import json
+
+
+    def read_config(path):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                return json.load(handle)
+        except FileNotFoundError:
+            return {}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A name kept so a debugger can inspect the error is reported; there is
+      no exemption for that.
+    - >-
+      Reads through other dynamic means, such as `sys.exc_info()` or a
+      template that receives `locals()` without naming the key, are not
+      seen as uses.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the `except` line.
+      language: python
+      code: |
+        except FileNotFoundError as exc:  # skylos: ignore[SKY-L005] kept for pdb
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L005"]` turns the rule off for the
+        project.
+
+related: [SKY-L007, SKY-L039, SKY-U003]

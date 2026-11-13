@@ -1,0 +1,155 @@
+id: SKY-L027
+title: Duplicate string literal
+family: logic
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. A string repeated three to five times is
+  LOW; six times or more is MEDIUM.
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Only when listed. This is advice outside the default set: the report
+    keeps it in JSON but does not list it, and the gate does not count it,
+    unless you pass `--all-advice` or select the rule (`--select SKY-L027`).
+
+what_it_is: >-
+  The same string value written out three or more times in one file, such
+  as a status name compared in several functions. SKY-L027 suggests one
+  named constant instead.
+
+why_it_matters: >-
+  When the value changes, every copy has to change with it. A missed copy
+  or a typo in one of them is a silent bug: the comparison is simply never
+  true.
+
+flagged_example:
+  language: python
+  filename: app/orders.py
+  expect_line: 7
+  code: |
+    """Order status changes for the warehouse API."""
+
+    from app.db import Order
+
+
+    def ship(order: Order) -> None:
+        if order.status != "awaiting_payment":
+            order.status = "ready_to_ship"
+        order.save()
+
+
+    def cancel(order: Order) -> None:
+        if order.status == "awaiting_payment":
+            order.status = "cancelled"
+        order.save()
+
+
+    def remind(order: Order) -> bool:
+        return order.status == "awaiting_payment"
+
+not_flagged_example:
+  language: python
+  filename: app/exports.py
+  code: |
+    """Shapes for the order export, the event bus and the audit log."""
+
+
+    def to_row(order) -> dict:
+        return {"customer_id": order.customer_id, "total_cents": order.total}
+
+
+    def to_event(order) -> dict:
+        return {"customer_id": order.customer_id, "type": "order.created"}
+
+
+    def to_audit(order) -> dict:
+        return {"customer_id": order.customer_id, "action": "create"}
+  why: >-
+    `"customer_id"` appears three times, but always as a dictionary key: it
+    names a field of a data shape. Skylos does not count dictionary keys,
+    subscripts such as `row["customer_id"]`, or lookups on a known mapping.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Skips test, example, benchmark
+    and documentation-build code and the root `setup.py`.
+  - >-
+    Counts string constants of five characters or more. Leaves out
+    docstrings, f-string pieces, dictionary keys and subscripts, `.get()`
+    and `in` keys on a mapping it can prove, type annotations and `Literal`
+    members, `cast()` type strings, `argparse` declarations, names passed
+    to `getattr`-style calls, module- and class-level constant tables,
+    file paths, HTML fragments and rule IDs.
+  - >-
+    Reports a value that is left three or more times; set the limit with
+    `duplicate_strings` under `[tool.skylos]`. Codec and URL-scheme names
+    that Python itself knows, such as `"utf-8"` and `"https"`, are not
+    reported.
+  - >-
+    The finding points at the first occurrence and records how many
+    functions the copies are in.
+  - >-
+    It is advice that is not listed by default. `--all-advice` or
+    `--select SKY-L027` lists it and lets the gate count it.
+
+source_refs:
+  - path: skylos/rules/quality/logic_maintainability.py
+    symbol: "class DuplicateStringLiteralRule"
+  - path: skylos/reporting/advice_policy.py
+    symbol: "def optional_advice_reason("
+    note: why the finding is not listed by default.
+  - path: skylos/reporting/advice_evidence.py
+    symbol: "DEFAULT_ADVICE_RULES ="
+    note: the advice that is listed by default; L027 is not in it.
+
+fix:
+  explanation: >-
+    Give the value one name and use that name everywhere. An `Enum` is the
+    next step when the values form a fixed set.
+  filename: app/orders.py
+  code: |
+    """Order status changes for the warehouse API."""
+
+    from app.db import Order
+
+    AWAITING_PAYMENT = "awaiting_payment"
+
+
+    def ship(order: Order) -> None:
+        if order.status != AWAITING_PAYMENT:
+            order.status = "ready_to_ship"
+        order.save()
+
+
+    def cancel(order: Order) -> None:
+        if order.status == AWAITING_PAYMENT:
+            order.status = "cancelled"
+        order.save()
+
+
+    def remind(order: Order) -> bool:
+        return order.status == AWAITING_PAYMENT
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Log and error messages that repeat on purpose, such as the same
+      user-facing text in three handlers, are counted.
+    - >-
+      Repeated keyword values, for example `on_delete="CASCADE"` in several
+      calls, are counted.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the reported line, the first occurrence.
+      language: python
+      code: |
+        if order.status != "awaiting_payment":  # skylos: ignore[SKY-L027] wire value
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L027"]` turns the rule off. To keep it
+        but allow more copies, raise `duplicate_strings` under
+        `[tool.skylos]`.
+
+related: [SKY-L029, SKY-C401]

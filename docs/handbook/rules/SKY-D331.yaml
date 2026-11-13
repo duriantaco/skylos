@@ -1,0 +1,154 @@
+id: SKY-D331
+title: Host device or control path mounted into a container
+family: infrastructure
+severity: HIGH
+languages: [Docker Compose]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`; the detector never reports CRITICAL.
+
+what_it_is: >-
+  A Docker Compose service that maps a host device, the whole `/dev`,
+  `/proc` or `/sys` tree, `/run/udev`, or the Docker socket into the
+  container. These paths give the container direct control over host
+  hardware or over the host itself.
+
+why_it_matters: >-
+  Whoever can talk to the Docker socket can start a privileged container
+  with the host's disk mounted, which is root on the host. Broad `/dev`,
+  `/proc` or `/sys` access lets a compromised container read other
+  processes' memory or reconfigure hardware.
+
+flagged_example:
+  language: yaml
+  filename: docker-compose.yml
+  expect_line: 5
+  code: |
+    services:
+      fleet-agent:
+        image: ghcr.io/acme/fleet-agent:1.8.0
+        restart: always
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock
+          - ./agent.toml:/etc/fleet-agent/agent.toml:ro
+        environment:
+          FLEET_API: https://fleet.example.com
+
+not_flagged_example:
+  language: yaml
+  filename: docker-compose.yml
+  code: |
+    services:
+      fleet-agent:
+        image: ghcr.io/acme/fleet-agent:1.8.0
+        restart: always
+        volumes:
+          - /var/run/postgresql:/var/run/postgresql
+          - agent-state:/var/lib/fleet-agent
+          - ./agent.toml:/etc/fleet-agent/agent.toml:ro
+        environment:
+          FLEET_API: https://fleet.example.com
+    volumes:
+      agent-state:
+  why: >-
+    The service still mounts a host socket folder, but it is PostgreSQL's,
+    not Docker's, and it is not a device or kernel interface. Named volumes
+    and files from the project folder are not host control paths either.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. Reads the same Compose files as SKY-D330
+    (`compose.y*ml`, `docker-compose.y*ml` and names starting with
+    `compose.` or `docker-compose.`), skipping symlinks, files over 1 MB and
+    YAML that does not parse.
+  - >-
+    For each service, reads the host side of every `devices:` and
+    `volumes:` entry, in short form (`/host:/container`) or long form
+    (`source:` or `src:`).
+  - >-
+    Counts the path when it is `/dev`, `/proc`, `/sys`, `/run/udev`,
+    `/run/docker.sock` or `/var/run/docker.sock`, or anything below one of
+    them, such as `/dev/video0` or `/sys/class/gpio`.
+  - >-
+    Skips host paths written with `${...}`, which are not resolved. A `:ro`
+    suffix does not change the result.
+  - >-
+    Does not need an edge or GPU context: any service is checked. Reports
+    HIGH once per service, on its `devices:` line when the service has one,
+    otherwise on its `volumes:` line.
+
+source_refs:
+  - path: skylos/rules/config/edge/docker_compose.py
+    symbol: "def _scan_host_control_mounts("
+  - path: skylos/rules/config/edge/docker_compose.py
+    symbol: "def _path_is_host_control_path("
+  - path: skylos/rules/config/edge/docker_compose.py
+    symbol: "HOST_CONTROL_PATHS = ("
+  - path: test/test_edge_compose_security.py
+    symbol: "def test_edge_compose_scanner_accepts_minimal_service"
+
+fix:
+  explanation: >-
+    Mount only what the service needs. Here the agent only reports status,
+    so it does not need the Docker socket at all. A service that must manage
+    containers is better run as a host service under its own user; a socket
+    proxy still mounts the socket and is still reported, so give that mount
+    a suppression with a reason.
+  filename: docker-compose.yml
+  code: |
+    services:
+      fleet-agent:
+        image: ghcr.io/acme/fleet-agent:1.8.0
+        restart: always
+        volumes:
+          - ./agent.toml:/etc/fleet-agent/agent.toml:ro
+        environment:
+          FLEET_API: https://fleet.example.com
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A camera or serial device that the service really needs, such as
+      `/dev/video0`, is reported the same way as a broad `/dev` mount. Keep
+      the device specific and suppress it with a reason.
+    - >-
+      It misses a host path that comes from a variable, such as
+      `${DOCKER_SOCKET}:/var/run/docker.sock`.
+    - >-
+      The finding sits on the `devices:` or `volumes:` key, not on the
+      mount itself. When a service has both keys it points at `devices:`
+      even if the risky path is under `volumes:`.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the reported `volumes:` or `devices:` line, or on a
+        comment line directly above it.
+      language: yaml
+      code: |
+        volumes:  # skylos: ignore[SKY-D331] camera node needs /dev/video0
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: yaml
+          filename: docker-compose.yml
+          code: |
+            services:
+              fleet-agent:
+                image: ghcr.io/acme/fleet-agent:1.8.0
+                restart: always
+                volumes:
+                  - /var/run/docker.sock:/var/run/docker.sock  # skylos: ignore[SKY-D331]
+                  - ./agent.toml:/etc/fleet-agent/agent.toml:ro
+      text: >-
+        A marker on the mount line itself does not work: the finding is on
+        the `volumes:` line above it, and only that line and the line before
+        it are read.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D331"]` turns the rule off for the
+        project.
+
+related: [SKY-D330, SKY-D332]

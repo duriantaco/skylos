@@ -1,0 +1,212 @@
+id: SKY-D208
+title: Weak SHA-1 hash
+family: security
+severity: MEDIUM
+severity_note: >-
+  Every SHA-1 finding is MEDIUM. In Python and TypeScript/JavaScript, a
+  SHA-1 hash over data whose names do not look like a credential, identity
+  or certificate stays MEDIUM but is marked low-risk and left out of the
+  terminal list.
+languages: [Python, TypeScript/JavaScript, Go, Java]
+gate:
+  full: counted
+  note: >-
+    Low-risk SHA-1 findings that the terminal list leaves out are still in
+    the JSON output and still count toward `max_security`.
+cwe: [CWE-328]
+
+what_it_is: >-
+  SHA-1 is a hash function that is no longer collision-resistant: two
+  different inputs with the same SHA-1 hash have been produced in practice.
+  SKY-D208 reports code that computes a SHA-1 hash.
+
+why_it_matters: >-
+  A SHA-1 fingerprint or signature can be matched by a forged document or
+  certificate, and SHA-1 is fast enough that hashed passwords or short keys
+  are cheap to brute-force if the table leaks.
+
+flagged_example:
+  language: python
+  filename: app/api_keys.py
+  expect_line: 7
+  code: |
+    import hashlib
+    import secrets
+
+
+    def issue_api_key(db, account_id: int) -> str:
+        api_key = secrets.token_urlsafe(32)
+        key_hash = hashlib.sha1(api_key.encode()).hexdigest()
+        db.execute(
+            "INSERT INTO api_keys (account_id, key_hash) VALUES (?, ?)",
+            (account_id, key_hash),
+        )
+        return api_key
+
+not_flagged_example:
+  language: python
+  filename: app/webhooks.py
+  code: |
+    import hashlib
+    import hmac
+
+
+    def legacy_signature_matches(secret: bytes, body: bytes, header: str) -> bool:
+        expected = "sha1=" + hmac.new(secret, body, hashlib.sha1).hexdigest()
+        return hmac.compare_digest(expected, header)
+  why: >-
+    `hashlib.sha1` is passed to `hmac.new()` as a reference, not called, so
+    there is no SHA-1 call to report. HMAC-SHA1 does not rely on collision
+    resistance and is still accepted for message authentication, for example
+    to check the `X-Hub-Signature` header older webhook senders use.
+
+more_examples:
+  - flagged:
+      language: go
+      expect_line: 9
+      files:
+        - filename: keys/fingerprint.go
+          code: |
+            package keys
+
+            import (
+            	"crypto/sha1"
+            	"encoding/hex"
+            )
+
+            func Fingerprint(apiKey string) string {
+            	sum := sha1.Sum([]byte(apiKey))
+            	return hex.EncodeToString(sum[:])
+            }
+        - filename: go.mod
+          language: text
+          code: |
+            module example.com/keys
+
+            go 1.22
+    not_flagged:
+      language: go
+      files:
+        - filename: keys/fingerprint.go
+          code: |
+            package keys
+
+            import (
+            	"crypto/sha256"
+            	"encoding/hex"
+            )
+
+            func Fingerprint(apiKey string) string {
+            	sum := sha256.Sum256([]byte(apiKey))
+            	return hex.EncodeToString(sum[:])
+            }
+        - filename: go.mod
+          language: text
+          code: |
+            module example.com/keys
+
+            go 1.22
+      why: >-
+        The Go engine reports only calls to `New` and `Sum` in `crypto/sha1`
+        (and `crypto/md5` for SKY-D207). `sha256.Sum256` is not one of them.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. In Python it finds calls to `hashlib.sha1()`,
+    including import aliases such as `from hashlib import sha1`, and
+    `hashlib.new("sha1", …)` with a literal algorithm name. A reference
+    that is not called, such as `hmac.new(key, msg, hashlib.sha1)`, is not
+    a call and is not reported.
+  - >-
+    Skips a Python call that passes `usedforsecurity=False` as a literal.
+    Test files are not skipped.
+  - >-
+    Looks at what is hashed: the data argument, values assigned to those
+    names earlier in the same function, and `.update()` arguments on the hash
+    object. When none of these names looks like a credential, identity or
+    certificate (`password`, `token`, `secret`, `api_key`, `user_id`,
+    `session_id`, `cert` and similar), the finding is marked low-risk: left
+    out of the terminal list unless you pass `--all-advice`, but kept in JSON
+    and counted by the gate.
+  - >-
+    In TypeScript and JavaScript it reports `<object>.createHash("sha1")`
+    with a literal string, with the same low-risk mark for a chained
+    `.update(x)` whose names are not sensitive.
+  - >-
+    In Go every call to `sha1.New` or `sha1.Sum` from `crypto/sha1` is
+    reported (by the Go engine as SKY-G208, shown as SKY-D208).
+  - >-
+    In Java it reports `getInstance("SHA1")`, `getInstance("SHA-1")` and
+    `getInstance("sha1")` with a literal string, and
+    `MessageDigest.getInstance(name)` when `name` is a constant holding one
+    of those.
+
+source_refs:
+  - path: skylos/rules/danger/calls.py
+    symbol: '"hashlib.sha1": ('
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _declares_non_security_use"
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _hash_input_names"
+  - path: skylos/security/sensitive_data.py
+    symbol: "def first_sensitive_name"
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: 'rule = "SKY-D207" if text == "md5" else "SKY-D208"'
+  - path: skylos/engines/go/internal/analyzer/analyzer.go
+    symbol: 'rule = "SKY-G208"'
+  - path: skylos/visitors/languages/go/go.py
+    symbol: '"SKY-G208": "SKY-D208"'
+  - path: skylos/visitors/languages/java/danger.py
+    symbol: 'elif text in ("SHA1", "SHA-1", "sha1"):'
+
+fix:
+  explanation: >-
+    Use SHA-256 or stronger for fingerprints of random keys and for
+    signatures, a password hash (scrypt, argon2, bcrypt) for passwords, and
+    keep SHA-1 only where a protocol requires it, such as HMAC-SHA1 or Git
+    object IDs (with `usedforsecurity=False` in Python).
+  filename: app/api_keys.py
+  code: |
+    import hashlib
+    import secrets
+
+
+    def issue_api_key(db, account_id: int) -> str:
+        api_key = secrets.token_urlsafe(32)
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        db.execute(
+            "INSERT INTO api_keys (account_id, key_hash) VALUES (?, ?)",
+            (account_id, key_hash),
+        )
+        return api_key
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      SHA-1 required by an outside format, such as Git object IDs, BitTorrent
+      info hashes or a partner API, is reported. In Python and TypeScript it
+      is only hidden from the terminal list when the hashed names are not
+      sensitive; it still counts for the gate.
+    - >-
+      Go reports every `sha1.New`/`sha1.Sum` call, whatever is hashed.
+    - >-
+      Missed: in TypeScript, `createHash("sha1")` imported by name (not
+      called on an object), and an algorithm name held in a variable.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line, or in Python pass `usedforsecurity=False`,
+        which also documents the intent.
+      language: python
+      code: |
+        oid = hashlib.sha1(header + blob).hexdigest()  # skylos: ignore[SKY-D208] Git object ID
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D208"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D207, SKY-D250, SKY-D282]

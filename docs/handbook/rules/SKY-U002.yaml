@@ -1,0 +1,205 @@
+id: SKY-U002
+title: Unused import
+family: dead-code
+severity: UNRATED
+severity_note: >-
+  Unused-code findings carry no severity in JSON. The terminal report shows
+  them as LOW, SARIF as level `note` and GitLab as `minor`. A confidence
+  score from 0 to 100 decides whether they are listed (60 or more by
+  default); an import nothing reads starts at 100.
+languages: [Python, TypeScript/JavaScript, PHP (`use`), Kotlin, Dart, Rust (hidden below the default threshold)]
+gate:
+  full: counted
+  note: >-
+    Counts toward `max_dead_code`, which has no limit by default, so it only
+    fails a gate where you set one.
+
+what_it_is: >-
+  An import that brings a name into a file which the file never uses. The
+  import still runs, loads the module and adds a dependency, but deleting it
+  changes nothing.
+
+why_it_matters: >-
+  Unused imports slow start-up, keep dependencies alive that could be
+  removed, and can create import cycles. They also mislead readers and
+  coding agents about what a module really depends on.
+
+flagged_example:
+  language: python
+  filename: app/reports.py
+  expect_line: 4
+  code: |
+    """Monthly sales report as CSV."""
+    import csv
+    import io
+    import json
+
+
+    def render_csv(rows):
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        for row in rows:
+            writer.writerow([row["month"], row["total"]])
+        return buffer.getvalue()
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: app/reports.py
+      code: |
+        """Monthly sales report as CSV."""
+        import csv
+        import io
+
+
+        def render_csv(rows):
+            buffer = io.StringIO()
+            writer = csv.writer(buffer)
+            for row in rows:
+                writer.writerow([row["month"], row["total"]])
+            return buffer.getvalue()
+    - filename: app/__init__.py
+      code: |
+        """Reporting helpers."""
+        from app.reports import render_csv
+  why: >-
+    `render_csv` is imported in a package's `__init__.py` that has no
+    `__all__`. Skylos treats public names there as the package's API (callers
+    write `from app import render_csv`), so the import is not reported even
+    though nothing in the project uses it.
+
+more_examples:
+  - flagged:
+      language: typescript
+      expect_file: src/config.ts
+      expect_line: 1
+      files:
+        - filename: src/config.ts
+          code: |
+            import { readFileSync } from "fs";
+            import path from "path";
+
+            export function configPath(name: string): string {
+              return path.join("config", `${name}.json`);
+            }
+        - filename: src/main.ts
+          code: |
+            import { configPath } from "./config";
+
+            console.log(configPath("app"));
+    not_flagged:
+      language: typescript
+      files:
+        - filename: src/config.ts
+          code: |
+            import type { Stats } from "fs";
+            import path from "path";
+
+            export function configPath(name: string): string {
+              return path.join("config", `${name}.json`);
+            }
+
+            export function isLarge(stats: Stats): boolean {
+              return stats.size > 1_000_000;
+            }
+        - filename: src/main.ts
+          code: |
+            import { configPath, isLarge } from "./config";
+
+            console.log(configPath("app"), isLarge);
+      why: >-
+        `Stats` is only used as a type annotation. A type-only use still
+        counts as a use, so the import is kept.
+
+how_skylos_decides:
+  - >-
+    Runs on every scan; no flag is needed. Each import binding is a
+    definition: the module name for `import x`, the alias for
+    `import x as y`, and each name of `from x import a, b`. TypeScript and
+    JavaScript named, default and namespace imports, PHP `use`, Kotlin and
+    Dart imports are read the same way.
+  - >-
+    Counts a binding as used when the file reads the name anywhere,
+    including in type annotations. In TypeScript, only a use in the same
+    file counts: the same word in another file never keeps an import alive.
+  - >-
+    Never reports `from __future__` imports, and treats imports in a
+    package `__init__.py` as exported API: every public name when there is
+    no `__all__`, otherwise the names `__all__` lists.
+  - >-
+    Caps an import inside a `try:` whose `except` catches `ImportError` or
+    `ModuleNotFoundError` (an optional dependency) at confidence 40, below
+    the default threshold of 60, so it is not listed.
+  - >-
+    Skips imports in test, example and benchmark paths, and imports whose
+    line carries `# noqa: F401`, a bare `# noqa`, `# skylos: ignore` or
+    `# skylos: ignore[SKY-U002]`. Other imports with no reads are listed at
+    confidence 100.
+
+source_refs:
+  - path: skylos/visitors/base.py
+    symbol: "def visit_Try(self, node: ast.Try)"
+    note: imports guarded by an ImportError handler.
+  - path: skylos/analysis/penalties.py
+    symbol: "def _check_conditional_import(def_obj)"
+  - path: skylos/analysis/penalties.py
+    symbol: "def _check_inline_ignore(def_obj, visitor)"
+    note: "`# noqa: F401` and skylos markers."
+  - path: skylos/analysis/penalties.py
+    symbol: "_FUTURE_IMPORTS = {"
+  - path: skylos/analyzer.py
+    symbol: "def _mark_exports(self)"
+    note: "`__init__.py` re-exports and `__all__`."
+  - path: skylos/core/grep_verify.py
+    symbol: "def _filter_typescript_binding_evidence("
+    note: TypeScript imports are never rescued by text in other files.
+
+fix:
+  explanation: >-
+    Delete the import. If it is there for a side effect (registering a
+    plugin, patching a library), say so on the line with an inline
+    suppression instead, so the next reader does not delete it.
+  filename: app/reports.py
+  code: |
+    """Monthly sales report as CSV."""
+    import csv
+    import io
+
+
+    def render_csv(rows):
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        for row in rows:
+            writer.writerow([row["month"], row["total"]])
+        return buffer.getvalue()
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Imports kept for their side effect, such as `import app.signals` to
+      register signal handlers, are reported because the bound name is never
+      read.
+    - >-
+      Re-exports from a module that is not an `__init__.py` are reported
+      unless the module lists them in `__all__`.
+    - >-
+      Optional imports inside `try`/`except ImportError` are held back even
+      when they are really unused.
+  suppress:
+    - check: inline
+      text: >-
+        On the import line, with a reason. `# noqa: F401` also works, since
+        it is the code Ruff and flake8 use for the same problem.
+      language: python
+      code: |
+        import json  # skylos: ignore[SKY-U002] imported for its side effect
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-U002"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        unused imports you already have.
+
+related: [SKY-U001, SKY-U003, SKY-U005]

@@ -1,0 +1,117 @@
+id: SKY-L006
+title: Inconsistent return
+family: logic
+severity: MEDIUM
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  MEDIUM. The catalog names the rule "Shadowed loop variable", but the
+  detector checks return statements; this page describes the detector.
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  A function that returns a value on some paths and uses a bare `return`
+  on others mixes two styles. Callers cannot tell whether the bare
+  `return` means "no result" on purpose or is a path someone forgot.
+
+why_it_matters: >-
+  The caller gets `None` where it expects a number, and the error shows up
+  later, far from its cause: here `price * (100 - find_discount(code)) / 100`
+  raises `TypeError` for an empty code instead of applying no discount.
+
+flagged_example:
+  language: python
+  filename: shop/discounts.py
+  expect_line: 1
+  code: |
+    def find_discount(code, discounts):
+        if not code:
+            return
+        for discount in discounts:
+            if discount.code == code.upper():
+                return discount.percent
+        return 0
+
+not_flagged_example:
+  language: python
+  filename: shop/discounts.py
+  code: |
+    def find_discount(code, discounts) -> int | None:
+        if not code:
+            return
+        for discount in discounts:
+            if discount.code == code.upper():
+                return discount.percent
+        return 0
+  why: >-
+    The return annotation `int | None` says `None` is a valid result, so
+    the bare `return` is a declared outcome. Skylos skips functions whose
+    annotation allows `None` (`Optional[...]`, `Union[..., None]`,
+    `X | None` or `None`).
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files and visits every `def` and
+    `async def`.
+  - >-
+    Skips the function when its return annotation allows `None`.
+  - >-
+    Collects the `return` statements of the function itself, not of nested
+    functions or classes. A `return` with a value other than `None` counts
+    as a value return; a bare `return` counts as a bare one. An explicit
+    `return None` counts as neither, as PEP 8 recommends.
+  - >-
+    Reports MEDIUM on the `def` line when the function has both. A
+    function that returns a value on some paths and simply ends on others,
+    with no bare `return`, is not reported.
+
+source_refs:
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "class ReturnConsistencyRule"
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "def _annotation_allows_none("
+  - path: skylos/rules/catalog.py
+    symbol: '"SKY-L006", "Shadowed loop variable"'
+    note: the catalog name that does not match the detector.
+  - path: test/test_quality_rules.py
+    symbol: "SKY-L006"
+
+fix:
+  explanation: >-
+    Return the same kind of value on every path. Here an empty code means
+    no discount, so return `0`. When `None` is a real answer, write
+    `return None` or annotate the function with `| None`.
+  filename: shop/discounts.py
+  code: |
+    def find_discount(code, discounts):
+        if not code:
+            return 0
+        for discount in discounts:
+            if discount.code == code.upper():
+                return discount.percent
+        return 0
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Functions that mean "no result" with a bare `return` and document it
+      only in the docstring are reported; add the annotation or write
+      `return None`.
+    - >-
+      A function that falls off its end on some paths (an implicit `None`)
+      is not reported, even though it has the same problem.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the `def` line (the first line of a multi-line
+        signature).
+      language: python
+      code: |
+        def find_discount(code, discounts):  # skylos: ignore[SKY-L006] legacy API
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L006"]` turns the rule off for the
+        project.
+
+related: [SKY-L028, SKY-T101]

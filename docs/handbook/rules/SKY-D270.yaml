@@ -1,0 +1,138 @@
+id: SKY-D270
+title: Token or password saved in browser storage
+family: security
+severity: MEDIUM
+languages: [TypeScript/JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  `localStorage` and `sessionStorage` keep values in the browser where any
+  script on the page can read them. SKY-D270 reports a
+  `localStorage.setItem()` or `sessionStorage.setItem()` call whose key names
+  a token, password, secret, API key or session identifier.
+
+why_it_matters: >-
+  One cross-site scripting bug, or one compromised npm package running on
+  the page, can read `localStorage.getItem("accessToken")` and send it away.
+  The attacker can then call your API as that user until the token expires,
+  from any machine. An `httpOnly` cookie cannot be read by script at all.
+
+flagged_example:
+  language: typescript
+  filename: src/auth/session.ts
+  expect_line: 7
+  code: |
+    interface LoginResponse {
+      accessToken: string;
+      expiresAt: number;
+    }
+
+    export function rememberLogin(login: LoginResponse): void {
+      localStorage.setItem("accessToken", login.accessToken);
+      localStorage.setItem("tokenExpiresAt", String(login.expiresAt));
+    }
+
+not_flagged_example:
+  language: typescript
+  filename: src/auth/session.ts
+  code: |
+    interface LoginResponse {
+      csrfToken: string;
+      expiresAt: number;
+    }
+
+    export function rememberLogin(login: LoginResponse): void {
+      localStorage.setItem("tokenExpiresAt", String(login.expiresAt));
+      sessionStorage.setItem("csrf_token", login.csrfToken);
+    }
+  why: >-
+    `tokenExpiresAt` mentions a token but ends in `ExpiresAt`, and only keys
+    that end in a sensitive word count. Keys starting with `csrf` or `xsrf`
+    are skipped on purpose: a CSRF token is meant to be readable by the
+    page's own script.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on TypeScript and JavaScript files. Finds calls
+    written exactly as `localStorage.setItem(…)` or
+    `sessionStorage.setItem(…)`.
+  - >-
+    Reads the first argument only when it is a plain quoted string. The key
+    is lower-cased and `_` and `-` are removed, so `auth_token`,
+    `auth-token` and `authToken` are the same.
+  - >-
+    Skips keys that start with `csrf` or `xsrf`.
+  - >-
+    Reports the call when the key is, or ends with, one of: `token`, `auth`,
+    `jwt`, `secret`, `password`, `passwd`, `credential`, `apikey`,
+    `bearer`, `accesstoken`, `refreshtoken`, `sessionid`, `sessionkey`,
+    `privatekey`.
+  - >-
+    The stored value is not looked at: the key name is the only evidence.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "# --- Sensitive data in localStorage/sessionStorage (SKY-D270) ---"
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "_STORAGE_SENSITIVE_SUFFIXES = ("
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "_STORAGE_SAFE_PREFIXES = (\"csrf\", \"xsrf\")"
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "@ls_set_obj (#eq? @ls_set_obj \"localStorage\")"
+    note: the call pattern; the receiver must be the bare name.
+  - path: test/test_typescript_expanded.py
+    symbol: "class TestLocalStorageTokens"
+
+fix:
+  explanation: >-
+    Let the server put the session in a cookie marked `HttpOnly`, `Secure`
+    and `SameSite`, and send requests with `credentials: "include"`. The
+    browser then attaches the token without page script ever seeing it. Keep
+    only harmless facts, such as the expiry time, in storage.
+  filename: src/auth/session.ts
+  code: |
+    interface LoginResponse {
+      expiresAt: number;
+    }
+
+    // The server sets the session cookie with HttpOnly; Secure; SameSite=Lax.
+    export async function logIn(email: string, password: string): Promise<void> {
+      const response = await fetch("/api/login", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const login: LoginResponse = await response.json();
+      localStorage.setItem("tokenExpiresAt", String(login.expiresAt));
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Keys that end in a sensitive word but hold nothing secret are
+      reported: `oauth` holding the chosen login provider ends in `auth`,
+      and `pushToken` holding a public push-subscription id ends in `token`.
+    - >-
+      Missed: a key held in a constant (`setItem(TOKEN_KEY, t)`), a
+      template-literal key, `window.localStorage.setItem(…)`, bracket
+      assignment (`localStorage["token"] = t`) and storage wrappers such as
+      `localforage` are not checked.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line with a comment on the same line.
+      language: typescript
+      code: |
+        localStorage.setItem("pushToken", subscription.token); // skylos: ignore[SKY-D270] public push id
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D270"]` turns the rule off for the whole
+        project.
+    - check: baseline
+      text: >-
+        `skylos baseline .` and then `--baseline` accept the existing calls
+        and report only new ones.
+
+related: [SKY-D226, SKY-D252, SKY-S102]

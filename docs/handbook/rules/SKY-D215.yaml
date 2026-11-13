@@ -1,0 +1,285 @@
+id: SKY-D215
+title: Path traversal
+family: security
+severity: HIGH
+severity_note: >-
+  Every language reports HIGH. In shell scripts the severity drops to
+  MEDIUM when only the script's own arguments reach the path behind a
+  root-only check, or when the command runs as a non-root user.
+languages: [Python, TypeScript/JavaScript, Go, Java, Kotlin, C#, PHP, Rust, Dart, Shell]
+gate:
+  full: counted
+cwe: [CWE-22]
+
+what_it_is: >-
+  Path traversal happens when outside text chooses a file path and can use
+  `../` or an absolute path to leave the folder the program meant to use.
+  Skylos reports SKY-D215 when request data, or a value that a request can
+  reach through a project caller, becomes the path of a file read, write,
+  delete or download.
+
+why_it_matters: >-
+  A download link called with `name=../../etc/passwd` or
+  `name=../.env` hands out files the server can read, including keys and
+  database passwords. On a write or delete path, the same trick overwrites
+  code or removes data.
+
+flagged_example:
+  language: python
+  filename: app/files.py
+  expect_line: 12
+  code: |
+    import os
+
+    from flask import Flask, request, send_file
+
+    app = Flask(__name__)
+    UPLOAD_DIR = "/srv/uploads"
+
+
+    @app.get("/files")
+    def download():
+        name = request.args.get("name", "")
+        return send_file(os.path.join(UPLOAD_DIR, name))
+
+not_flagged_example:
+  language: python
+  filename: app/files.py
+  code: |
+    from flask import Flask, request, send_from_directory
+
+    app = Flask(__name__)
+    UPLOAD_DIR = "/srv/uploads"
+
+
+    @app.get("/files")
+    def download():
+        name = request.args.get("name", "")
+        return send_from_directory(UPLOAD_DIR, name)
+  why: >-
+    Flask's `send_from_directory()` joins the name with `safe_join()`, which
+    refuses any result outside `UPLOAD_DIR`. Skylos only checks its
+    `directory` argument, which here is a fixed setting.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/server.ts
+      expect_line: 9
+      code: |
+        import express from "express";
+        import path from "path";
+
+        const app = express();
+        const UPLOAD_DIR = "/srv/uploads";
+
+        app.get("/files", (req, res) => {
+          const name = String(req.query.name ?? "");
+          res.sendFile(path.join(UPLOAD_DIR, name));
+        });
+
+        app.listen(3000);
+    not_flagged:
+      language: typescript
+      filename: src/server.ts
+      code: |
+        import express from "express";
+
+        const app = express();
+        const UPLOAD_DIR = "/srv/uploads";
+
+        app.get("/files", (req, res) => {
+          const name = String(req.query.name ?? "");
+          res.sendFile(name, { root: UPLOAD_DIR });
+        });
+
+        app.listen(3000);
+      why: >-
+        With the `root` option, Express resolves the name under `UPLOAD_DIR`
+        and refuses names that climb out of it with `..`.
+  - flagged:
+      language: go
+      filename: main.go
+      expect_line: 13
+      code: |
+        package main
+
+        import (
+        	"net/http"
+        	"os"
+        	"path/filepath"
+        )
+
+        const uploadDir = "/srv/uploads"
+
+        func download(w http.ResponseWriter, r *http.Request) {
+        	name := r.URL.Query().Get("name")
+        	data, err := os.ReadFile(filepath.Join(uploadDir, name))
+        	if err != nil {
+        		http.NotFound(w, r)
+        		return
+        	}
+        	w.Header().Set("Content-Type", "application/octet-stream")
+        	w.Write(data)
+        }
+
+        func main() {
+        	http.HandleFunc("/files", download)
+        	http.ListenAndServe(":8080", nil)
+        }
+    not_flagged:
+      language: go
+      filename: main.go
+      code: |
+        package main
+
+        import (
+        	"net/http"
+        	"os"
+        	"path/filepath"
+        )
+
+        const uploadDir = "/srv/uploads"
+
+        func download(w http.ResponseWriter, r *http.Request) {
+        	name := r.URL.Query().Get("name")
+        	data, err := os.ReadFile(filepath.Join(uploadDir, filepath.Base(name)))
+        	if err != nil {
+        		http.NotFound(w, r)
+        		return
+        	}
+        	w.Header().Set("Content-Type", "application/octet-stream")
+        	w.Write(data)
+        }
+
+        func main() {
+        	http.HandleFunc("/files", download)
+        	http.ListenAndServe(":8080", nil)
+        }
+      why: >-
+        `filepath.Base()` keeps only the last part of the name, so it cannot
+        contain a folder or `..`. Skylos treats its result as safe.
+
+how_skylos_decides:
+  - >-
+    In Python, finds file operations: `open()`, `os.open()`, `os.remove()`,
+    `os.unlink()`, `os.mkdir()`, `os.makedirs()`, `os.rmdir()`,
+    `shutil.copy()`, `copy2()`, `copytree()`, `move()` and `rmtree()`,
+    `pathlib` methods such as `read_text()`, `write_bytes()`, `unlink()` and
+    `rename()` on a path object, and file responses: FastAPI and Starlette
+    `FileResponse`, Flask `send_file()`, and only the `directory` argument of
+    `send_from_directory()`.
+  - >-
+    Treats request data, route and MCP tool arguments, `input()` and standard
+    input as untrusted. A path built from a helper's parameter is followed to
+    every caller Skylos can resolve in the project, and is reported when a
+    chain starts at untrusted data.
+  - >-
+    Moves a helper-parameter finding to the suppressed list when every
+    resolved caller passes literals, operator input or other safe values,
+    and also when a caller cannot be resolved (including a helper nobody
+    calls). A chain cut off by a depth or size limit stays reported.
+  - >-
+    Does not report paths whose only source is the person running the
+    program: command-line arguments and environment variables.
+  - >-
+    Accepts values that cannot carry `/` or `..`: `os.path.basename()`,
+    `Path(...).name`, werkzeug `secure_filename()`, `safe_join()` with a
+    fixed base, `hexdigest()`, UUIDs, `secrets.token_hex()` and `int()`.
+  - >-
+    Accepts a guard before the call: a path normalised with `resolve()`,
+    `realpath()`, `abspath()` or `normpath()` and checked with
+    `is_relative_to()`, `relative_to()`, `startswith()` or `commonpath()`,
+    where the failing branch raises, returns, breaks, continues or calls
+    `abort()`; an `assert` of the same; or `name in ALLOWED` where `ALLOWED`
+    is a literal collection or an upper-case name. A prefix check on a path
+    that was not normalised does not count.
+  - >-
+    TypeScript and JavaScript: request data from a route handler reaching
+    `fs`, `fs/promises` or `fs-extra` paths, or `res.sendFile()` /
+    `res.download()` without a `root` option. Go (reported by the Go engine
+    as SKY-G215 and SKY-G305): request or network input reaching `os.Open`,
+    `os.ReadFile`, `os.WriteFile` and similar calls without `filepath.Base`,
+    `SecureJoin` or a check on a cleaned path, and archive entry names
+    written to disk without a `..` check. Java, Kotlin, C#, PHP, Rust, Dart
+    and shell scripts have their own checks with the same idea.
+
+source_refs:
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "class _PathFlowChecker"
+    note: Python detector; `visit_Call` holds the sink list.
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "FILE_RESPONSE_SINKS = {"
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "def _path_is_contained"
+    note: guards and allowlists.
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "def _untrusted_path_evidence"
+    note: operator sources and helper parameters.
+  - path: skylos/rules/danger/taint.py
+    symbol: "PATH_SANITIZERS = {"
+  - path: skylos/rules/danger/untrusted_sources.py
+    symbol: "def is_traversal_safe_value"
+  - path: skylos/rules/danger/danger_fs/path_provenance.py
+    symbol: "def resolve_helper_parameter_findings"
+    note: callers of a helper; safe, unknown and incomplete chains.
+  - path: skylos/engines/go/internal/analyzer/analyzer.go
+    symbol: "\"SKY-G215\""
+  - path: skylos/visitors/languages/go/go.py
+    symbol: "_GO_RULE_REMAP"
+  - path: test/test_untrusted_source_flows.py
+    symbol: "def test_file_serving_negatives_stay_clean"
+
+fix:
+  explanation: >-
+    Resolve the full path and check that it is still inside the base folder
+    before using it. Reject everything else.
+  filename: app/files.py
+  code: |
+    from pathlib import Path
+
+    from flask import Flask, abort, request, send_file
+
+    app = Flask(__name__)
+    UPLOAD_DIR = Path("/srv/uploads").resolve()
+
+
+    @app.get("/files")
+    def download():
+        name = request.args.get("name", "")
+        path = (UPLOAD_DIR / name).resolve()
+        if not path.is_relative_to(UPLOAD_DIR):
+            abort(404)
+        return send_file(path)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A check made inside another function, such as `ensure_inside(path)`
+      that calls `abort()`, is not seen: the path is still reported.
+    - >-
+      An allowlist kept in a lower-case variable (`if name not in
+      reports: abort(404)`) is not recognised; use a literal set or an
+      upper-case constant.
+    - >-
+      An `open()` that reads or writes the same path usually also gets
+      SKY-D325 or SKY-D324, which ask about symlinks. They are separate
+      findings.
+  suppress:
+    - check: inline
+      text: >-
+        Silence one line and say why. A bare `# noqa` does not hide HIGH
+        security findings.
+      language: python
+      code: |
+        return send_file(path)  # skylos: ignore[SKY-D215] path checked by ensure_inside()
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D215"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D324, SKY-D325, SKY-D326, SKY-D255]

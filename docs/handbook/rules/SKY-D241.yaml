@@ -1,0 +1,167 @@
+id: SKY-D241
+title: MCP server on a network transport without authentication
+family: security
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+cwe: [CWE-306]
+
+what_it_is: >-
+  An MCP server can talk to its client over standard input and output
+  (stdio), or over the network with HTTP or server-sent events (SSE).
+  SKY-D241 reports a Python MCP server started on a network transport, or
+  on a non-local host, with no authentication passed to `run()`.
+
+why_it_matters: >-
+  Anyone who can reach the port can list the server's tools and call them
+  without logging in: here, refund orders. Local addresses are not a full
+  defence either, because other programs on the machine, and web pages
+  using DNS rebinding, can reach them.
+
+flagged_example:
+  language: python
+  filename: server/billing.py
+  expect_line: 15
+  code: |
+    from fastmcp import FastMCP
+
+    from billing import payments
+
+    mcp = FastMCP("billing-tools")
+
+
+    @mcp.tool()
+    def refund(order_id: str, amount_cents: int) -> str:
+        """Refund part of an order."""
+        return payments.refund(order_id, amount_cents)
+
+
+    if __name__ == "__main__":
+        mcp.run(transport="http", port=8000)
+
+not_flagged_example:
+  language: python
+  filename: server/billing.py
+  code: |
+    from fastmcp import FastMCP
+
+    from billing import payments
+
+    mcp = FastMCP("billing-tools")
+
+
+    @mcp.tool()
+    def refund(order_id: str, amount_cents: int) -> str:
+        """Refund part of an order."""
+        return payments.refund(order_id, amount_cents)
+
+
+    if __name__ == "__main__":
+        mcp.run(transport="stdio")
+  why: >-
+    Over stdio the server only talks to the client process that started it,
+    such as the user's own desktop app; there is no port to connect to.
+    `mcp.run()` with no transport is read the same way.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Python files that import `mcp`, `fastmcp` or a
+    module under `mcp.`.
+  - >-
+    Looks at `X.run(...)` calls where `X` was assigned from a call whose
+    name ends in `FastMCP` or `Server`, or is simply named `server`, `mcp`
+    or `app`. Other start-up calls, such as `run_async()` or
+    `uvicorn.run(...)`, are not checked.
+  - >-
+    Treats the call as networked when `transport=` is the literal `"sse"`,
+    `"http"`, `"streamable-http"` or `"streamable_http"`, or when `host=` is
+    a literal other than `"127.0.0.1"` and `"localhost"`. A transport or host
+    held in a variable is not read.
+  - >-
+    Skips the call when it passes any of the keywords `auth`,
+    `authenticator`, `auth_server_provider`, `middleware` or
+    `auth_middleware`, whatever their value.
+  - >-
+    Otherwise reports HIGH on the `run(` line. A call that also binds to
+    `"0.0.0.0"` is reported a second time, as SKY-D243.
+
+source_refs:
+  - path: skylos/rules/danger/danger_mcp/mcp_flow.py
+    symbol: "def _check_server_run"
+  - path: skylos/rules/danger/danger_mcp/mcp_flow.py
+    symbol: "_NETWORK_TRANSPORTS = {\"sse\", \"streamable-http\", \"streamable_http\", \"http\"}"
+  - path: skylos/rules/danger/danger_mcp/mcp_flow.py
+    symbol: "def _record_server_assignment"
+  - path: skylos/rules/danger/danger_mcp/mcp_flow.py
+    symbol: "def _check_call"
+  - path: test/test_mcp_rules.py
+    symbol: "def test_sse_with_auth_no_flag"
+
+fix:
+  explanation: >-
+    If only your own client uses the server, run it over stdio. If it must
+    serve HTTP, require a credential on every request, for example with an
+    ASGI middleware that checks a bearer token, passed to `run()`. FastMCP's
+    own `FastMCP(..., auth=...)` providers protect the server too, but
+    Skylos does not see them yet (see below).
+  filename: server/billing.py
+  code: |
+    from fastmcp import FastMCP
+    from starlette.middleware import Middleware
+
+    from billing import payments
+    from billing.auth import RequireBearerToken
+
+    mcp = FastMCP("billing-tools")
+
+
+    @mcp.tool()
+    def refund(order_id: str, amount_cents: int) -> str:
+        """Refund part of an order."""
+        return payments.refund(order_id, amount_cents)
+
+
+    if __name__ == "__main__":
+        mcp.run(
+            transport="http",
+            port=8000,
+            middleware=[Middleware(RequireBearerToken)],
+        )
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Authentication set on the server object is not seen:
+      `FastMCP("billing", auth=provider)` in FastMCP, or `token_verifier=` and
+      `auth=AuthSettings(...)` in the official MCP SDK, still leave the
+      `run()` call reported.
+    - >-
+      The keyword check does not look at the value: `middleware=[cors]` or
+      `auth=None` silence the finding although nothing checks a credential.
+    - >-
+      `host="::1"` (the IPv6 loopback address) counts as a network host.
+    - >-
+      In a file that imports MCP, any `app.run(...)` with a non-local host,
+      such as a Flask app, is checked the same way.
+    - >-
+      A transport chosen at run time, as in
+      `mcp.run(transport=os.environ["MCP_TRANSPORT"])`, is missed.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the `run(` line when authentication is configured elsewhere,
+        and say where.
+      language: python
+      code: |
+        mcp.run(transport="http", port=8000)  # skylos: ignore[SKY-D241] auth= on FastMCP()
+    - check: baseline
+      text: >-
+        `skylos baseline .`, then `--baseline`, accepts existing findings by
+        file and line.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D241"]` turns the check off for the
+        project.
+
+related: [SKY-D243, SKY-D240, SKY-D283]

@@ -1,0 +1,159 @@
+id: SKY-D311
+title: Artifact upload passes when files are missing
+family: ci-cd
+severity: MEDIUM
+severity_note: >-
+  The catalog lists MEDIUM, but the detector reports every finding as LOW.
+languages: [GitHub Actions workflows, composite actions]
+gate:
+  full: counted
+
+what_it_is: >-
+  `actions/upload-artifact` only warns when its `path` matches no files,
+  and the step still succeeds. SKY-D311 reports an upload step that does
+  not set `if-no-files-found: error`.
+
+why_it_matters: >-
+  A build that silently produced nothing then shows green. The release job
+  that downloads the artifact fails far from the cause, or ships without
+  the binary, and a wrong path can go unnoticed for many releases.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/build.yml
+  expect_line: 17
+  code: |
+    name: Build
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      build:
+        name: Build the CLI
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - run: go build -o dist/app ./cmd/app
+          - uses: actions/upload-artifact@v4
+            with:
+              name: app-linux
+              path: dist/app
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/build.yml
+  code: |
+    name: Build
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      build:
+        name: Build ${{ matrix.goos }}
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        strategy:
+          matrix:
+            goos: [linux, darwin, windows]
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - run: GOOS=${{ matrix.goos }} go build -o dist/ ./cmd/app
+          - uses: actions/upload-artifact@v4
+            with:
+              name: app-${{ matrix.goos }}
+              path: dist/
+              if-no-files-found: error
+              retention-days: 7
+  why: >-
+    The matrix, the expressions in the name and the broad `dist/` path do
+    not matter to this rule. The step sets `if-no-files-found: error`, so a
+    build that wrote nothing fails the job instead of passing.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows` and composite actions
+    (`action.yml`, `action.yaml`).
+  - >-
+    Checks every step whose `uses:` is `actions/upload-artifact` at any
+    version. Other actions, including `actions/upload-artifact/merge`, are
+    not read.
+  - >-
+    Reports the step unless its `with:` sets `if-no-files-found` to
+    `error` (any letter case). `warn`, `ignore`, a missing value and an
+    expression are all reported.
+  - >-
+    Reports LOW on the first line of the file that contains the step's
+    `uses:` text. Steps with the same `uses:` text give one finding there.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_artifact_upload_policy("
+  - path: test/test_github_actions_security.py
+    symbol: "def test_github_actions_scanner_detects_issue_derived_hardening_gaps"
+
+fix:
+  explanation: >-
+    Add `if-no-files-found: error` to uploads of build output. Keep `warn`
+    or `ignore` only for files that may legitimately be absent, such as
+    logs uploaded after a failure, and mark those steps.
+  filename: .github/workflows/build.yml
+  code: |
+    name: Build
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      build:
+        name: Build the CLI
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - run: go build -o dist/app ./cmd/app
+          - uses: actions/upload-artifact@v4
+            with:
+              name: app-linux
+              path: dist/app
+              if-no-files-found: error
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Uploads of optional files, such as test logs after a failure, set
+      `ignore` on purpose and are still reported.
+    - >-
+      Two upload steps with the same `uses:` text, for example
+      `actions/upload-artifact@v4`, give one finding on the first such
+      line, even when that step sets `error` and a later one does not. A
+      marker must then go on that first line.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D311] <reason>` on the reported `uses:`
+        line or on the line directly above it, one rule per marker.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D311] logs exist only when tests fail
+        - uses: actions/upload-artifact@v4
+          if: failure()
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D311"]` turns the rule off for the
+        whole project. A baseline also works, but it records the absolute
+        file path and line, so it stops matching when the checkout moves or
+        lines above the finding change.
+
+related: [SKY-D293, SKY-D372, SKY-D308]

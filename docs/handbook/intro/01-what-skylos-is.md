@@ -33,10 +33,13 @@ covers.
 ## What leaves your machine
 
 A scan uploads nothing to Skylos Cloud unless you ask it to, for example
-with `skylos cloud` or `--upload`. There is no update check and no
-analytics. Dead-code, `--danger`, `--secrets` and `--quality` checks work
+with `skylos cloud` or `--upload`. There is no analytics. The one version
+lookup is an anonymous read of the public PyPI record for `skylos`, at most
+once a day, for the upgrade notice that `skylos doctor` and a scan printed to
+a terminal show. It is skipped in CI and when standard output is not a
+terminal, and `SKYLOS_NO_TELEMETRY=1` turns it off. Dead-code, `--danger`, `--secrets` and `--quality` checks work
 offline. Two checks look things up on public services. They send package
-names and versions, never your source code:
+names, versions and CVE IDs, never your source code:
 
 - `--sca` asks OSV.dev about dependency versions. It also asks the GitHub
   API about advisory fix commits (with `GITHUB_TOKEN`, if set), and asks npm
@@ -44,7 +47,10 @@ names and versions, never your source code:
   lookup does not complete, it checks the malware feed that ships with the
   installed `ca9` library instead; nothing is downloaded for that.
   `--scan-publisher-changes` also asks the npm registry for the publisher
-  history of direct dependencies.
+  history of direct dependencies. With `npm_registry_mirrors` set, it asks
+  the public npm registry about packages locked behind that mirror, never
+  the mirror itself. `--sca-threat-intel` sends CVE IDs to FIRST for EPSS
+  scores and downloads CISA's list of exploited vulnerabilities.
 - `--ai-defects` asks PyPI, npm, the Go proxy and JSR whether imported
   packages and pinned versions exist, and reads parts of public wheel files
   from PyPI.

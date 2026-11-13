@@ -1,0 +1,137 @@
+id: SKY-D306
+title: Insecure workflow commands turned back on
+family: ci-cd
+severity: HIGH
+languages: [GitHub Actions workflows, composite actions]
+gate:
+  full: counted
+
+what_it_is: >-
+  GitHub Actions once let any line printed by a step, such as
+  `::set-env name=X::value` or `::add-path::dir`, change the job's
+  environment. GitHub disabled these commands in 2020 because printed text
+  is easy to influence. `ACTIONS_ALLOW_UNSECURE_COMMANDS: true` turns them
+  back on, and SKY-D306 reports it.
+
+why_it_matters: >-
+  With the commands on, anything a step prints can set variables or `PATH`
+  for later steps: a test name, a log line from a dependency, or the title
+  of an issue echoed to the log. One crafted line, such as one setting
+  `NODE_OPTIONS`, is enough to run code in the next step with the job's
+  token.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/lint.yml
+  expect_line: 7
+  code: |
+    name: Lint
+    on: [push, pull_request]
+    permissions:
+      contents: read
+    env:
+      # acme/setup-linter v1 still prints ::add-path::
+      ACTIONS_ALLOW_UNSECURE_COMMANDS: true
+    jobs:
+      lint:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - uses: acme/setup-linter@v1.2.0
+          - run: acme-lint .
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/lint.yml
+  code: |
+    name: Lint
+    on: [push, pull_request]
+    permissions:
+      contents: read
+    env:
+      # acme/setup-linter v1 still runs on Node 16
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+    jobs:
+      lint:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - uses: acme/setup-linter@v1.2.0
+          - run: acme-lint .
+  why: >-
+    This variable only lets an action written for an old Node.js version
+    run. It does not turn the workflow commands back on, and the rule
+    reads nothing but `ACTIONS_ALLOW_UNSECURE_COMMANDS`.
+
+how_skylos_decides:
+  - >-
+    Reads the top-level `env:` of a file, and in workflows every job's and
+    step's `env:`; in composite actions, each step's `env:`.
+  - >-
+    Reports `ACTIONS_ALLOW_UNSECURE_COMMANDS` set to true: `true`, `yes`,
+    `on` or `1`, quoted or not. `false`, an expression such as
+    `${{ vars.LEGACY }}`, and any other value are not reported.
+  - >-
+    One HIGH finding per file, on the first line that contains
+    `ACTIONS_ALLOW_UNSECURE_COMMANDS`.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_insecure_commands("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _iter_env_blocks("
+  - path: test/test_github_actions_security.py
+    symbol: "def test_github_actions_scanner_detects_extended_offline_risks("
+
+fix:
+  explanation: >-
+    Remove the variable and upgrade the action that still prints the old
+    commands. Current actions write to `$GITHUB_ENV` and `$GITHUB_PATH`
+    instead.
+  filename: .github/workflows/lint.yml
+  code: |
+    name: Lint
+    on: [push, pull_request]
+    permissions:
+      contents: read
+    jobs:
+      lint:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - uses: acme/setup-linter@v2.0.1
+          - run: acme-lint .
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Several jobs or steps that set the variable give one finding, on the
+      first line that names it, even when that line is a comment.
+    - >-
+      The examples also get SKY-D292 for actions referenced by a version
+      tag instead of a commit SHA.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D306]` on the reported line or on the line
+        directly above it, one rule per marker.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D306] removed once setup-linter v2 is out
+        ACTIONS_ALLOW_UNSECURE_COMMANDS: true
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D306"]` turns the rule off for the whole
+        project.
+    - check: baseline
+      text: >-
+        A baseline works, but it records the absolute file path and the line,
+        so it stops matching when the checkout moves or lines above shift.
+
+related: [SKY-D300, SKY-D292, SKY-D294]

@@ -1,0 +1,247 @@
+id: SKY-D210
+title: TLS certificate verification turned off
+family: security
+severity: HIGH
+languages: [Python, TypeScript/JavaScript, Go]
+gate:
+  full: counted
+cwe: [CWE-295]
+
+what_it_is: >-
+  TLS (the "S" in HTTPS) checks the server's certificate so a client knows it
+  is talking to the real server. SKY-D210 reports code that switches that
+  check off, such as `requests.get(url, verify=False)`,
+  `rejectUnauthorized: false` or `InsecureSkipVerify: true`.
+
+why_it_matters: >-
+  Anyone on the network path, such as a hostile Wi-Fi hotspot, a compromised
+  router or a container sidecar, can then pose as the server, read the
+  credentials and data the client sends and change the responses it gets.
+
+flagged_example:
+  language: python
+  filename: app/inventory.py
+  expect_line: 7
+  code: |
+    import requests
+
+    INVENTORY_URL = "https://inventory.internal.example.com/api/stock"
+
+
+    def fetch_stock(sku: str) -> dict:
+        response = requests.get(INVENTORY_URL, params={"sku": sku}, verify=False)
+        response.raise_for_status()
+        return response.json()
+
+not_flagged_example:
+  language: python
+  filename: tests/test_inventory.py
+  code: |
+    import requests
+
+
+    def test_stock_endpoint_answers(local_server):
+        response = requests.get(f"{local_server}/api/stock?sku=A1", verify=False)
+        assert response.status_code == 200
+  why: >-
+    The call is in a test module, where turning verification off is the
+    usual way to reach a local server with a self-signed certificate.
+    Python files named `test_*.py`, `*_test.py` or `conftest.py`, or under a
+    `tests/` or `test/` folder, are not checked by this rule.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/billing/client.ts
+      expect_line: 3
+      code: |
+        import https from "node:https";
+
+        const agent = new https.Agent({ rejectUnauthorized: false });
+
+        export function getInvoices(done: (body: string) => void): void {
+          https.get("https://billing.internal.example.com/invoices", { agent }, (res) => {
+            let body = "";
+            res.on("data", (chunk) => (body += chunk));
+            res.on("end", () => done(body));
+          });
+        }
+    not_flagged:
+      language: typescript
+      filename: src/billing/client.ts
+      code: |
+        import fs from "node:fs";
+        import https from "node:https";
+
+        const agent = new https.Agent({
+          ca: fs.readFileSync("/etc/ssl/certs/internal-ca.pem"),
+          rejectUnauthorized: true,
+        });
+
+        export function getInvoices(done: (body: string) => void): void {
+          https.get("https://billing.internal.example.com/invoices", { agent }, (res) => {
+            let body = "";
+            res.on("data", (chunk) => (body += chunk));
+            res.on("end", () => done(body));
+          });
+        }
+      why: >-
+        Verification stays on, and the private CA that signs the internal
+        server's certificate is trusted explicitly with `ca`.
+  - flagged:
+      language: go
+      expect_line: 10
+      files:
+        - filename: inventory/client.go
+          code: |
+            package inventory
+
+            import (
+            	"crypto/tls"
+            	"net/http"
+            )
+
+            func NewClient() *http.Client {
+            	return &http.Client{Transport: &http.Transport{
+            		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+            	}}
+            }
+        - filename: go.mod
+          language: text
+          code: |
+            module example.com/inventory
+
+            go 1.22
+    not_flagged:
+      language: go
+      files:
+        - filename: internal/testutil/client.go
+          code: |
+            package testutil
+
+            import (
+            	"crypto/tls"
+            	"net/http"
+            	"testing"
+            )
+
+            func NewTLSClient(t testing.TB) *http.Client {
+            	t.Helper()
+            	return &http.Client{Transport: &http.Transport{
+            		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+            	}}
+            }
+        - filename: go.mod
+          language: text
+          code: |
+            module example.com/inventory
+
+            go 1.22
+      why: >-
+        This is a test helper: the file imports `testing` and takes a
+        `testing.TB`. The Go engine treats such files like tests and does not
+        report `InsecureSkipVerify` there.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. In Python it reports a call with the keyword
+    `verify=False` (or `0`) that resolves to `requests` or `httpx`, including
+    `Session`, `Client` and `AsyncClient` objects;
+    `ssl._create_unverified_context()`; and any call with
+    `ignore_https_errors=True`, as browser libraries such as Playwright take.
+  - >-
+    It reports `ssl.SSLContext(...)` unless the context is a
+    `PROTOCOL_TLS_SERVER` context, a `PROTOCOL_TLS_CLIENT` context left with
+    its defaults, or a context that the following code sets to
+    `verify_mode = ssl.CERT_REQUIRED` and `check_hostname = True` before a
+    client uses it. A protocol held in an unknown variable is not reported.
+  - >-
+    Only the literal values count: `verify=settings.VERIFY_TLS` is not
+    reported, and neither is `session.verify = False` set as an attribute.
+  - >-
+    Skips Python test modules (`test_*.py`, `*_test.py`, `conftest.py`,
+    anything under `tests/` or `test/`), and a call that resolves to a small
+    data-only function or class of your own project, not the library, whose
+    result is never used.
+  - >-
+    In TypeScript and JavaScript it reports any `rejectUnauthorized: false`
+    in an object literal and `process.env.NODE_TLS_REJECT_UNAUTHORIZED =
+    "0"`, outside test files (`.test.`/`.spec.` names, `test`, `tests` and
+    `__tests__` folders).
+  - >-
+    In Go it reports a `tls.Config{...}` literal with `InsecureSkipVerify:
+    true` (by the Go engine as SKY-G210, shown as SKY-D210), except in test
+    helpers that import `testing` and take a `testing.TB`, `*testing.T`, `B`,
+    `F` or `M`. `_test.go` files are not scanned by the Go engine.
+
+source_refs:
+  - path: skylos/rules/danger/calls.py
+    symbol: '"requests.*": ('
+    note: the Python entries are marked `production_only`.
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _is_test_module"
+  - path: skylos/rules/danger/tls_provenance.py
+    symbol: "def tls_verification_disabled("
+  - path: skylos/rules/danger/tls_provenance.py
+    symbol: "def _context_unsafe"
+  - path: skylos/rules/danger/tls_provenance.py
+    symbol: "def _inert_call"
+  - path: skylos/visitors/languages/typescript/express_taint.py
+    symbol: "def _check_reject_unauthorized("
+  - path: skylos/visitors/languages/typescript/express_taint.py
+    symbol: "def _check_tls_env("
+  - path: skylos/engines/go/internal/analyzer/analyzer.go
+    symbol: 'key.Name == "InsecureSkipVerify"'
+  - path: skylos/engines/go/internal/analyzer/taint.go
+    symbol: "func (a *Analyzer) isTestSupportFile"
+
+fix:
+  explanation: >-
+    Keep verification on. For a server whose certificate comes from a
+    private CA, point the client at that CA instead: `verify=` a CA bundle
+    path in `requests`/`httpx`, `ca:` in Node, `RootCAs` in Go.
+  filename: app/inventory.py
+  code: |
+    import requests
+
+    INVENTORY_URL = "https://inventory.internal.example.com/api/stock"
+    INTERNAL_CA = "/etc/ssl/certs/internal-ca.pem"
+
+
+    def fetch_stock(sku: str) -> dict:
+        response = requests.get(INVENTORY_URL, params={"sku": sku}, verify=INTERNAL_CA)
+        response.raise_for_status()
+        return response.json()
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Test helpers that live outside test paths, such as `scripts/smoke.py`
+      or a `devtools/` package, are reported.
+    - >-
+      In TypeScript, `rejectUnauthorized: false` is reported in any object
+      literal, including options that never reach a TLS connection.
+    - >-
+      Missed: `session.verify = False`, a verification flag read from
+      settings, and `ssl.create_default_context()` followed by
+      `check_hostname = False` and `verify_mode = ssl.CERT_NONE`. In Go, a
+      flag that is not the literal `true` (`InsecureSkipVerify: cfg.Insecure`)
+      is missed.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line, for example a tool that only ever talks to a
+        device on the local network with a fixed self-signed certificate.
+      language: python
+      code: |
+        r = requests.get(url, verify=False)  # skylos: ignore[SKY-D210] lab device, no CA
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D210"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D216, SKY-D252, SKY-D346]
