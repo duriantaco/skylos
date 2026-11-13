@@ -28,6 +28,7 @@ def scan(tmp_path, code):
         r"(a*)*b",
         r"(a+)+b(c)\2",
         r"^(\w+=\w+;?)*$",
+        r"^[^@]+(?:\.[^@]+)*$",
         r"(x+)+y|" + "|".join(f"word{index}" for index in range(400)),
     ],
 )

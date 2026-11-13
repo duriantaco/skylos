@@ -523,12 +523,13 @@ def _analyze(tree, flags, mode, spent):
     rejected = [char for char in dict.fromkeys(rejected) if not char.isspace()]
     literals = [*rejected[:_MAX_REJECTED], *list(dict.fromkeys(named))[:_MAX_NAMED]]
     literals = list(dict.fromkeys(literals))
+    suffixes = list(dict.fromkeys([*_SUFFIXES, *rejected[:_MAX_REJECTED]]))
     start = spent[0]
     polynomial = None
     tried = set()
     for prefix, body in repeats:
         for pump in _pumps(body, flags, literals):
-            for suffix in _SUFFIXES:
+            for suffix in suffixes:
                 shape = (prefix, pump, suffix)
                 if shape in tried:
                     continue
