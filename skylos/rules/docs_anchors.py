@@ -199,6 +199,8 @@ RULE_DOCS_ANCHORS = {
     "SKY-D409": "sky-d409--privileged-kubernetes-container",
     "SKY-D410": "sky-d410--kubernetes-host-namespace-sharing",
     "SKY-D411": "sky-d411--sensitive-kubernetes-host-path-mounted",
+    "SKY-D378": "sky-d378--incomplete-path-traversal-defence",
+    "SKY-D379": "sky-d379--catastrophic-regex-backtracking",
     "SKY-D510": "sky-d510--prototype-pollution",
     "SKY-DEP001": "kubernetes-deployment-exposure-sky-dep",
     "SKY-DEP002": "kubernetes-deployment-exposure-sky-dep",

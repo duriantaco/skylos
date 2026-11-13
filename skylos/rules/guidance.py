@@ -636,6 +636,14 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-D377": {
         "default": "Remove the duplicated keys so the file says once what runs."
     },
+    "SKY-D378": {
+        "default": "Resolve the joined path and check that it stays inside the base directory; do not rely on removing or rejecting `..`.",
+        "python": "Use `Path(base, name).resolve()` and require `is_relative_to(Path(base).resolve())` before the file operation.",
+    },
+    "SKY-D379": {
+        "default": "Rewrite nested or adjacent repeats so they cannot match the same text, or limit the input length before matching.",
+        "python": "Make the repeated parts mutually exclusive, use a possessive repeat or atomic group (`(?>...)`), or cap `len(text)` first.",
+    },
     "SKY-D510": {
         "default": "Reject __proto__, constructor and prototype keys before merging objects."
     },
