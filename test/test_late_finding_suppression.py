@@ -1062,3 +1062,53 @@ def test_publish_job_change_marker_added_by_the_change_is_not_honoured_in_ci(
 
     assert local == []
     assert ci == [11]
+
+
+BLOCK_RELEASE = (
+    "name: Release\n"
+    "on:\n"
+    "  push:\n"
+    '    tags: ["v*"]\n'
+    "permissions:\n"
+    "  contents: read\n"
+    "jobs:\n"
+    "  pypi:\n"
+    "    runs-on: ubuntu-latest\n"
+    "    steps:\n"
+    "      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955\n"
+    "        with:\n"
+    "          persist-credentials: false\n"
+    "      - name: Build\n"
+    "{above}"
+    "        run: |{header}\n"
+    "{inside}"
+    "          python -m pip install --upgrade pip build twine\n"
+    "          python -m build\n"
+    "      - run: twine upload dist/*\n"
+    "        env:\n"
+    "          TWINE_USERNAME: __token__\n"
+    "          TWINE_PASSWORD: ${{{{ secrets.PYPI_API_TOKEN }}}}\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("above", "header", "inside", "reported"),
+    [
+        ("", "", "", [16]),
+        ("", "  # skylos: ignore[SKY-D371] pinned in the next release", "", []),
+        ("        # skylos: ignore[SKY-D371] pinned in the next release\n", "", "", []),
+        ("", "  # skylos: ignore[SKY-D340]", "", [16]),
+        ("", "", "          # skylos: ignore[SKY-D371]\n", [17]),
+    ],
+)
+def test_publish_job_rule_reads_the_run_line_marker_for_a_block_command(
+    tmp_path, real_publish_engine, above, header, inside, reported
+):
+    _write(
+        tmp_path,
+        {WORKFLOW: BLOCK_RELEASE.format(above=above, header=header, inside=inside)},
+    )
+
+    result = _run(tmp_path, enable_danger=True)
+
+    assert _publish_rows(result) == reported

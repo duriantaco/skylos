@@ -186,6 +186,7 @@ class FileMarkers:
         self.lines = []
         self.ignore_lines = set()
         self.rules_by_line = {}
+        self.block_headers = {}
         if text is None:
             self.style = None
             return
@@ -204,6 +205,22 @@ class FileMarkers:
             self.rules_by_line = _rule_markers(
                 _config_comments(self.style, text, self.lines)
             )
+        if self.style == "yaml" and "skylos" in text:
+            self.block_headers, header_comments = _yaml_block_headers(text)
+            for line, rules in _rule_markers(header_comments).items():
+                self.rules_by_line.setdefault(line, set()).update(rules)
+
+    def _marked(self, rule_id: str, line: int) -> int | None:
+        if rule_id in self.rules_by_line.get(line, ()):
+            return line
+        above = line - 1
+        if (
+            above >= 1
+            and rule_id in self.rules_by_line.get(above, ())
+            and _standalone(self.lines[above - 1])
+        ):
+            return above
+        return None
 
     def marker_line(self, finding: dict) -> int | None:
         line = finding.get("line")
@@ -218,16 +235,38 @@ class FileMarkers:
             return None
         if self.style is None or not rule_id:
             return None
-        if rule_id in self.rules_by_line.get(line, ()):
-            return line
-        above = line - 1
-        if (
-            above >= 1
-            and rule_id in self.rules_by_line.get(above, ())
-            and _standalone(self.lines[above - 1])
-        ):
-            return above
-        return None
+        marker = self._marked(rule_id, line)
+        if marker is None and line in self.block_headers:
+            marker = self._marked(rule_id, self.block_headers[line])
+        return marker
+
+
+def _yaml_block_headers(text: str) -> tuple[dict[int, int], dict[int, str]]:
+    import yaml
+
+    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+    try:
+        tokens = list(yaml.scan(text, Loader=loader))
+    except (yaml.YAMLError, ValueError, RecursionError):
+        return {}, {}
+    lines = text.splitlines()
+    headers = {}
+    comments = {}
+    for token in tokens:
+        if not isinstance(token, yaml.ScalarToken) or token.style not in ("|", ">"):
+            continue
+        header = token.start_mark.line + 1
+        if header <= len(lines):
+            after = lines[header - 1][token.start_mark.column :]
+            index = after.find("#")
+            if index > 0 and after[index - 1] in " \t":
+                comments[header] = after[index:]
+        last = token.end_mark.line
+        if token.end_mark.column > 0:
+            last += 1
+        for line in range(header + 1, last + 1):
+            headers[line] = header
+    return headers, comments
 
 
 def read_file_markers(path) -> FileMarkers:
