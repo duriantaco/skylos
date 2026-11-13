@@ -750,6 +750,19 @@ def _strict_regex(pattern: str, flags: str) -> bool:
     return re.fullmatch(r"[A-Za-z0-9_\-\[\]+*?{},()]*", body) is not None
 
 
+def _regex_admits(regex, value: str) -> bool:
+    if regex is None:
+        return False
+    pattern, flags = regex
+    options = 0
+    if "i" in flags:
+        options = re.IGNORECASE
+    try:
+        return re.search(pattern, value, options | re.ASCII) is not None
+    except re.error:
+        return True
+
+
 class _FileContext:
     def __init__(self, source: bytes, root, file_path: str):
         self.source = source
@@ -2077,10 +2090,24 @@ class _HandlerTaint:
                 operator = subject.child_by_field_name("operator")
                 argument = subject.child_by_field_name("argument")
                 if operator is not None and _text(self.source, operator) == "typeof":
-                    if (equal and literal in {"string", "number", "boolean"}) or (
-                        not equal and literal == "object"
-                    ):
-                        return [_Fact(_subject(self.source, argument), "typed", guard_end)]
+                    if equal and literal in {"string", "number", "boolean"}:
+                        return [
+                            _Fact(
+                                _subject(self.source, argument),
+                                "typed",
+                                guard_end,
+                                literal,
+                            )
+                        ]
+                    if not equal and literal == "object":
+                        return [
+                            _Fact(
+                                _subject(self.source, argument),
+                                "typed",
+                                guard_end,
+                                "primitive",
+                            )
+                        ]
                     return []
             if literal is not None and equal:
                 return [_Fact(_subject(self.source, subject), "in_list", guard_end, {literal})]
@@ -2147,7 +2174,11 @@ class _HandlerTaint:
                 name == "isValidObjectId"
                 or (binding is not None and binding[1] in {"isValidObjectId", "isMongoId"})
             ):
-                return [_Fact(_subject(self.source, args[0]), "typed", guard_end)]
+                return [
+                    _Fact(
+                        _subject(self.source, args[0]), "typed", guard_end, "object_id"
+                    )
+                ]
             return []
         if callee.type != "member_expression":
             return []
@@ -2229,7 +2260,14 @@ class _HandlerTaint:
             if flags is not None:
                 flags_text = _text(self.source, flags)
             if truth and _strict_regex(pattern_text, flags_text):
-                return [_Fact(_subject(self.source, args[0]), "strict", guard_end)]
+                return [
+                    _Fact(
+                        _subject(self.source, args[0]),
+                        "strict",
+                        guard_end,
+                        (pattern_text, flags_text),
+                    )
+                ]
             if not truth and re.fullmatch(r"\\\.\\\.", pattern_text):
                 return [_Fact(_subject(self.source, args[0]), "no_dotdot", guard_end)]
             return []
@@ -2242,7 +2280,9 @@ class _HandlerTaint:
                 or (method == "isValid" and "ObjectId" in callee_path)
             )
         ):
-            return [_Fact(_subject(self.source, args[0]), "typed", guard_end)]
+            return [
+                _Fact(_subject(self.source, args[0]), "typed", guard_end, "object_id")
+            ]
         if method in {"isInteger", "isSafeInteger", "isInt", "isUUID", "isNumeric"} and args and truth:
             return [_Fact(_subject(self.source, args[0]), "strict", guard_end)]
         return []
@@ -3566,7 +3606,13 @@ class _SinkChecker:
         for fact in self.taint.facts_at(sink):
             if fact.subject != subject:
                 continue
-            if fact.kind in {"in_list", "strict", "own_key", "typed"}:
+            if fact.kind == "own_key":
+                return True
+            if fact.kind == "in_list" and "__proto__" not in fact.data:
+                return True
+            if fact.kind == "typed" and fact.data in {"number", "boolean", "object_id"}:
+                return True
+            if fact.kind == "strict" and not _regex_admits(fact.data, "__proto__"):
                 return True
             if fact.kind == "not_in_list" and "__proto__" in fact.data:
                 return True

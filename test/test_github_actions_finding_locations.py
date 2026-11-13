@@ -327,3 +327,175 @@ def test_shell_rule_aliased_run_is_reported_and_ignored_where_it_is_used():
     assert [f["line"] for f in _scan_publish_step(reused, "SKY-D327")] == [7, 9]
     ignored = reused.replace("*collect\n", "*collect  # skylos: ignore[SKY-D327]\n")
     assert [f["line"] for f in _scan_publish_step(ignored, "SKY-D327")] == [7]
+
+
+@pytest.mark.parametrize(
+    ("step", "rule_id", "expected"),
+    [
+        (
+            (
+                "      - run: |\n          npm ci\n          npm run build\n"
+                "          npm publish --access public\n"
+            ),
+            "SKY-D340",
+            [6],
+        ),
+        (
+            (
+                "      - run: |\n          npm ci\n          echo ready\n"
+                "          npx -y markdownlint-cli2 docs\n"
+            ),
+            "SKY-D341",
+            [9],
+        ),
+        (
+            "      - run: |\n          npx -y a\n          echo mid\n          npx -y b\n",
+            "SKY-D341",
+            [7],
+        ),
+        (
+            (f"      - run: |\n          echo start\n          {_EXFIL}\n"),
+            "SKY-D327",
+            [8],
+        ),
+        ("      - run: sudo npm publish\n", "SKY-D340", [6]),
+        ("      - run: env NODE_AUTH_TOKEN=x npm publish\n", "SKY-D340", [6]),
+        ('      - run: "npm ci\\nnpx -y tool"\n', "SKY-D341", [6]),
+        ("      - run: yarn install --frozen-lockfile\n", "SKY-D341", []),
+        (
+            (
+                "      - run: |\n          cat > RELEASING.md <<'EOF'\n"
+                "          npm publish --access public\n          EOF\n          echo done\n"
+            ),
+            "SKY-D340",
+            [],
+        ),
+    ],
+    ids=[
+        "publish-on-third-line-at-run-line",
+        "npx-on-third-line",
+        "one-finding-per-rule-per-step",
+        "exfil-on-second-line",
+        "sudo-publish",
+        "env-publish",
+        "escaped-newline-in-quoted-run",
+        "yarn-install-is-not-a-script",
+        "heredoc-text-is-not-a-command",
+    ],
+)
+def test_shell_rule_reads_every_command_of_a_run_block(step, rule_id, expected):
+    found = _scan_publish_step(_exfil_step(step), rule_id)
+    assert [f["line"] for f in found] == expected
+
+
+@pytest.mark.parametrize(
+    ("step", "rule_id", "expected"),
+    [
+        (
+            (
+                "      - run: |\n          npx -y a  # skylos: ignore[SKY-D341]\n"
+                "          npx -y b\n"
+            ),
+            "SKY-D341",
+            [8],
+        ),
+        (
+            (
+                "      - run: |\n          npm ci\n          # skylos: ignore[SKY-D340]\n"
+                "          npx -y b\n"
+            ),
+            "SKY-D341",
+            [9],
+        ),
+        (
+            (
+                "      - run: |\n          npm ci\n"
+                "          # skylos: ignore[SKY-D341] reviewed scaffold\n"
+                "          npx -y create-vite@5.5.2 demo\n          echo built\n"
+                "          npx -y markdownlint-cli2 docs\n"
+            ),
+            "SKY-D341",
+            [11],
+        ),
+        (
+            '      - run: |\n          npx -y tool --title "# skylos: ignore[SKY-D341]"\n',
+            "SKY-D341",
+            [7],
+        ),
+        (
+            "      - run: |\n          npx -y tool\n          # skylos: ignore[SKY-D341]\n",
+            "SKY-D341",
+            [7],
+        ),
+        (
+            "      - run: |  # skylos: ignore[SKY-D341]\n          npx -y a\n",
+            "SKY-D341",
+            [],
+        ),
+        (
+            (
+                "      - run: |  # skylos: ignore[SKY-D341]\n          npm ci\n"
+                "          npx -y b\n"
+            ),
+            "SKY-D341",
+            [8],
+        ),
+        (
+            (
+                "      - run: |  # skylos: ignore[SKY-D341]\n          npm ci\n"
+                "          npm publish\n"
+            ),
+            "SKY-D340",
+            [6],
+        ),
+        (
+            (
+                "      - run: |\n          npm ci  # skylos: ignore[SKY-D340]\n"
+                "          npm test\n          npm publish\n"
+            ),
+            "SKY-D340",
+            [6],
+        ),
+        (
+            (
+                "      - run: |\n          npm ci\n          # skylos: ignore[SKY-D340]\n"
+                "          npm publish\n"
+            ),
+            "SKY-D340",
+            [6],
+        ),
+        (
+            (
+                "      # skylos: ignore[SKY-D340]\n      - run: |\n          npm ci\n"
+                "          npm publish\n"
+            ),
+            "SKY-D340",
+            [],
+        ),
+    ],
+    ids=[
+        "trailing-marker-stays-on-its-line",
+        "other-rule-marker-above",
+        "own-marker-does-not-reach-a-later-command",
+        "marker-in-quoted-argument-is-not-a-comment",
+        "marker-below-the-command",
+        "header-comment-covers-first-line",
+        "header-comment-does-not-reach-second-line",
+        "d340-other-rule-marker-on-run-line",
+        "d340-marker-on-another-command",
+        "d340-script-comment-is-not-a-yaml-comment",
+        "d340-yaml-comment-above-run",
+    ],
+)
+def test_shell_rule_ignore_marker_covers_only_its_own_command(step, rule_id, expected):
+    found = _scan_publish_step(_exfil_step(step), rule_id)
+    assert [f["line"] for f in found] == expected
+
+
+def test_d340_multi_line_publish_in_release_only_workflow_is_not_reported():
+    text = (
+        "on:\n  release:\n    types: [published]\njobs:\n  publish:\n"
+        "    runs-on: ubuntu-latest\n    steps:\n"
+        "      - run: |\n          npm ci\n          npm publish\n"
+    )
+    assert _scan_publish_step(text) == []

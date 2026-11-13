@@ -8,7 +8,7 @@ from typing import Any
 
 from skylos.core.safe_cache_io import read_project_text_no_symlink, read_text_no_symlink
 from skylos.rules.config.findings import config_finding
-from skylos.security.command_guard import scan_shell_command
+from skylos.security.command_guard import script_comment_ignores, shell_command_risks
 
 try:
     import yaml
@@ -752,22 +752,43 @@ def _scan_shell_command_risks(
 ) -> None:
     for job_id, job in _iter_jobs(data):
         for command in _iter_commands(data, job):
-            for risk in scan_shell_command(command):
-                if risk.rule_id in ignore:
+            first_line = _line_for_value(lines, command, fallback_key="script")
+            reported: set[str] = set()
+            for offset, risk in shell_command_risks(command):
+                if risk.rule_id in ignore or risk.rule_id in reported:
                     continue
-                _add_finding(
-                    findings,
-                    lines,
+                line = _line_for_command_offset(lines, command, first_line, offset)
+                if line == first_line:
+                    if _is_inline_ignored(lines, line, risk.rule_id):
+                        continue
+                elif script_comment_ignores(command, offset, risk.rule_id):
+                    continue
+                reported.add(risk.rule_id)
+                findings.append(
                     _finding(
                         rule_id=risk.rule_id,
                         name="gitlab-ci-shell-command-risk",
                         message=f"Job {job_id}: {risk.message}",
                         file=path,
-                        line=_line_for_value(lines, command, fallback_key="script"),
+                        line=line,
                         severity=risk.severity,
                         value=f"{job_id}:{risk.rule_id}",
-                    ),
+                    )
                 )
+
+
+def _line_for_command_offset(
+    lines: list[str], command: str, first_line: int, offset: int | None
+) -> int:
+    if offset is None:
+        return first_line
+    leading = len(command) - len(command.lstrip())
+    index = command.count("\n", 0, offset)
+    candidate = first_line + command.count("\n", leading, offset)
+    needle = command.split("\n")[index].strip()
+    if needle and 1 <= candidate <= len(lines) and needle in lines[candidate - 1]:
+        return candidate
+    return first_line
 
 
 def _scan_dind_without_tls(

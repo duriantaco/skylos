@@ -1042,3 +1042,114 @@ router.get('/p', async (req, res) => {
     assert [(f["severity"], bool(f.get("security_evidence"))) for f in hits] == [
         ("HIGH", True)
     ]
+
+
+def _proto_route(
+    guard: str, write: str = "settings[section][req.body.key] = req.body.value;"
+):
+    return (
+        EXPRESS
+        + """
+const settings = { theme: {}, email: {} };
+const SECTIONS = ['theme', 'email'];
+const ALLOWED = new Set(['theme', 'email']);
+router.post('/p/:section', (req, res) => {
+  const section = req.params.section;
+"""
+        + guard
+        + "\n  "
+        + write
+        + """
+  res.end();
+});
+"""
+    )
+
+
+PROTO_KEY_GUARD_CASES = {
+    "typeof_string_exit": (
+        "  if (typeof section !== 'string') return res.status(400).end();",
+        1,
+    ),
+    "typeof_string_loose_exit": (
+        "  if (typeof section != 'string') { return res.status(400).end(); }",
+        1,
+    ),
+    "typeof_not_object_exit": (
+        "  if (typeof section === 'object') throw new Error('bad');",
+        1,
+    ),
+    "word_pattern_admits_proto": (
+        "  if (!/^[\\w-]+$/.test(section)) return res.status(400).end();",
+        1,
+    ),
+    "only_proto_allowed": (
+        "  if (section !== '__proto__') return res.status(400).end();",
+        1,
+    ),
+    "rejects_proto_constructor_prototype": (
+        "  if (section === '__proto__' || section === 'constructor' || section === 'prototype') return res.status(400).end();",
+        0,
+    ),
+    "fixed_list_includes": (
+        "  if (!SECTIONS.includes(section)) return res.status(404).end();",
+        0,
+    ),
+    "fixed_set_has": (
+        "  if (!ALLOWED.has(section)) return res.status(404).end();",
+        0,
+    ),
+    "own_key_of_fixed_object": (
+        "  if (!Object.hasOwn(settings, section)) return res.status(404).end();",
+        0,
+    ),
+    "typeof_string_then_fixed_list": (
+        "  if (typeof section !== 'string' || !SECTIONS.includes(section)) return res.status(400).end();",
+        0,
+    ),
+    "typeof_number_exit": (
+        "  if (typeof section !== 'number') return res.status(400).end();",
+        0,
+    ),
+    "lowercase_letters_pattern": (
+        "  if (!/^[a-z]+$/.test(section)) return res.status(400).end();",
+        0,
+    ),
+    "unguarded": ("", 1),
+}
+
+
+@pytest.mark.parametrize(
+    "guard,expected",
+    PROTO_KEY_GUARD_CASES.values(),
+    ids=PROTO_KEY_GUARD_CASES.keys(),
+)
+def test_d510_key_guard_must_exclude_proto(guard, expected):
+    hits = _hits(_scan_src(_proto_route(guard), "src/routes/settings.ts"), "SKY-D510")
+    assert len(hits) == expected
+    assert all(f.get("security_evidence") for f in hits)
+
+
+def test_d510_typeof_string_branch_still_reports():
+    route = _proto_route(
+        "  if (typeof section === 'string') {",
+        "  settings[section][req.body.key] = req.body.value;\n  }",
+    )
+    hits = _hits(_scan_src(route, "src/routes/settings.ts"), "SKY-D510")
+    assert len(hits) == 1
+
+
+def test_d510_null_prototype_target_is_safe_after_typeof():
+    route = (
+        EXPRESS
+        + """
+router.post('/p/:section', (req, res) => {
+  const store = Object.create(null);
+  const section = req.params.section;
+  if (typeof section !== 'string') return res.status(400).end();
+  store[section][req.body.key] = req.body.value;
+  res.end();
+});
+"""
+    )
+    assert _hits(_scan_src(route, "src/routes/settings.ts"), "SKY-D510") == []

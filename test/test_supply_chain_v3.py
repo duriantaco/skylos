@@ -2759,3 +2759,61 @@ def test_ci_inventory_marks_lists_it_had_to_cut(
     assert len(job["secrets"]["names"]) == min(names, 100)
     assert (job.get("truncated") is True) is job_cut
     assert block["truncated"] is block_cut
+
+
+PUBLISH_RELEASE = (
+    "name: Release\n"
+    "on:\n"
+    "  push:\n"
+    '    tags: ["v*"]\n'
+    "jobs:\n"
+    "  test:\n"
+    "    runs-on: ubuntu-latest\n"
+    "    steps:\n"
+    "      - run: npm test\n"
+    "  publish:\n"
+    "    runs-on: ubuntu-latest\n"
+    "    environment: npm\n"
+    "    steps:\n"
+    "      - run: npm ci\n"
+    "      - run: npm publish --access public\n"
+    "        env:\n"
+    "          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}\n"
+)
+
+
+@pytest.mark.skipif(
+    _real("ci_inventory") is None, reason="ca9.api.ci_inventory is not installed"
+)
+@pytest.mark.parametrize(
+    ("old", "new", "expected"),
+    [
+        (
+            "      - run: npm ci\n",
+            "      - run: npm ci\n      - run: npm run build\n",
+            [10],
+        ),
+        ("--access public\n", "--access public  # public package\n", []),
+        ("npm test\n", "npm test -- --runInBand\n", []),
+    ],
+)
+def test_publish_job_change_to_a_shell_line_the_inventory_does_not_model(
+    tmp_path, monkeypatch, old, new, expected
+):
+    monkeypatch.delenv("SKYLOS_DIFF_BASE", raising=False)
+    workflow = ".github/workflows/release.yml"
+    _repo(tmp_path, {workflow: PUBLISH_RELEASE})
+    _write(tmp_path / workflow, PUBLISH_RELEASE.replace(old, new))
+
+    findings, _receipt, _errors = diff.supply_chain_diff_findings(
+        tmp_path,
+        "HEAD",
+        dependencies=False,
+        security=True,
+        review_upgrades=False,
+        api=_real("ci_inventory"),
+    )
+
+    assert [
+        item["line"] for item in findings if item["rule_id"] == "SKY-D375"
+    ] == expected

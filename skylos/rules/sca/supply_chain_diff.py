@@ -1529,8 +1529,30 @@ def _publish_jobs(inventory) -> dict[tuple, tuple]:
             if not isinstance(job, dict) or not job.get("publishes"):
                 continue
             key = (str(workflow.get("file") or ""), str(job.get("id") or ""))
-            jobs[key] = (_without_lines({**job, "_workflow": context}), job)
+            jobs[key] = (
+                _without_lines({**job, "_workflow": context}),
+                job,
+                str(workflow.get("provider") or ""),
+            )
     return jobs
+
+
+def _job_definition(texts: dict, file: str, job_id: str, provider: str):
+    from skylos.rules.config.cicd.yaml_source import load_yaml_with_locations
+
+    text = texts.get(file)
+    if text is None:
+        return None
+    loaded = load_yaml_with_locations(text)
+    if loaded is None:
+        return None
+    data = loaded[0]
+    if provider == "github":
+        jobs = data.get("jobs")
+        if not isinstance(jobs, dict):
+            return None
+        return jobs.get(job_id)
+    return data.get(job_id)
 
 
 def publish_job_findings(
@@ -1563,9 +1585,14 @@ def publish_job_findings(
         return []
     old = _publish_jobs(before)
     findings = []
-    for (file, job_id), (shape, job) in sorted(_publish_jobs(after).items()):
+    for (file, job_id), (shape, job, provider) in sorted(_publish_jobs(after).items()):
         previous = old.get((file, job_id))
-        if previous is not None and previous[0] == shape:
+        if (
+            previous is not None
+            and previous[0] == shape
+            and _job_definition(base, file, job_id, provider)
+            == _job_definition(head, file, job_id, provider)
+        ):
             continue
         pure = PurePosixPath(file)
         if not file or pure.is_absolute() or ".." in pure.parts:

@@ -2339,6 +2339,57 @@ class TestNewDangerRules:
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D245" not in ids
 
+    @pytest.mark.parametrize(
+        "call",
+        (
+            "require(`./plugins/${name}`)",
+            'require("./plugins/" + name)',
+            "import(name)",
+            "import(`./plugins/${name}`)",
+            'import("./x/" + name)',
+            "require(req.params.format)",
+            'require(path.join(__dirname, "plugins", name))',
+            "require(`${__dirname}/plugins/${req.query.p}`)",
+            "require(name || './default')",
+        ),
+    )
+    def test_dynamic_module_paths_are_reported(self, tmp_path, call):
+        code = (
+            'const path = require("path");\n'
+            "async function load(req, name) {\n"
+            f"  return await {call};\n"
+            "}\n"
+            "module.exports = { load };\n"
+        )
+        _, _, _, danger = _scan_ts_file(tmp_path, "loader.js", code)
+        lines = [f["line"] for f in danger if f["rule_id"] == "SKY-D245"]
+        assert lines == [3]
+
+    @pytest.mark.parametrize(
+        "call",
+        (
+            'require("./a")',
+            "require(`./b`)",
+            'import("./c")',
+            "import(`./d`)",
+            'require("./e" + ".js")',
+            'require(path.join(__dirname, "plugins", "csv"))',
+            "require(`${__dirname}/plugins/csv`)",
+            'require(__dirname + "/plugins/csv")',
+            'require(flag ? "./a" : "./b")',
+        ),
+    )
+    def test_fixed_module_paths_are_not_reported(self, tmp_path, call):
+        code = (
+            'const path = require("path");\n'
+            "async function load(flag) {\n"
+            f"  return await {call};\n"
+            "}\n"
+            "module.exports = { load };\n"
+        )
+        _, _, _, danger = _scan_ts_file(tmp_path, "loader.js", code)
+        assert [f for f in danger if f["rule_id"] == "SKY-D245"] == []
+
     def test_jwt_decode_flagged(self, tmp_path):
         """SKY-D246: jwt.decode() without verify."""
         code = 'import jwt from "jsonwebtoken";\nconst payload = jwt.decode(token);\n'

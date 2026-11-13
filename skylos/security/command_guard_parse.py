@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import shlex
+from dataclasses import dataclass
 
 from skylos.security.command_guard_types import CommandRisk
 
@@ -82,6 +83,20 @@ OPTIONS_WITH_VALUES = {
     "-d",
     "-o",
 }
+
+
+SHELL_WORD_BREAKS = " \t\r\n;&|()<>"
+
+
+@dataclass(frozen=True)
+class ShellScript:
+    statements: tuple[tuple[int, str], ...]
+    comments: tuple[tuple[int, str], ...]
+    heredocs: tuple[tuple[int, int, str], ...]
+
+
+def parse_shell_script(text: str) -> ShellScript:
+    return _ShellScriptParser(text).parse()
 
 
 def split_shell_statements(command: str) -> list[str]:
@@ -347,4 +362,180 @@ def _matched_separator(text: str, idx: int, separators: set[str]) -> str | None:
             if sep == "|" and text.startswith("||", idx):
                 continue
             return sep
+    return None
+
+
+class _ShellScriptParser:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.statements: list[tuple[int, str]] = []
+        self.comments: list[tuple[int, str]] = []
+        self.heredocs: list[tuple[int, int, str]] = []
+        self.pending: list[tuple[str, bool, int]] = []
+        self.chars: list[str] = []
+        self.start: int | None = None
+
+    def parse(self) -> ShellScript:
+        text = self.text
+        quote: str | None = None
+        idx = 0
+        while idx < len(text):
+            char = text[idx]
+            if quote == "'":
+                if char == "'":
+                    quote = None
+                self._keep(char, idx)
+                idx += 1
+            elif char == "\\" and text.startswith("\n", idx + 1):
+                idx += 2
+            elif char == "\\" and idx + 1 < len(text):
+                self._keep(text[idx : idx + 2], idx)
+                idx += 2
+            elif quote == '"':
+                if char == '"':
+                    quote = None
+                self._keep(char, idx)
+                idx += 1
+            elif char in {"'", '"'}:
+                quote = char
+                self._keep(char, idx)
+                idx += 1
+            else:
+                idx = self._unquoted(char, idx)
+        self._flush()
+        return ShellScript(
+            tuple(self.statements), tuple(self.comments), tuple(self.heredocs)
+        )
+
+    def _unquoted(self, char: str, idx: int) -> int:
+        text = self.text
+        if char == "#" and self._at_word_start():
+            end = text.find("\n", idx)
+            if end < 0:
+                end = len(text)
+            self.comments.append((idx, text[idx:end]))
+            return end
+        arithmetic = self._arithmetic_end(idx)
+        if arithmetic is not None:
+            self._keep(text[idx:arithmetic], idx)
+            return arithmetic
+        if text.startswith("<<<", idx):
+            self._keep("<<<", idx)
+            return idx + 3
+        if text.startswith("<<", idx):
+            return self._heredoc_operator(idx)
+        if char == "\n":
+            if "".join(self.chars).rstrip().endswith("|"):
+                self._keep(" ", idx)
+            else:
+                self._flush()
+            return self._heredoc_bodies(idx + 1)
+        if text.startswith("&&", idx) or text.startswith("||", idx):
+            self._flush()
+            return idx + 2
+        if char == ";":
+            self._flush()
+            return idx + 1
+        self._keep(char, idx)
+        return idx + 1
+
+    def _at_word_start(self) -> bool:
+        last = "".join(self.chars[-1:])[-1:]
+        return last == "" or last in SHELL_WORD_BREAKS
+
+    def _arithmetic_end(self, idx: int) -> int | None:
+        text = self.text
+        if text.startswith("$((", idx):
+            opening = idx + 1
+        elif text.startswith("((", idx) and self._at_word_start():
+            opening = idx
+        else:
+            return None
+        depth = 0
+        for end in range(opening, len(text)):
+            if text[end] == "(":
+                depth += 1
+            elif text[end] == ")":
+                depth -= 1
+                if depth == 0:
+                    return end + 1
+        return None
+
+    def _heredoc_operator(self, idx: int) -> int:
+        text = self.text
+        end = idx + 2
+        strip_tabs = text.startswith("-", end)
+        if strip_tabs:
+            end += 1
+        while end < len(text) and text[end] in " \t":
+            end += 1
+        word_end, delimiter = _heredoc_delimiter(text, end)
+        if delimiter:
+            self.pending.append((delimiter, strip_tabs, len(self.statements)))
+        self._keep(text[idx:word_end], idx)
+        return word_end
+
+    def _heredoc_bodies(self, pos: int) -> int:
+        pending = self.pending
+        self.pending = []
+        for delimiter, strip_tabs, owner in pending:
+            found = _heredoc_end(self.text, pos, delimiter, strip_tabs)
+            if found is None:
+                return pos
+            body_end, after = found
+            self.heredocs.append((owner, pos, self.text[pos:body_end]))
+            pos = after
+        return pos
+
+    def _keep(self, chunk: str, idx: int) -> None:
+        self.chars.append(chunk)
+        if self.start is None and chunk.strip():
+            self.start = idx + len(chunk) - len(chunk.lstrip())
+
+    def _flush(self) -> None:
+        statement = "".join(self.chars).strip()
+        if statement and self.start is not None:
+            self.statements.append((self.start, statement))
+        self.chars = []
+        self.start = None
+
+
+def _heredoc_delimiter(text: str, start: int) -> tuple[int, str]:
+    chars: list[str] = []
+    quote: str | None = None
+    idx = start
+    while idx < len(text) and text[idx] != "\n":
+        char = text[idx]
+        if quote:
+            if char == quote:
+                quote = None
+            else:
+                chars.append(char)
+        elif char in {"'", '"'}:
+            quote = char
+        elif char == "\\" and idx + 1 < len(text):
+            chars.append(text[idx + 1])
+            idx += 1
+        elif char in SHELL_WORD_BREAKS:
+            break
+        else:
+            chars.append(char)
+        idx += 1
+    return idx, "".join(chars)
+
+
+def _heredoc_end(
+    text: str, pos: int, delimiter: str, strip_tabs: bool
+) -> tuple[int, int] | None:
+    line_start = pos
+    while line_start < len(text):
+        line_end = text.find("\n", line_start)
+        if line_end < 0:
+            line_end = len(text)
+        line = text[line_start:line_end].rstrip("\r")
+        if strip_tabs:
+            line = line.lstrip("\t")
+        if line == delimiter:
+            return line_start, min(line_end + 1, len(text))
+        line_start = line_end + 1
     return None

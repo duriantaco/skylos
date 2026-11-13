@@ -18,7 +18,7 @@ from skylos.rules.config.cicd.template_injection import interpolates_untrusted
 from skylos.rules.config.cicd.workflow_references import local_workflow_reference
 from skylos.rules.config.cicd.yaml_source import YamlSource, load_yaml_with_locations
 from skylos.rules.config.findings import config_finding
-from skylos.security.command_guard import scan_shell_command
+from skylos.security.command_guard import script_comment_ignores, shell_command_risks
 from skylos.security.command_guard_parse import dequote_shell, redefines_home
 
 try:
@@ -1756,6 +1756,7 @@ def _line_for_run_command(
     run_path: tuple[Any, ...],
     run_body: str,
     run_line: int | None,
+    offset: int | None = None,
 ) -> int:
     """Locate a command inside its own run value, never elsewhere in the file."""
     if source is None or not run_line:
@@ -1764,15 +1765,38 @@ def _line_for_run_command(
     stripped = run_body.strip()
     if span is None or not stripped:
         return run_line
-    needle = stripped.splitlines()[0]
     search_lines = lines
     if isinstance(lines, _WorkflowLines):
         search_lines = lines.parsed_lines
     first, last = span
-    for lineno in range(first, min(last, len(search_lines)) + 1):
-        if needle in search_lines[lineno - 1]:
+    last = min(last, len(search_lines))
+    needle = stripped.splitlines()[0]
+    candidates = list(range(first, last + 1))
+    if offset is not None:
+        index = run_body.count("\n", 0, offset)
+        needle = run_body.split("\n")[index].strip()
+        candidates.insert(0, first + 1 + index)
+    for lineno in candidates:
+        if first <= lineno <= last and needle and needle in search_lines[lineno - 1]:
             return lineno
     return run_line
+
+
+def _run_script_ignored(
+    source: YamlSource,
+    run_body: str,
+    offset: int | None,
+    run_line: int,
+    rule_id: str,
+) -> bool:
+    if offset is None:
+        offset = len(run_body) - len(run_body.lstrip())
+    if script_comment_ignores(run_body, offset, rule_id):
+        return True
+    if run_body.count("\n", 0, offset):
+        return False
+    comment = source.comment_on_line(run_line)
+    return comment is not None and f"skylos: ignore[{rule_id}]" in comment
 
 
 def _scan_run_blocks(
@@ -1795,12 +1819,13 @@ def _scan_run_blocks(
         run_line = None
         if source is not None:
             run_line = source.line_for_path(run_path)
-        for risk in scan_shell_command(
+        reported: set[str] = set()
+        for offset, risk in shell_command_risks(
             run_body,
             cwd_in_project=_run_starts_in_workspace(data, job, step),
             home_is_default=_home_is_default(data, job, step),
         ):
-            if risk.rule_id in ignore:
+            if risk.rule_id in ignore or risk.rule_id in reported:
                 continue
             if (
                 risk.rule_id == "SKY-D340"
@@ -1808,9 +1833,21 @@ def _scan_run_blocks(
                 and has_release_context(data, job, step, source)
             ):
                 continue
-            line = _line_for_run_command(lines, source, run_path, run_body, run_line)
+            line = _line_for_run_command(
+                lines, source, run_path, run_body, run_line, offset
+            )
             if risk.rule_id == "SKY-D340" and run_line:
                 line = run_line
+            yaml_only = line == run_line
+            if source is not None and run_line and not yaml_only:
+                if _run_script_ignored(
+                    source, run_body, offset, run_line, risk.rule_id
+                ):
+                    continue
+                yaml_only = True
+            if _is_inline_ignored(lines, line, risk.rule_id, yaml_only=yaml_only):
+                continue
+            reported.add(risk.rule_id)
             _add_finding(
                 findings,
                 lines,
@@ -1823,7 +1860,7 @@ def _scan_run_blocks(
                     severity=risk.severity,
                     value=risk.rule_id,
                 ),
-                yaml_only=line == run_line,
+                yaml_only=yaml_only,
             )
     if rule_id not in ignore:
         _scan_template_injection(

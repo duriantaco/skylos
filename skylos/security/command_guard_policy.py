@@ -5,7 +5,7 @@ import re
 from collections.abc import Iterator
 from fnmatch import fnmatchcase
 
-from skylos.security.command_guard_exfil import SENSITIVE_READERS
+from skylos.security.command_guard_exfil import SENSITIVE_READERS, _rm_executable_tokens
 from skylos.security.command_guard_parse import (
     command_name,
     split_redirects,
@@ -287,10 +287,11 @@ def _is_persistent_mutation(tokens: list[str]) -> bool:
 
 
 def _is_publish_command(tokens: list[str]) -> bool:
+    command = _rm_executable_tokens(tokens)
     publishes = any(
-        tokens_start_with(tokens, prefix) for prefix in PUBLISH_COMMAND_PREFIXES
-    ) or tokens_start_with(tokens, ("yarn", "npm", "publish"))
-    return publishes and not _requests_dry_run(tokens)
+        tokens_start_with(command, prefix) for prefix in PUBLISH_COMMAND_PREFIXES
+    ) or tokens_start_with(command, ("yarn", "npm", "publish"))
+    return publishes and not _requests_dry_run(command)
 
 
 def _requests_dry_run(tokens: list[str]) -> bool:
@@ -318,14 +319,17 @@ def _requests_dry_run(tokens: list[str]) -> bool:
 
 
 def _is_untrusted_package_tool_execution(tokens: list[str]) -> bool:
-    name = command_name(tokens)
+    command = _rm_executable_tokens(tokens)
+    name = command_name(command)
     if name == "npx":
-        return "-y" in tokens[1:] or "--yes" in tokens[1:] or _uses_latest_tag(tokens)
+        return (
+            "-y" in command[1:] or "--yes" in command[1:] or _uses_latest_tag(command)
+        )
     if name == "npm":
-        return _is_npm_tool_execution(tokens)
+        return _is_npm_tool_execution(command)
     if name == "pnpm":
-        return _is_pnpm_tool_execution(tokens)
-    return name == "yarn" and _is_yarn_tool_execution(tokens)
+        return _is_pnpm_tool_execution(command)
+    return name == "yarn" and _is_yarn_tool_execution(command)
 
 
 def _docker_run_mounts_host_root(tokens: list[str]) -> bool:
@@ -390,7 +394,13 @@ def _is_pnpm_tool_execution(tokens: list[str]) -> bool:
 
 
 def _is_yarn_tool_execution(tokens: list[str]) -> bool:
-    return bool(tokens[1:]) and (tokens[1] == "dlx" or _is_setup_script(tokens[1]))
+    if len(tokens) < 2:
+        return False
+    if tokens[1] == "dlx":
+        return True
+    if tokens[1] == "run":
+        return len(tokens) >= 3 and _is_setup_script(tokens[2])
+    return tokens[1] != "install" and _is_setup_script(tokens[1])
 
 
 def _is_setup_script(value: str) -> bool:

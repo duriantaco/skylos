@@ -290,3 +290,50 @@ deploy:
     assert "danger" in result
     assert {"SKY-D314", "SKY-D315", "SKY-D321"}.issubset(_rule_ids(result["danger"]))
     assert result["analysis_summary"]["danger_count"] == len(result["danger"])
+
+
+def _gitlab_lines(tmp_path, text, rule_id):
+    (tmp_path / ".gitlab-ci.yml").write_text(text, encoding="utf-8")
+    return sorted(
+        finding["line"]
+        for finding in scan_gitlab_ci(tmp_path)
+        if finding["rule_id"] == rule_id
+    )
+
+
+def test_gitlab_script_block_reports_each_command_on_its_own_line(tmp_path):
+    text = "publish:\n  script:\n    - |\n      npm ci\n      npm publish\n"
+    assert _gitlab_lines(tmp_path, text, "SKY-D340") == [5]
+
+
+def test_gitlab_script_block_reports_one_finding_per_rule(tmp_path):
+    text = (
+        "publish:\n  script:\n    - |\n      npm ci\n      npm publish\n"
+        "      echo done\n      npm publish --tag next\n"
+    )
+    assert _gitlab_lines(tmp_path, text, "SKY-D340") == [5]
+
+
+def test_gitlab_marker_on_another_command_does_not_hide_the_publish(tmp_path):
+    text = (
+        "publish:\n  script:\n    - |\n"
+        "      npm ci  # skylos: ignore[SKY-D340]\n      npm publish\n"
+    )
+    assert _gitlab_lines(tmp_path, text, "SKY-D340") == [5]
+
+
+def test_gitlab_marker_directly_above_the_publish_still_suppresses(tmp_path):
+    text = (
+        "publish:\n  script:\n    - |\n      npm ci\n"
+        "      # skylos: ignore[SKY-D340] released by hand\n      npm publish\n"
+    )
+    assert _gitlab_lines(tmp_path, text, "SKY-D340") == []
+
+
+def test_gitlab_prefixed_publish_and_yarn_install(tmp_path):
+    text = (
+        "publish:\n  script:\n    - yarn install --frozen-lockfile\n"
+        "    - sudo npm publish\n"
+    )
+    assert _gitlab_lines(tmp_path, text, "SKY-D340") == [4]
+    assert _gitlab_lines(tmp_path, text, "SKY-D341") == []
