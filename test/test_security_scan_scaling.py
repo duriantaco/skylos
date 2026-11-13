@@ -6,6 +6,7 @@ wrong answer would fail here too.
 """
 
 import json
+from pathlib import Path
 
 from skylos.analyzer import analyze
 from skylos.rules.danger.danger import scan_ctx
@@ -41,9 +42,9 @@ def test_command_factory_facts_scale_with_modules_not_with_their_square(
 
     rows = [row for row in scan_ctx(root, paths) if row["rule_id"] == "SKY-D212"]
 
-    assert sorted(
-        (row["file"].rsplit("/", 1)[-1], row["line"]) for row in rows
-    ) == sorted((f"job{index}.py", 13) for index in range(modules))
+    assert sorted((Path(row["file"]).name, row["line"]) for row in rows) == sorted(
+        (f"job{index}.py", 13) for index in range(modules)
+    )
     assert len(built) <= 4 * modules
 
 
@@ -90,7 +91,7 @@ def test_reexport_chain_is_followed_once_per_import(tmp_path, monkeypatch):
     report = json.loads(analyze(str(root), enable_danger=True))
 
     reported = {
-        (row["rule_id"], row["file"].rsplit("/", 1)[-1], row["line"])
+        (row["rule_id"], Path(row["file"]).name, row["line"])
         for row in report["danger"]
     }
     assert ("SKY-D215", "store.py", 6) in reported
@@ -124,7 +125,7 @@ def test_import_cycle_does_not_hide_a_traversal(tmp_path, monkeypatch):
     report = json.loads(analyze(str(root), enable_danger=True))
 
     reported = {
-        (row["rule_id"], row["file"].rsplit("/", 1)[-1], row["line"])
+        (row["rule_id"], Path(row["file"]).name, row["line"])
         for row in report["danger"]
     }
     assert ("SKY-D215", "store.py", 6) in reported
