@@ -50,12 +50,16 @@ _CYPHER_START = re.compile(
 # use _CYPHER_START/_CYPHER_PATTERN.  Keep the keyword set above shared and
 # look for the keyword-then-paren shape anywhere in the text: anchoring it to
 # an opening quote misses a query that starts on the following line or after
-# a leading clause such as WITH 1 AS one / OPTIONAL.  The lookbehinds keep
-# attribute, method and function definitions such as re.match(, db.create( and
-# def create( from starting the scan, and no part of the pattern can backtrack
-# over a run of spaces.
+# a leading clause such as WITH 1 AS one / OPTIONAL.  An escaped \n, \r or \t
+# in the source text counts as a break before the keyword and as whitespace
+# before the paren, since the string value holds a real one.  The lookbehinds
+# keep attribute, method and function definitions such as re.match(,
+# db.create( and def create( from starting the scan, and no part of the
+# pattern can backtrack over a run of spaces.
 _SOURCE_HINT = re.compile(
-    rf"(?<![\w.])(?<!def )(?:{_CYPHER_KEYWORDS})\s*\(", re.IGNORECASE
+    rf"(?:(?<![\w.])|(?<=\\[nrt]))(?<!def )"
+    rf"(?:{_CYPHER_KEYWORDS})(?:\s|\\[nrt])*\(",
+    re.IGNORECASE,
 )
 
 

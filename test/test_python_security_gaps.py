@@ -542,9 +542,32 @@ def test_graph_query_after_a_leading_clause_is_reported(tmp_path):
 
 
 @pytest.mark.parametrize(
+    "code",
+    [
+        "def find(graph, name):\n"
+        "    return graph.query(f\"WITH 1 AS one\\nMATCH (n {{id: '{name}'}}) RETURN n\")\n",
+        "def add(graph, node):\n"
+        "    return graph.run(f\"UNWIND $rows AS row\\tMERGE (n {{id: '{node}'}}) RETURN n\")\n",
+        "def find(graph, name):\n"
+        "    return graph.query(f\"MATCH\\n(n {{id: '{name}'}}) RETURN n\")\n",
+    ],
+    ids=[
+        "escaped-newline-before-keyword",
+        "escaped-tab-before-keyword",
+        "escaped-newline-before-bracket",
+    ],
+)
+def test_graph_query_with_an_escaped_break_by_the_keyword_is_reported(tmp_path, code):
+    rows = _graph_rows(scan(tmp_path, code))
+    assert [row["line"] for row in rows] == [2]
+
+
+@pytest.mark.parametrize(
     "source, expected",
     [
         ('graph.query("MATCH(n) RETURN n")', True),
+        ('graph.query("WITH 1 AS one\\nMATCH (n) RETURN n")', True),
+        ('graph.query("MATCH\\n(n) RETURN n")', True),
         ("graph.query('''MERGE (n) RETURN n''')", True),
         ('graph.query(f"""\nMATCH(n) RETURN n""")', True),
         ('graph.query(f"""\nWITH 1 AS one\nMATCH (n:Person) RETURN n""")', True),
@@ -558,6 +581,8 @@ def test_graph_query_after_a_leading_clause_is_reported(tmp_path):
     ],
     ids=[
         "quoted-match",
+        "escaped-newline-before-keyword",
+        "escaped-newline-before-bracket",
         "triple-quoted-merge",
         "leading-line-break",
         "leading-clause",
