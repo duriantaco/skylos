@@ -180,6 +180,9 @@ LANGUAGE_NAMES = {
     "dockerfile": "Dockerfile",
     "terraform": "Terraform",
     "solidity": "Solidity",
+    "markdown": "Markdown",
+    "md": "Markdown",
+    "html": "HTML",
     "diff": "Diff",
     "text": "Text",
 }
@@ -1020,6 +1023,18 @@ def code_width_warnings(where, data) -> list[str]:
                     f"(over {MAX_CODE_COLUMNS} wraps in print)"
                 )
     return warnings
+
+
+DATA_FILE_LANGUAGES = {
+    ".toml": "toml",
+    ".json": "json",
+    ".yml": "yaml",
+    ".yaml": "yaml",
+    ".md": "markdown",
+    ".cfg": "ini",
+    ".ini": "ini",
+    ".txt": "text",
+}
 
 
 def example_files(example: dict) -> list[dict]:
@@ -2208,8 +2223,8 @@ class Book:
         written = len(self.pages)
         edition = "Complete edition"
         scope = f"All {total} rules"
-        if self.mode == "pilot":
-            edition = "Pilot edition"
+        if self.mode == "pilot" and written < total:
+            edition = "Edition in progress"
             scope = f"{written} of {total} rules"
         today = datetime.date.today()
         date_text = f"{today.day} {today.strftime('%B %Y')}"
@@ -2688,7 +2703,10 @@ class Book:
         places = ", ".join(
             f"{html.escape(hit['file'])} line {hit['line']}"
             for hit in check.get("hits") or []
+            if hit["file"] not in ("", ".")
         )
+        if not places:
+            return f'<div class="verified">Checked. {lead}: reported for the project.</div>'
         return f'<div class="verified">Checked. {lead}: reported at {places}.</div>'
 
     def reference_files(self, reference: dict | None) -> dict[str, str]:
@@ -2799,7 +2817,9 @@ class Book:
     def file_block(
         self, entry: dict, status: str, highlight_lines, footer: str = ""
     ) -> str:
-        language = entry.get("language")
+        language = DATA_FILE_LANGUAGES.get(
+            Path(entry["filename"]).suffix.lower(), entry.get("language")
+        )
         if not entry["code"].strip():
             if not status:
                 status = "empty file"
@@ -3029,11 +3049,11 @@ class Book:
                 "</tr>"
             )
         note = ""
-        if self.mode == "pilot":
-            missing = self.page_rule_count - len(self.pages)
+        missing = self.page_rule_count - len(self.pages)
+        if self.mode == "pilot" and missing:
             note = (
                 f'<p class="family-coverage">Skylos has {self.page_rule_count} rules. '
-                f"This pilot edition has pages for {len(self.pages)}; the other {missing} "
+                f"This edition has pages for {len(self.pages)}; the other {missing} "
                 "are listed as not yet written in the coverage report that is built with "
                 "this PDF.</p>"
             )

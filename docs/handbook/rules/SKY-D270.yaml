@@ -125,7 +125,7 @@ false_alarms_and_suppression:
         Mark a reviewed line with a comment on the same line.
       language: typescript
       code: |
-        localStorage.setItem("pushToken", subscription.token); // skylos: ignore[SKY-D270] public id
+        localStorage.setItem("pushToken", sub.token); // skylos: ignore[SKY-D270] public id
     - check: config
       text: >-
         `[tool.skylos] ignore = ["SKY-D270"]` turns the rule off for the whole
