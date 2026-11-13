@@ -1,0 +1,258 @@
+id: SKY-D283
+title: Unauthenticated control, destructive or admin route
+family: security
+severity: HIGH
+severity_note: >-
+  CRITICAL when the same file also starts the server on every network
+  interface (`0.0.0.0` or `::`), shows no authentication anywhere, and the
+  handler really performs the action (it calls something named for it, or a
+  process, signal or file-removal function). Otherwise HIGH.
+languages: [Python]
+gate:
+  full: critical_blocks
+  note: >-
+    HIGH findings count toward the limits; a CRITICAL one fails the gate on
+    its own.
+cwe: [CWE-306, CWE-862]
+
+what_it_is: >-
+  Some web routes do dangerous things: reboot a machine, delete records,
+  grant admin rights or run commands. SKY-D283 reports such a route in a
+  Python web app (Flask, FastAPI, Quart, Starlette, Sanic or APIFlask) when
+  nothing on the route, in its handler or in the same file checks who the
+  caller is.
+
+why_it_matters: >-
+  Anyone who can reach the server can call the route. On an internal tool
+  or a device that listens on every network interface, one `curl -X POST`
+  from the same Wi-Fi or office network reboots the machine or deletes the
+  data, with no login and no record of who did it.
+
+flagged_example:
+  language: python
+  filename: app/server.py
+  expect_line: 14
+  code: |
+    import subprocess
+
+    from flask import Flask, jsonify
+
+    app = Flask(__name__)
+
+
+    @app.get("/status")
+    def status():
+        return jsonify(ok=True)
+
+
+    @app.post("/system/reboot")
+    def reboot():
+        subprocess.run(["systemctl", "reboot"], check=True)
+        return jsonify(status="rebooting")
+
+
+    if __name__ == "__main__":
+        app.run(host="0.0.0.0", port=8080)
+
+not_flagged_example:
+  language: python
+  filename: app/server.py
+  code: |
+    import hmac
+    import os
+    import subprocess
+
+    from flask import Flask, abort, jsonify, request
+
+    app = Flask(__name__)
+    API_KEY = os.environ["DEVICE_API_KEY"]
+
+
+    @app.before_request
+    def require_api_key():
+        sent = request.headers.get("X-Api-Key", "")
+        if not hmac.compare_digest(sent, API_KEY):
+            abort(401)
+
+
+    @app.get("/status")
+    def status():
+        return jsonify(ok=True)
+
+
+    @app.post("/system/reboot")
+    def reboot():
+        subprocess.run(["systemctl", "reboot"], check=True)
+        return jsonify(status="rebooting")
+
+
+    if __name__ == "__main__":
+        app.run(host="0.0.0.0", port=8080)
+  why: >-
+    The reboot route and the open bind are unchanged, but a
+    `before_request` hook reads the request headers and rejects the caller
+    with `abort(401)`. A request hook that may authenticate counts for every
+    route of the app, so no route in this file is reported.
+
+more_examples:
+  - flagged:
+      language: python
+      filename: app/api.py
+      expect_line: 9
+      code: |
+        from fastapi import FastAPI
+
+        from app.store import projects
+
+        app = FastAPI()
+
+
+        @app.delete("/projects/{project_id}")
+        def delete_project(project_id: int):
+            projects.delete(project_id)
+            return {"deleted": project_id}
+    not_flagged:
+      language: python
+      filename: app/api.py
+      code: |
+        from fastapi import Depends, FastAPI
+
+        from app.auth import require_admin
+        from app.store import projects
+
+        app = FastAPI()
+
+
+        @app.delete("/projects/{project_id}")
+        def delete_project(project_id: int, admin=Depends(require_admin)):
+            projects.delete(project_id)
+            return {"deleted": project_id}
+      why: >-
+        A `Depends(...)` parameter can authenticate the request, so the route
+        is skipped. The flagged version is a FastAPI `DELETE` route with no
+        such parameter; it is HIGH because the file never starts a server on
+        every interface.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Python files. Skips files in `test`, `tests`
+    or `corpus` folders and files named `test_*.py` or `*_test.py`.
+  - >-
+    Needs an app created in the same file (`Flask()`, `FastAPI()`,
+    `Quart()`, `Starlette()`, `Sanic()`, `APIFlask()`) and looks only at
+    routes registered on it. A route registered on an app from another
+    module is not checked.
+  - >-
+    Skips the whole file when module code could authenticate every request:
+    middleware other than CORS, GZip, trusted-host or HTTPS-redirect
+    middleware, a `before_request` or `middleware` hook that reads
+    credentials or rejects callers, or an app or router option such as
+    `dependencies=`, `auth=` or `permissions=`.
+  - >-
+    Keeps only routes that change state (`POST`, `PUT`, `PATCH`, `DELETE`)
+    and that have nothing on the route that could authenticate: no other
+    decorator, no decorator option beyond routing data, no `Depends()`,
+    `Security()`, `Header()`, `Cookie()` or API-key parameter, and a handler
+    that does not read `request.headers`, cookies, session or user, does
+    not reject with 401 or 403 and uses no name such as `auth`, `token` or
+    `login`.
+  - >-
+    Reports the route only when its function name or path names a
+    privileged action: control (`reboot`, `shutdown`, `arm`, `power` and
+    similar), destructive (`delete`, `drop`, `purge`, `wipe` and similar,
+    or any `DELETE` route), admin (`admin`, `sudo`, `impersonate`) or
+    command (`exec`, `shell`, `cmd`). Other open mutating routes stay the
+    quality review SKY-F102.
+  - >-
+    Raises HIGH to CRITICAL when the file starts the server on `0.0.0.0` or
+    `::` (also as the default of `os.environ.get`), shows no
+    authentication-named code anywhere, and the handler calls something
+    named for the action or a `subprocess`, `os.system`, `os.kill`,
+    `os.remove` or `shutil.rmtree` style function.
+
+source_refs:
+  - path: skylos/rules/danger/danger_web/route_auth.py
+    symbol: "def scan(tree, file_path, findings, *, project_root=None)"
+  - path: skylos/rules/quality/practices.py
+    symbol: "def open_unguarded_routes("
+    note: the order of the checks.
+  - path: skylos/rules/quality/_route_exposure.py
+    symbol: "PRIVILEGED_ROUTE_WORDS = {"
+  - path: skylos/rules/quality/_route_exposure.py
+    symbol: "def _request_auth_possible(facts: ModuleFacts) -> bool:"
+  - path: skylos/rules/quality/_route_exposure.py
+    symbol: "def route_guard_possible(function, route_decorators, facts: ModuleFacts) -> bool:"
+  - path: skylos/rules/quality/_route_exposure.py
+    symbol: "def exposure_severity(facts: ModuleFacts, function, actions) -> str:"
+  - path: test/test_unauthenticated_control_routes.py
+    symbol: "def test_privileged_routes_on_an_open_all_interface_app_are_critical"
+
+fix:
+  explanation: >-
+    Check the caller before the route runs. Put the check where it covers
+    every route, such as a `before_request` hook or FastAPI app
+    `dependencies=`, so a new route cannot forget it. Bind the server to
+    `127.0.0.1` unless other machines really need to reach it.
+  filename: app/server.py
+  code: |
+    import hmac
+    import os
+    import subprocess
+
+    from flask import Flask, abort, jsonify, request
+
+    app = Flask(__name__)
+    API_KEY = os.environ["DEVICE_API_KEY"]
+
+
+    @app.before_request
+    def require_api_key():
+        sent = request.headers.get("X-Api-Key", "")
+        if not hmac.compare_digest(sent, API_KEY):
+            abort(401)
+
+
+    @app.get("/status")
+    def status():
+        return jsonify(ok=True)
+
+
+    @app.post("/system/reboot")
+    def reboot():
+        subprocess.run(["systemctl", "reboot"], check=True)
+        return jsonify(status="rebooting")
+
+
+    if __name__ == "__main__":
+        app.run(host="127.0.0.1", port=8080)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Authentication done outside the file is not seen: a reverse proxy, an
+      API gateway, or a WSGI wrapper set up in another module. Such an app
+      is still reported.
+    - >-
+      A route whose name only sounds privileged is reported, for example
+      `POST /reports/export-command` that only stores a request.
+    - >-
+      Missed: any authentication-like name in the handler (even an unused
+      `token` variable) is taken as a possible check, and routes on an app
+      created in another module are not checked.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the `def` line of the route and say what protects it.
+      language: python
+      code: |
+        def reboot():  # skylos: ignore[SKY-D283] only reachable through the VPN gateway
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D283"]` turns the rule off for the
+        whole project.
+    - check: baseline
+      text: >-
+        `skylos baseline .` and then `--baseline` accept the routes you have
+        and report only new ones.
+
+related: [SKY-F102, SKY-D280, SKY-D241, SKY-D203]

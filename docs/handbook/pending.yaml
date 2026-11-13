@@ -52,13 +52,17 @@ pending:
   SKY-CIRC:
     reason: Not yet written.
   SKY-D200:
-    reason: Not yet written.
-  SKY-D216:
-    reason: Not yet written.
-  SKY-D217:
-    reason: Not yet written.
+    reason: 'No page: no scan reports SKY-D200. It is the internal ID of the Python
+      dangerous-call rule (`DangerousCallsRule` in `skylos/rules/danger/calls.py`);
+      its findings carry their own IDs (SKY-D201 to D210, D233, D235, D250, D346 to
+      D348), and an ignore or `--select` for SKY-D200 does not act on them. It needs
+      alias handling like the Go IDs, not a page.'
   SKY-D218:
-    reason: Not yet written.
+    reason: 'No page: Skylos never reports this rule. Every finding goes to the JSON
+      `suppressed` list as a diagnostic (`resolve_source_required_findings` in `skylos/rules/danger/danger_sql/sql_source_policy.py`),
+      and `--verify` only reads reported findings. A page needs either a verify check
+      for suppressed findings or a product decision to list SKY-D218. Draft kept outside
+      the repository.'
   SKY-D222:
     reason: Not yet written.
   SKY-D223:
@@ -66,66 +70,6 @@ pending:
   SKY-D224:
     reason: Not yet written.
   SKY-D225:
-    reason: Not yet written.
-  SKY-D229:
-    reason: Not yet written.
-  SKY-D232:
-    reason: Not yet written.
-  SKY-D233:
-    reason: Not yet written.
-  SKY-D234:
-    reason: Not yet written.
-  SKY-D235:
-    reason: Not yet written.
-  SKY-D236:
-    reason: Not yet written.
-  SKY-D237:
-    reason: Not yet written.
-  SKY-D238:
-    reason: Not yet written.
-  SKY-D239:
-    reason: Not yet written.
-  SKY-D244:
-    reason: Not yet written.
-  SKY-D245:
-    reason: Not yet written.
-  SKY-D246:
-    reason: Not yet written.
-  SKY-D251:
-    reason: Not yet written.
-  SKY-D252:
-    reason: Not yet written.
-  SKY-D253:
-    reason: Not yet written.
-  SKY-D254:
-    reason: Not yet written.
-  SKY-D255:
-    reason: Not yet written.
-  SKY-D257:
-    reason: Not yet written.
-  SKY-D258:
-    reason: Not yet written.
-  SKY-D260:
-    reason: Not yet written.
-  SKY-D261:
-    reason: Not yet written.
-  SKY-D262:
-    reason: Not yet written.
-  SKY-D263:
-    reason: Not yet written.
-  SKY-D264:
-    reason: Not yet written.
-  SKY-D266:
-    reason: Not yet written.
-  SKY-D267:
-    reason: Not yet written.
-  SKY-D280:
-    reason: Not yet written.
-  SKY-D281:
-    reason: Not yet written.
-  SKY-D282:
-    reason: Not yet written.
-  SKY-D283:
     reason: Not yet written.
   SKY-D295:
     reason: Not yet written.
@@ -145,37 +89,13 @@ pending:
     reason: Not yet written.
   SKY-D323:
     reason: Not yet written.
-  SKY-D326:
-    reason: Not yet written.
   SKY-D340:
     reason: Not yet written.
   SKY-D341:
     reason: Not yet written.
-  SKY-D344:
-    reason: Not yet written.
-  SKY-D345:
-    reason: Not yet written.
-  SKY-D346:
-    reason: Not yet written.
-  SKY-D347:
-    reason: Not yet written.
-  SKY-D348:
-    reason: Not yet written.
-  SKY-D349:
-    reason: Not yet written.
   SKY-D353:
     reason: Not yet written.
   SKY-D354:
-    reason: Not yet written.
-  SKY-D355:
-    reason: Not yet written.
-  SKY-D356:
-    reason: Not yet written.
-  SKY-D357:
-    reason: Not yet written.
-  SKY-D358:
-    reason: Not yet written.
-  SKY-D359:
     reason: Not yet written.
   SKY-D360:
     reason: Not yet written.
@@ -222,8 +142,6 @@ pending:
   SKY-D410:
     reason: Not yet written.
   SKY-D411:
-    reason: Not yet written.
-  SKY-D510:
     reason: Not yet written.
   SKY-DEP001:
     reason: Not yet written.

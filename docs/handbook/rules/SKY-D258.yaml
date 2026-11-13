@@ -1,0 +1,164 @@
+id: SKY-D258
+title: Android WebView lets file pages read other files and sites
+family: security
+severity: MEDIUM
+languages: [Kotlin]
+gate:
+  full: counted
+cwe: [CWE-200]
+
+what_it_is: >-
+  A WebView can open local HTML through `file://` URLs. The settings
+  `allowFileAccessFromFileURLs` and `allowUniversalAccessFromFileURLs` let
+  scripts in such a page also read other local files, or any website.
+  SKY-D258 reports a Kotlin line that sets either of them to `true`.
+
+why_it_matters: >-
+  If an opened file contains a script an attacker controls, for example a
+  downloaded report or an attachment, that script can read the app's
+  private files, such as saved login tokens, and send them to the
+  attacker's server.
+
+flagged_example:
+  language: kotlin
+  filename: app/src/main/java/com/acme/reports/ReportActivity.kt
+  expect_line: 13
+  code: |
+    package com.acme.reports
+
+    import android.os.Bundle
+    import android.webkit.WebView
+    import androidx.appcompat.app.AppCompatActivity
+    import java.io.File
+
+    class ReportActivity : AppCompatActivity() {
+        override fun onCreate(savedInstanceState: Bundle?) {
+            super.onCreate(savedInstanceState)
+            val webView = WebView(this)
+            webView.settings.allowFileAccess = true
+            webView.settings.allowUniversalAccessFromFileURLs = true
+            val report = File(filesDir, "reports/latest.html")
+            webView.loadUrl("file://" + report.absolutePath)
+            setContentView(webView)
+        }
+    }
+
+not_flagged_example:
+  language: kotlin
+  filename: app/src/main/java/com/acme/reports/ReportActivity.kt
+  code: |
+    package com.acme.reports
+
+    import android.os.Bundle
+    import android.webkit.WebView
+    import androidx.appcompat.app.AppCompatActivity
+    import java.io.File
+
+    class ReportActivity : AppCompatActivity() {
+        override fun onCreate(savedInstanceState: Bundle?) {
+            super.onCreate(savedInstanceState)
+            val webView = WebView(this)
+            webView.settings.allowFileAccess = true
+            webView.settings.allowFileAccessFromFileURLs = false
+            webView.settings.allowUniversalAccessFromFileURLs = false
+            val report = File(filesDir, "reports/latest.html")
+            webView.loadUrl("file://" + report.absolutePath)
+            setContentView(webView)
+        }
+    }
+  why: >-
+    `allowFileAccess` only lets the WebView open the report file itself;
+    with the two cross-access settings `false`, scripts in it cannot read
+    other files or other sites. Only `true` values of those two settings
+    are reported.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Kotlin (`.kt`) files, after comments and string
+    contents are blanked out.
+  - >-
+    Reports MEDIUM on each line that sets `allowFileAccessFromFileURLs` or
+    `allowUniversalAccessFromFileURLs` to the literal `true`, either as a
+    property (`= true`) or with the setter
+    (`setAllowUniversalAccessFromFileURLs(true)`).
+  - >-
+    Nothing else is read: a value held in a variable, `allowFileAccess`,
+    `allowContentAccess` and the URL the WebView loads are not checked.
+
+source_refs:
+  - path: skylos/visitors/languages/kotlin/security.py
+    symbol: "_FILE_URL_ACCESS_RE = re.compile("
+  - path: skylos/visitors/languages/kotlin/security.py
+    symbol: "def _scan_android"
+  - path: test/test_kotlin.py
+    symbol: "def test_kotlin_android_webview_settings"
+
+fix:
+  explanation: >-
+    Leave both settings at their default, `false`, and turn off
+    `allowFileAccess` too. Serve the app's own files over an `https://`
+    address with AndroidX `WebViewAssetLoader`, so the page follows the
+    normal same-origin rules of the web.
+  filename: app/src/main/java/com/acme/reports/ReportActivity.kt
+  code: |
+    package com.acme.reports
+
+    import android.os.Bundle
+    import android.webkit.WebResourceRequest
+    import android.webkit.WebResourceResponse
+    import android.webkit.WebView
+    import android.webkit.WebViewClient
+    import androidx.appcompat.app.AppCompatActivity
+    import androidx.webkit.WebViewAssetLoader
+    import java.io.File
+
+    class ReportActivity : AppCompatActivity() {
+        override fun onCreate(savedInstanceState: Bundle?) {
+            super.onCreate(savedInstanceState)
+            val reports = WebViewAssetLoader.InternalStoragePathHandler(
+                this,
+                File(filesDir, "reports"),
+            )
+            val loader = WebViewAssetLoader.Builder()
+                .addPathHandler("/reports/", reports)
+                .build()
+            val webView = WebView(this)
+            webView.settings.allowFileAccess = false
+            webView.webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(
+                    view: WebView,
+                    request: WebResourceRequest,
+                ): WebResourceResponse? = loader.shouldInterceptRequest(request.url)
+            }
+            webView.loadUrl("https://appassets.androidplatform.net/reports/latest.html")
+            setContentView(webView)
+        }
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A WebView that only opens HTML shipped inside the app, which no one
+      outside can change, is still reported.
+    - >-
+      Missed: Java source files, which this rule does not read, and a
+      value set through a variable, such as
+      `allowUniversalAccessFromFileURLs = BuildConfig.DEBUG`.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the setting line when the WebView only opens bundled files, and
+        say so.
+      language: kotlin
+      code: |
+        settings.allowFileAccessFromFileURLs = true // skylos: ignore[SKY-D258] bundled docs
+    - check: baseline
+      text: >-
+        `skylos baseline .`, then `--baseline`, accepts existing settings by
+        file and line.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D258"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D257]

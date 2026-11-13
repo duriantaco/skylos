@@ -1,0 +1,168 @@
+id: SKY-D217
+title: SQL injection through an ORM's raw SQL
+family: security
+severity: CRITICAL
+languages: [Python]
+gate:
+  full: critical_blocks
+cwe: [CWE-89]
+
+what_it_is: >-
+  ORMs (libraries that map database rows to objects, such as Django and
+  peewee) also let you write SQL by hand. SKY-D217 reports raw SQL text that
+  is pasted together from values, or that carries outside input, and is
+  passed to Django `.objects.raw()`, `QuerySet.extra()`, `RawSQL()` or
+  peewee `Model.raw()`.
+
+why_it_matters: >-
+  The ORM sends this text to the database exactly as written. A visitor who
+  searches for `' OR '1'='1` reads every row, and other payloads can change
+  data, even though the rest of the project uses safe ORM queries.
+
+flagged_example:
+  language: python
+  filename: shop/views.py
+  expect_line: 8
+  code: |
+    from django.http import JsonResponse
+
+    from shop.models import Book
+
+
+    def search(request):
+        title = request.GET.get("title", "")
+        books = Book.objects.raw(f"SELECT * FROM shop_book WHERE title = '{title}'")
+        return JsonResponse({"ids": [book.id for book in books]})
+
+not_flagged_example:
+  language: python
+  filename: shop/views.py
+  code: |
+    from django.http import JsonResponse
+
+    from shop.models import Book
+
+
+    def search(request):
+        title = request.GET.get("title", "")
+        books = Book.objects.raw("SELECT * FROM shop_book WHERE title = %s", [title])
+        return JsonResponse({"ids": [book.id for book in books]})
+  why: >-
+    The SQL text is a fixed literal with a `%s` placeholder. Django sends the
+    title separately as a parameter, so it can never change the statement.
+    Skylos only looks at the first argument, the SQL text.
+
+more_examples:
+  - flagged:
+      language: python
+      filename: shop/views.py
+      expect_line: 8
+      code: |
+        from django.http import JsonResponse
+
+        from shop.models import Book
+
+
+        def by_author(request):
+            author = request.GET.get("author", "")
+            books = Book.objects.extra(where=[f"author = '{author}'"])
+            return JsonResponse({"ids": list(books.values_list("id", flat=True))})
+    not_flagged:
+      language: python
+      filename: shop/views.py
+      code: |
+        from django.http import JsonResponse
+
+        from shop.models import Book
+
+
+        def by_author(request):
+            author = request.GET.get("author", "")
+            books = Book.objects.extra(where=["author = %s"], params=[author])
+            return JsonResponse({"ids": list(books.values_list("id", flat=True))})
+      why: >-
+        The `where` entry is fixed text and the author travels in `params`,
+        which Django binds as a parameter. Skylos checks `select` values and
+        the `where`, `tables` and `order_by` entries, never `params`.
+
+how_skylos_decides:
+  - >-
+    Finds four sinks: a `.objects.raw()` call, `.extra()` on a Django
+    queryset (a chain through `.objects`, or any `.extra()` in a file that
+    imports Django), Django's `RawSQL()` resolved through its import, and
+    `.raw()` in a file that imports peewee.
+  - >-
+    For `.raw()` and `RawSQL()` it reads the first argument. For `.extra()`
+    it reads each `select` value and each entry of `where`, `tables` and
+    `order_by`; `params` and `select_params` are bound values and are not
+    read.
+  - >-
+    Reports CRITICAL when that SQL text is an f-string, `+`, `%` or
+    `.format()` expression with a part that is not a fixed literal, or when
+    it is tainted: it comes from a function parameter (such as a view's
+    `request`), request data, `input()` or another outside source, directly
+    or through assignments.
+  - >-
+    Text built only from literals is left alone. SQLAlchemy `text()` and
+    pandas `read_sql()` are reported once, as SKY-D211, not here.
+
+source_refs:
+  - path: skylos/rules/danger/danger_sql/sql_raw_flow.py
+    symbol: "class _SQLRawFlowChecker"
+    note: "`visit_Call` holds the sink list."
+  - path: skylos/rules/danger/danger_sql/sql_raw_flow.py
+    symbol: "def _tainted_extra_fragment"
+  - path: skylos/rules/danger/danger_sql/sql_raw_flow.py
+    symbol: "def _is_interpolated_string"
+  - path: skylos/rules/danger/taint.py
+    symbol: "def _taint_params"
+    note: function parameters start out tainted.
+
+fix:
+  explanation: >-
+    Keep the SQL text fixed and pass every value in the parameter list. If
+    the query does not need raw SQL, use the ORM's own filters, which always
+    bind values.
+  filename: shop/views.py
+  code: |
+    from django.http import JsonResponse
+
+    from shop.models import Book
+
+
+    def search(request):
+        title = request.GET.get("title", "")
+        books = Book.objects.filter(title=title)
+        return JsonResponse({"ids": [book.id for book in books]})
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A helper that receives the SQL text as a parameter, such as
+      `def run(sql): return Book.objects.raw(sql)`, is reported even when
+      every caller passes a constant. Parameters count as untrusted.
+    - >-
+      An f-string that inserts a module constant, such as
+      `f"SELECT * FROM {TABLE}"`, is reported: only literals written in the
+      expression itself count as fixed text.
+    - >-
+      A column name checked against an allowlist before it is pasted into
+      `order_by` is still reported: allowlist checks are not recognised.
+  suppress:
+    - check: inline
+      text: >-
+        Silence one line and say why. A bare `# noqa` does not hide HIGH or
+        CRITICAL security findings.
+      language: python
+      code: |
+        books = Book.objects.raw(sql)  # skylos: ignore[SKY-D217] sql is from REPORTS
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D217"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D211, SKY-D281]

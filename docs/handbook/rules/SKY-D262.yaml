@@ -1,0 +1,170 @@
+id: SKY-D262
+title: LLM output run as code, SQL, a shell command or a URL
+family: security
+severity: CRITICAL
+languages: [Python]
+gate:
+  full: critical_blocks
+cwe: [CWE-1426]
+
+what_it_is: >-
+  A model's reply is text that anyone who can influence the prompt can
+  shape. SKY-D262 reports Python code that passes that reply, without
+  checking it, to `eval()` or `exec()`, a shell, a SQL `execute()` call or
+  the URL of an HTTP request.
+
+why_it_matters: >-
+  A "text to SQL" feature that runs whatever query the model writes will
+  run `DROP TABLE` or a query over another customer's rows as soon as a
+  user asks for it cleverly. The same goes for generated shell commands,
+  generated Python and URLs the server then fetches.
+
+flagged_example:
+  language: python
+  filename: reports/ask.py
+  expect_line: 18
+  code: |
+    import sqlite3
+
+    from openai import OpenAI
+
+    client = OpenAI()
+
+
+    def run_report(question: str) -> list[tuple]:
+        reply = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Write one SQLite query for the sales data."},
+                {"role": "user", "content": question},
+            ],
+        )
+        sql = reply.choices[0].message.content
+        conn = sqlite3.connect("sales.db")
+        return conn.execute(sql).fetchall()
+
+not_flagged_example:
+  language: python
+  filename: reports/digest.py
+  code: |
+    import os
+
+    import requests
+    from openai import OpenAI
+
+    client = OpenAI()
+    SLACK_WEBHOOK_URL = os.environ["SLACK_WEBHOOK_URL"]
+
+
+    def post_digest(question: str) -> None:
+        reply = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Summarise yesterday's sales in 3 lines."},
+                {"role": "user", "content": question},
+            ],
+        )
+        summary = reply.choices[0].message.content
+        requests.post(SLACK_WEBHOOK_URL, json={"text": summary}, timeout=10)
+  why: >-
+    The reply reaches a network call, but only as the message body. The URL
+    is a fixed setting, so the model cannot choose where the request goes.
+    For HTTP calls only the URL argument is checked.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Python files that mention an LLM library
+    (`openai`, `anthropic`, `litellm`, `langchain` and similar).
+  - >-
+    Marks as model output the result of a model call (the same calls as
+    SKY-D261: `.chat.completions.create`, `.responses.create`,
+    `.messages.create`, `.invoke`, `.generate` and so on) and every
+    variable assigned from an expression that contains model output, such
+    as `reply.choices[0].message.content` or `json.loads(reply...)`.
+  - >-
+    Reports CRITICAL when model output appears anywhere in: the first
+    argument of `eval()`, `exec()` or `os.system()`; the command of a
+    `subprocess.*` call with `shell=True`; the first argument of a call
+    ending in `.execute`, `.executemany` or `.executescript`; or the URL of
+    `requests.get/post/put/patch/delete/request` or the same `httpx` calls.
+  - >-
+    Nothing counts as a check: comparing the reply with a list, parsing it
+    or looking it up in a dictionary still leaves it marked. Only keeping it
+    out of those arguments avoids the finding.
+
+source_refs:
+  - path: skylos/rules/danger/danger_llm/llm_flow.py
+    symbol: "def _llm_output_sink_label"
+  - path: skylos/rules/danger/danger_llm/llm_flow.py
+    symbol: "def _expr_has_llm_output"
+  - path: skylos/rules/danger/danger_llm/llm_flow.py
+    symbol: "def _http_sink_label"
+    note: only the URL argument is read.
+  - path: skylos/rules/danger/danger_llm/utils.py
+    symbol: "DANGEROUS_EXEC_CALLS = frozenset("
+  - path: skylos/rules/danger/danger_llm/utils.py
+    symbol: "SQL_SINK_SUFFIXES = ("
+  - path: test/test_dangerous.py
+    symbol: "def test_langchain_llm_output_to_sql_flags_d262"
+
+fix:
+  explanation: >-
+    Do not run what the model writes. Ask it for structured data, check
+    each value against what you allow, and pass the value into fixed code:
+    a bound SQL parameter, a command from your own list, a URL on your own
+    host.
+  filename: reports/ask.py
+  code: |
+    import json
+    import sqlite3
+
+    from openai import OpenAI
+
+    client = OpenAI()
+    REGIONS = {"north", "south", "east", "west"}
+
+
+    def run_report(question: str) -> list[tuple]:
+        reply = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": 'Reply with JSON: {"region": "<name>"}.'},
+                {"role": "user", "content": question},
+            ],
+        )
+        region = json.loads(reply.choices[0].message.content)["region"]
+        if region not in REGIONS:
+            raise ValueError("unknown region")
+        conn = sqlite3.connect("sales.db")
+        query = "SELECT SUM(total) FROM sales WHERE region = ?"
+        return conn.execute(query, (region,)).fetchall()
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A reply checked against an allowlist is still reported when it ends
+      up in the argument: `conn.execute(REPORTS[name])`, where `name` came
+      from the model and `REPORTS` holds fixed queries, is reported.
+    - >-
+      Missed: `subprocess.run(cmd)` without `shell=True`, `urllib`,
+      `aiohttp`, SQL passed by keyword, output handed to a template or an
+      HTML response, output that crosses into another function, and code
+      in other languages.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line of the sink call and say what makes the
+        value safe.
+      language: python
+      code: |
+        return conn.execute(REPORTS[name]).fetchall()  # skylos: ignore[SKY-D262] fixed queries
+    - check: baseline
+      text: >-
+        `skylos baseline .`, then `--baseline`, accepts reviewed findings
+        and reports new ones.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D262"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D261, SKY-D211, SKY-D212, SKY-D201, SKY-D216]

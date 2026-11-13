@@ -61,14 +61,14 @@ families:
 
   - id: ci-cd
     title: CI/CD pipelines
-    prefixes: "`SKY-D290`–`SKY-D323`, `SKY-D350`–`SKY-D364`, `SKY-D371`–`SKY-D376`"
+    prefixes: "`SKY-D290`–`SKY-D323`, `SKY-D350`–`SKY-D354`, `SKY-D360`–`SKY-D364`, `SKY-D371`–`SKY-D376`"
     match:
       ids:
         - "SKY-D29?"
         - "SKY-D30?"
         - "SKY-D31?"
         - "SKY-D32[0-3]"
-        - "SKY-D35?"
+        - "SKY-D35[0-4]"
         - "SKY-D36[0-4]"
         - "SKY-D37[1-6]"
     intro: |

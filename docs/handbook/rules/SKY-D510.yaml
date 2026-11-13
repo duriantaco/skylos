@@ -1,0 +1,229 @@
+id: SKY-D510
+title: Prototype pollution from request data
+family: security
+severity: HIGH
+languages: [TypeScript/JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  In JavaScript every plain object inherits from `Object.prototype`, and the
+  property name `__proto__` points at it. Prototype pollution happens when
+  request data picks a property name, so that a write meant for one object
+  lands on `Object.prototype` and changes every object in the process.
+  SKY-D510 reports two shapes in server handlers: a two-level write
+  `obj[key1][key2] = value` whose first key comes from the request, and a
+  recursive merge function that copies request data key by key.
+
+why_it_matters: >-
+  A request with section `__proto__` and key `isAdmin` makes `{}.isAdmin`
+  true for the whole server until it restarts. Code such as
+  `if (user.isAdmin)` then lets everyone in, and other polluted properties
+  can crash the server or, through template and child-process options, run
+  commands.
+
+flagged_example:
+  language: typescript
+  filename: src/settings.ts
+  expect_line: 9
+  code: |
+    import express from "express";
+
+    const app = express();
+    app.use(express.json());
+
+    const settings: Record<string, Record<string, unknown>> = { theme: {}, email: {} };
+
+    app.post("/settings/:section", (req, res) => {
+      settings[req.params.section][req.body.key] = req.body.value;
+      res.json(settings[req.params.section]);
+    });
+
+not_flagged_example:
+  language: typescript
+  filename: src/settings.ts
+  code: |
+    import express from "express";
+
+    const app = express();
+    app.use(express.json());
+
+    const SECTIONS = ["theme", "email"];
+    const settings: Record<string, Record<string, unknown>> = { theme: {}, email: {} };
+
+    app.post("/settings/:section", (req, res) => {
+      const section = req.params.section;
+      if (!SECTIONS.includes(section)) {
+        return res.status(404).json({ error: "Unknown section" });
+      }
+      settings[section][req.body.key] = req.body.value;
+      res.json(settings[section]);
+    });
+  why: >-
+    The same nested write, but the first key is checked against a fixed list
+    and the handler returns when it is not on it. `__proto__` can no longer
+    reach the first level, so the write only changes `theme` or `email`.
+
+more_examples:
+  - flagged:
+      language: javascript
+      filename: src/profile.js
+      expect_line: 19
+      code: |
+        const express = require("express");
+
+        const router = express.Router();
+        const defaults = { notifications: { email: true } };
+
+        function merge(target, source) {
+          for (const key in source) {
+            if (typeof source[key] === "object" && source[key] !== null) {
+              merge((target[key] = target[key] || {}), source[key]);
+            } else {
+              target[key] = source[key];
+            }
+          }
+          return target;
+        }
+
+        router.put("/profile/preferences", (req, res) => {
+          const preferences = merge({}, defaults);
+          merge(preferences, req.body);
+          res.json(preferences);
+        });
+
+        module.exports = router;
+    not_flagged:
+      language: javascript
+      filename: src/profile.js
+      code: |
+        const express = require("express");
+
+        const router = express.Router();
+        const defaults = { notifications: { email: true } };
+
+        function merge(target, source) {
+          for (const key in source) {
+            if (key === "__proto__" || key === "constructor" || key === "prototype") {
+              continue;
+            }
+            if (typeof source[key] === "object" && source[key] !== null) {
+              merge((target[key] = target[key] || {}), source[key]);
+            } else {
+              target[key] = source[key];
+            }
+          }
+          return target;
+        }
+
+        router.put("/profile/preferences", (req, res) => {
+          const preferences = merge({}, defaults);
+          merge(preferences, req.body);
+          res.json(preferences);
+        });
+
+        module.exports = router;
+      why: >-
+        A JSON body such as `{"__proto__": {"isAdmin": true}}` makes the
+        first `merge` recurse into `Object.prototype`. The second `merge`
+        skips the three dangerous keys, so Skylos no longer treats it as an
+        unsafe merge.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on TypeScript and JavaScript files. Finds request
+    handlers: Express, Fastify, Hapi and Next.js `pages/api` functions,
+    Koa and `getServerSideProps`, NestJS methods with `@Body()` or
+    `@Query()` parameters, Next.js App Router route handlers and Remix
+    `loader` and `action`.
+  - >-
+    Follows request data (`req.body`, `req.params`, `req.query` and the
+    like) inside the handler through variables, destructuring,
+    `JSON.parse` and helpers in the same file. Calls into other modules
+    stop it.
+  - >-
+    Nested write: reports `obj[a][b] = value` when `a` comes from the
+    request and `b` is not a fixed string. Skipped when a check whose
+    failing branch returns or throws comes first: comparison with fixed
+    strings, a fixed list, `hasOwnProperty` or `Object.hasOwn`, a test that
+    rejects `__proto__`, a strict pattern or number check, or a `typeof`
+    check. Also skipped when `obj` was made with `Object.create(null)`.
+  - >-
+    Recursive merge: reports a call to a function in the same file that
+    takes request data as its second or later argument and is a recursive
+    merge: it loops over a parameter's keys with `for…in` or
+    `Object.keys()`, assigns `target[key]` and calls itself.
+  - >-
+    A merge function is safe when its body names `"__proto__"`,
+    `"constructor"` or `"prototype"` as a string, or uses `hasOwnProperty`,
+    `Object.hasOwn` or `Object.create(null)`. Merges from libraries are not
+    checked.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/express_taint.py
+    symbol: "def _two_level_write(self, node, left, right) -> None:"
+  - path: skylos/visitors/languages/typescript/express_taint.py
+    symbol: "def _key_guarded(self, key, sink) -> bool:"
+  - path: skylos/visitors/languages/typescript/express_taint.py
+    symbol: "def _merge(self, node, callee, args) -> None:"
+  - path: skylos/visitors/languages/typescript/express_taint.py
+    symbol: "def _unsafe_merge_shape(ctx: _FileContext, function) -> bool:"
+  - path: test/test_ts_express_taint_sinks.py
+    symbol: '"proto_guarded_merge": ('
+
+fix:
+  explanation: >-
+    Never let request data choose the first property name of a shared
+    object. Check the key against the object's own keys or a fixed list
+    first, or store user-keyed data in a `Map`. In merge helpers skip
+    `__proto__`, `constructor` and `prototype`.
+  filename: src/settings.ts
+  code: |
+    import express from "express";
+
+    const app = express();
+    app.use(express.json());
+
+    const settings: Record<string, Record<string, unknown>> = { theme: {}, email: {} };
+
+    app.post("/settings/:section", (req, res) => {
+      const section = req.params.section;
+      if (!Object.hasOwn(settings, section)) {
+        return res.status(404).json({ error: "Unknown section" });
+      }
+      settings[section][req.body.key] = req.body.value;
+      res.json(settings[section]);
+    });
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A check done by a helper is not recognised: with
+      `if (!isKnownSection(section)) return …` imported from another file,
+      the write is still reported.
+    - >-
+      Missed: merges done by a library or by a helper in another file
+      (`lodash.merge`, a shared `deepMerge`), and one-level writes such as
+      `settings.theme[req.body.key] = value`, which cannot reach
+      `Object.prototype` on their own.
+    - >-
+      Missed: `if (typeof section !== "string") return` counts as a check,
+      although `"__proto__"` is a string, so the nested write after it is
+      not reported.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the reported line and say what limits the key.
+      language: typescript
+      code: |
+        settings[section][key] = value; // skylos: ignore[SKY-D510] isKnownSection() checked
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D510"]` turns the rule off for the whole
+        project.
+    - check: baseline
+      text: >-
+        `skylos baseline .` and then `--baseline` accept the current findings
+        and report only new ones.
+
+related: [SKY-D234, SKY-D238]

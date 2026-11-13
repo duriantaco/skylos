@@ -1,0 +1,269 @@
+id: SKY-D216
+title: Server-side request forgery (SSRF)
+family: security
+severity: CRITICAL
+severity_note: >-
+  Python and Go findings are CRITICAL. In TypeScript and JavaScript, request
+  data that chooses the URL of `fetch`, axios, got or a similar client in a
+  route handler is HIGH, and a `fetch()` or axios call with any other
+  variable URL is MEDIUM.
+languages: [Python, TypeScript/JavaScript, Go, Java, Kotlin, C#, PHP, Dart, Shell]
+gate:
+  full: critical_blocks
+  note: >-
+    The TypeScript and JavaScript findings are HIGH or MEDIUM and are only
+    counted.
+cwe: [CWE-918]
+
+what_it_is: >-
+  Server-side request forgery (SSRF) happens when outside text chooses where
+  your server sends an HTTP request. Skylos reports SKY-D216 when request
+  data, a route or tool argument, or `input()` can pick the host of a call
+  such as `requests.get()`, `httpx.post()` or `urlopen()`.
+
+why_it_matters: >-
+  The server can reach places a visitor cannot. A link-preview endpoint
+  called with `url=http://169.254.169.254/latest/meta-data/` reads the cloud
+  metadata service and can hand back the machine's access keys. The same trick
+  reaches admin panels and databases on the internal network.
+
+flagged_example:
+  language: python
+  filename: app/preview.py
+  expect_line: 11
+  code: |
+    import requests
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.get("/preview")
+    def preview():
+        url = request.args.get("url", "")
+        page = requests.get(url, timeout=5)
+        return {"status": page.status_code, "length": len(page.text)}
+
+not_flagged_example:
+  language: python
+  filename: app/preview.py
+  code: |
+    import requests
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.get("/profile")
+    def profile():
+        user = request.args.get("user", "")
+        page = requests.get(f"https://api.github.com/users/{user}", timeout=5)
+        return {"status": page.status_code, "length": len(page.text)}
+  why: >-
+    The request data only fills the path. The literal prefix
+    `https://api.github.com/` already fixes the host, so the visitor can
+    choose which user to look up but not which server is contacted.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/server.ts
+      expect_line: 7
+      code: |
+        import express from "express";
+
+        const app = express();
+
+        app.get("/preview", async (req, res) => {
+          const url = String(req.query.url ?? "");
+          const page = await fetch(url);
+          res.json({ status: page.status });
+        });
+
+        app.listen(3000);
+    not_flagged:
+      language: typescript
+      filename: src/server.ts
+      code: |
+        import express from "express";
+
+        const app = express();
+
+        app.get("/profile", async (req, res) => {
+          const user = encodeURIComponent(String(req.query.user ?? ""));
+          const page = await fetch(`https://api.github.com/users/${user}`);
+          res.json({ status: page.status });
+        });
+
+        app.listen(3000);
+      why: >-
+        The template literal starts with a fixed `scheme://host/` prefix, so
+        the request data cannot change the host.
+  - flagged:
+      language: go
+      filename: main.go
+      expect_line: 9
+      code: |
+        package main
+
+        import (
+        	"net/http"
+        )
+
+        func preview(w http.ResponseWriter, r *http.Request) {
+        	target := r.URL.Query().Get("url")
+        	resp, err := http.Get(target)
+        	if err != nil {
+        		http.Error(w, "fetch failed", http.StatusBadGateway)
+        		return
+        	}
+        	defer resp.Body.Close()
+        	w.WriteHeader(resp.StatusCode)
+        }
+
+        func main() {
+        	http.HandleFunc("/preview", preview)
+        	http.ListenAndServe(":8080", nil)
+        }
+    not_flagged:
+      language: go
+      filename: main.go
+      code: |
+        package main
+
+        import (
+        	"net/http"
+        	"net/url"
+        )
+
+        func profile(w http.ResponseWriter, r *http.Request) {
+        	user := url.PathEscape(r.URL.Query().Get("user"))
+        	resp, err := http.Get("https://api.github.com/users/" + user)
+        	if err != nil {
+        		http.Error(w, "fetch failed", http.StatusBadGateway)
+        		return
+        	}
+        	defer resp.Body.Close()
+        	w.WriteHeader(resp.StatusCode)
+        }
+
+        func main() {
+        	http.HandleFunc("/profile", profile)
+        	http.ListenAndServe(":8080", nil)
+        }
+      why: >-
+        The string before the request value is a full `scheme://host/`
+        prefix, so the Go engine treats the host as fixed.
+
+how_skylos_decides:
+  - >-
+    In Python, finds HTTP calls: `get`, `post`, `put`, `delete`, `head`,
+    `options` and `request` on a receiver that looks like an HTTP client
+    (`requests`, `httpx`, `aiohttp`, `urllib3`, a `session` or `client`), and
+    `urllib.request.urlopen()`. The URL is the `url=` keyword, the first
+    argument of a verb, or the second argument of `request(method, url)`.
+  - >-
+    Skips in-process test clients (Flask `test_client()`, Django `Client`,
+    Starlette `TestClient` and others) and receivers proven to be an
+    SQLAlchemy session, whose `get()` and `delete()` are database calls.
+  - >-
+    Skips a URL whose host is already fixed: a literal `scheme://host/`
+    prefix, a module setting that holds such a URL or comes from the
+    environment, or `urljoin()` with a fixed base and a relative target.
+  - >-
+    Skips a URL checked before the call by a guard that always exits, such as
+    `if urlparse(url).hostname not in ALLOWED_HOSTS: abort(400)` or
+    `url.startswith("https://api.example.com/")`.
+  - >-
+    Reports CRITICAL only when a real untrusted source reaches the URL: a
+    route, MCP tool or command-dispatch argument, request data, `input()` or
+    standard input. A URL whose only source is a command-line argument or an
+    environment variable is the operator's choice and is not reported.
+  - >-
+    TypeScript and JavaScript: request data in an Express, Fastify, Koa,
+    NestJS or Next.js handler that reaches the URL of `fetch`, axios, got,
+    undici or `http(s).get` is HIGH; any other `fetch()` or axios call with a
+    URL that is not built from constants is MEDIUM. Go (reported by the Go
+    engine as SKY-G216): request or network input in `http.Get`, `http.Post`,
+    `http.NewRequest`, an `http.Client` call or a reverse proxy target,
+    unless a literal prefix fixes the host. Java, Kotlin, C#, PHP, Dart and
+    shell scripts have their own checks with the same idea.
+
+source_refs:
+  - path: skylos/rules/danger/danger_net/ssrf_flow.py
+    symbol: "class _SSRFFlowChecker"
+    note: Python detector; `visit_Call` holds the sink list.
+  - path: skylos/rules/danger/danger_net/ssrf_flow.py
+    symbol: "def _untrusted_evidence"
+    note: fixed hosts and operator-only sources.
+  - path: skylos/rules/danger/danger_net/ssrf_flow.py
+    symbol: "def _host_allowlist_guard_dominates"
+  - path: skylos/rules/danger/danger_net/ssrf_flow.py
+    symbol: "def _only_operator_sources"
+  - path: skylos/visitors/languages/typescript/express_taint.py
+    symbol: "SSRF: request data chooses the URL of the"
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "# --- fetch SSRF (SKY-D216) ---"
+  - path: skylos/engines/go/internal/analyzer/taint.go
+    symbol: "func (a *Analyzer) isSSRFURL"
+  - path: skylos/visitors/languages/go/go.py
+    symbol: "_GO_RULE_REMAP"
+
+fix:
+  explanation: >-
+    Parse the URL and accept only hosts you chose in advance, with the
+    `https` scheme. Reject everything else before the request is sent. If
+    you must allow any public site, resolve the name and refuse private,
+    loopback and link-local addresses as well.
+  filename: app/preview.py
+  code: |
+    from urllib.parse import urlparse
+
+    import requests
+
+    from flask import Flask, abort, request
+
+    app = Flask(__name__)
+    ALLOWED_HOSTS = {"example.com", "docs.example.com"}
+
+
+    @app.get("/preview")
+    def preview():
+        url = request.args.get("url", "")
+        if urlparse(url).hostname not in ALLOWED_HOSTS:
+            abort(400)
+        page = requests.get(url, timeout=5)
+        return {"status": page.status_code, "length": len(page.text)}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      An allowlist check made inside another function, such as
+      `ensure_allowed(url)`, is not seen: the URL is still reported.
+    - >-
+      In TypeScript and JavaScript, a `fetch()` of a URL built from a
+      function parameter is reported as MEDIUM even when every caller passes
+      a fixed address.
+    - >-
+      An allowlist kept in a local variable or a module-level string is not
+      accepted as a guard; use a literal set or a module-level collection.
+  suppress:
+    - check: inline
+      text: >-
+        Silence one line and say why. A bare `# noqa` does not hide HIGH or
+        CRITICAL security findings.
+      language: python
+      code: |
+        page = requests.get(url)  # skylos: ignore[SKY-D216] url checked by ensure_allowed()
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D216"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D218, SKY-D230, SKY-D356, SKY-D248]

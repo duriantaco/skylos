@@ -1,0 +1,176 @@
+id: SKY-D234
+title: Form or serializer accepts every model field
+family: security
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+cwe: [CWE-915]
+
+what_it_is: >-
+  Mass assignment means copying every field a client sends straight onto a
+  database record. In Django and Django REST Framework, `fields = "__all__"`
+  in a form's or serializer's `Meta` class does exactly that. SKY-D234
+  reports that line.
+
+why_it_matters: >-
+  The client chooses which fields to send. A user editing their own profile
+  can add `"is_staff": true` or `"is_superuser": true` to the request and
+  give themselves admin rights, or change another record's owner.
+
+flagged_example:
+  language: python
+  filename: accounts/api.py
+  expect_line: 8
+  code: |
+    from django.contrib.auth.models import User
+    from rest_framework import generics, permissions, serializers
+
+
+    class ProfileSerializer(serializers.ModelSerializer):
+        class Meta:
+            model = User
+            fields = "__all__"
+
+
+    class ProfileView(generics.RetrieveUpdateAPIView):
+        serializer_class = ProfileSerializer
+        permission_classes = [permissions.IsAuthenticated]
+
+        def get_object(self):
+            return self.request.user
+
+not_flagged_example:
+  language: python
+  filename: accounts/api.py
+  code: |
+    from django.contrib.auth.models import User
+    from rest_framework import generics, permissions, serializers
+
+
+    class ProfileSerializer(serializers.ModelSerializer):
+        class Meta:
+            model = User
+            fields = ["id", "username", "first_name", "last_name", "email", "is_staff"]
+            read_only_fields = ["id", "username", "is_staff"]
+
+
+    class ProfileView(generics.RetrieveUpdateAPIView):
+        serializer_class = ProfileSerializer
+        permission_classes = [permissions.IsAuthenticated]
+
+        def get_object(self):
+            return self.request.user
+  why: >-
+    The serializer names its fields one by one, and `is_staff` is shown but
+    read-only, so a request cannot change it. Only the literal string
+    `"__all__"` is reported.
+
+more_examples:
+  - flagged:
+      language: python
+      filename: shop/forms.py
+      expect_line: 9
+      code: |
+        from django import forms
+
+        from shop.models import Order
+
+
+        class OrderForm(forms.ModelForm):
+            class Meta:
+                model = Order
+                fields = "__all__"
+    not_flagged:
+      language: python
+      filename: shop/forms.py
+      code: |
+        from django import forms
+
+        from shop.models import Order
+
+
+        class OrderForm(forms.ModelForm):
+            class Meta:
+                model = Order
+                fields = ["shipping_address", "delivery_notes"]
+      why: >-
+        The customer can change only the address and the notes. Fields such
+        as the price, the status or the owner stay out of the form.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Python files that contain both `fields` and
+    `__all__`.
+  - >-
+    Looks at every class for a nested class named exactly `Meta`. Inside
+    it, reports HIGH on a plain assignment `fields = "__all__"`.
+  - >-
+    The base class is not checked, so a Django `ModelForm`, a DRF
+    `ModelSerializer` or any other class with such a `Meta` is reported.
+    `exclude = [...]`, a list such as `fields = ["__all__"]`, an annotated
+    assignment and other mass-assignment shapes are not.
+
+source_refs:
+  - path: skylos/rules/danger/danger_access/access_flow.py
+    symbol: "class _MassAssignmentChecker"
+  - path: skylos/rules/danger/danger_access/access_flow.py
+    symbol: 'and stmt.value.value == "__all__"'
+  - path: skylos/rules/danger/danger.py
+    symbol: 'if "fields" in source_lower and "__all__" in source_lower:'
+    note: the text prefilter that decides whether the check runs.
+
+fix:
+  explanation: >-
+    List the fields a client may send. For a serializer, mark fields the
+    client may see but not change as `read_only_fields`; keep permission
+    flags, owners and prices out of writable fields.
+  filename: accounts/api.py
+  code: |
+    from django.contrib.auth.models import User
+    from rest_framework import generics, permissions, serializers
+
+
+    class ProfileSerializer(serializers.ModelSerializer):
+        class Meta:
+            model = User
+            fields = ["id", "username", "first_name", "last_name", "email"]
+            read_only_fields = ["id", "username"]
+
+
+    class ProfileView(generics.RetrieveUpdateAPIView):
+        serializer_class = ProfileSerializer
+        permission_classes = [permissions.IsAuthenticated]
+
+        def get_object(self):
+            return self.request.user
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Output-only uses are reported too: a serializer used only by a
+      read-only list view, a form used only by staff, or a GraphQL type
+      that only displays a model.
+    - >-
+      Missed: `exclude = [...]`, which also lets new model fields through,
+      and other ways to copy request data onto a record, such as
+      `Order(**request.POST.dict())`, `setattr()` loops or
+      `obj.__dict__.update(data)`.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the `fields = "__all__"` line and say why every field may be
+        written.
+      language: python
+      code: |
+        fields = "__all__"  # skylos: ignore[SKY-D234] read-only report serializer
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D234"]` turns the rule off for the
+        whole project.
+    - check: baseline
+      text: >-
+        `skylos baseline .` and then `--baseline` accept the existing
+        serializers and report only new ones.
+
+related: [SKY-D283, SKY-D280, SKY-D510]

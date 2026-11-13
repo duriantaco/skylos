@@ -1,0 +1,190 @@
+id: SKY-D349
+title: Server-side template injection
+family: security
+severity: CRITICAL
+languages: [Python, Java, PHP]
+gate:
+  full: critical_blocks
+cwe: [CWE-1336]
+
+what_it_is: >-
+  A template engine such as Jinja or Velocity turns template text into code
+  and runs it. Server-side template injection (SSTI) happens when outside text
+  becomes part of the template itself instead of a value passed to it.
+  Skylos reports SKY-D349 when request data reaches the template source of
+  `render_template_string()`, a Jinja `from_string()` or a Java or PHP
+  equivalent.
+
+why_it_matters: >-
+  Template syntax can reach Python or Java objects. A visitor who sends
+  `{{ cycler.__init__.__globals__.os.popen('id').read() }}` as their name runs
+  a shell command on the server, with the application's files, keys and
+  network access.
+
+flagged_example:
+  language: python
+  filename: app/hello.py
+  expect_line: 9
+  code: |
+    from flask import Flask, render_template_string, request
+
+    app = Flask(__name__)
+
+
+    @app.get("/hello")
+    def hello():
+        name = request.args.get("name", "guest")
+        return render_template_string(f"<h1>Hello {name}!</h1>")
+
+not_flagged_example:
+  language: python
+  filename: app/hello.py
+  code: |
+    from flask import Flask, render_template_string, request
+
+    app = Flask(__name__)
+
+
+    @app.get("/hello")
+    def hello():
+        name = request.args.get("name", "guest")
+        return render_template_string("<h1>Hello {{ name }}!</h1>", name=name)
+  why: >-
+    The template text is a fixed literal and the name is passed as a template
+    variable. Jinja inserts it as escaped text and never reads it as template
+    syntax, so `{{ ... }}` in the name is shown, not run.
+
+more_examples:
+  - flagged:
+      language: java
+      filename: src/main/java/com/example/GreetingController.java
+      expect_line: 18
+      code: |
+        package com.example;
+
+        import java.io.StringWriter;
+        import org.apache.velocity.VelocityContext;
+        import org.apache.velocity.app.Velocity;
+        import org.springframework.web.bind.annotation.GetMapping;
+        import org.springframework.web.bind.annotation.RequestParam;
+        import org.springframework.web.bind.annotation.RestController;
+
+        @RestController
+        public class GreetingController {
+
+            @GetMapping("/greet")
+            public String greet(@RequestParam String template) {
+                VelocityContext context = new VelocityContext();
+                context.put("site", "Example Shop");
+                StringWriter out = new StringWriter();
+                Velocity.evaluate(context, out, "greeting", template);
+                return out.toString();
+            }
+        }
+    not_flagged:
+      language: java
+      filename: src/main/java/com/example/GreetingController.java
+      code: |
+        package com.example;
+
+        import java.io.StringWriter;
+        import org.apache.velocity.VelocityContext;
+        import org.apache.velocity.app.Velocity;
+        import org.springframework.web.bind.annotation.GetMapping;
+        import org.springframework.web.bind.annotation.RequestParam;
+        import org.springframework.web.bind.annotation.RestController;
+
+        @RestController
+        public class GreetingController {
+
+            @GetMapping("/greet")
+            public String greet(@RequestParam String name) {
+                VelocityContext context = new VelocityContext();
+                context.put("name", name);
+                StringWriter out = new StringWriter();
+                Velocity.evaluate(context, out, "greeting", "Hello, $name!");
+                return out.toString();
+            }
+        }
+      why: >-
+        The request value goes into the `VelocityContext` as data. The
+        template text, the fourth argument of `evaluate()`, is a fixed
+        string, which is the only argument Skylos checks there.
+
+how_skylos_decides:
+  - >-
+    In Python, finds `render_template_string()` and `from_string()` calls.
+    A `from_string()` counts only when its receiver's name contains `env`
+    or `jinja`, as in `env.from_string(src)` or
+    `jinja2.Environment().from_string(src)`.
+  - >-
+    Reads the template source: the first argument or `source=`. A string
+    literal is skipped.
+  - >-
+    Reports CRITICAL when an untrusted source reaches that source text:
+    request data, a route or MCP tool argument, `input()` or standard input,
+    directly or through assignments and f-strings. A source made only of
+    environment variables is configuration and is not reported.
+  - >-
+    Java: request data in the template argument of Velocity `evaluate()`,
+    FreeMarker `new Template(name, source, ...)`,
+    `StringTemplateLoader.putTemplate()` or Groovy
+    `TemplateEngine.createTemplate()`. PHP: request data in a Drupal
+    `#type => 'inline_template'` render array.
+
+source_refs:
+  - path: skylos/rules/danger/danger_web/xss_flow.py
+    symbol: "def _template_source_arg"
+  - path: skylos/rules/danger/danger_web/xss_flow.py
+    symbol: "def _check_template_injection"
+  - path: skylos/visitors/languages/java/models.py
+    symbol: "TEMPLATE_SINKS = {"
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: "def _report_template_injection"
+  - path: skylos/visitors/languages/php/danger.py
+    symbol: "\"SKY-D349\": \"CRITICAL\""
+
+fix:
+  explanation: >-
+    Keep templates in files or fixed strings, and pass outside values as
+    template variables. Never build template text from input.
+  filename: app/hello.py
+  code: |
+    from flask import Flask, render_template, request
+
+    app = Flask(__name__)
+
+
+    @app.get("/hello")
+    def hello():
+        name = request.args.get("name", "guest")
+        return render_template("hello.html", name=name)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A tool that lets trusted administrators edit templates through a web
+      form is reported, because the template text comes from request data.
+      Render such templates in Jinja's `SandboxedEnvironment` and keep the
+      form behind authentication.
+    - >-
+      A `from_string()` method on an object whose name happens to contain
+      `env` is treated as a Jinja environment.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed call and say why. A bare `# noqa` does not hide HIGH
+        or CRITICAL security findings.
+      language: python
+      code: |
+        return env.from_string(source)  # skylos: ignore[SKY-D349] admin-only, sandboxed
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D349"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D227, SKY-D355, SKY-D201, SKY-D237]

@@ -1,0 +1,203 @@
+id: SKY-D232
+title: JWT signature check turned off
+family: security
+severity: CRITICAL
+languages: [Python]
+gate:
+  full: critical_blocks
+cwe: [CWE-347]
+
+what_it_is: >-
+  A JWT (JSON Web Token) is a signed piece of text that says who a user is.
+  The signature is the only thing that proves the server issued it. SKY-D232
+  reports a PyJWT or python-jose `jwt.decode()` call that turns the
+  signature check off or accepts the `"none"` algorithm, which means "no
+  signature".
+
+why_it_matters: >-
+  Anyone can write a token with `"sub": "admin"` in it. When the signature
+  is not checked, the server believes that token, so an attacker can log in
+  as any user, including administrators, without a password.
+
+flagged_example:
+  language: python
+  filename: app/auth.py
+  expect_line: 12
+  code: |
+    import jwt
+    from flask import Flask, abort, request
+
+    app = Flask(__name__)
+
+
+    def current_user_id():
+        header = request.headers.get("Authorization", "")
+        if not header.startswith("Bearer "):
+            abort(401)
+        token = header.removeprefix("Bearer ")
+        claims = jwt.decode(token, options={"verify_signature": False})
+        return claims["sub"]
+
+not_flagged_example:
+  language: python
+  filename: app/auth.py
+  code: |
+    import jwt
+    from flask import Flask, abort, request
+
+    from app.keys import PUBLIC_KEYS
+
+    app = Flask(__name__)
+
+
+    def current_user_id():
+        header = request.headers.get("Authorization", "")
+        if not header.startswith("Bearer "):
+            abort(401)
+        token = header.removeprefix("Bearer ")
+        key_id = jwt.get_unverified_header(token).get("kid")
+        if key_id not in PUBLIC_KEYS:
+            abort(401)
+        claims = jwt.decode(
+            token,
+            PUBLIC_KEYS[key_id],
+            algorithms=["RS256"],
+            audience="api.example.com",
+            options={"verify_signature": True, "require": ["exp", "sub"]},
+        )
+        return claims["sub"]
+  why: >-
+    The unverified header is read only to pick which public key to use. The
+    `jwt.decode()` call then checks the signature with that key and allows
+    only RS256. The rule reports only a literal `False` for the signature
+    switch or a literal `"none"` algorithm, and neither is present.
+
+more_examples:
+  - flagged:
+      language: python
+      filename: app/tokens.py
+      expect_line: 7
+      code: |
+        from jose import jwt
+
+        from app.settings import JWT_SECRET
+
+
+        def read_claims(token: str) -> dict:
+            return jwt.decode(token, JWT_SECRET, algorithms=["HS256", "none"])
+    not_flagged:
+      language: python
+      filename: app/tokens.py
+      code: |
+        from jose import jwt
+
+        from app.settings import JWT_SECRET
+
+
+        def user_id_from_expired(token: str) -> str:
+            claims = jwt.decode(
+                token,
+                JWT_SECRET,
+                algorithms=["HS256"],
+                options={"verify_exp": False},
+            )
+            return claims["sub"]
+      why: >-
+        This refresh helper reads the user ID from an expired access token.
+        `verify_exp` turns off only the expiry check; the signature is still
+        checked against `JWT_SECRET` with HS256. SKY-D232 is about the
+        signature, so only `verify_signature`, `verify` and the `"none"`
+        algorithm count.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Python files that mention `jwt`. Finds calls
+    that resolve, through the file's imports, to `jwt.decode` (PyJWT,
+    including `import jwt as j` and `from jwt import decode`) or
+    `jose.jwt.decode` (python-jose). A local variable or function that
+    happens to be named `jwt` does not count.
+  - >-
+    Reports CRITICAL when a keyword argument written in the call turns the
+    signature check off: `algorithms=[...]` is a list literal holding the
+    string `"none"` (any case), `verify=False` (the old PyJWT form), or
+    `options={...}` is a dict literal with `"verify_signature": False`.
+  - >-
+    Values held in variables are not followed, so `options=OPTS` or
+    `algorithms=ALGS` is not checked. Other options, such as
+    `verify_exp` or `verify_aud`, are not reported.
+  - >-
+    TypeScript and JavaScript `jwt.decode()` without verification is a
+    separate rule, SKY-D246.
+
+source_refs:
+  - path: skylos/rules/danger/danger_jwt/jwt_flow.py
+    symbol: "class _JWTChecker(JWTImportVisitor)"
+    note: "`visit_Call` holds the three checks."
+  - path: skylos/rules/danger/danger_jwt/jwt_provenance.py
+    symbol: "def is_jwt_decode"
+    note: resolves the call through the file's import bindings.
+  - path: skylos/rules/danger/danger.py
+    symbol: '_JWT_TOKENS = ("jwt", "verify_signature", "algorithms")'
+    note: the text prefilter that decides whether the check runs.
+  - path: test/test_jwt_flow.py
+    symbol: "def test_jwt_safe_decode_rs256"
+
+fix:
+  explanation: >-
+    Pass the signing key and a fixed list of the algorithms you issue, and
+    leave signature checking on (it is on by default). Reject the request
+    when `jwt.decode()` raises `jwt.InvalidTokenError`.
+  filename: app/auth.py
+  code: |
+    import jwt
+    from flask import Flask, abort, request
+
+    app = Flask(__name__)
+    app.config.from_prefixed_env()
+
+
+    def current_user_id():
+        header = request.headers.get("Authorization", "")
+        if not header.startswith("Bearer "):
+            abort(401)
+        token = header.removeprefix("Bearer ")
+        try:
+            claims = jwt.decode(
+                token, app.config["JWT_SECRET"], algorithms=["HS256"]
+            )
+        except jwt.InvalidTokenError:
+            abort(401)
+        return claims["sub"]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Code that only reads a token's claims for display or debugging, never
+      for an access decision, is still reported. So is a test helper that
+      inspects tokens it made itself.
+    - >-
+      Missed: options or algorithm lists held in a variable or built
+      elsewhere, an `algorithms` tuple instead of a list, decoding through a
+      `jwt.PyJWT()` object, and `jwt.get_unverified_claims()` results used
+      for access decisions.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the first line of the `jwt.decode()` call (the
+        reported line) and say why the claims are not trusted for access.
+      language: python
+      code: |
+        claims = jwt.decode(  # skylos: ignore[SKY-D232] only logged, never trusted
+            token, options={"verify_signature": False}
+        )
+
+    - check: baseline
+      text: >-
+        `skylos baseline .` and then `--baseline` accept the existing calls
+        and report only new ones.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D232"]` turns the rule off for the
+        whole project, which also hides real authentication bypasses.
+
+related: [SKY-D246, SKY-D282, SKY-D283]

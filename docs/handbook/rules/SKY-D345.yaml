@@ -1,0 +1,147 @@
+id: SKY-D345
+title: Hugging Face download not pinned to a commit
+family: security
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+cwe: [CWE-494]
+
+what_it_is: >-
+  Models and datasets on the Hugging Face Hub live in Git repositories, and
+  `revision=` chooses which version to download. SKY-D345 reports a
+  download or `from_pretrained()` load with no `revision`, or with one that
+  can move, such as the branch `main` or a tag.
+
+why_it_matters: >-
+  Without a fixed commit, every new server, CI run or cache refresh gets
+  whatever the repository holds that day. If the owner's account is taken
+  over, or the owner simply pushes new weights, your service loads a
+  different model, or different code and pickled files with it, without
+  any change in your repository.
+
+flagged_example:
+  language: python
+  filename: app/classifier.py
+  expect_line: 7
+  code: |
+    from transformers import AutoModelForSequenceClassification
+
+    MODEL_ID = "acme-ml/review-sentiment"
+
+
+    def load_classifier():
+        return AutoModelForSequenceClassification.from_pretrained(
+            MODEL_ID,
+            num_labels=3,
+        )
+
+not_flagged_example:
+  language: python
+  filename: app/classifier.py
+  code: |
+    from datasets import load_dataset
+    from transformers import AutoModelForSequenceClassification
+
+    MODEL_ID = "acme-ml/review-sentiment"
+
+
+    def load_training_data():
+        return load_dataset("csv", data_files={"train": "data/train.csv"})
+
+
+    def load_classifier():
+        return AutoModelForSequenceClassification.from_pretrained(
+            MODEL_ID,
+            revision="3f1c2b7e9a0d4c5b6e7f8a9b0c1d2e3f4a5b6c7d",
+            num_labels=3,
+        )
+  why: >-
+    `load_dataset("csv", ...)` uses a builder that ships inside the
+    `datasets` package to read local files, so nothing comes from the Hub.
+    The model is pinned to a full 40-character commit SHA, which always
+    names the same files.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Python files and resolves imports to full
+    names.
+  - >-
+    Checks `from_pretrained()` on a class from `transformers`, `diffusers`
+    or `sentence_transformers`, or on a class named like `AutoModel`,
+    `AutoTokenizer`, `AutoConfig` or `StableDiffusionPipeline`; and calls
+    to `hf_hub_download`, `snapshot_download` and `load_dataset`.
+  - >-
+    Skips `load_dataset` when its path is a local folder (starting with
+    `./`, `../`, `/` or `~`), or a packaged builder such as `csv`, `json`
+    or `parquet` whose `data_files` contain no `http://`, `https://` or
+    `hf://` address.
+  - >-
+    Reports HIGH when `revision=` is missing, `None`, or a string that is
+    not 40 hexadecimal characters. `main`, `master`, `latest`, tags such as
+    `v1.2`, `refs/heads/…` and `refs/pr/…` all count as movable.
+  - >-
+    A `revision` held in a variable or built by an expression is not
+    judged, so the call is not reported.
+
+source_refs:
+  - path: skylos/rules/danger/danger_ml/model_deserialization.py
+    symbol: "def _is_huggingface_artifact_call"
+  - path: skylos/rules/danger/danger_ml/model_deserialization.py
+    symbol: "def _is_local_dataset_load"
+  - path: skylos/rules/danger/danger_ml/model_deserialization.py
+    symbol: "def _call_uses_missing_or_mutable_revision"
+  - path: skylos/rules/danger/danger_ml/model_deserialization.py
+    symbol: "def _is_immutable_commit_revision"
+  - path: test/test_deserialization.py
+    symbol: "def test_transformers_from_pretrained_without_revision_flags_d345"
+
+fix:
+  explanation: >-
+    Pick the commit you have reviewed on the model's "Files and versions"
+    page and pass its full SHA as `revision`. Update it on purpose, in a
+    reviewed change, when you want new weights.
+  filename: app/classifier.py
+  code: |
+    from transformers import AutoModelForSequenceClassification
+
+    MODEL_ID = "acme-ml/review-sentiment"
+
+
+    def load_classifier():
+        return AutoModelForSequenceClassification.from_pretrained(
+            MODEL_ID,
+            revision="3f1c2b7e9a0d4c5b6e7f8a9b0c1d2e3f4a5b6c7d",
+            num_labels=3,
+        )
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      `from_pretrained("./models/sentiment")` loads a local folder and
+      downloads nothing, but has no `revision` and is reported.
+    - >-
+      A tag in a repository your own team controls, such as
+      `revision="v1.2"`, is reported, because tags on the Hub can be moved.
+    - >-
+      Missed: `pipeline(..., model=...)`, `SentenceTransformer("...")`
+      without `from_pretrained`, loaders from other libraries such as
+      `PeftModel` or `timm`, and a movable revision held in a variable.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the call line of a load from a local folder or an internal
+        repository, and say why.
+      language: python
+      code: |
+        AutoTokenizer.from_pretrained("./models/nlp")  # skylos: ignore[SKY-D345] local dir
+    - check: baseline
+      text: >-
+        `skylos baseline .`, then `--baseline`, accepts existing loads by
+        file and line.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D345"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D213, SKY-D265]

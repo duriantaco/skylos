@@ -1,0 +1,170 @@
+id: SKY-D348
+title: Insecure temporary filename
+family: security
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+cwe: [CWE-377]
+
+what_it_is: >-
+  The shared temporary folder (`/tmp` on Linux and macOS) can be written by
+  every user and process on the machine. SKY-D348 reports Python code that
+  picks a temporary name first and creates the file later, with
+  `tempfile.mktemp()`, or that reuses a fixed, guessable folder under `/tmp`
+  with `exist_ok=True`.
+
+why_it_matters: >-
+  Between choosing the name and opening it, another local user can create
+  that path as a symlink to a file of yours, such as `~/.ssh/authorized_keys`.
+  Your program then writes into their target, or reads the data they
+  planted. A fixed folder like `/tmp/report-export` can simply be created by
+  someone else first.
+
+flagged_example:
+  language: python
+  filename: app/pdf.py
+  expect_line: 6
+  code: |
+    import subprocess
+    import tempfile
+
+
+    def render_pdf(html):
+        path = tempfile.mktemp(suffix=".html")
+        with open(path, "w") as handle:
+            handle.write(html)
+        subprocess.run(["wkhtmltopdf", path, path + ".pdf"], check=True)
+        return path + ".pdf"
+
+not_flagged_example:
+  language: python
+  filename: app/pdf.py
+  code: |
+    import subprocess
+    import tempfile
+
+
+    def render_pdf(html):
+        with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False) as handle:
+            handle.write(html)
+        subprocess.run(["wkhtmltopdf", handle.name, handle.name + ".pdf"], check=True)
+        return handle.name + ".pdf"
+  why: >-
+    `NamedTemporaryFile()` creates and opens the file in one step, with a
+    random name and owner-only permissions, so nobody can slip a symlink in
+    first. Only `mktemp()` is reported among the `tempfile` functions.
+
+more_examples:
+  - flagged:
+      language: python
+      filename: app/export.py
+      expect_line: 7
+      code: |
+        import os
+        import tempfile
+
+
+        def export_report(rows):
+            work_dir = os.path.join(tempfile.gettempdir(), "report-export")
+            os.makedirs(work_dir, exist_ok=True)
+            path = os.path.join(work_dir, "report.csv")
+            with open(path, "w") as handle:
+                handle.writelines(rows)
+            return path
+    not_flagged:
+      language: python
+      filename: app/export.py
+      code: |
+        import os
+        import tempfile
+
+
+        def export_report(rows):
+            work_dir = tempfile.mkdtemp(prefix="report-export-")
+            path = os.path.join(work_dir, "report.csv")
+            with open(path, "w") as handle:
+                handle.writelines(rows)
+            return path
+      why: >-
+        `mkdtemp()` creates a new folder with a random name that only the
+        current user can open. The flagged version accepts a folder that
+        any local user could have created, or replaced with a symlink,
+        before the program ran.
+
+how_skylos_decides:
+  - >-
+    Reports every call to `tempfile.mktemp()`, resolved through imports, as
+    HIGH.
+  - >-
+    Finds `os.makedirs(path, exist_ok=True)` and `Path(...).mkdir(...,
+    exist_ok=True)`, with `exist_ok` given as a literal `True`.
+  - >-
+    Reports the call when the path is a fixed folder under the shared
+    temporary root: a literal `/tmp` or `/var/tmp`, or
+    `tempfile.gettempdir()`, followed by constant names through
+    `os.path.join()`, `Path(...) / "name"`, `joinpath()`, `+` or an f-string,
+    local names, `self` attributes set in the same function and `a or
+    default` fallbacks.
+  - >-
+    Leaves the path alone when any part after the root is random,
+    caller-supplied or unknown, because such a name cannot be guessed in
+    advance.
+
+source_refs:
+  - path: skylos/rules/danger/calls.py
+    symbol: "\"tempfile.mktemp\": ("
+  - path: skylos/rules/danger/python_security_gaps.py
+    symbol: "def _shared_temp_path"
+  - path: skylos/rules/danger/python_security_gaps.py
+    symbol: "def _created_directory"
+  - path: skylos/rules/danger/python_security_gaps.py
+    symbol: "def _temp_root"
+
+fix:
+  explanation: >-
+    Let `tempfile` create the file or folder for you, in one step, with a
+    random name: `NamedTemporaryFile()`, `mkstemp()`, `mkdtemp()` or
+    `TemporaryDirectory()`. Put fixed file names inside that private folder.
+  filename: app/pdf.py
+  code: |
+    import os
+    import subprocess
+    import tempfile
+
+
+    def render_pdf(html, out_dir):
+        with tempfile.TemporaryDirectory() as work:
+            page = os.path.join(work, "page.html")
+            with open(page, "w") as handle:
+                handle.write(html)
+            pdf = os.path.join(out_dir, "page.pdf")
+            subprocess.run(["wkhtmltopdf", page, pdf], check=True)
+        return pdf
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A single-user container or CI job where nobody else can write `/tmp`
+      is still reported; the code is still unsafe on a shared machine.
+    - >-
+      `mktemp()` used only to invent a name that is passed to a tool which
+      creates the file exclusively itself is reported the same way.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line and say why. A bare `# noqa` does not hide HIGH
+        security findings.
+      language: python
+      code: |
+        path = tempfile.mktemp()  # skylos: ignore[SKY-D348] socket path, bind() fails if taken
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D348"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D324, SKY-D325, SKY-D200]

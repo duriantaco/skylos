@@ -1,0 +1,192 @@
+id: SKY-D280
+title: Next.js API route changes data without checking the user
+family: security
+severity: HIGH
+languages: [TypeScript/JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  A Next.js API route is a server function that answers HTTP requests, such
+  as `POST` in `app/api/posts/route.ts` or the handler in `pages/api/`.
+  SKY-D280 reports a route that handles `POST`, `PUT`, `PATCH` or `DELETE`
+  and changes data without first checking, in the route itself, that the
+  caller is logged in.
+
+why_it_matters: >-
+  Every API route is a public URL. Without a check, anyone can create,
+  change or delete records with one `fetch()` call, and the login page of
+  the app does nothing to stop them.
+
+flagged_example:
+  language: typescript
+  filename: app/api/posts/route.ts
+  expect_line: 5
+  code: |
+    import { NextResponse } from "next/server";
+
+    import { db } from "@/lib/db";
+
+    export async function POST(request: Request) {
+      const body = await request.json();
+      const post = await db.post.create({ data: { title: body.title, text: body.text } });
+      return NextResponse.json(post, { status: 201 });
+    }
+
+not_flagged_example:
+  language: typescript
+  filename: app/api/posts/route.ts
+  code: |
+    import { getServerSession } from "next-auth";
+    import { NextResponse } from "next/server";
+
+    import { db } from "@/lib/db";
+
+    export async function POST(request: Request) {
+      const session = await getServerSession();
+      if (!session) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+      const body = await request.json();
+      const post = await db.post.create({ data: { title: body.title, text: body.text } });
+      return NextResponse.json(post, { status: 201 });
+    }
+  why: >-
+    `getServerSession` from `next-auth` is a known authentication call. Its
+    result is awaited, and the route returns 401 when there is no session,
+    before `db.post.create()` runs.
+
+more_examples:
+  - flagged:
+      language: javascript
+      filename: pages/api/comments/[id].js
+      expect_line: 4
+      code: |
+        import { db } from "../../../lib/db";
+
+        export default async function handler(req, res) {
+          if (req.method === "DELETE") {
+            await db.comment.delete({ where: { id: req.query.id } });
+            return res.status(204).end();
+          }
+          const comment = await db.comment.findUnique({ where: { id: req.query.id } });
+          return res.status(200).json(comment);
+        }
+    not_flagged:
+      language: javascript
+      filename: pages/api/comments/[id].js
+      code: |
+        import { getToken } from "next-auth/jwt";
+
+        import { db } from "../../../lib/db";
+
+        export default async function handler(req, res) {
+          if (req.method === "DELETE") {
+            const token = await getToken({ req });
+            if (!token) {
+              return res.status(401).json({ error: "Unauthorized" });
+            }
+            await db.comment.delete({ where: { id: req.query.id } });
+            return res.status(204).end();
+          }
+          const comment = await db.comment.findUnique({ where: { id: req.query.id } });
+          return res.status(200).json(comment);
+        }
+      why: >-
+        In the Pages Router the method branch is the route. The `DELETE`
+        branch awaits `getToken` from `next-auth/jwt` and returns 401 without
+        a token before deleting. The `GET` part does not change data, so it
+        needs no check.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on TypeScript and JavaScript route files:
+    `route.ts`, `route.tsx`, `route.js` or `route.jsx` under an `app/`
+    folder, and files under `pages/api/`.
+  - >-
+    Finds mutating routes: an exported `POST`, `PUT`, `PATCH` or `DELETE`
+    function in the App Router, or a `req.method === "POST"` style branch in
+    a Pages Router handler. `GET` routes are not checked.
+  - >-
+    Accepts a route as protected only when a trusted authentication call
+    runs before every data change in it: `getServerSession` (`next-auth`),
+    `getToken` (`next-auth/jwt`), `auth` or `currentUser` (`@clerk/nextjs`),
+    Clerk `auth.protect()`, or an `auth` export of a local file proven to be
+    an Auth.js setup.
+  - >-
+    The call must be awaited, its result kept in a variable, and a check
+    such as `if (!session) return …` or `throw` must reject the request on
+    every path before the change. A result that is never checked, or a
+    check inside a branch, does not count.
+  - >-
+    A `POST` route on a webhook path (for example `api/stripe/webhook`)
+    that reads the request body is left to SKY-D282. When the file could
+    not be fully analysed, a file that looks like a mutating route is still
+    reported, because the check could not be proven.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/security_proofs.py
+    symbol: "def check_nextjs_missing_auth(flow: SecurityFlow, findings: list[dict]) -> None:"
+  - path: skylos/visitors/languages/typescript/security_proofs.py
+    symbol: "_TRUSTED_AUTH_IMPORTS = frozenset("
+    note: the authentication calls that count.
+  - path: skylos/visitors/languages/typescript/security_proofs.py
+    symbol: "def _assess_auth_boundary("
+    note: awaited, assigned and rejected before the change.
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "def _is_security_flow_candidate(source: bytes, file_path: str) -> bool:"
+  - path: test/test_ts_danger_nextjs.py
+    symbol: "def test_route_with_post_has_auth"
+
+fix:
+  explanation: >-
+    Call your authentication library at the top of the handler, stop with
+    401 when there is no user, and only then read the body and change data.
+    Check ownership too when one user must not edit another user's records.
+  filename: app/api/posts/route.ts
+  code: |
+    import { getServerSession } from "next-auth";
+    import { NextResponse } from "next/server";
+
+    import { db } from "@/lib/db";
+
+    export async function POST(request: Request) {
+      const session = await getServerSession();
+      if (!session?.user?.email) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+      const body = await request.json();
+      const post = await db.post.create({
+        data: { title: body.title, text: body.text, author: session.user.email },
+      });
+      return NextResponse.json(post, { status: 201 });
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Your own helper, such as `const user = await requireUser()` from
+      `@/lib/session`, is not a trusted authentication call, so the route is
+      still reported even when the helper checks the session.
+    - >-
+      Protection in `middleware.ts` is not seen; only checks inside the route
+      count. Routes meant to be public, such as a sign-up or contact form,
+      are reported too.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the line the finding points at (the exported function or the
+        method branch) and say what protects the route.
+      language: typescript
+      code: |
+        export async function POST(req: Request) { // skylos: ignore[SKY-D280] signup form
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D280"]` turns the rule off for the whole
+        project.
+    - check: baseline
+      text: >-
+        `skylos baseline .` and then `--baseline` accept today's routes and
+        report only new ones.
+
+related: [SKY-D283, SKY-D282, SKY-D281]

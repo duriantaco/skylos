@@ -1,0 +1,209 @@
+id: SKY-D238
+title: NoSQL injection
+family: security
+severity: HIGH
+languages: [TypeScript/JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  MongoDB queries are objects, and keys that start with `$` are operators.
+  When a JSON body or a query string is parsed, a field that should be text
+  can arrive as an object such as `{"$ne": null}`. SKY-D238 reports request
+  data that can be an object reaching a MongoDB or Mongoose query filter,
+  and request data in a `$where` JavaScript condition.
+
+why_it_matters: >-
+  A password-reset route that runs `findOne({ resetToken: req.body.token })`
+  matches the first user who has any token when the body sends
+  `{"token": {"$ne": null}}`. That is an account takeover with one request.
+  `$where` text built from input runs JavaScript inside the database.
+
+flagged_example:
+  language: typescript
+  filename: src/reset.ts
+  expect_line: 11
+  code: |
+    import express from "express";
+    import mongoose from "mongoose";
+
+    const userSchema = new mongoose.Schema({ email: String, resetToken: String });
+    const User = mongoose.model("User", userSchema);
+
+    const app = express();
+    app.use(express.json());
+
+    app.post("/reset", async (req, res) => {
+      const user = await User.findOne({ resetToken: req.body.token });
+      if (!user) {
+        res.status(404).end();
+        return;
+      }
+      res.json({ email: user.email });
+    });
+
+    app.listen(3000);
+
+not_flagged_example:
+  language: typescript
+  filename: src/reset.ts
+  code: |
+    import express from "express";
+    import mongoose from "mongoose";
+
+    const userSchema = new mongoose.Schema({ email: String, resetToken: String });
+    const User = mongoose.model("User", userSchema);
+
+    const app = express();
+    app.use(express.json());
+
+    app.post("/reset", async (req, res) => {
+      const token = String(req.body.token ?? "");
+      const user = await User.findOne({ resetToken: token });
+      if (!user) {
+        res.status(404).end();
+        return;
+      }
+      res.json({ email: user.email });
+    });
+
+    app.listen(3000);
+  why: >-
+    `String()` turns any value, objects included, into plain text, so the
+    filter can only compare `resetToken` with a string. Skylos treats the
+    result of `String()`, template literals and `.toString()` as text.
+
+more_examples:
+  - flagged:
+      language: javascript
+      filename: src/products.js
+      expect_line: 9
+      code: |
+        const express = require("express");
+        const mongoose = require("mongoose");
+
+        const Product = mongoose.model("Product", new mongoose.Schema({ price: Number }));
+        const app = express();
+
+        app.get("/products", async (req, res) => {
+          const max = req.query.max;
+          const items = await Product.find({ $where: `this.price < ${max}` });
+          res.json(items);
+        });
+
+        app.listen(3000);
+    not_flagged:
+      language: javascript
+      filename: src/products.js
+      code: |
+        const express = require("express");
+        const mongoose = require("mongoose");
+
+        const Product = mongoose.model("Product", new mongoose.Schema({ price: Number }));
+        const app = express();
+
+        app.get("/products", async (req, res) => {
+          const max = Number(req.query.max);
+          const items = await Product.find({ price: { $lt: max } });
+          res.json(items);
+        });
+
+        app.listen(3000);
+      why: >-
+        The condition uses the `$lt` operator instead of JavaScript text, and
+        `Number()` turns the input into a number. Neither a number nor a
+        fixed operator can change the query's shape.
+
+how_skylos_decides:
+  - >-
+    Only checks files that import a MongoDB library: `mongoose`, `mongodb`,
+    `@nestjs/mongoose`, `@typegoose/typegoose`, `mongojs` or `monk`. Skips
+    a file that calls `express-mongo-sanitize` or turns on Mongoose's
+    `sanitizeFilter` option, which strip or escape `$` keys.
+  - >-
+    Follows request data inside one route handler (Express, Fastify, Koa,
+    Hapi, NestJS, Next.js and others) to the filter of `find`, `findOne`,
+    `findOneAndUpdate`, `updateOne`, `deleteMany`, `countDocuments`,
+    `where`, `distinct` and similar calls, and to an `aggregate` `$match`
+    stage.
+  - >-
+    Reports HIGH when the filter is the request object itself
+    (`find(req.body)`), a spread of it, or a field whose value can be an
+    object: Express `req.body`, `req.query` and JSON cookies, parsed bodies
+    and `JSON.parse()` results. Route params, headers and other plain text
+    are not reported.
+  - >-
+    Reports any request data in a `$where` condition, text included.
+  - >-
+    Stops at `String()`, `Number()`, `typeof x === "string"` checks whose
+    failing branch returns or throws, ObjectId checks, and calls into other
+    modules such as a zod `.parse()` validator.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/express_taint.py
+    symbol: "_MONGO_MODULES = frozenset("
+  - path: skylos/visitors/languages/typescript/express_taint.py
+    symbol: "def _nosql(self, node, callee, args)"
+  - path: skylos/visitors/languages/typescript/express_taint.py
+    symbol: "def _injectable(self, expr, sink, depth: int)"
+
+fix:
+  explanation: >-
+    Check that each value has the type you expect before it goes into a
+    filter, or validate the whole body with a schema library. Never build
+    `$where` text from input; use query operators instead.
+  filename: src/reset.ts
+  code: |
+    import express from "express";
+    import mongoose from "mongoose";
+
+    const userSchema = new mongoose.Schema({ email: String, resetToken: String });
+    const User = mongoose.model("User", userSchema);
+
+    const app = express();
+    app.use(express.json());
+
+    app.post("/reset", async (req, res) => {
+      const token = req.body.token;
+      if (typeof token !== "string") {
+        res.status(400).end();
+        return;
+      }
+      const user = await User.findOne({ resetToken: token });
+      if (!user) {
+        res.status(404).end();
+        return;
+      }
+      res.json({ email: user.email });
+    });
+
+    app.listen(3000);
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A global validation layer, such as a NestJS `ValidationPipe` or an
+      Express middleware that checks every body, is not seen in an untyped
+      handler, so its routes can still be reported.
+    - >-
+      Sanitising middleware set up in another file, such as
+      `app.use(mongoSanitize())` in `server.ts`, is not seen when the route
+      lives in its own file.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line and say why. A bare `// noqa` does not hide
+        HIGH security findings.
+      language: typescript
+      code: |
+        const user = await User.findOne(filter); // skylos: ignore[SKY-D238] zod-checked
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D238"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D211, SKY-D510, SKY-D201]

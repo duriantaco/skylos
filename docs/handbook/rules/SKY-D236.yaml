@@ -1,0 +1,243 @@
+id: SKY-D236
+title: XML external entity (XXE)
+family: security
+severity: HIGH
+severity_note: >-
+  CRITICAL when request data is parsed, HIGH for any other input. dom4j
+  `DocumentHelper.parseText()` is MEDIUM, or HIGH with request data.
+languages: [Java, Kotlin]
+gate:
+  full: critical_blocks
+  note: >-
+    Only findings on request data are CRITICAL and fail the gate on their
+    own; the others are counted.
+
+what_it_is: >-
+  An XML document can declare a DTD with "external entities": names that
+  the parser replaces with the contents of a file or a URL. SKY-D236 reports
+  Java and Kotlin XML parsers that are created and used without turning DTDs
+  or external entities off, which the JDK parsers allow by default.
+
+why_it_matters: >-
+  A visitor who uploads XML with `<!ENTITY x SYSTEM "file:///etc/passwd">`
+  gets the file's contents back wherever `&x;` is echoed. The same trick
+  makes the server fetch internal URLs, and nested entities can exhaust
+  its memory.
+
+flagged_example:
+  language: java
+  filename: src/main/java/com/example/InvoiceController.java
+  expect_line: 21
+  code: |
+    package com.example;
+
+    import java.io.IOException;
+    import javax.servlet.http.HttpServletRequest;
+    import javax.xml.parsers.DocumentBuilder;
+    import javax.xml.parsers.DocumentBuilderFactory;
+    import javax.xml.parsers.ParserConfigurationException;
+    import org.springframework.web.bind.annotation.PostMapping;
+    import org.springframework.web.bind.annotation.RestController;
+    import org.w3c.dom.Document;
+    import org.xml.sax.SAXException;
+
+    @RestController
+    public class InvoiceController {
+
+        @PostMapping("/invoices")
+        public String upload(HttpServletRequest request)
+                throws IOException, ParserConfigurationException, SAXException {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            Document doc = builder.parse(request.getInputStream());
+            return doc.getDocumentElement().getAttribute("id");
+        }
+    }
+
+not_flagged_example:
+  language: java
+  filename: src/main/java/com/example/InvoiceController.java
+  code: |
+    package com.example;
+
+    import java.io.IOException;
+    import javax.servlet.http.HttpServletRequest;
+    import javax.xml.parsers.DocumentBuilder;
+    import javax.xml.parsers.DocumentBuilderFactory;
+    import javax.xml.parsers.ParserConfigurationException;
+    import org.springframework.web.bind.annotation.PostMapping;
+    import org.springframework.web.bind.annotation.RestController;
+    import org.w3c.dom.Document;
+    import org.xml.sax.SAXException;
+
+    @RestController
+    public class InvoiceController {
+        private static final String NO_DOCTYPE =
+                "http://apache.org/xml/features/disallow-doctype-decl";
+
+        @PostMapping("/invoices")
+        public String upload(HttpServletRequest request)
+                throws IOException, ParserConfigurationException, SAXException {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setFeature(NO_DOCTYPE, true);
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            Document doc = builder.parse(request.getInputStream());
+            return doc.getDocumentElement().getAttribute("id");
+        }
+    }
+  why: >-
+    `disallow-doctype-decl` makes the parser reject any document that has a
+    DTD, so no entity can be declared. Skylos reads the setting on the same
+    factory variable before `newDocumentBuilder()`, including through a
+    string constant of the class.
+
+more_examples:
+  - flagged:
+      language: kotlin
+      filename: src/main/kotlin/com/example/InvoiceController.kt
+      expect_line: 15
+      code: |
+        package com.example
+
+        import javax.xml.parsers.DocumentBuilderFactory
+        import org.springframework.web.bind.annotation.PostMapping
+        import org.springframework.web.bind.annotation.RequestBody
+        import org.springframework.web.bind.annotation.RestController
+
+        @RestController
+        class InvoiceController {
+
+            @PostMapping("/invoices")
+            fun upload(@RequestBody body: String): String {
+                val factory = DocumentBuilderFactory.newInstance()
+                val builder = factory.newDocumentBuilder()
+                val doc = builder.parse(body.byteInputStream())
+                return doc.documentElement.getAttribute("id")
+            }
+        }
+    not_flagged:
+      language: kotlin
+      filename: src/main/kotlin/com/example/InvoiceController.kt
+      code: |
+        package com.example
+
+        import javax.xml.XMLConstants
+        import javax.xml.parsers.DocumentBuilderFactory
+        import org.springframework.web.bind.annotation.PostMapping
+        import org.springframework.web.bind.annotation.RequestBody
+        import org.springframework.web.bind.annotation.RestController
+
+        @RestController
+        class InvoiceController {
+
+            @PostMapping("/invoices")
+            fun upload(@RequestBody body: String): String {
+                val factory = DocumentBuilderFactory.newInstance()
+                factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
+                factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
+                val builder = factory.newDocumentBuilder()
+                val doc = builder.parse(body.byteInputStream())
+                return doc.documentElement.getAttribute("id")
+            }
+        }
+      why: >-
+        Setting `ACCESS_EXTERNAL_DTD` and `ACCESS_EXTERNAL_SCHEMA` to an
+        empty string allows no protocol for external DTDs and schemas, so
+        the parser cannot load outside files or URLs. Skylos accepts this
+        pair for `DocumentBuilderFactory`.
+
+how_skylos_decides:
+  - >-
+    Tracks each XML factory variable (`DocumentBuilderFactory`,
+    `SAXParserFactory`, `XMLReader`, `XMLInputFactory`, `TransformerFactory`,
+    `SchemaFactory`, Commons `Digester`, JDOM `SAXBuilder`, dom4j
+    `SAXReader`) and the settings applied to it in statement order, up to
+    the parser it creates.
+  - >-
+    At a parse call, checks those settings per parser, following CodeQL's
+    rules: for example `disallow-doctype-decl` set to true, both external
+    entity features set to false, or `ACCESS_EXTERNAL_DTD` and
+    `ACCESS_EXTERNAL_SCHEMA` set to `""` for a `DocumentBuilderFactory`.
+    `FEATURE_SECURE_PROCESSING` alone does not count, and a setting made
+    after the parser was created does not protect it.
+  - >-
+    Skips parsing a classpath resource or a literal path bundled with the
+    app, building a new document, and DOM serialization through a
+    `Transformer`.
+  - >-
+    Reports CRITICAL when request data reaches the parse call and HIGH
+    otherwise. dom4j `DocumentHelper.parseText()` is MEDIUM, or HIGH with
+    request data.
+
+source_refs:
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: "def _process_xml_sinks"
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: "def _xml_setting_key"
+  - path: skylos/visitors/languages/java/models.py
+    symbol: "DISALLOW_DOCTYPE = \"disallow-doctype-decl\""
+  - path: skylos/visitors/languages/kotlin/security.py
+    symbol: "parses XML with DTDs and external entities enabled (XXE)."
+
+fix:
+  explanation: >-
+    Turn DTDs off on the factory before you create the parser. If you need
+    DTDs, at least turn off external general entities, external parameter
+    entities and loading external DTDs.
+  filename: src/main/java/com/example/InvoiceController.java
+  code: |
+    package com.example;
+
+    import java.io.IOException;
+    import javax.servlet.http.HttpServletRequest;
+    import javax.xml.parsers.DocumentBuilder;
+    import javax.xml.parsers.DocumentBuilderFactory;
+    import javax.xml.parsers.ParserConfigurationException;
+    import org.springframework.web.bind.annotation.PostMapping;
+    import org.springframework.web.bind.annotation.RestController;
+    import org.w3c.dom.Document;
+    import org.xml.sax.SAXException;
+
+    @RestController
+    public class InvoiceController {
+        private static final String NO_DOCTYPE =
+                "http://apache.org/xml/features/disallow-doctype-decl";
+
+        @PostMapping("/invoices")
+        public String upload(HttpServletRequest request)
+                throws IOException, ParserConfigurationException, SAXException {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setFeature(NO_DOCTYPE, true);
+            factory.setXIncludeAware(false);
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            Document doc = builder.parse(request.getInputStream());
+            return doc.getDocumentElement().getAttribute("id");
+        }
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A parser that only reads a trusted file whose path is not a literal,
+      such as a config path from settings, is still reported as HIGH.
+    - >-
+      Hardening applied in only one branch of an `if` does not count, so a
+      parser that is safe in practice can still be reported.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line and say why. A bare `//` comment without the
+        rule ID does not hide the finding.
+      language: java
+      code: |
+        Document doc = builder.parse(in); // skylos: ignore[SKY-D236] hardened in XmlConfig
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D236"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D215, SKY-D216, SKY-D233]

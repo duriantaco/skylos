@@ -1,0 +1,197 @@
+id: SKY-D251
+title: Password or token written to logs
+family: security
+severity: HIGH
+languages: [Python, TypeScript/JavaScript]
+gate:
+  full: counted
+cwe: [CWE-532]
+
+what_it_is: >-
+  Log lines are copied to files, terminals, CI output and log services that
+  many people can read. SKY-D251 reports a password, token or other secret
+  that reaches `print()`, Python `logging` or `console.log()` and friends.
+
+why_it_matters: >-
+  A database password in a log file is as good as a published one: anyone
+  with access to the logs, a support dashboard or a CI run page can copy it
+  and log in. Logs are also kept for months and rarely protected like a
+  secrets store.
+
+flagged_example:
+  language: python
+  filename: app/db.py
+  expect_line: 12
+  code: |
+    import logging
+    import os
+
+    import psycopg
+
+    log = logging.getLogger(__name__)
+
+
+    def connect():
+        password = os.environ["DATABASE_PASSWORD"]
+        dsn = f"postgresql://app:{password}@db.internal:5432/app"
+        log.info("connecting with %s", dsn)
+        return psycopg.connect(dsn)
+
+not_flagged_example:
+  language: python
+  filename: app/db.py
+  code: |
+    import logging
+    import os
+
+    import psycopg
+
+    log = logging.getLogger(__name__)
+
+
+    def connect():
+        password = os.environ["DATABASE_PASSWORD"]
+        host = os.environ.get("DATABASE_HOST", "db.internal")
+        log.info("connecting to %s (password set: %s)", host, bool(password))
+        return psycopg.connect(host=host, user="app", password=password)
+  why: >-
+    The password is read from the environment and passed to the driver, but
+    only `bool(password)` reaches the log, which is `True` or `False`.
+    `DATABASE_HOST` is not a secret name, so the host may be logged.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/session.ts
+      expect_line: 2
+      code: |
+        export async function refreshSession(refreshToken: string): Promise<string> {
+          console.log(`refreshing session with ${refreshToken}`);
+          const response = await fetch("/api/session/refresh", {
+            method: "POST",
+            body: JSON.stringify({ refreshToken }),
+          });
+          const { accessToken } = await response.json();
+          return accessToken;
+        }
+    not_flagged:
+      language: typescript
+      filename: src/session.ts
+      code: |
+        export async function refreshSession(refreshToken: string): Promise<string> {
+          console.log(`refreshing session, token length ${refreshToken.length}`);
+          const response = await fetch("/api/session/refresh", {
+            method: "POST",
+            body: JSON.stringify({ refreshToken }),
+          });
+          const { accessToken } = await response.json();
+          return accessToken;
+        }
+      why: >-
+        Only the token's length is logged. In TypeScript the rule reads the
+        last name of each logged value, and `refreshToken.length` ends in
+        `length`, not in a secret word.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. Python and TypeScript/JavaScript use different
+    checks.
+  - >-
+    Python looks for proven secrets, not names. A value is a secret when it
+    comes from `os.getenv()`, `os.environ.get()` or `os.environ[...]` with
+    a literal name that contains password, passwd, secret, token,
+    credential(s), api key, private key or access key as a separate word
+    (`DATABASE_PASSWORD`, `GITHUB_TOKEN`), from `getpass.getpass()`, or from
+    `input()` whose prompt contains one of those words.
+  - >-
+    Python follows that value through assignments, f-strings, `%`,
+    `.format()`, `+`, `join()`, lists, dicts and object fields, and through
+    unknown helper calls: a function named `redact()` is not trusted.
+  - >-
+    Python reports HIGH at a `print()` call or a standard `logging` call
+    (`logging.info()`, or `debug`, `info`, `warning`, `error`,
+    `exception`, `critical` or `log` on a `logging.getLogger()` logger)
+    that receives the value. It stays quiet when the value is replaced by a
+    literal on every path, passes through `len()` or `bool()`, or when only
+    another field of a container is printed. A parameter merely named
+    `password` is not a source.
+  - >-
+    TypeScript and JavaScript check `console.log`, `warn`, `error`,
+    `info`, `debug` and `trace`. For each argument that is a name, a member
+    such as `user.password`, or a `${...}` part of a template string, the
+    last name is lower-cased with `_` removed. HIGH is reported when it ends
+    in password, passwd, pwd, secret, token, apikey, credential(s),
+    authorization, privatekey, accesstoken, refreshtoken, ssn, creditcard,
+    cardnumber, cvv or pin. A name ending in `sessionId` counts only with
+    an authentication context, such as `req.cookies.sessionId`. One finding
+    per call.
+
+source_refs:
+  - path: skylos/rules/danger/danger_logging.py
+    symbol: "class _LoggingFlow"
+    note: Python source-to-output tracking; `_call` holds sources and sinks.
+  - path: skylos/rules/danger/danger_logging.py
+    symbol: "_SECRET_WORDS = re.compile("
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "# --- Sensitive data in logs (SKY-D251) ---"
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "def _sensitive_log_name"
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "_LOG_SENSITIVE_SUFFIXES = ("
+  - path: test/test_python_secret_logging.py
+    symbol: "def test_names_public_data_and_explicit_redaction_are_quiet"
+
+fix:
+  explanation: >-
+    Log what helps debugging without the secret: the host, the user name,
+    or whether a value is set. Pass credentials to the library as separate
+    arguments instead of building a URL that is easy to print.
+  filename: app/db.py
+  code: |
+    import logging
+    import os
+
+    import psycopg
+
+    log = logging.getLogger(__name__)
+
+
+    def connect():
+        password = os.environ["DATABASE_PASSWORD"]
+        log.info("connecting to db.internal:5432 as app")
+        return psycopg.connect(
+            host="db.internal", port=5432, user="app", password=password
+        )
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Python: an environment variable whose name contains a secret word but
+      holds a file path, such as `GOOGLE_APPLICATION_CREDENTIALS`, is
+      reported when printed.
+    - >-
+      TypeScript: names that end in a listed word but hold nothing secret
+      are reported, such as `mapPin`, `spin` or a `csrfToken` sent to the
+      page anyway.
+    - >-
+      Missed: in Python, secrets from other places (a config file, a
+      vault client, a request) and other loggers such as loguru or
+      structlog. In TypeScript, string concatenation (`"t=" + token`),
+      object arguments (`{ password }`) and loggers such as pino or winston.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the reported line and say why the output is safe.
+      language: python
+      code: |
+        print(creds_path)  # skylos: ignore[SKY-D251] file path, not the key
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D251"]` turns the rule off for the
+        whole project.
+    - check: baseline
+      text: >-
+        `skylos baseline .` and then `--baseline` accept the existing
+        findings and report only new ones.
+
+related: [SKY-D270, SKY-D263, SKY-S101]

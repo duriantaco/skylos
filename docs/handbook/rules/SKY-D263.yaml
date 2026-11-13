@@ -1,0 +1,162 @@
+id: SKY-D263
+title: Secrets or personal data sent to an LLM
+family: security
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+cwe: [CWE-359]
+
+what_it_is: >-
+  Text sent to a hosted model leaves your system: the provider receives
+  it, may log it, and the model may repeat it to whoever reads the answer.
+  SKY-D263 reports a model or embedding call whose input contains a value
+  that looks secret or personal, such as an API key, a password, a token or
+  an environment variable.
+
+why_it_matters: >-
+  A debugging helper that pastes the app's settings into a prompt hands a
+  live payment key to a third party and puts it in their logs. If the
+  answer is shown to users or stored, the key can surface there as well.
+
+flagged_example:
+  language: python
+  filename: ops/explain.py
+  expect_line: 13
+  code: |
+    import os
+
+    from openai import OpenAI
+
+    client = OpenAI()
+
+
+    def explain_failure(error: str) -> str:
+        settings = {
+            "database_url": os.environ["DATABASE_URL"],
+            "stripe_api_key": os.environ["STRIPE_API_KEY"],
+        }
+        reply = client.responses.create(
+            model="gpt-4o-mini",
+            input=f"Why does this fail?\n{error}\nSettings: {settings}",
+        )
+        return reply.output_text
+
+not_flagged_example:
+  language: python
+  filename: ops/explain.py
+  code: |
+    import os
+
+    from openai import OpenAI
+
+    from ops.logs import redact_secrets
+
+    client = OpenAI()
+
+
+    def explain_failure(error: str) -> str:
+        settings = {
+            "database_url": os.environ["DATABASE_URL"],
+            "stripe_api_key": os.environ["STRIPE_API_KEY"],
+        }
+        reply = client.responses.create(
+            model="gpt-4o-mini",
+            input=f"Why does this fail?\n{error}\nSettings: {redact_secrets(settings)}",
+        )
+        return reply.output_text
+  why: >-
+    The same settings pass through `redact_secrets()` first. A call whose
+    name is `redact`, `mask`, `redact_secrets`, `redact_pii` or
+    `sanitize_for_llm` counts as cleaning the value. Skylos trusts the name
+    and does not read the function.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Python files that mention an LLM library, and
+    finds the same model calls and prompt arguments as SKY-D261, including
+    `.embeddings.create`.
+  - >-
+    Reports HIGH when the prompt contains a sensitive value: a variable,
+    attribute, dictionary key or subscript whose name contains `password`,
+    `secret`, `token`, `auth`, `credential`, `api_key`, `apikey`,
+    `private_key`, `ssn` or `credit_card`; any `os.environ[...]` value or
+    `os.environ` itself; or `os.getenv()` / `os.environ.get()` of a name
+    containing `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `AUTH` or
+    `CREDENTIAL` (or of a name that is not a literal).
+  - >-
+    Follows values through f-strings, `+`, lists, dictionaries, call
+    arguments and variables assigned in the same function.
+  - >-
+    A call named `redact`, `mask`, `redact_secrets`, `redact_pii` or
+    `sanitize_for_llm` around the value stops it from counting.
+
+source_refs:
+  - path: skylos/rules/danger/danger_llm/llm_flow.py
+    symbol: "rule_id=\"SKY-D263\""
+  - path: skylos/rules/danger/danger_llm/sensitivity.py
+    symbol: "class SensitiveExpressionMixin"
+  - path: skylos/rules/danger/danger_llm/sensitivity.py
+    symbol: "def _env_call_is_sensitive"
+  - path: skylos/rules/danger/danger_llm/utils.py
+    symbol: "SENSITIVE_FIELD_NAMES = frozenset("
+  - path: skylos/rules/danger/danger_llm/utils.py
+    symbol: "REDACTION_CALLS = frozenset("
+  - path: test/test_dangerous.py
+    symbol: "def test_redacted_sensitive_env_sent_to_llm_does_not_flag_d263"
+
+fix:
+  explanation: >-
+    Send the model only what it needs to answer. Here that is the error and
+    which settings are present, never their values. If values must go,
+    remove secrets and personal data first with a redaction step you have
+    tested.
+  filename: ops/explain.py
+  code: |
+    import os
+
+    from openai import OpenAI
+
+    client = OpenAI()
+    SETTING_NAMES = ("DATABASE_URL", "STRIPE_API_KEY")
+
+
+    def explain_failure(error: str) -> str:
+        present = [name for name in SETTING_NAMES if name in os.environ]
+        reply = client.responses.create(
+            model="gpt-4o-mini",
+            input=f"Why does this fail?\n{error}\nSettings that are set: {present}",
+        )
+        return reply.output_text
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Name parts match anywhere in a name: `author` contains `auth`, so a
+      prompt that includes a variable called `author` is reported. Any
+      `os.environ[...]` value counts, even a harmless one such as a region
+      name.
+    - >-
+      Missed: personal data in fields with other names (`email`, `phone`,
+      `address`), secrets read from a file or a vault client, values built
+      in another function, and code in other languages.
+    - >-
+      Any function called `mask` or `redact` clears the value, even one that
+      does nothing.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line where the model call starts.
+      language: python
+      code: |
+        reply = client.responses.create(  # skylos: ignore[SKY-D263] local model, no egress
+    - check: baseline
+      text: >-
+        `skylos baseline .`, then `--baseline`, accepts reviewed calls and
+        reports new ones.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D263"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D261, SKY-D251, SKY-S101, SKY-D262]

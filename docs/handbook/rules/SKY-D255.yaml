@@ -1,0 +1,117 @@
+id: SKY-D255
+title: File inclusion
+family: security
+severity: CRITICAL
+languages: [PHP]
+gate:
+  full: critical_blocks
+cwe: [CWE-98]
+
+what_it_is: >-
+  PHP's `include`, `require`, `include_once` and `require_once` load a file
+  and run it as PHP code. File inclusion happens when request data chooses
+  which file is loaded. Skylos reports SKY-D255 when `$_GET`, `$_POST`,
+  cookies or other request data reach the path of one of these statements.
+
+why_it_matters: >-
+  With `?page=../../../../var/log/nginx/access` a visitor can make the
+  server run a log file into which they wrote PHP code, or read files such
+  as `/etc/passwd`. Where `allow_url_include` is on, a URL loads code from
+  the attacker's server.
+
+flagged_example:
+  language: php
+  filename: public/index.php
+  expect_line: 4
+  code: |
+    <?php
+
+    $page = $_GET['page'] ?? 'home';
+    include __DIR__ . '/pages/' . $page . '.php';
+
+not_flagged_example:
+  language: php
+  filename: public/index.php
+  code: |
+    <?php
+
+    $file = match ($_GET['page'] ?? 'home') {
+        'about' => 'about.php',
+        'contact' => 'contact.php',
+        default => 'home.php',
+    };
+    include __DIR__ . '/pages/' . $file;
+  why: >-
+    The request value only selects an arm of the `match`. Every arm returns
+    a fixed file name, so the included path can only be one of three files.
+    Skylos follows the values each arm returns, not the value that was
+    matched.
+
+how_skylos_decides:
+  - >-
+    Runs PHP's flow-sensitive taint check over each function or file:
+    request data starts at `$_GET`, `$_POST`, `$_REQUEST`, `$_COOKIE`, the
+    name and type of uploaded files, and the request objects of common
+    frameworks, and follows assignments, string building and branches.
+  - >-
+    Finds `include`, `include_once`, `require` and `require_once` and checks
+    the path expression after the keyword.
+  - >-
+    Stops at values that cannot choose the file: numbers from casts and
+    numeric functions, `basename()` for paths, `match` arms that return
+    literals, and a guard whose failing branch exits, such as a strict
+    `in_array($page, [...], true)` against a literal list.
+  - >-
+    Reports CRITICAL when request data still reaches the path. Before
+    5.6.0 this was reported as SKY-D215.
+
+source_refs:
+  - path: skylos/visitors/languages/php/danger.py
+    symbol: "File inclusion: a request-controlled path reaches include/require"
+  - path: skylos/visitors/languages/php/danger.py
+    symbol: "def match_values(node) -> list:"
+  - path: skylos/visitors/languages/php/danger.py
+    symbol: "if name in {\"in_array\", \"array_key_exists\"}:"
+
+fix:
+  explanation: >-
+    Map the input to a fixed list of files, or reject anything that is not
+    on a literal allowlist before the include runs. Keep
+    `allow_url_include` off.
+  filename: public/index.php
+  code: |
+    <?php
+
+    $page = $_GET['page'] ?? 'home';
+    if (!in_array($page, ['home', 'about', 'contact'], true)) {
+        http_response_code(404);
+        exit;
+    }
+    include __DIR__ . '/pages/' . $page . '.php';
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A check made in a helper function, such as `assert_page($page)` that
+      exits on a bad value, is not seen, so the include stays reported.
+    - >-
+      A loose `in_array()` without the third argument `true` does not count
+      as a guard, because PHP's loose comparison accepts unexpected values.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line and say why. A bare `// noqa` does not hide
+        CRITICAL security findings.
+      language: php
+      code: |
+        include $path; // skylos: ignore[SKY-D255] path checked by assert_page()
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D255"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D215, SKY-D201, SKY-D245, SKY-D357]

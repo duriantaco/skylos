@@ -1,0 +1,168 @@
+id: SKY-D257
+title: Android WebView exposes app code to page JavaScript
+family: security
+severity: HIGH
+languages: [Kotlin]
+gate:
+  full: counted
+cwe: [CWE-749]
+
+what_it_is: >-
+  A WebView shows web pages inside an Android app.
+  `addJavascriptInterface()` hands it a Kotlin or Java object whose
+  `@JavascriptInterface` methods page scripts can call. SKY-D257 reports
+  that call when the same class also turns JavaScript on.
+
+why_it_matters: >-
+  The bridge does not check which site is calling. Any page the WebView
+  ends up on, through a link, a redirect, an injected script or a URL
+  passed in by another app, can call the methods; here it can read the
+  user's session token and send it anywhere.
+
+flagged_example:
+  language: kotlin
+  filename: app/src/main/java/com/acme/help/HelpActivity.kt
+  expect_line: 17
+  code: |
+    package com.acme.help
+
+    import android.annotation.SuppressLint
+    import android.os.Bundle
+    import android.webkit.JavascriptInterface
+    import android.webkit.WebView
+    import androidx.appcompat.app.AppCompatActivity
+
+    class HelpActivity : AppCompatActivity() {
+        private val session by lazy { SessionStore(this) }
+
+        @SuppressLint("SetJavaScriptEnabled")
+        override fun onCreate(savedInstanceState: Bundle?) {
+            super.onCreate(savedInstanceState)
+            val webView = WebView(this)
+            webView.settings.javaScriptEnabled = true
+            webView.addJavascriptInterface(AppBridge(), "App")
+            webView.loadUrl(intent.getStringExtra("url") ?: "https://help.acme.example")
+            setContentView(webView)
+        }
+
+        inner class AppBridge {
+            @JavascriptInterface
+            fun authToken(): String = session.token
+        }
+    }
+
+not_flagged_example:
+  language: kotlin
+  filename: app/src/main/java/com/acme/help/HelpActivity.kt
+  code: |
+    package com.acme.help
+
+    import android.annotation.SuppressLint
+    import android.os.Bundle
+    import android.webkit.WebView
+    import androidx.appcompat.app.AppCompatActivity
+
+    class HelpActivity : AppCompatActivity() {
+        @SuppressLint("SetJavaScriptEnabled")
+        override fun onCreate(savedInstanceState: Bundle?) {
+            super.onCreate(savedInstanceState)
+            val webView = WebView(this)
+            webView.settings.javaScriptEnabled = true
+            webView.loadUrl("https://help.acme.example")
+            setContentView(webView)
+        }
+    }
+  why: >-
+    JavaScript is on, but no object is handed to the page, so page scripts
+    can only do what they could do in a browser. JavaScript alone is not
+    reported.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Kotlin (`.kt`) files, after comments and string
+    contents are blanked out.
+  - >-
+    Finds every `addJavascriptInterface(` call, and every
+    `javaScriptEnabled = true` or `setJavaScriptEnabled(true)`.
+  - >-
+    Reports HIGH on the `addJavascriptInterface(` line when JavaScript is
+    turned on inside the same innermost class, or both sit outside any
+    class in the same file. Which object is passed and which URL is loaded
+    are not read.
+
+source_refs:
+  - path: skylos/visitors/languages/kotlin/security.py
+    symbol: "def _scan_android"
+  - path: skylos/visitors/languages/kotlin/security.py
+    symbol: "_JS_BRIDGE_RE = re.compile(r\"\\baddJavascriptInterface\\s*\\(\")"
+  - path: skylos/visitors/languages/kotlin/security.py
+    symbol: "def _scope_key"
+    note: the enclosing class that both calls must share.
+  - path: test/test_kotlin.py
+    symbol: "def test_kotlin_android_webview_settings"
+
+fix:
+  explanation: >-
+    Replace the bridge with `WebViewCompat.addWebMessageListener` from
+    AndroidX WebKit. It takes a list of allowed origins, so only your own
+    site can send messages, and the app decides what to answer.
+  filename: app/src/main/java/com/acme/help/HelpActivity.kt
+  code: |
+    package com.acme.help
+
+    import android.annotation.SuppressLint
+    import android.os.Bundle
+    import android.webkit.WebView
+    import androidx.appcompat.app.AppCompatActivity
+    import androidx.webkit.WebViewCompat
+    import androidx.webkit.WebViewFeature
+
+    class HelpActivity : AppCompatActivity() {
+        private val session by lazy { SessionStore(this) }
+
+        @SuppressLint("SetJavaScriptEnabled")
+        override fun onCreate(savedInstanceState: Bundle?) {
+            super.onCreate(savedInstanceState)
+            val webView = WebView(this)
+            webView.settings.javaScriptEnabled = true
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+                WebViewCompat.addWebMessageListener(
+                    webView,
+                    "App",
+                    setOf("https://help.acme.example"),
+                ) { _, message, _, _, reply ->
+                    if (message.data == "authToken") reply.postMessage(session.token)
+                }
+            }
+            webView.loadUrl("https://help.acme.example")
+            setContentView(webView)
+        }
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A WebView that only ever shows pages bundled in the app, with
+      navigation to other sites blocked, is still reported.
+    - >-
+      Missed: JavaScript turned on in one class (for example a shared
+      WebView factory) and the bridge added in another, and Java source
+      files, which this rule does not read.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the `addJavascriptInterface(` line when the WebView can only
+        load your own bundled pages, and say how that is enforced.
+      language: kotlin
+      code: |
+        webView.addJavascriptInterface(AppBridge(), "App") // skylos: ignore[SKY-D257] bundled
+    - check: baseline
+      text: >-
+        `skylos baseline .`, then `--baseline`, accepts existing bridges by
+        file and line.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D257"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D258]
