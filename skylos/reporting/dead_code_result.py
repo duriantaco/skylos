@@ -26,12 +26,34 @@ def _sorted_values(values):
     return sorted(values)
 
 
-def dead_code_evidence(analyzer, path, pyproject_entrypoint_qnames, threshold=None):
+def dead_code_search_facts(analyzer, path, files_searched=None):
+    from skylos.deadcode.evidence import SearchFacts
+
+    return SearchFacts(
+        analyzer.defs,
+        project_root=_evidence_root(analyzer, path),
+        files_searched=files_searched,
+        explicit_all_files=getattr(analyzer, "_explicit_all_exports_by_file", None),
+    )
+
+
+def _evidence_root(analyzer, path):
     evidence_root = getattr(analyzer, "_project_root", None)
     if evidence_root is None:
         evidence_root = Path(_primary_path(path))
         if evidence_root.is_file():
             evidence_root = evidence_root.parent
+    return evidence_root
+
+
+def dead_code_evidence(
+    analyzer,
+    path,
+    pyproject_entrypoint_qnames,
+    threshold=None,
+    search=None,
+):
+    evidence_root = _evidence_root(analyzer, path)
 
     from skylos.deadcode.evidence import (
         EvidenceEvent,
@@ -45,6 +67,7 @@ def dead_code_evidence(analyzer, path, pyproject_entrypoint_qnames, threshold=No
         project_root=evidence_root,
         pyproject_entrypoint_qnames=pyproject_entrypoint_qnames,
         threshold=threshold,
+        search=search,
     )
     for finding in getattr(analyzer, "_grep_verify_incomplete_candidates", ()):
         ledger.add(
@@ -126,6 +149,21 @@ def _attach_evidence(target: dict, definition, evidence_by_name) -> None:
     entry = _evidence_for_definition(evidence_by_name, definition)
     if not entry:
         return
+    _attach_evidence_entry(target, entry)
+
+
+def _attach_reported_candidate_evidence(target: dict, definition, thr, search) -> None:
+    if "dead_code_classification" in target:
+        return
+    from skylos.deadcode.evidence import build_reported_candidate_evidence
+
+    _attach_evidence_entry(
+        target,
+        build_reported_candidate_evidence(definition, threshold=thr, search=search),
+    )
+
+
+def _attach_evidence_entry(target: dict, entry) -> None:
     target["dead_code_classification"] = entry["classification"]
     target["dead_code_evidence"] = list(entry.get("evidence") or [])
     decision = entry.get("decision") or {}
@@ -201,6 +239,7 @@ def dead_code_candidate_decisions(
     *,
     review_config=None,
     include_review_proofs=False,
+    search=None,
 ):
     from skylos.deadcode.review_proof import prepare_dead_code_review_proofs
 
@@ -250,6 +289,8 @@ def dead_code_candidate_decisions(
                         "invalid",
                     )
         _attach_evidence(item, definition, evidence_by_name)
+        if disposition == "reported":
+            _attach_reported_candidate_evidence(item, definition, thr, search)
         item["dead_code_disposition"] = disposition
         if disposition == "reported" and include_review_proofs:
             from skylos.deadcode.review_proof import build_dead_code_review_proof

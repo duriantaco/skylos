@@ -17,6 +17,116 @@ from skylos.security.static_trace_walk import PredecessorWalker, observed_guards
 
 __all__ = ["attach_security_traces", "build_index", "TraceLimits"]
 
+_PROVENANCE_KEYS = ("sql_provenance", "redirect_provenance", "path_provenance")
+_PROVENANCE_STEP = re.compile(r"^(\S+):(\d+) (.+)$")
+_STEP_MESSAGE_LIMIT = 300
+
+
+def _provenance_chain(finding):
+    metadata = finding.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return []
+    for key in _PROVENANCE_KEYS:
+        record = metadata.get(key)
+        if not isinstance(record, Mapping):
+            continue
+        chains = record.get("untrusted")
+        if isinstance(chains, list) and chains and isinstance(chains[0], list):
+            return chains[0]
+    return []
+
+
+def _provenance_entries(finding, index):
+    entries = []
+    for text in _provenance_chain(finding):
+        if not isinstance(text, str):
+            continue
+        match = _PROVENANCE_STEP.match(text)
+        if match is None:
+            continue
+        path = match.group(1)
+        line = int(match.group(2))
+        location = index.units.get(path)
+        if location is None:
+            location = index.documents.get(path)
+        if location is None or line < 1:
+            continue
+        entries.append((location, line, match.group(3)[:_STEP_MESSAGE_LIMIT]))
+    return entries
+
+
+def _line_column(index, path, line):
+    text = index.source_line(path, line)
+    if text is None:
+        return 0
+    return len(text) - len(text.lstrip())
+
+
+def _existing_assignment(graph, path, line):
+    matches = []
+    for step_id, step in graph.steps.items():
+        if (
+            step["kind"] == "assignment"
+            and step["file"] == path
+            and step["line"] == line
+        ):
+            matches.append(step_id)
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _add_provenance_steps(graph, index, finding):
+    if graph.found_source or graph.sink_id is None:
+        return
+    entries = _provenance_entries(finding, index)
+    if not entries:
+        return
+    if len(graph.steps) + len(entries) > index.limits.max_steps:
+        return
+    destination = graph.sink_id
+    last_location, last_line, _last_message = entries[-1]
+    reused = None
+    if len(entries) > 1:
+        reused = _existing_assignment(graph, last_location.path, last_line)
+    if reused is not None:
+        destination = reused
+        entries = entries[:-1]
+    previous = None
+    for position, (location, line, message) in enumerate(entries):
+        kind = "propagation"
+        if position == 0:
+            kind = "source"
+        step = graph.add(
+            kind,
+            location,
+            None,
+            message,
+            token="provenance",
+            line=line,
+            column=_line_column(index, location.path, line),
+        )
+        graph.connect(previous, step, "provenance")
+        previous = step
+    graph.connect(previous, destination, "provenance")
+
+
+def _secret_lines(secrets, index):
+    lines = set()
+    for secret in secrets or ():
+        if not isinstance(secret, Mapping):
+            continue
+        path = index.relative_path(secret.get("file") or secret.get("file_path") or "")
+        start = secret.get("line")
+        if not path or type(start) is not int:
+            continue
+        end = secret.get("end_line")
+        if type(end) is not int or end < start:
+            end = start
+        for line in range(start, min(end, start + 64) + 1):
+            lines.add((path, line))
+    return lines
+
 
 def _sink_call(unit, finding):
     line = finding.get("line")
@@ -221,10 +331,13 @@ def trace_finding(finding, index):
             )
         for argument in arguments:
             walker.walk(unit, scope, argument, graph.sink_id)
+    _add_provenance_steps(graph, index, finding)
     return graph.finish(receiver)
 
 
-def attach_security_traces(findings, *, project_root, files=None, limits=None):
+def attach_security_traces(
+    findings, *, project_root, files=None, limits=None, secrets=None
+):
     """Attach deterministic explanatory metadata; preserve every original field."""
     failure = None
     findings = list(findings)
@@ -248,6 +361,10 @@ def attach_security_traces(findings, *, project_root, files=None, limits=None):
 
         index = ProjectTraceIndex(project_root, (), limits)
         failure = type(error).__name__
+    try:
+        index.withheld_lines = _secret_lines(secrets, index)
+    except Exception:
+        index.withheld_lines = None
     for finding in findings:
         if not isinstance(finding, dict):
             continue
@@ -286,3 +403,4 @@ def _failed_trace(finding, index, error_class):
     trace = graph.finish(receiver)
     trace["error"] = error_class
     return trace
+

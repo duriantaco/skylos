@@ -8,12 +8,75 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 from skylos import __version__
 from skylos.core.safe_cache_io import read_project_text_no_symlink
 from skylos.rules.quality._provider_context import project_local_provider
 from skylos.security.static_trace_bindings import SourceUnit
+
+
+_LINE_BREAK = re.compile(r"\r\n|\r|\n")
+_LITERAL_MASK = b"<literal>"
+_LINE_END = 1 << 30
+
+
+def _literal_spans(tree):
+    spans = {}
+    stack = [tree]
+    while stack:
+        node = stack.pop()
+        literal = isinstance(node, ast.JoinedStr) or (
+            isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes))
+        )
+        if not literal:
+            stack.extend(ast.iter_child_nodes(node))
+            continue
+        start_line = getattr(node, "lineno", None)
+        end_line = getattr(node, "end_lineno", None)
+        start = getattr(node, "col_offset", None)
+        end = getattr(node, "end_col_offset", None)
+        if type(start_line) is not int or type(start) is not int:
+            continue
+        if type(end_line) is not int or type(end) is not int:
+            end_line = start_line
+            end = _LINE_END
+        for line in range(start_line, end_line + 1):
+            first = 0
+            last = _LINE_END
+            if line == start_line:
+                first = start
+            if line == end_line:
+                last = end
+            spans.setdefault(line, []).append((first, last))
+    return spans
+
+
+def _merged_spans(spans, length):
+    merged = []
+    for start, end in sorted(spans):
+        start = max(0, min(start, length))
+        end = max(start, min(end, length))
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _comment_start(raw, spans):
+    position = raw.find(b"#")
+    while position != -1:
+        inside = False
+        for start, end in spans:
+            if start <= position < end:
+                inside = True
+                position = raw.find(b"#", end)
+                break
+        if not inside:
+            return position
+    return None
 
 
 @dataclass(frozen=True)
@@ -49,6 +112,9 @@ class ProjectTraceIndex:
         self.call_targets = {}
         self.receiver_proofs = {}
         self._snapshot_id = None
+        self._source_lines = {}
+        self._literal_spans = {}
+        self.withheld_lines = None
         self.selected_paths = []
         self._load(files, priority_files)
         for unit in self.units.values():
@@ -75,6 +141,41 @@ class ProjectTraceIndex:
             relative = None
         self._relative_paths[key] = relative
         return relative
+
+    def source_line(self, path, line):
+        if path not in self._source_lines:
+            lines = None
+            document = self.documents.get(path)
+            if document is not None:
+                text = read_project_text_no_symlink(
+                    self.root, path, max_bytes=self.limits.max_file_bytes, newline=""
+                )
+                if text is not None:
+                    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+                    if digest == document.digest:
+                        lines = _LINE_BREAK.split(text.lstrip("\ufeff"))
+            self._source_lines[path] = lines
+        lines = self._source_lines[path]
+        if lines is None or type(line) is not int or not 1 <= line <= len(lines):
+            return None
+        return lines[line - 1]
+
+    def code_line(self, path, line):
+        unit = self.units.get(path)
+        text = self.source_line(path, line)
+        if unit is None or text is None:
+            return None
+        if path not in self._literal_spans:
+            self._literal_spans[path] = _literal_spans(unit.tree)
+        raw = text.encode("utf-8")
+        spans = _merged_spans(self._literal_spans[path].get(line, ()), len(raw))
+        comment = _comment_start(raw, spans)
+        if comment is not None:
+            raw = raw[:comment]
+        for start, end in reversed(spans):
+            if start < len(raw):
+                raw = raw[:start] + _LITERAL_MASK + raw[end:]
+        return raw.decode("utf-8", "replace")
 
     def _paths(self, files):
         paths = set()

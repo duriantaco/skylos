@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import os
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -348,12 +349,101 @@ class EvidenceLedger:
 DEAD_CODE_SYMBOL_TYPES = {"class", "function", "method", "type", "variable"}
 
 
+SAME_NAME_CANDIDATE_LIMIT = 3
+_CANDIDATE_TEXT_LIMIT = 200
+
+
+class SearchFacts:
+    """What the analyzer searched when it decided a symbol has no references."""
+
+    def __init__(
+        self,
+        definitions: dict[str, Any],
+        *,
+        project_root: str | Path | None = None,
+        files_searched: int | None = None,
+        explicit_all_files: Iterable[str] | None = None,
+    ) -> None:
+        self.files_searched = _safe_int(files_searched)
+        self.explicit_all_files = frozenset(explicit_all_files or ())
+        self._format_file = None
+        if project_root is not None:
+            self._format_file = _repo_relative_file_formatter(project_root)
+        self._by_simple_name: dict[str, list[Any]] = {}
+        self._sorted_names: set[str] = set()
+        for definition in definitions.values():
+            simple_name = str(getattr(definition, "simple_name", ""))
+            if simple_name:
+                self._by_simple_name.setdefault(simple_name, []).append(definition)
+
+    def relative_file(self, filename: Any) -> str:
+        text = str(filename)
+        if self._format_file is None:
+            return Path(text).as_posix()
+        return self._format_file(text)
+
+    def same_name_candidates(self, definition: Any) -> tuple[list[str], int]:
+        simple_name = str(getattr(definition, "simple_name", ""))
+        bucket = self._by_simple_name.get(simple_name, [])
+        if simple_name not in self._sorted_names:
+            bucket.sort(key=_candidate_sort_key)
+            self._sorted_names.add(simple_name)
+        others = 0
+        visible: list[str] = []
+        for candidate in bucket:
+            if candidate is definition:
+                continue
+            others += 1
+            if len(visible) < SAME_NAME_CANDIDATE_LIMIT:
+                visible.append(self._candidate_text(candidate))
+        return visible, others
+
+    def _candidate_text(self, candidate: Any) -> str:
+        text = "{}:{} {} {}".format(
+            self.relative_file(getattr(candidate, "filename", "")),
+            _safe_int(getattr(candidate, "line", 0)) or 0,
+            getattr(candidate, "type", "symbol"),
+            getattr(candidate, "name", ""),
+        )
+        return text[:_CANDIDATE_TEXT_LIMIT]
+
+    def details(self, definition: Any, *, project_wide: bool = True) -> dict[str, Any]:
+        details: dict[str, Any] = {
+            "searched_name": _searched_name(definition),
+        }
+        if project_wide and self.files_searched is not None:
+            details["files_searched"] = self.files_searched
+        candidates, total = self.same_name_candidates(definition)
+        if project_wide and total:
+            details["same_name_definitions"] = candidates
+            details["same_name_definition_count"] = total
+        return details
+
+
+def _candidate_sort_key(definition: Any) -> tuple[str, int, str, str]:
+    return (
+        str(getattr(definition, "filename", "")),
+        _safe_int(getattr(definition, "line", 0)) or 0,
+        str(getattr(definition, "name", "")),
+        str(getattr(definition, "type", "")),
+    )
+
+
+def _searched_name(definition: Any) -> str:
+    if getattr(definition, "type", None) == "import":
+        binding = getattr(definition, "binding_name", None)
+        if isinstance(binding, str) and binding:
+            return binding
+    return str(getattr(definition, "simple_name", ""))
+
+
 def build_dead_code_evidence(
     definitions: dict[str, Any],
     *,
     project_root: str | Path | None = None,
     pyproject_entrypoint_qnames: Iterable[str] | None = None,
     threshold: int | None = None,
+    search: SearchFacts | None = None,
 ) -> EvidenceLedger:
     ledger = EvidenceLedger()
     entrypoints = set(pyproject_entrypoint_qnames or ())
@@ -370,9 +460,95 @@ def build_dead_code_evidence(
         _add_signal_evidence(ledger, symbol, definition)
         _add_uncertainty_evidence(ledger, symbol, definition)
         _add_reference_evidence(ledger, symbol, definition)
-        _add_deadness_evidence(ledger, symbol, definition, threshold=threshold)
+        _add_deadness_evidence(
+            ledger, symbol, definition, threshold=threshold, search=search
+        )
 
     return ledger
+
+
+def build_reported_candidate_evidence(
+    definition: Any,
+    *,
+    threshold: int | None = None,
+    search: SearchFacts | None = None,
+) -> dict[str, Any]:
+    """Checked facts for a reported candidate the ledger does not classify."""
+    ledger = EvidenceLedger()
+    symbol = SymbolKey.from_definition(definition)
+    kind = str(getattr(definition, "type", ""))
+    references = _safe_int(getattr(definition, "references", 0)) or 0
+    name = _searched_name(definition)
+    details: dict[str, Any] = {"references": references}
+    if search is not None:
+        details.update(search.details(definition, project_wide=kind != "parameter"))
+    else:
+        details["searched_name"] = name
+
+    if kind == "import":
+        reason = f"no read of the imported name `{name}` resolved to this import"
+        details["imported_target"] = str(getattr(definition, "name", ""))[
+            :_CANDIDATE_TEXT_LIMIT
+        ]
+        details["in_package_init"] = bool(getattr(definition, "in_init", False))
+        if getattr(definition, "unread_type_checking_import", False):
+            details["type_checking_only"] = True
+        if getattr(definition, "conditional_import", False):
+            details["conditional_import"] = True
+    elif kind == "parameter":
+        reason = f"no read of the parameter `{name}` was found"
+        owner = str(getattr(definition, "name", "")).rpartition(".")[0]
+        if owner:
+            details["owner"] = owner[:_CANDIDATE_TEXT_LIMIT]
+    else:
+        reason = "no static references were found"
+    ledger.add(
+        symbol,
+        EvidenceEvent(
+            kind=EvidenceKind.NO_STATIC_REFERENCES,
+            reason=reason,
+            source="analyzer",
+            details=details,
+        ),
+    )
+
+    if kind != "parameter" and not bool(getattr(definition, "is_exported", False)):
+        export_reason = "symbol is not exported as public API"
+        export_details: dict[str, Any] = {}
+        if kind == "import" and search is not None:
+            declares_all = (
+                _source_key(getattr(definition, "filename", ""))
+                in search.explicit_all_files
+            )
+            export_details["module_declares_all"] = declares_all
+            if declares_all:
+                export_reason = f"`{name}` is not listed in the module's `__all__`"
+            else:
+                export_reason = (
+                    "the module declares no `__all__` and the import is not "
+                    "treated as a re-export"
+                )
+        ledger.add(
+            symbol,
+            EvidenceEvent(
+                kind=EvidenceKind.NOT_EXPORTED,
+                reason=export_reason,
+                source="analyzer",
+                details=export_details,
+            ),
+        )
+
+    _add_confidence_gate(ledger, symbol, definition, threshold=threshold)
+    decision = ledger.decision(symbol, definition=definition, threshold=threshold)
+    return {
+        "classification": ledger.classify(symbol).value,
+        "decision": decision.to_dict(),
+        "evidence": [event.to_dict() for event in ledger.events(symbol)],
+    }
+
+
+def _source_key(filename: Any) -> str:
+    return os.path.normcase(os.path.abspath(str(filename)))
 
 
 def _add_root_evidence(
@@ -494,13 +670,16 @@ def _add_deadness_evidence(
     definition: Any,
     *,
     threshold: int | None,
+    search: SearchFacts | None = None,
 ) -> None:
     references = _safe_int(getattr(definition, "references", 0)) or 0
-    confidence = _safe_int(getattr(definition, "confidence", None))
-    threshold_value = _safe_int(threshold)
 
     if references > 0:
         return
+
+    searched: dict[str, Any] = {}
+    if search is not None:
+        searched = search.details(definition)
 
     unreachable_group = "unreachable_group" in dict(_iter_heuristic_refs(definition))
     if unreachable_group:
@@ -510,7 +689,10 @@ def _add_deadness_evidence(
                 kind=EvidenceKind.NO_REACHABLE_CALLERS,
                 reason="references are confined to unreachable functions in the analyzed project",
                 source="python_reachability",
-                details={"callers": sorted(getattr(definition, "called_by", ()))},
+                details={
+                    "callers": sorted(getattr(definition, "called_by", ())),
+                    **searched,
+                },
             ),
         )
     elif references <= 0:
@@ -520,7 +702,7 @@ def _add_deadness_evidence(
                 kind=EvidenceKind.NO_STATIC_REFERENCES,
                 reason="no static references were found",
                 source="analyzer",
-                details={"references": references},
+                details={"references": references, **searched},
             ),
         )
 
@@ -544,6 +726,18 @@ def _add_deadness_evidence(
             ),
         )
 
+    _add_confidence_gate(ledger, symbol, definition, threshold=threshold)
+
+
+def _add_confidence_gate(
+    ledger: EvidenceLedger,
+    symbol: SymbolKey,
+    definition: Any,
+    *,
+    threshold: int | None,
+) -> None:
+    confidence = _safe_int(getattr(definition, "confidence", None))
+    threshold_value = _safe_int(threshold)
     if (
         confidence is not None
         and threshold_value is not None

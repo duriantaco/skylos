@@ -6,6 +6,10 @@ import hashlib
 import json
 
 
+_STEP_SNIPPET_LIMIT = 240
+_REDACTION_MARKERS = ("[redacted]", "[redacted PEM block]")
+
+
 def stable_id(value):
     data = json.dumps(value, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(data.encode("utf-8")).hexdigest()[:24]
@@ -39,7 +43,7 @@ class TraceGraph:
         self.limitations.add(message)
         self.incomplete = True
 
-    def add(self, kind, unit, node, message, *, token="", line=None):
+    def add(self, kind, unit, node, message, *, token="", line=None, column=None):
         path = None
         digest = None
         if unit is not None:
@@ -52,7 +56,8 @@ class TraceGraph:
             )
         if line is None:
             line = getattr(node, "lineno", self.finding.get("line", 1))
-        column = getattr(node, "col_offset", 0)
+        if column is None:
+            column = getattr(node, "col_offset", 0)
         step_id = stable_id([self.trace_id, kind, path, line, column, message, token])
         if step_id in self.steps:
             return step_id
@@ -73,6 +78,44 @@ class TraceGraph:
             step["source_sha256"] = digest
         self.steps[step_id] = step
         return step_id
+
+    def _snippet(self, step):
+        withheld = self.index.withheld_lines
+        if withheld is None:
+            return None
+        location = (step.get("file"), step.get("line"))
+        if location in withheld:
+            return None
+        text = self.index.code_line(location[0], location[1])
+        if text is None or not text.strip():
+            return None
+        from skylos.cicd.evidence import sanitize_untrusted_text
+
+        text = text.strip()
+        safe = sanitize_untrusted_text(
+            text,
+            max_length=_STEP_SNIPPET_LIMIT,
+            markdown=False,
+            preserve_newlines=False,
+            neutralize_mentions=False,
+        )
+        for marker in _REDACTION_MARKERS:
+            if marker in safe and marker not in text:
+                return None
+        return safe or None
+
+    def _attach_snippets(self, steps):
+        snippets = {}
+        try:
+            for step in steps:
+                snippet = self._snippet(step)
+                if snippet:
+                    snippets[step["id"]] = snippet
+        except Exception:
+            return
+        for step in steps:
+            if step["id"] in snippets:
+                step["snippet"] = snippets[step["id"]]
 
     def connect(self, predecessor, successor, kind="data"):
         if predecessor and successor and predecessor != successor:
@@ -121,6 +164,7 @@ class TraceGraph:
             if parents:
                 step["parent_id"] = parents[0]
             output_steps.append(step)
+        self._attach_snippets(output_steps)
         output_edges = []
         for start, end, kind in sorted(self.edges):
             output_edges.append({"from": start, "to": end, "kind": kind})

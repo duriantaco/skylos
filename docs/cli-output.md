@@ -170,6 +170,17 @@ outcome counts are available under
 Unverified same-name attribute matches are retained as contextual evidence;
 they do not rescue a symbol unless a stronger liveness signal confirms the use.
 
+Evidence events for a reported symbol say what was searched. The
+`no_static_references` (or `no_reachable_callers`) event's `details` carry
+`searched_name`, `files_searched`, and, when other definitions share the name,
+`same_name_definition_count` with up to three `same_name_definitions`
+(`file:line kind qualified_name`, sorted). Unused imports, parameters and
+constants carry the same `dead_code_*` fields: an import records
+`imported_target`, `in_package_init`, `type_checking_only` or
+`conditional_import` when set, and whether the module declares `__all__`
+(`module_declares_all`); a parameter records its `owner`. These fields explain
+a finding; they never decide whether it is reported.
+
 Each reported candidate's confidence is capped by its weakest evidence, so
 findings can be sorted and the top trusted first. The finding lists the
 factor (`Confidence: 60% (default export ...)`) and JSON carries it in
@@ -1140,6 +1151,13 @@ output. Each result carries:
 - `codeFlows` only when the analyzer recorded a source-to-sink path
   (`security_evidence.path`, for example SSRF and Server Action SQL taint).
   Steps without their own file and line are shown at the finding location.
+  Each located step has `region.startLine`, `region.startColumn` and, for
+  Python steps not on a secret line, `region.snippet.text` with that source
+  line (at most 240 characters, string literals shown as `<literal>`).
+- `region.endLine` on Python complexity and nesting findings (the end of the
+  measured function), and `properties.skylos_metadata.measure` with the
+  recorded `value`, `threshold`, `length`, `metric` and `end_line` of a
+  quality finding.
 
 Rules include `helpUri`, `properties.tags` (with `security` and
 `external/cwe/cwe-N` tags), and, for security, secret, and dependency rules,
