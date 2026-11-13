@@ -81,6 +81,7 @@ from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
 from skylos.config import load_config
 from skylos.analysis.errors import analysis_error_payload as _analysis_error_payload
 from skylos.analysis.errors import dedupe_source_analysis_errors
+from skylos.analysis.file_markers import MarkerReader
 from skylos.analysis.finding_filter import (
     finding_is_inline_ignored as _finding_is_inline_ignored,
 )
@@ -346,6 +347,39 @@ def _license_policy_findings(
         return []
 
 
+def _inline_suppressed(
+    finding, per_file_ignore_lines, per_file_ignore_rules, marker_reader
+):
+    if marker_reader is not None:
+        return marker_reader.ignored(finding)
+    file_key = str(finding.get("file", ""))
+    return _finding_is_inline_ignored(
+        finding,
+        per_file_ignore_lines.get(file_key, set()),
+        per_file_ignore_rules.get(file_key, {}),
+    )
+
+
+def _unsuppressed_dependency_findings(
+    findings, *, project_ignore, marker_reader, all_suppressed
+):
+    kept = []
+    for finding in findings:
+        if finding.get("rule_id") in project_ignore:
+            continue
+        if marker_reader.ignored(finding):
+            all_suppressed.append(
+                {
+                    **finding,
+                    "category": "dependencies",
+                    "reason": "inline ignore comment",
+                }
+            )
+            continue
+        kept.append(finding)
+    return kept
+
+
 def _extend_unsuppressed_danger_findings(
     findings,
     *,
@@ -354,15 +388,15 @@ def _extend_unsuppressed_danger_findings(
     per_file_ignore_rules,
     all_dangers,
     all_suppressed,
+    marker_reader=None,
 ):
     for finding in findings:
         if finding.get("rule_id") in project_ignore:
             continue
 
-        file_key = str(finding.get("file", ""))
-        f_ignore = per_file_ignore_lines.get(file_key, set())
-        f_ignore_rules = per_file_ignore_rules.get(file_key, {})
-        if _finding_is_inline_ignored(finding, f_ignore, f_ignore_rules):
+        if _inline_suppressed(
+            finding, per_file_ignore_lines, per_file_ignore_rules, marker_reader
+        ):
             suppressed = dict(finding)
             suppressed["category"] = "danger"
             suppressed["reason"] = "inline ignore comment"
@@ -380,15 +414,15 @@ def _extend_unsuppressed_ai_defect_findings(
     per_file_ignore_rules,
     all_ai_defects,
     all_suppressed,
+    marker_reader=None,
 ):
     for finding in findings:
         if finding.get("rule_id") in project_ignore:
             continue
 
-        file_key = str(finding.get("file", ""))
-        f_ignore = per_file_ignore_lines.get(file_key, set())
-        f_ignore_rules = per_file_ignore_rules.get(file_key, {})
-        if _finding_is_inline_ignored(finding, f_ignore, f_ignore_rules):
+        if _inline_suppressed(
+            finding, per_file_ignore_lines, per_file_ignore_rules, marker_reader
+        ):
             suppressed = dict(finding)
             suppressed["category"] = "ai_defect"
             suppressed["reason"] = "inline ignore comment"
@@ -406,15 +440,15 @@ def _extend_unsuppressed_dead_file_findings(
     per_file_ignore_rules,
     unused_files,
     all_suppressed,
+    marker_reader=None,
 ):
     for finding in findings:
         if finding.get("rule_id") in project_ignore:
             continue
 
-        file_key = str(finding.get("file", ""))
-        ignored_lines = per_file_ignore_lines.get(file_key, set())
-        ignored_rules = per_file_ignore_rules.get(file_key, {})
-        if _finding_is_inline_ignored(finding, ignored_lines, ignored_rules):
+        if _inline_suppressed(
+            finding, per_file_ignore_lines, per_file_ignore_rules, marker_reader
+        ):
             all_suppressed.append(
                 {
                     **finding,
@@ -437,6 +471,7 @@ def _append_ai_verification_result(
     all_ai_defects,
     all_suppressed,
     verification_checks,
+    marker_reader=None,
 ):
     from skylos.core.verification_coverage import reconcile_check_findings
 
@@ -449,6 +484,7 @@ def _append_ai_verification_result(
         per_file_ignore_rules=per_file_ignore_rules,
         all_ai_defects=all_ai_defects,
         all_suppressed=all_suppressed,
+        marker_reader=marker_reader,
     )
     accepted_count = len(all_ai_defects) - before_count
     suppressed_count = len(all_suppressed) - before_suppressed
@@ -536,6 +572,32 @@ def _working_tree_diff_start(context, diff_base):
     return run_memo(("git-merge-base", str(context.root), diff_base), compute)
 
 
+def _detected_diff_signal_files(root, path, git_context):
+    from skylos.security.contracts import resolve_diff_base_ref
+
+    detected_changes = set()
+    signal_base = resolve_diff_base_ref(root)
+    merge_base = _working_tree_diff_start(git_context, signal_base)
+    for revision in (merge_base or "HEAD", "--cached"):
+        diff_result = git_context.run(
+            "diff", "--name-only", "--no-relative", "-z", revision
+        )
+        if diff_result.returncode == 0:
+            detected_changes.update(
+                str(git_context.root / name)
+                for name in diff_result.stdout.split("\0")
+                if name
+            )
+    if not detected_changes:
+        return None
+    return {
+        str(candidate)
+        for candidate in _scoped_changed_paths(
+            root, path, detected_changes, resolve_symlinks=False
+        )
+    }
+
+
 def _requires_security_control_history(context, diff_base, changed_files):
     from skylos.security.regression_diff import SOURCE_SUFFIXES
 
@@ -587,6 +649,7 @@ def _scan_ai_defect_diff_signals(
     per_file_ignore_rules,
     all_ai_defects,
     all_suppressed,
+    marker_reader=None,
 ):
     from skylos.rules.ai_defect.api_surface_drift import detect_cli_surface_drift
     from skylos.rules.ai_defect.ci_permission_expansion import (
@@ -609,6 +672,7 @@ def _scan_ai_defect_diff_signals(
                 per_file_ignore_rules=per_file_ignore_rules,
                 all_ai_defects=all_ai_defects,
                 all_suppressed=all_suppressed,
+                marker_reader=marker_reader,
             )
 
         if "SKY-A104" not in project_ignore:
@@ -619,6 +683,7 @@ def _scan_ai_defect_diff_signals(
                 per_file_ignore_rules=per_file_ignore_rules,
                 all_ai_defects=all_ai_defects,
                 all_suppressed=all_suppressed,
+                marker_reader=marker_reader,
             )
 
     if {"SKY-A122", "SKY-A125"} - set(project_ignore):
@@ -635,6 +700,7 @@ def _scan_ai_defect_diff_signals(
             per_file_ignore_rules=per_file_ignore_rules,
             all_ai_defects=all_ai_defects,
             all_suppressed=all_suppressed,
+            marker_reader=marker_reader,
         )
 
 
@@ -4774,6 +4840,8 @@ class Skylos:
                             diff_base=dependency_bump_diff_base,
                         )
                     )
+                    no_source_markers = MarkerReader(root)
+                    no_source_suppressed = []
                     # Reviewer settings and scanner markers live in files
                     # Skylos may not otherwise analyze (YAML, Markdown, Ruby,
                     # PHP, Terraform): compare them even without source files.
@@ -4783,18 +4851,26 @@ class Skylos:
                         )
                         from skylos.security.contracts import resolve_diff_base_ref
 
-                        ai_defect_findings.extend(
+                        _extend_unsuppressed_ai_defect_findings(
                             scan_git_changes(
                                 project_root,
                                 changed_files,
                                 resolve_diff_base_ref(root),
                                 project_ignore=project_ignore,
                                 scope=path,
-                            )
+                            ),
+                            project_ignore=project_ignore,
+                            per_file_ignore_lines={},
+                            per_file_ignore_rules={},
+                            all_ai_defects=ai_defect_findings,
+                            all_suppressed=no_source_suppressed,
+                            marker_reader=no_source_markers,
                         )
                     except Exception:
                         if os.getenv("SKYLOS_DEBUG"):
                             logger.exception("Guardrail diff scan failed")
+                    if no_source_suppressed:
+                        result.setdefault("suppressed", []).extend(no_source_suppressed)
                 if ai_defect_findings:
                     result["ai_defects"] = ai_defect_findings
                     result["analysis_summary"]["ai_defects_count"] = len(
@@ -4866,8 +4942,22 @@ class Skylos:
                                 "reason": "scanner_returned_no_coverage_receipt",
                             }
                         )
-                        result["dependency_vulnerabilities"] = list(sca_findings)
-                        result["analysis_summary"]["sca_count"] = len(sca_findings)
+                        no_source_dependency_suppressed = []
+                        result["dependency_vulnerabilities"] = (
+                            _unsuppressed_dependency_findings(
+                                sca_findings,
+                                project_ignore=project_ignore,
+                                marker_reader=MarkerReader(root),
+                                all_suppressed=no_source_dependency_suppressed,
+                            )
+                        )
+                        if no_source_dependency_suppressed:
+                            result.setdefault("suppressed", []).extend(
+                                no_source_dependency_suppressed
+                            )
+                        result["analysis_summary"]["sca_count"] = len(
+                            result["dependency_vulnerabilities"]
+                        )
                         result["analysis_summary"].update(
                             _supply_chain_summary(project_root, sca_findings)
                         )
@@ -5335,7 +5425,14 @@ class Skylos:
                 )
 
                 if empty_file_finding:
-                    empty_files.append(empty_file_finding)
+                    _extend_unsuppressed_dead_file_findings(
+                        [empty_file_finding],
+                        project_ignore=project_ignore,
+                        per_file_ignore_lines={str(file): file_ignore_lines},
+                        per_file_ignore_rules={str(file): file_ignore_rules},
+                        unused_files=empty_files,
+                        all_suppressed=all_suppressed,
+                    )
 
                 if enable_quality and q_finds:
                     all_quality.extend(q_finds)
@@ -5446,6 +5543,9 @@ class Skylos:
             if injected:
                 os.environ.pop("SKYLOS_CUSTOM_RULES", None)
 
+        marker_reader = MarkerReader(root, per_file_ignore_lines, per_file_ignore_rules)
+        self._marker_reader = marker_reader
+
         if enable_quality:
             if progress_callback:
                 progress_callback(0, 1, Path("PHASE: clone detection"))
@@ -5485,24 +5585,32 @@ class Skylos:
                 else:
                     severity = "LOW"
 
-                all_quality.append(
-                    {
-                        "rule_id": RULE_ID,
-                        "kind": "clone",
-                        "name": top.name,
-                        "simple_name": top.name,
-                        "basename": Path(top.file_path).name,
-                        "value": f"{g.clone_type.value} {g.similarity:.2f}",
-                        "message": (
-                            f"Clone group detected ({g.clone_type.value}, sim={g.similarity:.3f}, members={len(g.fragments)}) "
-                            f"examples: {', '.join(members_preview)}"
-                        ),
-                        "file": top.file_path,
-                        "line": top.start_line,
-                        "severity": severity,
-                        "category": "QUALITY",
-                    }
-                )
+                clone_finding = {
+                    "rule_id": RULE_ID,
+                    "kind": "clone",
+                    "name": top.name,
+                    "simple_name": top.name,
+                    "basename": Path(top.file_path).name,
+                    "value": f"{g.clone_type.value} {g.similarity:.2f}",
+                    "message": (
+                        f"Clone group detected ({g.clone_type.value}, sim={g.similarity:.3f}, members={len(g.fragments)}) "
+                        f"examples: {', '.join(members_preview)}"
+                    ),
+                    "file": top.file_path,
+                    "line": top.start_line,
+                    "severity": severity,
+                    "category": "QUALITY",
+                }
+                if marker_reader.ignored(clone_finding):
+                    all_suppressed.append(
+                        {
+                            **clone_finding,
+                            "category": "quality",
+                            "reason": "inline ignore comment",
+                        }
+                    )
+                else:
+                    all_quality.append(clone_finding)
 
         git_context = GitContext.from_path(root)
         # Diff-based signals also read uncommitted work during a full scan.
@@ -5513,28 +5621,11 @@ class Skylos:
             enable_quality or enable_danger or enable_ai_defects
         ):
             try:
-                detected_changes = set()
-                from skylos.security.contracts import resolve_diff_base_ref
-
-                signal_base = resolve_diff_base_ref(root)
-                merge_base = _working_tree_diff_start(git_context, signal_base)
-                for revision in (merge_base or "HEAD", "--cached"):
-                    diff_result = git_context.run(
-                        "diff", "--name-only", "--no-relative", "-z", revision
-                    )
-                    if diff_result.returncode == 0:
-                        detected_changes.update(
-                            str(git_context.root / name)
-                            for name in diff_result.stdout.split("\0")
-                            if name
-                        )
-                if detected_changes:
-                    diff_signal_files = {
-                        str(candidate)
-                        for candidate in _scoped_changed_paths(
-                            root, path, detected_changes, resolve_symlinks=False
-                        )
-                    }
+                detected_signal_files = _detected_diff_signal_files(
+                    root, path, git_context
+                )
+                if detected_signal_files is not None:
+                    diff_signal_files = detected_signal_files
             except Exception:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error("Auto-detect git changes failed", exc_info=True)
@@ -5622,12 +5713,18 @@ class Skylos:
             from skylos.security.contracts import detect_security_contract_regressions
 
             try:
-                all_dangers.extend(
+                _extend_unsuppressed_danger_findings(
                     detect_security_contract_regressions(
                         project_root,
                         project_cfg,
                         changed_files=contract_regression_files,
-                    )
+                    ),
+                    project_ignore=project_ignore,
+                    per_file_ignore_lines=per_file_ignore_lines,
+                    per_file_ignore_rules=per_file_ignore_rules,
+                    all_dangers=all_dangers,
+                    all_suppressed=all_suppressed,
+                    marker_reader=marker_reader,
                 )
             except Exception:
                 if os.getenv("SKYLOS_DEBUG"):
@@ -5999,7 +6096,15 @@ class Skylos:
                                 for hit in inj_hits
                                 if hit.get("rule_id") not in project_ignore
                             ][:remaining]
-                            all_dangers.extend(bounded_hits)
+                            _extend_unsuppressed_danger_findings(
+                                bounded_hits,
+                                project_ignore=project_ignore,
+                                per_file_ignore_lines=per_file_ignore_lines,
+                                per_file_ignore_rules=per_file_ignore_rules,
+                                all_dangers=all_dangers,
+                                all_suppressed=all_suppressed,
+                                marker_reader=marker_reader,
+                            )
                             injection_findings += len(bounded_hits)
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
@@ -6037,6 +6142,7 @@ class Skylos:
                             per_file_ignore_rules=per_file_ignore_rules,
                             all_ai_defects=all_ai_defects,
                             all_suppressed=all_suppressed,
+                            marker_reader=marker_reader,
                         )
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
@@ -6071,6 +6177,7 @@ class Skylos:
                             all_ai_defects=all_ai_defects,
                             all_suppressed=all_suppressed,
                             verification_checks=self._ai_verification_checks,
+                            marker_reader=marker_reader,
                         )
                 except Exception:
                     if _python_signature_files(files):
@@ -6105,6 +6212,7 @@ class Skylos:
                         per_file_ignore_rules=per_file_ignore_rules,
                         all_ai_defects=all_ai_defects,
                         all_suppressed=all_suppressed,
+                        marker_reader=marker_reader,
                     )
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
@@ -6173,6 +6281,7 @@ class Skylos:
                             all_ai_defects=all_ai_defects,
                             all_suppressed=all_suppressed,
                             verification_checks=self._ai_verification_checks,
+                            marker_reader=marker_reader,
                         )
                     except Exception:
                         self._ai_verification_checks.append(
@@ -6228,6 +6337,7 @@ class Skylos:
                                 per_file_ignore_rules=per_file_ignore_rules,
                                 all_ai_defects=all_ai_defects,
                                 all_suppressed=all_suppressed,
+                                marker_reader=marker_reader,
                             )
                         except Exception as exc:
                             # The primary worker may already have reported this file.
@@ -6276,6 +6386,7 @@ class Skylos:
                             all_ai_defects=all_ai_defects,
                             all_suppressed=all_suppressed,
                             verification_checks=self._ai_verification_checks,
+                            marker_reader=marker_reader,
                         )
                     except Exception:
                         self._ai_verification_checks.append(
@@ -6318,6 +6429,7 @@ class Skylos:
                             all_ai_defects=all_ai_defects,
                             all_suppressed=all_suppressed,
                             verification_checks=self._ai_verification_checks,
+                            marker_reader=marker_reader,
                         )
                     except Exception:
                         self._ai_verification_checks.append(
@@ -6360,6 +6472,7 @@ class Skylos:
                                 per_file_ignore_rules=per_file_ignore_rules,
                                 all_ai_defects=all_ai_defects,
                                 all_suppressed=all_suppressed,
+                                marker_reader=marker_reader,
                             )
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
@@ -6392,6 +6505,7 @@ class Skylos:
                         per_file_ignore_rules=per_file_ignore_rules,
                         all_ai_defects=all_ai_defects,
                         all_suppressed=all_suppressed,
+                        marker_reader=marker_reader,
                     )
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
@@ -6423,6 +6537,7 @@ class Skylos:
                         per_file_ignore_rules=per_file_ignore_rules,
                         all_ai_defects=all_ai_defects,
                         all_suppressed=all_suppressed,
+                        marker_reader=marker_reader,
                     )
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
@@ -6542,7 +6657,14 @@ class Skylos:
                         scan_root, sca_findings, usage_files,
                         source_scope=self._analysis_scope,
                     )
-                    all_sca.extend(sca_findings)
+                    all_sca.extend(
+                        _unsuppressed_dependency_findings(
+                            sca_findings,
+                            project_ignore=project_ignore,
+                            marker_reader=marker_reader,
+                            all_suppressed=all_suppressed,
+                        )
+                    )
                     try:
                         from skylos.rules.sca.reachability import (
                             enrich_with_reachability,
@@ -6614,6 +6736,7 @@ class Skylos:
                         all_ai_defects=all_ai_defects,
                         all_suppressed=all_suppressed,
                         verification_checks=self._ai_verification_checks,
+                        marker_reader=marker_reader,
                     )
                 except Exception:
                     self._ai_verification_checks.append(
@@ -6925,6 +7048,7 @@ class Skylos:
             per_file_ignore_rules=per_file_ignore_rules,
             unused_files=empty_files,
             all_suppressed=all_suppressed,
+            marker_reader=marker_reader,
         )
 
         unused_ts_exports = self._find_unused_ts_exports(

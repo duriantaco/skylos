@@ -11,6 +11,8 @@ from skylos.core.safe_cache_io import (
 from skylos.core.sca_baseline import (
     dependency_snapshot,
     filter_dependency_findings,
+    line_baseline_rule,
+    line_fingerprint,
     supply_chain_trust_rule,
 )
 
@@ -25,6 +27,7 @@ _FINDING_CATEGORIES = (
     "quality",
     "secrets",
     "unused_files",
+    "circular_dependencies",
 )
 _DEAD_CODE_CATEGORIES = (
     "unused_functions",
@@ -214,6 +217,7 @@ def save_baseline(project_root: str | Path, result: dict) -> Path:
         "quality": len(result.get("quality", [])),
         "secrets": len(result.get("secrets", [])),
         "dependency_vulnerabilities": len(result.get("dependency_vulnerabilities", [])),
+        "circular_dependencies": len(result.get("circular_dependencies", [])),
     }
 
     fingerprints = set()
@@ -224,6 +228,10 @@ def save_baseline(project_root: str | Path, result: dict) -> Path:
             stable = _stable_fingerprint(finding, project_root)
             if stable is not None:
                 fingerprints.add(stable)
+
+    for finding in result.get("dependency_vulnerabilities", []) or []:
+        if line_baseline_rule(finding):
+            fingerprints.add(line_fingerprint(finding))
 
     for category in _DEAD_CODE_CATEGORIES:
         for item in result.get(category, []):
@@ -341,6 +349,8 @@ def filter_new_findings(
             source=dependency_source,
             policy_base=policy_base,
             policy_baseline=policy_baseline,
+            line_known=known,
+            base_line_known=base_known,
         )
         dependency_receipt = (filtered.get("analysis_summary") or {}).get(
             "dependency_baseline"

@@ -200,6 +200,8 @@ def build_analysis_result(
         ts_importers_of=ts_importers_of,
         project_root=getattr(analyzer, "_project_root", None),
         workspace_inventory=workspace_inventory,
+        marker_reader=getattr(analyzer, "_marker_reader", None),
+        suppressed=all_suppressed,
     )
     graded_files = files
     apply_report_scope(result, analyzer, modmap=modmap, raw_imports=all_raw_imports)

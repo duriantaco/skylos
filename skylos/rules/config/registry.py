@@ -5,8 +5,9 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from skylos.analysis.file_markers import MarkerReader
 from skylos.core.git_context import GitContext
-from skylos.rules.config.agent_publish import scan_agent_publish
+from skylos.rules.config.agent_publish import PUBLISH_RULE_IDS, scan_agent_publish
 from skylos.rules.config.cicd.github_actions import (
     scan_github_actions,
     scan_github_actions_file,
@@ -115,6 +116,17 @@ def _repository_ci_findings(
     return findings
 
 
+def _without_inline_marked(findings, reader: MarkerReader, rules=None) -> list:
+    kept = []
+    for finding in findings:
+        if rules is not None and finding.get("rule_id") not in rules:
+            kept.append(finding)
+            continue
+        if not reader.ignored(finding):
+            kept.append(finding)
+    return kept
+
+
 def scan_config_files(
     root: str | Path,
     *,
@@ -127,28 +139,35 @@ def scan_config_files(
     exclude_folders: list[str] | tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
+    markers = MarkerReader(root)
     findings.extend(
-        scan_terraform(
-            root,
-            changed_files=changed_files,
-            ignore=ignore,
-            analysis_errors=analysis_errors,
-            required_rules=required_rules,
-            scan_paths=scan_paths,
-            configuration_coverage=configuration_coverage,
-            exclude_folders=exclude_folders,
+        _without_inline_marked(
+            scan_terraform(
+                root,
+                changed_files=changed_files,
+                ignore=ignore,
+                analysis_errors=analysis_errors,
+                required_rules=required_rules,
+                scan_paths=scan_paths,
+                configuration_coverage=configuration_coverage,
+                exclude_folders=exclude_folders,
+            ),
+            markers,
         )
     )
     findings.extend(
-        scan_kubernetes(
-            root,
-            changed_files=changed_files,
-            ignore=ignore,
-            analysis_errors=analysis_errors,
-            required_rules=required_rules,
-            scan_paths=scan_paths,
-            configuration_coverage=configuration_coverage,
-            exclude_folders=exclude_folders,
+        _without_inline_marked(
+            scan_kubernetes(
+                root,
+                changed_files=changed_files,
+                ignore=ignore,
+                analysis_errors=analysis_errors,
+                required_rules=required_rules,
+                scan_paths=scan_paths,
+                configuration_coverage=configuration_coverage,
+                exclude_folders=exclude_folders,
+            ),
+            markers,
         )
     )
     findings.extend(
@@ -161,11 +180,15 @@ def scan_config_files(
     )
     findings.extend(scan_gitlab_ci(root, changed_files=changed_files, ignore=ignore))
     findings.extend(
-        scan_agent_publish(
-            root,
-            changed_files=changed_files,
-            ignore=ignore,
-            repository=_subfolder_repository(root, scan_paths),
+        _without_inline_marked(
+            scan_agent_publish(
+                root,
+                changed_files=changed_files,
+                ignore=ignore,
+                repository=_subfolder_repository(root, scan_paths),
+            ),
+            markers,
+            PUBLISH_RULE_IDS,
         )
     )
     findings.extend(

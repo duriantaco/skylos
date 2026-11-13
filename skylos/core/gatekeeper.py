@@ -570,6 +570,15 @@ def _effective_gate_config(config):
     return effective
 
 
+def _circular_dependency_limit(config):
+    if not isinstance(config, dict):
+        return None
+    value = config.get("max_circular_deps")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
 def _cloud_gate_policy(config):
     from skylos.config import synced_gate_policy
     from skylos.core.cloud_gate import cloud_gate_policy
@@ -1466,6 +1475,14 @@ def check_gate(results, config, strict=False, provenance=None):
         )
     else:
         passed = _apply_cloud_gate(reasons, gate_config, cloud_gate, found, results)
+    if not _append_threshold_reason(
+        reasons,
+        issues=results.get("circular_dependencies", []) or [],
+        limit=_circular_dependency_limit(config),
+        noun="circular dependency",
+        plural="circular dependencies",
+    ):
+        passed = False
     if reasons:
         passed = False
     regressions = _security_control_regressions(results)

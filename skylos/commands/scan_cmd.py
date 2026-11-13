@@ -667,8 +667,12 @@ def _add_supply_chain_diff_findings(result, project_root, base_ref, args, config
     could not run is an analysis error, which a diff-scoped gate treats as
     incomplete.
     """
+    from skylos.analysis.file_markers import MarkerReader
     from skylos.core.file_discovery import find_git_root
-    from skylos.rules.sca.supply_chain_diff import supply_chain_diff_findings
+    from skylos.rules.sca.supply_chain_diff import (
+        RULE_PUBLISH_JOB_CHANGED,
+        supply_chain_diff_findings,
+    )
 
     ignore = set()
     if isinstance(config, dict):
@@ -699,6 +703,13 @@ def _add_supply_chain_diff_findings(result, project_root, base_ref, args, config
         ]
     summary = result.setdefault("analysis_summary", {})
     summary["supply_chain_diff"] = receipt
+    markers = MarkerReader(find_git_root(project_root) or project_root)
+    findings = [
+        finding
+        for finding in findings
+        if finding.get("rule_id") != RULE_PUBLISH_JOB_CHANGED
+        or not markers.ignored(finding)
+    ]
     for finding in findings:
         section = "dependency_vulnerabilities"
         if finding.get("category") == "SECURITY":

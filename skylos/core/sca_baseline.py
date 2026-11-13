@@ -50,6 +50,19 @@ SUPPLY_CHAIN_TRUST_RULES = frozenset(
 )
 
 
+LINE_BASELINE_RULES = frozenset(
+    {"SKY-SCA-SRC001", "SKY-SCA-SRC003", "SKY-SCA-INT001", "SKY-SCA-AGE001"}
+)
+
+
+def line_fingerprint(finding) -> str:
+    return f"{finding.get('rule_id', '')}:{finding.get('file', '')}:{finding.get('line', 0)}"
+
+
+def line_baseline_rule(finding) -> bool:
+    return isinstance(finding, dict) and finding.get("rule_id") in LINE_BASELINE_RULES
+
+
 def supply_chain_trust_rule(finding) -> bool:
     """Agent/editor-config and publish-job rules (SKY-D365-D377), malware
     (``SKY-SCA-MAL*`` or ``metadata.malicious``), unsafe upgrades, weakened
@@ -271,12 +284,18 @@ def filter_dependency_findings(
     source=None,
     policy_base=False,
     policy_baseline=None,
+    line_known=None,
+    base_line_known=None,
 ):
     """Split dependency findings into new and baselined ones.
 
     With ``policy_base``, a supply-chain trust-boundary finding
     (``supply_chain_trust_rule``) is baselined only when ``policy_baseline``
-    (the baseline on the policy base commit) holds it as well."""
+    (the baseline on the policy base commit) holds it as well.
+
+    Supply-chain policy findings (``LINE_BASELINE_RULES``) carry no advisory
+    identity; like other findings they match ``line_known``, the baseline's
+    rule, file and line fingerprints."""
     filtered = dict(result)
     findings = result.get("dependency_vulnerabilities", [])
     if not isinstance(findings, list):
@@ -294,6 +313,21 @@ def filter_dependency_findings(
     existing = []
     new = []
     for finding in findings:
+        if line_baseline_rule(finding):
+            matched = line_fingerprint(finding) in (line_known or ())
+            if (
+                matched
+                and policy_base
+                and supply_chain_trust_rule(finding)
+                and line_fingerprint(finding) not in (base_line_known or ())
+            ):
+                matched = False
+                not_honoured += 1
+            if matched:
+                existing.append(finding)
+            else:
+                new.append(finding)
+            continue
         identity = (
             dependency_fingerprints(finding, project_root)
             if status == "applied"

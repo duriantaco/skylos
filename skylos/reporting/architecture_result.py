@@ -32,6 +32,8 @@ def attach_circular_and_architecture(
     ts_importers_of=None,
     project_root=None,
     workspace_inventory=None,
+    marker_reader=None,
+    suppressed=None,
 ):
     check_circular = project_cfg.get("check_circular", True)
     if not check_circular and not enable_quality:
@@ -42,6 +44,11 @@ def attach_circular_and_architecture(
     except Exception:
         _debug_traceback()
         return
+    if "SKY-CIRC" in set(project_cfg.get("ignore", [])):
+        circular_findings = []
+    circular_findings = _without_marked(
+        circular_findings, marker_reader, suppressed, "quality"
+    )
     if check_circular and circular_findings:
         result["circular_dependencies"] = circular_findings
     if enable_quality:
@@ -61,7 +68,24 @@ def attach_circular_and_architecture(
             ts_importers_of,
             project_root,
             workspace_inventory,
+            marker_reader,
+            suppressed,
         )
+
+
+def _without_marked(findings, marker_reader, suppressed, category):
+    if marker_reader is None:
+        return findings
+    kept = []
+    for finding in findings:
+        if not marker_reader.ignored(finding):
+            kept.append(finding)
+            continue
+        if suppressed is not None:
+            suppressed.append(
+                {**finding, "category": category, "reason": "inline ignore comment"}
+            )
+    return kept
 
 
 def _architecture_metric_sources(files, modmap):
@@ -117,6 +141,8 @@ def _attach_architecture(
     ts_importers_of,
     project_root,
     workspace_inventory,
+    marker_reader=None,
+    suppressed=None,
 ):
     try:
         findings, summary = _architecture_findings(
@@ -146,7 +172,22 @@ def _attach_architecture(
         summary["advisory_count"] = 0
         summary["advisory_signal_count"] = 0
         result["analysis_summary"]["architecture_advisory_count"] = 0
-    _attach_architecture_findings(result, project_cfg, all_quality, findings)
+    ignored_rules = set(project_cfg.get("ignore", []))
+    _attach_architecture_findings(
+        result,
+        project_cfg,
+        all_quality,
+        _without_marked(
+            [
+                finding
+                for finding in findings or ()
+                if finding.get("rule_id") not in ignored_rules
+            ],
+            marker_reader,
+            suppressed,
+            "quality",
+        ),
+    )
 
 
 def _architecture_findings(
