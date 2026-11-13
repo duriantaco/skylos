@@ -369,11 +369,20 @@ parameter is followed through the scanned source (imports, assignments,
 calls, returns, constructor and dataclass bindings, aliases,
 `functools.partial`, executors, lambdas, containers and their local aliases,
 JSON/YAML decoding, Celery `delay`/`apply_async` and RQ `enqueue` arguments)
-to every caller that can be resolved. It is reported when a resolved chain
+to every caller that can be resolved. A method call on a receiver that cannot
+be resolved is followed only when every function of that name in the scanned
+project belongs to one class hierarchy, the name is not a method of a built-in
+container, string or file, and the project never calls it on an external
+object. It is reported when a resolved chain
 starts at request data, a route or MCP tool argument, a Django class-based
 view registered by a URL pattern or DRF router, a FastAPI `Depends`
 dependency of a resolved route, a function a deployment file names as a
-server or handler, standard input, a CGI request variable, a network response,
+server or handler, the `environ` of a WSGI callable or the `scope`/`receive`
+of an ASGI callable (the complete `(environ, start_response)` or
+`(scope, receive, send)` signature; only keys the client fills in, such as
+`PATH_INFO`, `QUERY_STRING`, `HTTP_*`, `wsgi.input`, `path`, `query_string`
+and `headers`, count, and objects the server or application stores under other
+keys do not), standard input, a CGI request variable, a network response,
 asyncio stream or `recv_into` buffer, a downloaded file's content or an
 archive member name; `metadata.path_provenance` lists the steps. A parameter
 named `request`/`req` counts as request data only in a module that imports a

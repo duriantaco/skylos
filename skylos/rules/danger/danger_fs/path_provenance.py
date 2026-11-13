@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import io
 import os
 import re
 import sys
@@ -171,6 +172,17 @@ _TORNADO_ARGUMENT_METHODS = frozenset(
     {"get_argument", "get_arguments", "get_query_argument", "get_query_arguments",
      "get_body_argument", "get_body_arguments", "get_cookie", "decode_argument"}
 )  # fmt: skip
+_BUILTIN_METHOD_NAMES = frozenset(
+    name
+    for kind in (dict, list, set, frozenset, str, bytes, bytearray, tuple, int, float, object, io.TextIOWrapper, io.BytesIO)
+    for name in dir(kind)
+)
+_WSGI_REQUEST_KEYS = frozenset({"wsgi.input", "SERVER_NAME", "RAW_URI"})
+_ASGI_REQUEST_KEYS = frozenset({"path", "raw_path", "query_string", "headers", "subprotocols"})
+_GATEWAY_STEP = re.compile(r" (WSGI|ASGI) request data `(?:environ|scope)`")
+_GATEWAY_READ = re.compile(r" (?:item of `|passes through `|derived by `|returned by calling `|`[^`]+` iterates )")
+_WSGI_SIGNATURE = ("environ", "start_response")
+_ASGI_SIGNATURE = ("scope", "receive", "send")
 _TORNADO_VERBS = frozenset({"get", "post", "put", "patch", "delete", "head", "options"})
 _SAFE_CALLS = frozenset(
     {"builtins.int", "builtins.float", "builtins.bool", "builtins.len",
@@ -1038,6 +1050,7 @@ class _Project:
         self._value_active = set()
         self._mro_cache = {}
         self._subclasses = None
+        self._method_families = None
         self._site_cache = {}
         self._param_value_active = set()
         self._import_maps = {}
@@ -1781,6 +1794,57 @@ class _Project:
         if name.startswith("builtins.") and name.endswith(("Error", "Exception", "Warning")):
             return True
         return False
+
+    def method_family(self, fn):
+        """Name of the one project class hierarchy that defines every
+        function called ``fn.name``, or None.
+
+        A call ``obj.name(...)`` on an unresolved receiver can then reach only
+        that hierarchy among project code. Names that built-in containers,
+        strings or files also define are never accepted, because the receiver
+        may be one of those, and neither is a name the project also calls on
+        an external object.
+        """
+        label = _function_label(fn)
+        if self._method_families is None:
+            self._method_families = {}
+            self._functions_by_label = {}
+            for info in self.function_info.values():
+                node = info[2].node
+                self._functions_by_label.setdefault(_function_label(node), []).append(info)
+            self._external_method_names = set()
+            for unit in self.units:
+                for call, scope in unit.calls:
+                    func = call.func
+                    if not isinstance(func, ast.Attribute):
+                        continue
+                    values = self.values(unit, scope, func)
+                    if values and any(value.kind in {"ext", "extattr"} for value in values):
+                        self._external_method_names.add(func.attr)
+        if label in self._method_families:
+            return self._method_families[label]
+        self._method_families[label] = None
+        if label.startswith("__") or label in _BUILTIN_METHOD_NAMES or label in self._external_method_names:
+            return None
+        own = self.function_info.get(id(fn))
+        if own is None or own[3] is None:
+            return None
+        root = None
+        order, external = self.mro(own[3])
+        if external:
+            return None
+        for _, cls_node in order:
+            if any(isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == label for item in cls_node.body):
+                root = cls_node
+        if root is None:
+            return None
+        members = {id(root)}
+        members.update(id(node) for _, node in self.subclasses(root))
+        for info in self._functions_by_label.get(label, ()):
+            if info[3] is None or id(info[3]) not in members:
+                return None
+        self._method_families[label] = root.name
+        return root.name
 
     def subclasses(self, cls_node):
         if self._subclasses is None:
@@ -3670,6 +3734,9 @@ class _Tracer:
         facts = _Facts()
         for kind, step in sites.entries:
             facts.add(_Facts.leaf(kind, step))
+        gateway = _gateway_parameter(fn, name)
+        if gateway and not sites.entries and not unit.is_test:
+            facts.add(_Facts.leaf(UNTRUSTED, _step(unit, fn, f"{gateway} request data `{name}` of `{_function_label(fn)}`")))
         for step in sites.escapes:
             facts.add(_Facts.leaf(UNKNOWN, step))
         if len(sites.resolved) > _MAX_SITES:
@@ -3678,9 +3745,15 @@ class _Tracer:
             facts.add(self._site_facts(fn, site, name))
         if len(sites.possible) > _MAX_SITES:
             facts.add(_Facts.leaf(UNKNOWN, _step(unit, fn, f"`{_function_label(fn)}` has more than {_MAX_SITES} unresolved possible callers")))
+        family = self.project.method_family(fn)
         for site in sites.possible[:_MAX_SITES]:
             unresolved = _step(site.unit, site.call, f"the receiver of `{_describe(site.call)}` is not resolved")
-            facts.add(self._site_facts(fn, site, name).moved(UNTRUSTED, UNKNOWN, unresolved).moved(INCOMPLETE, UNKNOWN, unresolved))
+            traced = self._site_facts(fn, site, name)
+            if family and isinstance(site.call.func, ast.Attribute):
+                only = _step(site.unit, site.call, f"`{_function_label(fn)}` is defined only by `{family}` and its subclasses in the scanned project")
+                facts.add(traced.then(only).moved(INCOMPLETE, UNKNOWN, unresolved))
+                continue
+            facts.add(traced.moved(UNTRUSTED, UNKNOWN, unresolved).moved(INCOMPLETE, UNKNOWN, unresolved))
         if not sites.resolved and not sites.possible and not sites.entries and not sites.escapes:
             facts.add(_Facts.leaf(UNKNOWN, _step(unit, fn, f"no call of `{_function_label(fn)}` in the scanned project")))
         return facts
@@ -4494,7 +4567,32 @@ class _Tracer:
             return self._environment(unit, node, node.slice)
         if self.project.constant_table(unit, scope, node.value):
             return _Facts.leaf(SAFE, _step(unit, node, f"entry of constant table `{_describe(node.value)}`"))
-        return self.trace(unit, scope, node.value, env).then(_step(unit, node, f"item of `{_describe(node.value)}`"))
+        base = self._gateway_item(unit, node, self.trace(unit, scope, node.value, env), node.slice)
+        return base.then(_step(unit, node, f"item of `{_describe(node.value)}`"))
+
+    def _gateway_item(self, unit, node, facts, key):
+        """Keep an item of a WSGI ``environ`` or ASGI ``scope`` untrusted only
+        when its key is one the client fills in. The server and the
+        application store their own objects under the other keys."""
+        chains = facts.chains[UNTRUSTED]
+        if not chains:
+            return facts
+        protocols = set()
+        for chain in chains:
+            marker = _GATEWAY_STEP.search(chain[0])
+            if marker is None or any(_GATEWAY_READ.search(step) for step in chain[1:]):
+                return facts
+            protocols.add(marker.group(1))
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            name = key.value
+            if "WSGI" in protocols and (name in _CGI_VARIABLES or name in _WSGI_REQUEST_KEYS or name.startswith("HTTP_")):
+                return facts
+            if "ASGI" in protocols and name in _ASGI_REQUEST_KEYS:
+                return facts
+            reason = f"`{name}` is set by the server or the application, not by the client"
+        else:
+            reason = "the key is chosen at run time"
+        return facts.moved(UNTRUSTED, UNKNOWN, _step(unit, node, reason))
 
     def _environment(self, unit, node, key):
         if isinstance(key, ast.Constant) and isinstance(key.value, str):
@@ -4551,12 +4649,18 @@ class _Tracer:
                 if not arguments:
                     return _Facts.leaf(SAFE, _step(unit, node, f"`.{func.attr}()` formats a date or time"))
                 return self._union(unit, scope, arguments, env).then(_step(unit, node, f"`.{func.attr}()` formats a date or time"))
+            if func.attr in {"get", "pop", "setdefault"} and node.args:
+                receiver = self._gateway_item(unit, node, receiver, node.args[0])
             if func.attr in _TRANSPARENT_METHODS and not (values and any(value.kind == "fn" for value in values)):
                 return _Facts().add(receiver).add(self._union(unit, scope, arguments, env)).then(
                     _step(unit, node, f"passes through `.{func.attr}()`")
                 )
             if receiver.chains[UNTRUSTED]:
                 return receiver.then(_step(unit, node, f"derived by `.{func.attr}()`"))
+        if isinstance(func, ast.Name) and values is None:
+            callee = self.trace(unit, scope, func, env)
+            if callee.chains[UNTRUSTED]:
+                return callee.then(_step(unit, node, f"returned by calling `{func.id}`"))
         return _Facts.leaf(UNKNOWN, _step(unit, node, f"return value of `{_describe(node)}` is not followed"))
 
     def _constructor_facts(self, unit, scope, node, value, env):
@@ -7276,6 +7380,27 @@ _HTTP_REQUEST_FIELDS = frozenset(
         "body",
     }
 )
+
+
+def _gateway_parameter(fn, name):
+    """Name the server gateway protocol whose callable signature ``fn`` has
+    when ``name`` is the parameter that carries the request.
+
+    PEP 3333 calls a WSGI application with ``(environ, start_response)`` and
+    the ASGI specification calls an application with ``(scope, receive,
+    send)``. Only the complete signature counts; one matching name does not.
+    """
+    args = fn.args
+    if args.vararg or args.kwarg or args.kwonlyargs:
+        return None
+    names = [arg.arg for arg in [*args.posonlyargs, *args.args]]
+    if names and names[0] in {"self", "cls"}:
+        names = names[1:]
+    if names == list(_WSGI_SIGNATURE) and name == "environ":
+        return "WSGI"
+    if names == list(_ASGI_SIGNATURE) and name in {"scope", "receive"}:
+        return "ASGI"
+    return None
 
 
 def _reads_request_attributes(fn, name):
