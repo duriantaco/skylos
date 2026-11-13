@@ -13,6 +13,7 @@
 * **scale:** keep parallel danger-rule worker results picklable instead of retrying them in the parent process.
 * **sca:** keep the npm mirror identity cache on disk and verify identities on hosts without a home directory.
 * **cicd:** only treat a real YAML comment as an inline ignore for D340 and for shell-command findings on a one-line `run:`, so a marker inside a quoted step value no longer hides a publish or exfiltration finding.
+* **cicd:** locate each shell-command finding inside its own `run:` value, so repeating the command next to an ignore marker elsewhere in the workflow no longer hides it and identical steps are each reported.
 
 ## [5.6.0](https://github.com/duriantaco/skylos/compare/v5.5.0...v5.6.0) (2026-11-11)
 

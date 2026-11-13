@@ -236,6 +236,34 @@ class YamlSource:
 
     def line_for_path(self, path: tuple[Any, ...], *, key: bool = True) -> int | None:
         """Return a one-based key/value line, or None when the path is absent."""
+        located = self._locate(path)
+        if located is None:
+            return None
+        if key:
+            return located[1]
+        return located[2]
+
+    def scalar_lines_for_path(self, path: tuple[Any, ...]) -> tuple[int, int] | None:
+        """Return the one-based lines of a scalar written at the path itself.
+
+        A value reached through an alias or a merge is written elsewhere, so
+        it has no lines of its own at this path.
+        """
+        located = self._locate(path)
+        if located is None:
+            return None
+        node, _, _, fallback_line = located
+        if fallback_line is not None or not isinstance(node, ScalarNode):
+            return None
+        first = node.start_mark.line
+        last = node.end_mark.line
+        if node.end_mark.column == 0 and last > first:
+            last -= 1
+        return first + 1, last + 1
+
+    def _locate(
+        self, path: tuple[Any, ...]
+    ) -> tuple[Node, int, int, int | None] | None:
         node = self._root
         key_line = value_line = node.start_mark.line + 1
         fallback_line = None
@@ -263,7 +291,7 @@ class YamlSource:
                 fallback_line = fallback_line or alias_line
             else:
                 return None
-        return key_line if key else value_line
+        return node, key_line, value_line, fallback_line
 
 
 def load_yaml_with_locations(
