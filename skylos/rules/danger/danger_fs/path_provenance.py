@@ -579,9 +579,18 @@ _OPERATORS = {ast.Div: "/", ast.Add: "+", ast.Mod: "%", ast.Mult: "*", ast.Sub: 
 
 def _describe(node, depth=0):
     """Identifiers and structure of ``node``; literal contents are withheld."""
+    if depth == 0:
+        cached = getattr(node, "_skylos_description", None)
+        if cached is not None:
+            return cached
     text = _describe_parts(node, depth)
     if len(text) > 60:
-        return text[:57] + "..."
+        text = text[:57] + "..."
+    if depth == 0:
+        try:
+            node._skylos_description = text
+        except AttributeError:
+            return text
     return text
 
 
@@ -1051,6 +1060,8 @@ class _Project:
         self._mro_cache = {}
         self._subclasses = None
         self._method_families = None
+        self._class_statements = {}
+        self._setattr_calls = {}
         self._site_cache = {}
         self._param_value_active = set()
         self._import_maps = {}
@@ -1794,6 +1805,35 @@ class _Project:
         if name.startswith("builtins.") and name.endswith(("Error", "Exception", "Warning")):
             return True
         return False
+
+    def class_statements(self, cls_node):
+        """Class-body assignments and function definitions by the name they
+        bind, in body order."""
+        index = self._class_statements.get(id(cls_node))
+        if index is not None:
+            return index
+        index = {}
+        for statement in cls_node.body:
+            if isinstance(statement, (ast.Assign, ast.AnnAssign)) and statement.value is not None:
+                targets = getattr(statement, "targets", None) or [statement.target]
+                names = {target.id for target in targets if isinstance(target, ast.Name)}
+                for name in names:
+                    index.setdefault(name, []).append(statement)
+            elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                index.setdefault(statement.name, []).append(statement)
+        self._class_statements[id(cls_node)] = index
+        return index
+
+    def setattr_calls(self, unit):
+        calls = self._setattr_calls.get(id(unit))
+        if calls is None:
+            calls = [
+                call
+                for call, _ in unit.calls
+                if isinstance(call.func, ast.Name) and call.func.id == "setattr" and len(call.args) >= 2
+            ]
+            self._setattr_calls[id(unit)] = calls
+        return calls
 
     def method_family(self, fn):
         """Name of the one project class hierarchy that defines every
@@ -4321,15 +4361,13 @@ class _Tracer:
         found = False
         for cls_unit, cls in classes:
             class_scope = cls_unit.class_scopes[id(cls)]
-            for statement in cls.body:
-                if isinstance(statement, (ast.Assign, ast.AnnAssign)) and statement.value is not None:
-                    targets = getattr(statement, "targets", None) or [statement.target]
-                    if any(isinstance(target, ast.Name) and target.id == attr for target in targets):
-                        found = True
-                        facts.add(self.trace(cls_unit, class_scope, statement.value).then(
-                            _step(cls_unit, statement, f"class attribute `{cls.name}.{attr}`")
-                        ))
-                elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)) and statement.name == attr:
+            for statement in project.class_statements(cls).get(attr, ()):
+                if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                    found = True
+                    facts.add(self.trace(cls_unit, class_scope, statement.value).then(
+                        _step(cls_unit, statement, f"class attribute `{cls.name}.{attr}`")
+                    ))
+                else:
                     found = True
                     if not _is_property(statement):
                         facts.add(_Facts.leaf(UNKNOWN, _step(cls_unit, statement, f"`{attr}` is a method object")))
@@ -4360,9 +4398,7 @@ class _Tracer:
                 facts.add(self.trace(store_unit, scope, value).then(_step(store_unit, statement, f"assigns `.{attr}`")))
         facts.add(self._attribute_container_writes(cls_node, attr, targets))
         for cls_unit, cls in classes:
-            for call, scope in cls_unit.calls:
-                if not (isinstance(call.func, ast.Name) and call.func.id == "setattr" and len(call.args) >= 2):
-                    continue
+            for call in project.setattr_calls(cls_unit):
                 name = call.args[1]
                 if isinstance(name, ast.Constant) and name.value != attr:
                     continue
