@@ -187,6 +187,8 @@ RULE_DOCS_ANCHORS = {
     "SKY-D375": "package-publish-jobs",
     "SKY-D376": "package-publish-jobs",
     "SKY-D377": "agent-and-editor-configuration",
+    "SKY-D378": "sky-d378--incomplete-path-traversal-defence",
+    "SKY-D379": "sky-d379--catastrophic-regex-backtracking",
     "SKY-D400": "sky-d400--worldwide-administrative-ingress",
     "SKY-D401": "sky-d401--new-database-storage-encryption-disabled",
     "SKY-D402": "sky-d402--public-s3-canned-acl",
