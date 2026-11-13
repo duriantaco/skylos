@@ -1,0 +1,152 @@
+id: SKY-D335
+title: Root edge systemd service without basic sandboxing
+family: infrastructure
+severity: MEDIUM
+languages: [systemd units]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`) at MEDIUM. It counts toward
+    `max_security`.
+
+what_it_is: >-
+  An edge or device systemd service that runs as root without three common
+  systemd safety settings: `NoNewPrivileges=true`, `ProtectSystem=full` or
+  `strict`, and `PrivateTmp=true`. Each one takes a power away from the
+  process that it almost never needs.
+
+why_it_matters: >-
+  Without them, a compromised root daemon can rewrite system binaries and
+  configuration, gain new privileges through setuid programs, and read or
+  plant files in the shared `/tmp`. With them, the same bug does much less
+  damage.
+
+flagged_example:
+  language: ini
+  filename: object-detector.service
+  expect_line: 7
+  code: |
+    [Unit]
+    Description=Jetson object detector
+    After=nvargus-daemon.service
+
+    [Service]
+    User=root
+    ExecStart=/opt/detector/bin/detector --engine /opt/detector/model.engine
+    Restart=always
+
+    [Install]
+    WantedBy=multi-user.target
+
+not_flagged_example:
+  language: ini
+  filename: object-detector.service
+  code: |
+    [Unit]
+    Description=Jetson object detector
+    After=nvargus-daemon.service
+
+    [Service]
+    User=detector
+    SupplementaryGroups=video
+    ExecStart=/opt/detector/bin/detector --engine /opt/detector/model.engine
+    Restart=always
+
+    [Install]
+    WantedBy=multi-user.target
+  why: >-
+    The same service without the three settings, but running as its own
+    user. The rule only checks services that run as root, so it stays quiet.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. Reads the same `*.service` files as SKY-D333 and
+    needs the same `[Service]` section and edge context (a device, camera,
+    GPU or robot word, or a `/dev/` path, somewhere in the unit).
+  - >-
+    Needs the service to run as root: no `User=` in `[Service]`, or the last
+    `User=` is empty, `0` or `root`.
+  - >-
+    Checks the last value of each setting in `[Service]`:
+    `NoNewPrivileges` and `PrivateTmp` must be `1`, `true`, `yes` or `on`;
+    `ProtectSystem` must be `full` or `strict` (`yes` does not count).
+  - >-
+    Reports MEDIUM on the `ExecStart=` line (line 1 when there is none),
+    naming the settings that are missing.
+
+source_refs:
+  - path: skylos/rules/config/edge/systemd.py
+    symbol: "def _scan_missing_sandboxing("
+  - path: skylos/rules/config/edge/systemd.py
+    symbol: "def _has_protect_system("
+  - path: test/test_edge_systemd_security.py
+    symbol: "def test_edge_systemd_scanner_accepts_hardened_non_root_service"
+
+fix:
+  explanation: >-
+    When the service must stay root, add the three settings. Running it as
+    its own user, as in the not-flagged example, clears this rule and
+    SKY-D333 together.
+  filename: object-detector.service
+  code: |
+    [Unit]
+    Description=Jetson object detector
+    After=nvargus-daemon.service
+
+    [Service]
+    User=root
+    ExecStart=/opt/detector/bin/detector --engine /opt/detector/model.engine
+    Restart=always
+    NoNewPrivileges=true
+    ProtectSystem=strict
+    PrivateTmp=true
+
+    [Install]
+    WantedBy=multi-user.target
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      `ProtectSystem=yes` is reported as missing: it only protects `/usr`
+      and `/boot`, and the rule asks for `full` or `strict`.
+    - >-
+      Settings added in a drop-in file (`object-detector.service.d/*.conf`)
+      are not read; only `*.service` files are scanned.
+    - >-
+      Stronger settings that make these three redundant, such as a
+      `RootDirectory=` jail, are not recognised.
+    - >-
+      `DynamicUser=yes` without `User=` counts as root, and any unit that
+      mentions `/dev/` counts as a device service, as for SKY-D333.
+  suppress:
+    - check:
+        kind: example
+        example:
+          language: ini
+          filename: object-detector.service
+          code: |
+            [Unit]
+            Description=Jetson object detector
+            After=nvargus-daemon.service
+
+            [Service]
+            User=root
+            # skylos: ignore[SKY-D335] sandboxed by the vendor drop-in
+            ExecStart=/opt/detector/bin/detector --engine /opt/detector/model.engine
+            Restart=always
+
+            [Install]
+            WantedBy=multi-user.target
+      text: >-
+        Put the marker on a comment line directly above `ExecStart=`.
+        systemd reads `#` only at the start of a line.
+      language: ini
+      code: |
+        # skylos: ignore[SKY-D335] sandboxed by the vendor drop-in
+        ExecStart=/opt/detector/bin/detector --engine /opt/detector/model.engine
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D335"]` turns the rule off for the
+        project.
+
+related: [SKY-D333, SKY-D334, SKY-D336]

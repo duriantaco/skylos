@@ -1,0 +1,154 @@
+id: SKY-D227
+title: Inline template that turns off HTML escaping
+family: security
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+cwe: [CWE-79]
+
+what_it_is: >-
+  Flask and Jinja escape every `{{ value }}` by default, so text a user
+  typed is shown as text. The `|safe` filter and `{% autoescape false %}`
+  turn that escaping off. SKY-D227 reports a template written inline in a
+  `render_template_string()` call that uses either one.
+
+why_it_matters: >-
+  Whatever reaches the unescaped value is placed in the page as markup. A
+  comment body such as `<img src=x onerror=…>` then runs script in the
+  browser of everyone who views the post, with their session.
+
+flagged_example:
+  language: python
+  filename: app/posts.py
+  expect_line: 13
+  code: |
+    from flask import Flask, render_template_string
+
+    app = Flask(__name__)
+
+    POSTS = {
+        1: {"title": "Hello", "body": "Written by a visitor through the editor."},
+    }
+
+
+    @app.get("/posts/<int:post_id>")
+    def show_post(post_id):
+        post = POSTS[post_id]
+        return render_template_string(
+            "<article><h1>{{ post.title }}</h1>{{ post.body|safe }}</article>",
+            post=post,
+        )
+
+not_flagged_example:
+  language: python
+  filename: app/posts.py
+  code: |
+    from flask import Flask, render_template_string
+
+    app = Flask(__name__)
+
+    POSTS = {
+        1: {"title": "Hello", "body": "Written by a visitor through the editor."},
+    }
+
+
+    @app.get("/posts/<int:post_id>")
+    def show_post(post_id):
+        post = POSTS[post_id]
+        return render_template_string(
+            "<article><h1>{{ post.title }}</h1><p>{{ post.body }}</p></article>",
+            post=post,
+        )
+  why: >-
+    The same inline template, but every value goes through Jinja's normal
+    `{{ … }}` output, which escapes `<`, `>`, `&` and quotes. There is no
+    `|safe` filter and no `{% autoescape false %}`, so nothing in the
+    template text turns escaping off.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Python files. It looks at calls whose name ends
+    in `render_template_string`, such as `render_template_string(…)` or
+    `flask.render_template_string(…)`.
+  - >-
+    Reads only the first positional argument, and only when it is a string
+    literal written in the call. A template held in a variable or constant,
+    passed as `source=`, or loaded from a template file is not read.
+  - >-
+    Reports HIGH when that text, lower-cased, contains `|safe` or the exact
+    text `{% autoescape false %}`. It does not check what values the template
+    receives: the finding is about escaping being switched off.
+  - >-
+    Other ways to build templates, such as Jinja's `Environment().from_string()`
+    or `Template()`, are not checked by this rule. When request data becomes
+    the template text itself, Skylos reports SKY-D349 (template injection)
+    instead.
+
+source_refs:
+  - path: skylos/rules/danger/danger_web/xss_flow.py
+    symbol: "def _template_is_unsafe_literal"
+    note: the `|safe` and `{% autoescape false %}` text checks.
+  - path: skylos/rules/danger/danger_web/xss_flow.py
+    symbol: "def _const_str_value"
+    note: only a string literal is read.
+  - path: skylos/rules/danger/danger_web/xss_flow.py
+    symbol: '"rule_id": "SKY-D227"'
+    note: the finding, raised from `visit_Call`.
+  - path: test/test_xss_flow.py
+    symbol: "def test_rule_sky_d227"
+
+fix:
+  explanation: >-
+    Drop `|safe` and let Jinja escape the value. If the field really must
+    keep some formatting, clean it with an HTML sanitizer such as
+    `bleach.clean()` that keeps only the tags you allow, wrap the result in
+    `Markup`, and pass that to the template.
+  filename: app/posts.py
+  code: |
+    import bleach
+    from flask import Flask, render_template_string
+    from markupsafe import Markup
+
+    app = Flask(__name__)
+
+    POSTS = {
+        1: {"title": "Hello", "body": "Written by a visitor through the editor."},
+    }
+
+
+    @app.get("/posts/<int:post_id>")
+    def show_post(post_id):
+        post = POSTS[post_id]
+        body = Markup(bleach.clean(post["body"], tags={"p", "b", "i", "a"}))
+        return render_template_string(
+            "<article><h1>{{ post.title }}</h1>{{ body }}</article>",
+            post=post,
+            body=body,
+        )
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      `|safe` on a value your own code builds, such as rendered Markdown that
+      was already sanitized or a constant snippet, is still reported: the
+      rule only reads the template text.
+    - >-
+      The check is a plain text match. A custom filter whose name starts
+      with `safe`, such as `{{ url|safe_url }}`, is reported; a spaced filter
+      such as `{{ body | safe }}` and a tag written as
+      `{%autoescape false%}` are missed.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line Skylos reports: the line where the
+        `render_template_string(` call starts.
+      language: python
+      code: |
+        return render_template_string(  # skylos: ignore[SKY-D227] body sanitized by bleach
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D227"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D226, SKY-D228, SKY-D349]

@@ -86,7 +86,7 @@ families:
 
   - id: infrastructure
     title: Deployment and infrastructure
-    prefixes: "`SKY-DEP`, `SKY-GPU`, `SKY-D330`–`SKY-D336`, `SKY-D342`, `SKY-D343`, `SKY-D400`, `SKY-D401`"
+    prefixes: "`SKY-DEP`, `SKY-GPU`, `SKY-D330`–`SKY-D336`, `SKY-D342`, `SKY-D343`, `SKY-D400`–`SKY-D411`"
     match:
       categories: [reliability]
       ids:
@@ -96,6 +96,8 @@ families:
         - SKY-D342
         - SKY-D343
         - "SKY-D40?"
+        - SKY-D410
+        - SKY-D411
     intro: |
       Rules for the files that describe how code is deployed: Kubernetes
       manifests, Docker Compose files, systemd units, Dockerfiles, Terraform

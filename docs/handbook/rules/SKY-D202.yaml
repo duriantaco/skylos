@@ -1,0 +1,163 @@
+id: SKY-D202
+title: Dynamic code execution with exec
+family: security
+severity: HIGH
+severity_note: >-
+  Python `exec()` and a string passed to `setTimeout()` or `setInterval()`
+  are HIGH. TypeScript and JavaScript `new Function(...)` is reported as
+  CRITICAL.
+languages: [Python, TypeScript/JavaScript]
+gate:
+  full: critical_blocks
+  note: >-
+    Python findings are HIGH and only counted. A Python call whose code is
+    fixed text is hidden from the default list but still counted.
+cwe: [CWE-95]
+
+what_it_is: >-
+  `exec()` runs a string as a whole Python program, and JavaScript's
+  `new Function(...)` and string timers do the same in the browser or Node.
+  SKY-D202 reports these calls when the code is not proven to be fixed
+  text.
+
+why_it_matters: >-
+  A "custom rules" feature that `exec()`s an uploaded file lets whoever
+  uploads it run any code on the server, read its secrets and reach the
+  database. The same holds for formulas that a web page compiles with
+  `new Function`.
+
+flagged_example:
+  language: python
+  filename: app/rules.py
+  expect_line: 7
+  code: |
+    from pathlib import Path
+
+
+    def load_rules(upload_dir: str, name: str) -> dict:
+        source = Path(upload_dir, name).read_text()
+        namespace: dict = {}
+        exec(source, namespace)
+        return namespace["RULES"]
+
+not_flagged_example:
+  language: python
+  filename: app/dialog.py
+  code: |
+    from PyQt6.QtWidgets import QMessageBox
+
+
+    def confirm_delete() -> bool:
+        box = QMessageBox()
+        box.setText("Delete the selected files?")
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        return box.exec() == QMessageBox.StandardButton.Yes
+  why: >-
+    PyQt 6 names the method that shows a dialog `exec()`. Skylos resolves
+    `box` to the `QMessageBox` it was created from, so the call is a method
+    of that object, not the builtin `exec`.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/formula.ts
+      expect_line: 4
+      code: |
+        type Row = Record<string, number>;
+
+        export function compileFormula(formula: string): (row: Row) => number {
+          return new Function("row", `with (row) { return ${formula}; }`) as (
+            row: Row,
+          ) => number;
+        }
+    not_flagged:
+      language: typescript
+      filename: src/refresh.ts
+      code: |
+        export function scheduleRefresh(refresh: () => void): void {
+          setTimeout(() => refresh(), 30_000);
+        }
+      why: >-
+        The timer receives a function, not a string, so nothing is compiled
+        from text. Only a string literal passed to `setTimeout()` or
+        `setInterval()` is reported.
+
+how_skylos_decides:
+  - >-
+    Python: resolves each call's name through imports and simple
+    assignments, including the builtin stored in a variable (`run = exec`),
+    and matches the builtin `exec`. A method called `exec` on another object
+    does not match.
+  - >-
+    Skips a call proved to run the project's own checked-in source: a module
+    file under the project, located from `__file__`, read, parsed with
+    `ast.parse`, compiled and run in a fresh namespace dict.
+  - >-
+    Reports the rest as HIGH. When every value that can reach the code is
+    fixed text that reads no outside name, the finding is marked low-risk:
+    hidden from the default list, still in JSON output and counted by the
+    gate.
+  - >-
+    TypeScript and JavaScript: reports every `new Function(...)` as CRITICAL,
+    and `setTimeout()` or `setInterval()` with a string literal argument as
+    HIGH.
+
+source_refs:
+  - path: skylos/rules/danger/calls.py
+    symbol: "DANGEROUS_CALLS = {"
+    note: the Python sink table; `exec` is SKY-D202.
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _call_findings("
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _constant_code_is_closed("
+    note: fixed code must read no outside name to count as low-risk.
+  - path: skylos/rules/danger/source_owned_code.py
+    symbol: "def source_owned_code_calls("
+  - path: skylos/rules/danger/callable_bindings.py
+    symbol: "def callable_names("
+    note: follows `exec` stored in another name.
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "_SIMPLE_PATTERN = \"\"\""
+
+fix:
+  explanation: >-
+    Do not run uploaded text as code. Store rules as data (JSON, YAML loaded
+    with `yaml.safe_load`, TOML) and interpret them with your own code.
+  filename: app/rules.py
+  code: |
+    import json
+    from pathlib import Path
+
+
+    def load_rules(upload_dir: str, name: str) -> dict:
+        source = Path(upload_dir, name).read_text()
+        return json.loads(source)["RULES"]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Tools that build Python source from a template and `exec()` it, such
+      as code generators, are reported even when every input is checked.
+    - >-
+      In TypeScript and JavaScript, `new Function("return this")()` and
+      other fixed bodies are reported as CRITICAL.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed call on its own line. A bare `# noqa` does not hide
+        a HIGH or CRITICAL security finding.
+      language: python
+      code: |
+        exec(code, namespace)  # skylos: ignore[SKY-D202] code is generated by build_stub()
+    - check: baseline
+      text: >-
+        Accept existing findings with `skylos baseline .`, then scan with
+        `--baseline`.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D202"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D201, SKY-D245, SKY-D349, SKY-D200]

@@ -1,0 +1,137 @@
+id: SKY-D248
+title: Hard-coded localhost URL
+family: security
+severity: MEDIUM
+languages: [TypeScript/JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  SKY-D248 reports a string in TypeScript or JavaScript code that starts
+  with a loopback address: `http://localhost`, `http://127.0.0.1` or
+  `http://0.0.0.0` (or the `https://` forms). Such a URL only works on the
+  developer's own machine, so it usually means a host that should come from
+  configuration was typed into the code.
+
+why_it_matters: >-
+  A build that ships with `http://localhost:8080/api` sends real users'
+  requests to their own computer: the feature breaks in production, or a
+  login or payment call goes to whatever happens to listen on that port. It
+  also tells an attacker which internal ports and paths the service uses.
+
+flagged_example:
+  language: typescript
+  filename: src/api/client.ts
+  expect_line: 1
+  code: |
+    const API_BASE_URL = "http://localhost:8080/api";
+
+    export async function fetchInvoices(customerId: string): Promise<Response> {
+      const id = encodeURIComponent(customerId);
+      return fetch(`${API_BASE_URL}/customers/${id}/invoices`);
+    }
+
+not_flagged_example:
+  language: typescript
+  filename: src/api/client.ts
+  code: |
+    const API_BASE_URL = process.env.API_BASE_URL ?? "http://localhost:8080/api";
+
+    export async function fetchInvoices(customerId: string): Promise<Response> {
+      const id = encodeURIComponent(customerId);
+      return fetch(`${API_BASE_URL}/customers/${id}/invoices`);
+    }
+  why: >-
+    The localhost URL is only the fallback after `??` when
+    `process.env.API_BASE_URL` is not set. The real host comes from the
+    environment, so Skylos treats the literal as a development default.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on TypeScript and JavaScript files. It looks at every
+    string literal and template literal of 16 or more characters.
+  - >-
+    Reports the string when it starts (ignoring case) with `http://localhost`,
+    `http://127.0.0.1`, `http://0.0.0.0` or the same three with `https://`.
+    A template such as `` `http://127.0.0.1:${port}/health` `` counts, because
+    only the start of the text is checked.
+  - >-
+    Skips files in test folders (`test`, `tests`, `__tests__`) and test file
+    names (`*.test.ts`, `*.spec.js` and similar).
+  - >-
+    Skips the literal when it is the right-hand side of `??` or `||` and the
+    left-hand side is an environment lookup: `process.env.X`,
+    `process.env["X"]`, `import.meta.env.X`, `Bun.env.X`, `Deno.env.get("X")`
+    or a `??`/`||` chain of them. The lookup must be the real global: a local
+    variable named `process`, or code that reassigns `process.env`, cancels
+    this proof.
+  - >-
+    Does not look at other private addresses such as `http://10.0.0.12` or
+    internal host names, and does not read Python or other languages.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "_INTERNAL_URL_PREFIXES = ("
+    note: the six loopback prefixes.
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "# Hardcoded internal URL (SKY-D248)"
+    note: the check itself, with the test-file skip.
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "def _is_environment_default("
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "def _is_environment_lookup("
+  - path: skylos/constants.py
+    symbol: "MIN_SECRET_LENGTH = 16"
+  - path: test/test_security_lookalike_precision.py
+    symbol: "def test_localhost_default_after_env_lookup_is_not_reported"
+
+fix:
+  explanation: >-
+    Read the host from configuration and fail at start-up when it is missing,
+    so a build never silently falls back to a developer address. Keep any
+    localhost default in local tooling (`.env.development`, test setup)
+    instead of the shipped code.
+  filename: src/api/client.ts
+  code: |
+    const API_BASE_URL = process.env.API_BASE_URL;
+    if (!API_BASE_URL) {
+      throw new Error("API_BASE_URL is not set");
+    }
+
+    export async function fetchInvoices(customerId: string): Promise<Response> {
+      const id = encodeURIComponent(customerId);
+      return fetch(`${API_BASE_URL}/customers/${id}/invoices`);
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Development-only code outside a test folder, such as a dev-server
+      config, a Storybook or Playwright setup file, is reported.
+    - >-
+      A ternary such as `isProd ? "https://api.example.com" :
+      "http://localhost:3000"` is reported: only the `??`/`||` fallback
+      after an environment lookup is accepted.
+    - >-
+      `config.apiUrl ?? "http://localhost:3000"` is reported, because
+      `config` is not one of the recognised environment objects.
+    - >-
+      Missed: private network addresses (`http://10.0.0.12`,
+      `http://192.168.1.5`) and internal host names are not checked.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line with a comment on the same line.
+      language: typescript
+      code: |
+        const DEV_PROXY = "http://localhost:5173"; // skylos: ignore[SKY-D248] vite dev only
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D248"]` turns the rule off for the whole
+        project.
+    - check: baseline
+      text: >-
+        `skylos baseline .` and then `--baseline` accept the URLs you already
+        have and report only new ones.
+
+related: [SKY-S101, SKY-D216]

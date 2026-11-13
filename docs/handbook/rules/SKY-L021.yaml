@@ -1,0 +1,210 @@
+id: SKY-L021
+title: Security control removed by a change
+family: logic
+severity: HIGH
+severity_note: >-
+  The catalog gives no severity for this rule; every finding is HIGH.
+languages: [Python, TypeScript, JavaScript, Go, Java, PHP, Rust, Dart]
+gate:
+  full: blocks
+  note: >-
+    It is only reported when the scan compares the code with an earlier
+    version: a `--diff` scan, uncommitted or staged changes in a Git
+    checkout, or a CI run that names a base branch. A HIGH finding fails
+    the gate whatever the limits, and a baseline cannot accept it.
+run_with: >-
+  `skylos . --quality --diff origin/main` (or `--danger`, or `-a`); a full
+  scan also checks uncommitted changes.
+
+what_it_is: >-
+  SKY-L021 compares each changed source file with its earlier version and
+  reports a security control that the change takes away: a login decorator,
+  an auth dependency, CSRF protection, TLS verification, a validation or
+  escaping call, a security header and similar checks. It looks at the
+  change, not at the code as a whole.
+
+why_it_matters: >-
+  Removing one decorator is a one-line diff that looks like cleanup, but it
+  opens the endpoint to anyone. Coding agents do this when a test fails
+  with a 302 or 403 and the quickest way to pass is to drop the check.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  expect_line: 9
+  base_files:
+    - filename: billing/views.py
+      code: |
+        """Refunds for the customer billing pages."""
+
+        from django.contrib.auth.decorators import login_required
+        from django.http import JsonResponse
+        from django.shortcuts import get_object_or_404
+
+        from billing.models import Invoice
+
+
+        @login_required
+        def refund_invoice(request, invoice_id):
+            invoice = get_object_or_404(Invoice, pk=invoice_id)
+            invoice.refund(issued_by=request.user)
+            return JsonResponse({"status": "refunded", "id": invoice.pk})
+  files:
+    - filename: billing/views.py
+      code: |
+        """Refunds for the customer billing pages."""
+
+        from django.http import JsonResponse
+        from django.shortcuts import get_object_or_404
+
+        from billing.models import Invoice
+
+
+        def refund_invoice(request, invoice_id):
+            invoice = get_object_or_404(Invoice, pk=invoice_id)
+            invoice.refund(issued_by=request.user)
+            return JsonResponse({"status": "refunded", "id": invoice.pk})
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: billing/views.py
+      code: |
+        """Refunds for the customer billing pages."""
+
+        from django.contrib.auth.decorators import login_required
+        from django.http import JsonResponse
+        from django.shortcuts import get_object_or_404
+
+        from billing.models import Invoice
+
+
+        @login_required
+        def refund_invoice(request, invoice_id):
+            invoice = get_object_or_404(Invoice, pk=invoice_id)
+            invoice.refund(issued_by=request.user)
+            return JsonResponse({"status": "refunded", "id": invoice.pk})
+  files:
+    - filename: billing/views.py
+      code: |
+        """Refunds for the customer billing pages."""
+
+        from django.core.exceptions import PermissionDenied
+        from django.http import JsonResponse
+        from django.shortcuts import get_object_or_404
+
+        from billing.models import Invoice
+
+
+        def refund_invoice(request, invoice_id):
+            if not request.user.is_authenticated:
+                raise PermissionDenied
+            invoice = get_object_or_404(Invoice, pk=invoice_id)
+            invoice.refund(issued_by=request.user)
+            return JsonResponse({"status": "refunded", "id": invoice.pk})
+  why: >-
+    The decorator is gone, but the view now starts with a check that rejects
+    anonymous users. Skylos proves this one replacement: Django's own
+    `login_required` swapped for a first-statement
+    `if not request.user.is_authenticated:` that raises Django's
+    `PermissionDenied` or returns a 401/403 response.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` or `--danger` when Git reports changed files: in a
+    `--diff` scan, and in a full scan for uncommitted or staged work, or
+    against the base branch that `SKYLOS_DIFF_BASE` or the CI provider
+    names. Compares every changed `.py`, `.ts`, `.tsx`, `.js`, `.jsx`,
+    `.go`, `.java`, `.php`, `.rs` and `.dart` file with its version at the
+    base. New and deleted files are skipped, and so are files whose path
+    has a `test`, `tests` or `__tests__` folder or a test file name.
+  - >-
+    In Python, parses both versions of each top-level function. Reports an
+    auth decorator (`login_required`, `permission_required`, `jwt_required`,
+    `admin_required` and names such as `require_admin` or `staff_only`) that
+    was removed, and a Django `if not request.user.is_authenticated` guard
+    that was removed. Stays quiet when the whole function was deleted, or
+    when Django's `login_required` was replaced by such a guard or kept in
+    another form.
+  - >-
+    For other code, reads the removed and added lines: a removed auth,
+    validation, audit, permission or rate-limit decorator; a removed
+    `Depends(get_current_user)`-style auth dependency or auth-typed
+    parameter that the change does not add back; removed CSRF protection or
+    an added `@csrf_exempt`; an added `verify=False`; `sha256` and similar
+    replaced by `md5` or `sha1`.
+  - >-
+    Also reports removed `validate(`, `escape(` and sanitising calls the
+    change does not add back, removed Django or DRF validators, security
+    headers such as `Content-Security-Policy`, header middleware (`helmet(`,
+    `SecurityMiddleware`), `encrypt(`/`Fernet` calls, `SECRET_KEY`
+    assignments, audit logging and permission checks.
+  - >-
+    For routes, reports auth middleware removed from an Express route that
+    still exists, and an `if` that compares the owner or current user and
+    rejects with 401/403 when it is removed from a function that still
+    exists.
+  - >-
+    Each finding is HIGH and points at a line of the new file next to where
+    the control used to be (for a Python decorator, the `def` line). Diff
+    filtering keeps it even though that line did not change.
+
+source_refs:
+  - path: skylos/rules/quality/regression.py
+    symbol: "def detect_security_regressions("
+  - path: skylos/security/auth_regressions.py
+    symbol: "def python_auth_changes("
+    note: the before/after proof for Python auth decorators and guards.
+  - path: skylos/security/regression_diff.py
+    symbol: "def compare_source_controls("
+    note: which changed files are compared, and how.
+  - path: skylos/core/gatekeeper.py
+    symbol: "def _security_control_regressions("
+    note: a HIGH finding fails the gate on its own.
+  - path: skylos/core/baseline.py
+    symbol: "A control removed in this comparison is a new regression"
+    note: a baseline never accepts it.
+
+fix:
+  explanation: >-
+    Put the control back. If the view moved to a different check on
+    purpose, make that check reject the caller before any work is done, and
+    say so in the pull request.
+  code: |
+    @login_required
+    def refund_invoice(request, invoice_id):
+        invoice = get_object_or_404(Invoice, pk=invoice_id)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A control replaced by an equivalent one Skylos cannot prove, such as a
+      Flask `before_request` hook, a class-level permission or a custom
+      middleware, is still reported. Only the Django replacement in the
+      not-flagged example is recognised.
+    - >-
+      Most checks match text on removed lines, so moving a `validate(` call
+      or a header line into another file of the same change is reported as
+      a removal.
+    - >-
+      Product issue: the test-file check reads the absolute path, so when
+      the repository itself sits under a folder named `test`, `tests` or
+      `__tests__` (for example `/home/ci/tests/shop`), nothing is reported.
+  suppress:
+    - check:
+        kind: inline
+        expect: reported
+      text: >-
+        An inline `# skylos: ignore[SKY-L021]` marker does not hide it:
+        inline markers are applied before this comparison runs. A baseline
+        does not either; every removed control counts as new.
+      language: python
+      code: |
+        def refund_invoice(request, invoice_id):  # skylos: ignore[SKY-L021] ignored
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L021"]` turns the comparison off for
+        the project.
+
+related: [SKY-D283, SKY-A105, SKY-DEP001]

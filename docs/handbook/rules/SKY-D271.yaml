@@ -1,0 +1,138 @@
+id: SKY-D271
+title: Stack trace or SQL error sent to the client
+family: security
+severity: MEDIUM
+languages: [TypeScript/JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  When a request fails, a server should log the details and send the caller
+  a short, generic message. SKY-D271 reports a response call such as
+  `res.json()` or `res.send()` whose argument includes an error's `stack`
+  or the SQL details a database driver attaches (`sql`, `sqlMessage`,
+  `sqlState`).
+
+why_it_matters: >-
+  A stack trace shows file paths, library versions and the code path that
+  failed; a MySQL error can echo the query and table names. An attacker who
+  can make a request fail learns how to aim the next one, for example how
+  to finish a half-working SQL injection.
+
+flagged_example:
+  language: typescript
+  filename: src/server/errors.ts
+  expect_line: 9
+  code: |
+    import type { NextFunction, Request, Response } from "express";
+
+    export function errorHandler(
+      err: Error,
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ): void {
+      res.status(500).json({ error: err.message, stack: err.stack });
+    }
+
+not_flagged_example:
+  language: typescript
+  filename: src/server/errors.ts
+  code: |
+    import type { NextFunction, Request, Response } from "express";
+
+    export function errorHandler(
+      err: Error,
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ): void {
+      console.error(err.stack);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  why: >-
+    The stack trace still exists, but it goes to the server log through
+    `console.error()`, which is not a response method. The client only
+    receives a fixed message.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on TypeScript and JavaScript files. Walks every call
+    whose method name is `json`, `send`, `write` or `end`, on any receiver:
+    `res.json(…)`, `res.status(500).send(…)`, `reply.send(…)`.
+  - >-
+    Searches all of the call's arguments, however deeply nested, for a
+    property access ending in `.stack`, `.sql`, `.sqlMessage` or
+    `.sqlState`, and reports the call when it finds one.
+  - >-
+    It does not check that the receiver is an HTTP response or that the
+    object is an error, and it does not follow values through variables:
+    `const details = err.stack; res.json({ details })` is not reported.
+  - >-
+    Other ways to leak details, such as `err.message` or `String(err)`, are
+    not checked.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "def _check_error_disclosure("
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "def _find_error_prop("
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "_ERROR_DISCLOSURE_PROPS = {"
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "_RESPONSE_METHODS = {"
+  - path: test/test_typescript_expanded.py
+    symbol: "class TestErrorDisclosure"
+
+fix:
+  explanation: >-
+    Log the full error on the server, return a generic message, and give the
+    caller an identifier they can quote to support so the log entry can be
+    found.
+  filename: src/server/errors.ts
+  code: |
+    import { randomUUID } from "node:crypto";
+
+    import type { NextFunction, Request, Response } from "express";
+
+    export function errorHandler(
+      err: Error,
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ): void {
+      const errorId = randomUUID();
+      console.error(errorId, err.stack);
+      res.status(500).json({ error: "Internal server error", errorId });
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Any `write`, `send` or `end` call counts, so writing a stack trace to a
+      log stream, such as `process.stdout.write(err.stack)` or
+      `logFile.write(err.stack)`, is reported.
+    - >-
+      A stack trace sent only in development, such as
+      `res.json({ stack: isProd ? undefined : err.stack })`, is reported:
+      the condition is not evaluated.
+    - >-
+      Missed: `err.message`, `String(err)`, `err.toString()` and a stack
+      copied into a variable before the response.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line with a comment on the same line.
+      language: typescript
+      code: |
+        logStream.write(err.stack); // skylos: ignore[SKY-D271] server log, not a response
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D271"]` turns the rule off for the whole
+        project.
+    - check: baseline
+      text: >-
+        `skylos baseline .` and then `--baseline` accept the existing calls
+        and report only new ones.
+
+related: [SKY-D251, SKY-D211]

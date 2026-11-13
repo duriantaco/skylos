@@ -1,0 +1,154 @@
+id: SKY-D333
+title: Edge systemd service runs as root
+family: infrastructure
+severity: HIGH
+languages: [systemd units]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`; the detector never reports CRITICAL.
+
+what_it_is: >-
+  A systemd service for a robot, camera, GPU or other device that runs as
+  root, either because it sets `User=root` or because it sets no `User=` at
+  all. systemd starts services as root unless told otherwise.
+
+why_it_matters: >-
+  Device daemons parse input from sensors, serial lines and the network. A
+  bug in one that runs as root hands the whole device to an attacker,
+  including its keys, its updates and every other process on it.
+
+flagged_example:
+  language: ini
+  filename: arm-controller.service
+  expect_line: 6
+  code: |
+    [Unit]
+    Description=Robot arm controller
+    After=network-online.target
+
+    [Service]
+    ExecStart=/opt/arm-controller/bin/arm-controller --port /dev/ttyUSB0
+    Restart=on-failure
+    NoNewPrivileges=true
+    ProtectSystem=strict
+    PrivateTmp=true
+
+    [Install]
+    WantedBy=multi-user.target
+
+not_flagged_example:
+  language: ini
+  filename: report-mailer.service
+  code: |
+    [Unit]
+    Description=Nightly sales report mailer
+
+    [Service]
+    Type=oneshot
+    ExecStart=/usr/local/bin/report-mailer --to finance@example.com
+  why: >-
+    This service also runs as root, but nothing in it points to a device:
+    no `/dev/` path, no camera, GPU, robot or bus word. The rule only checks
+    edge and device services, so it stays quiet.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. Reads every `*.service` file outside `.git`,
+    `.venv`, `venv`, `node_modules`, `build`, `dist` and cache folders,
+    skipping symlinks and files over 500 KB.
+  - >-
+    Parses the unit into sections and `Key=value` lines, joining lines that
+    end in `\`. Lines starting with `#` or `;` are comments.
+  - >-
+    Needs a `[Service]` section and an edge context: the file name or any
+    value in any section contains one of `camera`, `can0`, `cuda`, `gpio`,
+    `gpiochip`, `i2c`, `jetson`, `l4t`, `nvargus`, `nvidia`, `robot`,
+    `ros2`, `roslaunch`, `spidev` or `v4l2`, or the text `/dev/`,
+    `--device`, `--runtime=nvidia` or `network=host`.
+  - >-
+    Treats the service as root when `[Service]` has no `User=`, or when the
+    last `User=` is empty, `0` or `root`. `DynamicUser=` is not read.
+  - >-
+    Reports HIGH on the `User=` line, or on the `ExecStart=` line when there
+    is no `User=`.
+
+source_refs:
+  - path: skylos/rules/config/edge/systemd.py
+    symbol: "def _scan_root_edge_service("
+  - path: skylos/rules/config/edge/systemd.py
+    symbol: "def _edge_context("
+  - path: skylos/rules/config/edge/systemd.py
+    symbol: "def _runs_as_root("
+  - path: test/test_edge_systemd_security.py
+    symbol: "def test_edge_systemd_scanner_ignores_non_edge_service"
+
+fix:
+  explanation: >-
+    Run the service as its own user and give that user only the device
+    groups it needs, here `dialout` for the serial port.
+  filename: arm-controller.service
+  code: |
+    [Unit]
+    Description=Robot arm controller
+    After=network-online.target
+
+    [Service]
+    User=robot
+    Group=dialout
+    ExecStart=/opt/arm-controller/bin/arm-controller --port /dev/ttyUSB0
+    Restart=on-failure
+    NoNewPrivileges=true
+    ProtectSystem=strict
+    PrivateTmp=true
+
+    [Install]
+    WantedBy=multi-user.target
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      `DynamicUser=yes` without a `User=` line still counts as root, even
+      though systemd then runs the service under a fresh unprivileged user.
+    - >-
+      The edge test is a text search over every value, so any unit that
+      mentions `/dev/` counts as a device service; a `/dev/null` in a shell
+      command is enough.
+    - >-
+      Root services with no device context are never checked.
+  suppress:
+    - check:
+        kind: example
+        example:
+          language: ini
+          filename: arm-controller.service
+          code: |
+            [Unit]
+            Description=Robot arm controller
+            After=network-online.target
+
+            [Service]
+            # skylos: ignore[SKY-D333] needs root for real-time scheduling
+            ExecStart=/opt/arm-controller/bin/arm-controller --port /dev/ttyUSB0
+            Restart=on-failure
+            NoNewPrivileges=true
+            ProtectSystem=strict
+            PrivateTmp=true
+
+            [Install]
+            WantedBy=multi-user.target
+      text: >-
+        Put the marker on a comment line directly above the reported line
+        (`User=`, or `ExecStart=` without one). systemd reads `#` only at
+        the start of a line, so do not append it to a value.
+      language: ini
+      code: |
+        # skylos: ignore[SKY-D333] needs root for real-time scheduling
+        ExecStart=/opt/arm-controller/bin/arm-controller --port /dev/ttyUSB0
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D333"]` turns the rule off for the
+        project.
+
+related: [SKY-D334, SKY-D335, SKY-D336]

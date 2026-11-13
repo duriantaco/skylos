@@ -1,0 +1,152 @@
+id: SKY-L002
+title: Bare except block
+family: logic
+severity: MEDIUM
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  MEDIUM.
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  An `except:` with no exception type catches everything, including
+  `KeyboardInterrupt` and `SystemExit`. Those are not errors: they are how
+  Ctrl+C and `sys.exit()` stop a program.
+
+why_it_matters: >-
+  A bare `except:` around a slow call swallows the stop request, so Ctrl+C
+  or a worker shutdown is logged as a cache error and the program keeps
+  running. It also hides real bugs, such as a `NameError`, behind the same
+  fallback.
+
+flagged_example:
+  language: python
+  filename: rates/cache.py
+  expect_line: 11
+  code: |
+    """Read-through cache for exchange rates."""
+
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+
+    def cached_rate(cache, currency):
+        try:
+            return cache.get(f"rate:{currency}")
+        except:
+            logger.warning("rate cache unavailable, falling back to the API")
+            return None
+
+not_flagged_example:
+  language: python
+  filename: rates/cache.py
+  code: |
+    """Read-through cache for exchange rates."""
+
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+
+    def cached_rate(cache, currency):
+        try:
+            return cache.get(f"rate:{currency}")
+        except Exception:
+            logger.warning("rate cache unavailable, falling back to the API")
+            return None
+  why: >-
+    `except Exception:` is still broad, but it does not catch
+    `KeyboardInterrupt`, `SystemExit` or `GeneratorExit`, so the program can
+    still be stopped. SKY-L002 only looks for a handler with no type at all.
+    A narrower type, as in the fix, is better still.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Visits every `except` clause,
+    including `except*` groups.
+  - >-
+    Reports MEDIUM when the clause names no exception type (`except:`). Any
+    named type, even `except BaseException:`, is not reported by this rule.
+  - >-
+    Does not look at the handler body: a bare `except:` that logs, cleans up
+    or re-raises is reported the same way. The finding is on the `except`
+    line.
+
+source_refs:
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "class BareExceptRule"
+  - path: skylos/analysis/file_processing.py
+    symbol: '("SKY-L002", BareExceptRule)'
+    note: registered with the other --quality rules.
+  - path: test/test_logic.py
+    symbol: "class TestBareExceptRule"
+
+fix:
+  explanation: >-
+    Catch the errors the call can actually raise. Here the Redis client
+    raises connection and timeout errors when the cache is down.
+  filename: rates/cache.py
+  code: |
+    """Read-through cache for exchange rates."""
+
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+
+    def cached_rate(cache, currency):
+        try:
+            return cache.get(f"rate:{currency}")
+        except (ConnectionError, TimeoutError):
+            logger.warning("rate cache unavailable, falling back to the API")
+            return None
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A bare `except:` that ends with `raise` passes every exception on, so
+      it swallows nothing; it is still reported. `except BaseException:` with
+      `raise` says the same thing more clearly and is not reported.
+    - >-
+      A bare `except: pass` or `except: return None` is also reported by
+      SKY-L007 (empty error handler). SKY-L030 does not report bare
+      handlers; it covers `except Exception:` with a placeholder return.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the `except:` line.
+      language: python
+      code: |
+        except:  # skylos: ignore[SKY-L002] re-raised below after cleanup
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: python
+          filename: rates/cache.py
+          code: |
+            """Read-through cache for exchange rates."""
+
+            import logging
+
+            logger = logging.getLogger(__name__)
+
+
+            def cached_rate(cache, currency):
+                try:
+                    return cache.get(f"rate:{currency}")
+                except:  # noqa: E722
+                    logger.warning("rate cache unavailable, falling back to the API")
+                    return None
+      text: >-
+        `# noqa: E722`, the flake8 code for the same problem, is not read:
+        Skylos ignores `noqa` comments that name codes. A bare `# noqa` with
+        no code does hide the finding.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L002"]` turns the rule off for the
+        project.
+
+related: [SKY-L007, SKY-L030, SKY-L039]

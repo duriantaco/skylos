@@ -1,0 +1,139 @@
+id: SKY-D330
+title: Privileged container with device or GPU access
+family: infrastructure
+severity: HIGH
+languages: [Docker Compose]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`; the detector never reports CRITICAL.
+
+what_it_is: >-
+  A Docker Compose service that sets `privileged: true` and also gets a host
+  device (such as a camera or serial port) or an NVIDIA GPU. Privileged mode
+  turns off almost every container boundary: the container sees all host
+  devices and holds every Linux capability.
+
+why_it_matters: >-
+  On an edge box such as a Jetson or a robot, anyone who gets code running in
+  that container (through a bug in the camera or model code) is effectively
+  root on the device. They can load kernel modules, write to every disk and
+  reach every other device.
+
+flagged_example:
+  language: yaml
+  filename: docker-compose.yml
+  expect_line: 5
+  code: |
+    services:
+      camera:
+        image: nvcr.io/nvidia/l4t-jetpack:r36.3.0
+        runtime: nvidia
+        privileged: true
+        devices:
+          - /dev/video0:/dev/video0
+        environment:
+          CAMERA_FPS: "30"
+        restart: unless-stopped
+
+not_flagged_example:
+  language: yaml
+  filename: docker-compose.yml
+  code: |
+    services:
+      camera:
+        image: nvcr.io/nvidia/l4t-jetpack:r36.3.0
+        runtime: nvidia
+        privileged: false
+        devices:
+          - /dev/video0:/dev/video0
+        environment:
+          CAMERA_FPS: "30"
+        restart: unless-stopped
+  why: >-
+    `privileged: false` is read as a boolean, not as text, so the service is
+    not privileged and this rule stays quiet. The `/dev/video0` mapping is
+    still reported by SKY-D331, which looks at device mappings on their own.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. Reads YAML files named `compose.yaml`,
+    `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`, or starting
+    with `compose.` or `docker-compose.` and ending in `.yml` / `.yaml`, in
+    any folder except `.git`, `.venv`, `venv`, `node_modules`, `build`,
+    `dist` and cache folders.
+  - >-
+    Skips a file larger than 1 MB, a symlink, a file that does not parse as
+    YAML, and a document whose structure is deeper than 100 levels or has
+    more than 50,000 nodes.
+  - >-
+    Looks at each entry under `services:`. A service counts as privileged
+    when `privileged` is `true`, or the text `1`, `true`, `yes` or `on`.
+  - >-
+    Reports only when that privileged service also has device or GPU access:
+    a `devices:` or `volumes:` entry whose host path is `/dev`, `/proc`,
+    `/sys`, `/run/udev`, the Docker socket or a device such as
+    `/dev/video0`, `/dev/ttyUSB0`, `/dev/i2c-1` or `/dev/nvidia0`; or
+    `runtime: nvidia`; or a `gpus:` key; or an environment value starting
+    with `NVIDIA_`.
+  - >-
+    Host paths written with `${...}` are not resolved and do not count.
+  - >-
+    Reports HIGH on the `privileged:` line of that service, once per service.
+
+source_refs:
+  - path: skylos/rules/config/edge/docker_compose.py
+    symbol: "def _scan_privileged_device_access("
+  - path: skylos/rules/config/edge/docker_compose.py
+    symbol: "def _has_gpu_runtime("
+    note: what counts as GPU access.
+  - path: skylos/rules/config/edge/docker_compose.py
+    symbol: "def _is_compose_file("
+  - path: test/test_edge_compose_security.py
+    symbol: "def test_edge_compose_scanner_detects_privileged_device_runtime"
+
+fix:
+  explanation: >-
+    Remove `privileged: true` and pass only the device the service needs.
+    The NVIDIA runtime already gives the container the GPU. If the process
+    needs one extra Linux capability, add that one with `cap_add:` instead.
+  filename: docker-compose.yml
+  code: |
+    services:
+      camera:
+        image: nvcr.io/nvidia/l4t-jetpack:r36.3.0
+        runtime: nvidia
+        devices:
+          - /dev/video0:/dev/video0
+        environment:
+          CAMERA_FPS: "30"
+        restart: unless-stopped
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      It misses a privileged service that gets its GPU through the Compose
+      `deploy.resources.reservations.devices` block (`driver: nvidia`,
+      `capabilities: [gpu]`): that form is not read as GPU access, so the
+      service is not reported.
+    - >-
+      Privileged services without a device or GPU, such as a `docker:dind`
+      build container, are outside this rule and are not reported.
+    - >-
+      The flagged example is also reported by SKY-D331 for its
+      `/dev/video0` mapping.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the `privileged:` line, or on its own comment line
+        directly above it.
+      language: yaml
+      code: |
+        privileged: true  # skylos: ignore[SKY-D330] vendor driver needs it
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D330"]` turns the rule off for the
+        project.
+
+related: [SKY-D331, SKY-D332, SKY-D336]

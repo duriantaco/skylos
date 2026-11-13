@@ -1,0 +1,195 @@
+id: SKY-D309
+title: Secret in a workflow-wide or job-wide environment
+family: ci-cd
+severity: HIGH
+severity_note: >-
+  HIGH when the secret is in the workflow's top-level `env:`, which every
+  job and step inherits. MEDIUM when it is in one job's `env:`.
+languages: [GitHub Actions workflows]
+gate:
+  full: counted
+
+what_it_is: >-
+  Variables under a workflow's or job's `env:` are passed to every step
+  below them. SKY-D309 reports a secret placed there, because every
+  command and action in that scope receives it, not only the step that
+  needs it.
+
+why_it_matters: >-
+  Each extra step is another chance to leak the secret. A compromised
+  dependency's install script in the test job, or a third-party action
+  that sends its environment home, can read a deploy key that only the
+  upload step needed.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/deploy.yml
+  expect_line: 9
+  code: |
+    name: Deploy
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    env:
+      AWS_REGION: eu-west-1
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    jobs:
+      test:
+        name: Test
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - run: npm ci
+          - run: npm test
+      sourcemaps:
+        name: Upload source maps
+        needs: test
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - run: ./scripts/upload-sourcemaps.sh dist/
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/deploy.yml
+  code: |
+    name: Deploy
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    env:
+      AWS_REGION: eu-west-1
+    jobs:
+      test:
+        name: Test
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - run: npm ci
+          - run: npm test
+      sourcemaps:
+        name: Upload source maps
+        needs: test
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - name: Upload to Sentry
+            env:
+              SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+            run: ./scripts/upload-sourcemaps.sh dist/
+  why: >-
+    The Sentry token is set on the one step that uploads, so `npm ci` in the
+    test job never sees it. The job-wide `GH_TOKEN` holds the job's own
+    `GITHUB_TOKEN`, a short-lived token limited by `permissions:`; the
+    rule leaves that name out. Plain values such as `AWS_REGION` are not
+    secrets.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows`. Composite actions are
+    not checked.
+  - >-
+    Looks at the workflow's top-level `env:` and each job's `env:`. Jobs
+    that call a reusable workflow (`jobs.<id>.uses`) are skipped. Step
+    `env:`, container and service environments are not read.
+  - >-
+    Reports a variable whose string value contains a `${{ … }}` expression
+    that names `secrets.<NAME>`, for any name except `GITHUB_TOKEN`.
+    `toJSON(secrets)` and `secrets[...]` are not matched here.
+  - >-
+    Gives HIGH for the workflow `env:` and MEDIUM for a job `env:`. One
+    finding per variable, on the first line of the file that contains its
+    value.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_broad_secret_env("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "SECRETS_OUTSIDE_ENV_RE = re.compile("
+    note: the `secrets.<NAME>` pattern.
+  - path: test/test_github_actions_security.py
+    symbol: "def test_github_actions_scanner_detects_issue_derived_hardening_gaps"
+
+fix:
+  explanation: >-
+    Move the secret to the `env:` of the step that uses it. A step-level
+    variable reaches only that step's command or action.
+  filename: .github/workflows/deploy.yml
+  code: |
+    name: Deploy
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    env:
+      AWS_REGION: eu-west-1
+    jobs:
+      test:
+        name: Test
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - run: npm ci
+          - run: npm test
+      sourcemaps:
+        name: Upload source maps
+        needs: test
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - name: Upload to Sentry
+            env:
+              SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+            run: ./scripts/upload-sourcemaps.sh dist/
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A job whose only step needs the secret is still reported for its
+      job-level `env:`, although moving the variable changes nothing.
+    - >-
+      Any secret counts, including values that are not credentials, such
+      as a secret that holds a URL.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D309] <reason>` on the reported line or
+        on the line directly above it, one rule per marker.
+      language: yaml
+      code: |
+        env:
+          # skylos: ignore[SKY-D309] every step in this job signs artifacts
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D309"]` turns the rule off for the
+        whole project. A baseline also works, but it records the absolute
+        file path and line, so it stops matching when the checkout moves or
+        lines above the finding change.
+
+related: [SKY-D298, SKY-D299, SKY-D297, SKY-D312]

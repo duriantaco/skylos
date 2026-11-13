@@ -1,0 +1,139 @@
+id: SKY-D206
+title: Unsafe YAML load
+family: security
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    A load of fixed YAML text is hidden from the default list but still
+    counted.
+cwe: [CWE-502]
+
+what_it_is: >-
+  PyYAML's full and unsafe loaders understand tags such as
+  `!!python/object/apply:os.system`, which create Python objects and call
+  functions while the file is read. SKY-D206 reports YAML loads that do not
+  use one of PyYAML's data-only loaders.
+
+why_it_matters: >-
+  A deploy service that reads a `.deploy.yml` from a pushed branch with the
+  full loader runs any command written into that file. Whoever can push a
+  branch can then take over the build or deploy host.
+
+flagged_example:
+  language: python
+  filename: deploy/config.py
+  expect_line: 8
+  code: |
+    from pathlib import Path
+
+    import yaml
+
+
+    def read_deploy_config(checkout: Path) -> dict:
+        with open(checkout / ".deploy.yml") as handle:
+            return yaml.load(handle, Loader=yaml.Loader)
+
+not_flagged_example:
+  language: python
+  filename: deploy/config.py
+  code: |
+    from pathlib import Path
+
+    import yaml
+
+
+    def read_deploy_config(checkout: Path) -> dict:
+        with open(checkout / ".deploy.yml") as handle:
+            return yaml.load(handle, Loader=yaml.SafeLoader)
+  why: >-
+    `yaml.SafeLoader` only builds strings, numbers, lists and dicts; a
+    `!!python/...` tag makes it raise an error instead of calling anything.
+    Skylos accepts PyYAML's own `SafeLoader`, `CSafeLoader`, `BaseLoader`
+    and `CBaseLoader`.
+
+how_skylos_decides:
+  - >-
+    Resolves call names through imports and matches `yaml.load`,
+    `yaml.load_all`, `yaml.unsafe_load`, `yaml.unsafe_load_all`,
+    `yaml.full_load`, `yaml.full_load_all` and ruamel's
+    `YAML(typ="unsafe")`.
+  - >-
+    For `yaml.load` and `yaml.load_all`, skips the call when the `Loader`
+    (keyword or second argument) is PyYAML's own `SafeLoader`,
+    `CSafeLoader`, `BaseLoader` or `CBaseLoader`, imported or reached as
+    `yaml.SafeLoader`, or a local subclass Skylos can prove only adds
+    data-only constructors. A call with no `Loader` is reported.
+  - >-
+    A name such as `SafeLoader` only counts when nothing in the module
+    rebinds it: `SafeLoader = yaml.UnsafeLoader` keeps the finding, while
+    `getattr(yaml, "CSafeLoader", yaml.SafeLoader)` is accepted.
+  - >-
+    `yaml.unsafe_load`, `yaml.full_load` and their `_all` forms are always
+    reported, because their loaders can build Python objects.
+  - >-
+    Reports a match as HIGH. When the YAML text itself is a fixed literal,
+    the finding is marked low-risk: hidden from the default list, still in
+    JSON output and counted by the gate.
+
+source_refs:
+  - path: skylos/rules/danger/calls.py
+    symbol: "DANGEROUS_CALLS = {"
+    note: the YAML entries.
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _yaml_load_without_safeloader("
+  - path: skylos/rules/danger/calls.py
+    symbol: "_NATIVE_SAFE_YAML_LOADERS = frozenset("
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _yaml_loader_rebinding("
+    note: "`SafeLoader = yaml.UnsafeLoader` and other rebinding."
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _ruamel_unsafe_type("
+  - path: skylos/rules/danger/yaml_loader_provenance.py
+    symbol: "def yaml_loader_classes("
+    note: local loader subclasses proved data-only.
+
+fix:
+  explanation: >-
+    Use `yaml.safe_load()` (or `Loader=yaml.SafeLoader`). If the file needs
+    custom types, register constructors on a `SafeLoader` subclass that
+    build plain data.
+  filename: deploy/config.py
+  code: |
+    from pathlib import Path
+
+    import yaml
+
+
+    def read_deploy_config(checkout: Path) -> dict:
+        with open(checkout / ".deploy.yml") as handle:
+            return yaml.safe_load(handle)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A config file that only your own team edits is reported too; Skylos
+      does not trace where the file came from.
+    - >-
+      A loader passed in through a variable or parameter is reported even
+      when callers always pass `SafeLoader`, because the loader cannot be
+      proved at the call.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed call on its own line. A bare `# noqa` does not hide
+        a HIGH security finding.
+      language: python
+      code: |
+        return yaml.load(handle, Loader=yaml.Loader)  # skylos: ignore[SKY-D206] own repo
+    - check: baseline
+      text: >-
+        Accept existing findings with `skylos baseline .`, then scan with
+        `--baseline`.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D206"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D204, SKY-D233, SKY-D200]

@@ -1,0 +1,121 @@
+id: SKY-D332
+title: Host networking on an edge or device service
+family: infrastructure
+severity: MEDIUM
+languages: [Docker Compose]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`) at MEDIUM. It counts toward
+    `max_security`.
+
+what_it_is: >-
+  A Docker Compose service on a robot, Jetson or other device that uses
+  `network_mode: host`. The container then shares the device's network
+  stack, so every port it opens is open on every interface of the device.
+
+why_it_matters: >-
+  Robot and device control services (ROS nodes, camera streams, debug
+  consoles) often listen without authentication. With host networking they
+  are reachable from any network the device joins, such as a customer's
+  Wi-Fi, instead of only from the containers that need them.
+
+flagged_example:
+  language: yaml
+  filename: docker-compose.yml
+  expect_line: 4
+  code: |
+    services:
+      nav-stack:
+        image: ros:humble-ros-base
+        network_mode: host
+        command: ros2 launch nav_bringup robot.launch.py
+        environment:
+          ROS_DOMAIN_ID: "7"
+
+not_flagged_example:
+  language: yaml
+  filename: docker-compose.yml
+  code: |
+    services:
+      status-page:
+        image: nginx:1.27-alpine
+        network_mode: host
+        volumes:
+          - ./site:/usr/share/nginx/html:ro
+  why: >-
+    Host networking alone is not reported. This service has no GPU runtime,
+    no host device and no edge image or command, so the rule does not treat
+    it as an edge service.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. Reads the same Compose files as SKY-D330
+    (`compose.y*ml`, `docker-compose.y*ml` and names starting with
+    `compose.` or `docker-compose.`), skipping symlinks, files over 1 MB and
+    YAML that does not parse.
+  - >-
+    Looks only at services whose `network_mode` is `host`.
+  - >-
+    Reports when the service also looks like an edge or device service: it
+    has GPU access (`runtime: nvidia`, a `gpus:` key or an `NVIDIA_`
+    environment value); the image name or any key or value in the service
+    contains `jetson`, `l4t`, `nvidia`, `cuda`, `ros:` or `ros2`; or it maps
+    a host device or control path as described under SKY-D331.
+  - >-
+    Reports MEDIUM on the service's `network_mode:` line.
+
+source_refs:
+  - path: skylos/rules/config/edge/docker_compose.py
+    symbol: "def _scan_host_network_edge_service("
+  - path: skylos/rules/config/edge/docker_compose.py
+    symbol: "def _has_edge_runtime_context("
+  - path: test/test_edge_compose_security.py
+    symbol: "def test_edge_compose_scanner_detects_privileged_device_runtime"
+
+fix:
+  explanation: >-
+    Put the service on a Compose network and publish only the ports other
+    machines must reach, bound to the interface that should see them.
+    Containers on the same Compose network still reach each other.
+  filename: docker-compose.yml
+  code: |
+    services:
+      nav-stack:
+        image: ros:humble-ros-base
+        networks: [robot]
+        command: ros2 launch nav_bringup robot.launch.py
+        environment:
+          ROS_DOMAIN_ID: "7"
+        ports:
+          - "127.0.0.1:9090:9090"
+    networks:
+      robot: {}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      The edge test is a plain text search, so a service whose name, image
+      or settings merely contain `cuda` or `nvidia` (for example in an
+      environment value) counts as an edge service.
+    - >-
+      A non-edge service on host networking, such as a reverse proxy, is
+      not reported even when host networking is the real risk.
+    - >-
+      Some ROS 2 setups need host networking for DDS discovery across
+      machines. Keep the service on a trusted network and suppress the
+      finding with that reason.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the `network_mode:` line, or on a comment line
+        directly above it.
+      language: yaml
+      code: |
+        network_mode: host  # skylos: ignore[SKY-D332] DDS needs multicast on robot LAN
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D332"]` turns the rule off for the
+        project.
+
+related: [SKY-D330, SKY-D331]

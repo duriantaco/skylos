@@ -1,0 +1,163 @@
+id: SKY-D265
+title: Unsafe ML model deserialization
+family: security
+severity: CRITICAL
+severity_note: >-
+  CRITICAL when the file comes from a download (`hf_hub_download()`,
+  `snapshot_download()`, `requests`, `urlretrieve()`, `wget`), a URL, a
+  function parameter or request data. A fixed local path is HIGH.
+languages: [Python]
+gate:
+  full: critical_blocks
+cwe: [CWE-502]
+
+what_it_is: >-
+  Many model formats are Python pickles: PyTorch `.pt` and `.pth`
+  checkpoints, joblib and scikit-learn models, NumPy files saved with
+  objects, Keras models. Loading a pickle can run any code its author put in
+  the file. SKY-D265 reports model-loading calls that can unpickle, and rates
+  them CRITICAL when the file comes from a download or from outside input.
+
+why_it_matters: >-
+  A checkpoint from a model hub, or one a user uploads, can carry a payload
+  that runs a shell command the moment `torch.load()` opens it, with the
+  permissions of your training job or inference server. Model files are
+  rarely reviewed like code, so this is an easy way in.
+
+flagged_example:
+  language: python
+  filename: app/classifier.py
+  expect_line: 10
+  code: |
+    import torch
+    from huggingface_hub import hf_hub_download
+
+    REPO_ID = "acme-labs/ticket-classifier"
+    REVISION = "9b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c"
+
+
+    def load_classifier(net):
+        weights = hf_hub_download(REPO_ID, "classifier.pt", revision=REVISION)
+        net.load_state_dict(torch.load(weights))
+        return net.eval()
+
+not_flagged_example:
+  language: python
+  filename: app/classifier.py
+  code: |
+    import torch
+    from huggingface_hub import hf_hub_download
+
+    REPO_ID = "acme-labs/ticket-classifier"
+    REVISION = "9b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c"
+
+
+    def load_classifier(net):
+        weights = hf_hub_download(REPO_ID, "classifier.pt", revision=REVISION)
+        net.load_state_dict(torch.load(weights, weights_only=True))
+        return net.eval()
+  why: >-
+    The file is still a downloaded pickle, but `weights_only=True` makes
+    PyTorch use a restricted unpickler that accepts only tensors, containers
+    and plain values, so the file cannot call arbitrary functions. Skylos
+    skips `torch.load()` when this keyword is the literal `True`.
+
+how_skylos_decides:
+  - >-
+    Looks at Python calls and resolves import aliases, so `np.load`,
+    `from tensorflow import keras` and `from joblib import load` are
+    recognised.
+  - >-
+    Reports `torch.load()` unless it passes `weights_only=True` as a
+    literal; `numpy.load()` only with `allow_pickle=True`; every
+    `joblib.load()`; Keras `load_model()` from `keras.models`,
+    `tensorflow.keras.models` or `tf.keras.models`; and `pickle.load()` when
+    an argument contains a string ending in a model suffix (`.pt`, `.pth`,
+    `.ckpt`, `.bin`, `.h5`, `.keras`, `.pkl`, `.pickle`, `.joblib`), for
+    example `pickle.load(open("model.pkl", "rb"))`.
+  - >-
+    Rates the finding CRITICAL when an argument comes from outside: a
+    variable assigned from `hf_hub_download()`, `snapshot_download()`,
+    `requests.get()`/`post()`, `urllib.request.urlretrieve()` or
+    `wget.download()` (or such a call inside the argument); a string that
+    starts with `http://`, `https://`, `s3://`, `gs://` or `hf://`; or
+    tainted data: a function parameter, `request.*` or `input()`.
+    Otherwise it is HIGH.
+  - >-
+    Reports one finding per call, on the line where the call starts.
+    `pickle.load()` and `pickle.loads()` in general belong to SKY-D204 and
+    SKY-D205, so a `pickle.load()` of a model file can get both rules.
+
+source_refs:
+  - path: skylos/rules/danger/danger_ml/model_deserialization.py
+    symbol: "def _check_model_load_call"
+    note: which loaders are reported and which keywords skip them.
+  - path: skylos/rules/danger/danger_ml/model_deserialization.py
+    symbol: "def _append_model_load_finding"
+    note: CRITICAL or HIGH.
+  - path: skylos/rules/danger/danger_ml/model_deserialization.py
+    symbol: "def _expr_is_remote_model"
+  - path: skylos/rules/danger/danger_ml/model_deserialization.py
+    symbol: "REMOTE_MODEL_CALLS = {"
+  - path: skylos/rules/danger/danger_ml/model_deserialization.py
+    symbol: "MODEL_ARTIFACT_SUFFIXES = ("
+  - path: skylos/rules/danger/taint.py
+    symbol: "def _taint_params"
+    note: function parameters start out tainted.
+  - path: test/test_deserialization.py
+    symbol: "def test_huggingface_downloaded_checkpoint_load_is_critical_d265"
+
+fix:
+  explanation: >-
+    Ship and load weights in the safetensors format, which holds only
+    tensor data and runs no code. When you must read a PyTorch checkpoint,
+    pass `weights_only=True` and keep PyTorch at 2.6 or later: earlier
+    versions had a bypass of that option (CVE-2025-32434). Load joblib,
+    pickle and Keras files only from storage you control.
+  filename: app/classifier.py
+  code: |
+    from huggingface_hub import hf_hub_download
+    from safetensors.torch import load_file
+
+    REPO_ID = "acme-labs/ticket-classifier"
+    REVISION = "9b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c"
+
+
+    def load_classifier(net):
+        weights = hf_hub_download(REPO_ID, "classifier.safetensors", revision=REVISION)
+        net.load_state_dict(load_file(weights))
+        return net.eval()
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A helper such as `def load(path): return torch.load(path)` is CRITICAL,
+      because function parameters count as untrusted, even when every caller
+      passes a file you built yourself.
+    - >-
+      PyTorch 2.6 and later already default to `weights_only=True`, but
+      Skylos cannot see the installed version and asks for the keyword.
+      Keras `load_model()` is reported for every file format and whatever
+      its `safe_mode=` setting.
+    - >-
+      `weights_only=True` is trusted as written; Skylos does not check that
+      the installed PyTorch has the fix for CVE-2025-32434.
+  suppress:
+    - check: inline
+      text: >-
+        Silence one call that reads only your own artefacts and say why. A
+        bare `# noqa` does not hide a HIGH or CRITICAL security finding.
+      language: python
+      code: |
+        model = joblib.load(MODEL_PATH)  # skylos: ignore[SKY-D265] built by our CI job
+    - check: baseline
+      text: >-
+        Accept the loaders you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D265"]` turns the rule off for the
+        whole project. It does not hide SKY-D204 or SKY-D205 on the same
+        `pickle` calls.
+
+related: [SKY-D204, SKY-D205, SKY-D233, SKY-D213, SKY-D345]

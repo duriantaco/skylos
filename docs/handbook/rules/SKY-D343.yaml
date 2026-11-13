@@ -1,0 +1,149 @@
+id: SKY-D343
+title: Dockerfile bakes a secret into the image
+family: infrastructure
+severity: HIGH
+languages: [Dockerfile]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`; the detector never reports CRITICAL.
+
+fragments:
+  DB_DEMO_PASSWORD: ["orders-", "prod-2024"]
+
+what_it_is: >-
+  A Dockerfile `ENV` or `ARG` that gives a password, token, key or other
+  secret-looking variable a literal value. `ENV` values are stored in the
+  image configuration, and `ARG` defaults are recorded in the image
+  history.
+
+why_it_matters: >-
+  Anyone who can pull the image can read the value with `docker inspect` or
+  `docker history`, including everyone with access to the registry, the CI
+  cache or a leaked image tarball. Rotating the secret also means
+  rebuilding and redeploying every image that contains it.
+
+flagged_example:
+  language: dockerfile
+  filename: Dockerfile
+  expect_line: 4
+  code: |
+    FROM node:22-alpine
+    WORKDIR /app
+    ENV NODE_ENV=production
+    ENV DATABASE_PASSWORD={{DB_DEMO_PASSWORD}}
+    COPY package*.json ./
+    RUN npm ci --omit=dev
+    COPY . .
+    CMD ["node", "server.js"]
+
+not_flagged_example:
+  language: dockerfile
+  filename: Dockerfile
+  code: |
+    FROM node:22-alpine
+    WORKDIR /app
+    ARG NPM_TOKEN
+    ENV NODE_ENV=production
+    ENV DATABASE_PASSWORD_FILE=/run/secrets/db_password
+    ENV DATABASE_PASSWORD=${DATABASE_PASSWORD}
+    COPY package*.json ./
+    RUN npm ci --omit=dev
+    COPY . .
+    CMD ["node", "server.js"]
+  why: >-
+    Every name here looks secret, but no value is a literal secret:
+    `ARG NPM_TOKEN` has no default, `DATABASE_PASSWORD_FILE` holds a path
+    (names ending in `_FILE`, `_PATH`, `_DIR`, `_NAME` or `_ARN` are
+    references), and `${DATABASE_PASSWORD}` is a reference to another
+    variable.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. Reads the same Dockerfiles as SKY-D342
+    (`Dockerfile`, `Dockerfile.*`, `*.dockerfile`) and joins lines that end
+    in `\`.
+  - >-
+    For `ARG`, reads each `NAME=value`; an `ARG` without `=` has no default
+    and is skipped. For `ENV`, reads each `NAME=value`, or the older
+    `ENV NAME value` form.
+  - >-
+    A name counts as secret when it contains `PASSWORD`, `PASSWD`, `SECRET`,
+    `TOKEN`, `API_KEY`, `ACCESS_KEY`, `CLIENT_SECRET`, `CREDENTIAL(S)` or
+    `PRIVATE_KEY` as a whole underscore-separated part, in any case, and
+    does not end in `_FILE`, `_PATH`, `_DIR`, `_NAME` or `_ARN`.
+  - >-
+    The value must be a literal: not empty and not starting with `$`.
+  - >-
+    Reports HIGH on the line where the instruction starts, once per
+    instruction even when it sets several secret names.
+
+source_refs:
+  - path: skylos/rules/config/container/dockerfile.py
+    symbol: "def _scan_secret_build_values("
+  - path: skylos/rules/config/container/dockerfile.py
+    symbol: "SECRET_NAME_RE = re.compile("
+  - path: skylos/rules/config/container/dockerfile.py
+    symbol: "def _secret_name_is_sensitive("
+  - path: test/test_dockerfile_security.py
+    symbol: "def test_dockerfile_secret_file_reference_is_accepted"
+
+fix:
+  explanation: >-
+    Keep secrets out of the image. Give the container the secret at run
+    time, here as a file mounted by Docker or Kubernetes secrets, and let
+    the image say only where to find it. A token needed during the build
+    belongs in `RUN --mount=type=secret`.
+  filename: Dockerfile
+  code: |
+    FROM node:22-alpine
+    WORKDIR /app
+    ENV NODE_ENV=production
+    ENV DATABASE_PASSWORD_FILE=/run/secrets/db_password
+    COPY package*.json ./
+    RUN npm ci --omit=dev
+    COPY . .
+    CMD ["node", "server.js"]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Settings whose names merely contain a secret word are reported:
+      `ENV PASSWORD_MIN_LENGTH=12` and `ENV AUTH_TOKEN_TTL=3600` both are.
+    - >-
+      Placeholder values such as `changeme` are reported like real ones,
+      which is usually right: the default ends up in production.
+    - >-
+      Only `ENV` and `ARG` are read. A secret written into a file with
+      `RUN echo ... > /root/.npmrc` is not reported by this rule.
+  suppress:
+    - check:
+        kind: example
+        example:
+          language: dockerfile
+          filename: Dockerfile
+          code: |
+            FROM node:22-alpine
+            WORKDIR /app
+            ENV NODE_ENV=production
+            # skylos: ignore[SKY-D343] throwaway database for the CI image only
+            ENV DATABASE_PASSWORD={{DB_DEMO_PASSWORD}}
+            COPY package*.json ./
+            RUN npm ci --omit=dev
+            COPY . .
+            CMD ["node", "server.js"]
+      text: >-
+        Put the marker on a comment line directly above the `ENV` or `ARG`.
+        After the value, `#` is not a comment in a Dockerfile; it becomes
+        part of the value.
+      language: dockerfile
+      code: |
+        # skylos: ignore[SKY-D343] throwaway database for the CI image only
+        ENV DATABASE_PASSWORD={{DB_DEMO_PASSWORD}}
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D343"]` turns the rule off for the
+        project.
+
+related: [SKY-D342, SKY-S101]

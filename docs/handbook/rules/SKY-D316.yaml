@@ -1,0 +1,170 @@
+id: SKY-D316
+title: GitLab CI literal secret variable
+family: ci-cd
+severity: HIGH
+severity_note: >-
+  HIGH for a value under the top-level `variables:`, which every job
+  receives. MEDIUM for a value under one job's `variables:`.
+languages: [GitLab CI]
+gate:
+  full: counted
+
+what_it_is: >-
+  GitLab CI files can set environment variables for jobs. SKY-D316 reports
+  a variable whose name says it is a secret, such as `DEPLOY_TOKEN` or
+  `DB_PASSWORD`, when its value is written into the file itself instead of
+  coming from a CI/CD variable stored in GitLab's settings.
+
+why_it_matters: >-
+  Anyone who can read the repository, its forks or an old clone has the
+  secret, and it stays in Git history after it is removed. GitLab does not
+  mask a value written in the file, so it can also appear in job logs.
+
+flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  expect_line: 4
+  code: |
+    variables:
+      PIP_INDEX_URL: https://pypi.org/simple
+      SENTRY_ORG: acme
+      SENTRY_AUTH_TOKEN: "{{SENTRY_DEMO_TOKEN}}"
+
+    stages: [build]
+
+    upload-sourcemaps:
+      stage: build
+      image: getsentry/sentry-cli:2.33.1
+      script:
+        - sentry-cli releases new "$CI_COMMIT_SHA"
+
+not_flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  code: |
+    variables:
+      PIP_INDEX_URL: https://pypi.org/simple
+      SENTRY_ORG: acme
+      TOKEN_TTL_SECONDS: "3600"
+
+    stages: [test]
+
+    integration-tests:
+      stage: test
+      image: python:3.12-slim
+      services:
+        - postgres:16.4
+      variables:
+        POSTGRES_PASSWORD: postgres
+        DATABASE_PASSWORD: $STAGING_DB_PASSWORD
+      script:
+        - pytest tests/integration
+  why: >-
+    `DATABASE_PASSWORD` only refers to a variable stored in GitLab.
+    `postgres` is on Skylos's list of placeholder values, as the password of
+    a throwaway test database usually is. `TOKEN_TTL_SECONDS` matches the
+    name pattern, but `3600` is too short to be a secret.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). Reads every file named exactly
+    `.gitlab-ci.yml` in the scanned folder, skipping `.git`, `node_modules`,
+    `.venv`, `venv`, `build`, `dist` and cache folders. A subfolder scan of
+    a Git repository also reads the repository's top-level `.gitlab-ci.yml`.
+    Files pulled in with `include:` are not read.
+  - >-
+    Skips a file that PyYAML's safe loader cannot read, without a warning.
+    That includes every file that uses GitLab's `!reference` tag.
+  - >-
+    Reads the top-level `variables:` and the `variables:` of every job,
+    hidden `.template` jobs included.
+  - >-
+    The name must contain one of `SECRET`, `TOKEN`, `PASSWORD`, `PASS`,
+    `API_KEY`, `PRIVATE_KEY`, `ACCESS_KEY`, `CREDENTIAL` or `CREDENTIALS`
+    as a whole underscore-separated part, in any case. `DB_PASS` matches;
+    `APIKEY` and `PASSWD` do not.
+  - >-
+    Skips values that are empty, start with `$` or contain `${` (references
+    to other variables), are YAML booleans, or are a placeholder:
+    `changeme`, `change-me`, `dummy`, `example`, `fake`, `none`,
+    `password`, `placeholder`, `postgres`, `root`, `test` or `todo`.
+  - >-
+    Skips the long form `NAME: {value: …, description: …}`: only plain
+    values are read.
+  - >-
+    Reports what is left when it is at least 8 characters long or contains
+    `-`, `_`, `=`, `:` or `/`: HIGH at the top level, MEDIUM in a job, on the
+    first line of the file that defines that name.
+
+source_refs:
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _scan_literal_secret_variables("
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _is_literal_secret_value("
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "SECRET_VARIABLE_RE = "
+  - path: test/test_gitlab_ci_security.py
+    symbol: "def test_gitlab_ci_scanner_detects_workflow_supply_chain_risks"
+
+fix:
+  explanation: >-
+    Revoke the token first: it is already in Git history. Then create a new
+    one as a masked, protected CI/CD variable under Settings > CI/CD >
+    Variables, and delete the line from the file. Jobs receive the stored
+    variable under the same name without any mention in `.gitlab-ci.yml`.
+  filename: .gitlab-ci.yml
+  code: |
+    variables:
+      PIP_INDEX_URL: https://pypi.org/simple
+      SENTRY_ORG: acme
+
+    stages: [build]
+
+    upload-sourcemaps:
+      stage: build
+      image: getsentry/sentry-cli:2.33.1
+      script:
+        - sentry-cli releases new "$CI_COMMIT_SHA"
+
+fragments:
+  SENTRY_DEMO_TOKEN: ["sntryu_", "0handbook0demo0only0not0a0real0token0"]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Settings that are not secrets but have a matching name are reported
+      when the value is long or has a `/`, such as
+      `AWS_WEB_IDENTITY_TOKEN_FILE: /tmp/web-identity-token` or
+      `TOKEN_TTL: "86400000"`.
+    - >-
+      A secret in the long form (`value:` and `description:`) is not
+      reported at all.
+    - >-
+      When two jobs use the same variable name, every finding points at the
+      first line that defines it.
+    - >-
+      This rule judges names and value shapes only. The secrets scan
+      (SKY-S101) is a separate check that looks at the values themselves.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D316]` and a reason on the reported line,
+        or on the line directly above it. Skylos looks for that exact text,
+        so write one rule per marker, with the ID in upper case.
+      language: yaml
+      code: |
+        variables:
+          # skylos: ignore[SKY-D316] path to a file, not a secret
+          AWS_WEB_IDENTITY_TOKEN_FILE: /tmp/web-identity-token
+    - check: baseline
+      text: >-
+        A baseline hides the findings that exist today. Each entry records
+        the rule, the absolute file path and the line, so it stops matching
+        when the line moves or the checkout is at another path. Do not
+        baseline a real secret: revoke it.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D316"]` turns the rule off for the whole
+        project.
+
+related: [SKY-S101, SKY-D301, SKY-D323]

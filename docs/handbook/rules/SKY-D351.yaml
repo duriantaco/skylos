@@ -1,0 +1,170 @@
+id: SKY-D351
+title: AI agent action's write-access check switched off
+family: ci-cd
+severity: CRITICAL
+severity_note: >-
+  CRITICAL when the agent can run any shell command, HIGH when its tools can
+  change things, MEDIUM when they only read. `allowed_bots: "*"` on its own
+  is capped at HIGH, and so is a job with a fixed `environment:` name. A job
+  with no secrets and no write token is reported only for a shell agent, at
+  MEDIUM.
+languages: [GitHub Actions workflows]
+gate:
+  full: critical_blocks
+  note: >-
+    `skylos cicd risk-review` also marks a new HIGH or CRITICAL finding of
+    this rule as "CI weakened", which needs a human approval.
+
+what_it_is: >-
+  claude-code-action and codex-action refuse to run when the account that
+  started the workflow has no write access to the repository. A `"*"` in
+  `allowed_non_write_users`, `allowed_bots` or `allow-users` switches that
+  check off, so anyone who can open an issue or comment can start the agent.
+
+why_it_matters: >-
+  The wildcard is often added so a triage bot can answer new issues. The
+  issue author then controls text the agent reads, and a crafted issue can
+  make the agent use its tools, its API key and the job's write token for
+  the attacker.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/triage.yml
+  expect_line: 16
+  code: |
+    name: Issue triage
+    on:
+      issues:
+        types: [opened]
+    permissions:
+      contents: read
+      issues: write
+    jobs:
+      triage:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: anthropics/claude-code-action@v1
+            with:
+              anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+              github_token: ${{ secrets.GITHUB_TOKEN }}
+              allowed_non_write_users: "*"
+              prompt: "Add area and priority labels to #${{ github.event.issue.number }}."
+              claude_args: >-
+                --allowedTools "Bash(gh issue view:*),Bash(gh issue edit:*)"
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/triage.yml
+  code: |
+    name: Issue triage
+    on:
+      issues:
+        types: [opened]
+    permissions:
+      contents: read
+      issues: write
+    jobs:
+      triage:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: anthropics/claude-code-action@v1
+            with:
+              anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+              allowed_non_write_users: "*"
+              prompt: "Add area and priority labels to #${{ github.event.issue.number }}."
+              claude_args: >-
+                --allowedTools "Bash(gh issue view:*),Bash(gh issue edit:*)"
+  why: >-
+    claude-code-action honours `allowed_non_write_users` only when a
+    `github_token` is passed to it. Without one, as here, the action still
+    refuses accounts without write access, so the wildcard has no effect.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows` and finds steps that use
+    `anthropics/claude-code-action` or `openai/codex-action`, the agent
+    actions with a built-in write-access check.
+  - >-
+    Looks for an exact `"*"`: `allowed_non_write_users` (claude-code-action
+    v1 and later, and only together with `github_token`), `allowed_bots`
+    (any GitHub App), or codex-action's `allow-users`. A list of named
+    accounts is not reported.
+  - >-
+    For each trigger an outsider can cause (as for SKY-D350) that the action
+    would normally check, evaluates the job's `if:`, its `needs:` jobs and
+    earlier steps. If none of them checks the account either, the wildcard
+    is what lets the outsider in.
+  - >-
+    Needs the same two things as SKY-D350: a way for the outsider's text to
+    reach the agent (the prompt, an earlier step, a tool such as
+    `gh issue view` with a prompt about the issue, or a checkout of the pull
+    request), and something to steal (a secret, a write permission,
+    `id-token: write`, or no `permissions:` at all). An agent with no tools
+    is not reported.
+  - >-
+    Reports once per agent step, on the line of the first widened setting.
+    The inline marker must be a YAML comment.
+
+source_refs:
+  - path: skylos/rules/config/cicd/ai_agents.py
+    symbol: "def _claude_action("
+    note: the `github_token` condition and `allowed_bots`.
+  - path: skylos/rules/config/cicd/ai_agents.py
+    symbol: "def _codex_action("
+  - path: skylos/rules/config/cicd/ai_agents.py
+    symbol: "def _report_widened("
+  - path: test/test_github_actions_ai_agents.py
+    symbol: "def test_allowed_non_write_users_without_github_token_keeps_the_check"
+
+fix:
+  explanation: >-
+    Name the accounts that may start the agent instead of using `"*"`, or
+    remove the setting. The action then refuses everyone else. Any wildcard
+    combined with an API key secret and tools stays reported, graded by what
+    the tools can do.
+  filename: .github/workflows/triage.yml
+  code: |
+    name: Issue triage
+    on:
+      issues:
+        types: [opened]
+    permissions:
+      contents: read
+      issues: write
+    jobs:
+      triage:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: anthropics/claude-code-action@v1
+            with:
+              anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+              github_token: ${{ secrets.GITHUB_TOKEN }}
+              allowed_non_write_users: "docs-bot,release-helper"
+              prompt: "Add area and priority labels to #${{ github.event.issue.number }}."
+              claude_args: >-
+                --allowedTools "Bash(gh issue view:*),Bash(gh issue edit:*)"
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A job protected by an environment with required reviewers is still
+      reported (at most HIGH): Skylos cannot see the reviewers.
+    - >-
+      `allowed_bots: "*"` is reported even when only your own GitHub Apps
+      comment in practice: any installed App can trigger the job.
+  suppress:
+    - check: inline
+      text: >-
+        Put a YAML comment with exactly one rule on the reported line or on
+        its own line directly above it.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D351] label-only job, no secrets but the API key
+        allowed_non_write_users: "*"
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D351"]` turns the rule off for the whole
+        project. A baseline also works, but it records the absolute file path
+        and the line.
+
+related: [SKY-D350, SKY-D352, SKY-D353]

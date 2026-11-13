@@ -1,0 +1,150 @@
+id: SKY-D305
+title: Multi-line if with ${{ }} that is always true
+family: ci-cd
+severity: MEDIUM
+severity_note: >-
+  The catalog lists MEDIUM, but the detector reports every finding as HIGH.
+languages: [GitHub Actions workflows]
+gate:
+  full: counted
+
+what_it_is: >-
+  An `if:` written as a YAML block (`if: |`) keeps a line break after the
+  last line. When the block holds `${{ … }}`, GitHub no longer sees one
+  expression but text with an expression inside, and any non-empty text is
+  true. SKY-D305 reports a block `if:` that contains `${{`.
+
+why_it_matters: >-
+  The condition never stops the job. In the example, a release meant to run
+  only for version tags and `main` also runs when someone starts the
+  workflow by hand on any branch, and publishes that branch.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/release.yml
+  expect_line: 10
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+      workflow_dispatch:
+    permissions:
+      contents: read
+    jobs:
+      publish:
+        if: |
+          ${{ startsWith(github.ref, 'refs/tags/v') ||
+              github.ref == 'refs/heads/main' }}
+        runs-on: ubuntu-latest
+        environment: release
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - run: ./scripts/publish.sh
+            env:
+              REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/release.yml
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+      workflow_dispatch:
+    permissions:
+      contents: read
+    jobs:
+      publish:
+        if: |
+          startsWith(github.ref, 'refs/tags/v') ||
+          github.ref == 'refs/heads/main'
+        runs-on: ubuntu-latest
+        environment: release
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - run: ./scripts/publish.sh
+            env:
+              REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+  why: >-
+    The block has no `${{ }}`. GitHub reads the whole `if:` text as the
+    expression, and the trailing line break does not change its value.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows`, not composite actions.
+  - >-
+    Goes through the file line by line for `if:` followed by a block marker,
+    `|` or `>` with any modifier (`|-`, `>-`, `|+`), on its own or after a
+    list dash.
+  - >-
+    Takes the lines below it that are indented further, and reports when any
+    of them contains `${{`.
+  - >-
+    One HIGH finding on the `if:` line.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "BLOCK_SCALAR_IF_RE = re.compile("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_conditions("
+  - path: test/test_github_actions_security.py
+    symbol: "def test_github_actions_scanner_detects_extended_offline_risks("
+
+fix:
+  explanation: >-
+    Write the condition without `${{ }}`, either on one line or as a block.
+    GitHub treats a bare `if:` as an expression.
+  filename: .github/workflows/release.yml
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+      workflow_dispatch:
+    permissions:
+      contents: read
+    jobs:
+      publish:
+        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+        runs-on: ubuntu-latest
+        environment: release
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - run: ./scripts/publish.sh
+            env:
+              REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      `if: |-` and `if: >-` drop the final line break, so a `${{ }}` block
+      written with them works as intended. Skylos still reports them, even
+      though its own message suggests a stripped block.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D305]` on the reported `if:` line or on the
+        line directly above it, one rule per marker.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D305] |- strips the trailing line break
+        if: |-
+          ${{ github.event_name == 'push' }}
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D305"]` turns the rule off for the whole
+        project.
+    - check: baseline
+      text: >-
+        A baseline works, but it records the absolute file path and the line,
+        so it stops matching when the checkout moves or lines above shift.
+
+related: [SKY-D303, SKY-D304, SKY-D374]

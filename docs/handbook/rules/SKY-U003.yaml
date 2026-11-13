@@ -1,0 +1,191 @@
+id: SKY-U003
+title: Unused variable
+family: dead-code
+severity: UNRATED
+severity_note: >-
+  Unused-code findings carry no severity in JSON. The terminal report shows
+  them as LOW, SARIF as level `note` and GitLab as `minor`. A confidence
+  score from 0 to 100 decides whether they are listed (60 or more by
+  default): 100 for a local variable, at most 90 for a public module-level
+  name and 80 for a class attribute.
+languages: [Python, TypeScript/JavaScript (top-level declarations), PHP (properties), C# (fields), Swift (private properties), Dart]
+gate:
+  full: counted
+  note: >-
+    Counts toward `max_dead_code`, which has no limit by default, so it only
+    fails a gate where you set one.
+
+what_it_is: >-
+  A variable, constant or attribute that is assigned but never read. In a
+  function it is usually a value someone computed and then forgot to use;
+  at module or class level it is a setting nothing looks at any more.
+
+why_it_matters: >-
+  A computed value that is never used often means a bug: in the example
+  below the discount is worked out but the customer is still charged the
+  full price. Unused settings also mislead readers into thinking they
+  change something.
+
+flagged_example:
+  language: python
+  filename: shop/pricing.py
+  expect_line: 8
+  code: |
+    """Order pricing for the checkout service."""
+
+    VAT_RATE = 0.2
+
+
+    def order_total(items, coupon_amount):
+        subtotal = sum(item["price"] * item["qty"] for item in items)
+        discounted = subtotal - coupon_amount
+        return round(subtotal * (1 + VAT_RATE))
+
+not_flagged_example:
+  language: python
+  filename: shop/receipts.py
+  code: |
+    """Receipt lines for the checkout service."""
+
+
+    def receipt_line(item):
+        name = item["name"]
+        amount = item["price"] * item["qty"]
+        return "{name}: {amount:.2f}".format(**locals())
+  why: >-
+    `name` and `amount` are never named again, but `locals()` hands every
+    local variable to `format`. Skylos sees the `locals()` call and keeps
+    all local variables of that function. It does the same for `vars()`,
+    `eval`, `exec` and frame introspection such as `sys._getframe`.
+
+more_examples:
+  - flagged:
+      language: typescript
+      expect_file: src/http.ts
+      expect_line: 1
+      files:
+        - filename: src/http.ts
+          code: |
+            const RETRY_LIMIT = 3;
+            const TIMEOUT_MS = 5000;
+
+            export async function fetchJson(url: string) {
+              const signal = AbortSignal.timeout(TIMEOUT_MS);
+              const response = await fetch(url, { signal });
+              return response.json();
+            }
+        - filename: src/main.ts
+          code: |
+            import { fetchJson } from "./http";
+
+            fetchJson("/api/orders").then(console.log);
+    not_flagged:
+      language: typescript
+      files:
+        - filename: src/http.ts
+          code: |
+            const TIMEOUT_MS = 5000;
+
+            export async function fetchJson(url: string) {
+              const signal = AbortSignal.timeout(TIMEOUT_MS);
+              const response = await fetch(url, { signal });
+              return response.json();
+            }
+        - filename: src/main.ts
+          code: |
+            import { fetchJson } from "./http";
+
+            fetchJson("/api/orders").then(console.log);
+      why: >-
+        Every top-level constant is read. In TypeScript and JavaScript only
+        top-level declarations are checked; a variable inside a function is
+        not.
+
+how_skylos_decides:
+  - >-
+    Runs on every scan; no flag is needed. In Python every assignment
+    target is a definition: module-level names, class attributes and local
+    variables. In TypeScript and JavaScript only top-level `const`, `let`
+    and `var` declarations count (a top-level arrow function counts as a
+    function); PHP properties, C# fields, Dart variables and Swift private
+    properties are read too.
+  - >-
+    Never reports `_`, or a local variable of a function that calls
+    `locals()`, `vars()` with no argument, `eval`, `exec` or reads its own
+    frame.
+  - >-
+    Skips fields that a framework reads by declaration: Enum members,
+    dataclass, attrs and NamedTuple fields, Pydantic and other `*Model` or
+    `*Schema` class attributes, ORM columns, Django and DRF settings and
+    serializer fields, Marshmallow fields and type aliases. A class
+    attribute whose name also appears as an attribute of another class is
+    kept too, since Skylos cannot tell which class a read belongs to.
+  - >-
+    Lowers confidence by 40 for an upper-case class attribute such as
+    `MAX_ITEMS`, caps a class attribute at 80 and a public module-level name
+    at 90 (it can be imported from outside the project), and treats names
+    in `__all__`, or public names of an `__init__.py` without `__all__`, as
+    exported.
+  - >-
+    Skips test, example and benchmark paths and lines marked `# noqa: F841`
+    or `# skylos: ignore[SKY-U003]`, then confirms with a text search of the
+    project (for a Python local, only inside the function that owns it).
+    The rest is listed when it scores at least the threshold (`--confidence`,
+    default 60).
+
+source_refs:
+  - path: skylos/analysis/penalties.py
+    symbol: "def _check_data_model_fields(def_obj, analyzer, framework)"
+    note: framework fields, `_`, dynamic locals and shared attribute names.
+  - path: skylos/visitors/base.py
+    symbol: "def _reads_locals_dynamically(node: ast.Call)"
+  - path: skylos/visitors/languages/typescript/core.py
+    symbol: "elif self._is_top_level(node):"
+    note: only top-level TypeScript and JavaScript variables.
+  - path: skylos/deadcode/confidence.py
+    symbol: "CONFIDENCE_CAPS = {"
+  - path: skylos/core/grep_verify.py
+    symbol: "def _filter_python_local_binding_evidence("
+    note: grep evidence for a local must come from its own function.
+
+fix:
+  explanation: >-
+    Use the value or delete the assignment. Here the discount was meant to
+    be charged, so the total must be computed from it.
+  filename: shop/pricing.py
+  code: |
+    """Order pricing for the checkout service."""
+
+    VAT_RATE = 0.2
+
+
+    def order_total(items, coupon_amount):
+        subtotal = sum(item["price"] * item["qty"] for item in items)
+        discounted = subtotal - coupon_amount
+        return round(discounted * (1 + VAT_RATE))
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Module-level settings read by a framework through `getattr` or a
+      settings loader can be reported when the framework is not one Skylos
+      knows.
+    - >-
+      Class attributes read only through `self.__dict__` or serialisation
+      libraries Skylos does not know are reported.
+    - >-
+      Unused variables inside TypeScript and JavaScript functions are not
+      checked at all.
+  suppress:
+    - check: inline
+      text: >-
+        On the assignment line, with a reason. `# noqa: F841` also works.
+      language: python
+      code: |
+        discounted = subtotal - coupon_amount  # skylos: ignore[SKY-U003] audit log
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-U003"]` turns the rule off for the
+        project.
+
+related: [SKY-U001, SKY-U002, SKY-U006]

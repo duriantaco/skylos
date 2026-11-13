@@ -1,0 +1,186 @@
+id: SKY-D310
+title: OIDC publish job runs repository build scripts
+family: ci-cd
+severity: HIGH
+languages: [GitHub Actions workflows]
+gate:
+  full: counted
+
+what_it_is: >-
+  `permissions: id-token: write` lets a job ask GitHub for an OIDC token,
+  which PyPI, npm and cloud providers accept in place of a stored
+  password. SKY-D310 reports a job that holds this permission and also
+  runs build scripts from the repository, such as `make` or
+  `./scripts/build.sh`.
+
+why_it_matters: >-
+  Everything those scripts run, including the build tools and plugins they
+  pull in, can request the same token and publish a release or reach the
+  cloud account. One bad change to a Makefile, or one compromised build
+  dependency, is enough to ship a malicious version under your name.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/publish.yml
+  expect_line: 23
+  code: |
+    name: Publish
+    on:
+      release:
+        types: [published]
+    permissions:
+      contents: read
+    jobs:
+      publish:
+        name: Build and publish to PyPI
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        environment: pypi
+        permissions:
+          contents: read
+          id-token: write
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - uses: actions/setup-python@v5
+            with:
+              python-version: "3.12"
+          - run: make dist
+          - uses: pypa/gh-action-pypi-publish@release/v1
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/docs.yml
+  code: |
+    name: Docs
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      deploy:
+        name: Deploy docs to S3
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        environment: docs
+        permissions:
+          contents: read
+          id-token: write
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - uses: aws-actions/configure-aws-credentials@v4
+            with:
+              role-to-assume: arn:aws:iam::123456789012:role/deploy-docs
+              aws-region: eu-west-1
+          - run: aws s3 sync docs/ s3://docs.example.com --delete
+  why: >-
+    This job also holds `id-token: write` and runs a command, but the
+    command is the AWS CLI from the runner image. The files it uploads are
+    data; no script from the repository runs while the token is available.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows`. Jobs that call a
+    reusable workflow are skipped.
+  - >-
+    Keeps jobs whose effective permissions grant `id-token: write`: the
+    job's own `permissions:` when it has one, otherwise the workflow's.
+    `permissions: write-all` counts.
+  - >-
+    In those jobs, looks for a `run:` block with a line that starts with a
+    repository script or build entry point: `./scripts/`, `./ci/`,
+    `./build/`, `./tools/`, `./release/` or `./deploy/`; `bash`, `sh`,
+    `python`, `node`, `ruby` or `pwsh` running a file in one of those
+    folders; `npm run`, `pnpm run`, `yarn run` or `bun run`; or `make`.
+  - >-
+    Reports HIGH once per job, on the first matching step, at the first
+    line of the file that contains the step's first command line.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_oidc_build_script_exposure("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "LOCAL_SCRIPT_RE = re.compile("
+    note: the script and build-command patterns.
+  - path: test/test_github_actions_security.py
+    symbol: "def test_github_actions_scanner_detects_issue_derived_hardening_gaps"
+
+fix:
+  explanation: >-
+    Build in a job without `id-token: write`, upload the files as an
+    artifact, and publish them from a second job that holds the token and
+    runs only the publish action.
+  filename: .github/workflows/publish.yml
+  code: |
+    name: Publish
+    on:
+      release:
+        types: [published]
+    permissions:
+      contents: read
+    jobs:
+      build:
+        name: Build the distributions
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - uses: actions/setup-python@v5
+            with:
+              python-version: "3.12"
+          - run: make dist
+          - uses: actions/upload-artifact@v4
+            with:
+              name: dist
+              path: dist/
+              if-no-files-found: error
+      publish:
+        name: Publish to PyPI
+        needs: build
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        environment: pypi
+        permissions:
+          contents: read
+          id-token: write
+        steps:
+          - uses: actions/download-artifact@v4
+            with:
+              name: dist
+              path: dist/
+          - uses: pypa/gh-action-pypi-publish@release/v1
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      The check matches text, not what runs. A `make` line that only
+      prints a version is reported. Commands that also run repository code
+      but match none of the patterns are missed: `python -m build`,
+      `pip install .`, `npm publish`, `cargo build`, a script in another
+      folder such as `./bin/release`, or `cd web && npm run build`.
+    - >-
+      An `id-token: write` used only to log in to a cloud provider is
+      treated the same as one used to publish.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D310] <reason>` on the reported line or
+        on the line directly above it, one rule per marker.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D310] make only checks the version tag
+        - run: make check-version
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D310"]` turns the rule off for the
+        whole project. A baseline also works, but it records the absolute
+        file path and line, so it stops matching when the checkout moves or
+        lines above the finding change.
+
+related: [SKY-D364, SKY-D371, SKY-D373, SKY-D319]

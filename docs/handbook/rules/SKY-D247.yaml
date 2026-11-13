@@ -1,0 +1,119 @@
+id: SKY-D247
+title: CORS middleware open to every origin
+family: security
+severity: MEDIUM
+languages: [TypeScript/JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  The `cors` package for Express and similar Node servers decides which
+  other websites may call your API from a browser and read the answer.
+  SKY-D247 reports `cors({ origin: "*" })` and `cors({ origin: true })`,
+  which allow every website.
+
+why_it_matters: >-
+  Any page a user opens can then read your API's responses from their
+  browser. With `origin: true` and `credentials: true`, the browser also
+  sends the user's cookies, so another site can read their account data.
+
+flagged_example:
+  language: typescript
+  filename: src/server.ts
+  expect_line: 6
+  code: |
+    import cors from "cors";
+    import express from "express";
+
+    const app = express();
+
+    app.use(cors({ origin: "*", methods: ["GET", "POST"] }));
+
+not_flagged_example:
+  language: typescript
+  filename: src/server.ts
+  code: |
+    import cors from "cors";
+    import express from "express";
+
+    const app = express();
+    const allowed = new Set(["https://app.example.com", "https://admin.example.com"]);
+
+    app.use(
+      cors({
+        origin: (origin, callback) => callback(null, !origin || allowed.has(origin)),
+        credentials: true,
+      }),
+    );
+  why: >-
+    `origin` is a function that accepts only the two listed sites (and
+    requests with no `Origin`, such as server-to-server calls). The rule
+    reports only the literal values `"*"` and `true`.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on TypeScript and JavaScript files. Finds calls to
+    a function named exactly `cors` whose first argument is an object
+    literal.
+  - >-
+    Reports MEDIUM when that object has a property written `origin` whose
+    value, with quotes removed, is `*` or `true`.
+  - >-
+    Nothing else is read: `cors()` with no options (which the `cors`
+    package also treats as "every origin"), options held in a variable, a
+    quoted `"origin"` key, `origin: ["*"]` and an
+    `Access-Control-Allow-Origin` header set by hand are not reported.
+    Whether credentials are enabled does not change the result. Python CORS
+    settings are SKY-D231.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "# --- CORS wildcard (SKY-D247) ---"
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: '(#eq? @cors_fn "cors")'
+    note: the tree-sitter query that finds `cors(...)` calls.
+  - path: test/test_typescript_expanded.py
+    symbol: "def test_cors_wildcard_origin"
+
+fix:
+  explanation: >-
+    List the sites that may call the API. Use an array of origins, or a
+    function that checks the request's origin against a fixed set. Enable
+    `credentials` only with such a list.
+  filename: src/server.ts
+  code: |
+    import cors from "cors";
+    import express from "express";
+
+    const app = express();
+
+    app.use(
+      cors({
+        origin: ["https://app.example.com", "https://admin.example.com"],
+        methods: ["GET", "POST"],
+      }),
+    );
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A public API that is meant to be read by every site, such as open
+      data or a status endpoint with no cookies, is still reported.
+    - >-
+      `app.use(cors())` with no options allows every origin but is not
+      reported, nor is a configuration object built elsewhere and passed
+      in as a variable.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the line of the `cors(…)` call and say why every origin is
+        acceptable.
+      language: typescript
+      code: |
+        app.use(cors({ origin: "*" })); // skylos: ignore[SKY-D247] public open-data API, no cookies
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D247"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D231, SKY-D252]

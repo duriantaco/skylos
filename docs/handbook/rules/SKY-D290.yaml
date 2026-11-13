@@ -1,0 +1,195 @@
+id: SKY-D290
+title: GitHub Actions dangerous trigger
+family: ci-cd
+severity: HIGH
+languages: [GitHub Actions workflows]
+gate:
+  full: counted
+
+what_it_is: >-
+  A few GitHub Actions triggers run a workflow with the base repository's
+  token and secrets even though someone outside the project started it:
+  `pull_request_target` (a pull request from a fork), `workflow_run` (after
+  another workflow, which a fork can start) and `issue_comment` (anyone who
+  can comment). SKY-D290 reports these triggers when the workflow can hand
+  that power to code or text from the pull request.
+
+why_it_matters: >-
+  A `pull_request_target` job that checks out the pull request and runs
+  `npm ci` runs the attacker's `package.json` scripts with your secrets and
+  write token. Anyone with a GitHub account can open that pull request, so
+  one workflow file can leak deploy keys or push a backdoor to a release
+  branch.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/preview.yml
+  expect_line: 3
+  code: |
+    name: Preview
+    on:
+      pull_request_target:
+        types: [opened, synchronize]
+    permissions:
+      contents: read
+      pull-requests: write
+    jobs:
+      preview:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+            with:
+              ref: ${{ github.event.pull_request.head.sha }}
+              persist-credentials: false
+          - run: npm ci && npm run build
+          - run: npx netlify deploy --dir=dist --alias="pr-$PR_NUMBER"
+            env:
+              PR_NUMBER: ${{ github.event.pull_request.number }}
+              NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/preview.yml
+  code: |
+    name: Label
+    on:
+      pull_request_target:
+        types: [opened, synchronize]
+    permissions:
+      contents: read
+      pull-requests: write
+    jobs:
+      label:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+            with:
+              persist-credentials: false
+          - run: ./scripts/label-by-paths.sh "$PR_NUMBER"
+            env:
+              PR_NUMBER: ${{ github.event.pull_request.number }}
+              GH_TOKEN: ${{ github.token }}
+  why: >-
+    The job holds a write token, but it never fetches the pull request's
+    code: `actions/checkout` without a `ref` checks out the base branch, so
+    the script that runs is one a maintainer merged. The permissions are
+    declared and no `run:` expands text from the pull request.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows`. Composite actions
+    (`action.yml`) have no triggers and are not checked.
+  - >-
+    `pull_request_target`: skips a workflow whose only job has one step
+    that uses `actions/labeler`. Otherwise it looks at every job that can
+    run on this event (a job whose `if:` is only
+    `github.event_name == '…'` checks for other events is left out).
+  - >-
+    A job makes the trigger dangerous when it calls a reusable workflow,
+    when neither it nor the workflow declares `permissions`, or when a
+    `run:` expands text the pull request author controls. A job that never
+    fetches the pull request's code may hold any privilege, because it runs
+    the base branch's files.
+  - >-
+    A job that fetches the pull request's code (a checkout whose `ref` or
+    `repository` names `github.event.pull_request.head…`,
+    `merge_commit_sha`, `github.head_ref` or `refs/pull/…`, or a
+    `gh pr checkout` or `git fetch` / `checkout` / `pull` of `pull/…`) is
+    safe only when it has no write scope (and no permission string other
+    than `read-all`), mentions no `secrets.`, `github.token` or
+    `GITHUB_TOKEN` anywhere, has no step with a cache turned on, and every
+    checkout sets `persist-credentials: false`.
+  - >-
+    `workflow_run`: always reported. Skylos does not look at what the
+    workflow does with the run that triggered it.
+  - >-
+    `issue_comment`: reported for a job that an account without write
+    access can start (after the job's `if:` and `needs`), that checks out
+    pull request code and then runs something (a later command, `run:`
+    step or local action), while the job has an undeclared or write-scoped
+    token, secrets, a runner that may be self-hosted, or a cache-mode that
+    writes. Only a verified permission check stops it: a known check action
+    or a script that looks the permission up and exits non-zero.
+  - >-
+    Reports HIGH on the trigger's line under `on:`: one finding for
+    `pull_request_target` or `workflow_run`, one per job for
+    `issue_comment`.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_triggers("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _pull_request_target_is_isolated("
+    note: when a pull_request_target workflow is left alone.
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _audit_comment_trigger("
+    note: the issue_comment check.
+  - path: test/test_github_actions_security.py
+    symbol: "def test_pull_request_target_reading_pr_code_with_privileges_is_still_flagged"
+
+fix:
+  explanation: >-
+    Build pull requests with the `pull_request` trigger. A fork's run then
+    gets a read-only token and no secrets, so its code cannot take them.
+    Deploy previews only for branches in your own repository, as here, or
+    from a separate workflow that never runs the pull request's code.
+  filename: .github/workflows/preview.yml
+  code: |
+    name: Preview
+    on:
+      pull_request:
+        types: [opened, synchronize]
+    permissions:
+      contents: read
+      pull-requests: write
+    jobs:
+      preview:
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+            with:
+              persist-credentials: false
+          - run: npm ci && npm run build
+          - run: npx netlify deploy --dir=dist --alias="pr-$PR_NUMBER"
+            env:
+              PR_NUMBER: ${{ github.event.pull_request.number }}
+              NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Every `workflow_run` workflow is reported, including one that only
+      reads the triggering run's status and never touches its artifacts.
+    - >-
+      A `pull_request_target` job that mentions `GITHUB_TOKEN` or a secret
+      anywhere, even in a step that runs before the pull request's code is
+      fetched, counts as exposed.
+    - >-
+      The flagged example also gets other findings about the same job, such
+      as SKY-D299 for the secret and SKY-D313 for the missing timeout.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D290]` with a reason at the end of the
+        trigger's line, or on its own line directly above it. It must be a
+        real YAML comment.
+      language: yaml
+      code: |
+        on:
+          # skylos: ignore[SKY-D290] reads only the triggering run's status
+          workflow_run:
+            workflows: [CI]
+            types: [completed]
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) hides it too, but
+        the entry is the rule, the absolute file path and the line. It stops
+        matching when lines above the trigger move or the checkout is at
+        another path.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D290"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D294, SKY-D293, SKY-D299, SKY-D313, SKY-D350]

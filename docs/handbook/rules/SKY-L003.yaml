@@ -1,0 +1,105 @@
+id: SKY-L003
+title: Comparison to True, False or None with ==
+family: logic
+severity: LOW
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  LOW.
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  `x == None`, `x == True` and `x == False` ask the object whether it is
+  equal, and an object's `__eq__` can answer anything. `x is None` asks
+  whether it is the one `None` object, which no class can change.
+
+why_it_matters: >-
+  A class with a custom `__eq__`, such as a mock or an ORM field, can make
+  `== None` true or false when it should not. A check like
+  `user.is_admin == True` also silently fails for truthy values such as
+  `1` or `"yes"` coming from a form or a database.
+
+flagged_example:
+  language: python
+  filename: documents/permissions.py
+  expect_line: 2
+  code: |
+    def can_delete(user, document):
+        if user.is_admin == True:
+            return True
+        if document.owner_id is None:
+            return False
+        return document.owner_id == user.id
+
+not_flagged_example:
+  language: python
+  filename: documents/permissions.py
+  code: |
+    def can_delete(user, document, settings):
+        if settings.get("allow_delete") in (True, "1"):
+            return user.is_admin is True or document.owner_id == user.id
+        return False
+  why: >-
+    Only `==` and `!=` with a literal `True`, `False` or `None` are
+    reported. `in (True, "1")` is a membership test, `is True` is the
+    identity check the rule asks for, and `owner_id == user.id` compares two
+    values.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Visits every comparison, including
+    chains such as `a == b == None`.
+  - >-
+    Reports each `==` or `!=` whose right-hand side is the literal `True`,
+    `False` or `None`. The left-hand side is not checked, so `None == x` is
+    not reported.
+  - >-
+    Does not know the type of the value: a NumPy array, a pandas column or a
+    SQLAlchemy column is reported the same way as a plain variable.
+  - >-
+    Reports LOW on the line where the comparison starts, once per matching
+    operator.
+
+source_refs:
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "class DangerousComparisonRule"
+  - path: test/test_logic.py
+    symbol: "class TestDangerousComparisonRule"
+
+fix:
+  explanation: >-
+    Use `is None` for `None`. For booleans, test the value itself, or use
+    `is True` when only the real `True` should pass.
+  filename: documents/permissions.py
+  code: |
+    def can_delete(user, document):
+        if user.is_admin is True:
+            return True
+        if document.owner_id is None:
+            return False
+        return document.owner_id == user.id
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Libraries that build expressions from `==` need it. In SQLAlchemy,
+      `User.deleted_at == None` becomes `deleted_at IS NULL` in SQL, while
+      `is None` is plain Python and always false. In pandas and NumPy,
+      `df["active"] == True` compares each element. Both are reported; keep
+      them and suppress, or use `.is_(None)` and `df["active"].eq(True)`.
+    - >-
+      `None == x`, with the literal on the left, is not reported.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line where the comparison starts.
+      language: python
+      code: |
+        query = query.filter(User.deleted_at == None)  # skylos: ignore[SKY-L003] SQL IS NULL
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L003"]` turns the rule off for the
+        project, which suits code bases built on SQLAlchemy or pandas.
+
+related: [SKY-L033, SKY-L037]

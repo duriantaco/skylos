@@ -1,0 +1,163 @@
+id: SKY-L024
+title: Stale mock target
+family: logic
+severity: HIGH
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  HIGH.
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  `mock.patch("app.payments.PaymentClient")` replaces a name inside a module
+  for the length of a test. SKY-L024 reports a patch target that names
+  something the module no longer defines or imports, usually because the
+  code was renamed and the test was not.
+
+why_it_matters: >-
+  `mock.patch` raises `AttributeError` for a missing target, so the test
+  breaks on its next run. Worse, the quick way to silence that error,
+  `create=True`, makes the test patch a name nothing reads, and it then
+  calls the real payment client.
+
+flagged_example:
+  language: python
+  setup: git
+  expect_line: 7
+  expect_file: tests/test_payments.py
+  files:
+    - filename: tests/test_payments.py
+      code: |
+        from unittest import mock
+
+        from app.payments import charge_card
+
+
+        def test_charge_card_returns_charge_id():
+            with mock.patch("app.payments.PaymentClient") as client_cls:
+                client_cls.return_value.create_charge.return_value = "ch_123"
+                assert charge_card("cus_1", 500) == "ch_123"
+    - filename: app/payments.py
+      code: |
+        """Card payments through the provider SDK."""
+
+        from app.gateway import GatewayClient
+
+
+        def charge_card(customer_id: str, amount_cents: int) -> str:
+            client = GatewayClient()
+            return client.create_charge(customer_id, amount_cents)
+    - filename: app/gateway.py
+      code: |
+        """Thin wrapper around the payment provider's HTTP API."""
+
+
+        class GatewayClient:
+            def create_charge(self, customer_id: str, amount_cents: int) -> str:
+                raise NotImplementedError("network call")
+
+not_flagged_example:
+  language: python
+  setup: git
+  files:
+    - filename: tests/test_payments.py
+      code: |
+        from unittest import mock
+
+        from app.payments import charge_card
+
+
+        def test_charge_card_returns_charge_id():
+            with mock.patch("app.payments.GatewayClient") as client_cls:
+                client_cls.return_value.create_charge.return_value = "ch_123"
+                assert charge_card("cus_1", 500) == "ch_123"
+    - filename: app/payments.py
+      code: |
+        """Card payments through the provider SDK."""
+
+        from app.gateway import GatewayClient
+
+
+        def charge_card(customer_id: str, amount_cents: int) -> str:
+            client = GatewayClient()
+            return client.create_charge(customer_id, amount_cents)
+    - filename: app/gateway.py
+      code: |
+        """Thin wrapper around the payment provider's HTTP API."""
+
+
+        class GatewayClient:
+            def create_charge(self, customer_id: str, amount_cents: int) -> str:
+                raise NotImplementedError("network call")
+  why: >-
+    `GatewayClient` is defined in `app/gateway.py`, but `app.payments`
+    imports it, which creates a binding of that name in `app.payments`.
+    That is the name `charge_card` looks up, so this is the right place to
+    patch, and Skylos counts the import as a definition.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python test files whose name starts with
+    `test_` or `conftest`. Files named `*_test.py` are not checked.
+  - >-
+    Looks at calls to `patch(...)` or `<something>.patch(...)` whose first
+    argument is a string literal. Skips `patch.object(...)` and any call
+    with `create=True`.
+  - >-
+    Splits the target at its last dot into a module and a name, and finds
+    the project root: the nearest folder above the test with a
+    `pyproject.toml`, `setup.py` or `.git`. Looks for the module as
+    `a/b.py` or `a/b/__init__.py` under that root, with exact letter case.
+    A module it cannot find there (an installed package, a `src/` layout,
+    a class attribute such as `app.payments.Client.send`) is not checked.
+  - >-
+    Collects the names the module binds: functions, classes, imports and
+    assignments, also inside `if`, `try`, `for` and `with` blocks, but not
+    inside function or class bodies. Stays quiet when the module has a
+    module-level `__getattr__`, a `from … import *`, `exec()` or writes
+    through `globals()`, since any name could then exist.
+  - >-
+    Reports HIGH on the `patch` call when the name is not among those
+    bindings.
+
+source_refs:
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "class StaleMockRule"
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "def _module_patch_bindings(tree):"
+    note: which bindings count, and when the module is too dynamic to judge.
+  - path: test/test_vibe_rules.py
+    symbol: "class TestStaleMock"
+
+fix:
+  explanation: >-
+    Patch the name the code under test really looks up, here the new class
+    name, in the module that uses it.
+  code: |
+    with mock.patch("app.payments.GatewayClient") as client_cls:
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A name that only exists at run time, for example one a plugin loader
+      adds with `setattr(module, ...)` from another file, is reported.
+    - >-
+      Names bound only under `if TYPE_CHECKING:` count as defined, so a
+      patch of such a name is not reported although it fails at run time.
+    - >-
+      Targets in installed packages and `src/`-layout projects are never
+      checked.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line of the `patch(...)` call.
+      language: python
+      code: |
+        with mock.patch("app.plugins.Exporter"):  # skylos: ignore[SKY-L024] added by loader
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L024"]` turns the rule off for the
+        project.
+
+related: [SKY-L012, SKY-A101]

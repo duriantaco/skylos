@@ -1,0 +1,145 @@
+id: SKY-D242
+title: MCP resource template that exposes any file path
+family: security
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+cwe: [CWE-22]
+
+what_it_is: >-
+  An MCP resource is data the server offers to the AI client under a URI.
+  A resource template such as `docs://{path}` lets the client fill in part
+  of that URI. SKY-D242 reports a Python resource template whose
+  placeholder looks like a file path chosen by the caller.
+
+why_it_matters: >-
+  The model fills in the placeholder, and a prompt-injected model will
+  happily ask for `../../home/app/.env`. If the handler joins that value
+  onto a folder, the server returns files outside the folder it was meant
+  to share.
+
+flagged_example:
+  language: python
+  filename: server/docs.py
+  expect_line: 9
+  code: |
+    from pathlib import Path
+
+    from mcp.server.fastmcp import FastMCP
+
+    DOCS = Path("/srv/docs")
+    mcp = FastMCP("docs")
+
+
+    @mcp.resource("docs://{path}")
+    def read_doc(path: str) -> str:
+        """Return one documentation page."""
+        return (DOCS / path).read_text()
+
+not_flagged_example:
+  language: python
+  filename: server/docs.py
+  code: |
+    from mcp.server.fastmcp import FastMCP
+
+    from docs_app import store
+
+    mcp = FastMCP("docs")
+
+
+    @mcp.resource("notes://{note_id}")
+    def read_note(note_id: str) -> str:
+        """Return one saved note by its ID."""
+        return store.get_note(note_id).body
+  why: >-
+    The placeholder is an ID that the handler looks up in a store; no file
+    path is built from it. Skylos reads only the URI template: it reports
+    `file://` templates and placeholders named like a path, and `note_id`
+    is neither.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Python files that import `mcp`, `fastmcp` or a
+    module under `mcp.`, on functions decorated with a call named
+    `resource`, such as `@mcp.resource("...")`.
+  - >-
+    Takes the URI from the decorator's string-literal arguments and its
+    `uri=` keyword. A URI held in a variable or built with an f-string is
+    not read.
+  - >-
+    Reports HIGH for a `file://` URI with any placeholder after the scheme,
+    such as `file:///{path}` or `file:///srv/{name}`.
+  - >-
+    Also reports HIGH when the template has a placeholder named `path`,
+    `file`, `filename`, `dir`, `directory` or `filepath` (any case) and the
+    first placeholder comes straight after the scheme or after one fixed
+    segment: `docs://{path}`, `docs://pages/{file}` and
+    `repo://{owner}/{path}` are reported; `docs://v1/pages/{path}` is not.
+  - >-
+    The handler's body is not read, so a check inside it neither adds nor
+    removes a finding. The finding sits on the decorator line.
+
+source_refs:
+  - path: skylos/rules/danger/danger_mcp/mcp_flow.py
+    symbol: "def _check_resource_uri"
+  - path: skylos/rules/danger/danger_mcp/mcp_flow.py
+    symbol: "if dec_name == \"resource\" and isinstance(dec, ast.Call):"
+  - path: test/test_mcp_rules.py
+    symbol: "def test_constrained_resource_no_flag"
+
+fix:
+  explanation: >-
+    Let the caller choose a name, not a path, and resolve it against a fixed
+    list of what you mean to share. If you must accept a path, resolve it
+    and refuse anything outside the folder; Skylos still reports the
+    template then, so mark the reviewed line.
+  filename: server/docs.py
+  code: |
+    from pathlib import Path
+
+    from mcp.server.fastmcp import FastMCP
+
+    DOCS = Path("/srv/docs")
+    PAGES = {page.stem: page for page in DOCS.glob("*.md")}
+    mcp = FastMCP("docs")
+
+
+    @mcp.resource("docs://pages/{slug}")
+    def read_doc(slug: str) -> str:
+        """Return one documentation page by its name."""
+        page = PAGES.get(slug)
+        if page is None:
+            raise ValueError(f"unknown page: {slug}")
+        return page.read_text()
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A handler that resolves the path and checks that it stays inside the
+      shared folder is still reported, because only the template is read.
+    - >-
+      Path-like placeholders are missed when they have another name
+      (`{doc}`), sit deeper in the URI (`docs://v1/pages/{path}`) or use
+      FastMCP's multi-segment wildcard (`docs://{path*}`), which accepts
+      slashes and is the riskiest form.
+    - >-
+      Resource handlers in TypeScript MCP servers are not checked.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the decorator line once the handler confines the path, and say
+        how.
+      language: python
+      code: |
+        @mcp.resource("docs://{path}")  # skylos: ignore[SKY-D242] resolved under DOCS
+    - check: baseline
+      text: >-
+        `skylos baseline .`, then `--baseline`, accepts existing findings by
+        file and line.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D242"]` turns the check off for the
+        project.
+
+related: [SKY-D215, SKY-D240, SKY-D241]

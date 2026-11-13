@@ -1,0 +1,183 @@
+id: SKY-L026
+title: Unfinished code or placeholder default
+family: logic
+severity: MEDIUM
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  MEDIUM.
+languages: [Python, TypeScript, JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  A function whose whole body is `pass`, `...`, `raise NotImplementedError`
+  or an empty `return` was never written. SKY-L026 reports such a body only
+  when something proves it matters: a "TODO: implement" note, a return type
+  the body cannot meet, or a security check it lets through. It also
+  reports `...` used as a parameter default.
+
+why_it_matters: >-
+  A stub called from a permission check returns `None`, which reads as
+  "not blocked", so every request passes. Code generators leave such stubs
+  behind, and the program still imports and runs without an error.
+
+flagged_example:
+  language: python
+  filename: app/refunds.py
+  expect_line: 7
+  code: |
+    """Refund rules for the support console."""
+
+    from fastapi import HTTPException
+
+
+    def account_is_frozen(customer_id: str) -> bool:
+        pass
+
+
+    def issue_refund(customer_id: str, amount_cents: int) -> dict:
+        if account_is_frozen(customer_id):
+            raise HTTPException(403, "Account is frozen")
+        return {"customer": customer_id, "refunded": amount_cents}
+
+not_flagged_example:
+  language: python
+  filename: app/hooks.py
+  code: |
+    """Extension points for refund processing."""
+
+
+    class RefundNotifier:
+        def notify(self, customer_id: str, amount_cents: int) -> None:
+            """Hook for subclasses; the default sends nothing."""
+            pass
+
+
+    class PaymentProvider:
+        def refund(self, charge_id: str, amount_cents: int) -> str:
+            raise NotImplementedError
+  why: >-
+    An empty hook that is declared to return `None`, and a bare
+    `raise NotImplementedError` in a base class, are normal Python. Neither
+    has a "TODO: implement" note, a return type the body breaks, or a
+    security check that depends on it, so Skylos leaves them alone.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: web/webhooks.ts
+      expect_line: 3
+      code: |
+        import { createHmac } from "node:crypto";
+
+        export function verifyWebhookSignature(payload: string, signature: string): boolean {
+          throw new Error("Not implemented");
+        }
+    not_flagged:
+      language: typescript
+      filename: web/currency.ts
+      code: |
+        export function parseCurrency(code: string): string {
+          throw new Error(`Unsupported currency: ${code}`);
+        }
+      why: >-
+        The function only throws, but its message describes a real error,
+        not missing code. In TypeScript and JavaScript, Skylos reports a
+        throw-only function only when the message says "not implemented",
+        "unimplemented", "implement me" or starts with "TODO".
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`. In Python, skips `.pyi` stubs, files whose name
+    starts with `test_` or `conftest`, functions under
+    `if TYPE_CHECKING:`, and Protocol methods and functions decorated with
+    `abc.abstractmethod` or `typing.overload` (resolved through the
+    imports) unless a security check depends on them.
+  - >-
+    Looks at functions whose body, after an optional docstring, is a single
+    `pass`, `...`, `raise NotImplementedError`, `return`, `return None`,
+    `return ""` or an empty `[]`, `{}`, `()`, `set()`, `list()`,
+    `dict()` or `tuple()`, or only a docstring.
+  - >-
+    Reports such a body only with evidence. A security check: the function
+    is a FastAPI `Security(...)` dependency, or its result decides an `if`
+    that raises `PermissionError` or an `HTTPException` with 401 or 403,
+    and the placeholder value skips that branch. A return type: the
+    annotation is a builtin such as `bool`, `int`, `str` or `list` that the
+    placeholder does not match, or `NoReturn`/`Never`. An unfinished note:
+    a `TODO: implement` or `FIXME: finish the …` comment inside the
+    function, or "not implemented yet" in its docstring or error message.
+  - >-
+    Separately reports a parameter whose default is `...`, unless the
+    annotation accepts Ellipsis or the function checks for it.
+  - >-
+    In TypeScript and JavaScript, skips test, story, mock and fixture
+    files, and reports a function whose only statement throws an error
+    whose fixed message says "not implemented", "unimplemented",
+    "implement me" or is a TODO note.
+  - >-
+    Every finding is MEDIUM. Python findings point at the placeholder
+    statement or the `...` default; TypeScript findings at the function.
+
+source_refs:
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "class UnfinishedGenerationRule"
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "def _empty_callable_runtime_contracts("
+    note: placeholders that skip a permission-denial branch.
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "def _ellipsis_default_findings("
+  - path: skylos/visitors/languages/typescript/quality_signals.py
+    symbol: "def _unfinished_stub_findings("
+    note: the TypeScript and JavaScript check.
+
+fix:
+  explanation: >-
+    Write the check, or delete the stub and its caller. A stub that must stay
+    should fail closed, for example `raise NotImplementedError`, so callers
+    cannot treat it as "allowed".
+  filename: app/refunds.py
+  code: |
+    """Refund rules for the support console."""
+
+    from fastapi import HTTPException
+
+    from app.risk import risk_client
+
+
+    def account_is_frozen(customer_id: str) -> bool:
+        return risk_client.is_frozen(customer_id)
+
+
+    def issue_refund(customer_id: str, amount_cents: int) -> dict:
+        if account_is_frozen(customer_id):
+            raise HTTPException(403, "Account is frozen")
+        return {"customer": customer_id, "refunded": amount_cents}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A deliberate no-op annotated with a builtin type, such as
+      `def is_enabled(self) -> bool: pass` in a base class, is reported for
+      its return type.
+    - >-
+      When a decorator or another dependency supplies the real behaviour,
+      the finding carries `verification_status: unverified`; Skylos cannot
+      see that behaviour.
+    - >-
+      An empty stub with no TODO, no return type and no security caller is
+      not reported, even if nothing implements it.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the reported line: the placeholder statement, or
+        the line of the `...` default.
+      language: python
+      code: |
+        pass  # skylos: ignore[SKY-L026] filled in by the plugin at import time
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L026"]` turns the rule off for the
+        project.
+
+related: [SKY-L030, SKY-L032, SKY-A115]

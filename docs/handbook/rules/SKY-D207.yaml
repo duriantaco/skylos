@@ -1,0 +1,229 @@
+id: SKY-D207
+title: Weak MD5 hash
+family: security
+severity: MEDIUM
+severity_note: >-
+  Every MD5 finding is MEDIUM. In Java, `Cipher.getInstance("DES")` is also
+  reported under this rule, as HIGH ("Weak cipher DES"). In Python and
+  TypeScript/JavaScript, an MD5 hash over data whose names do not look like a
+  credential, identity or certificate stays MEDIUM but is marked low-risk and
+  left out of the terminal list.
+languages: [Python, TypeScript/JavaScript, Go, Java]
+gate:
+  full: counted
+  note: >-
+    Low-risk MD5 findings that the terminal list leaves out are still in the
+    JSON output and still count toward `max_security`.
+cwe: [CWE-328]
+
+what_it_is: >-
+  MD5 is an old hash function. Collisions (two inputs with the same hash)
+  can be made on a laptop, and its speed makes guessing the input cheap.
+  SKY-D207 reports code that computes an MD5 hash.
+
+why_it_matters: >-
+  Password or token hashes stored as MD5 fall quickly to a cracking rig if
+  the table leaks, and an MD5 signature or fingerprint can be matched by a
+  forged file. The fix is usually a one-line change of algorithm.
+
+flagged_example:
+  language: python
+  filename: app/accounts.py
+  expect_line: 5
+  code: |
+    import hashlib
+
+
+    def store_password(db, username: str, password: str) -> None:
+        digest = hashlib.md5(password.encode()).hexdigest()
+        db.execute(
+            "UPDATE users SET password_hash = ? WHERE username = ?",
+            (digest, username),
+        )
+
+not_flagged_example:
+  language: python
+  filename: app/http_cache.py
+  code: |
+    import hashlib
+
+
+    def etag_for(body: bytes) -> str:
+        return hashlib.md5(body, usedforsecurity=False).hexdigest()
+  why: >-
+    `usedforsecurity=False` states that the hash is a cache key, not a
+    security check, and FIPS builds of Python enforce that. Skylos skips any
+    `hashlib.md5()` call that passes the literal `False` there.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/auth/reset-tokens.ts
+      expect_line: 4
+      code: |
+        import crypto from "node:crypto";
+
+        export function storeResetToken(db: Db, userId: string, resetToken: string) {
+          const tokenHash = crypto.createHash("md5").update(resetToken).digest("hex");
+          return db.resetTokens.insert({ userId, tokenHash });
+        }
+    not_flagged:
+      language: typescript
+      filename: src/auth/reset-tokens.ts
+      code: |
+        import crypto from "node:crypto";
+
+        export function storeResetToken(db: Db, userId: string, resetToken: string) {
+          const tokenHash = crypto.createHash("sha256").update(resetToken).digest("hex");
+          return db.resetTokens.insert({ userId, tokenHash });
+        }
+      why: >-
+        Only the literal algorithm names `"md5"` and `"sha1"` are reported.
+        SHA-256 over a random reset token is a sound way to store it.
+  - flagged:
+      language: java
+      filename: src/main/java/com/example/TokenHashes.java
+      expect_line: 7
+      code: |
+        package com.example;
+
+        import java.security.MessageDigest;
+
+        public class TokenHashes {
+            public static byte[] hash(String token) throws Exception {
+                MessageDigest md = MessageDigest.getInstance("MD5");
+                return md.digest(token.getBytes("UTF-8"));
+            }
+        }
+    not_flagged:
+      language: java
+      filename: src/main/java/com/example/TokenHashes.java
+      code: |
+        package com.example;
+
+        import java.security.MessageDigest;
+
+        public class TokenHashes {
+            public static byte[] hash(String token) throws Exception {
+                MessageDigest md = MessageDigest.getInstance("SHA-256");
+                return md.digest(token.getBytes("UTF-8"));
+            }
+        }
+      why: >-
+        The algorithm string is `SHA-256`. Java is checked by the literal name
+        passed to `getInstance()`, or by the constant a variable holds when
+        it is passed to `MessageDigest.getInstance()`.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. In Python it finds calls to `hashlib.md5()`,
+    including `from hashlib import md5` and other import aliases, and
+    `hashlib.new("md5", …)` with a literal algorithm name.
+  - >-
+    Skips a Python call that passes `usedforsecurity=False` as a literal.
+    Test files are not skipped.
+  - >-
+    Looks at what is hashed: the data argument, values assigned to those
+    names earlier in the same function, and `.update()` arguments on the hash
+    object. When none of these names looks like a credential, identity or
+    certificate (words such as `password`, `token`, `secret`, `api_key`,
+    `user_id`, `session_id`, `cert`), the finding is marked low-risk: it is
+    left out of the terminal list unless you pass `--all-advice`, but stays in
+    JSON and counts for the gate. Names containing `hash`, `digest`, `url`,
+    `path` or `file` never count as sensitive. When the data cannot be read
+    from the call, the finding stays listed.
+  - >-
+    In TypeScript and JavaScript it reports `<object>.createHash("md5")`
+    with a literal string. The same low-risk mark applies when the hash is
+    chained into `.update(x)` and the names in `x` (one step back through a
+    `const`) are not sensitive.
+  - >-
+    In Go every call to `md5.New` or `md5.Sum` from `crypto/md5` is reported
+    (by the Go engine as SKY-G207, shown as SKY-D207), with no low-risk mark.
+  - >-
+    In Java it reports any `getInstance("MD5")` call with that literal
+    string, and `MessageDigest.getInstance(name)` when `name` is a constant
+    holding `MD5`. A literal `"DES"` passed to `getInstance()` is reported
+    here as well, as HIGH.
+
+source_refs:
+  - path: skylos/rules/danger/calls.py
+    symbol: '"hashlib.md5": ('
+    note: the Python rule entry, with the `security_optout` option.
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _declares_non_security_use"
+    note: the `usedforsecurity=False` skip.
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _call_low_risk_context"
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _hashlib_new_weak_rule"
+  - path: skylos/security/sensitive_data.py
+    symbol: "def sensitive_category"
+    note: which names count as sensitive.
+  - path: skylos/reporting/listing.py
+    symbol: "LOW_RISK_REASONS = {"
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "# --- Weak crypto (SKY-D207 / SKY-D208) ---"
+  - path: skylos/engines/go/internal/analyzer/analyzer.go
+    symbol: "var cryptoWeakFuncs"
+  - path: skylos/visitors/languages/java/danger.py
+    symbol: "Weak cipher DES. Use AES-256 instead."
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: '"java.security.MessageDigest"'
+
+fix:
+  explanation: >-
+    For passwords use a slow password hash with a random salt: `scrypt`
+    from the standard library, or `argon2`/`bcrypt` from a package. For
+    tokens, signatures and fingerprints use SHA-256 or stronger. Where MD5 is
+    only a checksum or cache key, keep it and pass `usedforsecurity=False`.
+  filename: app/accounts.py
+  code: |
+    import hashlib
+    import os
+
+
+    def store_password(db, username: str, password: str) -> None:
+        salt = os.urandom(16)
+        digest = hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1)
+        db.execute(
+            "UPDATE users SET password_hash = ?, password_salt = ? WHERE username = ?",
+            (digest.hex(), salt.hex(), username),
+        )
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      MD5 used as a checksum, ETag or cache key is reported. When the hashed
+      names are not sensitive the finding is only hidden from the terminal
+      list; it still counts for the gate. Add `usedforsecurity=False` in
+      Python to remove it.
+    - >-
+      Sensitivity is judged by names only: MD5 over a variable called `data`
+      that holds a password is marked low-risk, and MD5 over a `user_id`
+      used to pick an A/B bucket stays listed.
+    - >-
+      Go reports every `md5.New`/`md5.Sum`, including the `Content-MD5`
+      checksums some storage APIs require.
+    - >-
+      Missed: in TypeScript, `createHash("md5")` imported by name from
+      `node:crypto` (not called on an object) and an algorithm held in a
+      variable.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line. For Python checksums, `usedforsecurity=False`
+        is the better fix because it also documents the intent.
+      language: python
+      code: |
+        digest = hashlib.md5(blob).hexdigest()  # skylos: ignore[SKY-D207] S3 Content-MD5
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D207"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D208, SKY-D250, SKY-D253]

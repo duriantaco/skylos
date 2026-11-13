@@ -1,0 +1,116 @@
+id: SKY-D307
+title: Workflow or action without a name
+family: ci-cd
+severity: LOW
+languages: [GitHub Actions workflows, composite actions]
+gate:
+  full: counted
+
+what_it_is: >-
+  A workflow file or an `action.yml` without a top-level `name:`. GitHub
+  then shows a workflow by its file path, in the Actions tab and in the
+  checks of a pull request. This is a tidiness finding, not a security
+  hole.
+
+why_it_matters: >-
+  Reviewers and auditors find runs and checks by name. Unnamed workflows
+  make it harder to see at a glance which pipeline ran, failed or was
+  skipped, and GitHub's metadata syntax lists `name` as required for an
+  action.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/test.yml
+  expect_line: 1
+  code: |
+    on:
+      pull_request:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - run: make test
+
+not_flagged_example:
+  language: yaml
+  filename: action.yml
+  code: |
+    name: Set up the Acme CLI
+    description: Installs a pinned version of the Acme CLI.
+    runs:
+      using: composite
+      steps:
+        - run: ./install.sh
+          shell: bash
+  why: >-
+    The action has a top-level `name:`. The rule does not look at job or
+    step names, which this composite action does not have.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows` and `action.yml` /
+    `action.yaml` files anywhere in the scan.
+  - >-
+    Reports the file when its top level has no `name` key. Any value counts,
+    even an empty one. Job and step names are not checked.
+  - >-
+    One LOW finding on line 1.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_anonymous_definition("
+  - path: test/test_github_actions_security.py
+    symbol: "def test_github_actions_scanner_detects_composite_action_risks("
+
+fix:
+  explanation: >-
+    Add a short `name:` that says what the workflow does.
+  filename: .github/workflows/test.yml
+  code: |
+    name: Tests
+    on:
+      pull_request:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - run: make test
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Every unnamed workflow is reported, including small ones whose file
+      name already says enough.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D307]` on line 1 of the file, the line the
+        finding is on.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D307] shown by file name on purpose
+        on: push
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D307"]` turns the rule off for the whole
+        project.
+    - check: baseline
+      text: >-
+        A baseline works, but it records the absolute file path and the line,
+        so it stops matching when the checkout moves.
+
+related: [SKY-D291, SKY-D313]
