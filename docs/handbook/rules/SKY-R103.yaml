@@ -1,0 +1,152 @@
+id: SKY-R103
+title: Skylos gate policy
+family: quality
+severity: LOW
+languages: [Python, TypeScript, JavaScript, Java, Go]
+gate:
+  full: counted
+  diff: counted
+  note: >-
+    Advice that is measured on every `--quality` scan but not listed by
+    default. It is listed, and counted toward `max_quality`, with
+    `--all-advice` or when the rule is named in `[tool.skylos.gate] rules`.
+    A diff scan checks it only when the change touches a policy file such
+    as `pyproject.toml`.
+
+what_it_is: >-
+  The Skylos quality gate (`skylos . --gate`) fails a build when findings
+  exceed the limits in `[tool.skylos.gate]`. SKY-R103 reports a project
+  whose `pyproject.toml` has no `[tool.skylos.gate]` table, whatever
+  languages it contains.
+
+why_it_matters: >-
+  Without written limits, the gate falls back to its defaults, and what
+  blocks a merge depends on the Skylos version rather than on a decision
+  the team made and can review in the repository.
+
+flagged_example:
+  language: toml
+  files:
+    - filename: pyproject.toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.0.0"
+
+        [tool.skylos]
+        quality_enabled = true
+        exclude = ["migrations"]
+    - filename: app/pricing.py
+      language: python
+      code: |
+        """Price helpers."""
+
+
+        def total(prices):
+            return sum(prices)
+  expect_file: pyproject.toml
+  expect_line: 5
+
+not_flagged_example:
+  language: toml
+  files:
+    - filename: pyproject.toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.0.0"
+
+        [tool.skylos]
+        quality_enabled = true
+        exclude = ["migrations"]
+
+        [tool.skylos.gate]
+        max_critical = 0
+        max_security = 0
+        max_quality = 10
+    - filename: app/pricing.py
+      language: python
+      code: |
+        """Price helpers."""
+
+
+        def total(prices):
+            return sum(prices)
+  why: >-
+    The same Skylos settings, plus a `[tool.skylos.gate]` table that states
+    the limits the team agreed on.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, once per scanned project, for every language. A
+    diff scan runs it only when a policy file is among the changed files.
+  - >-
+    Reads `pyproject.toml` at the project root and looks for a
+    `[tool.skylos.gate]` table. A gate synced from Skylos Cloud does not
+    count.
+  - >-
+    When the table is missing, reports LOW on the `[tool.skylos]` line, on
+    line 1 when there is no such line, or on the project folder when
+    there is no `pyproject.toml`.
+
+source_refs:
+  - path: skylos/rules/quality/policy.py
+    symbol: "def analyze_repo_policy("
+  - path: skylos/rules/quality/policy.py
+    symbol: "def _line_for_section("
+
+fix:
+  explanation: >-
+    Add a `[tool.skylos.gate]` table with the limits you want; `skylos
+    cicd init` can write one for you.
+  filename: pyproject.toml
+  code: |
+    [project]
+    name = "shop"
+    version = "1.0.0"
+
+    [tool.skylos]
+    quality_enabled = true
+    exclude = ["migrations"]
+
+    [tool.skylos.gate]
+    max_critical = 0
+    max_security = 0
+    max_quality = 10
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A project that does not use the Skylos gate, or keeps its gate in
+      Skylos Cloud, is still reported.
+    - >-
+      A project without `pyproject.toml`, such as a pure Go or JavaScript
+      repository, is always reported, on the project folder.
+  suppress:
+    - check:
+        kind: example
+        example:
+          language: toml
+          files:
+            - filename: pyproject.toml
+              code: |
+                [project]
+                name = "shop"
+                version = "1.0.0"
+
+                [tool.skylos]
+                quality_enabled = true
+                ignore = ["SKY-R103"]
+            - filename: app/pricing.py
+              language: python
+              code: |
+                """Price helpers."""
+
+
+                def total(prices):
+                    return sum(prices)
+      text: >-
+        `ignore = ["SKY-R103"]` under `[tool.skylos]` turns the check off. An
+        inline marker in `pyproject.toml` is not read.
+
+related: [SKY-R104, SKY-R101]

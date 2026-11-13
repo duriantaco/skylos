@@ -1,0 +1,187 @@
+id: SKY-Q702
+title: Low cohesion
+family: quality
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. MEDIUM for 3 or 4 unconnected method
+  groups, HIGH from 5.
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    A measurement, not listed by default. It is listed, and counted toward
+    `max_quality`, with `--all-advice` or when the rule is named in
+    `[tool.skylos.gate] rules`.
+
+what_it_is: >-
+  A cohesive class is one whose methods work on the same data. SKY-Q702
+  splits a Python class's methods into groups that share instance
+  attributes or call each other (a measure called LCOM4) and reports a
+  class with more than 2 groups that have nothing in common.
+
+why_it_matters: >-
+  Unconnected groups are separate jobs sharing one name. Every user of the
+  class depends on all of them, a change to the mail settings means
+  retesting database code, and the class keeps growing because it is the
+  obvious place for "one more helper".
+
+flagged_example:
+  language: python
+  filename: app/toolkit.py
+  expect_line: 9
+  code: |
+    """Shop helpers that grew into one class."""
+
+    import smtplib
+    import sqlite3
+
+    FIND_ORDER = "SELECT * FROM orders WHERE id = ?"
+
+
+    class ShopToolkit:
+        def open_database(self, path):
+            self.connection = sqlite3.connect(path)
+
+        def find_order(self, order_id):
+            return self.connection.execute(FIND_ORDER, (order_id,)).fetchone()
+
+        def configure_mail(self, host, sender):
+            self.smtp_host = host
+            self.sender = sender
+
+        def send_receipt(self, to, text):
+            with smtplib.SMTP(self.smtp_host) as smtp:
+                smtp.sendmail(self.sender, [to], text)
+
+        def reset_counters(self):
+            self.page_views = 0
+
+        def count_page_view(self):
+            self.page_views += 1
+            return self.page_views
+
+not_flagged_example:
+  language: python
+  filename: app/toolkit.py
+  code: |
+    """Shop helpers that grew into one class."""
+
+    import smtplib
+    import sqlite3
+
+    FIND_ORDER = "SELECT * FROM orders WHERE id = ?"
+
+
+    class ShopToolkit:
+        def open_database(self, path):
+            self.connection = sqlite3.connect(path)
+
+        def find_order(self, order_id):
+            return self.connection.execute(FIND_ORDER, (order_id,)).fetchone()
+
+        def configure_mail(self, host, sender):
+            self.smtp_host = host
+            self.sender = sender
+
+        def send_receipt(self, to, text):
+            with smtplib.SMTP(self.smtp_host) as smtp:
+                smtp.sendmail(self.sender, [to], text)
+  why: >-
+    Two unconnected groups remain, database and mail. That is the limit;
+    Skylos reports a class only from three groups.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, on Python classes outside test code, examples,
+    benchmarks, a top-level `docs` folder and the root `setup.py`.
+    `Protocol` classes and classes whose methods are all abstract are
+    skipped.
+  - >-
+    Builds a graph of the class's methods: two methods are connected when
+    they use the same instance attribute or one calls the other through
+    `self`. `__init__` counts like any method, so one that sets every
+    attribute joins all the groups. Methods that use no instance state are
+    left out.
+  - >-
+    Reports when the number of separate groups is above 2 and at least two
+    of them use attributes the class sets itself. Dataclasses, attrs
+    classes, pydantic models, `TypedDict` and `NamedTuple` need more than 6
+    groups.
+  - >-
+    Reports on the `class` line, MEDIUM for 3 or 4 groups and HIGH above 4,
+    and lists up to four groups with their methods. The limits are fixed.
+
+source_refs:
+  - path: skylos/rules/quality/cohesion.py
+    symbol: "class LCOMRule"
+  - path: skylos/rules/quality/cohesion.py
+    symbol: "def analyze_cohesion("
+  - path: skylos/rules/quality/cohesion.py
+    symbol: "def __init__(self, low_threshold=2, high_threshold=4)"
+  - path: skylos/reporting/advice_evidence.py
+    symbol: "ARCHITECTURE_METRIC_RULES"
+    note: not listed by default.
+
+fix:
+  explanation: >-
+    Give each group its own class, named after its job, and let callers use
+    only the one they need.
+  filename: app/toolkit.py
+  code: |
+    """Order lookups, receipts and page statistics."""
+
+    import smtplib
+    import sqlite3
+
+    FIND_ORDER = "SELECT * FROM orders WHERE id = ?"
+
+
+    class OrderStore:
+        def __init__(self, path):
+            self.connection = sqlite3.connect(path)
+
+        def find_order(self, order_id):
+            return self.connection.execute(FIND_ORDER, (order_id,)).fetchone()
+
+
+    class ReceiptMailer:
+        def __init__(self, host, sender):
+            self.smtp_host = host
+            self.sender = sender
+
+        def send_receipt(self, to, text):
+            with smtplib.SMTP(self.smtp_host) as smtp:
+                smtp.sendmail(self.sender, [to], text)
+
+
+    class PageCounter:
+        def __init__(self):
+            self.page_views = 0
+
+        def count_page_view(self):
+            self.page_views += 1
+            return self.page_views
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A constructor that assigns every attribute connects all methods, so a
+      class with unrelated jobs set up in `__init__` is not reported.
+    - >-
+      A facade that deliberately groups unrelated operations behind one
+      object, such as an SDK client, is reported.
+  suppress:
+    - check: inline
+      text: >-
+        On the `class` line (the reported line):
+      language: python
+      code: |
+        class ShopToolkit:  # skylos: ignore[SKY-Q702] split tracked in SHOP-142
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-Q702"]` turns the rule off for the
+        project. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-Q501, SKY-Q701]

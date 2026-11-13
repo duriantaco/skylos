@@ -1,0 +1,151 @@
+id: SKY-Q806
+title: Opaque identifier
+family: quality
+severity: LOW
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    A measurement, not listed by default. It is listed, and counted toward
+    `max_quality`, with `--all-advice` or when the rule is named in
+    `[tool.skylos.gate] rules`.
+
+what_it_is: >-
+  An opaque identifier is a placeholder name such as `tmp`, `obj`, `val` or
+  `data` given to a value whose meaning is plain from where it comes from.
+  SKY-Q806 reports such a local variable when the right-hand side names
+  the value through a dictionary key and the variable lives long enough
+  for the name to matter.
+
+why_it_matters: >-
+  Eight lines after `tmp = event[...]["customer_email"]`, a reader sees
+  `mailer.send(tmp, ...)` and has to scroll back to learn that `tmp` is an
+  e-mail address. Names that say what a value is make review and later
+  changes faster and safer.
+
+flagged_example:
+  language: python
+  filename: app/webhooks.py
+  expect_line: 9
+  code: |
+    """Stripe webhook handlers."""
+
+    import logging
+
+    log = logging.getLogger(__name__)
+
+
+    def handle_checkout_completed(event, db, mailer):
+        tmp = event["data"]["object"]["customer_email"]
+        order = db.find_order(event["data"]["object"]["client_reference_id"])
+        if not tmp:
+            return False
+        order.contact_email = tmp
+        db.save(order)
+        mailer.send(tmp, "Thanks for your order")
+        log.info("receipt sent to %s", tmp)
+        return True
+
+not_flagged_example:
+  language: python
+  filename: app/webhooks.py
+  code: |
+    """Stripe webhook handlers."""
+
+
+    def handle_checkout_completed(event, db):
+        tmp = event["data"]["object"]["customer_email"]
+        db.update_contact(event["data"]["object"]["client_reference_id"], tmp)
+        return True
+  why: >-
+    The same placeholder is used once, on the very next line, where its
+    origin is still in view. Skylos reports a placeholder name only when
+    its last use is at least five lines after the assignment.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, on the local variables of Python functions.
+    Files in `test`, `tests` or `corpus` folders and `test_*.py` or
+    `*_test.py` files are skipped.
+  - >-
+    The name must be a placeholder: `tmp`, `temp`, `var`, `val`, `obj`,
+    `thing`, `stuff`, `out`, `ret` or a single letter (strong), or `data`,
+    `result`, `results`, `value`, `item`, `items` or `info` (weak). Names
+    starting with `_`, upper-case names and common short names such as
+    `id` and `pk` are not placeholders.
+  - >-
+    The right-hand side must name the value through a key:
+    `x["customer_email"]` or `x.get("customer_email")`. Skylos builds a
+    suggested name from those words and drops the finding when the
+    suggestion is no clearer than the current name or the right side
+    already uses the current name.
+  - >-
+    The variable must be used, with its last use at least 5 lines after
+    the assignment. A score adds the name's opacity, the strength of the
+    key evidence and the usage (a long span, three or more uses, use in a
+    condition, a call or a `return`); it must reach 6, or 7 for a weak
+    name.
+  - >-
+    Reports LOW on the assignment line, with the suggested name.
+
+source_refs:
+  - path: skylos/rules/quality/_readability.py
+    symbol: "class OpaqueIdentifierRule"
+  - path: skylos/rules/quality/_readability.py
+    symbol: "def _should_report("
+  - path: skylos/rules/quality/_readability.py
+    symbol: "def _direct_key_tokens("
+  - path: skylos/rules/quality/_readability.py
+    symbol: "_STRONG_OPAQUE_NAMES = {"
+  - path: skylos/reporting/advice_evidence.py
+    symbol: "ARCHITECTURE_METRIC_RULES"
+    note: not listed by default.
+
+fix:
+  explanation: >-
+    Name the variable after what it holds; the key it comes from is usually
+    the right name.
+  filename: app/webhooks.py
+  code: |
+    """Stripe webhook handlers."""
+
+    import logging
+
+    log = logging.getLogger(__name__)
+
+
+    def handle_checkout_completed(event, db, mailer):
+        customer_email = event["data"]["object"]["customer_email"]
+        order = db.find_order(event["data"]["object"]["client_reference_id"])
+        if not customer_email:
+            return False
+        order.contact_email = customer_email
+        db.save(order)
+        mailer.send(customer_email, "Thanks for your order")
+        log.info("receipt sent to %s", customer_email)
+        return True
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A generic name in truly generic code, such as `data` in a function
+      that forwards any payload, can be reported when it is read from a
+      named key.
+    - >-
+      It misses placeholder names whose value comes from a function call
+      without a key, such as `tmp = load_invoice(invoice_id)`.
+  suppress:
+    - check: inline
+      text: >-
+        On the assignment line (the reported line):
+      language: python
+      code: |
+        tmp = event["data"]["object"]["customer_email"]  # skylos: ignore[SKY-Q806] legacy
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-Q806"]` turns the rule off for the
+        project. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-L027, SKY-Q702]

@@ -1,0 +1,222 @@
+id: SKY-Q805
+title: Architecture layer policy violation
+family: quality
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. Each rule of the policy sets its own
+  severity (HIGH when it sets none); a module outside every layer under
+  `strict = true` is MEDIUM.
+languages: [Python, TypeScript, JavaScript]
+run_with: >-
+  `--quality`, when `[tool.skylos.architecture]` defines `layers` and
+  `rules`
+gate:
+  full: counted
+  opt_in: >-
+    a layer policy: `layers` and `rules` under `[tool.skylos.architecture]`
+  note: >-
+    Listed by default and counted toward `max_quality`.
+
+what_it_is: >-
+  A layer policy names the parts of a project (for example `domain` and
+  `web`) and says which part may import which. SKY-Q805 reports every
+  import between project modules that breaks the policy you configured
+  under `[tool.skylos.architecture]`.
+
+why_it_matters: >-
+  Business rules that import web code can no longer run in a job, a test
+  or a command-line tool without a web request. Layer rules keep that
+  separation, and an import that crosses it is caught in review instead of
+  months later.
+
+flagged_example:
+  language: python
+  files:
+    - filename: shop/domain/orders.py
+      code: |
+        """Order rules."""
+
+        from shop.web.session import current_user_id
+
+
+        def can_cancel(order, request):
+            return order.owner_id == current_user_id(request)
+    - filename: shop/web/session.py
+      code: |
+        """Request session helpers."""
+
+
+        def current_user_id(request):
+            return request.cookies.get("user_id")
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.architecture]
+        layers = [
+          { name = "domain", patterns = ["shop.domain"] },
+          { name = "web", patterns = ["shop.web"] },
+        ]
+        rules = [
+          { from = "domain", deny = ["web"] },
+        ]
+    - filename: shop/__init__.py
+      code: |
+        """The shop package."""
+    - filename: shop/domain/__init__.py
+      code: |
+        """Business rules."""
+    - filename: shop/web/__init__.py
+      code: |
+        """Web layer."""
+  expect_file: shop/domain/orders.py
+  expect_line: 1
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: shop/domain/orders.py
+      code: |
+        """Order rules."""
+
+
+        def can_cancel(order, user_id):
+            return order.owner_id == user_id
+    - filename: shop/web/views.py
+      code: |
+        """Order views."""
+
+        from shop.domain.orders import can_cancel
+
+
+        def cancel_view(order, request):
+            if not can_cancel(order, request.cookies.get("user_id")):
+                return 403
+            order.cancel()
+            return 204
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.architecture]
+        layers = [
+          { name = "domain", patterns = ["shop.domain"] },
+          { name = "web", patterns = ["shop.web"] },
+        ]
+        rules = [
+          { from = "domain", deny = ["web"] },
+        ]
+    - filename: shop/__init__.py
+      code: |
+        """The shop package."""
+    - filename: shop/domain/__init__.py
+      code: |
+        """Business rules."""
+    - filename: shop/web/__init__.py
+      code: |
+        """Web layer."""
+  why: >-
+    The web view imports the domain rule, which the policy allows; only
+    `domain` importing `web` is denied. The domain function now takes the
+    user ID instead of the request.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` when `[tool.skylos.architecture]` has both
+    `layers` and `rules`. It uses the import graph of the project's Python
+    modules (top-level imports only) and TypeScript and JavaScript modules.
+  - >-
+    Puts each module in a layer: a pattern matches the dotted module name
+    or file path, a prefix of it, a glob, or one of its parts. When several
+    layers match, the most specific pattern wins. Other modules are in no
+    layer.
+  - >-
+    For each import from a layer that has a rule: reports it when the
+    target layer is in `deny`, or when `allow` is set and does not list the
+    target layer. With `strict = true`, an import to or from a module in no
+    layer is also reported, MEDIUM.
+  - >-
+    Reports on line 1 of the importing module, naming both modules and
+    layers, with the rule's `severity` (HIGH by default).
+
+source_refs:
+  - path: skylos/analysis/architecture_layers.py
+    symbol: "def get_layer_policy_findings("
+  - path: skylos/analysis/architecture_layers.py
+    symbol: "def _layer_pattern_matches("
+  - path: skylos/analysis/architecture_layers.py
+    symbol: "def _normalize_layer_policy("
+  - path: skylos/config.py
+    symbol: '"architecture": {'
+
+fix:
+  explanation: >-
+    Pass the value the lower layer needs as an argument, or move the shared
+    code into a layer both may import, so the dependency points the allowed
+    way.
+  filename: shop/domain/orders.py
+  code: |
+    """Order rules."""
+
+
+    def can_cancel(order, user_id):
+        return order.owner_id == user_id
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A short pattern can put a module in the wrong layer: it also matches
+      any module with a name part equal to it, so the pattern `web` puts
+      `shop.admin.web` in the web layer too.
+    - >-
+      Imports inside functions and `if TYPE_CHECKING:` blocks are not read,
+      so those crossings are not reported.
+  suppress:
+    - check:
+        kind: inline
+        expect: reported
+      text: >-
+        An inline marker does **not** work for this rule: with this comment
+        on line 1 of the importing module, it is still reported.
+      language: python
+      code: |
+        """Order rules."""  # skylos: ignore[SKY-Q805] moving to the web layer
+    - check:
+        kind: example
+        example:
+          language: python
+          files:
+            - filename: shop/domain/orders.py
+              code: |
+                """Order rules."""
+
+                from shop.web.session import current_user_id
+
+
+                def can_cancel(order, request):
+                    return order.owner_id == current_user_id(request)
+            - filename: shop/web/session.py
+              code: |
+                """Request session helpers."""
+
+
+                def current_user_id(request):
+                    return request.cookies.get("user_id")
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [tool.skylos]
+                ignore = ["SKY-Q805"]
+
+                [tool.skylos.architecture]
+                layers = [
+                  { name = "domain", patterns = ["shop.domain"] },
+                  { name = "web", patterns = ["shop.web"] },
+                ]
+                rules = [
+                  { from = "domain", deny = ["web"] },
+                ]
+      text: >-
+        `ignore = ["SKY-Q805"]` under `[tool.skylos]` turns the rule off;
+        changing the policy's `allow` or `deny` lists accepts one crossing
+        for good.
+
+related: [SKY-CIRC, SKY-Q804, SKY-Q802]

@@ -1,0 +1,162 @@
+id: SKY-T104
+title: TypeScript compiler suppression directive
+family: quality
+severity: MEDIUM
+severity_note: >-
+  `@ts-ignore` is reported MEDIUM, as the catalog says. A file-wide
+  `@ts-nocheck` is reported HIGH.
+languages: [TypeScript, JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  `// @ts-ignore` tells the TypeScript compiler to hide every error on the
+  next line, and `// @ts-nocheck` at the top of a file turns checking off
+  for the whole file. SKY-T104 reports both. `// @ts-expect-error` is not
+  reported, because the compiler complains once the error it expects is
+  gone.
+
+why_it_matters: >-
+  A `@ts-ignore` added to silence one error also hides the next one on that
+  line. Here it hides that a string is passed where the payment code expects
+  a number of cents, so the charge goes out wrong and nothing warns about
+  it.
+
+flagged_example:
+  language: typescript
+  filename: src/checkout/pay.ts
+  expect_line: 4
+  code: |
+    import { charge } from "./payments";
+
+    export async function checkout(cartId: string, amount: number) {
+      // @ts-ignore
+      return charge(cartId, amount.toFixed(2));
+    }
+
+not_flagged_example:
+  language: typescript
+  filename: src/checkout/pay.ts
+  code: |
+    import { charge } from "./payments";
+
+    export async function checkout(cartId: string, amount: number) {
+      // @ts-expect-error charge() takes cents until payments v3 ships
+      return charge(cartId, amount.toFixed(2));
+    }
+  why: >-
+    `@ts-expect-error` hides only an error that really exists, and the
+    compiler fails the build once it no longer does. With a reason next to
+    it, it is the reviewed way to accept a known type error.
+
+more_examples:
+  - flagged:
+      language: javascript
+      filename: src/legacy/totals.js
+      expect_line: 1
+      code: |
+        // @ts-nocheck
+        export function legacyTotal(items) {
+          return items.reduce((sum, item) => sum + item.price, 0);
+        }
+    not_flagged:
+      language: javascript
+      filename: src/legacy/totals.js
+      code: |
+        // @ts-check
+        /** @param {{ price: number }[]} items */
+        export function legacyTotal(items) {
+          return items.reduce((sum, item) => sum + item.price, 0);
+        }
+      why: >-
+        `// @ts-check` turns type checking on for a JavaScript file, the
+        opposite of `@ts-nocheck`. Skylos reports only the pragma that turns
+        it off.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on TypeScript and JavaScript files. Declaration
+    files (`.d.ts`) and generated files (under `build`, `dist`, `generated`
+    or `vendor` folders, `*.gen.*` or `*.generated.*` names, or with a
+    generated-code header) are skipped.
+  - >-
+    Reads the comments at the top of the file, before the first statement.
+    When the last `// @ts-check` or `// @ts-nocheck` among them is
+    `@ts-nocheck`, it reports that comment once, HIGH, and nothing else in
+    the file.
+  - >-
+    Otherwise it reports MEDIUM every `// @ts-ignore` comment (also with
+    three slashes), and every block comment whose last line starts with
+    `@ts-ignore`. `@ts-expect-error` is never reported.
+  - >-
+    Reports on the line of the comment.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/type_safety.py
+    symbol: "def _suppression_findings("
+  - path: skylos/visitors/languages/typescript/type_safety.py
+    symbol: "def _is_ignore_directive("
+  - path: skylos/visitors/languages/typescript/type_safety.py
+    symbol: "def _check_pragma("
+  - path: skylos/visitors/languages/typescript/type_safety.py
+    symbol: "def scan_type_safety("
+    note: directives are checked before the TypeScript-only file filter.
+
+fix:
+  explanation: >-
+    Fix the type error. When it cannot be fixed yet, use
+    `@ts-expect-error` with a reason, so the comment is removed as soon as
+    the error is gone.
+  filename: src/checkout/pay.ts
+  code: |
+    import { charge } from "./payments";
+
+    export async function checkout(cartId: string, amount: number) {
+      return charge(cartId, Math.round(amount * 100));
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A `@ts-ignore` that works around a bug in a library's type
+      definitions is still reported; switch it to `@ts-expect-error`.
+    - >-
+      In a file with `@ts-nocheck`, only that pragma is reported, so the
+      `@ts-ignore` comments in it appear only after the pragma is removed.
+  suppress:
+    - check:
+        kind: inline
+        expect: reported
+      text: >-
+        A marker added after `// @ts-ignore` on the same line is **not**
+        read, because a Skylos directive must open its comment; the line
+        is still reported.
+      language: typescript
+      code: |
+        // @ts-ignore  // skylos: ignore[SKY-T104] removed with payments v3
+    - check:
+        kind: example
+        example:
+          language: typescript
+          filename: src/checkout/pay.ts
+          code: |
+            import { charge } from "./payments";
+
+            export async function checkout(cartId: string, amount: number) {
+              /* skylos: ignore[SKY-T104] removed with payments v3 */ // @ts-ignore
+              return charge(cartId, amount.toFixed(2));
+            }
+      text: >-
+        Put the marker in its own block comment before the directive, on the
+        same line:
+      language: typescript
+      code: |
+        /* skylos: ignore[SKY-T104] removed with payments v3 */ // @ts-ignore
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-T104"]` in `pyproject.toml` turns the
+        rule off for the project. A baseline accepts existing findings, but
+        it records the absolute file path and the line, so an entry stops
+        matching when the checkout moves or the line shifts.
+
+related: [SKY-T103, SKY-T106, SKY-R105]

@@ -1,0 +1,290 @@
+id: SKY-Q502
+title: File too large
+family: quality
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. MEDIUM when one limit is exceeded by less
+  than half; HIGH when a count reaches 1.5 times its limit or two or more
+  limits are exceeded.
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Advice that is measured on every `--quality` scan but not listed by
+    default. It is listed, and counted toward `max_quality`, with
+    `--all-advice` or when the rule is named in `[tool.skylos.gate] rules`.
+
+what_it_is: >-
+  SKY-Q502 reports a Python module that has grown too big to hold one
+  responsibility: more than 500 lines of implementation code, more than 40
+  classes, functions and methods, or more than 25 top-level definitions.
+  The examples lower the top-level limit to 6 in `pyproject.toml` so they
+  stay short.
+
+why_it_matters: >-
+  A grab-bag module such as `utils.py` is imported by everything, so a
+  change to one helper rebuilds and retests the world, merges conflict
+  often, and nobody can tell which helpers are still used.
+
+flagged_example:
+  language: python
+  files:
+    - filename: app/utils.py
+      code: |
+        """Helpers used across the shop."""
+
+        import re
+        import time
+        from decimal import Decimal
+
+
+        def slugify(title):
+            return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+
+
+        def parse_money(text):
+            return Decimal(text.replace(",", "").lstrip("$"))
+
+
+        def format_money(amount, currency="USD"):
+            return f"{amount:,.2f} {currency}"
+
+
+        def chunked(items, size):
+            return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+        def retry(call, attempts=3, delay=0.5):
+            for attempt in range(attempts):
+                try:
+                    return call()
+                except ConnectionError:
+                    if attempt == attempts - 1:
+                        raise
+                    time.sleep(delay)
+
+
+        def mask_email(email):
+            name, _, domain = email.partition("@")
+            return f"{name[:1]}***@{domain}"
+
+
+        def send_welcome_email(mailer, customer):
+            mailer.send(customer.email, "Welcome!", f"Hi {customer.first_name}")
+
+
+        def order_reference(order_id):
+            return f"ORD-{order_id:08d}"
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos]
+        god_file_max_top_level_definitions = 6
+  expect_file: app/utils.py
+  expect_line: 1
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: app/statuses.py
+      code: |
+        """Status values stored in the database."""
+
+        from enum import Enum
+
+
+        class OrderStatus(str, Enum):
+            OPEN = "open"
+            PAID = "paid"
+            SHIPPED = "shipped"
+
+
+        class PaymentStatus(str, Enum):
+            PENDING = "pending"
+            CAPTURED = "captured"
+            REFUNDED = "refunded"
+
+
+        class ShipmentStatus(str, Enum):
+            LABELLED = "labelled"
+            IN_TRANSIT = "in_transit"
+            DELIVERED = "delivered"
+
+
+        class RefundReason(str, Enum):
+            DAMAGED = "damaged"
+            LATE = "late"
+            OTHER = "other"
+
+
+        class Carrier(str, Enum):
+            DHL = "dhl"
+            UPS = "ups"
+
+
+        class Currency(str, Enum):
+            USD = "USD"
+            EUR = "EUR"
+
+
+        class Channel(str, Enum):
+            WEB = "web"
+            APP = "app"
+
+
+        class Region(str, Enum):
+            EU = "eu"
+            US = "us"
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos]
+        god_file_max_top_level_definitions = 6
+  why: >-
+    The module also has 8 top-level classes, but each one only declares
+    values and has no behaviour. Skylos leaves such declaration-only classes
+    out of every count, so a catalogue of enums or records is not a god
+    file.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, once per Python module.
+  - >-
+    Counts three things. Implementation code lines: lines with code, not
+    blank, comment or docstring lines, leaving out declaration-only classes
+    and the inner lines of literal lists, tuples, sets and dicts. All
+    definitions: classes, functions and methods that are not inside a
+    function body. Top-level definitions: classes and functions directly in
+    the module.
+  - >-
+    Declaration-only classes (fields, enum values, stubs and a plain
+    `__init__` that copies its parameters) and `@overload` signatures that
+    repeat a real function are not counted.
+  - >-
+    Compares the counts with `god_file_max_lines` (default 500),
+    `god_file_max_definitions` (default 40) and
+    `god_file_max_top_level_definitions` (default 25) under
+    `[tool.skylos]`, and reports when any count is above its limit.
+  - >-
+    Skips test code (test folders, `test_*.py` and `*_test.py` modules that
+    define tests, files pytest is configured to collect), `examples` and
+    `benchmarks` folders, a top-level `docs` folder and the root
+    `setup.py`.
+  - >-
+    Reports on line 1 of the file, naming every exceeded limit. HIGH when
+    the worst count is at least 1.5 times its limit or two limits are
+    exceeded, otherwise MEDIUM.
+
+source_refs:
+  - path: skylos/rules/quality/class_size.py
+    symbol: "class GodFileRule"
+  - path: skylos/rules/quality/class_size.py
+    symbol: "def _implementation_lines("
+  - path: skylos/rules/quality/class_size.py
+    symbol: "def _module_definitions("
+  - path: skylos/rules/quality/class_size.py
+    symbol: "def _is_declarative_class("
+  - path: skylos/config.py
+    symbol: '"god_file_max_top_level_definitions": 25,'
+  - path: skylos/analysis/file_processing.py
+    symbol: 'if _enabled(cfg, "SKY-Q502"):'
+
+fix:
+  explanation: >-
+    Split the module by responsibility: money helpers in one module, text
+    helpers in another, email in the module that sends mail. Each module
+    then has a name that says what is in it.
+  code: |
+    """Money parsing and formatting."""
+
+    from decimal import Decimal
+
+
+    def parse_money(text):
+        return Decimal(text.replace(",", "").lstrip("$"))
+
+
+    def format_money(amount, currency="USD"):
+        return f"{amount:,.2f} {currency}"
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A module that is large on purpose, such as a generated client or a
+      single-file library meant to be copied, is reported.
+    - >-
+      A long module of small, closely related functions (a parser with one
+      function per grammar rule) is reported although splitting it would
+      not make it clearer.
+  suppress:
+    - check: inline
+      text: >-
+        On line 1 of the file, the reported line:
+      language: python
+      code: |
+        """Helpers used across the shop."""  # skylos: ignore[SKY-Q502] being split
+    - check:
+        kind: example
+        example:
+          language: python
+          files:
+            - filename: app/utils.py
+              code: |
+                """Helpers used across the shop."""
+
+                import re
+                import time
+                from decimal import Decimal
+
+
+                def slugify(title):
+                    return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+
+
+                def parse_money(text):
+                    return Decimal(text.replace(",", "").lstrip("$"))
+
+
+                def format_money(amount, currency="USD"):
+                    return f"{amount:,.2f} {currency}"
+
+
+                def chunked(items, size):
+                    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+                def retry(call, attempts=3, delay=0.5):
+                    for attempt in range(attempts):
+                        try:
+                            return call()
+                        except ConnectionError:
+                            if attempt == attempts - 1:
+                                raise
+                            time.sleep(delay)
+
+
+                def mask_email(email):
+                    name, _, domain = email.partition("@")
+                    return f"{name[:1]}***@{domain}"
+
+
+                def send_welcome_email(mailer, customer):
+                    mailer.send(customer.email, "Welcome!", f"Hi {customer.first_name}")
+
+
+                def order_reference(order_id):
+                    return f"ORD-{order_id:08d}"
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [tool.skylos]
+                god_file_max_top_level_definitions = 6
+                ignore = ["SKY-Q502"]
+      text: >-
+        `ignore = ["SKY-Q502"]` under `[tool.skylos]` turns the rule off for
+        the project; higher `god_file_max_*` values raise the limits
+        instead. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves.
+
+related: [SKY-Q501, SKY-C304, SKY-Q701]

@@ -1,0 +1,126 @@
+id: SKY-P403
+title: Nested loop that searches a collection per item
+family: quality
+severity: LOW
+severity_note: >-
+  The catalog gives no severity. Every finding is reported LOW.
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Advice that is measured on every `--quality` scan but not listed by
+    default. It is listed, and counted toward `max_quality`, with
+    `--all-advice` or when the rule is named in `[tool.skylos.gate] rules`.
+
+what_it_is: >-
+  A loop inside a loop that walks a whole collection to find the match for
+  each outer item does work proportional to both sizes multiplied. SKY-P403
+  reports such an inner loop. The catalog lists the rule as "Suspicious
+  performance pattern".
+
+why_it_matters: >-
+  Matching 10,000 orders against 10,000 customers this way is 100 million
+  comparisons. It is instant in a test with ten rows and takes minutes in
+  production; a dictionary lookup does the same job in one pass.
+
+flagged_example:
+  language: python
+  filename: app/reports/join.py
+  expect_line: 6
+  code: |
+    """Join orders to their customers for the nightly report."""
+
+
+    def attach_customers(orders, customers):
+        for order in orders:
+            for customer in customers:
+                if customer.id == order.customer_id:
+                    order.customer = customer
+        return orders
+
+not_flagged_example:
+  language: python
+  filename: app/reports/grid.py
+  code: |
+    """Plain-text grid for the stock report."""
+
+
+    def render_grid(rows):
+        lines = []
+        for row in rows:
+            cells = []
+            for cell in row:
+                cells.append(str(cell).rjust(8))
+            lines.append(" ".join(cells))
+        return "\n".join(lines)
+  why: >-
+    The inner loop walks the cells of the current row, a different part of
+    the data on each pass. Every cell is visited once, so the work grows
+    with the size of the grid, not with rows times rows.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, on Python `for` loops. For each outer loop it
+    looks for `for` loops in its body, including inside `if`, `with` and
+    `try` blocks, and through an inner loop with a fixed count.
+  - >-
+    Skips the pair when either loop has a fixed number of passes (such as
+    `range(3)` or a literal list), when the inner loop walks a part of the
+    outer item, consumes an iterator shared with the outer loop, always
+    ends with `break` or `return`, or runs only once before the outer loop
+    is left.
+  - >-
+    Reports only when the inner loop searches for the outer item: a test in
+    its body (or in a `filter` lambda or generator condition) relates a
+    value of the inner item to a value of the outer item, and the inner
+    collection can be walked again on every pass.
+  - >-
+    Reports LOW on the line of the inner `for`, naming both iterables.
+
+source_refs:
+  - path: skylos/rules/quality/performance.py
+    symbol: "def _find_nested_loops("
+  - path: skylos/rules/quality/performance.py
+    symbol: "def _is_repeated_scan("
+  - path: skylos/rules/quality/performance.py
+    symbol: "def _constant_iteration_count("
+
+fix:
+  explanation: >-
+    Build a dictionary (or set) of the inner collection once, keyed by what
+    you search for, and look each outer item up in it.
+  filename: app/reports/join.py
+  code: |
+    """Join orders to their customers for the nightly report."""
+
+
+    def attach_customers(orders, customers):
+        by_id = {customer.id: customer for customer in customers}
+        for order in orders:
+            order.customer = by_id.get(order.customer_id)
+        return orders
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      When both collections are small by design, for example a few
+      configured regions per request, the nested search is reported
+      although it costs nothing.
+    - >-
+      A search written as a comprehension or with `any(...)` inside the
+      outer loop is not a `for` statement and is not reported.
+  suppress:
+    - check: inline
+      text: >-
+        On the inner `for` line (the reported line):
+      language: python
+      code: |
+        for customer in customers:  # skylos: ignore[SKY-P403] at most 20 customers per batch
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-P403"]` turns the rule off for the
+        project. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-P401, SKY-P404, SKY-Q402]

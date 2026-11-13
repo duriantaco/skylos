@@ -1,0 +1,130 @@
+id: SKY-G280
+title: Go weak TLS version
+family: go
+severity: HIGH
+languages: [Go]
+gate:
+  full: counted
+  note: >-
+    Counted toward `max_security` and `max_high`.
+
+what_it_is: >-
+  TLS 1.0 and 1.1 are old versions of the protocol behind HTTPS, deprecated
+  since 2021 because of known weaknesses. SKY-G280 reports a Go
+  `tls.Config{...}` literal whose `MinVersion` is `VersionTLS10` or
+  `VersionTLS11`, which lets connections fall back to them.
+
+why_it_matters: >-
+  An attacker on the network can push a connection down to the weakest
+  version both sides accept. Compliance scans and standards such as PCI
+  DSS also fail a service that still accepts TLS 1.0.
+
+flagged_example:
+  language: go
+  filename: payments/client.go
+  expect_line: 9
+  code: |
+    package payments
+
+    import (
+    	"crypto/tls"
+    	"net/http"
+    )
+
+    func NewClient() *http.Client {
+    	cfg := &tls.Config{
+    		MinVersion: tls.VersionTLS10,
+    	}
+    	return &http.Client{Transport: &http.Transport{TLSClientConfig: cfg}}
+    }
+
+not_flagged_example:
+  language: go
+  filename: payments/client.go
+  code: |
+    package payments
+
+    import (
+    	"crypto/tls"
+    	"net/http"
+    )
+
+    func NewClient() *http.Client {
+    	cfg := &tls.Config{
+    		MinVersion: tls.VersionTLS12,
+    		MaxVersion: tls.VersionTLS13,
+    	}
+    	return &http.Client{Transport: &http.Transport{TLSClientConfig: cfg}}
+    }
+  why: >-
+    The same client pins TLS 1.2 as the minimum. Only a `MinVersion` of
+    `VersionTLS10` or `VersionTLS11` is reported.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. The bundled Go engine, `skylos-go`, parses each
+    `.go` file with Go's own parser. `_test.go` files, symbolic links and
+    files under `vendor`, `testdata`, `node_modules` and hidden folders are
+    skipped.
+  - >-
+    Finds composite literals of `Config` from the `crypto/tls` import
+    (`tls.Config{...}` or `&tls.Config{...}`).
+  - >-
+    Reports when the literal sets `MinVersion` to a selector ending in
+    `VersionTLS10` or `VersionTLS11`. A constant number such as `0x0301`, a
+    variable, or a later assignment `cfg.MinVersion = ...` is not checked.
+  - >-
+    Reports HIGH on the line where the literal starts. The ID stays
+    SKY-G280 in the output.
+
+source_refs:
+  - path: skylos/engines/go/internal/analyzer/analyzer.go
+    symbol: "// SKY-G280: Weak TLS version"
+  - path: skylos/visitors/languages/go/go.py
+    symbol: "_GO_RULE_REMAP"
+    note: G280 is not renamed.
+
+fix:
+  explanation: >-
+    Set `MinVersion` to `tls.VersionTLS12` or `tls.VersionTLS13`. Go has
+    defaulted clients to TLS 1.2 since 1.18, so removing an old setting
+    also works for a client.
+  filename: payments/client.go
+  code: |
+    package payments
+
+    import (
+    	"crypto/tls"
+    	"net/http"
+    )
+
+    func NewClient() *http.Client {
+    	cfg := &tls.Config{
+    		MinVersion: tls.VersionTLS12,
+    	}
+    	return &http.Client{Transport: &http.Transport{TLSClientConfig: cfg}}
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A client that must talk to an old device or partner system that only
+      speaks TLS 1.0 is reported; the risk is real, but it may be accepted.
+    - >-
+      It misses the same setting made outside the literal
+      (`cfg.MinVersion = tls.VersionTLS10`) or through a variable.
+  suppress:
+    - check: inline
+      text: >-
+        At the end of the reported line, where the literal starts:
+      language: go
+      code: |
+        cfg := &tls.Config{ // skylos: ignore[SKY-G280] legacy terminal, isolated VLAN
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-G280"]` in a `pyproject.toml` at the
+        project root turns the rule off. A baseline accepts existing
+        findings, but it records the absolute file path and the line, so an
+        entry stops matching when the checkout moves or the line shifts.
+
+related: [SKY-D210]

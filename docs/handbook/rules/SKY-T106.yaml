@@ -1,0 +1,157 @@
+id: SKY-T106
+title: Unsafe exported API type
+family: quality
+severity: MEDIUM
+languages: [TypeScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  `any` switches TypeScript's checks off for a value. SKY-T106 reports
+  `any`, an `any`-valued index signature and `Record<string, any>` in the
+  types of what a module exports: function parameters and return types,
+  interface and class members, type aliases and exported variables.
+
+why_it_matters: >-
+  An exported type is a promise to every caller. With `payload: any`, each
+  caller can read any property without a check, so a typo or a changed
+  webhook format compiles fine and fails only in production, in code far
+  from the module that let it through.
+
+flagged_example:
+  language: typescript
+  filename: src/webhooks/types.ts
+  expect_line: 4
+  code: |
+    export interface WebhookEvent {
+      id: string;
+      type: string;
+      payload: any;
+    }
+
+    export function handleWebhook(event: WebhookEvent): void {
+      console.log(event.id, event.type);
+    }
+
+not_flagged_example:
+  language: typescript
+  filename: src/webhooks/types.ts
+  code: |
+    export interface WebhookEvent {
+      id: string;
+      type: string;
+      payload: unknown;
+    }
+
+    function logRaw(value: any): void {
+      console.log(JSON.stringify(value));
+    }
+
+    export function handleWebhook(event: WebhookEvent): void {
+      logRaw(event.payload);
+    }
+  why: >-
+    The exported interface uses `unknown`, which forces every caller to
+    check the payload before using it. The remaining `any` belongs to a
+    helper that is not exported, so it is not part of the module's API.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/webhooks/handler.ts
+      expect_line: 3
+      code: |
+        import type { WebhookEvent } from "./types";
+
+        export function handleWebhook(event: WebhookEvent, meta: Record<string, any>) {
+          console.log(event.id, meta.source);
+        }
+    not_flagged:
+      language: typescript
+      filename: src/webhooks/handler.ts
+      code: |
+        import type { WebhookEvent } from "./types";
+
+        type Meta = { source: string; receivedAt: number };
+
+        export function handleWebhook(event: WebhookEvent, meta: Meta) {
+          console.log(event.id, meta.source);
+        }
+      why: >-
+        The metadata has its own precise type, so the exported signature
+        says exactly what callers must pass.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on `.ts`, `.tsx`, `.mts` and `.cts` files,
+    declaration files (`.d.ts`) included. Generated files and files that
+    do not parse are skipped.
+  - >-
+    Collects what the module exports: exported functions, classes,
+    interfaces, type aliases and variables, including `export { name }`
+    lists and `export default`. Private class members are left out.
+  - >-
+    Reads the type annotations of that public surface: parameters, return
+    types, properties, index signatures and alias bodies.
+  - >-
+    Reports a type that is exactly `any` (also as the value of an index
+    signature) and `Record<string, any>` when `Record` is the built-in one.
+    `any` nested inside another type, such as `any[]` or `Promise<any>`,
+    is not reported.
+  - >-
+    Reports MEDIUM on the line of the offending type, once per type.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/quality_signals.py
+    symbol: "def _unsafe_export_findings("
+  - path: skylos/visitors/languages/typescript/quality_signals.py
+    symbol: "def _exported_roots("
+  - path: skylos/visitors/languages/typescript/quality_signals.py
+    symbol: "def _unsafe_annotation_kind("
+  - path: skylos/visitors/languages/typescript/quality_signals.py
+    symbol: "def _is_record_string_any("
+
+fix:
+  explanation: >-
+    Give the value a precise type. When its shape is not known in advance,
+    use `unknown`, which makes each caller check it before use.
+  filename: src/webhooks/types.ts
+  code: |
+    export type WebhookPayload =
+      | { kind: "order.paid"; orderId: string; amount: number }
+      | { kind: "order.refunded"; orderId: string; reason: string };
+
+    export interface WebhookEvent {
+      id: string;
+      type: string;
+      payload: WebhookPayload;
+    }
+
+    export function handleWebhook(event: WebhookEvent): void {
+      console.log(event.id, event.type);
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A deliberately generic API, such as a logger that accepts anything,
+      is reported; `unknown` usually works there too.
+    - >-
+      It misses `any` nested inside another type (`any[]`,
+      `Promise<any>`, `Map<string, any>`) and `any` in code that is not
+      exported.
+  suppress:
+    - check: inline
+      text: >-
+        On the reported line:
+      language: typescript
+      code: |
+        payload: any; // skylos: ignore[SKY-T106] shape varies per provider
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-T106"]` in `pyproject.toml` turns the
+        rule off for the project. A baseline accepts existing findings, but
+        it records the absolute file path and the line, so an entry stops
+        matching when the checkout moves or the line shifts.
+
+related: [SKY-T103, SKY-T105, SKY-T104]

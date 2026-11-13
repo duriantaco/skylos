@@ -1,12 +1,4 @@
 pending:
-  SKY-C303:
-    reason: Not yet written.
-  SKY-C304:
-    reason: Not yet written.
-  SKY-C401:
-    reason: Not yet written.
-  SKY-CIRC:
-    reason: Not yet written.
   SKY-D200:
     reason: 'No page: no scan reports SKY-D200. It is the internal ID of the Python
       dangerous-call rule (`DangerousCallsRule` in `skylos/rules/danger/calls.py`);
@@ -19,63 +11,7 @@ pending:
       and `--verify` only reads reported findings. A page needs either a verify check
       for suppressed findings or a product decision to list SKY-D218. Draft kept outside
       the repository.'
-  SKY-F101:
-    reason: Not yet written.
-  SKY-F102:
-    reason: Not yet written.
-  SKY-G206:
-    reason: Not yet written.
-  SKY-G260:
-    reason: Not yet written.
-  SKY-G280:
-    reason: Not yet written.
-  SKY-P401:
-    reason: Not yet written.
-  SKY-P402:
-    reason: Not yet written.
-  SKY-P403:
-    reason: Not yet written.
-  SKY-P404:
-    reason: Not yet written.
-  SKY-Q501:
-    reason: Not yet written.
-  SKY-Q502:
-    reason: Not yet written.
-  SKY-Q701:
-    reason: Not yet written.
-  SKY-Q702:
-    reason: Not yet written.
   SKY-Q801:
-    reason: Not yet written.
-  SKY-Q802:
-    reason: Not yet written.
-  SKY-Q803:
-    reason: Not yet written.
-  SKY-Q804:
-    reason: Not yet written.
-  SKY-Q805:
-    reason: Not yet written.
-  SKY-Q806:
-    reason: Not yet written.
-  SKY-R101:
-    reason: Not yet written.
-  SKY-R102:
-    reason: Not yet written.
-  SKY-R103:
-    reason: Not yet written.
-  SKY-R104:
-    reason: Not yet written.
-  SKY-R105:
-    reason: Not yet written.
-  SKY-T101:
-    reason: Not yet written.
-  SKY-T102:
-    reason: Not yet written.
-  SKY-T103:
-    reason: Not yet written.
-  SKY-T104:
-    reason: Not yet written.
-  SKY-T105:
-    reason: Not yet written.
-  SKY-T106:
-    reason: Not yet written.
+    reason: 'No page: no detector emits SKY-Q801. The ID appears only in the docstring
+      of `skylos/analysis/architecture.py`, and dictionary.md lists it as reserved
+      with no current finding, so no example can produce it.'

@@ -1,0 +1,137 @@
+id: SKY-T103
+title: Suspicious chained type assertion
+family: quality
+severity: MEDIUM
+languages: [TypeScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  A type assertion (`value as User`) tells the TypeScript compiler to trust
+  you about a value's type; it checks nothing at run time. Chaining two
+  assertions through `unknown` or `any` (`value as unknown as User`) forces
+  a type the compiler would otherwise reject. SKY-T103 reports such a
+  chain when it ends in a precise type.
+
+why_it_matters: >-
+  The compiler stops checking, so if the value does not have that shape the
+  error appears later and somewhere else: `user.isAdmin` is `undefined`,
+  the admin check quietly fails, or a missing field crashes a page far from
+  the line that caused it.
+
+flagged_example:
+  language: typescript
+  filename: src/auth/session.ts
+  expect_line: 4
+  code: |
+    type User = { id: string; email: string; isAdmin: boolean };
+
+    export function currentUser(session: { user: object }): User {
+      return session.user as unknown as User;
+    }
+
+not_flagged_example:
+  language: typescript
+  filename: src/auth/session.ts
+  code: |
+    type User = { id: string; email: string; isAdmin: boolean };
+
+    function isUser(value: unknown): value is User {
+      const v = value as Record<string, unknown>;
+      return (
+        typeof v.id === "string" &&
+        typeof v.email === "string" &&
+        typeof v.isAdmin === "boolean"
+      );
+    }
+
+    export function currentUser(session: { user: object }): User {
+      if (!isUser(session.user)) {
+        throw new Error("session has no valid user");
+      }
+      return session.user;
+    }
+  why: >-
+    The only assertion is a single step to `Record<string, unknown>`, a type
+    that still says "unknown", inside a type guard that checks every field
+    at run time. Skylos reports only a chain whose last type is precise.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on `.ts`, `.tsx`, `.mts` and `.cts` files.
+    Declaration files (`.d.ts`) and generated files (under `build`, `dist`,
+    `generated` or `vendor` folders, `*.gen.ts` or `*.generated.ts` names,
+    or with a generated-code header) are skipped, and so is code inside a
+    part of the file that does not parse.
+  - >-
+    Finds a type assertion, written `x as T` or `<T>x`, whose operand is
+    itself an assertion, looking through parentheses, `await`, `!` and
+    `satisfies`.
+  - >-
+    The inner assertion must be to a bridge type: `unknown`, `any`,
+    `object` or `{}`.
+  - >-
+    The outer type must be precise: not `as const`, and with no `any`,
+    `unknown`, `object` or `{}` anywhere inside it. `x as unknown as
+    Record<string, unknown>` is therefore not reported.
+  - >-
+    Reports MEDIUM on the line where the outer assertion starts.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/type_safety.py
+    symbol: "def _chained_assertion_findings("
+  - path: skylos/visitors/languages/typescript/type_safety.py
+    symbol: '_BRIDGE_TYPES = frozenset({"any", "unknown", "object", "{}"})'
+  - path: skylos/visitors/languages/typescript/type_safety.py
+    symbol: "def _is_precise_type_target("
+  - path: skylos/visitors/languages/typescript/type_safety.py
+    symbol: "def _skip_file("
+
+fix:
+  explanation: >-
+    Check the value at run time with a type guard (or a schema library such
+    as Zod) and let the compiler narrow it, instead of asserting it.
+  filename: src/auth/session.ts
+  code: |
+    type User = { id: string; email: string; isAdmin: boolean };
+
+    function isUser(value: unknown): value is User {
+      const v = value as Record<string, unknown>;
+      return (
+        typeof v.id === "string" &&
+        typeof v.email === "string" &&
+        typeof v.isAdmin === "boolean"
+      );
+    }
+
+    export function currentUser(session: { user: object }): User {
+      if (!isUser(session.user)) {
+        throw new Error("session has no valid user");
+      }
+      return session.user;
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A chain is sometimes the only way to bridge two library types that
+      describe the same object, for example two versions of a generated
+      client. It is still reported.
+    - >-
+      A single assertion such as `data as User` hides the same problem but
+      is not reported by this rule.
+  suppress:
+    - check: inline
+      text: >-
+        On the reported line:
+      language: typescript
+      code: |
+        return session.user as unknown as User; // skylos: ignore[SKY-T103] auth checked it
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-T103"]` in `pyproject.toml` turns the
+        rule off for the project. A baseline accepts existing findings, but
+        it records the absolute file path and the line, so an entry stops
+        matching when the checkout moves or the line shifts.
+
+related: [SKY-T105, SKY-T106, SKY-T104]

@@ -1,0 +1,209 @@
+id: SKY-C303
+title: Too many arguments
+family: quality
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. Python reports MEDIUM when a function has
+  more required positional parameters than the limit and LOW when only the
+  total number of parameters is over 10. TypeScript, JavaScript, Java and
+  Go always report LOW.
+languages: [Python, TypeScript, JavaScript, Java, Go]
+gate:
+  full: counted
+  note: >-
+    Advice that is measured on every `--quality` scan but not listed by
+    default. It is listed, and counted toward `max_quality`, with
+    `--all-advice` or when the rule is named in `[tool.skylos.gate] rules`.
+
+what_it_is: >-
+  A function that takes many positional parameters is easy to call with
+  two values swapped. SKY-C303 reports a Python function with more than 5
+  required positional parameters or more than 10 parameters in all, and a
+  TypeScript, JavaScript, Java or Go function with more than 5 parameters.
+
+why_it_matters: >-
+  `create_invoice(42, 99.0, "EUR", today, 0.2, 30)` runs without error when
+  the tax rate and the due days trade places, and the customer gets a bill
+  due in a fraction of a day with a 3000% tax. Long parameter lists also
+  tend to grow, because each new option is one more slot.
+
+flagged_example:
+  language: python
+  filename: app/billing.py
+  expect_line: 6
+  code: |
+    """Invoice creation for the billing service."""
+
+    from datetime import timedelta
+
+
+    def create_invoice(customer_id, amount, currency, issued_on, due_days, tax_rate):
+        due_date = issued_on + timedelta(days=due_days)
+        return {
+            "customer_id": customer_id,
+            "currency": currency,
+            "due_date": due_date.isoformat(),
+            "total": round(amount * (1 + tax_rate), 2),
+        }
+
+not_flagged_example:
+  language: python
+  filename: app/addresses.py
+  code: |
+    """Postal addresses kept on customer accounts."""
+
+
+    class Address:
+        def __init__(self, street, city, region, postcode, country, phone):
+            self.street = street
+            self.city = city
+            self.region = region
+            self.postcode = postcode
+            self.country = country
+            self.phone = phone
+  why: >-
+    The constructor takes six required values, but it only stores each one
+    in a field of the same kind of plain record class. Skylos treats that as
+    a record, whose parameters name its fields, and does not report it.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/mail/invoice.ts
+      expect_line: 1
+      code: |
+        export function sendInvoice(
+          to: string,
+          subject: string,
+          body: string,
+          cc: string[],
+          replyTo: string,
+          attachPdf: boolean,
+        ): void {
+          console.log(to, subject, body, cc, replyTo, attachPdf);
+        }
+    not_flagged:
+      language: typescript
+      filename: src/mail/invoice.ts
+      code: |
+        type SendOptions = {
+          to: string;
+          subject: string;
+          body: string;
+          cc: string[];
+          replyTo: string;
+          attachPdf: boolean;
+        };
+
+        export function sendInvoice(options: SendOptions): void {
+          const { to, subject, body, cc, replyTo, attachPdf } = options;
+          console.log(to, subject, body, cc, replyTo, attachPdf);
+        }
+      why: >-
+        The six values arrive as one options object, so callers name each
+        one. TS/JS counts the entries between the parentheses, and an object
+        parameter (destructured or not) is one entry.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`. Python counts the positional parameters without
+    a default, leaving out `self` or `cls` of a method, and separately the
+    total of positional and keyword-only parameters. `*args` and `**kwargs`
+    are not counted.
+  - >-
+    Python reports MEDIUM when the required positional count is above
+    `max_args` under `[tool.skylos]` (default 5), and otherwise LOW when the
+    total is above 10. Parameters after `*` count only toward the total.
+  - >-
+    Python leaves alone a Click command whose every parameter is declared by
+    a `@click.option` or `@click.argument`, the `__init__` of a plain class
+    that only copies each parameter into a field of the same object, wide
+    keyword-only options that are all passed on to one dataclass of the same
+    module, and `@overload` declarations in `.pyi` stubs that are only wide
+    in total. A function with `@overload` signatures is reported once, on
+    its implementation, for its widest signature.
+  - >-
+    Python skips test code (test folders, `test_*.py` and `*_test.py`
+    modules that define tests, files pytest is configured to collect),
+    `examples` and `benchmarks` folders, a top-level `docs` folder and the
+    root `setup.py`.
+  - >-
+    TypeScript and JavaScript count every entry in the parameter list, Java
+    every formal parameter, and Go every parameter name. They report LOW
+    above 5; the limit there is fixed and does not read `max_args`.
+  - >-
+    Reports on the `def` (or function) line.
+
+source_refs:
+  - path: skylos/rules/quality/structure.py
+    symbol: "class ArgCountRule"
+  - path: skylos/rules/quality/structure.py
+    symbol: "def _arity(self, node)"
+  - path: skylos/rules/quality/_parameter_context.py
+    symbol: "def exempts(self, function)"
+    note: the Click callback and plain record constructor exemptions.
+  - path: skylos/rules/quality/_scope.py
+    symbol: "def is_non_production_python("
+  - path: skylos/analysis/file_processing.py
+    symbol: 'ArgCountRule(max_args=cfg["max_args"])'
+  - path: skylos/config.py
+    symbol: '"max_args": 5,'
+  - path: skylos/visitors/languages/typescript/quality.py
+    symbol: "def _param_count(func_node)"
+  - path: skylos/visitors/languages/java/quality.py
+    symbol: "def _param_count(func_node)"
+  - path: skylos/visitors/languages/go/quality.py
+    symbol: "def scan_go_quality("
+  - path: skylos/reporting/advice_evidence.py
+    symbol: "DEFAULT_ADVICE_RULES"
+    note: C303 is not in the default listed set.
+
+fix:
+  explanation: >-
+    Make the options keyword-only with a `*`, so every caller has to name
+    them, or group values that travel together into one object. In TS/JS,
+    pass an options object.
+  filename: app/billing.py
+  code: |
+    """Invoice creation for the billing service."""
+
+    from datetime import timedelta
+
+
+    def create_invoice(customer_id, amount, *, currency, issued_on, due_days, tax_rate):
+        due_date = issued_on + timedelta(days=due_days)
+        return {
+            "customer_id": customer_id,
+            "currency": currency,
+            "due_date": due_date.isoformat(),
+            "total": round(amount * (1 + tax_rate), 2),
+        }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A callback whose signature is fixed by a framework or a protocol, such
+      as a handler that must take six positional values, is still reported
+      unless it matches one of the exemptions above.
+    - >-
+      In TS/JS, Java and Go the limit cannot be changed, and a parameter
+      with a default value counts like any other.
+  suppress:
+    - check: inline
+      text: >-
+        On the `def` line (the reported line), which can be split so the
+        comment fits:
+      language: python
+      code: |
+        def create_invoice(  # skylos: ignore[SKY-C303] public API, kept for callers
+            customer_id, amount, currency, issued_on, due_days, tax_rate
+        ):
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-C303"]` turns the rule off for the
+        project; `max_args = 7` under `[tool.skylos]` raises the Python
+        limit instead. A baseline accepts existing findings, but it records
+        the absolute file path and the line, so an entry stops matching when
+        the checkout moves or the line shifts.
+
+related: [SKY-L029, SKY-C304, SKY-Q501]

@@ -1,0 +1,159 @@
+id: SKY-R102
+title: Python lint policy
+family: quality
+severity: LOW
+languages: [Python]
+gate:
+  full: counted
+  diff: counted
+  note: >-
+    Advice that is measured on every `--quality` scan but not listed by
+    default. It is listed, and counted toward `max_quality`, with
+    `--all-advice` or when the rule is named in `[tool.skylos.gate] rules`.
+    A diff scan checks it only when the change touches a policy file such
+    as `pyproject.toml`.
+
+what_it_is: >-
+  A linter (Ruff, Flake8 or Pylint) flags common mistakes and style
+  problems in Python code. SKY-R102 reports a repository that contains
+  Python code but has no configuration for any of them.
+
+why_it_matters: >-
+  Without a shared linter configuration, unused imports, shadowed names
+  and similar slips reach review, and each developer's editor applies
+  different rules, so the same file changes back and forth.
+
+flagged_example:
+  language: python
+  files:
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.0.0"
+
+        [tool.mypy]
+        files = ["app"]
+    - filename: app/pricing.py
+      code: |
+        """Price helpers."""
+
+
+        def total(prices: list[float]) -> float:
+            return sum(prices)
+  expect_file: pyproject.toml
+  expect_line: 1
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.0.0"
+
+        [tool.mypy]
+        files = ["app"]
+    - filename: setup.cfg
+      language: ini
+      code: |
+        [flake8]
+        max-line-length = 88
+        exclude = .venv,build
+    - filename: app/pricing.py
+      code: |
+        """Price helpers."""
+
+
+        def total(prices: list[float]) -> float:
+            return sum(prices)
+  why: >-
+    The linter is configured in a `[flake8]` section of `setup.cfg`.
+    Skylos checks the usual places for Ruff, Flake8 and Pylint settings,
+    not only `pyproject.toml`.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, once per scanned project. A diff scan runs it
+    only when a policy file is among the changed files.
+  - >-
+    Checks that the project has at least one `.py`, `.pyi` or `.pyw` file,
+    leaving out excluded folders and virtual environments.
+  - >-
+    Looks for a linter policy at the project root: `[tool.ruff]`,
+    `[tool.flake8]` or `[tool.pylint]` in `pyproject.toml`; a `ruff.toml`,
+    `.ruff.toml`, `.flake8`, `.pylintrc`, `pylintrc` or `pylintrc.toml`
+    file; or a `flake8` or `pylint` section in `setup.cfg` or `tox.ini`.
+  - >-
+    When none exists, reports LOW on line 1 of `pyproject.toml`, or on the
+    project folder when there is no `pyproject.toml`.
+
+source_refs:
+  - path: skylos/rules/quality/policy.py
+    symbol: "def analyze_repo_policy("
+  - path: skylos/rules/quality/policy.py
+    symbol: "def _has_python_lint_config("
+  - path: skylos/rules/quality/policy.py
+    symbol: "def _has_ruff_config("
+
+fix:
+  explanation: >-
+    Add a linter configuration, for example a `[tool.ruff]` table, and run
+    the linter in CI or a pre-commit hook.
+  filename: pyproject.toml
+  language: toml
+  code: |
+    [project]
+    name = "shop"
+    version = "1.0.0"
+
+    [tool.mypy]
+    files = ["app"]
+
+    [tool.ruff]
+    line-length = 88
+
+    [tool.ruff.lint]
+    select = ["E", "F", "B"]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A linter configured only in a CI script or an editor setting is not
+      seen, so the project is reported.
+    - >-
+      Other linters, such as Prospector or wemake-python-styleguide on
+      their own, do not count.
+  suppress:
+    - check:
+        kind: example
+        example:
+          language: python
+          files:
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [project]
+                name = "shop"
+                version = "1.0.0"
+
+                [tool.mypy]
+                files = ["app"]
+
+                [tool.skylos]
+                ignore = ["SKY-R102"]
+            - filename: app/pricing.py
+              code: |
+                """Price helpers."""
+
+
+                def total(prices: list[float]) -> float:
+                    return sum(prices)
+      text: >-
+        `ignore = ["SKY-R102"]` under `[tool.skylos]` turns the check off. An
+        inline marker in `pyproject.toml` is not read.
+
+related: [SKY-R101, SKY-R104]

@@ -1,0 +1,213 @@
+id: SKY-Q803
+title: Module hard to change or unused
+family: quality
+severity: MEDIUM
+severity_note: >-
+  The catalog gives no severity. Every finding is reported MEDIUM.
+languages: [Python, TypeScript, JavaScript]
+gate:
+  full: listed
+  note: >-
+    By default it is an advisory shown under architecture metrics, and no
+    limit counts it. With `enforce_iad = true` under
+    `[tool.skylos.architecture]` (used in the examples) it becomes a
+    quality finding, counted toward `max_quality` and failing a strict
+    gate.
+
+what_it_is: >-
+  Using instability (I) and abstractness (A) as in SKY-Q802, SKY-Q803 names
+  two corners. The zone of pain is a concrete module that others depend on
+  and that depends on little itself (A and I below 0.3). The zone of
+  uselessness is an abstract module that nothing stable depends on (A and
+  I above 0.7).
+
+why_it_matters: >-
+  A module in the zone of pain is hard to change: each edit reaches every
+  importer, and there is no interface to put a new implementation behind.
+  A module in the zone of uselessness is abstraction that nothing uses,
+  which readers still have to understand.
+
+flagged_example:
+  language: python
+  files:
+    - filename: shop/pricing.py
+      code: |
+        """Tax and discount rules."""
+
+
+        def price_with_tax(amount, rate):
+            return round(amount * (1 + rate), 2)
+    - filename: shop/checkout.py
+      code: |
+        """Checkout totals."""
+
+        from shop.pricing import price_with_tax
+
+
+        def checkout_total(cart):
+            return price_with_tax(sum(item.price for item in cart), 0.2)
+    - filename: shop/invoices.py
+      code: |
+        """Invoice lines."""
+
+        from shop.pricing import price_with_tax
+
+
+        def invoice_line(item):
+            return f"{item.name}: {price_with_tax(item.price, 0.2)}"
+    - filename: shop/__init__.py
+      code: |
+        """The shop package."""
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.architecture]
+        enforce_iad = true
+  expect_file: shop/pricing.py
+  expect_line: 1
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: shop/pricing.py
+      code: |
+        """Tax and discount rules."""
+
+        from shop._rates import TAX_RATE
+
+
+        def price_with_tax(amount):
+            return round(amount * (1 + TAX_RATE), 2)
+    - filename: shop/_rates.py
+      code: |
+        """Tax rates."""
+
+        TAX_RATE = 0.2
+    - filename: shop/checkout.py
+      code: |
+        """Checkout totals."""
+
+        from shop.pricing import price_with_tax
+
+
+        def checkout_total(cart):
+            return price_with_tax(sum(item.price for item in cart))
+    - filename: shop/invoices.py
+      code: |
+        """Invoice lines."""
+
+        from shop.pricing import price_with_tax
+
+
+        def invoice_line(item):
+            return f"{item.name}: {price_with_tax(item.price)}"
+    - filename: shop/__init__.py
+      code: |
+        """The shop package."""
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.architecture]
+        enforce_iad = true
+  why: >-
+    `pricing` now also depends on a module of its own (I = 1/3), so it is
+    no longer in the zone of pain; SKY-Q802 may still report its distance.
+    The constants moved to `_rates`, a private helper with at most three
+    importers, which Skylos does not place in a zone.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, on the import graph of the project's Python
+    modules (top-level imports only) and TypeScript and JavaScript modules,
+    with I and A computed as for SKY-Q802.
+  - >-
+    A module with at least one import link is in the zone of pain when A
+    and I are both below 0.3 and in the zone of uselessness when both are
+    above 0.7, unless its distance |A + I - 1| is at most 0.2.
+  - >-
+    Skips test modules, entry points (a module with an
+    `if __name__ == "__main__":` block or a `pyproject.toml` script), a
+    private module (name starting with `_`) with at most three importers,
+    and a package submodule imported only by its own package `__init__`.
+  - >-
+    Reports MEDIUM on line 1, naming the zone. Without `enforce_iad = true`
+    the finding is an advisory in the scan's architecture metrics.
+
+source_refs:
+  - path: skylos/analysis/architecture_findings.py
+    symbol: "def generate_architecture_findings("
+  - path: skylos/analysis/architecture.py
+    symbol: "def _classify_zone("
+  - path: skylos/analysis/architecture.py
+    symbol: "def _filter_contextual_findings("
+  - path: skylos/analysis/architecture_support.py
+    symbol: "def architecture_iad_strict("
+
+fix:
+  explanation: >-
+    Mark internal helpers private: rename `pricing.py` to `_pricing.py`
+    (below) and update the imports. For a real
+    shared boundary, let importers depend on an interface (`Protocol` or
+    `ABC`) instead of the concrete module. Remove abstractions nothing
+    uses.
+  code: |
+    """Tax and discount rules."""
+
+
+    def price_with_tax(amount, rate):
+        return round(amount * (1 + rate), 2)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      The zones were defined for whole packages. At file level most shared
+      constants and helper modules land in the zone of pain without being a
+      problem, which is why the rule is advisory by default.
+    - >-
+      Third-party imports do not count, so a module that wraps a library
+      can look more stable than it is.
+  suppress:
+    - check:
+        kind: inline
+        expect: reported
+      text: >-
+        An inline marker does **not** work for this rule: with this comment
+        on line 1, the reported line, the module is still reported.
+      language: python
+      code: |
+        """Tax and discount rules."""  # skylos: ignore[SKY-Q803] stable by design
+    - check:
+        kind: example
+        example:
+          language: python
+          files:
+            - filename: shop/pricing.py
+              code: |
+                """Tax and discount rules."""
+
+
+                def price_with_tax(amount, rate):
+                    return round(amount * (1 + rate), 2)
+            - filename: shop/checkout.py
+              code: |
+                """Checkout totals."""
+
+                from shop.pricing import price_with_tax
+
+
+                def checkout_total(cart):
+                    return price_with_tax(sum(item.price for item in cart), 0.2)
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [tool.skylos]
+                ignore = ["SKY-Q803"]
+
+                [tool.skylos.architecture]
+                enforce_iad = true
+      text: >-
+        `ignore = ["SKY-Q803"]` under `[tool.skylos]` turns the rule off for
+        the project; leaving out `enforce_iad` keeps it an advisory that no
+        gate counts.
+
+related: [SKY-Q802, SKY-Q804]

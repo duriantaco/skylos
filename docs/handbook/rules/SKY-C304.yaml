@@ -1,0 +1,256 @@
+id: SKY-C304
+title: Function too long
+family: quality
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. Python reports MEDIUM below 100 code lines
+  and HIGH from 100. TypeScript, JavaScript, Java and Go always report LOW.
+languages: [Python, TypeScript, JavaScript, Java, Go]
+gate:
+  full: counted
+  note: >-
+    Hidden when it is the only metric reported for the function. In Python
+    and JS/TS it is listed when SKY-Q306 and SKY-Q301 or SKY-Q302 also
+    report the function, in Go and Java when another function metric does;
+    the metrics then share one entry, led by the most severe, which the
+    gate counts once. Otherwise it is counted only with `--all-advice` or
+    when the rule is named in `[tool.skylos.gate] rules`.
+
+what_it_is: >-
+  SKY-C304 reports a function or method with more than 50 lines of code. In
+  Python and TS/JS, blank lines and comment-only lines do not count, nor do
+  Python docstrings. The examples below lower the Python limit to 15 with
+  `max_lines = 15` in `pyproject.toml`, so they stay short.
+
+why_it_matters: >-
+  A long function usually does several jobs at once: it fetches, filters,
+  computes and formats. Each job is harder to test on its own, and a change
+  to one of them means reading, and risking, all the others.
+
+flagged_example:
+  language: python
+  files:
+    - filename: app/reports.py
+      code: |
+        """Monthly sales report for the finance team."""
+
+        from collections import defaultdict
+
+
+        def monthly_report(orders, month):
+            totals = defaultdict(float)
+            refunds = defaultdict(float)
+            customers = set()
+            for order in orders:
+                if order.created.month != month:
+                    continue
+                customers.add(order.customer_id)
+                if order.status == "refunded":
+                    refunds[order.region] += order.total
+                    continue
+                totals[order.region] += order.total
+            lines = [f"Sales report for month {month}", ""]
+            for region in sorted(totals):
+                net = totals[region] - refunds.get(region, 0.0)
+                lines.append(f"{region:<12} {totals[region]:>10.2f} {net:>10.2f}")
+            lines.append("")
+            lines.append(f"Customers: {len(customers)}")
+            lines.append(f"Refunded: {sum(refunds.values()):.2f}")
+            return "\n".join(lines)
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos]
+        max_lines = 15
+  expect_file: app/reports.py
+  expect_line: 6
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: app/reports.py
+      code: |
+        """Monthly sales report for the finance team."""
+
+        from collections import defaultdict
+
+
+        def monthly_totals(orders, month):
+            """Sum sales and refunds per region for one month.
+
+            Refunded orders are kept apart so the report can show gross and
+            net figures side by side. Orders from other months are skipped.
+
+            Returns the totals and refunds keyed by region, and the customers.
+            """
+            totals = defaultdict(float)
+            refunds = defaultdict(float)
+            customers = set()
+
+            for order in orders:
+                if order.created.month != month:
+                    continue
+                customers.add(order.customer_id)
+
+                if order.status == "refunded":
+                    refunds[order.region] += order.total
+                    continue
+                totals[order.region] += order.total
+
+            return totals, refunds, customers
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos]
+        max_lines = 15
+  why: >-
+    The function spans 23 lines, but its docstring and blank lines are not
+    code. It has 13 code lines, under the limit of 15 set in
+    `pyproject.toml`.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`. Each function and method is measured from its
+    first line to its last, so a nested function's lines also count toward
+    the function that contains it.
+  - >-
+    Python counts code lines only: blank lines, comment-only lines and the
+    docstrings of the function and of functions and classes inside it are
+    left out. It reports a count above `max_lines` under `[tool.skylos]`
+    (default 50): MEDIUM below 100 lines, HIGH from 100.
+  - >-
+    Python skips test code (test folders, `test_*.py` and `*_test.py`
+    modules that define tests, files pytest is configured to collect),
+    `examples` and `benchmarks` folders, a top-level `docs` folder and the
+    root `setup.py`.
+  - >-
+    TypeScript and JavaScript leave out blank and comment-only lines and
+    skip test callbacks such as `describe(...)` and `it(...)` bodies in test
+    files. Java and Go count every line, blanks and comments included. All
+    three report LOW above 50; that limit is fixed and does not read
+    `max_lines`.
+  - >-
+    Reports on the `def` (or function) line.
+
+source_refs:
+  - path: skylos/rules/quality/structure.py
+    symbol: "class FunctionLengthRule"
+  - path: skylos/rules/quality/_code_lines.py
+    symbol: "def code_lines("
+  - path: skylos/rules/quality/_scope.py
+    symbol: "def is_non_production_function_scope("
+  - path: skylos/config.py
+    symbol: '"max_lines": 50,'
+  - path: skylos/visitors/languages/typescript/quality.py
+    symbol: "def _code_line_count("
+  - path: skylos/visitors/languages/typescript/quality.py
+    symbol: "max_length: int = 50"
+    note: scan_quality is called without it, so TS/JS always use 50.
+  - path: skylos/visitors/languages/java/quality.py
+    symbol: "func_length: int = func_node.end_point[0] - func_node.start_point[0] + 1"
+  - path: skylos/visitors/languages/go/quality.py
+    symbol: "func_length: int = func_node.end_point[0] - func_node.start_point[0] + 1"
+  - path: skylos/reporting/advice_display.py
+    symbol: "def standalone_function_advice("
+    note: a lone length finding is hidden by default.
+
+fix:
+  explanation: >-
+    Split the function along its jobs: one function gathers the numbers,
+    another formats them. Each part is then short enough to read in one go
+    and can be tested on its own.
+  filename: app/reports.py
+  code: |
+    """Monthly sales report for the finance team."""
+
+    from collections import defaultdict
+
+
+    def monthly_totals(orders, month):
+        totals = defaultdict(float)
+        refunds = defaultdict(float)
+        customers = set()
+        for order in orders:
+            if order.created.month != month:
+                continue
+            customers.add(order.customer_id)
+            if order.status == "refunded":
+                refunds[order.region] += order.total
+                continue
+            totals[order.region] += order.total
+        return totals, refunds, customers
+
+
+    def monthly_report(orders, month):
+        totals, refunds, customers = monthly_totals(orders, month)
+        lines = [f"Sales report for month {month}", ""]
+        for region in sorted(totals):
+            net = totals[region] - refunds.get(region, 0.0)
+            lines.append(f"{region:<12} {totals[region]:>10.2f} {net:>10.2f}")
+        lines.append("")
+        lines.append(f"Customers: {len(customers)}")
+        lines.append(f"Refunded: {sum(refunds.values()):.2f}")
+        return "\n".join(lines)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A long but flat function, such as one that builds a large mapping or
+      registers many routes in a row, is reported although it is easy to
+      read.
+    - >-
+      In Java and Go, comments and blank lines count, so a well-commented
+      method reaches the limit sooner than the same code in Python or TS/JS.
+  suppress:
+    - check: inline
+      text: >-
+        On the `def` line (the reported line):
+      language: python
+      code: |
+        def monthly_report(orders, month):  # skylos: ignore[SKY-C304] one report layout
+    - check:
+        kind: example
+        example:
+          language: python
+          files:
+            - filename: app/reports.py
+              code: |
+                """Monthly sales report for the finance team."""
+
+                from collections import defaultdict
+
+
+                def monthly_report(orders, month):
+                    totals = defaultdict(float)
+                    refunds = defaultdict(float)
+                    customers = set()
+                    for order in orders:
+                        if order.created.month != month:
+                            continue
+                        customers.add(order.customer_id)
+                        if order.status == "refunded":
+                            refunds[order.region] += order.total
+                            continue
+                        totals[order.region] += order.total
+                    lines = [f"Sales report for month {month}", ""]
+                    for region in sorted(totals):
+                        net = totals[region] - refunds.get(region, 0.0)
+                        lines.append(f"{region:<12} {totals[region]:>10.2f} {net:>10.2f}")
+                    lines.append("")
+                    lines.append(f"Customers: {len(customers)}")
+                    lines.append(f"Refunded: {sum(refunds.values()):.2f}")
+                    return "\n".join(lines)
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [tool.skylos]
+                max_lines = 15
+                ignore = ["SKY-C304"]
+      text: >-
+        `ignore = ["SKY-C304"]` under `[tool.skylos]` turns the rule off for
+        the project; a higher `max_lines` raises the Python limit instead. A
+        baseline accepts existing findings, but it records the absolute file
+        path and the line, so an entry stops matching when the checkout
+        moves or the line shifts.
+
+related: [SKY-Q301, SKY-Q306, SKY-Q302, SKY-Q502]

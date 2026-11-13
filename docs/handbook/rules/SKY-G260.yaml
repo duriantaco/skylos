@@ -1,0 +1,139 @@
+id: SKY-G260
+title: Go unclosed resource
+family: go
+severity: MEDIUM
+languages: [Go]
+gate:
+  full: counted
+
+what_it_is: >-
+  A file from `os.Open` or a database handle from `sql.Open` holds an
+  operating-system resource until `Close` is called. SKY-G260 reports a
+  function that opens one and neither closes it, returns it nor stores it
+  somewhere else.
+
+why_it_matters: >-
+  Go's garbage collector does not close files promptly. A handler that
+  leaks one file per request eventually fails with "too many open files",
+  and a leaked `sql.DB` keeps its own pool of connections to the database.
+
+flagged_example:
+  language: go
+  filename: reports/lines.go
+  expect_line: 9
+  code: |
+    package reports
+
+    import (
+    	"bufio"
+    	"os"
+    )
+
+    func CountLines(path string) (int, error) {
+    	f, err := os.Open(path)
+    	if err != nil {
+    		return 0, err
+    	}
+    	lines := 0
+    	scanner := bufio.NewScanner(f)
+    	for scanner.Scan() {
+    		lines++
+    	}
+    	return lines, scanner.Err()
+    }
+
+not_flagged_example:
+  language: go
+  filename: reports/open.go
+  code: |
+    package reports
+
+    import "os"
+
+    // OpenReport opens a report for the caller, who must close it.
+    func OpenReport(path string) (*os.File, error) {
+    	f, err := os.Open(path)
+    	if err != nil {
+    		return nil, err
+    	}
+    	return f, nil
+    }
+  why: >-
+    The file is returned, so closing it is the caller's job. Skylos treats
+    a returned handle, or one stored in a struct field, map or slice, as
+    handed off.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. The bundled Go engine, `skylos-go`, parses each
+    `.go` file with Go's own parser. `_test.go` files, symbolic links and
+    files under `vendor`, `testdata`, `node_modules` and hidden folders are
+    skipped.
+  - >-
+    In each function and function literal, finds variables assigned the
+    result of `os.Open`, `os.OpenFile` or `database/sql`'s `Open`.
+  - >-
+    Treats the handle as handled when the same function calls `.Close()` on
+    it anywhere (deferred, direct or inside a deferred closure), returns
+    it, alone or inside another value, or assigns it to a struct field or
+    an index.
+  - >-
+    Reports MEDIUM on the line of the open call for each handle that is not
+    handled. Whether `Close` runs on every path, or its error is checked, is
+    not examined.
+
+source_refs:
+  - path: skylos/engines/go/internal/analyzer/analyzer.go
+    symbol: "func (a *Analyzer) checkUnclosedResource("
+  - path: skylos/engines/go/internal/analyzer/analyzer.go
+    symbol: "var openFuncs = map[string]map[string]bool{"
+
+fix:
+  explanation: >-
+    Close the handle with `defer f.Close()` right after the error check.
+  filename: reports/lines.go
+  code: |
+    package reports
+
+    import (
+    	"bufio"
+    	"os"
+    )
+
+    func CountLines(path string) (int, error) {
+    	f, err := os.Open(path)
+    	if err != nil {
+    		return 0, err
+    	}
+    	defer f.Close()
+    	lines := 0
+    	scanner := bufio.NewScanner(f)
+    	for scanner.Scan() {
+    		lines++
+    	}
+    	return lines, scanner.Err()
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A handle passed to a helper that closes it (`process(f)`) is reported,
+      because only `Close`, `return` and field or index assignment count.
+    - >-
+      It misses other resources, such as `net.Dial` connections and
+      `http.Response` bodies, and a `Close` that only runs on one branch.
+  suppress:
+    - check: inline
+      text: >-
+        At the end of the reported line:
+      language: go
+      code: |
+        f, err := os.Open(path) // skylos: ignore[SKY-G260] closed by the registry
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-G260"]` in a `pyproject.toml` at the
+        project root turns the rule off. A baseline accepts existing
+        findings, but it records the absolute file path and the line, so an
+        entry stops matching when the checkout moves or the line shifts.
+
+related: [SKY-G203, SKY-L008]

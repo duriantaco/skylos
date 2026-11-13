@@ -1,0 +1,258 @@
+id: SKY-Q804
+title: Stable module depends on an unstable one
+family: quality
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. HIGH when the stable module's instability
+  is below 0.1, MEDIUM otherwise.
+languages: [Python, TypeScript, JavaScript]
+gate:
+  full: counted
+  note: >-
+    A measurement, not listed by default. It is listed, and counted toward
+    `max_quality`, with `--all-advice` or when the rule is named in
+    `[tool.skylos.gate] rules`.
+
+what_it_is: >-
+  A module's instability (I) is the share of its import links that point
+  outward: the modules it imports, divided by those plus the modules that
+  import it. SKY-Q804 reports a stable module (I below 0.3, many importers)
+  that imports an unstable one (I above 0.7, which itself imports a lot).
+  The catalog calls this a dependency inversion violation.
+
+why_it_matters: >-
+  Everything that imports the stable module now also depends, through it,
+  on a module that changes whenever any of its own dependencies change. A
+  tweak to a theme or a locale table can then break the data models that
+  half the project imports.
+
+flagged_example:
+  language: python
+  files:
+    - filename: shop/models.py
+      code: |
+        """Shop data records."""
+
+        from shop.formatting import money
+
+
+        class Order:
+            def __init__(self, order_id, total):
+                self.order_id = order_id
+                self.total = total
+
+            def label(self):
+                return f"Order {self.order_id}: {money(self.total)}"
+    - filename: shop/formatting.py
+      code: |
+        """Display helpers."""
+
+        from shop.locale import currency_symbol
+        from shop.settings import DECIMALS
+        from shop.themes import highlight
+
+
+        def money(amount):
+            return highlight(f"{currency_symbol()}{amount:.{DECIMALS}f}")
+    - filename: shop/locale.py
+      code: |
+        """Locale data."""
+
+
+        def currency_symbol():
+            return "$"
+    - filename: shop/settings.py
+      code: |
+        """Display settings."""
+
+        DECIMALS = 2
+    - filename: shop/themes.py
+      code: |
+        """Text themes."""
+
+
+        def highlight(text):
+            return f"*{text}*"
+    - filename: shop/views.py
+      code: |
+        """Web views."""
+
+        from shop.models import Order
+
+
+        def order_page(order_id):
+            return Order(order_id, 10).label()
+    - filename: shop/jobs.py
+      code: |
+        """Background jobs."""
+
+        from shop.models import Order
+
+
+        def nightly(ids):
+            return [Order(i, 0).label() for i in ids]
+    - filename: shop/api.py
+      code: |
+        """JSON API."""
+
+        from shop.models import Order
+
+
+        def order_json(order_id):
+            return {"label": Order(order_id, 10).label()}
+    - filename: shop/__init__.py
+      code: |
+        """The shop package."""
+  expect_file: shop/models.py
+  expect_line: 1
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: shop/models.py
+      code: |
+        """Shop data records."""
+
+        from shop.formatting import money
+
+
+        class Order:
+            def __init__(self, order_id, total):
+                self.order_id = order_id
+                self.total = total
+
+            def label(self):
+                return f"Order {self.order_id}: {money(self.total)}"
+    - filename: shop/formatting.py
+      code: |
+        """Display helpers."""
+
+        from shop.locale import currency_symbol
+        from shop.settings import DECIMALS
+
+
+        def money(amount):
+            return f"{currency_symbol()}{amount:.{DECIMALS}f}"
+    - filename: shop/locale.py
+      code: |
+        """Locale data."""
+
+
+        def currency_symbol():
+            return "$"
+    - filename: shop/settings.py
+      code: |
+        """Display settings."""
+
+        DECIMALS = 2
+    - filename: shop/views.py
+      code: |
+        """Web views."""
+
+        from shop.models import Order
+
+
+        def order_page(order_id):
+            return Order(order_id, 10).label()
+    - filename: shop/jobs.py
+      code: |
+        """Background jobs."""
+
+        from shop.models import Order
+
+
+        def nightly(ids):
+            return [Order(i, 0).label() for i in ids]
+    - filename: shop/api.py
+      code: |
+        """JSON API."""
+
+        from shop.models import Order
+
+
+        def order_json(order_id):
+            return {"label": Order(order_id, 10).label()}
+    - filename: shop/__init__.py
+      code: |
+        """The shop package."""
+  why: >-
+    Without the theme import, `formatting` imports two modules and is
+    imported by one, so its instability is 2/3. That is not above 0.7, so
+    `models` no longer depends on an unstable module.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, on the import graph of the project's Python
+    modules (top-level imports only) and TypeScript and JavaScript modules.
+  - >-
+    For each module computes instability: the project modules it imports,
+    divided by those plus the project modules that import it.
+  - >-
+    For every module with instability below 0.3, checks each module it
+    imports. It reports the pair when the imported module's instability is
+    above 0.7, unless the imported module is one of its own submodules or
+    the importing module is only a re-export facade (an `__init__` that
+    imports names to publish them).
+  - >-
+    Reports on line 1 of the stable module, HIGH when its instability is
+    below 0.1 and MEDIUM otherwise. The limits are fixed.
+
+source_refs:
+  - path: skylos/analysis/architecture.py
+    symbol: "def analyze_architecture("
+  - path: skylos/analysis/architecture.py
+    symbol: "unstable_threshold = 0.7"
+  - path: skylos/analysis/architecture.py
+    symbol: "def _export_facade("
+  - path: skylos/analysis/architecture_findings.py
+    symbol: "# SKY-Q804: DIP violations"
+  - path: skylos/reporting/advice_evidence.py
+    symbol: "ARCHITECTURE_METRIC_RULES"
+    note: not listed by default.
+
+fix:
+  explanation: >-
+    Let the stable module depend on something stable: pass the formatter in,
+    depend on a small interface, or move the formatting call out of the
+    model into the views that need it.
+  filename: shop/models.py
+  code: |
+    """Shop data records."""
+
+
+    class Order:
+        def __init__(self, order_id, total):
+            self.order_id = order_id
+            self.total = total
+
+        def label(self, format_money):
+            return f"Order {self.order_id}: {format_money(self.total)}"
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Instability alone does not prove a problem: a stable module that
+      calls a busy but well-tested helper is reported although nothing is
+      wrong.
+    - >-
+      Only imports within the scanned project count, and only top-level
+      imports in Python.
+  suppress:
+    - check:
+        kind: inline
+        expect: reported
+      text: >-
+        An inline marker does **not** work for this rule: with this comment
+        on line 1 of the stable module, the reported line, it is still
+        reported.
+      language: python
+      code: |
+        """Shop data records."""  # skylos: ignore[SKY-Q804] formatting is frozen
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-Q804"]` turns the rule off for the
+        project. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-Q802, SKY-Q803, SKY-CIRC]
