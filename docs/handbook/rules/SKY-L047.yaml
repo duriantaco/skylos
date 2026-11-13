@@ -1,0 +1,131 @@
+id: SKY-L047
+title: Duplicate test
+family: logic
+severity: LOW
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  A test with the same decorators, parameters and body as an earlier test in
+  the same module or class, under a different name. Docstrings and layout
+  are ignored; one changed literal makes it a different test.
+
+why_it_matters: >-
+  The copy adds run time and checks nothing new. Its name usually promises a
+  different case, such as `..._when_meaningful_test_file_changed` next to
+  `..._when_any_test_file_changed`, and that case stays untested.
+
+flagged_example:
+  language: python
+  filename: test_impact.py
+  expect_line: 10
+  code: |
+    from review.impact import detect_gaps
+
+
+    def test_allows_change_when_any_test_file_changed():
+        changed = ["src/billing/tax.py", "tests/test_tax.py"]
+        findings = detect_gaps(changed)
+        assert findings == []
+
+
+    def test_allows_change_when_meaningful_test_file_changed():
+        changed = ["src/billing/tax.py", "tests/test_tax.py"]
+        findings = detect_gaps(changed)
+        assert findings == []
+
+not_flagged_example:
+  language: python
+  filename: test_impact.py
+  code: |
+    import pytest
+
+    from review.impact import detect_gaps
+
+
+    def test_allows_change_when_any_test_file_changed():
+        findings = detect_gaps(["src/billing/tax.py", "tests/test_tax.py"])
+        assert findings == []
+
+
+    def test_reports_change_without_tests():
+        findings = detect_gaps(["src/billing/tax.py"])
+        assert findings != []
+
+
+    @pytest.mark.vcr()
+    def test_first_recorded_run():
+        assert detect_gaps(["src/billing/tax.py"]) != []
+
+
+    @pytest.mark.vcr()
+    def test_second_recorded_run():
+        assert detect_gaps(["src/billing/tax.py"]) != []
+  why: >-
+    The first two tests pass different inputs. The last two have the same
+    body, but `vcr` replays a recording chosen by the test's name, so they
+    can run against different data.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on the same collected tests as SKY-L044, comparing
+    tests of the same module, or of the same class, never across classes.
+  - >-
+    Two tests match when their parameters, decorators and statements are
+    identical as syntax trees, apart from a leading docstring. The later one
+    is reported and names the first.
+  - >-
+    Skips bodies that call nothing, a second definition under the same name
+    (Python keeps only the last), and tests whose name selects recorded
+    data: a `vcr`, `cassette`, `betamax` or `recording` marker, or a
+    `snapshot`, `vcr_cassette`, `request` or regression fixture.
+
+source_refs:
+  - path: skylos/rules/quality/test_effectiveness.py
+    symbol: "class DuplicateTestRule"
+  - path: skylos/rules/quality/test_effectiveness.py
+    symbol: "def _name_selects_data("
+  - path: test/test_test_quality_effectiveness.py
+    symbol: "L047_VALID"
+
+fix:
+  explanation: >-
+    Remove the copy, or change it to cover the case its name describes.
+  filename: test_impact.py
+  code: |
+    from review.impact import detect_gaps
+
+
+    def test_allows_change_when_any_test_file_changed():
+        changed = ["src/billing/tax.py", "tests/test_tax.py"]
+        findings = detect_gaps(changed)
+        assert findings == []
+
+
+    def test_reports_change_when_test_file_only_adds_comments():
+        changed = ["src/billing/tax.py", "tests/test_tax_comments.py"]
+        findings = detect_gaps(changed)
+        assert findings != []
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Two tests that read different data through a fixture or plugin keyed on
+      the test name Skylos does not know are reported as copies.
+    - >-
+      It misses copies that differ only in a variable name or a comment-only
+      line move, and copies in different classes or files.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the `def` line of the later test.
+      language: python
+      code: |
+        def test_meaningful_change():  # skylos: ignore[SKY-L047] other cassette
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L047"]` turns the rule off for the
+        project.
+
+related: [SKY-L042, SKY-C401, SKY-L044]

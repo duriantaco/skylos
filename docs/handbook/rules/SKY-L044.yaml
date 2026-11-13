@@ -1,0 +1,129 @@
+id: SKY-L044
+title: Test runs no project code
+family: logic
+severity: LOW
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  A test in which every name it reads is one the test bound itself, or a
+  pure builtin such as `len`, `sum` or `sorted`. The test builds its own
+  values and asserts on them, or re-implements the logic it claims to check,
+  so nothing from the project is ever called.
+
+why_it_matters: >-
+  The test passes whatever the project does. It shows up as a green test
+  named after a feature, so a reader believes the feature is covered when
+  no line of it runs. Coding agents write this kind of test when they cannot
+  get a real one to pass.
+
+flagged_example:
+  language: python
+  filename: test_provider.py
+  expect_line: 4
+  code: |
+    from billing.providers import infer_provider
+
+
+    def test_provider_inferred_from_claude_model():
+        model = "claude-3-7-sonnet-latest"
+        if "claude" in model.lower():
+            provider = "anthropic"
+        else:
+            provider = "openai"
+        assert provider == "anthropic"
+
+
+    def test_provider_inferred_from_gpt_model():
+        assert infer_provider("gpt-4.1") == "openai"
+
+not_flagged_example:
+  language: python
+  filename: test_provider.py
+  code: |
+    from billing.providers import DEFAULT_MODEL, infer_provider
+
+
+    def test_provider_inferred_from_claude_model():
+        assert infer_provider("claude-3-7-sonnet-latest") == "anthropic"
+
+
+    def test_default_model_is_supported():
+        model = DEFAULT_MODEL
+        assert model.startswith("gpt-")
+  why: >-
+    The first test calls `infer_provider`; the second reads `DEFAULT_MODEL`,
+    a name imported from the project. Either one can change the result, so
+    neither test is reported.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`. Looks only at tests pytest or unittest would
+    collect: module-level `test*` functions and `test*` methods of collected
+    `Test*` classes or proven `unittest.TestCase` subclasses, using the
+    project's pytest settings. Skipped and `xfail` tests are left out.
+  - >-
+    Reports the test when every name it reads is bound inside the test or is
+    a builtin from a fixed list (`len`, `sum`, `sorted`, `str`, `int`,
+    `isinstance`, `range`, ...) that still resolves to the builtin in that
+    scope.
+  - >-
+    Leaves the test alone when it takes a parameter (a fixture), has a
+    decorator, imports anything, reads a module-level name, reads a `self`
+    attribute other than a standard `unittest` assertion method, defines a
+    nested function or class, raises, awaits or yields.
+  - >-
+    A test with no assertion at all is also left alone when fixtures, setup
+    hooks or a `conftest.py` may supply its checks.
+  - >-
+    Empty bodies stay SKY-L041 and literal-only assertions such as
+    `assert True` stay SKY-L040, so one test is not reported twice.
+
+source_refs:
+  - path: skylos/rules/quality/test_effectiveness.py
+    symbol: "class SelfContainedTestRule"
+  - path: skylos/rules/quality/test_effectiveness.py
+    symbol: "def _self_contained("
+  - path: test/test_test_quality_effectiveness.py
+    symbol: "L044_VALID"
+
+fix:
+  explanation: >-
+    Call the code under test and assert on what it returns. Delete the copy
+    of the logic from the test.
+  filename: test_provider.py
+  code: |
+    from billing.providers import infer_provider
+
+
+    def test_provider_inferred_from_claude_model():
+        assert infer_provider("claude-3-7-sonnet-latest") == "anthropic"
+
+
+    def test_provider_inferred_from_gpt_model():
+        assert infer_provider("gpt-4.1") == "openai"
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A test of Python itself, or of a pure builtin, is reported: it really
+      runs no project code. Move it out of the project's suite or suppress it.
+    - >-
+      It misses a test that calls project code and then ignores the result,
+      or asserts the wrong value. SKY-L046 covers a result that is never
+      checked; `skylos done` (SKY-A120) runs the tests to find lines no test
+      would notice breaking.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the `def` line of the test.
+      language: python
+      code: |
+        def test_sorting_is_stable():  # skylos: ignore[SKY-L044] documents sorted()
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L044"]` turns the rule off for the
+        project.
+
+related: [SKY-L040, SKY-L041, SKY-L045, SKY-L046, SKY-A120]
