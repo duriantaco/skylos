@@ -1067,6 +1067,83 @@ class _FileContext:
             return False
         return self.module_of(_text(self.source, node)) in _PATH_MODULES
 
+    def separator_prefix(self, node) -> bool:
+        """The prefix provably ends with ``/`` or ``\\`` and is more than
+        separators: ``'/srv/files2/x'.startsWith('/srv/files')`` is true."""
+        whole = self.const_string(node)
+        if whole is not None and whole.strip("/\\") == "":
+            return False
+        if self._is_path_separator(node, 0):
+            return False
+        return self._ends_with_separator(node, 0)
+
+    def _is_path_separator(self, node, depth: int) -> bool:
+        node = _unwrap(node)
+        if node is None or depth > 6:
+            return False
+        if node.type == "identifier":
+            name = _text(self.source, node)
+            if name in self.assigned:
+                return False
+            return self._is_path_separator(self.const_values.get(name), depth + 1)
+        if node.type != "member_expression":
+            return False
+        prop = node.child_by_field_name("property")
+        return (
+            prop is not None
+            and _text(self.source, prop) == "sep"
+            and self.is_path_module(node.child_by_field_name("object"))
+        )
+
+    def _ends_with_separator(self, node, depth: int) -> bool:
+        node = _unwrap(node)
+        if node is None or depth > 6:
+            return False
+        value = _string_value(self.source, node)
+        if value is not None:
+            return value.endswith(("/", "\\"))
+        if node.type == "identifier":
+            name = _text(self.source, node)
+            if name in self.assigned:
+                return False
+            bound = self.const_values.get(name)
+            if bound is None:
+                return False
+            return self._ends_with_separator(bound, depth + 1)
+        if node.type == "binary_expression":
+            operator = node.child_by_field_name("operator")
+            if operator is None or _text(self.source, operator) != "+":
+                return False
+            return self._ends_with_separator(node.child_by_field_name("right"), depth + 1)
+        if node.type == "template_string":
+            parts = [child for child in node.named_children if child.type != "comment"]
+            text = _text(self.source, node)
+            if not parts or parts[-1].type != "template_substitution":
+                return text.endswith(("/`", "\\\\`"))
+            if not text.endswith("}`"):
+                return False
+            inner = [child for child in parts[-1].named_children if child.type != "comment"]
+            return len(inner) == 1 and self._ends_with_separator(inner[0], depth + 1)
+        if node.type == "member_expression":
+            prop = node.child_by_field_name("property")
+            return (
+                prop is not None
+                and _text(self.source, prop) == "sep"
+                and self.is_path_module(node.child_by_field_name("object"))
+            )
+        if node.type == "call_expression":
+            callee = _unwrap(node.child_by_field_name("function"))
+            args = _call_args(node)
+            if callee is None or callee.type != "member_expression" or not args:
+                return False
+            prop = callee.child_by_field_name("property")
+            if prop is None or _text(self.source, prop) not in {"join", "normalize"}:
+                return False
+            if not self.is_path_module(callee.child_by_field_name("object")):
+                return False
+            return self._ends_with_separator(args[-1], depth + 1)
+        return False
+
     def string_list(self, node, depth: int = 0) -> frozenset[str] | None:
         node = _unwrap(node)
         if node is None or depth > 3:
@@ -2188,6 +2265,7 @@ class _HandlerTaint:
                 "prefix": prefix,
                 "normalized": normalized,
                 "prefix_tainted": self.taint(args[0], "raw") is not None,
+                "separator": self.ctx.separator_prefix(args[0]),
             }
             return [_Fact(_subject(self.source, subject), kind, guard_end, data)]
         if method == "endsWith" and args and truth:
@@ -2374,6 +2452,7 @@ class _HandlerTaint:
             if (
                 fact.kind == "starts"
                 and fact.data.get("prefix") not in {"", "/", "."}
+                and fact.data.get("separator")
                 and not fact.data.get("prefix_tainted")
             ):
                 if fact.data.get("normalized") or self._is_normalized(leaf):

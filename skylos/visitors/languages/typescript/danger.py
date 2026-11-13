@@ -4023,6 +4023,130 @@ def _archive_guard_without_braces_contains_sink(
     return False
 
 
+_QUOTED_TEXT = re.compile(r"""^(['"])(.*)\1$""", re.S)
+_PLAIN_TEMPLATE = re.compile(r"^`([^`$]*)`$")
+_SEPARATOR_MEMBER = re.compile(r"^(?:path\.)?sep$")
+_PATH_JOIN_CALL = re.compile(r"^path\.(?:join|normalize)\((.*)\)$", re.S)
+
+
+def _call_argument_texts(line: str, token: str) -> list[str]:
+    """The argument text of each ``token(...)`` call on the line."""
+    found = []
+    start = line.find(token)
+    while start != -1:
+        index = start + len(token)
+        depth = 1
+        quote = None
+        while index < len(line) and depth:
+            char = line[index]
+            if quote:
+                if char == "\\":
+                    index += 1
+                elif char == quote:
+                    quote = None
+            elif char in "'\"`":
+                quote = char
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            index += 1
+        if depth:
+            return []
+        found.append(line[start + len(token) : index - 1].strip())
+        start = line.find(token, index)
+    return found
+
+
+def _split_last_plus(text: str) -> str | None:
+    depth = 0
+    quote = None
+    last = None
+    for index, char in enumerate(text):
+        if quote:
+            if char == quote and text[index - 1] != "\\":
+                quote = None
+        elif char in "'\"`":
+            quote = char
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif char == "+" and depth == 0:
+            last = index
+    if last is None:
+        return None
+    return text[last + 1 :].strip()
+
+
+def _declared_value(name: str, lines: list[str]) -> str | None:
+    declaration = re.compile(
+        rf"^\s*(?:export\s+)?(?:const|let|var)\s+{re.escape(name)}\s*(?::[^=]+)?=\s*(.+?);?\s*$"
+    )
+    assignment = re.compile(rf"(?<![\w.$]){re.escape(name)}\s*(?:[-+*/]?=)(?!=)")
+    values = []
+    writes = 0
+    for line in lines:
+        matched = declaration.match(line)
+        if matched:
+            values.append(matched.group(1))
+        writes += len(assignment.findall(line))
+    if len(values) != 1 or writes != 1:
+        return None
+    return values[0]
+
+
+def _text_ends_with_separator(text: str, lines: list[str], depth: int = 0) -> bool:
+    text = text.strip()
+    if depth > 6 or not text:
+        return False
+    quoted = _QUOTED_TEXT.match(text) or _PLAIN_TEMPLATE.match(text)
+    if quoted:
+        value = quoted.group(quoted.lastindex)
+        return value.endswith(("/", "\\"))
+    if text.startswith("`") and text.endswith("`"):
+        if text.endswith("}`"):
+            inner = text[text.rfind("${") + 2 : -2]
+            return _text_ends_with_separator(inner, lines, depth + 1)
+        return text.endswith(("/`", "\\\\`"))
+    right = _split_last_plus(text)
+    if right is not None:
+        return _text_ends_with_separator(right, lines, depth + 1)
+    if _SEPARATOR_MEMBER.match(text):
+        return True
+    joined = _PATH_JOIN_CALL.match(text)
+    if joined:
+        arguments = [part.strip() for part in joined.group(1).split(",")]
+        return _text_ends_with_separator(arguments[-1], lines, depth + 1)
+    if re.fullmatch(r"[A-Za-z_$][\w$]*", text):
+        value = _declared_value(text, lines)
+        if value is None:
+            return False
+        return _text_ends_with_separator(value, lines, depth + 1)
+    return False
+
+
+def _only_separator_text(text: str) -> bool:
+    if _SEPARATOR_MEMBER.match(text.strip()):
+        return True
+    quoted = _QUOTED_TEXT.match(text.strip()) or _PLAIN_TEMPLATE.match(text.strip())
+    return bool(quoted) and quoted.group(quoted.lastindex).strip("/\\") == ""
+
+
+def _starts_with_separator_prefix(line: str, lines: list[str]) -> bool:
+    """Every ``startsWith`` prefix on the guard line ends at a separator:
+    ``'/tmp/out2/x'.startsWith('/tmp/out')`` is true."""
+    arguments = _call_argument_texts(line, "startsWith(")
+    if not arguments:
+        return False
+    for argument in arguments:
+        if _only_separator_text(argument):
+            return False
+        if not _text_ends_with_separator(argument, lines):
+            return False
+    return True
+
+
 def _archive_lines_have_guard(
     lines: list[str], names: set[str], direct_entry: bool, sink_idx: int
 ) -> bool:
@@ -4049,6 +4173,7 @@ def _archive_lines_have_guard(
             and "if" in line
             and "startsWith(" in line
             and ("!" in line or "=== false" in line or "== false" in line)
+            and _starts_with_separator_prefix(line, lines)
         ):
             trailing = "\n".join(lines[idx : min(len(lines), idx + 4)])
             if any(token in trailing for token in _ARCHIVE_CONTROL_FLOW_HINTS):
@@ -4058,6 +4183,7 @@ def _archive_lines_have_guard(
             and has_normalize
             and "if" in line
             and "startsWith(" in line
+            and _starts_with_separator_prefix(line, lines)
             and "!" not in line
             and "=== false" not in line
             and "== false" not in line

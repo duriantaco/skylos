@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from time import perf_counter
 
+import pytest
+
 from skylos.visitors.languages.typescript import scan_typescript_file
 
 
@@ -368,53 +370,66 @@ yauzl.open("archive.zip", { lazyEntries: true }, (err, zipfile) => {
     assert "SKY-D215" in _rule_ids(findings)
 
 
-def test_positive_startswith_guard_inside_branch_is_safe(tmp_path):
-    findings = _scan_ts_file(
-        tmp_path,
-        "archive.ts",
-        """import fs from "fs";
+POSITIVE_BRANCH_GUARD = """import fs from "fs";
 import path from "path";
 import yauzl from "yauzl";
 
 function extract(entry: { fileName: string }) {
   const base = "/tmp/out";
   const outputPath = path.normalize(path.join(base, entry.fileName));
-  if (outputPath.startsWith(base)) {
+  if (outputPath.startsWith(PREFIX)) {
     fs.writeFileSync(outputPath, "data");
     return;
   }
   throw new Error("bad path");
 }
-""",
-    )
-    assert "SKY-D215" not in _rule_ids(findings)
+"""
 
-
-def test_braceless_positive_startswith_guard_is_safe(tmp_path):
-    findings = _scan_ts_file(
-        tmp_path,
-        "archive.ts",
-        """import fs from "fs";
+BRACELESS_GUARD = """import fs from "fs";
 import path from "path";
 import yauzl from "yauzl";
 
 function extract(entry: { fileName: string }) {
   const base = "/tmp/out";
   const outputPath = path.normalize(path.join(base, entry.fileName));
-  if (outputPath.startsWith(base))
+  if (outputPath.startsWith(PREFIX))
     fs.writeFileSync(outputPath, "data");
   else
     throw new Error("bad path");
 }
-""",
-    )
+"""
+
+
+@pytest.mark.parametrize(
+    ("source", "prefix"),
+    [
+        (POSITIVE_BRANCH_GUARD, "base + path.sep"),
+        (POSITIVE_BRANCH_GUARD, "base + '/'"),
+        (POSITIVE_BRANCH_GUARD, "`${base}/`"),
+        (POSITIVE_BRANCH_GUARD, "'/tmp/out/'"),
+        (BRACELESS_GUARD, "base + path.sep"),
+        (BRACELESS_GUARD, "base + '/'"),
+        (BRACELESS_GUARD, "'/tmp/out/'"),
+    ],
+)
+def test_positive_startswith_guard_ending_at_a_separator_is_safe(
+    tmp_path, source, prefix
+):
+    findings = _scan_ts_file(tmp_path, "archive.ts", source.replace("PREFIX", prefix))
     assert "SKY-D215" not in _rule_ids(findings)
 
 
+@pytest.mark.parametrize("source", [POSITIVE_BRANCH_GUARD, BRACELESS_GUARD])
+@pytest.mark.parametrize("prefix", ["base", "'/tmp/out'", "'/'", "path.sep"])
+def test_startswith_guard_admitting_a_sibling_folder_is_reported(
+    tmp_path, source, prefix
+):
+    findings = _scan_ts_file(tmp_path, "archive.ts", source.replace("PREFIX", prefix))
+    assert "SKY-D215" in _rule_ids(findings)
+
+
 def test_semicolonless_archive_alias_storm_does_not_dos_scan(tmp_path):
-    aliases = "\n".join(
-        f"    const alias{index} = entry.path" for index in range(1500)
-    )
+    aliases = "\n".join(f"    const alias{index} = entry.path" for index in range(1500))
     started = perf_counter()
 
     findings = _scan_ts_file(
