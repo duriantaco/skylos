@@ -1,3 +1,4 @@
+import pytest
 from pathlib import Path
 from skylos.rules.danger.danger import scan_ctx
 
@@ -281,3 +282,60 @@ def test_trust_remote_code_off_or_caller_chosen_is_not_d213(tmp_path):
     )
     out = _scan_one(tmp_path, "hf_remote_code_off.py", code)
     assert "SKY-D213" not in _rule_ids(out)
+
+
+@pytest.mark.parametrize(
+    ("code", "reported"),
+    [
+        ("AutoModel.from_pretrained('./models/sentiment')\n", False),
+        ("AutoModel.from_pretrained('../models/x')\n", False),
+        ("AutoModel.from_pretrained('/opt/models/x')\n", False),
+        ("AutoModel.from_pretrained('~/models/x')\n", False),
+        ("AutoModel.from_pretrained(pretrained_model_name_or_path='./m')\n", False),
+        ("AutoModel.from_pretrained('./models/x', revision='main')\n", False),
+        ("AutoModel.from_pretrained(Path('/opt/models/x'))\n", False),
+        ("AutoModel.from_pretrained(Path('../models/x'))\n", False),
+        ("AutoModel.from_pretrained(Path('/opt/models') / 'x')\n", False),
+        ("AutoModel.from_pretrained(Path('models/x').resolve())\n", False),
+        ("AutoModel.from_pretrained(os.path.join('./models', input()))\n", False),
+        ("AutoModel.from_pretrained(os.path.abspath('models/x'))\n", False),
+        ("AutoModel.from_pretrained(f'./models/{input()}')\n", False),
+        ("MODEL_DIR = './models/x'\nAutoModel.from_pretrained(MODEL_DIR)\n", False),
+        ("AutoModel.from_pretrained('org/model')\n", True),
+        ("AutoModel.from_pretrained('models/sentiment')\n", True),
+        ("AutoModel.from_pretrained('org/model', revision='main')\n", True),
+        ("AutoModel.from_pretrained(Path('./models/x'))\n", True),
+        ("AutoModel.from_pretrained(Path('./models') / 'x')\n", True),
+        ("AutoModel.from_pretrained(str(Path('./models/x')))\n", True),
+        ("AutoModel.from_pretrained(Path('models/x'))\n", True),
+        ("AutoModel.from_pretrained(os.path.join('models', 'x'))\n", True),
+        ("AutoModel.from_pretrained(os.path.join(Path('./m'), 'x'))\n", True),
+        ("AutoModel.from_pretrained(f'{input()}/model')\n", True),
+        (
+            (
+                "MODEL_DIR = './models/x'\n\n\ndef load():\n    MODEL_DIR = 'org/model'\n"
+                "    return AutoModel.from_pretrained(MODEL_DIR)\n"
+            ),
+            True,
+        ),
+        (
+            (
+                "from settings import *\nMODEL_DIR = './models/x'\n"
+                "AutoModel.from_pretrained(MODEL_DIR)\n"
+            ),
+            True,
+        ),
+        ("def load(path):\n    return AutoModel.from_pretrained(path)\n", True),
+        (
+            (
+                "from huggingface_hub import hf_hub_download\n"
+                "hf_hub_download(repo_id='./x', filename='a.bin')\n"
+            ),
+            True,
+        ),
+    ],
+)
+def test_from_pretrained_local_folder_is_not_d345(tmp_path, code, reported):
+    header = "import os\nfrom pathlib import Path\nfrom transformers import AutoModel\n"
+    out = _scan_one(tmp_path, "model_local.py", header + code)
+    assert ("SKY-D345" in _rule_ids(out)) is reported

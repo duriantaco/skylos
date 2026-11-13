@@ -12519,11 +12519,94 @@ def _dynamic_module_specifier(node, source_bytes: bytes, top_level: bool) -> boo
     return not top_level
 
 
+_UNDEFINED_BINDING_FIELDS = {
+    "required_parameter": "pattern",
+    "optional_parameter": "pattern",
+    "variable_declarator": "name",
+    "assignment_expression": "left",
+    "augmented_assignment_expression": "left",
+    "assignment_pattern": "left",
+    "for_in_statement": "left",
+    "arrow_function": "parameter",
+    "catch_clause": "parameter",
+    "pair_pattern": "value",
+    "function_declaration": "name",
+    "generator_function_declaration": "name",
+    "function_expression": "name",
+    "class_declaration": "name",
+}
+_UNDEFINED_BINDING_PARENTS = frozenset(
+    {
+        "formal_parameters",
+        "array_pattern",
+        "object_pattern",
+        "rest_pattern",
+        "update_expression",
+        "import_specifier",
+        "import_clause",
+        "namespace_import",
+    }
+)
+
+
+def _undefined_is_global(bindings, source_bytes: bytes) -> bool:
+    if bindings.dynamic_scope or not bindings.unbound("undefined"):
+        return False
+    for node in bindings.nodes:
+        if node.type not in {
+            "undefined",
+            "identifier",
+            "shorthand_property_identifier_pattern",
+        }:
+            continue
+        if _get_text(source_bytes, node) != "undefined":
+            continue
+        parent = node.parent
+        if node.type == "shorthand_property_identifier_pattern":
+            return False
+        if parent is None:
+            continue
+        if parent.type in _UNDEFINED_BINDING_PARENTS:
+            return False
+        field = _UNDEFINED_BINDING_FIELDS.get(parent.type)
+        if field is None:
+            continue
+        target = parent.child_by_field_name(field)
+        if (
+            target is not None
+            and target.start_byte == node.start_byte
+            and target.end_byte == node.end_byte
+        ):
+            return False
+    return True
+
+
+def _is_presence_operand(node, source_bytes: bytes, undefined_global: bool) -> bool:
+    if _is_null_literal_expression(node):
+        return True
+    node = _unwrap_ts_expression(node)
+    if node is None:
+        return False
+    if node.type == "unary_expression":
+        operator = node.child_by_field_name("operator")
+        return operator is not None and _get_text(source_bytes, operator) == "void"
+    if node.type in {"undefined", "identifier"}:
+        return undefined_global and _get_text(source_bytes, node) == "undefined"
+    if node.type == "string":
+        return _get_text(source_bytes, node) in {'""', "''"}
+    if node.type == "template_string":
+        return _get_text(source_bytes, node) == "``"
+    return False
+
+
 def _check_timing_comparison(
     root_node, source_bytes: bytes, file_path: str, findings: list[dict]
 ) -> None:
     """SKY-D253: Detect == or === comparisons with sensitive variable names."""
     bindings = _JsBindings(root_node, source_bytes)
+    undefined_global = b"undefined" in source_bytes and _undefined_is_global(
+        bindings, source_bytes
+    )
     stack = [root_node]
     while stack:
         node = stack.pop()
@@ -12547,8 +12630,8 @@ def _check_timing_comparison(
                     )
                 )
                 if not (
-                    _is_null_literal_expression(left)
-                    or _is_null_literal_expression(right)
+                    _is_presence_operand(left, source_bytes, undefined_global)
+                    or _is_presence_operand(right, source_bytes, undefined_global)
                     or boolean_literal
                     or _compares_one_form_entry_twice(node, left, right, source_bytes, bindings)
                 ):

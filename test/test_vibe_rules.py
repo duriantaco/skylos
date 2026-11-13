@@ -1698,6 +1698,48 @@ class TestHardcodedCredential:
             assert len(l014) == 0
 
     @pytest.mark.parametrize(
+        "code",
+        [
+            'DATABASE_URL = "postgresql://localhost:5432/app"',
+            'DB_URL = "postgresql://app@db.internal/app"',
+            'DSN = "sqlite:///app.db"',
+            'CONNECTION_STRING = "Server=localhost;Database=app;Trusted_Connection=True;"',
+            'DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://localhost:5432/app")',
+            'DATABASE_URL = "${DATABASE_URL}"',
+            'CACHE_KEY = "checkout:session:v2"',
+            'RATE_LIMIT_KEY = "rate-limit:login:v1"',
+            'PROFILE_CACHE_KEY = "user_profile.v3"',
+        ],
+    )
+    def test_locations_and_cache_keys_without_a_secret_are_not_credentials(self, code):
+        findings = check_code(
+            HardcodedCredentialRule(), "import os\n" + code, filename="settings.py"
+        )
+        assert [f for f in findings if f["rule_id"] == "SKY-L014"] == []
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            'DATABASE_URL = "postgresql://admin:Sup3rS3cret@db.internal:5432/app"',
+            'DSN = "redis://:hunter22@cache.internal:6379/0"',
+            'CONNECTION_STRING = "Server=db;Database=app;User Id=app;Password=Xk92mLq7;"',
+            'DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://admin:hunter22@db/app")',
+            'CACHE_KEY = "x8hq2-lmz9r-t4vb7"',
+            'API_KEY = "checkout:session:v2"',
+            'SECRET_KEY = "x8Hq2LmZ9rT4vB7nK1pD"',
+            'STRIPE_KEY = "k3Jd9Qm2Lx7Tb4Vn8Rz1"',
+        ],
+    )
+    def test_embedded_passwords_and_random_keys_still_reported(self, code):
+        findings = check_code(
+            HardcodedCredentialRule(), "import os\n" + code, filename="settings.py"
+        )
+        l014 = [f for f in findings if f["rule_id"] == "SKY-L014"]
+        assert l014
+        assert {f["line"] for f in l014} == {2}
+        assert all(f["severity"] == "HIGH" for f in l014)
+
+    @pytest.mark.parametrize(
         ("code", "expected_severity"),
         [
             # A value that looks like a name is still the credential.

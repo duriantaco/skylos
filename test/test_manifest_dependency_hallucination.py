@@ -1077,3 +1077,137 @@ def test_scan_manifest_dependency_legacy_exists_cache_is_present_state(tmp_path)
     )
 
     assert findings == []
+
+
+def _registry_with(public):
+    def checker(_ecosystem, name, _version, _cache):
+        if name in public:
+            return STATUS_PRESENT
+        return STATUS_MISSING_PACKAGE
+
+    return checker
+
+
+def _write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _missing_names(findings):
+    names = []
+    for finding in findings:
+        if finding["rule_id"] != RULE_ID_DEPENDENCY_HALLUCINATION:
+            continue
+        assert finding["severity"] == "CRITICAL"
+        names.append(finding["message"].split("'")[1])
+    return sorted(names)
+
+
+def _npm_member(repo, folder, name, dependencies=None):
+    manifest = {"name": name, "version": "1.0.0"}
+    if dependencies:
+        manifest["dependencies"] = dependencies
+    _write(repo / folder / "package.json", json.dumps(manifest))
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        {"package.json": json.dumps({"name": "acme", "workspaces": ["packages/*"]})},
+        {
+            "package.json": json.dumps(
+                {"name": "acme", "workspaces": {"packages": ["packages/*"]}}
+            )
+        },
+        {
+            "package.json": json.dumps({"name": "acme"}),
+            "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n',
+        },
+    ],
+    ids=["npm", "yarn-object", "pnpm"],
+)
+def test_npm_workspace_sibling_is_not_a_hallucinated_package(tmp_path, declaration):
+    for filename, text in declaration.items():
+        _write(tmp_path / filename, text)
+    _npm_member(tmp_path, "packages/ui", "@acme/ui")
+    _npm_member(
+        tmp_path,
+        "packages/web",
+        "@acme/web",
+        {"@acme/ui": "^1.0.0", "@acme/ghost-kit": "1.0.0", "express": "4.21.2"},
+    )
+
+    findings = scan_manifest_dependency_hallucinations(
+        tmp_path, status_checker=_registry_with({"express"})
+    )
+
+    assert _missing_names(findings) == ["@acme/ghost-kit"]
+
+
+def test_same_name_outside_a_declared_workspace_is_still_reported(tmp_path):
+    _write(
+        tmp_path / "package.json",
+        json.dumps({"name": "acme", "workspaces": ["packages/*"]}),
+    )
+    _npm_member(tmp_path, "packages/web", "@acme/web", {"@acme/ui": "1.0.0"})
+    _npm_member(tmp_path, "tools/ui", "@acme/ui")
+    _npm_member(tmp_path, "examples/demo", "demo", {"@acme/web": "1.0.0"})
+
+    findings = scan_manifest_dependency_hallucinations(
+        tmp_path, status_checker=_registry_with(set())
+    )
+
+    assert _missing_names(findings) == ["@acme/ui", "@acme/web"]
+
+
+def _uv_root(tmp_path, extra=""):
+    _write(
+        tmp_path / "pyproject.toml",
+        '[project]\nname = "acme"\nversion = "0.1.0"\n\n'
+        '[tool.uv.workspace]\nmembers = ["packages/*"]\nexclude = ["packages/legacy"]\n'
+        + extra,
+    )
+
+
+def _uv_member(tmp_path, folder, name, dependencies=()):
+    deps = ", ".join(f'"{dep}"' for dep in dependencies)
+    _write(
+        tmp_path / folder / "pyproject.toml",
+        f'[project]\nname = "{name}"\nversion = "2.4.0"\ndependencies = [{deps}]\n',
+    )
+
+
+@pytest.mark.parametrize(
+    "root_sources",
+    ["", "\n[tool.uv.sources]\nacme-billing-core = { workspace = true }\n"],
+    ids=["member-only", "root-sources"],
+)
+def test_uv_workspace_member_is_not_a_hallucinated_package(tmp_path, root_sources):
+    _uv_root(tmp_path, root_sources)
+    _uv_member(tmp_path, "packages/billing-core", "acme-billing-core")
+    _uv_member(
+        tmp_path,
+        "packages/api",
+        "acme-api",
+        ["acme_billing_core==2.4.0", "acme-ghost-sdk==1.0.0", "flask==3.0.0"],
+    )
+
+    findings = scan_manifest_dependency_hallucinations(
+        tmp_path, status_checker=_registry_with({"flask"})
+    )
+
+    assert _missing_names(findings) == ["acme-ghost-sdk"]
+
+
+def test_uv_excluded_member_and_requirements_file_are_still_checked(tmp_path):
+    _uv_root(tmp_path)
+    _uv_member(tmp_path, "packages/legacy", "acme-legacy")
+    _uv_member(tmp_path, "packages/billing-core", "acme-billing-core")
+    _uv_member(tmp_path, "packages/api", "acme-api", ["acme-legacy==2.4.0"])
+    _write(tmp_path / "packages/api/requirements.txt", "acme-billing-core==2.4.0\n")
+
+    findings = scan_manifest_dependency_hallucinations(
+        tmp_path, status_checker=_registry_with(set())
+    )
+
+    assert _missing_names(findings) == ["acme-billing-core", "acme-legacy"]

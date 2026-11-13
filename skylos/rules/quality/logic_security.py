@@ -5,6 +5,7 @@ import re
 import tokenize
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from skylos.rules import secret_shapes
 from skylos.rules.base import SkylosRule
@@ -2419,6 +2420,8 @@ def _looks_like_real_secret(value: str, vibe_dictionary=None) -> bool:
         return False
     if len(set(stripped)) <= 4:
         return False
+    if _is_namespaced_identifier(stripped):
+        return False
     has_alpha = any(c.isalpha() for c in stripped)
     has_digit = any(c.isdigit() for c in stripped)
     if _HEX_SECRET_RE.fullmatch(stripped):
@@ -2478,6 +2481,9 @@ _LOCATION_NAME_WORDS = frozenset(
         "addr",
     }
 )
+_NAMESPACED_VALUE_SEPARATORS = re.compile(r"[:._/=;-]+")
+_VERSION_TOKEN_RE = re.compile(r"[vV]?[0-9]{1,4}")
+_KEY_VALUE_PASSWORD_RE = re.compile(r"(?i)(?:^|;)\s*(?:password|pwd)\s*=\s*[^;\s]")
 # ``<X>_KEY`` names that hold a key, not the name of a setting.
 _SECRET_KEY_NAME_SUFFIXES = (
     "secret_key",
@@ -2510,10 +2516,37 @@ def _is_location_name(target, var_name: str) -> bool:
     holds where something is, with no credential word in it."""
     if not isinstance(target, ast.Name):
         return False
+    return _names_a_location(var_name)
+
+
+def _names_a_location(var_name: str) -> bool:
     lower = var_name.lower()
     if any(stem in lower for stem in _CREDENTIAL_NAME_STEMS):
         return False
     return bool(set(re.split(r"[^a-z0-9]+", lower)) & _LOCATION_NAME_WORDS)
+
+
+def _is_namespaced_identifier(value: str) -> bool:
+    parts = [part for part in _NAMESPACED_VALUE_SEPARATORS.split(value) if part]
+    if len(parts) < 2:
+        return False
+    for part in parts:
+        if _VERSION_TOKEN_RE.fullmatch(part):
+            continue
+        if not part.isalpha() or _shannon_entropy(part) >= _NAME_WORD_MAX_ENTROPY:
+            return False
+    return True
+
+
+def _embeds_password(value: str) -> bool:
+    if _KEY_VALUE_PASSWORD_RE.search(value):
+        return True
+    if "://" not in value:
+        return False
+    try:
+        return bool(urlsplit(value.strip()).password)
+    except ValueError:
+        return True
 
 
 def _key_names_its_setting(target, var_name: str, value: str) -> bool:
@@ -3216,7 +3249,10 @@ class HardcodedCredentialRule(SkylosRule):
         if not _is_credential_var(name, self.vibe_dictionary):
             return False
         lower = name.lower()
-        explicit = lower in self.vibe_dictionary.credential_var_names or any(
+        explicit = (
+            lower in self.vibe_dictionary.credential_var_names
+            and not _names_a_location(name)
+        ) or any(
             lower.endswith(suffix)
             for suffix in self.vibe_dictionary.credential_var_suffixes
             if suffix != "_key"
@@ -3239,6 +3275,7 @@ class HardcodedCredentialRule(SkylosRule):
             explicit
             or _looks_like_real_secret(value, self.vibe_dictionary)
             or _CREDENTIAL_DSN_RE.search(value)
+            or _embeds_password(value)
             # Preserve suspicious password/passphrase shapes even when they
             # fail the high-entropy token heuristic. Reference handling below
             # still treats location references separately from passwords.

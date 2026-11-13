@@ -1328,3 +1328,112 @@ def test_tls_verification_off_follows_the_test_module_rule(
     assert write_text_no_symlink(path, code, encoding="utf-8")
     out = scan_ctx(tmp_path / "repo", [path])
     assert [f["severity"] for f in out if f["rule_id"] == "SKY-D210"] == expected
+
+
+_SIGNED_CHECK = (
+    "import hmac\nimport logging.config\n\n\n"
+    "def check(data):\n"
+    "    if not hmac.compare_digest(data[:32], b'k' * 32):\n"
+    "        return None\n"
+    "    return data[32:]\n\n\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("code", "reported"),
+    [
+        ("import logging.config\nlogging.config.listen(9030)\n", True),
+        (_SIGNED_CHECK + "logging.config.listen(9030, verify=check)\n", False),
+        (_SIGNED_CHECK + "logging.config.listen(9030, check)\n", False),
+        (
+            (
+                "from logging.config import listen\n\n\n"
+                "def check(data):\n    return None\n\n\n"
+                "listen(9030, verify=check)\n"
+            ),
+            False,
+        ),
+        (
+            (
+                "import hmac\nimport logging.config\nlogging.config.listen(9030, "
+                "verify=lambda b: b[32:] if hmac.compare_digest(b[:32], b'k' * 32) "
+                "else None)\n"
+            ),
+            False,
+        ),
+        ("import logging.config\nlogging.config.listen(9030, verify=None)\n", True),
+        (
+            "import logging.config\nlogging.config.listen(9030, verify=lambda b: b)\n",
+            True,
+        ),
+        (
+            (
+                "import logging.config\n\n\ndef passthrough(data):\n"
+                '    """Accept everything."""\n    return data\n\n\n'
+                "logging.config.listen(9030, verify=passthrough)\n"
+            ),
+            True,
+        ),
+        (
+            _SIGNED_CHECK + "check = None\nlogging.config.listen(9030, verify=check)\n",
+            True,
+        ),
+        (
+            (
+                "import logging.config\nimport signer\n"
+                "logging.config.listen(9030, verify=signer.verify)\n"
+            ),
+            True,
+        ),
+        (
+            "import logging.config\nopts = {}\nlogging.config.listen(9030, **opts)\n",
+            True,
+        ),
+        ("import logging.config\nlogging.config.listen(9030, verify=bytes)\n", True),
+        (
+            (
+                "import functools\nimport logging.config\n\n\n@functools.cache\n"
+                "def check(data):\n    return None\n\n\n"
+                "logging.config.listen(9030, verify=check)\n"
+            ),
+            True,
+        ),
+        (
+            (
+                "import logging.config\n\n\ndef start(check):\n"
+                "    return logging.config.listen(9030, verify=check)\n"
+            ),
+            True,
+        ),
+        (
+            (
+                "import logging.config\nfrom verifiers import *\n\n\n"
+                "def check(data):\n    return None\n\n\n"
+                "logging.config.listen(9030, verify=check)\n"
+            ),
+            True,
+        ),
+    ],
+    ids=[
+        "no-verify",
+        "verify-function",
+        "positional-verify-function",
+        "imported-listen-with-verify",
+        "checking-lambda",
+        "verify-none",
+        "identity-lambda",
+        "pass-through-function",
+        "name-rebound-to-none",
+        "attribute-verifier-unproven",
+        "kwargs-only",
+        "bytes-passes-everything",
+        "decorated-function-unproven",
+        "parameter-unproven",
+        "star-import-may-rebind",
+    ],
+)
+def test_logging_config_listen_verify_callable(tmp_path, code, reported):
+    out = _scan_one(tmp_path, "a_logging_listen.py", code)
+    assert ("SKY-D347" in _rule_ids(out)) is reported
+    direct = _scan_dangerous_calls_rule(code)
+    assert ("SKY-D347" in _rule_ids(direct)) is reported

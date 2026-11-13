@@ -423,6 +423,93 @@ export async function POST(request: Request) {
     assert _rule_findings(findings, "SKY-D282") == []
 
 
+def _stripe_route_with_secret(secret: str, preamble: str = "") -> str:
+    return (
+        """
+import Stripe from "stripe";
+
+const stripe = new Stripe(process.env.STRIPE_API_KEY!);
+"""
+        + preamble
+        + """
+export async function POST(request: Request) {
+  const payload = await request.text();
+  const signature = request.headers.get("stripe-signature");
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(payload, signature, """
+        + secret
+        + """);
+  } catch {
+    return new Response("bad signature", { status: 400 });
+  }
+  await enqueueStripeEvent(event);
+  return new Response("ok");
+}
+"""
+    )
+
+
+@pytest.mark.parametrize(
+    "secret,preamble",
+    (
+        ('process.env.STRIPE_WEBHOOK_SECRET ?? ""', ""),
+        ("process.env.STRIPE_WEBHOOK_SECRET || ''", ""),
+        (
+            "webhookSecret",
+            'const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET ?? "";\n',
+        ),
+    ),
+)
+def test_d282_server_secret_with_empty_fallback_is_verified(
+    tmp_path: Path, secret: str, preamble: str
+) -> None:
+    findings = _scan_typescript(
+        tmp_path,
+        "app/api/webhooks/stripe/route.ts",
+        _stripe_route_with_secret(secret, preamble),
+    )
+
+    assert _rule_findings(findings, "SKY-D282") == []
+
+
+@pytest.mark.parametrize(
+    "secret",
+    (
+        'process.env.STRIPE_WEBHOOK_SECRET ?? "whsec_local_fallback"',
+        'process.env.NEXT_PUBLIC_STRIPE_WEBHOOK_SECRET ?? ""',
+        'process.env.STRIPE_WEBHOOK_SECRET && ""',
+        '"" ?? process.env.STRIPE_WEBHOOK_SECRET',
+    ),
+)
+def test_d282_secret_fallback_lookalikes_still_report(
+    tmp_path: Path, secret: str
+) -> None:
+    findings = _scan_typescript(
+        tmp_path,
+        "app/api/webhooks/stripe/route.ts",
+        _stripe_route_with_secret(secret),
+    )
+
+    assert len(_rule_findings(findings, "SKY-D282")) == 1
+
+
+def test_d282_route_without_verification_still_reports(tmp_path: Path) -> None:
+    findings = _scan_typescript(
+        tmp_path,
+        "app/api/webhooks/stripe/route.ts",
+        """
+export async function POST(request: Request) {
+  const event = await request.json();
+  await enqueueStripeEvent(event);
+  return new Response("ok");
+}
+""",
+    )
+
+    assert len(_rule_findings(findings, "SKY-D282")) == 1
+
+
 def test_d282_svix_verifier_with_request_headers_and_server_secret_is_safe(
     tmp_path: Path,
 ) -> None:

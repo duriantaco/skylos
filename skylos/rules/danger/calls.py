@@ -247,11 +247,13 @@ DANGEROUS_CALLS = {
         "SKY-D347",
         "MEDIUM",
         "logging.config.listen() starts an unauthenticated config listener",
+        {"verified_listener": True},
     ),
     "logging.config.config.listen": (
         "SKY-D347",
         "MEDIUM",
         "logging.config.listen() starts an unauthenticated config listener",
+        {"verified_listener": True},
     ),
     "tempfile.mktemp": (
         "SKY-D348",
@@ -951,6 +953,80 @@ def _hashlib_new_weak_rule(node: ast.Call, name: str | None) -> str | None:
     if not (isinstance(algorithm, ast.Constant) and isinstance(algorithm.value, str)):
         return None
     return _HASHLIB_NEW_WEAK.get(algorithm.value.lower())
+
+
+def _listener_verifies(node: ast.Call, module: ast.AST | None) -> bool:
+    verifier = _listener_verify_argument(node)
+    if isinstance(verifier, ast.Lambda):
+        return not _returns_first_parameter(verifier.body, verifier.args)
+    if isinstance(verifier, ast.Name) and module is not None:
+        return _names_verifier_function(verifier.id, module)
+    return False
+
+
+def _listener_verify_argument(node: ast.Call) -> ast.AST | None:
+    for keyword in node.keywords:
+        if keyword.arg == "verify":
+            return keyword.value
+    if len(node.args) > 1 and not any(
+        isinstance(arg, ast.Starred) for arg in node.args[:2]
+    ):
+        return node.args[1]
+    return None
+
+
+def _names_verifier_function(name: str, module: ast.AST) -> bool:
+    found = False
+    for child in ast.walk(module):
+        if not binds_name(child, name):
+            continue
+        if not isinstance(child, ast.FunctionDef) or child.decorator_list:
+            return False
+        body = list(child.body)
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            body = body[1:]
+        if (
+            len(body) == 1
+            and isinstance(body[0], ast.Return)
+            and _returns_first_parameter(body[0].value, child.args)
+        ):
+            return False
+        found = True
+    return found
+
+
+def _returns_first_parameter(value: ast.AST | None, args: ast.arguments) -> bool:
+    params = [*args.posonlyargs, *args.args]
+    return bool(params) and isinstance(value, ast.Name) and value.id == params[0].arg
+
+
+def binds_name(node: ast.AST, name: str) -> bool:
+    if isinstance(node, ast.Name):
+        return node.id == name and not isinstance(node.ctx, ast.Load)
+    if isinstance(node, ast.arg):
+        return node.arg == name
+    if isinstance(node, ast.alias):
+        return node.name == "*" or (node.asname or node.name.split(".")[0]) == name
+    if isinstance(
+        node,
+        (
+            ast.FunctionDef,
+            ast.AsyncFunctionDef,
+            ast.ClassDef,
+            ast.ExceptHandler,
+            ast.MatchAs,
+            ast.MatchStar,
+        ),
+    ):
+        return node.name == name
+    if isinstance(node, ast.MatchMapping):
+        return node.rest == name
+    return False
 
 
 def _kw_equals(node: ast.Call, requirements):
@@ -3251,6 +3327,13 @@ class DangerousCallsRule(SkylosRule):
             if opts and "kw_equals" in opts:
                 if not _kw_equals(node, opts["kw_equals"]):
                     continue
+
+            if (
+                opts
+                and opts.get("verified_listener")
+                and _listener_verifies(node, self._module)
+            ):
+                continue
 
             if (
                 opts

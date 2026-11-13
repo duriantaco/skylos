@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import ast
+import re
 import sys
 
-from skylos.rules.danger.calls import _qualified_name_from_call, track_import_aliases
+from skylos.rules.danger.calls import (
+    _qualified_name_from_call,
+    binds_name,
+    track_import_aliases,
+)
 from skylos.rules.danger.danger_ml.config_constructors import DataConstructorProof
 from skylos.rules.danger.taint import TaintVisitor
 
@@ -71,6 +76,33 @@ MUTABLE_HF_REVISIONS = {
     "main",
     "master",
 }
+
+LOCAL_PATH_PREFIXES = ("./", "../", "/", "~", ".\\", "..\\", "\\\\")
+WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
+PATHLIB_CONSTRUCTORS = {
+    "pathlib.Path",
+    "pathlib.PosixPath",
+    "pathlib.PurePath",
+    "pathlib.PurePosixPath",
+    "pathlib.PureWindowsPath",
+    "pathlib.WindowsPath",
+}
+STRING_PATH_CALLS = {
+    "os.fspath",
+    "os.path.expanduser",
+    "os.path.join",
+    "posixpath.join",
+    "str",
+}
+ABSOLUTE_PATH_CALLS = {
+    "os.getcwd",
+    "os.path.abspath",
+    "os.path.realpath",
+    "pathlib.Path.cwd",
+    "pathlib.Path.home",
+}
+LOCAL_PATH_METHODS = {"absolute", "expanduser", "joinpath", "resolve"}
+MAX_LOCAL_PATH_DEPTH = 4
 
 KERAS_LOAD_MODEL_CALLS = {
     "keras.models.load_model",
@@ -187,8 +219,10 @@ class _ModelDeserializationChecker(TaintVisitor):
         )
 
     def _check_model_load_call(self, node: ast.Call, name: str) -> None:
-        if _is_huggingface_artifact_call(name) and not _is_local_dataset_load(
-            node, name
+        if (
+            _is_huggingface_artifact_call(name)
+            and not _is_local_dataset_load(node, name)
+            and not self._loads_local_pretrained(node, name)
         ):
             if _call_uses_missing_or_mutable_revision(node):
                 self._append_huggingface_revision_finding(node, name)
@@ -305,6 +339,62 @@ class _ModelDeserializationChecker(TaintVisitor):
             self._expr_looks_like_model_path(child) for child in ast.iter_child_nodes(node)
         )
 
+    def _loads_local_pretrained(self, node: ast.Call, name: str) -> bool:
+        if not name.endswith(".from_pretrained"):
+            return False
+        reference = _keyword_value(node, "pretrained_model_name_or_path")
+        if reference is None and node.args:
+            reference = node.args[0]
+        return self._is_local_path(reference, 0)
+
+    def _is_local_path(
+        self, node: ast.AST | None, depth: int, normalized: bool = False
+    ) -> bool:
+        if node is None or depth > MAX_LOCAL_PATH_DEPTH:
+            return False
+        if isinstance(node, ast.Constant):
+            return isinstance(node.value, str) and _is_explicit_local_path(
+                node.value, normalized
+            )
+        if isinstance(node, ast.JoinedStr):
+            return bool(node.values) and self._is_local_path(
+                node.values[0], depth, normalized
+            )
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return self._is_local_path(node.left, depth + 1, normalized)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            return self._is_local_path(node.left, depth + 1, True)
+        if isinstance(node, ast.Name):
+            return self._is_local_path(
+                _single_module_value(self._tree, node.id), depth + 1, normalized
+            )
+        if not isinstance(node, ast.Call):
+            return False
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in LOCAL_PATH_METHODS
+        ):
+            receiver = node.func.value
+            if node.func.attr in {"absolute", "resolve"} and (
+                isinstance(receiver, ast.Call)
+                and _qualified_name_from_call(receiver, self.aliases)
+                in PATHLIB_CONSTRUCTORS
+            ):
+                return True
+            return self._is_local_path(receiver, depth + 1, True)
+        name = _qualified_name_from_call(node, self.aliases)
+        if name in ABSOLUTE_PATH_CALLS:
+            return True
+        if name in PATHLIB_CONSTRUCTORS:
+            return bool(node.args) and self._is_local_path(
+                node.args[0], depth + 1, True
+            )
+        if name in STRING_PATH_CALLS:
+            return bool(node.args) and self._is_local_path(
+                node.args[0], depth + 1, normalized
+            )
+        return False
+
     @staticmethod
     def _kw_is_true(node: ast.Call, keyword_name: str) -> bool:
         return any(
@@ -366,6 +456,41 @@ def _loads_local_path(node: ast.Call) -> bool:
     if not (isinstance(reference, ast.Constant) and isinstance(reference.value, str)):
         return False
     return reference.value.strip().startswith(("./", "../", "/", "~"))
+
+
+def _is_explicit_local_path(value: str, normalized: bool) -> bool:
+    path = value.strip()
+    while normalized and path.startswith(("./", ".\\")):
+        path = path[2:].lstrip("/\\")
+    if normalized and not path:
+        return True
+    return (
+        path in {".", ".."}
+        or path.startswith(LOCAL_PATH_PREFIXES)
+        or bool(WINDOWS_DRIVE_RE.match(path))
+    )
+
+
+def _single_module_value(tree: ast.AST | None, name: str) -> ast.AST | None:
+    if not isinstance(tree, ast.Module):
+        return None
+    if sum(1 for child in ast.walk(tree) if binds_name(child, name)) != 1:
+        return None
+    for statement in tree.body:
+        if (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and statement.targets[0].id == name
+        ):
+            return statement.value
+        if (
+            isinstance(statement, ast.AnnAssign)
+            and isinstance(statement.target, ast.Name)
+            and statement.target.id == name
+        ):
+            return statement.value
+    return None
 
 
 def _is_remote_path(value: str) -> bool:

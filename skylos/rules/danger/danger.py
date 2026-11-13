@@ -44,6 +44,7 @@ from .calls import (
     _matches_rule,
     _declares_non_security_use,
     _kw_equals,
+    _listener_verifies,
     _qualified_name_from_call as qualified_name_from_call,
     _weak_random_has_security_context,
     _weak_random_call_name,
@@ -224,6 +225,13 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                     opts
                     and "kw_equals" in opts
                     and not _kw_equals(node, opts["kw_equals"])
+                ):
+                    continue
+
+                if (
+                    opts
+                    and opts.get("verified_listener")
+                    and _listener_verifies(node, self._module)
                 ):
                     continue
 

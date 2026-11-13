@@ -1315,3 +1315,30 @@ def test_privileged_job_timeout_is_reported_only_when_the_default_does_not_bound
         checkout_with=checkout_with,
     )
     assert bool(_workflow_findings(tmp_path, text, "SKY-D313")) is reported
+
+
+@pytest.mark.parametrize(
+    ("image", "expected"),
+    [
+        ("Dockerfile", []),
+        ("./build/Dockerfile", []),
+        ("docker/Dockerfile.prod", []),
+        ("dockerfile", []),
+        ("docker://alpine:latest", [("HIGH", 4)]),
+        ("docker://node:20", [("MEDIUM", 4)]),
+        ("docker://example/Dockerfile", [("HIGH", 4)]),
+        ("alpine:latest", [("HIGH", 4)]),
+    ],
+)
+def test_docker_action_built_from_its_own_dockerfile_is_not_an_unpinned_image(
+    tmp_path, image, expected
+):
+    (tmp_path / "action.yml").write_text(
+        f"name: a\nruns:\n  using: docker\n  image: {image}\n", encoding="utf-8"
+    )
+    findings = scan_github_actions(tmp_path)
+    assert [
+        (finding["severity"], finding["line"])
+        for finding in findings
+        if finding["rule_id"] == "SKY-D296"
+    ] == expected

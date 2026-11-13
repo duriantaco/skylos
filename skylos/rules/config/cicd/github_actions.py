@@ -2146,6 +2146,13 @@ def _scan_image_value(
     )
 
 
+def _is_action_dockerfile(image: Any) -> bool:
+    if not isinstance(image, str) or image.lower().startswith("docker://"):
+        return False
+    name = image.split("/")[-1].lower()
+    return name.startswith("dockerfile.") or name.endswith("dockerfile")
+
+
 def _scan_container_images(
     data: dict[str, Any],
     path: Path,
@@ -2212,7 +2219,11 @@ def _scan_container_images(
                 )
     else:
         runs = data.get("runs")
-        if isinstance(runs, dict) and runs.get("using") == "docker":
+        if (
+            isinstance(runs, dict)
+            and runs.get("using") == "docker"
+            and not _is_action_dockerfile(runs.get("image"))
+        ):
             _scan_image_value(
                 image=runs.get("image"),
                 rule_id=rule_id,

@@ -32,6 +32,7 @@ from skylos.rules.ai_defect.manifest_dependency_hallucination import (
     STATUS_MISSING_VERSION,
     STATUS_UNKNOWN,
     check_dependency_version_status,
+    without_local_workspace_packages,
 )
 from skylos.rules.sca.vulnerability_scanner import (
     _PACKAGE_JSON_DEPENDENCY_SECTIONS,
@@ -185,7 +186,7 @@ def scan_diff_dependency_hallucinations(
         registry_unreachable = registry_unreachable or unreachable
 
     manifest_findings, manifest_unreachable = _check_manifest_specs(
-        manifest_specs, status_checker
+        without_local_workspace_packages(repo_root, manifest_specs), status_checker
     )
     findings.extend(manifest_findings)
     registry_unreachable = registry_unreachable or manifest_unreachable

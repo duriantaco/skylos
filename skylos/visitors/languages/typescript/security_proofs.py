@@ -2727,6 +2727,16 @@ def _expression_is_server_secret(
     node = flow.unwrap(node)
     if node is None or node.type == "string":
         return False
+    if node.type == "binary_expression" and len(node.named_children) == 2:
+        left, right = node.named_children
+        operator = flow.source[left.end_byte : right.start_byte].decode(
+            "utf-8", errors="replace"
+        )
+        return (
+            operator.strip() in {"??", "||"}
+            and _is_empty_literal(flow, right)
+            and _expression_is_server_secret(flow, left, event, route, depth + 1, seen)
+        )
     env_key = _server_environment_key(flow, node)
     if env_key is not None:
         compact = _compact(flow.node_text(node))

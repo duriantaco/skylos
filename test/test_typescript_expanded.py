@@ -2642,6 +2642,62 @@ class TestNewQualityRules:
         uc002 = [f for f in quality if f["rule_id"] == "SKY-UC002"]
         assert len(uc002) == 0
 
+    @pytest.mark.parametrize("filename", ("helpers.ts", "helpers.js"))
+    def test_hoisted_function_after_return_is_reachable(self, tmp_path, filename):
+        code = (
+            "export function total(x) {\n"
+            "  return helper(x) + count();\n"
+            "  function helper(y) {\n"
+            "    return y + 1;\n"
+            "  }\n"
+            "  function* ids() {\n"
+            "    yield 1;\n"
+            "  }\n"
+            "  function count() {\n"
+            "    return [...ids()].length;\n"
+            "  }\n"
+            "}\n"
+        )
+        _, _, quality, _ = _scan_ts_file(tmp_path, filename, code)
+        assert [f for f in quality if f["rule_id"] == "SKY-UC002"] == []
+
+    def test_type_only_declarations_after_return_are_not_code(self, tmp_path):
+        code = (
+            "export function area(x: number): number {\n"
+            "  return x * x;\n"
+            "  interface Shape { side: number }\n"
+            "  type Side = number;\n"
+            "}\n"
+        )
+        _, _, quality, _ = _scan_ts(tmp_path, code)
+        assert [f for f in quality if f["rule_id"] == "SKY-UC002"] == []
+
+    @pytest.mark.parametrize(
+        "statement",
+        (
+            "const f = () => 1;",
+            "let y = 2;",
+            "class K {}",
+            "console.log(x);",
+            "var z = 3;",
+        ),
+    )
+    def test_statements_after_hoisted_helper_still_unreachable(
+        self, tmp_path, statement
+    ):
+        code = (
+            "export function total(x: number): number {\n"
+            "  return helper(x);\n"
+            "  function helper(y: number) {\n"
+            "    return y + 1;\n"
+            "  }\n"
+            f"  {statement}\n"
+            "}\n"
+        )
+        _, _, quality, _ = _scan_ts(tmp_path, code)
+        lines = [f["line"] for f in quality if f["rule_id"] == "SKY-UC002"]
+        assert lines == [6]
+
 
 class TestInsecureRandomness:
     """SKY-D250: Math.random() is not cryptographically secure."""
@@ -2962,6 +3018,60 @@ class TestTimingUnsafeComparison:
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D253" in ids
+
+    @pytest.mark.parametrize(
+        "expression",
+        (
+            "token === undefined",
+            "undefined !== token",
+            "token == undefined",
+            'token === ""',
+            '"" == token',
+            "token !== ''",
+            "token === ``",
+            "signature === void 0",
+            "(token as string | undefined) === undefined",
+        ),
+    )
+    def test_presence_checks_are_not_timing_comparisons(self, tmp_path, expression):
+        code = f"export function check(token, signature) {{\n  if ({expression}) {{ return false; }}\n  return true;\n}}\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        assert [f for f in danger if f["rule_id"] == "SKY-D253"] == []
+
+    @pytest.mark.parametrize(
+        "expression",
+        (
+            "token === expectedToken",
+            'signature == req.headers["x-expected"]',
+            'password === "hunter2"',
+            'token === " "',
+            "token === `${prefix}`",
+        ),
+    )
+    def test_secret_comparisons_beside_presence_checks_still_report(
+        self, tmp_path, expression
+    ):
+        code = (
+            "export function check(token, signature, password, req, expectedToken, prefix) {\n"
+            "  if (token === undefined) { return false; }\n"
+            f"  return {expression};\n"
+            "}\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        assert [f["line"] for f in danger if f["rule_id"] == "SKY-D253"] == [3]
+
+    @pytest.mark.parametrize(
+        "code",
+        (
+            "const undefined = process.env.TOKEN;\nexport const ok = (token) => token === undefined;\n",
+            "export function f({ undefined }, token) {\n  return token === undefined;\n}\n",
+            "export function f(token) {\n  try { run(); } catch (undefined) { return token === undefined; }\n}\n",
+            "export const f = (undefined, token) => token === undefined;\n",
+        ),
+    )
+    def test_rebound_undefined_still_reports(self, tmp_path, code):
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        assert len([f for f in danger if f["rule_id"] == "SKY-D253"]) == 1
 
     def test_password_triple_eq(self, tmp_path):
         code = (

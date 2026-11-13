@@ -1139,6 +1139,73 @@ class TestManifestDiffChecks:
         kinds = [f["kind"] for f in result["findings"]]
         assert kinds == ["hallucinated_import", "undeclared_import"]
 
+    @staticmethod
+    def _missing_names(result):
+        return sorted(
+            finding["message"].split("'")[1]
+            for finding in result["findings"]
+            if finding["rule_id"] == "SKY-D222"
+        )
+
+    def test_npm_workspace_sibling_added_to_a_member_is_not_hallucinated(
+        self, tmp_path
+    ):
+        (tmp_path / "package.json").write_text(
+            '{"name": "acme", "workspaces": ["packages/*"]}', encoding="utf-8"
+        )
+        (tmp_path / "packages" / "ui").mkdir(parents=True)
+        (tmp_path / "packages" / "ui" / "package.json").write_text(
+            '{"name": "@acme/ui", "version": "1.0.0"}', encoding="utf-8"
+        )
+        lines = [
+            "{",
+            '  "name": "@acme/web",',
+            '  "dependencies": {',
+            '    "@acme/ui": "1.0.0",',
+            '    "@acme/ghost-kit": "1.0.0"',
+            "  }",
+            "}",
+        ]
+        (tmp_path / "packages" / "web").mkdir(parents=True)
+        (tmp_path / "packages" / "web" / "package.json").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8"
+        )
+
+        result = scan_diff_dependency_hallucinations(
+            _new_file_diff("packages/web/package.json", "\n".join(lines)),
+            str(tmp_path),
+            import_scanner=_noop_import_scanner,
+            status_checker=lambda *_args: "missing_package",
+        )
+
+        assert self._missing_names(result) == ["@acme/ghost-kit"]
+
+    def test_uv_path_source_added_to_pyproject_is_not_hallucinated(self, tmp_path):
+        lines = [
+            "[project]",
+            'name = "acme-api"',
+            'version = "0.1.0"',
+            "dependencies = [",
+            '  "acme-billing-core==2.4.0",',
+            '  "acme-ghost-sdk==1.0.0",',
+            "]",
+            "",
+            "[tool.uv.sources]",
+            'acme-billing-core = { path = "../billing-core" }',
+        ]
+        (tmp_path / "pyproject.toml").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8"
+        )
+
+        result = scan_diff_dependency_hallucinations(
+            _new_file_diff("pyproject.toml", "\n".join(lines)),
+            str(tmp_path),
+            import_scanner=_noop_import_scanner,
+            status_checker=lambda *_args: "missing_package",
+        )
+
+        assert self._missing_names(result) == ["acme-ghost-sdk"]
+
 
 class TestValidateCodeChangeDependencies:
     def test_dependency_findings_flow_into_result(self, monkeypatch):

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import fnmatch
+import glob
 import json
 import logging
 import os
@@ -30,11 +32,21 @@ from skylos.rules.sca.vulnerability_scanner import (
     ECOSYSTEM_GO,
     ECOSYSTEM_NPM,
     ECOSYSTEM_PYPI,
+    MAX_MANIFEST_BYTES,
     _classify_npm_registry_spec,
+    _load_toml,
+    _normalize_dependency_name,
+    _pyproject_non_pypi_source_names,
+    _uv_non_pypi_source_names,
     parse_go_mod,
     parse_package_json_candidates,
     parse_pyproject_toml_candidates,
     parse_requirements_txt_candidates,
+)
+from skylos.visitors.languages.typescript.workspace import (
+    _expand_workspace_patterns,
+    _extract_workspace_patterns,
+    _parse_pnpm_workspace_yaml,
 )
 
 
@@ -304,8 +316,189 @@ def _collect_manifest_dependencies(root: Path) -> list[dict[str, Any]]:
             except Exception as exc:
                 logger.debug("Failed to parse dependency manifest %s: %s", path, exc)
 
+    dependencies = without_local_workspace_packages(root, dependencies)
     dependencies.extend(_collect_install_surface_dependencies(root))
     return dependencies
+
+
+def without_local_workspace_packages(
+    repo_root: str | Path | None,
+    dependencies: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    root = _repo_root(repo_root)
+    if root is None or not any(
+        _local_package_key(dependency) is not None for dependency in dependencies
+    ):
+        return dependencies
+    workspaces = _local_workspaces(root)
+    own_sources: dict[Path, set[str]] = {}
+    kept = []
+    for dependency in dependencies:
+        if not _defined_locally(root, dependency, workspaces, own_sources):
+            kept.append(dependency)
+    return kept
+
+
+def _local_package_key(dependency: dict[str, Any]) -> tuple[str, str] | None:
+    ecosystem = str(dependency.get("ecosystem", ""))
+    name = str(dependency.get("name", "")).strip()
+    manifest = Path(str(dependency.get("file", "")))
+    if not name:
+        return None
+    if ecosystem == ECOSYSTEM_NPM and manifest.name == "package.json":
+        return ecosystem, name
+    if ecosystem == ECOSYSTEM_PYPI and manifest.name == "pyproject.toml":
+        return ecosystem, _normalize_dependency_name(name)
+    return None
+
+
+def _defined_locally(
+    root: Path,
+    dependency: dict[str, Any],
+    workspaces: list[tuple[str, frozenset[Path], frozenset[str]]],
+    own_sources: dict[Path, set[str]],
+) -> bool:
+    key = _local_package_key(dependency)
+    if key is None:
+        return False
+    ecosystem, name = key
+    manifest = Path(str(dependency["file"]))
+    if not manifest.is_absolute():
+        manifest = root / manifest
+    try:
+        manifest = manifest.resolve()
+    except OSError:
+        return False
+    if ecosystem == ECOSYSTEM_PYPI:
+        if manifest not in own_sources:
+            own_sources[manifest] = _pyproject_non_pypi_source_names(
+                _read_toml_object(manifest)
+            )
+        if name in own_sources[manifest]:
+            return True
+    return any(
+        kind == ecosystem and manifest.parent in folders and name in names
+        for kind, folders, names in workspaces
+    )
+
+
+def _local_workspaces(
+    root: Path,
+) -> list[tuple[str, frozenset[Path], frozenset[str]]]:
+    workspaces: list[tuple[str, frozenset[Path], frozenset[str]]] = []
+    resolver = ParentResolver()
+    for dirpath, dirnames, filenames in os.walk(root):
+        _filter_manifest_dirs(dirnames)
+        if _manifest_depth(root, dirpath, resolver) > 3:
+            dirnames.clear()
+            continue
+        folder = Path(dirpath)
+        patterns: list[str] = []
+        if "package.json" in filenames:
+            patterns.extend(
+                _extract_workspace_patterns(_read_json_object(folder / "package.json"))
+            )
+        if "pnpm-workspace.yaml" in filenames:
+            text = read_text_no_symlink(
+                folder / "pnpm-workspace.yaml",
+                max_bytes=MAX_INSTALL_SURFACE_BYTES,
+                encoding="utf-8",
+                errors="ignore",
+            )
+            if text:
+                patterns.extend(_parse_pnpm_workspace_yaml(text))
+        if patterns:
+            workspaces.append(_npm_workspace(root, folder, patterns))
+        if "pyproject.toml" in filenames:
+            workspace = _uv_workspace(root, folder)
+            if workspace is not None:
+                workspaces.append(workspace)
+    return workspaces
+
+
+def _npm_workspace(
+    root: Path, folder: Path, patterns: list[str]
+) -> tuple[str, frozenset[Path], frozenset[str]]:
+    members = [folder.resolve(), *_expand_workspace_patterns(folder, patterns, "")]
+    folders: set[Path] = set()
+    names: set[str] = set()
+    for member in members:
+        if not _inside(member, root):
+            continue
+        folders.add(member)
+        name = _read_json_object(member / "package.json").get("name")
+        if isinstance(name, str) and name.strip():
+            names.add(name.strip())
+    return ECOSYSTEM_NPM, frozenset(folders), frozenset(names)
+
+
+def _uv_workspace(
+    root: Path, folder: Path
+) -> tuple[str, frozenset[Path], frozenset[str]] | None:
+    data = _read_toml_object(folder / "pyproject.toml")
+    tool = data.get("tool")
+    if not isinstance(tool, dict) or not isinstance(tool.get("uv"), dict):
+        return None
+    workspace = tool["uv"].get("workspace")
+    if not isinstance(workspace, dict):
+        return None
+    members = _string_list(workspace.get("members"))
+    excluded = _string_list(workspace.get("exclude"))
+    base = folder.resolve()
+    folders = {base}
+    names = set(_uv_non_pypi_source_names(tool))
+    candidates = [base]
+    for pattern in members:
+        for matched in sorted(glob.glob(str(base / pattern))):
+            candidate = Path(matched).resolve()
+            if candidate.is_dir() and (candidate / "pyproject.toml").is_file():
+                candidates.append(candidate)
+    for candidate in candidates:
+        if not _inside(candidate, root):
+            continue
+        relative = _relative_posix(candidate, base)
+        if candidate != base and any(
+            fnmatch.fnmatchcase(relative, pattern.strip("/")) for pattern in excluded
+        ):
+            continue
+        folders.add(candidate)
+        project = _read_toml_object(candidate / "pyproject.toml").get("project")
+        if isinstance(project, dict) and isinstance(project.get("name"), str):
+            names.add(_normalize_dependency_name(project["name"]))
+    return ECOSYSTEM_PYPI, frozenset(folders), frozenset(names)
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _read_toml_object(path: Path) -> dict[str, Any]:
+    text = read_text_no_symlink(
+        path,
+        max_bytes=MAX_MANIFEST_BYTES,
+        encoding="utf-8",
+        errors="ignore",
+    )
+    if not text:
+        return {}
+    return _load_toml(text.lstrip("\ufeff"))
+
+
+def _inside(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _relative_posix(path: Path, base: Path) -> str:
+    try:
+        return path.relative_to(base).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 def _apply_manifest_dependency_context(

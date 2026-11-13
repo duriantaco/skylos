@@ -58,6 +58,16 @@ _TERMINATOR_TYPES: set[str] = {
     "continue_statement",
 }
 
+_HOISTED_DECLARATION_TYPES: frozenset[str] = frozenset(
+    {
+        "function_declaration",
+        "generator_function_declaration",
+        "function_signature",
+        "interface_declaration",
+        "type_alias_declaration",
+    }
+)
+
 _QUERY_CACHE: dict[tuple[int, str], Query] = {}
 
 _FUNC_PATTERN = """
@@ -826,6 +836,8 @@ def _check_unreachable_code(
             found_terminator = False
             for child in node.children:
                 if child.type in ("{", "}"):
+                    continue
+                if found_terminator and child.type in _HOISTED_DECLARATION_TYPES:
                     continue
                 if found_terminator and child.type not in ("comment", "ERROR"):
                     findings.append(
