@@ -80,11 +80,30 @@ scan never claims those packages are clean. A pull request that introduces such
 a source is reported as SKY-SCA-SRC004, and packages in `internal_packages` on
 the target branch are exempt.
 
-The scan still stops with exit 2 when at least 5 packages are not checked and
-they outnumber the packages it could check, which is what a private mirror of
-public packages looks like. It also stops on contradictory records: a tarball on
-the public registry that doesn't match its package, a pnpm alternate `id`, or an
-unrecorded Yarn `virtual:` peer.
+The scan still stops with exit 2 when it could check no public package at all,
+or when at least 5 packages are not checked and they outnumber the packages it
+could check, which is what a private mirror of public packages looks like. It
+also stops on contradictory records: a tarball on the public registry that
+doesn't match its package, a pnpm alternate `id`, or an unrecorded Yarn
+`virtual:` peer.
+
+### Public npm packages behind a private mirror
+
+npm, pnpm, Yarn Classic and Bun lockfiles often record public packages
+through a company mirror. To check those packages, list the mirror:
+
+```toml
+[tool.skylos.supply_chain]
+npm_registry_mirrors = ["https://packages.example.com/npm/"]
+internal_packages = ["@company/*"]
+```
+
+For each locked package behind that mirror, Skylos asks the public npm
+registry for the same name and version and compares the lockfile's
+`sha256`, `sha384` or `sha512` integrity value. Only an exact match makes it a
+public package that OSV is asked about. The mirror itself is never contacted,
+and names that match `internal_packages` are never sent. A package with no
+integrity value, or a different one, stays "not checked".
 
 ### When OSV can't be reached
 
@@ -100,9 +119,24 @@ package with no saved answer leaves the scan incomplete (exit 2).
 
 PyPI advisories carry `metadata.reachability_tier`, shown in a **Use** column:
 `called at app.py:4`, `imported`, `unknown`, `no import found` or `not reached`.
+For npm advisories, Skylos looks for JavaScript and TypeScript source that
+imports a direct dependency (static imports, re-exports, literal dynamic
+imports and bare `require()` calls) and shows `JS/TS import at src/app.ts:3`.
+It matches the import to the vulnerable copy in a v2 or v3
+`package-lock.json` or `npm-shrinkwrap.json`; anything else stays `unknown`.
 Packages sort by severity and, within a severity, by use. Nothing is hidden and
 the gate counts every advisory: a package can run without an import, as a
 command-line tool does.
+
+### Exploit context (EPSS and KEV)
+
+`--sca-threat-intel` turns on `--sca` and adds two public signals to each CVE:
+its EPSS score (FIRST's estimate of how likely it is to be exploited soon) and
+whether it is in CISA's Known Exploited Vulnerabilities catalog. Only CVE IDs
+are sent to FIRST; the CISA catalog is downloaded whole. Each value is dated
+and marked `current`, `stale` or `unknown`. The context never changes a
+finding's severity, its order or the gate. It needs `ca9` 0.9.0 or later;
+older versions keep the CVE findings and say the context is unavailable.
 
 ## Upgrade review
 
