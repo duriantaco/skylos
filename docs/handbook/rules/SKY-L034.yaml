@@ -1,0 +1,114 @@
+id: SKY-L034
+title: Repeated mutable alias
+family: logic
+severity: MEDIUM
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  A list built by repeating a list that holds a mutable value, such as
+  `[[None] * cols] * rows` or `[{}] * 3`. The `*` copies references, not
+  values, so every row is the same inner list.
+
+why_it_matters: >-
+  A change to one element shows up in all of them. In the example below,
+  booking seat 3 in row 0 books seat 3 in every row, and the venue shows as
+  sold out after a handful of sales.
+
+flagged_example:
+  language: python
+  filename: venues/seating.py
+  expect_line: 5
+  code: |
+    """Seat maps for a venue."""
+
+
+    def empty_seat_map(rows, seats_per_row):
+        return [[None] * seats_per_row] * rows
+
+
+    def book(seat_map, row, seat, ticket_id):
+        seat_map[row][seat] = ticket_id
+
+not_flagged_example:
+  language: python
+  filename: venues/seating.py
+  code: |
+    """Seat maps for a venue."""
+
+
+    def empty_row(seats_per_row):
+        return [None] * seats_per_row
+
+
+    def book(row_map, seat, ticket_id):
+        row_map[seat] = ticket_id
+  why: >-
+    The repeated element is `None`, which cannot be changed in place.
+    `row_map[seat] = ticket_id` replaces one slot and leaves the others
+    alone, so sharing the same `None` is harmless.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Looks at every `*` whose one
+    side is a list or tuple literal (or a `+` or `*` of such literals) and
+    whose other side is the repeat count.
+  - >-
+    The sequence must provably contain a mutable element: a list, dict or
+    set literal or comprehension, a call to builtin `list()`, `dict()` or
+    `set()` that is not shadowed in the file, a list repetition such as
+    `[None] * cols`, or a tuple holding one of these.
+  - >-
+    The count must be able to be 2 or more. A literal `0` or `1`, a
+    comparison, a `not` expression and a builtin `bool()` result are
+    skipped; an unknown name such as `rows` counts.
+  - >-
+    Reports MEDIUM on the line of the `*` expression.
+
+source_refs:
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "class RepeatedMutableAliasRule"
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "def _proven_sequence_fact("
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "def _repeat_count_can_alias("
+
+fix:
+  explanation: >-
+    Build each inner list separately with a comprehension, so every row is
+    its own object.
+  filename: venues/seating.py
+  code: |
+    """Seat maps for a venue."""
+
+
+    def empty_seat_map(rows, seats_per_row):
+        return [[None] * seats_per_row for _ in range(rows)]
+
+
+    def book(seat_map, row, seat, ticket_id):
+        seat_map[row][seat] = ticket_id
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A grid that is only ever read, never changed in place, is still
+      reported; the sharing is harmless there.
+    - >-
+      It misses repetition of a variable that holds a list, such as
+      `row = []` followed by `[row] * 3`, because only literals and builtin
+      calls written in place are proven mutable.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line of the `*` expression.
+      language: python
+      code: |
+        EMPTY = [[]] * 4  # skylos: ignore[SKY-L034] read-only sentinel rows
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L034"]` turns the rule off for the
+        project.
+
+related: [SKY-L001]

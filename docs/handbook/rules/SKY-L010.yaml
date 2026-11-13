@@ -1,0 +1,123 @@
+id: SKY-L010
+title: Security TODO marker
+family: logic
+severity: MEDIUM
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  MEDIUM.
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  A `TODO`, `FIXME`, `HACK`, `XXX` or `TEMP` comment that talks about a
+  security control: authentication, permissions, validation, escaping,
+  encryption, tokens, sessions, TLS and similar. It marks protection that
+  someone meant to add and has not added yet.
+
+why_it_matters: >-
+  The code ships without the missing check, and the comment is often the
+  only record that it is missing. In the example below any signed-in user
+  can delete any account until someone remembers the TODO.
+
+flagged_example:
+  language: python
+  filename: accounts/views.py
+  expect_line: 7
+  code: |
+    """Account management endpoints."""
+
+    from accounts.models import Account
+
+
+    def delete_account(request, account_id):
+        # TODO: add a permission check so users can only delete their own account
+        account = Account.objects.get(pk=account_id)
+        account.delete()
+        return {"deleted": account_id}
+
+not_flagged_example:
+  language: python
+  filename: accounts/views.py
+  code: |
+    """Account management endpoints."""
+
+    from accounts.models import Account
+
+
+    def delete_account(request, account_id):
+        # TODO: temporary workaround until the bulk delete API ships
+        account = Account.objects.get(pk=account_id, owner=request.user)
+        account.delete()
+        return {"deleted": account_id}
+  why: >-
+    Words such as "temporary", "workaround", "hack" or "disable" are not
+    enough on their own. Skylos reports a TODO only when it also names a
+    security subject, and "bulk delete API" is not one.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Reads every comment, and the
+    docstrings of modules, classes and functions; other strings are not
+    read.
+  - >-
+    Looks for `TODO`, `FIXME`, `HACK`, `XXX` or `TEMP` followed by `:` or a
+    space, then a security word later on the line: for example
+    authentication, authorization, permission, credential, sanitize,
+    validate, escape, encrypt, injection, OAuth, rate limit, CSRF, XSS, SQLi,
+    TLS, SSL, certificate, CORS, session, cookie, JWT, API key, ACL, RBAC,
+    login, password, secret, token, security or unsafe.
+  - >-
+    The generic words disable, bypass, hardcode, hack, workaround,
+    temporary and fixme only count when the rest of the comment names a
+    security subject, which also includes MFA, 2FA, OTP, passkeys,
+    signatures, HMAC, HTTPS, mTLS and SSH.
+  - >-
+    Reports MEDIUM once per line, on the line of the comment.
+
+source_refs:
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "class SecurityTodoRule"
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "_SECURITY_TODO_RE = re.compile("
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "def _has_security_todo_subject("
+
+fix:
+  explanation: >-
+    Do the work the comment describes, then delete the comment. Here the
+    query only finds accounts that belong to the signed-in user.
+  filename: accounts/views.py
+  code: |
+    """Account management endpoints."""
+
+    from accounts.models import Account
+
+
+    def delete_account(request, account_id):
+        account = Account.objects.get(pk=account_id, owner=request.user)
+        account.delete()
+        return {"deleted": account_id}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A TODO about non-security work that happens to use a listed word, such
+      as "validate the CSV header" or "cache the session list", is reported.
+    - >-
+      A TODO that describes a security gap without any listed word, such as
+      "check that the caller owns this account", is missed.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker at the end of the comment line. Better still, move
+        the task to your issue tracker and delete the comment.
+      language: python
+      code: |
+        # TODO: validate the CSV header  # skylos: ignore[SKY-L010] not security
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L010"]` turns the rule off for the
+        project.
+
+related: [SKY-L011, SKY-L009, SKY-L026]

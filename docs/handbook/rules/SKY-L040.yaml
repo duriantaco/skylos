@@ -1,0 +1,102 @@
+id: SKY-L040
+title: Constant assertion in test
+family: logic
+severity: LOW
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  An `assert` in a test whose condition is made only of literals and is
+  always true, such as `assert True` or `assert 1 == 1`. It can never fail,
+  so it checks nothing.
+
+why_it_matters: >-
+  The test passes whatever the code under test does. Coding agents write
+  such asserts to make a test go green; the suite then reports coverage of
+  behaviour that is not checked at all.
+
+flagged_example:
+  language: python
+  filename: tests/test_pricing.py
+  expect_line: 6
+  code: |
+    from shop.pricing import cart_total
+
+
+    def test_cart_total_applies_discount():
+        total = cart_total([{"price": 100, "qty": 2}], discount=0.1)
+        assert True
+
+not_flagged_example:
+  language: python
+  filename: tests/test_pricing.py
+  code: |
+    from shop.pricing import cart_total
+
+
+    def test_cart_total_applies_discount():
+        total = cart_total([{"price": 100, "qty": 2}], discount=0.1)
+        assert total is not None
+  why: >-
+    This check is weak, but it is not constant: it reads `total`, a value
+    the code under test produced, and fails if `cart_total` returns `None`.
+    Skylos only reports conditions it can prove true from literals alone.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python test files that pytest would collect
+    under the project's settings (`python_files`, `testpaths`,
+    `norecursedirs`; `test_*.py` and `*_test.py` by default) and on
+    `unittest.TestCase` classes whose base is proven by the imports.
+  - >-
+    Looks only at directly declared test functions and methods. Skipped or
+    `xfail` tests, `conftest.py`, fixture and snapshot folders, and nested
+    functions are left out.
+  - >-
+    Reports an `assert` whose condition contains only literals, tuples,
+    lists, `not`, `and`/`or`, `+`/`-` and comparisons, and evaluates to
+    true. Any name, call or attribute stops the check. Asserts Skylos knows
+    can never run are skipped.
+  - >-
+    Reports LOW on the line of the `assert`.
+
+source_refs:
+  - path: skylos/rules/quality/test_assertions.py
+    symbol: "class ConstantTestAssertionRule"
+  - path: skylos/rules/quality/test_assertions.py
+    symbol: "def _literal_condition("
+  - path: skylos/rules/quality/_test_subjects.py
+    symbol: "def test_subjects("
+
+fix:
+  explanation: >-
+    Assert the result the test is named after.
+  filename: tests/test_pricing.py
+  code: |
+    from shop.pricing import cart_total
+
+
+    def test_cart_total_applies_discount():
+        total = cart_total([{"price": 100, "qty": 2}], discount=0.1)
+        assert total == 180
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A smoke test that only checks that an import or a call does not
+      raise, and ends with `assert True` to say so, is reported. Removing
+      the `assert` keeps the same meaning.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line of the `assert`.
+      language: python
+      code: |
+        assert True  # skylos: ignore[SKY-L040] import smoke test
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L040"]` turns the rule off for the
+        project.
+
+related: [SKY-L041, SKY-L042, SKY-A101]

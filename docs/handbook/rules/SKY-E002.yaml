@@ -1,0 +1,95 @@
+id: SKY-E002
+title: Empty file
+family: dead-code
+severity: LOW
+languages: [Python]
+run_with: "`skylos .` (every scan)"
+gate:
+  full: counted
+  note: >-
+    Counts toward `max_dead_code`, which has no limit by default, so it only
+    fails a gate where you set one.
+
+what_it_is: >-
+  A Python file with no code at all, or with nothing but a docstring.
+  Such files are usually left behind when code moves elsewhere.
+
+why_it_matters: >-
+  An empty module still imports without error, so nothing breaks and
+  nobody notices it. Readers open it looking for the helpers its name
+  promises, and new code may be added to the stale location.
+
+flagged_example:
+  language: python
+  filename: billing/helpers.py
+  expect_line: 1
+  code: |
+    """Shared helpers for the billing app."""
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: billing/__init__.py
+      code: |
+        """Billing: invoices, payments and refunds."""
+    - filename: billing/invoices.py
+      code: |
+        def invoice_total(lines):
+            return sum(line.amount for line in lines)
+  why: >-
+    `__init__.py` marks `billing` as a package, so it may be empty or hold
+    only the package docstring. Skylos also skips `__main__.py` and
+    `main.py`.
+
+how_skylos_decides:
+  - >-
+    Runs in every scan, with no extra flag, on Python files that parse.
+  - >-
+    Reports a file whose module body is empty (only comments, blank lines
+    or nothing) or holds exactly one statement that is a string, the
+    docstring.
+  - >-
+    Skips files named `__init__.py`, `__main__.py` and `main.py`, and, in a
+    Django project, an `admin.py` next to the app's `__init__.py`.
+  - >-
+    Does not check whether other files import the module. Reports LOW on
+    line 1, in the `unused_files` list of the JSON output.
+
+source_refs:
+  - path: skylos/analysis/file_worker.py
+    symbol: "def _empty_file_finding("
+  - path: skylos/analysis/file_worker.py
+    symbol: "def _is_truly_empty_or_docstring_only("
+
+fix:
+  explanation: >-
+    Delete the file, and remove any import of it. If the module is a
+    planned home for new code, add that code, or say so in the docstring
+    and suppress the finding.
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A deliberately empty module that other code imports, such as a
+      settings override that is empty in the default configuration, is
+      reported.
+  suppress:
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-E002"]` turns the rule off for the
+        project.
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: python
+          filename: billing/helpers.py
+          code: |
+            """Shared helpers for the billing app."""  # skylos: ignore[SKY-E002]
+      text: >-
+        An inline marker does not work for this rule: a
+        `# skylos: ignore[SKY-E002]` (or a bare `# skylos: ignore`) on line 1
+        of the file is not read, and the file is still reported. Use the
+        project setting above, or exclude the folder from the scan.
+
+related: [SKY-E003, SKY-U001]

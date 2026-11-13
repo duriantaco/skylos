@@ -1,0 +1,129 @@
+id: SKY-L028
+title: Too many returns
+family: logic
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. Six to eight `return` statements are LOW;
+  nine or more are MEDIUM.
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Hidden when it is the only metric reported for the function. It is
+    listed when two complexity measures agree on the same function
+    (SKY-Q301 with SKY-Q306, or SKY-Q306 with SKY-Q302); the metrics then
+    share one entry, led by the most severe, which the gate counts once.
+    Otherwise it is counted only with `--all-advice` or when the rule is
+    named in `[tool.skylos.gate] rules`.
+
+what_it_is: >-
+  A function with more than five `return` statements. Each `return` is
+  another exit the reader has to keep in mind, and the function's result
+  depends on which branch ran.
+
+why_it_matters: >-
+  Long chains of early returns often encode a table of values as control
+  flow. Adding a case means finding the right place in the chain, and a
+  case placed one line too low silently never runs.
+
+flagged_example:
+  language: python
+  filename: shipping/rates.py
+  expect_line: 4
+  code: |
+    """Shipping rates by country."""
+
+
+    def shipping_rate(country, weight_kg, express):
+        if express:
+            return 25
+        if weight_kg > 20:
+            return 40
+        if country == "US":
+            return 5
+        if country == "CA":
+            return 8
+        if country in ("GB", "IE"):
+            return 9
+        return 15
+
+not_flagged_example:
+  language: python
+  filename: shipping/rates.py
+  code: |
+    """Shipping rates by country."""
+
+
+    def shipping_rate(country, weight_kg, express):
+        if express:
+            return 25
+        if weight_kg > 20:
+            return 40
+        if country in ("US", "CA"):
+            return 5
+        if country in ("GB", "IE"):
+            return 9
+        return 15
+  why: >-
+    Five `return` statements is the limit, not over it. The rule counts
+    exits only; it does not judge whether a sixth would make the function
+    harder to read.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python functions and methods. Test files,
+    examples, benchmarks and build scripts are skipped.
+  - >-
+    Counts the `return` statements in the function's own body, including
+    those inside `if`, `for`, `while`, `try`, `with` and `match` blocks, but
+    not those of nested functions or classes.
+  - >-
+    Reports when the count is above 5: LOW for 6 to 8, MEDIUM for 9 or
+    more. The finding is on the `def` line.
+
+source_refs:
+  - path: skylos/rules/quality/logic_maintainability.py
+    symbol: "class TooManyReturnsRule"
+  - path: skylos/reporting/advice_evidence.py
+    symbol: "FUNCTION_METRIC_RULES = frozenset("
+    note: listing of function metrics.
+
+fix:
+  explanation: >-
+    Keep the special cases as early returns and move the per-country values
+    into a table. Adding a country is now one line of data.
+  filename: shipping/rates.py
+  code: |
+    """Shipping rates by country."""
+
+    COUNTRY_RATES = {"US": 5, "CA": 8, "GB": 9, "IE": 9}
+    DEFAULT_RATE = 15
+
+
+    def shipping_rate(country, weight_kg, express):
+        if express:
+            return 25
+        if weight_kg > 20:
+            return 40
+        return COUNTRY_RATES.get(country, DEFAULT_RATE)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A flat dispatcher or validation function where every branch is a
+      guard clause is reported, even when it reads clearly.
+    - >-
+      The limit of 5 is fixed; it cannot be changed in configuration.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the `def` line.
+      language: python
+      code: |
+        def shipping_rate(country, weight_kg, express):  # skylos: ignore[SKY-L028]
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L028"]` turns the rule off for the
+        project.
+
+related: [SKY-Q301, SKY-Q306, SKY-Q302, SKY-C304]

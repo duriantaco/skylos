@@ -1,0 +1,140 @@
+id: SKY-L008
+title: Missing resource cleanup
+family: logic
+severity: MEDIUM
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  MEDIUM.
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  A file, socket, database connection or HTTP session is opened and kept in
+  a variable without a `with` block or a `finally` that closes it. A later
+  `close()` call only runs if nothing fails in between.
+
+why_it_matters: >-
+  When a query or a write raises, the `close()` line is skipped and the
+  handle stays open. A busy worker that hits the same error again and again
+  runs out of file descriptors or database connections, and SQLite keeps
+  its lock on the file until the process ends.
+
+flagged_example:
+  language: python
+  filename: jobs/store.py
+  expect_line: 7
+  code: |
+    """Read job counts from the local queue database."""
+
+    import sqlite3
+
+
+    def count_pending(db_path):
+        conn = sqlite3.connect(db_path)
+        rows = conn.execute("SELECT COUNT(*) FROM jobs WHERE state = 'pending'")
+        count = rows.fetchone()[0]
+        conn.close()
+        return count
+
+not_flagged_example:
+  language: python
+  filename: jobs/store.py
+  code: |
+    """Read job counts from the local queue database."""
+
+    import sqlite3
+
+
+    def open_jobs_db(db_path):
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+  why: >-
+    The connection is returned, so the caller owns it and is the one who
+    must close it. Skylos skips a handle that the function returns or
+    yields, or hands to an owner such as `ExitStack.enter_context()` or an
+    attribute the class closes.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Looks at the statements of each
+    function and of the module, including those inside `if`, `for`, `while`
+    and `try` blocks, but not inside a `with` block.
+  - >-
+    Recognizes `open()`, `Path(...).open()`, `sqlite3.connect()`,
+    `psycopg2.connect()`, `pymysql.connect()`, `cx_Oracle.connect()`,
+    `socket.socket()`, `requests.Session()`, `urllib3.PoolManager()`,
+    `http.client.HTTPConnection()` and `HTTPSConnection()`, and the
+    `tempfile` `NamedTemporaryFile()`, `TemporaryFile()` and
+    `SpooledTemporaryFile()` calls, written with those module names.
+  - >-
+    Reports such a call when its result is assigned (`conn = ...`,
+    `self.conn = ...`) or when the call is a statement on its own.
+  - >-
+    Skips the assignment when the very next statement is `conn.close()` or
+    `with conn:` (the second only for handles whose `with` closes them, so
+    not for database connections), when a `finally` closes the name on every
+    path, when the name is returned or yielded, and when the handle is
+    stored on an attribute or in a container, wrapped in a returned object,
+    or registered with `enter_context`, `callback`, `addCleanup`,
+    `closing()`, `atexit.register` or `weakref.finalize`.
+  - >-
+    Skips `self.attr = open(...)` when a method of the class closes that
+    attribute. Reports MEDIUM on the line of the assignment.
+
+source_refs:
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "class MissingResourceCleanupRule"
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "RESOURCE_FUNCTIONS = {"
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "def _finally_covers("
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "def _handle_changes_owner("
+  - path: test/test_quality_rules.py
+    symbol: "class TestMissingResourceCleanup"
+
+fix:
+  explanation: >-
+    Close the connection in a `with` block. A `sqlite3` connection used as
+    `with conn:` only commits or rolls back; it does not close, so wrap it
+    in `contextlib.closing()` (or close it in a `finally`).
+  filename: jobs/store.py
+  code: |
+    """Read job counts from the local queue database."""
+
+    import sqlite3
+    from contextlib import closing
+
+
+    def count_pending(db_path):
+        with closing(sqlite3.connect(db_path)) as conn:
+            rows = conn.execute("SELECT COUNT(*) FROM jobs WHERE state = 'pending'")
+            return rows.fetchone()[0]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A short script that opens one file and relies on the process exit to
+      close it is reported.
+    - >-
+      It misses `with sqlite3.connect(path) as conn:`, which leaves the
+      connection open, and a handle opened inside another call, such as
+      `json.load(open(path))`.
+    - >-
+      A `close()` that comes later in the function, after other statements,
+      does not count as cleanup, even when nothing between can fail.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line that opens the resource.
+      language: python
+      code: |
+        conn = sqlite3.connect(db_path)  # skylos: ignore[SKY-L008] closed by the pool
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L008"]` turns the rule off for the
+        project.
+
+related: [SKY-L031, SKY-L007]

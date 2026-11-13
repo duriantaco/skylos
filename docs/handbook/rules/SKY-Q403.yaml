@@ -1,0 +1,151 @@
+id: SKY-Q403
+title: Inconsistent lock acquisition order
+family: quality
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  Two locks are taken in one order in one place (`ledger_lock`, then
+  `audit_lock`) and in the opposite order somewhere else in the same file,
+  while the first is still held. Two threads that run both paths at the
+  same time can each hold one lock and wait forever for the other.
+
+why_it_matters: >-
+  This is a deadlock: the threads stop, nothing crashes, and nothing is
+  logged. It only happens when the timing lines up, so it passes tests and
+  appears in production under load, freezing transfers until the process
+  is restarted.
+
+flagged_example:
+  language: python
+  filename: ledger/transfers.py
+  expect_line: 19
+  code: |
+    """Move money between the ledger and the audit log."""
+
+    import threading
+
+    ledger_lock = threading.Lock()
+    audit_lock = threading.Lock()
+
+
+    def post_transfer(ledger, audit, transfer):
+        with ledger_lock:
+            ledger.apply(transfer)
+            with audit_lock:
+                audit.record(transfer)
+
+
+    def reconcile(ledger, audit):
+        with audit_lock:
+            entries = audit.pending()
+            with ledger_lock:
+                ledger.mark_reconciled(entries)
+
+not_flagged_example:
+  language: python
+  filename: ledger/transfers.py
+  code: |
+    """Move money between the ledger and the audit log."""
+
+    import threading
+
+    ledger_lock = threading.Lock()
+    audit_lock = threading.Lock()
+
+
+    def post_transfer(ledger, audit, transfer):
+        with ledger_lock:
+            ledger.apply(transfer)
+            with audit_lock:
+                audit.record(transfer)
+
+
+    def reconcile(ledger, audit):
+        with audit_lock:
+            entries = audit.pending()
+        with ledger_lock:
+            ledger.mark_reconciled(entries)
+  why: >-
+    `reconcile` still takes `audit_lock` first, but it releases it before
+    taking `ledger_lock`. It never holds both at once, so it cannot wait on
+    `post_transfer` while blocking it.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files and reads the whole module,
+    across all its functions, methods and classes.
+  - >-
+    Treats a `with` or `async with` item as a lock when its text contains
+    "lock", "mutex" or "semaphore" (`ledger_lock`, `self.mutex`). Locks are
+    told apart by their exact text.
+  - >-
+    Records every pair "A held while B is taken", from nested `with`
+    blocks and from several locks in one `with a, b:` statement.
+  - >-
+    Reports when a pair B then A follows an earlier pair A then B, unless
+    both were taken while holding a common outer lock, which keeps the two
+    paths from running at once.
+  - >-
+    Reports HIGH on the `with` statement that takes the second lock in the
+    reversed order.
+
+source_refs:
+  - path: skylos/rules/quality/concurrency.py
+    symbol: "class LockOrderRule"
+  - path: skylos/rules/quality/concurrency.py
+    symbol: "def _iter_with_lock_pairs("
+  - path: skylos/rules/quality/concurrency.py
+    symbol: "def _can_deadlock("
+
+fix:
+  explanation: >-
+    Pick one order for the two locks and use it everywhere. Here both
+    functions take `ledger_lock` before `audit_lock`.
+  filename: ledger/transfers.py
+  code: |
+    """Move money between the ledger and the audit log."""
+
+    import threading
+
+    ledger_lock = threading.Lock()
+    audit_lock = threading.Lock()
+
+
+    def post_transfer(ledger, audit, transfer):
+        with ledger_lock:
+            ledger.apply(transfer)
+            with audit_lock:
+                audit.record(transfer)
+
+
+    def reconcile(ledger, audit):
+        with ledger_lock:
+            with audit_lock:
+                entries = audit.pending()
+            ledger.mark_reconciled(entries)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Two code paths that can never run at the same time (for example, one
+      runs only at start-up) are still reported.
+    - >-
+      It misses locks whose names do not contain "lock", "mutex" or
+      "semaphore", locks taken with `.acquire()`, and orders that differ
+      across files.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the reported `with` line.
+      language: python
+      code: |
+        with ledger_lock:  # skylos: ignore[SKY-Q403] reconcile runs only at startup
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-Q403"]` turns the rule off for the
+        project.
+
+related: [SKY-Q404]

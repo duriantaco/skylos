@@ -1,0 +1,133 @@
+id: SKY-L013
+title: Insecure randomness
+family: logic
+severity: HIGH
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  HIGH.
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  A function from Python's `random` module produces a value that is stored
+  under a security name, such as a reset code, token, session ID or salt.
+  `random` is built for simulations and games: its output can be predicted
+  by anyone who sees enough earlier values.
+
+why_it_matters: >-
+  An attacker who requests a few reset codes for their own account can
+  work out the generator's state and predict the next code, then reset
+  someone else's password. The `secrets` module exists for exactly these
+  values.
+
+flagged_example:
+  language: python
+  filename: accounts/reset.py
+  expect_line: 10
+  code: |
+    """Password reset by SMS code."""
+
+    import random
+
+    from accounts.cache import cache
+    from accounts.sms import send_sms
+
+
+    def start_password_reset(user):
+        reset_code = random.randint(100000, 999999)
+        cache.set(f"reset:{user.id}", reset_code, timeout=600)
+        send_sms(user.phone, f"Your reset code is {reset_code}")
+
+not_flagged_example:
+  language: python
+  filename: accounts/reset.py
+  code: |
+    """Password reset by SMS code."""
+
+    import random
+    import time
+
+    from accounts.sms import send_sms
+
+
+    def resend_reset_sms(user, message):
+        delay = random.uniform(1.0, 5.0)
+        time.sleep(delay)
+        send_sms(user.phone, message)
+  why: >-
+    `random` is used here, but for a retry delay (jitter). Nobody gains
+    anything by predicting it, and the name `delay` contains no security
+    word, so Skylos leaves it alone.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Skips test files (`test_*.py`,
+    `*_test.py` and `conftest.py`).
+  - >-
+    Looks at assignments whose value is a direct call written
+    `random.randint()`, `random.randrange()`, `random.random()`,
+    `random.uniform()`, `random.choice()`, `random.choices()`,
+    `random.sample()`, `random.shuffle()`, `random.randbytes()` or
+    `random.getrandbits()`.
+  - >-
+    Reports HIGH when the name being assigned (a variable, an attribute or
+    the container of a subscript) contains one of these words: token,
+    secret, key, password, nonce, session, cookie, otp, totp, mfa, sso,
+    salt, csrf, auth, jwt, hmac, signature, code, pin, verification or
+    confirm.
+  - >-
+    The match is on part of the name, ignoring case, and the finding is on
+    the line of the assignment.
+
+source_refs:
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "class InsecureRandomRule"
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "def _var_name_is_security("
+  - path: skylos/rules/vibe_dictionary.py
+    symbol: "INSECURE_RANDOM_FUNCS = {"
+
+fix:
+  explanation: >-
+    Use the `secrets` module. `secrets.randbelow(n)` gives an unpredictable
+    number below `n`; `secrets.token_urlsafe()` gives a token string.
+  filename: accounts/reset.py
+  code: |
+    """Password reset by SMS code."""
+
+    import secrets
+
+    from accounts.cache import cache
+    from accounts.sms import send_sms
+
+
+    def start_password_reset(user):
+        reset_code = 100000 + secrets.randbelow(900000)
+        cache.set(f"reset:{user.id}", reset_code, timeout=600)
+        send_sms(user.phone, f"Your reset code is {reset_code}")
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Because part of the name is enough, names such as `monkey`,
+      `shipping_choice` (contains "pin") or `postcode` are treated as
+      security values.
+    - >-
+      It misses the common token pattern
+      `token = "".join(random.choices(alphabet, k=32))`, because the
+      assigned call is `join`, not a `random` function, and it misses
+      functions imported with `from random import randint`.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line of the assignment.
+      language: python
+      code: |
+        promo_code = random.choice(CODES)  # skylos: ignore[SKY-L013] not secret
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L013"]` turns the rule off for the
+        project.
+
+related: [SKY-D250, SKY-L014]

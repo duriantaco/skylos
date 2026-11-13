@@ -1,0 +1,221 @@
+id: SKY-Q305
+title: Duplicate branch logic
+family: quality
+severity: MEDIUM
+severity_note: >-
+  The catalog gives no severity for this rule; every finding is MEDIUM.
+languages: [Python, TypeScript, JavaScript, Rust]
+gate:
+  full: counted
+
+what_it_is: >-
+  An `if`/`elif` chain where two branches test the same condition, or two
+  branches run the same block of code. The second copy either can never
+  run or does the same thing under a different name.
+
+why_it_matters: >-
+  It is usually a copy-paste slip. In the example below heavy parcels get
+  express labels and priority because the `elif` body was copied from the
+  branch above and never changed, so the business pays express rates for
+  every heavy order.
+
+flagged_example:
+  language: python
+  filename: shipping/labels.py
+  expect_line: 10
+  code: |
+    """Shipping labels."""
+
+    from shipping.printer import make_label
+
+
+    def shipping_label(order):
+        if order.express:
+            label = make_label(order, "express")
+            label.priority = 1
+        elif order.weight > 20:
+            label = make_label(order, "express")
+            label.priority = 1
+        else:
+            label = make_label(order, "standard")
+        return label
+
+not_flagged_example:
+  language: python
+  filename: shipping/labels.py
+  code: |
+    """Shipping rates."""
+
+
+    def shipping_rate(order):
+        if order.country == "US":
+            return 5
+        elif order.country == "CA":
+            return 5
+        else:
+            return 15
+  why: >-
+    Two branches return the same value, but each body is a single statement.
+    A table of values written as branches often repeats a value on purpose,
+    so Python bodies need at least two real statements before Skylos
+    compares them.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/grades.ts
+      expect_line: 6
+      code: |
+        export function grade(score: number): string {
+          if (score >= 90) {
+            return "A";
+          } else if (score >= 80) {
+            return "B";
+          } else if (score >= 90) {
+            return "A+";
+          }
+          return "C";
+        }
+    not_flagged:
+      language: typescript
+      filename: src/grades.ts
+      code: |
+        export function grade(score: number): string {
+          if (score >= 97) {
+            return "A+";
+          } else if (score >= 90) {
+            return "A";
+          } else if (score >= 80) {
+            return "B";
+          }
+          return "C";
+        }
+      why: >-
+        Every condition in the chain is different. In the flagged version
+        the third test repeats the first, so `"A+"` can never be returned.
+  - flagged:
+      language: rust
+      expect_file: src/lib.rs
+      expect_line: 5
+      files:
+        - filename: src/lib.rs
+          code: |
+            pub fn shipping_fee(express: bool, heavy: bool, base: u32) -> u32 {
+                if express {
+                    let fee = base * 2;
+                    fee + 10
+                } else if heavy {
+                    let fee = base * 2;
+                    fee + 10
+                } else {
+                    base
+                }
+            }
+        - filename: Cargo.toml
+          language: toml
+          code: |
+            [package]
+            name = "shop"
+            version = "0.1.0"
+            edition = "2021"
+    not_flagged:
+      language: rust
+      files:
+        - filename: src/lib.rs
+          code: |
+            pub fn shipping_fee(express: bool, heavy: bool, base: u32) -> u32 {
+                if express {
+                    let fee = base * 2;
+                    fee + 10
+                } else if heavy {
+                    let fee = base + base / 2;
+                    fee + 5
+                } else {
+                    base
+                }
+            }
+        - filename: Cargo.toml
+          language: toml
+          code: |
+            [package]
+            name = "shop"
+            version = "0.1.0"
+            edition = "2021"
+      why: >-
+        The two blocks look alike but compute different fees, so there is no
+        copy to merge.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`. In Python it looks at each `if`/`elif`/`else`
+    chain inside a function and compares the conditions and the branch
+    bodies by their syntax tree, so formatting and comments do not matter.
+  - >-
+    A Python condition that repeats an earlier one in the chain is
+    reported. A body is compared only when it has at least two statements
+    other than `pass`, `...` and strings; a body equal to an earlier one,
+    including the `else` body, is reported.
+  - >-
+    In TypeScript and JavaScript it compares the text of the conditions in
+    an `if`/`else if` chain and reports a repeated condition; bodies are
+    not compared.
+  - >-
+    In Rust it compares the blocks of an `if`/`else if`/`else` chain only
+    when every condition is a variable known to be a `bool` (such as a
+    `bool` parameter), a `true`/`false` literal or its `!` negation, so a
+    chain of comparisons is not checked. Comments are ignored; blocks with
+    macros or attributes, or with fewer than two statements, are skipped.
+  - >-
+    Reports MEDIUM on the repeated branch: its `elif`, condition or `else`
+    line (in Python, the first statement of a repeated `else` body).
+
+source_refs:
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "class DuplicateBranchRule"
+  - path: skylos/visitors/languages/typescript/quality.py
+    symbol: "def _check_duplicate_conditions("
+  - path: skylos/visitors/languages/rust/quality.py
+    symbol: "def duplicate_bodies("
+
+fix:
+  explanation: >-
+    Merge the branches when they really should do the same thing, or change
+    the copied body to what that case needs.
+  filename: shipping/labels.py
+  code: |
+    """Shipping labels."""
+
+    from shipping.printer import make_label
+
+
+    def shipping_label(order):
+        if order.express:
+            label = make_label(order, "express")
+            label.priority = 1
+        elif order.weight > 20:
+            label = make_label(order, "freight")
+        else:
+            label = make_label(order, "standard")
+        return label
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Two branches that are deliberately kept separate because they are
+      expected to diverge soon are reported.
+    - >-
+      In TypeScript, conditions are compared as text, so `a > b` and
+      `b < a` are not seen as the same, and `x == 1` and `x  == 1` differ.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the reported line.
+      language: python
+      code: |
+        elif order.weight > 20:  # skylos: ignore[SKY-Q305] split planned in #88
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-Q305"]` turns the rule off for the
+        project.
+
+related: [SKY-UC001, SKY-Q301]

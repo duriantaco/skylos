@@ -1,0 +1,134 @@
+id: SKY-L014
+title: Hardcoded credential
+family: logic
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. A credential literal is HIGH; a known
+  placeholder value such as `changeme`, `password` or `secret` is MEDIUM.
+languages: [Python]
+gate:
+  full: counted
+
+fragments:
+  STRIPE_DEMO_KEY: ["sk_live_", "51HandbookDemo0nly"]
+
+what_it_is: >-
+  A password, API key, token or signing secret written as a string in the
+  source: assigned to a variable with a credential name, used as a default
+  argument, or given as the fallback of an environment lookup such as
+  `os.environ.get("STRIPE_SECRET_KEY", "...")`. It also finds database URLs
+  with a user name and password inside.
+
+why_it_matters: >-
+  Everyone who can read the repository, its forks, its CI logs or a leaked
+  copy holds the key. A fallback is worse than it looks: when the setting is
+  missing in production, the service quietly runs with the key from the
+  source instead of failing at start-up.
+
+flagged_example:
+  language: python
+  filename: payments/settings.py
+  expect_line: 5
+  code: |
+    """Settings for the payments service."""
+
+    import os
+
+    STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "{{STRIPE_DEMO_KEY}}")
+    CHECKOUT_CACHE_KEY = "checkout:session"
+
+not_flagged_example:
+  language: python
+  filename: payments/settings.py
+  code: |
+    """Settings for the payments service."""
+
+    import os
+
+    STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY")
+    CHECKOUT_CACHE_KEY = "checkout:session"
+  why: >-
+    The secret is read from the environment with no literal fallback.
+    `CHECKOUT_CACHE_KEY` ends in `_KEY`, but a plain `_KEY` name is only
+    reported when its value looks like a random secret, and
+    `"checkout:session"` does not.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Skips test files (`test_*.py`,
+    `*_test.py` and `conftest.py`).
+  - >-
+    Looks at string literals assigned to a name or attribute, used as a
+    default argument, or given as the fallback of `os.environ.get()`,
+    `os.getenv()`, `getattr()` and similar lookups. Empty strings are
+    ignored.
+  - >-
+    The name must look like a credential: `password`, `secret`, `api_key`,
+    `dsn`, `database_url` and other listed names, or a name ending in
+    `_password`, `_secret`, `_token`, `_key`, `_api_key` or
+    `_private_key`. A literal passed to a credential keyword elsewhere in
+    the file counts as well.
+  - >-
+    Names that say outright they hold a secret (password, token, secret,
+    auth, session, `*_secret_key`, `*_api_key` and similar) are reported
+    whatever the value. A plain `*_key` name is reported only when the value
+    looks random (letters, digits and symbols with high entropy), is a
+    database URL with `user:password@`, or starts with `$`, `%` or `{{`.
+  - >-
+    Skips values that only name a setting, such as
+    `APP_URL_KEY = "APP_URL"`. Reports HIGH, or MEDIUM when the value is a
+    known placeholder such as `changeme`, on the line of the literal.
+
+source_refs:
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "class HardcodedCredentialRule"
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "def _looks_like_real_secret("
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "def _names_a_setting("
+  - path: skylos/rules/vibe_dictionary.py
+    symbol: "CREDENTIAL_VAR_SUFFIXES = {"
+
+fix:
+  explanation: >-
+    Read the secret from the environment or a secrets manager and fail at
+    start-up when it is missing. Then rotate the key that was in the
+    source: removing it from the file does not remove it from Git history.
+  filename: payments/settings.py
+  code: |
+    """Settings for the payments service."""
+
+    import os
+
+    STRIPE_SECRET_KEY = os.environ["STRIPE_SECRET_KEY"]
+    CHECKOUT_CACHE_KEY = "checkout:session"
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A `_KEY` constant whose value mixes letters, digits and punctuation,
+      such as `CACHE_KEY = "checkout:session:v2"`, can look random enough to
+      be reported as a credential.
+    - >-
+      `database_url`, `dsn` and `connection_string` count as credential
+      names, so `DATABASE_URL = "postgresql://localhost:5432/app"` is
+      reported even though it holds no password. Only reference forms such
+      as `"${DATABASE_URL}"` are accepted under those names.
+    - >-
+      A clearly fake default used only in local development, such as
+      `password="changeme"`, is still reported (as MEDIUM).
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line of the literal.
+      language: python
+      code: |
+        LOCAL_DB_PASSWORD = "changeme"  # skylos: ignore[SKY-L014] docker-compose only
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L014"]` turns the rule off for the
+        project. Real keys are better caught by the secrets scan
+        (`--secrets`), which recognises provider formats such as Stripe and
+        AWS keys.
+
+related: [SKY-S101, SKY-L032, SKY-L011]

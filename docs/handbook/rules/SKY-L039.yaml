@@ -1,0 +1,154 @@
+id: SKY-L039
+title: Except clause that only re-raises
+family: logic
+severity: LOW
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Only when listed. This is advice outside the default set: the report
+    keeps it in JSON but does not list it, and the gate does not count it,
+    unless you pass `--all-advice` or select the rule (`--select SKY-L039`).
+
+what_it_is: >-
+  The last `except` clauses of a `try` contain nothing but `raise`. The
+  exception would leave the `try` anyway, so those clauses do nothing
+  except make the reader look for handling that is not there.
+
+why_it_matters: >-
+  Readers assume an `except Exception:` handles something, and reviewers
+  stop looking for missing error handling. The empty clause is noise that
+  often marks code generated from a template and never finished.
+
+flagged_example:
+  language: python
+  filename: payments/charge.py
+  expect_line: 10
+  code: |
+    """Charge an order through the payment gateway."""
+
+
+    def charge(gateway, order):
+        try:
+            return gateway.charge(order.total)
+        except gateway.CardDeclined as exc:
+            order.mark_declined(exc.reason)
+            return None
+        except Exception:
+            raise
+
+not_flagged_example:
+  language: python
+  filename: payments/charge.py
+  code: |
+    """Charge an order through the payment gateway."""
+
+    from payments.errors import PaymentError
+
+
+    def charge(gateway, order):
+        try:
+            return gateway.charge(order.total)
+        except gateway.CardDeclined:
+            raise
+        except Exception as exc:
+            raise PaymentError(f"charge failed for order {order.id}") from exc
+  why: >-
+    The re-raise-only clause comes first, and it has a job: it keeps
+    `CardDeclined` away from the broader `except Exception` below, which
+    would otherwise wrap it in `PaymentError`. Skylos only reports re-raise
+    clauses at the end of the list.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Looks at every `try` statement;
+    `try`/`except*` is not checked.
+  - >-
+    Walks the `except` clauses from the last one backwards while each holds
+    a single `raise`, either bare or `raise exc` of the caught name. A
+    `raise ... from ...` or any other statement ends the walk.
+  - >-
+    Skips the statement when a comment sits inside those clauses (a
+    documented placeholder), when the project's ruff configuration ignores
+    `TRY203` or `TRY302` for the file, and in golden test fixtures (files a
+    test reads as text).
+  - >-
+    Reports LOW on the first of the trailing re-raise clauses. When every
+    clause only re-raises, the message says the whole `try` can go (or
+    become a plain `try`/`finally`).
+
+source_refs:
+  - path: skylos/rules/quality/slop.py
+    symbol: "class ReraiseOnlyHandlerRule"
+  - path: skylos/rules/quality/slop.py
+    symbol: "def _reraises_only("
+  - path: skylos/reporting/advice_evidence.py
+    symbol: "DEFAULT_ADVICE_RULES ="
+    note: L039 is not in the default advice set, so it is not listed by default.
+
+fix:
+  explanation: >-
+    Delete the clause. The exception propagates exactly as before.
+  filename: payments/charge.py
+  code: |
+    """Charge an order through the payment gateway."""
+
+
+    def charge(gateway, order):
+        try:
+            return gateway.charge(order.total)
+        except gateway.CardDeclined as exc:
+            order.mark_declined(exc.reason)
+            return None
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A clause kept as a reminder of where handling will go is reported
+      unless a comment inside the clause says so.
+    - >-
+      `noqa` comments that name ruff's code (`# noqa: TRY203`) do not
+      silence it; only the project's ruff ignore list is read.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the reported `except` line, or write a comment
+        inside the clause to mark it as a deliberate placeholder.
+      language: python
+      code: |
+        except Exception:  # skylos: ignore[SKY-L039] handling added in #412
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L039"]` turns the rule off for the
+        project.
+    - check:
+        kind: example
+        example:
+          language: python
+          files:
+            - filename: payments/charge.py
+              code: |
+                """Charge an order through the payment gateway."""
+
+
+                def charge(gateway, order):
+                    try:
+                        return gateway.charge(order.total)
+                    except gateway.CardDeclined as exc:
+                        order.mark_declined(exc.reason)
+                        return None
+                    except Exception:
+                        raise
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [tool.ruff.lint]
+                ignore = ["TRY203"]
+      text: >-
+        A project whose ruff configuration ignores `TRY203` (ruff's check
+        for the same pattern) has already declined this rewrite, so Skylos
+        stays quiet there too. The nearest `ruff.toml`, `.ruff.toml` or
+        `pyproject.toml` with a `[tool.ruff]` table counts, including
+        `per-file-ignores`.
+
+related: [SKY-L007, SKY-L030, SKY-L002]

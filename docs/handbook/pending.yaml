@@ -51,10 +51,6 @@ pending:
     reason: Not yet written.
   SKY-DEP003:
     reason: Not yet written.
-  SKY-E002:
-    reason: Not yet written.
-  SKY-E003:
-    reason: Not yet written.
   SKY-F101:
     reason: Not yet written.
   SKY-F102:
@@ -73,54 +69,6 @@ pending:
     reason: Not yet written.
   SKY-GPU003:
     reason: Not yet written.
-  SKY-L007:
-    reason: Not yet written.
-  SKY-L008:
-    reason: Not yet written.
-  SKY-L009:
-    reason: Not yet written.
-  SKY-L010:
-    reason: Not yet written.
-  SKY-L011:
-    reason: Not yet written.
-  SKY-L013:
-    reason: Not yet written.
-  SKY-L014:
-    reason: Not yet written.
-  SKY-L016:
-    reason: Not yet written.
-  SKY-L017:
-    reason: Not yet written.
-  SKY-L028:
-    reason: Not yet written.
-  SKY-L029:
-    reason: Not yet written.
-  SKY-L030:
-    reason: Not yet written.
-  SKY-L032:
-    reason: Not yet written.
-  SKY-L033:
-    reason: Not yet written.
-  SKY-L034:
-    reason: Not yet written.
-  SKY-L035:
-    reason: Not yet written.
-  SKY-L036:
-    reason: Not yet written.
-  SKY-L037:
-    reason: Not yet written.
-  SKY-L038:
-    reason: Not yet written.
-  SKY-L039:
-    reason: Not yet written.
-  SKY-L040:
-    reason: Not yet written.
-  SKY-L041:
-    reason: Not yet written.
-  SKY-L042:
-    reason: Not yet written.
-  SKY-L043:
-    reason: Not yet written.
   SKY-P401:
     reason: Not yet written.
   SKY-P402:
@@ -128,20 +76,6 @@ pending:
   SKY-P403:
     reason: Not yet written.
   SKY-P404:
-    reason: Not yet written.
-  SKY-Q305:
-    reason: Not yet written.
-  SKY-Q401:
-    reason: Not yet written.
-  SKY-Q402:
-    reason: Not yet written.
-  SKY-Q403:
-    reason: Not yet written.
-  SKY-Q404:
-    reason: Not yet written.
-  SKY-Q405:
-    reason: Not yet written.
-  SKY-Q407:
     reason: Not yet written.
   SKY-Q501:
     reason: Not yet written.
@@ -204,8 +138,4 @@ pending:
   SKY-T105:
     reason: Not yet written.
   SKY-T106:
-    reason: Not yet written.
-  SKY-UC001:
-    reason: Not yet written.
-  SKY-UC002:
     reason: Not yet written.

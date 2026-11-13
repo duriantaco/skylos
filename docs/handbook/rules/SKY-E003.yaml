@@ -1,0 +1,140 @@
+id: SKY-E003
+title: Unused TypeScript/JavaScript file
+family: dead-code
+severity: LOW
+languages: [TypeScript, JavaScript]
+run_with: "`skylos .` (every scan)"
+gate:
+  full: counted
+  note: >-
+    Counts toward `max_dead_code`, which has no limit by default, so it only
+    fails a gate where you set one.
+
+what_it_is: >-
+  A TypeScript or JavaScript file that no other file imports and that is not
+  an entry point, so nothing loads it. Files imported only by such unused
+  files are reported too.
+
+why_it_matters: >-
+  The file still compiles and lints, so it costs review time and keeps its
+  dependencies installed. Coding agents often create a second version of a
+  module (`legacyFormat.ts` next to `format.ts`) and leave the old one
+  behind.
+
+flagged_example:
+  language: typescript
+  expect_file: src/legacyFormat.ts
+  expect_line: 1
+  files:
+    - filename: src/legacyFormat.ts
+      code: |
+        export function formatPriceOld(cents: number): string {
+          return "$" + Math.round(cents) / 100;
+        }
+    - filename: src/index.ts
+      code: |
+        import { formatPrice } from "./format";
+
+        export function renderTotal(cents: number): string {
+          return `Total: ${formatPrice(cents)}`;
+        }
+    - filename: src/format.ts
+      code: |
+        export function formatPrice(cents: number): string {
+          return `$${(cents / 100).toFixed(2)}`;
+        }
+    - filename: package.json
+      language: json
+      code: |
+        {
+          "name": "shop-web",
+          "version": "1.0.0",
+          "main": "src/index.ts"
+        }
+
+not_flagged_example:
+  language: typescript
+  files:
+    - filename: src/migrate.ts
+      code: |
+        import { db } from "./db";
+
+        await db.migrate.latest();
+    - filename: src/db.ts
+      code: |
+        export const db = { migrate: { latest: async () => undefined } };
+    - filename: src/index.ts
+      code: |
+        export { db } from "./db";
+    - filename: package.json
+      language: json
+      code: |
+        {
+          "name": "shop-web",
+          "version": "1.0.0",
+          "main": "src/index.ts",
+          "scripts": {
+            "migrate": "tsx src/migrate.ts"
+          }
+        }
+  why: >-
+    No file imports `src/migrate.ts`, but the `migrate` script in
+    `package.json` runs it by path. Skylos reads such references in
+    configuration, templates and scripts and treats the file as used.
+
+how_skylos_decides:
+  - >-
+    Runs in every scan on `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`,
+    `.mts` and `.cts` files outside excluded folders.
+  - >-
+    Builds the import graph, counting re-exports. A file is unused when no
+    other file imports it, or when every file that imports it is itself
+    unused.
+  - >-
+    Never reports entry points and infrastructure: files named in
+    `package.json` (`main`, `exports`, `bin` and similar) or by a bundler or
+    framework convention (Next.js pages and routes, config files, static
+    site generators), tests and stories, `.d.ts` files, and files under
+    `scripts`, `examples`, `static`, `public` or benchmark folders.
+  - >-
+    Before reporting, looks for the file's path in configuration files,
+    HTML, `package.json` scripts and other languages, and treats a file
+    loaded that way as used.
+  - >-
+    Reports LOW on line 1, in the `unused_files` list of the JSON output.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/analysis.py
+    symbol: "def find_dead_ts_files("
+  - path: skylos/visitors/languages/typescript/analysis.py
+    symbol: "def _is_ts_entry_or_infra("
+  - path: skylos/visitors/languages/typescript/analysis.py
+    symbol: "def _dead_ts_file_set("
+
+fix:
+  explanation: >-
+    Delete the file once you have checked that nothing loads it in a way
+    Skylos cannot see, such as a dynamic `import()` with a computed path.
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A file loaded only through a dynamic `import()` with a computed path,
+      a plugin system or another repository is reported.
+    - >-
+      A library file meant for consumers but not listed in `package.json`
+      `exports` is reported; list it there.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker at the end of the file's first line.
+      language: typescript
+      code: |
+        export function formatPriceOld(cents: number): string { // skylos: ignore[SKY-E003]
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-E003"]` turns the rule off for the
+        project. A file that other packages load can instead be listed as an
+        entry in `package.json` (`exports`, `main` or `bin`).
+
+related: [SKY-E002, SKY-U001]

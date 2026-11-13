@@ -1,0 +1,122 @@
+id: SKY-L043
+title: Sleep used for test synchronization
+family: logic
+severity: LOW
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  A test starts background work, sleeps for a fixed time with
+  `time.sleep()`, then checks that a `threading.Event` was set. The sleep
+  is a guess at how long the work takes.
+
+why_it_matters: >-
+  On a busy CI runner the work takes longer than the guess and the test
+  fails at random (a flaky test); on a fast machine every run wastes the
+  full delay. Teams learn to rerun failures, and real failures get rerun
+  too.
+
+flagged_example:
+  language: python
+  filename: tests/test_worker.py
+  expect_line: 10
+  code: |
+    import threading
+    import time
+
+    from app.worker import start_worker
+
+
+    def test_worker_processes_job():
+        done = threading.Event()
+        start_worker(on_finish=done.set)
+        time.sleep(0.5)
+        assert done.is_set()
+
+not_flagged_example:
+  language: python
+  filename: tests/test_worker.py
+  code: |
+    import threading
+    import time
+
+    from app.worker import debounce
+
+
+    def test_debounce_fires_after_quiet_period():
+        fired = threading.Event()
+        debounced = debounce(fired.set, wait=0.2)
+        debounced()
+        time.sleep(0.3)
+        assert fired.is_set()
+  why: >-
+    Here the waiting is what the test is about: a debounced call must fire
+    only after a quiet period. Skylos skips tests whose names mention timing
+    (debounce, delay, timeout, sleep, interval, latency and similar) and
+    tests that read a clock such as `time.monotonic()`.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python test files that pytest would collect
+    (`test_*.py` and `*_test.py` by default) and on proven
+    `unittest.TestCase` classes. Skipped and `xfail` tests are left out.
+  - >-
+    Needs a local `threading.Event()` assigned once in the test and used
+    only through its methods (`done.set`, `done.is_set()` and so on), and
+    the standard `time` and `threading` modules, not patched or shadowed
+    in the file.
+  - >-
+    Reports a `time.sleep()` statement with a fixed positive number when
+    the very next statement is `assert event.is_set()` (or
+    `== True`/`is True`) for that event.
+  - >-
+    Skips the sleep inside `pytest.raises` or `assertRaises`, and tests
+    whose names contain a timing word or that call `time.time()`,
+    `time.monotonic()` or `time.perf_counter()`. Reports LOW on the line of
+    the sleep.
+
+source_refs:
+  - path: skylos/rules/quality/test_reliability.py
+    symbol: "class SleepSynchronizationRule"
+  - path: skylos/rules/quality/test_reliability.py
+    symbol: "def _event_candidate("
+  - path: skylos/rules/quality/test_reliability.py
+    symbol: "_TIMING_WORDS = {"
+
+fix:
+  explanation: >-
+    Wait for the event itself, with a generous upper bound. `Event.wait()`
+    returns as soon as the event is set and returns `False` on timeout, so
+    the test is both faster and stable.
+  filename: tests/test_worker.py
+  code: |
+    import threading
+
+    from app.worker import start_worker
+
+
+    def test_worker_processes_job():
+        done = threading.Event()
+        start_worker(on_finish=done.set)
+        assert done.wait(timeout=5)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      It misses sleeps followed by other checks, such as a queue length or
+      a database row, and sleeps with a computed delay. Only the
+      Event pattern above is proven.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line of the sleep.
+      language: python
+      code: |
+        time.sleep(0.5)  # skylos: ignore[SKY-L043] worker has a fixed start delay
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L043"]` turns the rule off for the
+        project.
+
+related: [SKY-L040, SKY-L042]

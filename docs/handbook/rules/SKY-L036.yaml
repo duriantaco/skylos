@@ -1,0 +1,122 @@
+id: SKY-L036
+title: Import repeated inside function
+family: logic
+severity: LOW
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Only when listed. This is advice outside the default set: the report
+    keeps it in JSON but does not list it, and the gate does not count it,
+    unless you pass `--all-advice` or select the rule (`--select SKY-L036`).
+
+what_it_is: >-
+  A function imports a module that the file already imports at the top,
+  under the same name. The inner `import` binds the very same module object
+  again, so it changes nothing.
+
+why_it_matters: >-
+  It is clutter that makes readers wonder whether the function needs a
+  different module or a lazy import for a reason. Repeated imports are a
+  common trace of code pasted in from another file or generated piece by
+  piece.
+
+flagged_example:
+  language: python
+  filename: orders/export.py
+  expect_line: 7
+  code: |
+    """Export orders as JSON."""
+
+    import json
+
+
+    def export_order(order):
+        import json
+
+        return json.dumps(order.to_dict(), sort_keys=True)
+
+not_flagged_example:
+  language: python
+  filename: orders/export.py
+  code: |
+    """Export orders as JSON and PDF."""
+
+    import json
+
+
+    def export_order(order):
+        return json.dumps(order.to_dict(), sort_keys=True)
+
+
+    def export_order_pdf(order):
+        import weasyprint
+
+        return weasyprint.HTML(string=order.to_html()).write_pdf()
+  why: >-
+    `weasyprint` is not imported at the top of the file. Importing a heavy,
+    optional library inside the one function that needs it is a deliberate
+    lazy import, not a repeat.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Test and sample code is not
+    checked, nor is a file that reads function source with
+    `inspect.getsource()`.
+  - >-
+    Reports an import inside a function when an earlier, unconditional
+    module-level `import m` binds the same module to the same name. A
+    `from pkg import sub` counts only when `sub` is a module file of a
+    project package.
+  - >-
+    `from m import name` of a function, class or constant is not reported,
+    because tests often patch `m.name` and a later import reads the patched
+    value.
+  - >-
+    Skips module imports under `if TYPE_CHECKING`, `try`/`except
+    ImportError` or other blocks, names bound twice, declared `global`, used
+    with `globals()` or `exec`, rebound in the function or an enclosing
+    one, and modules the file writes to or reloads.
+  - >-
+    Reports LOW on the line of the inner import.
+
+source_refs:
+  - path: skylos/rules/quality/slop.py
+    symbol: "class RepeatedFunctionImportRule"
+  - path: skylos/reporting/advice_evidence.py
+    symbol: "DEFAULT_ADVICE_RULES ="
+    note: L036 is not in the default advice set, so it is not listed by default.
+
+fix:
+  explanation: >-
+    Delete the inner import; the module-level one already covers the
+    function.
+  filename: orders/export.py
+  code: |
+    """Export orders as JSON."""
+
+    import json
+
+
+    def export_order(order):
+        return json.dumps(order.to_dict(), sort_keys=True)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A function that is shipped elsewhere as source (for example, sent to a
+      remote worker with a serializer) needs its own imports. Skylos only
+      sees that when the file calls `inspect.getsource()`.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line of the inner import.
+      language: python
+      code: |
+        import json  # skylos: ignore[SKY-L036] function is shipped as source
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L036"]` turns the rule off for the
+        project.
+
+related: [SKY-U002]

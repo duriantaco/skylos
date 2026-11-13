@@ -1,0 +1,143 @@
+id: SKY-Q402
+title: Await in loop
+family: quality
+severity: LOW
+languages: [TypeScript, JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  An `await` inside the body of a `for` loop, so each iteration waits for
+  the previous one to finish. When the iterations do not depend on each
+  other, the work could run side by side.
+
+why_it_matters: >-
+  Loading 200 invoices one at a time at 50 ms each takes ten seconds; the
+  same requests in parallel take a fraction of that. This is a review hint,
+  not a bug: order, rate limits or shared state can make the serial loop
+  the right choice.
+
+flagged_example:
+  language: typescript
+  filename: src/invoices.ts
+  expect_line: 6
+  code: |
+    import { fetchInvoice, Invoice } from "./api";
+
+    export async function loadInvoices(ids: string[]): Promise<Invoice[]> {
+      const invoices: Invoice[] = [];
+      for (const id of ids) {
+        invoices.push(await fetchInvoice(id));
+      }
+      return invoices;
+    }
+
+not_flagged_example:
+  language: typescript
+  filename: src/invoices.ts
+  code: |
+    import { fetchInvoice, Invoice } from "./api";
+
+    export async function findPaidInvoice(ids: string[]): Promise<Invoice | undefined> {
+      for (const id of ids) {
+        const invoice = await fetchInvoice(id);
+        if (invoice.paid) {
+          return invoice;
+        }
+      }
+      return undefined;
+    }
+  why: >-
+    The loop stops at the first paid invoice, so it is serial on purpose:
+    fetching every invoice at once would do work the early `return` avoids.
+    Skylos skips loops that can exit early with `return`, `break` or
+    `continue`.
+
+more_examples:
+  - flagged:
+      language: javascript
+      filename: src/welcome.js
+      expect_line: 5
+      code: |
+        import { sendWelcomeEmail } from "./mail.js";
+
+        export async function welcomeAll(users) {
+          for (const user of users) {
+            await sendWelcomeEmail(user);
+          }
+        }
+    not_flagged:
+      language: javascript
+      filename: src/welcome.js
+      code: |
+        import { sendWelcomeEmail } from "./mail.js";
+
+        export async function welcomeAll(users) {
+          for (let i = 0; i < users.length; i += 50) {
+            await Promise.all(users.slice(i, i + 50).map(sendWelcomeEmail));
+          }
+        }
+      why: >-
+        Each iteration sends a batch of 50 in parallel and waits for the
+        batch, which keeps the mail provider's rate limit. Awaiting
+        `Promise.all` or `Promise.allSettled` in a loop is deliberate
+        batching.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on TypeScript and JavaScript files. Findings in
+    test files are dropped.
+  - >-
+    Finds each `await` and walks up to the nearest loop inside the same
+    function; an `await` inside a nested callback belongs to that callback.
+  - >-
+    Skips `while` and `do` loops, `for await` loops, `for (;;)` without a
+    condition, an `await` in the loop header rather than its body, and
+    loops that can leave early with `return`, or a `break` or `continue` of
+    that loop.
+  - >-
+    Skips awaits of `Promise.all()` or `Promise.allSettled()`, and of
+    functions or methods named `sleep`, `delay`, `backoff` or `pause`.
+  - >-
+    Reports LOW on the line of the `await`.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/quality.py
+    symbol: "def _check_await_in_loop("
+  - path: skylos/visitors/languages/typescript/quality.py
+    symbol: "def _is_clearly_serial_loop("
+  - path: skylos/reporting/report_scope.py
+    symbol: "TEST_CODE_NOT_APPLICABLE_RULES = frozenset("
+
+fix:
+  explanation: >-
+    Start all requests, then wait for all of them. For long lists, send
+    them in batches as in the JavaScript example, so you do not overload
+    the API.
+  filename: src/invoices.ts
+  code: |
+    import { fetchInvoice, Invoice } from "./api";
+
+    export async function loadInvoices(ids: string[]): Promise<Invoice[]> {
+      return Promise.all(ids.map((id) => fetchInvoice(id)));
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Work that must run in order, such as database migrations or writes
+      that depend on the previous one, is reported. Keep the loop and
+      suppress the finding.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line of the `await`.
+      language: typescript
+      code: |
+        await runMigration(step); // skylos: ignore[SKY-Q402] migrations run in order
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-Q402"]` turns the rule off for the
+        project.
+
+related: [SKY-Q406, SKY-Q407, SKY-Q401]

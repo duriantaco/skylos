@@ -1,0 +1,114 @@
+id: SKY-L042
+title: Repeated test assertion
+family: logic
+severity: LOW
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  Two identical `assert` statements next to each other in a test, checking
+  a plain local value that cannot have changed in between. The second one
+  can only pass if the first did, so it adds nothing.
+
+why_it_matters: >-
+  The copy usually replaced a check that was meant to be different, such as
+  the cart total after the count. The test looks thorough while one of its
+  intended checks is missing.
+
+flagged_example:
+  language: python
+  filename: tests/test_cart.py
+  expect_line: 10
+  code: |
+    from shop.cart import Cart
+
+
+    def test_cart_holds_added_items():
+        cart = Cart()
+        cart.add("apple")
+        cart.add("pear")
+        count = len(cart.items)
+        assert count == 2
+        assert count == 2
+
+not_flagged_example:
+  language: python
+  filename: tests/test_cart.py
+  code: |
+    from shop.cart import Cart
+
+
+    def test_cart_total_is_stable():
+        cart = Cart()
+        cart.add("apple")
+        cart.add("pear")
+        assert cart.total() == 5
+        assert cart.total() == 5
+  why: >-
+    The repeated line calls `cart.total()` again, and the second call can
+    return something else if the first one changed the cart. Checking that
+    it does not is a real test. Skylos only reports repeats of plain local
+    values it can prove unchanged.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python test files that pytest would collect
+    (`test_*.py` and `*_test.py` by default) and on proven
+    `unittest.TestCase` classes. Skipped and `xfail` tests are left out, and
+    so are tests that use `global` or `nonlocal`.
+  - >-
+    Reports an `assert` that is identical to the statement right before it,
+    when its condition uses at least one name and only compares values with
+    `==`, `!=`, `is`, `<` and similar, or combines such comparisons.
+  - >-
+    Every name must be a local known to hold a plain value: a string,
+    number, bool, `None` or tuple literal, or the result of the builtin
+    `len()`. Calls, attributes and subscripts are not proven.
+  - >-
+    Any statement between the two asserts, or a call in an assignment,
+    resets what is known. Reports LOW on the second `assert`.
+
+source_refs:
+  - path: skylos/rules/quality/test_reliability.py
+    symbol: "class DuplicateTestAssertionRule"
+  - path: skylos/rules/quality/test_reliability.py
+    symbol: "def _safe_assertion("
+  - path: skylos/rules/quality/test_reliability.py
+    symbol: "def _advance_values("
+
+fix:
+  explanation: >-
+    Replace the copy with the check you meant, here the cart total.
+  filename: tests/test_cart.py
+  code: |
+    from shop.cart import Cart
+
+
+    def test_cart_holds_added_items():
+        cart = Cart()
+        cart.add("apple")
+        cart.add("pear")
+        count = len(cart.items)
+        assert count == 2
+        assert cart.total() == 5
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      It misses the same copy-paste on an attribute or call, such as two
+      `assert cart.count == 2` lines, because Skylos cannot prove the value
+      did not change.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the second `assert`.
+      language: python
+      code: |
+        assert count == 2  # skylos: ignore[SKY-L042] kept for the bisect script
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L042"]` turns the rule off for the
+        project.
+
+related: [SKY-L040, SKY-L041]
