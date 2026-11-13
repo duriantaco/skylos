@@ -520,8 +520,15 @@ def _terminal_output() -> bool:
         return False
 
 
-def _start_update_check() -> None:
+_NOTICE_FORMATS = frozenset({"rich", "pretty"})
+
+
+def _start_update_check(args=None, *, cli_module=None) -> None:
     if not _terminal_output():
+        return
+    if args is not None and getattr(args, "format", "rich") not in _NOTICE_FORMATS:
+        return
+    if cli_module is not None and cli_module._is_main_machine_output(args):
         return
     from skylos.core.update_check import refresh_in_background
 
@@ -629,7 +636,7 @@ def run_scan_command(
     if base == "auto":
         base = cli_module.auto_diff_base_ref()
     previous_diff = os.environ.get("SKYLOS_DIFF_BASE")
-    _start_update_check()
+    _start_update_check(args, cli_module=cli_module)
     try:
         with base_policy_context(
             cli_module._resolve_main_project_root(args.path), base

@@ -298,6 +298,19 @@ def _manifest_hint(text):
     return False
 
 
+def _helm_chart_template(base, path):
+    for folder in path.parents:
+        if folder == base or not folder.is_relative_to(base):
+            return False
+        if folder.name != "templates":
+            continue
+        for name in ("Chart.yaml", "Chart.yml"):
+            chart = folder.parent / name
+            if chart.is_file() and not chart.is_symlink():
+                return True
+    return False
+
+
 def load_project(root, *, changed_files=None, scan_paths=None, exclude_folders=None):
     project = Project()
     base, paths = _discover(
@@ -359,7 +372,17 @@ def load_project(root, *, changed_files=None, scan_paths=None, exclude_folders=N
                 project.coverage["documents_parsed"] += 1
             project.coverage["files_parsed"] += 1
         except (ValueError, TypeError, RecursionError, yaml.YAMLError) as error:
-            if hinted:
+            if hinted and _helm_chart_template(base, path):
+                mark = getattr(error, "problem_mark", None)
+                project.error(
+                    path,
+                    "kubernetes_template_not_rendered",
+                    "Helm chart template was not checked: Kubernetes policies need "
+                    "the rendered manifest",
+                    (mark.line + 1) if mark is not None else 1,
+                    hard=False,
+                )
+            elif hinted:
                 mark = getattr(error, "problem_mark", None)
                 project.error(
                     path,

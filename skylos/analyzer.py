@@ -650,6 +650,7 @@ def _scan_ai_defect_diff_signals(
     all_ai_defects,
     all_suppressed,
     marker_reader=None,
+    include_guardrails=True,
 ):
     from skylos.rules.ai_defect.api_surface_drift import detect_cli_surface_drift
     from skylos.rules.ai_defect.ci_permission_expansion import (
@@ -686,7 +687,7 @@ def _scan_ai_defect_diff_signals(
                 marker_reader=marker_reader,
             )
 
-    if {"SKY-A122", "SKY-A125"} - set(project_ignore):
+    if include_guardrails and {"SKY-A122", "SKY-A125"} - set(project_ignore):
         # AI-reviewer settings changed (A122) and scanner suppression markers
         # added (A125): base against head, like `skylos done`.
         from skylos.rules.ai_defect.guardrails import scan_git_changes
@@ -4869,6 +4870,28 @@ class Skylos:
                     except Exception:
                         if os.getenv("SKYLOS_DEBUG"):
                             logger.exception("Guardrail diff scan failed")
+                    if {"SKY-A103", "SKY-A104"} - set(project_ignore):
+                        try:
+                            no_source_signal_files = changed_files
+                            if no_source_signal_files is None:
+                                no_source_signal_files = _detected_diff_signal_files(
+                                    root, path, GitContext.from_path(root)
+                                )
+                            if no_source_signal_files:
+                                _scan_ai_defect_diff_signals(
+                                    root,
+                                    no_source_signal_files,
+                                    project_ignore=project_ignore,
+                                    per_file_ignore_lines={},
+                                    per_file_ignore_rules={},
+                                    all_ai_defects=ai_defect_findings,
+                                    all_suppressed=no_source_suppressed,
+                                    marker_reader=no_source_markers,
+                                    include_guardrails=False,
+                                )
+                        except Exception:
+                            if os.getenv("SKYLOS_DEBUG"):
+                                logger.exception("AI defect diff scan failed")
                     if no_source_suppressed:
                         result.setdefault("suppressed", []).extend(no_source_suppressed)
                 if ai_defect_findings:

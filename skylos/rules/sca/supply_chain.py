@@ -289,6 +289,17 @@ def _package_label(record: dict) -> str:
     return record["name"] or "dependency"
 
 
+def _registry_source(record: dict) -> str:
+    if record.get("registry"):
+        return _text(record["registry"])
+    registries = [_text(item) for item in record.get("registries") or () if item]
+    if len(registries) == 1:
+        return registries[0]
+    if registries:
+        return "any of " + ", ".join(registries[:4])
+    return "a registry that is not one of your private registries"
+
+
 def _message(rule_id: str, record: dict, evidence: dict, policy) -> str:
     label = _package_label(record)
     if rule_id == RULE_CONFUSION:
@@ -300,7 +311,7 @@ def _message(rule_id: str, record: dict, evidence: dict, policy) -> str:
             mode = " through an extra index that pip merges with the public one"
         return (
             f"{label} matches internal package pattern {pattern} but resolves from "
-            f"{record.get('registry')}{mode}. Anyone can publish that name on the "
+            f"{_registry_source(record)}{mode}. Anyone can publish that name on the "
             "public registry (dependency confusion). Install internal packages only "
             "from your private registry: an exclusive --index-url or a scoped registry."
         )

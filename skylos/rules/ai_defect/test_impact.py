@@ -62,6 +62,7 @@ _HIGH_RISK_HINTS = {
     "webhook": "integration",
 }
 _TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9]+")
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 _ASSERTION_RE = re.compile(
     r"(\bassert\b|"
     r"\bself\.assert[A-Z]\w*\s*\(|"
@@ -114,7 +115,9 @@ def detect_test_impact_gaps(
         risk_area = _risk_area(path)
         if risk_area is None:
             continue
-        findings.append(_make_finding(path, risk_area))
+        findings.append(
+            _make_finding(path, risk_area, _first_changed_line(diff_map.get(path)))
+        )
 
     return findings[:10]
 
@@ -316,7 +319,35 @@ def _risk_area(path: str) -> str | None:
     return None
 
 
-def _make_finding(path: str, risk_area: str) -> dict:
+def _first_changed_line(diff_text: str | None) -> int:
+    new_line = None
+    deletion_anchor = None
+    for raw_line in (diff_text or "").splitlines():
+        hunk = _HUNK_RE.match(raw_line)
+        if hunk is not None:
+            if deletion_anchor is not None:
+                return deletion_anchor
+            new_line = int(hunk.group(1))
+            continue
+        if new_line is None:
+            continue
+        if raw_line.startswith("+"):
+            return max(1, new_line)
+        if raw_line.startswith("-"):
+            if deletion_anchor is None:
+                deletion_anchor = max(1, new_line - 1)
+            continue
+        if raw_line.startswith("\\"):
+            continue
+        if deletion_anchor is not None:
+            return deletion_anchor
+        new_line += 1
+    if deletion_anchor is not None:
+        return deletion_anchor
+    return 1
+
+
+def _make_finding(path: str, risk_area: str, line: int = 1) -> dict:
     return {
         "rule_id": RULE_ID,
         "kind": "test_impact",
@@ -327,7 +358,7 @@ def _make_finding(path: str, risk_area: str) -> dict:
             "is unchanged."
         ),
         "file": path,
-        "line": 1,
+        "line": line,
         "col": 0,
         "category": "ai_defect",
         "defect_type": "test_impact_gap",

@@ -34,7 +34,8 @@ def scan_mirrored_dependency_bumps(
     """Compare merge-base to HEAD for PRs, or HEAD to local working files.
 
     A PR comparison never mixes committed metadata with uncommitted dependency
-    edits. Only selected changed files receive findings; ancestor manifests are
+    edits. A base that is HEAD itself (``--diff HEAD``) has no committed change
+    to compare, so HEAD is compared with the local working files. Only selected changed files receive findings; ancestor manifests are
     read as evidence so an explicit single-file scan keeps package ownership.
     Commit hooks use staged=True to compare HEAD with index blobs, regardless
     of worktree edits or the PR base. No Git tree or target file is written.
@@ -140,6 +141,8 @@ def _revisions(context: GitContext, diff_base: str | None):
     merge_base = context.run("merge-base", base.stdout.strip(), head_ref)
     if merge_base.returncode != 0:
         return None
+    if merge_base.stdout.strip() == head_ref:
+        return head_ref, None
     return merge_base.stdout.strip(), head_ref
 
 
