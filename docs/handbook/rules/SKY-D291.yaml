@@ -13,8 +13,8 @@ gate:
   full: counted
 
 what_it_is: >-
-  Every workflow job gets a `GITHUB_TOKEN`. Its `permissions:` block says
-  what that token may do. Without one, the job gets the repository's
+  Every workflow job gets a `GITHUB_TOKEN`, and its `permissions:` block
+  says what that token may do. Without one, the job gets the repository's
   default, which can be read-write. SKY-D291 reports workflows that leave
   the token at the default, and grants that are broader than the jobs need.
 

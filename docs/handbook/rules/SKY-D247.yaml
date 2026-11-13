@@ -110,7 +110,7 @@ false_alarms_and_suppression:
         acceptable.
       language: typescript
       code: |
-        app.use(cors({ origin: "*" })); // skylos: ignore[SKY-D247] public open-data API, no cookies
+        app.use(cors({ origin: "*" })); // skylos: ignore[SKY-D247] public API
     - check: config
       text: >-
         `[tool.skylos] ignore = ["SKY-D247"]` turns the rule off for the

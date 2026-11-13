@@ -18,7 +18,8 @@ what_it_is: >-
   An AI agent in a workflow is allowed to run any shell command, for example
   with Claude Code's `Bash` tool, `--dangerously-skip-permissions`, Codex's
   `danger-full-access` sandbox or Gemini's YOLO mode, and the text it reads
-  can come from someone else.
+  can come from someone else. SKY-D352 reports that combination in the
+  workflow step that starts the agent.
 
 why_it_matters: >-
   A maintainer types "@claude please fix this" under an issue that a

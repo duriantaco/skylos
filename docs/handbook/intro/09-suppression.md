@@ -63,9 +63,10 @@ Some rules read no inline marker at all: agent and editor settings and
 publish-job rules (SKY-D365 to SKY-D377), Terraform and Kubernetes rules
 (SKY-D400 to SKY-D411), security-contract regressions (SKY-SC001), the
 prompt-injection text rules SKY-D260 and SKY-D266, empty files (SKY-E002),
-and the AI-code rules that compare a change with its base (SKY-A102,
-SKY-A103, SKY-A104, SKY-A122 and SKY-A125). Use a baseline or the project
-setting below for those. Each rule page says which methods work, and the
+duplicated code (SKY-C401), circular imports (SKY-CIRC), the module design
+rules SKY-Q802 to SKY-Q805, and the AI-code rules that compare a change with
+its base (SKY-A102, SKY-A103, SKY-A104, SKY-A122 and SKY-A125). Use a
+baseline or the project setting below for those. Each rule page says which methods work, and the
 build checks those claims against the real scanner.
 
 ## For the whole project
@@ -80,7 +81,9 @@ counted as suppressed. Write the IDs in upper case. Secrets are the
 exception: `ignore = ["SKY-S101"]` does not affect the secrets scan, and a
 committed secret stays reported. The dependency checks SKY-SCA-SRC001,
 SKY-SCA-SRC003, SKY-SCA-INT001 and SKY-SCA-AGE001 are not affected either:
-neither this list, an inline marker nor a baseline hides them. A gate policy
+neither this list, an inline marker nor a baseline hides them. Circular
+imports (SKY-CIRC) ignore the list and baselines too; set
+`check_circular = false` under `[tool.skylos]` to turn them off. A gate policy
 pulled from Skylos Cloud can set this list instead of `pyproject.toml`.
 
 For dead code, a whitelist keeps matching names alive instead of turning

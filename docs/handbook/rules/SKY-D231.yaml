@@ -154,7 +154,7 @@ false_alarms_and_suppression:
         Mark the reported line and say why every origin is acceptable.
       language: python
       code: |
-        response.headers["Access-Control-Allow-Origin"] = origin  # skylos: ignore[SKY-D231] checked by gateway
+        response.headers["Access-Control-Allow-Origin"] = origin  # skylos: ignore[SKY-D231] gateway
     - check: config
       text: >-
         `[tool.skylos] ignore = ["SKY-D231"]` turns the rule off for the
