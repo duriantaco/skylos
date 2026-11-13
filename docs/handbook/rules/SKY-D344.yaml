@@ -20,9 +20,9 @@ why_it_matters: >-
   request that looks harmless.
 
 fragments:
-  RLO: ["‮"]
-  LRI: ["⁦"]
-  PDI: ["⁩"]
+  RLO: ["\u202E"]
+  LRI: ["\u2066"]
+  PDI: ["\u2069"]
 
 flagged_example:
   language: python
@@ -92,7 +92,7 @@ false_alarms_and_suppression:
     - >-
       A translation file that uses direction controls on purpose, to mix
       right-to-left and left-to-right words in one message, is reported.
-      Writing those controls as `‮`-style escapes keeps the meaning and
+      Writing those controls as `\u202e`-style escapes keeps the meaning and
       avoids the finding.
   suppress:
     - check: inline
