@@ -59,9 +59,14 @@ several rules and `ignore-start` / `ignore-end` are not read there.
       - uses: our-org/deploy-action@v3
 ```
 
-Agent and editor settings, publish-job rules (SKY-D365 to SKY-D377) and
-Terraform rules read no inline marker at all. Use a baseline or the project
-setting below for those.
+Some rules read no inline marker at all: agent and editor settings and
+publish-job rules (SKY-D365 to SKY-D377), Terraform and Kubernetes rules
+(SKY-D400 to SKY-D411), security-contract regressions (SKY-SC001), the
+prompt-injection text rules SKY-D260 and SKY-D266, empty files (SKY-E002),
+and the AI-code rules that compare a change with its base (SKY-A102,
+SKY-A103, SKY-A104, SKY-A122 and SKY-A125). Use a baseline or the project
+setting below for those. Each rule page says which methods work, and the
+build checks those claims against the real scanner.
 
 ## For the whole project
 
@@ -73,8 +78,10 @@ ignore = ["SKY-L028", "SKY-C303"]
 This turns the listed rules off everywhere. Their findings are dropped, not
 counted as suppressed. Write the IDs in upper case. Secrets are the
 exception: `ignore = ["SKY-S101"]` does not affect the secrets scan, and a
-committed secret stays reported. A gate policy pulled from Skylos Cloud can
-set this list instead of `pyproject.toml`.
+committed secret stays reported. The dependency checks SKY-SCA-SRC001,
+SKY-SCA-SRC003, SKY-SCA-INT001 and SKY-SCA-AGE001 are not affected either:
+neither this list, an inline marker nor a baseline hides them. A gate policy
+pulled from Skylos Cloud can set this list instead of `pyproject.toml`.
 
 For dead code, a whitelist keeps matching names alive instead of turning
 the rule off. Patterns use shell-style wildcards:
