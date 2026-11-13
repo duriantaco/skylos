@@ -323,6 +323,56 @@ def test_real_defences_and_lookalikes_stay_quiet(tmp_path, code):
     assert scan(tmp_path, code) == []
 
 
+SIBLING_PREFIX = """import os
+
+def save(name, data):
+    if ".." in name:
+        raise ValueError
+    target = os.path.realpath(os.path.join(UPLOADS, name))
+    if not target.startswith(UPLOADS):
+        raise ValueError
+    with open(target, "wb") as handle:
+        handle.write(data)
+"""
+
+CHARACTER_PREFIX = """import os
+
+def save(name, data):
+    if ".." in name:
+        raise ValueError
+    target = os.path.realpath(os.path.join(UPLOADS, name))
+    if os.path.commonprefix([target, UPLOADS]) != UPLOADS:
+        raise ValueError
+    with open(target, "wb") as handle:
+        handle.write(data)
+"""
+
+SEPARATOR_PREFIX = """import os
+
+def save(name, data):
+    if ".." in name:
+        raise ValueError
+    target = os.path.realpath(os.path.join(UPLOADS, name))
+    if not target.startswith(UPLOADS + os.sep):
+        raise ValueError
+    with open(target, "wb") as handle:
+        handle.write(data)
+"""
+
+
+@pytest.mark.parametrize("code", [SIBLING_PREFIX, CHARACTER_PREFIX])
+def test_prefix_checks_that_admit_a_sibling_folder_are_reported(tmp_path, code):
+    findings = scan(tmp_path, code)
+
+    assert [(f["line"], f["metadata"]["path_defence"]["kind"]) for f in findings] == [
+        (9, "absolute_path")
+    ]
+
+
+def test_prefix_check_ending_at_a_separator_stays_quiet(tmp_path):
+    assert scan(tmp_path, SEPARATOR_PREFIX) == []
+
+
 def test_one_finding_per_defence(tmp_path):
     code = """import os
 

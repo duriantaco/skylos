@@ -15,6 +15,13 @@ from __future__ import annotations
 
 import ast
 
+from skylos.rules.danger.danger_fs.prefix_separator import (
+    bound_names,
+    dotted,
+    ends_with_separator,
+    scope_bindings,
+)
+
 RULE_ID = "SKY-D378"
 SEVERITY = "MEDIUM"
 SINGLE_PASS_STRIP = "single_pass_strip"
@@ -72,9 +79,10 @@ _PATH_CLASSES = frozenset(
     {"Path", "PurePath", "PosixPath", "PurePosixPath", "WindowsPath", "PureWindowsPath"}
 )
 _CONTAINMENT_CALLS = frozenset(
-    {"is_relative_to", "relative_to", "commonpath", "commonprefix", "safe_join"}
+    {"is_relative_to", "relative_to", "commonpath", "safe_join"}
 )
 _NORMALIZERS = frozenset({"realpath", "resolve", "abspath", "normpath"})
+_CHARACTER_PREFIX_CALLS = frozenset({"commonprefix"})
 _NAME_ONLY_CALLS = frozenset({"basename", "secure_filename"})
 _ABSOLUTE_CALLS = frozenset({"isabs", "is_absolute"})
 _LEADING_STRIPS = frozenset({"lstrip", "strip", "removeprefix"})
@@ -182,8 +190,53 @@ def _rejected_names(test):
     return names
 
 
+class _Module:
+    """What the module binds: plain constants and trusted path imports."""
+
+    def __init__(self, tree):
+        self.rebound = bound_names(tree)
+        self.bindings = scope_bindings(tree)
+        self.globals = {
+            name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Global)
+            for name in node.names
+        }
+        self.imports = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.asname:
+                        self.imports[alias.asname] = alias.name
+                    else:
+                        head = alias.name.split(".")[0]
+                        self.imports[head] = head
+            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                for alias in node.names:
+                    if alias.name != "*":
+                        self.imports[alias.asname or alias.name] = (
+                            f"{node.module}.{alias.name}"
+                        )
+
+    def canonical(self, node):
+        name = dotted(node)
+        if name is None:
+            return None
+        head, _, rest = name.partition(".")
+        if head in self.rebound:
+            return None
+        base = self.imports.get(head)
+        if base is None:
+            return None
+        if rest:
+            return f"{base}.{rest}"
+        return base
+
+
 class _Scope:
-    def __init__(self, scope):
+    def __init__(self, scope, module):
+        self.module = module
+        self.own = scope_bindings(scope)
         self.nodes = sorted(
             _scope_nodes(scope),
             key=lambda node: (
@@ -218,7 +271,7 @@ class _Scope:
                 return True
             if name in _NORMALIZERS:
                 normalized = True
-            if name == "startswith":
+            if name == "startswith" and self.separator_prefix(call):
                 prefix_checked = True
         for node in self.nodes:
             if (
@@ -228,6 +281,24 @@ class _Scope:
             ):
                 return True
         return normalized and prefix_checked
+
+    def binding(self, name):
+        if name in self.own:
+            values = self.own[name]
+            if len(values) == 1:
+                return values[0]
+            return None
+        if name in self.module.globals:
+            return None
+        values = self.module.bindings.get(name)
+        if values and len(values) == 1:
+            return values[0]
+        return None
+
+    def separator_prefix(self, call):
+        if len(call.args) != 1 or call.keywords:
+            return False
+        return ends_with_separator(call.args[0], self.binding, self.module.canonical)
 
     def absolute_handled(self, name):
         for call in self.calls:
@@ -275,7 +346,11 @@ class _Scope:
                 continue
             for inner in ast.walk(test):
                 if isinstance(inner, ast.Call):
-                    if self.dot_dot_call(inner) or _last_name(inner) in _PROBES:
+                    if (
+                        self.dot_dot_call(inner)
+                        or _last_name(inner) in _PROBES
+                        or _last_name(inner) in _CHARACTER_PREFIX_CALLS
+                    ):
                         continue
                     arguments = [
                         *inner.args,
@@ -424,8 +499,8 @@ def _absolute_message(name, line):
     )
 
 
-def _check_scope(scope_node, symbol, file_path, findings):
-    scope = _Scope(scope_node)
+def _check_scope(scope_node, symbol, file_path, findings, module):
+    scope = _Scope(scope_node, module)
     if not scope.calls:
         return
     loops = scope.loop_strips()
@@ -521,11 +596,12 @@ def scan(tree, file_path, findings):
     try:
         if not _mentions_dot_dot(tree):
             return
-        _check_scope(tree, "<module>", file_path, findings)
+        module = _Module(tree)
+        _check_scope(tree, "<module>", file_path, findings, module)
         for node in ast.walk(tree):
             if isinstance(
                 node, (ast.FunctionDef, ast.AsyncFunctionDef)
             ) and _mentions_dot_dot(node):
-                _check_scope(node, node.name, file_path, findings)
+                _check_scope(node, node.name, file_path, findings, module)
     except RecursionError:
         return
