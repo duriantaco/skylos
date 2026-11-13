@@ -2111,23 +2111,24 @@ class Book:
         return RULE_ID_PATTERN.sub(replace, escaped)
 
     def inline(self, text: str) -> str:
-        pieces = re.split(r"(`[^`]+`)", str(text))
-        out = []
-        for piece in pieces:
-            if len(piece) >= 2 and piece.startswith("`") and piece.endswith("`"):
-                out.append(f"<code>{html.escape(piece[1:-1])}</code>")
-                continue
-            escaped = html.escape(piece, quote=False)
-            escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
-            escaped = re.sub(
-                r"\[([^\]]+)\]\(([^)\s]+)\)",
-                lambda match: (
-                    f'<a href="{html.escape(match.group(2))}">{match.group(1)}</a>'
-                ),
-                escaped,
-            )
-            out.append(self.link_rule_ids(escaped))
-        return "".join(out)
+        spans = []
+
+        def keep_code(match):
+            spans.append(f"<code>{html.escape(match.group(1))}</code>")
+            return f"\x00{len(spans) - 1}\x00"
+
+        held = re.sub(r"`([^`]+)`", keep_code, str(text).replace("\x00", ""))
+        escaped = html.escape(held, quote=False)
+        escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
+        escaped = re.sub(
+            r"\[([^\]]+)\]\(([^)\s]+)\)",
+            lambda match: (
+                f'<a href="{html.escape(match.group(2))}">{match.group(1)}</a>'
+            ),
+            escaped,
+        )
+        escaped = self.link_rule_ids(escaped)
+        return re.sub(r"\x00(\d+)\x00", lambda match: spans[int(match.group(1))], escaped)
 
     def code_block(
         self,
