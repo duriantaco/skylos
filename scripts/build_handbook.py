@@ -7,6 +7,8 @@ Inputs, all under docs/handbook/:
 - families.yaml: the book's rule families, their intros and which catalog
   rules belong to each;
 - intro/*.md: the front matter, in a small Markdown subset;
+- cloud/*.md: the "Using Skylos Cloud" guide, in the same subset, with
+  screenshots from img/cloud/ and the feature list in cloud/manifest.yaml;
 - handbook.css: the page style.
 
 The rule list comes from skylos/rules/catalog.py. Rules without a page are
@@ -22,6 +24,7 @@ verifiable fix must not.
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import datetime
 import difflib
@@ -48,6 +51,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 HANDBOOK_DIR = REPO_ROOT / "docs" / "handbook"
 RULES_DIR = HANDBOOK_DIR / "rules"
 INTRO_DIR = HANDBOOK_DIR / "intro"
+CLOUD_DIR = HANDBOOK_DIR / "cloud"
+CLOUD_MANIFEST_FILE = CLOUD_DIR / "manifest.yaml"
+IMAGE_DIR = HANDBOOK_DIR / "img"
+IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+IMAGE_PATTERN = re.compile(r"^!\[([^\]]*)\]\(([^)\s]+)\)$")
+CLOUD_STATUSES = ("covered", "not_available")
+SHOT_MM_PER_PIXEL = 0.124
+SHOT_MAX_WIDTH_MM = 176
+SHOT_MAX_HEIGHT_MM = 125
 FAMILIES_FILE = HANDBOOK_DIR / "families.yaml"
 PENDING_FILE = HANDBOOK_DIR / "pending.yaml"
 CSS_FILE = HANDBOOK_DIR / "handbook.css"
@@ -343,12 +355,20 @@ def run(args) -> int:
         if args.verify_only:
             return 0
 
+    cloud_errors = cloud_problems()
+    if cloud_errors:
+        for error in cloud_errors:
+            print(f"error: {error}", file=sys.stderr)
+        raise BuildError(f"{len(cloud_errors)} Cloud guide problem(s); nothing built")
+
     if args.check:
         return 0
 
     verify_report = read_verify_report(verify_path)
     intro = load_intro(catalog, families, pages)
     book = Book(catalog, families, pages, intro, verify_report, args.mode)
+    book.cloud = load_cloud_chapters()
+    book.cloud_manifest = load_cloud_manifest()
     html_path = output.with_suffix(".html")
     page_numbers: dict[str, int] = {}
     html_path.write_text(book.render(page_numbers), encoding="utf-8")
@@ -1721,6 +1741,158 @@ def load_intro(catalog, families, pages) -> list[dict]:
     return chapters
 
 
+def load_cloud_chapters() -> list[dict]:
+    chapters = []
+    for path in sorted(CLOUD_DIR.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        match = re.match(r"#\s+(.+)\n", text)
+        if not match:
+            raise BuildError(f"cloud/{path.name}: must start with '# Title'")
+        body = text[match.end() :]
+        slug = re.sub(r"^[0-9]+-", "", path.stem)
+        chapters.append(
+            {
+                "slug": slug,
+                "title": match.group(1).strip(),
+                "body": body,
+                "path": path,
+                "prefix": "cloud",
+            }
+        )
+    return chapters
+
+
+def chapter_headings(body: str) -> set[str]:
+    headings = set()
+    in_code = False
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code = not in_code
+            continue
+        if in_code:
+            continue
+        match = re.match(r"#{2,4}\s+(.+)", stripped)
+        if match:
+            headings.add(match.group(1).strip())
+    return headings
+
+
+def chapter_images(body: str) -> list[str]:
+    images = []
+    for line in body.splitlines():
+        match = IMAGE_PATTERN.match(line.strip())
+        if match:
+            images.append(match.group(2))
+    return images
+
+
+def resolve_image(source: str) -> Path:
+    path = (HANDBOOK_DIR / source).resolve()
+    if not path.is_relative_to(IMAGE_DIR.resolve()):
+        raise BuildError(f"image {source} must live under docs/handbook/img/")
+    if path.suffix.lower() not in IMAGE_TYPES:
+        raise BuildError(f"image {source} must be a PNG or JPEG file")
+    if not path.is_file():
+        raise BuildError(f"image {source} does not exist")
+    return path
+
+
+def image_size(data: bytes) -> tuple[int, int] | None:
+    if data[:8] == b"\x89PNG\r\n\x1a\n" and data[12:16] == b"IHDR":
+        return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    return None
+
+
+def shot_width_mm(size: tuple[int, int] | None) -> float:
+    if not size:
+        return SHOT_MAX_WIDTH_MM
+    width, height = size
+    natural = width * SHOT_MM_PER_PIXEL
+    by_height = SHOT_MAX_HEIGHT_MM * width / height
+    return round(min(SHOT_MAX_WIDTH_MM, natural, by_height), 1)
+
+
+def load_cloud_manifest() -> dict:
+    if not CLOUD_MANIFEST_FILE.is_file():
+        return {}
+    data = read_yaml(CLOUD_MANIFEST_FILE)
+    if not isinstance(data, dict):
+        raise BuildError("cloud/manifest.yaml must be a mapping")
+    return data
+
+
+def cloud_verified_text(manifest: dict) -> str:
+    verified = manifest.get("verified_against") or {}
+    commit = str(verified.get("commit") or "").strip()
+    date_text = str(verified.get("date") or "").strip()
+    if not commit or not date_text:
+        raise BuildError("cloud/manifest.yaml needs verified_against.commit and .date")
+    day = datetime.date.fromisoformat(date_text)
+    return f"Verified against Skylos Cloud {commit}, {day.day} {day.strftime('%B %Y')}."
+
+
+def cloud_problems() -> list[str]:
+    chapters = load_cloud_chapters()
+    manifest = load_cloud_manifest()
+    problems = []
+    if not chapters and not manifest:
+        return problems
+    if not manifest:
+        return ["cloud/manifest.yaml is missing"]
+    try:
+        cloud_verified_text(manifest)
+    except (BuildError, ValueError) as error:
+        problems.append(f"cloud/manifest.yaml: {error}")
+    headings = {
+        chapter["path"].name: chapter_headings(chapter["body"]) for chapter in chapters
+    }
+    for chapter in chapters:
+        for source in chapter_images(chapter["body"]):
+            try:
+                resolve_image(source)
+            except BuildError as error:
+                problems.append(f"cloud/{chapter['path'].name}: {error}")
+    features = manifest.get("features")
+    if not isinstance(features, list) or not features:
+        problems.append("cloud/manifest.yaml: features must be a non-empty list")
+        return problems
+    seen = set()
+    for feature in features:
+        problems.extend(cloud_feature_problems(feature, headings, seen))
+    return problems
+
+
+def cloud_feature_problems(feature, headings, seen) -> list[str]:
+    if not isinstance(feature, dict) or not str(feature.get("id") or "").strip():
+        return ["cloud/manifest.yaml: every feature needs an id"]
+    feature_id = str(feature["id"])
+    where = f"cloud/manifest.yaml: {feature_id}"
+    problems = []
+    if feature_id in seen:
+        problems.append(f"{where}: listed twice")
+    seen.add(feature_id)
+    if not str(feature.get("label") or "").strip():
+        problems.append(f"{where}: needs the label shown in Cloud")
+    status = feature.get("status", "covered")
+    if status not in CLOUD_STATUSES:
+        problems.append(f"{where}: status must be one of {', '.join(CLOUD_STATUSES)}")
+        return problems
+    if status == "not_available" and not str(feature.get("reason") or "").strip():
+        problems.append(f"{where}: a feature that is not available needs a reason")
+    chapter = str(feature.get("chapter") or "")
+    section = str(feature.get("section") or "")
+    if not chapter or not section:
+        problems.append(f"{where}: has no guide section (chapter and section)")
+        return problems
+    if chapter not in headings:
+        problems.append(f"{where}: chapter {chapter} does not exist in cloud/")
+        return problems
+    if section not in headings[chapter]:
+        problems.append(f"{where}: {chapter} has no section '{section}'")
+    return problems
+
+
 def find_chrome(explicit: str | None) -> str:
     candidates = []
     if explicit:
@@ -1861,6 +2033,8 @@ class Book:
         self.families = families
         self.pages = pages
         self.intro = intro
+        self.cloud: list[dict] = []
+        self.cloud_manifest: dict = {}
         self.verify_report = verify_report
         self.mode = mode
         self.version = skylos_version()
@@ -1891,6 +2065,8 @@ class Book:
         self.anchors = []
         body = [self.render_cover(), self.render_contents()]
         for number, chapter in enumerate(self.intro, start=1):
+            body.append(self.render_chapter(number, chapter))
+        for number, chapter in enumerate(self.cloud, start=len(self.intro) + 1):
             body.append(self.render_chapter(number, chapter))
         for family in self.active_families():
             body.append(self.render_family(family))
@@ -2035,6 +2211,15 @@ class Book:
                     f"{number}. {html.escape(chapter['title'])}", target, "toc-chapter"
                 )
             )
+        if self.cloud:
+            rows.append('<div class="toc-part">Using Skylos Cloud</div>')
+        for number, chapter in enumerate(self.cloud, start=len(self.intro) + 1):
+            target = f"cloud-{chapter['slug']}"
+            rows.append(
+                self.toc_row(
+                    f"{number}. {html.escape(chapter['title'])}", target, "toc-chapter"
+                )
+            )
         rows.append('<div class="toc-part">Rules</div>')
         for family in self.active_families():
             target = f"family-{family['id']}"
@@ -2065,13 +2250,16 @@ class Book:
         )
 
     def render_chapter(self, number: int, chapter: dict) -> str:
-        target = self.anchor(f"intro-{chapter['slug']}")
+        prefix = chapter.get("prefix", "intro")
+        target = self.anchor(f"{prefix}-{chapter['slug']}")
         content = self.markdown(
             self.expand_placeholders(chapter["body"], chapter["path"])
         )
         css_class = "chapter"
         if number == 1:
             css_class = "chapter first"
+        if prefix == "cloud":
+            css_class = "chapter cloud-guide"
         return (  # skylos: ignore[SKY-D228] joins HTML fragments this module escaped
             f'<section class="{css_class}" id="{target}">\n'
             f'<p class="chapter-number">Chapter {number}</p>\n'
@@ -2089,12 +2277,14 @@ class Book:
             "category_table": self.category_table_markdown(),
             "command_overview": self.command_overview_markdown(),
         }
+        if self.cloud_manifest:
+            values["cloud_verified"] = cloud_verified_text(self.cloud_manifest)
 
         def replace(match):
             key = match.group(1)
             if key not in values:
                 raise BuildError(
-                    f"intro/{path.name}: unknown placeholder {{{{{key}}}}}"
+                    f"{path.parent.name}/{path.name}: unknown placeholder {{{{{key}}}}}"
                 )
             return values[key]
 
@@ -2141,6 +2331,12 @@ class Book:
                 index += 1
                 out.append(self.plain_code("\n".join(code), language))
                 continue
+            image = IMAGE_PATTERN.match(stripped)
+            if image:
+                flush()
+                out.append(self.image_figure(image.group(1), image.group(2)))
+                index += 1
+                continue
             heading = re.match(r"(#{2,4})\s+(.+)", stripped)
             if heading:
                 flush()
@@ -2163,6 +2359,7 @@ class Book:
             if re.match(r"([-*]|\d+\.)\s+", stripped):
                 flush()
                 ordered = bool(re.match(r"\d+\.\s+", stripped))
+                first_number = re.match(r"(\d+)\.", stripped)
                 items = []
                 while index < len(lines):
                     current = lines[index].strip()
@@ -2175,10 +2372,14 @@ class Book:
                         break
                     index += 1
                 tag = "ul"
+                opening = "ul"
                 if ordered:
                     tag = "ol"
+                    opening = "ol"
+                    if first_number and first_number.group(1) != "1":
+                        opening = f'ol start="{int(first_number.group(1))}"'
                 rendered = "".join(f"<li>{self.inline(item)}</li>" for item in items)
-                out.append(f"<{tag}>{rendered}</{tag}>")
+                out.append(f"<{opening}>{rendered}</{tag}>")
                 continue
             if stripped.startswith(">"):
                 flush()
@@ -2196,6 +2397,22 @@ class Book:
             index += 1
         flush()
         return "\n".join(out)
+
+    def image_figure(self, caption: str, source: str) -> str:
+        path = resolve_image(source)
+        raw = path.read_bytes()
+        data = base64.b64encode(raw).decode("ascii")
+        mime = IMAGE_TYPES[path.suffix.lower()]
+        width = shot_width_mm(image_size(raw))
+        caption_html = ""
+        if caption.strip():
+            caption_html = f"<figcaption>{self.inline(caption)}</figcaption>"
+        return (  # skylos: ignore[SKY-D228] joins HTML fragments this module escaped
+            '<figure class="shot">'
+            f'<img src="data:{mime};base64,{data}" style="width:{width}mm" '
+            f'alt="{html.escape(caption)}">'
+            f"{caption_html}</figure>"
+        )
 
     def markdown_table(self, table_lines: list[str]) -> str:
         def cells(row: str) -> list[str]:

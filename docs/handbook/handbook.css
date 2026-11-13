@@ -671,3 +671,34 @@ table.options td.opt code {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.chapter.cloud-guide {
+  break-before: page;
+  margin-top: 0;
+}
+
+.chapter.cloud-guide h4 {
+  font-size: 9.6pt;
+  margin: 8pt 0 3pt;
+  color: var(--accent);
+}
+
+figure.shot {
+  margin: 8pt 0 12pt;
+  break-inside: avoid;
+  text-align: left;
+}
+
+figure.shot img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 0.6pt solid var(--line);
+  border-radius: 3pt;
+}
+
+figure.shot figcaption {
+  margin-top: 3pt;
+  font-size: 8pt;
+  color: var(--muted);
+}

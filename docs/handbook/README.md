@@ -12,6 +12,10 @@ file and prints that to PDF with headless Chrome.
 | `rules/<RULE-ID>.yaml` | One rule page. The file name is the rule ID. |
 | `families.yaml` | The book's rule families: title, ID prefixes, intro, and which catalog rules belong to each. |
 | `intro/NN-name.md` | Front matter chapters, in file-name order. |
+| `cloud/NN-name.md` | The "Using Skylos Cloud" guide, printed after the front matter. |
+| `cloud/manifest.yaml` | Every Cloud destination, the guide section that covers it, and the Cloud commit the guide was checked against. |
+| `cloud/capture/` | Scripts that seed a local Cloud with fictional data and retake the screenshots (see its README). |
+| `img/cloud/*.png` | The guide's screenshots. |
 | `pending.yaml` | Catalog rules that have no page yet, each with a reason. |
 | `batches.json` | The unwritten rules split into six batches for parallel writing. |
 | `handbook.css` | Page style (A4, `@page` margins, footer page numbers). |
@@ -30,6 +34,29 @@ table are generated at build time from the CLI's own parsers
 (`skylos/cli_core/main_parser.py`, the agent parser and every command whose
 `--help` is argparse) and its help table (`skylos/ui/help.py`). New commands
 and flags appear without hand edits.
+
+## The Skylos Cloud guide
+
+The chapters in `cloud/` use the same Markdown subset as `intro/`, plus one
+line form for a screenshot:
+
+```markdown
+![Caption, with (1) (2) for the numbered marks.](img/cloud/gate-fail-scan.png)
+```
+
+The image must be a PNG or JPEG under `img/`. The build embeds it in the
+HTML (base64), so the PDF needs no other file. Keep images under about
+150 KB: `cloud/capture/optimize.py` trims, scales and reduces each capture.
+
+`{{cloud_verified}}` prints "Verified against Skylos Cloud <commit>, <date>"
+from `cloud/manifest.yaml`. Every feature in the manifest names the chapter
+and the `##`/`###` heading that covers it; the build (`--check` included)
+and `test/test_handbook_coverage.py` fail when one has no section, when a
+referenced image is missing, or when the manifest has no verified commit.
+With `SKYLOS_CLOUD_REPO=<Cloud checkout>` the test also fails when Cloud has
+a sidebar, settings or project destination the manifest does not list, or
+when the checkout is not at the verified commit. Retake the screenshots and
+update the manifest for each Cloud release (`cloud/capture/README.md`).
 
 ## Build
 

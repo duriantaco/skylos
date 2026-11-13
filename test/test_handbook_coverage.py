@@ -3,11 +3,19 @@
 These checks read YAML, the rule catalog and the command parsers; they never
 run a scan. A new catalog rule fails here until it has a page in
 docs/handbook/rules/ or a reasoned entry in docs/handbook/pending.yaml.
+
+The "Using Skylos Cloud" guide is checked against docs/handbook/cloud/manifest.yaml:
+every Cloud destination listed there needs a section in the guide. With
+SKYLOS_CLOUD_REPO pointing at a Skylos Cloud checkout, the manifest itself is
+checked against that checkout's sidebar and settings pages.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import os
+import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -127,4 +135,78 @@ def test_every_top_level_command_is_in_a_chapter_or_the_command_reference(builde
     assert not uncovered, (
         "These commands have no help-table entry, no parser the handbook can "
         f"read, and no chapter that mentions them: {uncovered}"
+    )
+
+
+def cloud_manifest():
+    path = HANDBOOK_DIR / "cloud" / "manifest.yaml"
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def test_every_cloud_destination_has_a_guide_section(builder):
+    problems = builder.cloud_problems()
+    assert not problems, problems
+
+
+def test_cloud_guide_names_the_commit_it_was_verified_against(builder):
+    manifest = cloud_manifest()
+    text = builder.cloud_verified_text(manifest)
+    assert str(manifest["verified_against"]["commit"]) in text
+    first = sorted((HANDBOOK_DIR / "cloud").glob("*.md"))[0]
+    assert "{{cloud_verified}}" in first.read_text(encoding="utf-8"), (
+        f"{first.name} must print the verified commit with {{{{cloud_verified}}}}"
+    )
+
+
+def cloud_checkout_destinations(repo: Path) -> dict[str, set[str]]:
+    navigation = (repo / "src/lib/dashboard-navigation.ts").read_text(encoding="utf-8")
+    settings = (repo / "src/lib/settings-sections.ts").read_text(encoding="utf-8")
+    sidebar = set(
+        re.findall(r'\{ key: "\w+", href: "[^"]+", label: "([^"]+)" \}', navigation)
+    )
+    pages = set(re.findall(r'\[/\^[^\n]+?/, "([^"]+)"\]', navigation))
+    setting_labels = set(re.findall(r'label: "([^"]+)"', settings))
+    project = (repo / "src/lib/project-navigation.ts").read_text(encoding="utf-8")
+    project_labels = set(re.findall(r'\{ key: "\w+", label: "([^"]+)"', project))
+    project_labels |= set(re.findall(r'\{ segment: "[^"]+", label: "([^"]+)"', project))
+    return {
+        "sidebar": sidebar,
+        "page": pages,
+        "settings": setting_labels,
+        "project": project_labels,
+    }
+
+
+def test_cloud_manifest_matches_the_cloud_checkout():
+    checkout = os.environ.get("SKYLOS_CLOUD_REPO")
+    if not checkout:
+        pytest.skip(
+            "set SKYLOS_CLOUD_REPO to a Skylos Cloud checkout to run this check"
+        )
+    repo = Path(checkout)
+    manifest = cloud_manifest()
+    listed: dict[str, set[str]] = {}
+    for feature in manifest["features"]:
+        listed.setdefault(feature.get("source", ""), set()).add(feature["label"])
+    missing = []
+    for source, labels in cloud_checkout_destinations(repo).items():
+        assert labels, (
+            f"no {source} destinations found in {repo}; the parser needs an update"
+        )
+        for label in sorted(labels - listed.get(source, set())):
+            missing.append(f"{source}: {label}")
+    assert not missing, (
+        "Skylos Cloud destinations with no entry in docs/handbook/cloud/manifest.yaml: "
+        f"{missing}"
+    )
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--short=8", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    verified = str(manifest["verified_against"]["commit"])
+    assert head == verified, (
+        f"the guide was verified against Skylos Cloud {verified} but the checkout is "
+        f"at {head}: re-check the guide, retake the screenshots and update the manifest"
     )
