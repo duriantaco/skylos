@@ -14,6 +14,12 @@ from skylos.rules.danger.builtin_bindings import builtin_references
 from skylos.rules.danger.import_proof import provider_binding_is_stable
 from skylos.rules.danger.danger_fs.closed_world import HELPER_PARAMETER_SOURCE
 from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
+from skylos.rules.danger.danger_fs.prefix_separator import (
+    bound_names,
+    dotted as prefix_dotted,
+    ends_with_separator,
+    scope_bindings,
+)
 from skylos.security.receiver_resolution import ReceiverResolver
 from skylos.rules.danger.danger_fs.path_open_modes import PathOpenModes
 from skylos.rules.danger.danger_fs.open_read_evidence import UpdateHandleReads
@@ -639,10 +645,22 @@ class _PathFlowChecker(TaintVisitor):
         self._import_parents = {}
         self._builtin_string_refs = frozenset()
         self._path_parents = {}
+        self._module_rebound = frozenset()
+        self._module_bindings = {}
+        self._global_names = frozenset()
+        self._function_bindings = {}
 
     def visit_Module(self, node):
         self.untrusted_sources = UntrustedSourceIndex(node, follow_local_calls=True)
         self._builtin_string_refs = builtin_references(node, {"str"})
+        self._module_rebound = frozenset(bound_names(node))
+        self._module_bindings = scope_bindings(node)
+        self._global_names = frozenset(
+            name
+            for item in ast.walk(node)
+            if isinstance(item, ast.Global)
+            for name in item.names
+        )
         self._import_parents = {
             id(child): parent
             for parent in ast.walk(node)
@@ -1167,10 +1185,55 @@ class _PathFlowChecker(TaintVisitor):
             return set()
         if call.func.attr not in _CONTAINMENT_METHODS:
             return set()
+        if call.func.attr == "startswith" and not self._separator_prefix(call):
+            return set()
         receiver = _unwrap_str_call(call.func.value)
         if not self._is_normalized_expr(receiver):
             return set()
         return _names_in(receiver)
+
+    def _separator_prefix(self, call):
+        """``startswith`` proves containment only for a prefix that ends at a
+        separator: ``/srv/files2`` also starts with ``/srv/files``."""
+        if len(call.args) != 1 or call.keywords:
+            return False
+        return ends_with_separator(
+            call.args[0], self._prefix_binding, self._prefix_canonical
+        )
+
+    def _prefix_binding(self, name):
+        function = self._current_function()
+        if function is not None:
+            key = id(function)
+            bindings = self._function_bindings.get(key)
+            if bindings is None:
+                bindings = scope_bindings(function)
+                self._function_bindings[key] = bindings
+            if name in bindings:
+                values = bindings[name]
+                if len(values) == 1:
+                    return values[0]
+                return None
+        if name in self._global_names:
+            return None
+        values = self._module_bindings.get(name)
+        if values and len(values) == 1:
+            return values[0]
+        return None
+
+    def _prefix_canonical(self, node):
+        name = prefix_dotted(node)
+        if name is None:
+            return None
+        head, _, rest = name.partition(".")
+        if head in self._module_rebound:
+            return None
+        base = self.import_aliases.get(head)
+        if base is None:
+            return None
+        if rest:
+            return f"{base}.{rest}"
+        return base
 
     def _is_path_argument(self, node):
         if isinstance(node, ast.Name):

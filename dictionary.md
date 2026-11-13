@@ -361,7 +361,10 @@ resolved path (`resolve()`, `realpath`, `abspath`, `normpath`) checked with
 `is_relative_to`, `relative_to`, `startswith` or `commonpath` before a
 rejecting branch; a membership check against a constant allowlist;
 `safe_join`; and `basename`. A prefix check on an unnormalized path does not
-count as a guard.
+count as a guard. `startswith` counts only when the prefix provably ends with a
+separator (`base + os.sep`, `base + "/"`, `f"{base}/"`, `os.path.join(base, "")`
+or a literal such as `"/srv/files/"`), because `/srv/files2/x` also starts with
+`/srv/files`; a prefix of only separators proves nothing.
 
 Python D215, D324 and D325 check tainted paths from web routes, MCP/agent
 tools, request data and standard input. A path built from a helper's
@@ -571,7 +574,10 @@ replace that writes `<` back cancels it); a local function named `escapeHtml`,
 count only when the failing branch returns, throws, breaks or continues before
 the sink (or the sink sits inside the passing branch), and only for the value
 that reaches the sink, unless it is reassigned after the guard: a
-`startsWith(root)` check on a `path.resolve`/`normalize`/`join` result,
+`startsWith(root)` check on a `path.resolve`/`normalize`/`join` result when
+the prefix provably ends with a separator (`root + path.sep`, `root + '/'`,
+`` `${root}/` `` or a literal ending in `/`, but not `'/'` or `path.sep`
+alone),
 `path.relative(root, p).startsWith('..')`, or rejecting `..` when the value is
 joined under a prefix and not `path.resolve`d (D215); an allowlist of string
 literals (`['a.com'].includes(u.hostname)`, `new Set([...]).has()`, `===`)
@@ -824,7 +830,8 @@ Ambiguous YAML and unsupported conditions keep the warning.
 D378 needs no proof that the value is attacker-controlled: the defence in the
 code is the evidence that its author treats it as untrusted. It stays quiet when
 the function also resolves the path and checks containment (`is_relative_to`,
-`relative_to`, `commonpath`, or a normalized path with `startswith`), keeps only
+`relative_to`, `commonpath`, or a normalized path with `startswith` on a prefix
+that ends with a separator), keeps only
 the file name (`basename`, `secure_filename`, `.name`), uses `safe_join`,
 rejects or strips a leading separator or an absolute path, validates the value
 with another call, pattern or allowlist, or removes the sequence in a `while`
