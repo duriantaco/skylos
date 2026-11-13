@@ -1,0 +1,303 @@
+id: SKY-A111
+title: Test newly skipped
+family: ai-defects
+severity: HIGH
+languages: [Python tests (pytest, unittest), JavaScript/TypeScript tests (Jest, Vitest, Mocha, node:test, Playwright)]
+gate:
+  full: not_run
+  note: >-
+    Only `skylos done` reports it, in its `test_tampering` check, which
+    blocks by default: one newly skipped or focused test fails the verdict.
+    `skylos cicd risk-review` counts it as "tests weakened", which needs a
+    human approval.
+run_with: >-
+  `skylos done` (compares uncommitted changes with `HEAD`) or
+  `skylos done --base origin/main` for a pull request; agent hooks run it
+  when the agent stops
+verify:
+  mode: manual
+  reason: >-
+    Only `skylos done` runs this rule; the handbook build runs `skylos .`
+    scans, which never report it.
+
+what_it_is: >-
+  A test that ran at the base commit no longer runs after the change,
+  because it gained a skip or expected-failure marker. In JavaScript and
+  TypeScript, a new `.only` counts too: it focuses one test and stops every
+  other test in its file from running.
+
+why_it_matters: >-
+  A skipped test still shows up in the test count, so the run stays green
+  and looks complete. A coding agent that cannot fix a failure can hide it
+  with one decorator line, and the behaviour the test checked goes
+  unchecked from then on.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  expect_file: tests/test_shipping.py
+  expect_line: 11
+  base_files:
+    - filename: shop/shipping.py
+      code: |
+        """Shipping cost rules."""
+
+        FREE_SHIPPING_FROM = 50
+
+
+        def shipping_cost(order_total):
+            if order_total >= FREE_SHIPPING_FROM:
+                return 0
+            return 5
+    - filename: tests/test_shipping.py
+      code: |
+        from shop.shipping import shipping_cost
+
+
+        def test_small_order_pays_shipping():
+            assert shipping_cost(20) == 5
+
+
+        def test_free_shipping_from_threshold():
+            assert shipping_cost(50) == 0
+  files:
+    - filename: shop/shipping.py
+      code: |
+        """Shipping cost rules."""
+
+        FREE_SHIPPING_FROM = 50
+
+
+        def shipping_cost(order_total):
+            if order_total > FREE_SHIPPING_FROM:
+                return 0
+            return 5
+    - filename: tests/test_shipping.py
+      code: |
+        import pytest
+
+        from shop.shipping import shipping_cost
+
+
+        def test_small_order_pays_shipping():
+            assert shipping_cost(20) == 5
+
+
+        @pytest.mark.skip(reason="flaky")
+        def test_free_shipping_from_threshold():
+            assert shipping_cost(50) == 0
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: shop/shipping.py
+      code: |
+        """Shipping cost rules."""
+
+        FREE_SHIPPING_FROM = 50
+
+
+        def shipping_cost(order_total):
+            if order_total >= FREE_SHIPPING_FROM:
+                return 0
+            return 5
+    - filename: tests/test_shipping.py
+      code: |
+        from shop.shipping import shipping_cost
+
+
+        def test_small_order_pays_shipping():
+            assert shipping_cost(20) == 5
+
+
+        def test_free_shipping_from_threshold():
+            assert shipping_cost(50) == 0
+  files:
+    - filename: tests/test_shipping.py
+      code: |
+        import pytest
+
+        from shop.shipping import shipping_cost
+
+
+        def test_small_order_pays_shipping():
+            assert shipping_cost(20) == 5
+
+
+        def test_free_shipping_from_threshold():
+            assert shipping_cost(50) == 0
+
+
+        @pytest.mark.skip(reason="needs the carrier sandbox")
+        def test_live_carrier_rates():
+            assert shipping_cost(20, carrier="dhl") > 0
+  why: >-
+    The skipped test is new in this change. SKY-A111 compares tests that
+    existed at the base; a test that never ran before did not stop running.
+    Both existing tests still run.
+
+more_examples:
+  - flagged:
+      language: typescript
+      setup: git_diff
+      expect_file: src/price.test.ts
+      expect_line: 5
+      base_files:
+        - filename: src/price.ts
+          code: |
+            export function withVat(net: number): number {
+              return Math.round(net * 1.2 * 100) / 100;
+            }
+        - filename: src/price.test.ts
+          code: |
+            import { describe, expect, it } from "vitest";
+            import { withVat } from "./price";
+
+            describe("withVat", () => {
+              it("adds 20 percent", () => {
+                expect(withVat(10)).toBe(12);
+              });
+
+              it("rounds to cents", () => {
+                expect(withVat(0.99)).toBe(1.19);
+              });
+            });
+      files:
+        - filename: src/price.test.ts
+          code: |
+            import { describe, expect, it } from "vitest";
+            import { withVat } from "./price";
+
+            describe("withVat", () => {
+              it.only("adds 20 percent", () => {
+                expect(withVat(10)).toBe(12);
+              });
+
+              it("rounds to cents", () => {
+                expect(withVat(0.99)).toBe(1.19);
+              });
+            });
+    not_flagged:
+      language: typescript
+      setup: git_diff
+      base_files:
+        - filename: src/price.ts
+          code: |
+            export function withVat(net: number): number {
+              return Math.round(net * 1.2 * 100) / 100;
+            }
+        - filename: src/price.test.ts
+          code: |
+            import { describe, expect, it } from "vitest";
+            import { withVat } from "./price";
+
+            describe("withVat", () => {
+              it("adds 20 percent", () => {
+                expect(withVat(10)).toBe(12);
+              });
+
+              it.skip("handles a reduced rate", () => {
+                expect(withVat(10)).toBe(11);
+              });
+            });
+      files:
+        - filename: src/price.test.ts
+          code: |
+            import { describe, expect, it } from "vitest";
+            import { withVat } from "./price";
+
+            describe("withVat", () => {
+              it("adds 20 percent", () => {
+                expect(withVat(10)).toBe(12);
+              });
+
+              it.skip("handles a reduced rate", () => {
+                expect(withVat(10, "reduced")).toBe(10.5);
+              });
+            });
+      why: >-
+        The `it.skip` test was already skipped at the base; the change only
+        edits its body. Nothing that ran before stops running.
+
+how_skylos_decides:
+  - >-
+    Runs in `skylos done`, which compares the working tree (or a pull
+    request's head) with a base commit: `HEAD` by default, the merge base
+    with `--base`. Its settings come from the base commit, never from the
+    change.
+  - >-
+    Inventories every test at the base and at head without running
+    anything, and records the markers that stop each one from running.
+    Python: `skip`, `skipif`, `xfail`, `skipIf`, `skipUnless` and
+    `expectedFailure` decorators, a `pytestmark` on the module or class,
+    `pytest.skip()`, `pytest.xfail()`, `pytest.importorskip()` or
+    `self.skipTest()` calls and a raised `SkipTest` in the test, and a
+    module-level `pytest.skip()`. JavaScript and TypeScript: `xit`, `xtest`, `xdescribe` and
+    `.skip`, `.todo`, `.fixme` and `.failing`/`.fails`/`.fail` on a test or
+    an enclosing `describe`.
+  - >-
+    Pairs each base test with its head version (same file, class and name,
+    or the same body after a move or rename) and reports a head test that
+    carries a marker its base version did not have.
+  - >-
+    Separately reports each `.only`, `fit` or `fdescribe` (and
+    `{ only: true }`) at head that was not at the base, even on a new test,
+    because it stops the existing tests in the file from running. A focus
+    that only moved, with the same body, is not new.
+  - >-
+    Tests written in this change are not compared, so a new test that
+    arrives skipped is not SKY-A111.
+
+source_refs:
+  - path: skylos/done/checks.py
+    symbol: "def check_test_tampering("
+  - path: skylos/done/inventory.py
+    symbol: "_SKIP_DECORATORS = {"
+  - path: skylos/done/inventory.py
+    symbol: "def compare_inventories("
+  - path: skylos/done/js_inventory.py
+    symbol: "_MEMBER_MARKERS = {"
+  - path: skylos/done/js_inventory.py
+    symbol: "def newly_focused("
+  - path: skylos/done/config.py
+    symbol: '"test_tampering": "block"'
+    note: the default mode.
+
+fix:
+  explanation: >-
+    Remove the skip and fix the code the test caught: here the free
+    shipping threshold became `>` instead of `>=`. If the test is truly
+    flaky, fix the flakiness, or skip it in its own reviewed change that
+    names the cause and an issue to re-enable it.
+  language: python
+  code: |
+    def shipping_cost(order_total):
+        if order_total >= FREE_SHIPPING_FROM:
+            return 0
+        return 5
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A deliberate `skipif` for a platform or an optional dependency, added
+      to an existing test, is reported. Say why in the pull request.
+    - >-
+      A test made to skip from outside its body, for example by a
+      `conftest.py` hook or a `pytest.ini` marker expression, is not a
+      marker on the test; settings like that are SKY-A112's job.
+    - >-
+      A JavaScript test whose title is not a plain string literal is not
+      inventoried, so a skip added to it is not seen.
+  suppress:
+    - text: >-
+        `skylos done` findings ignore `# skylos: ignore[...]` comments and the
+        `[tool.skylos] ignore` list. To stop the check from blocking, commit a
+        lower mode to the base branch first (the change under review cannot
+        loosen its own check):
+      language: toml
+      code: |
+        [tool.skylos.done.checks]
+        test_tampering = "advise"
+
+related: [SKY-A101, SKY-A110, SKY-A112, SKY-A113]

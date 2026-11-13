@@ -1,0 +1,222 @@
+id: SKY-A120
+title: Changed line not checked by tests
+family: ai-defects
+severity: MEDIUM
+languages: [Python (pytest)]
+gate:
+  full: not_run
+  note: >-
+    Only `skylos done` reports it, in its `changed_lines_checked` check,
+    which advises by default: the finding is shown but does not fail the
+    verdict. With `changed_lines_checked = "block"` in
+    `[tool.skylos.done.checks]` it blocks. The check runs only after the
+    blocking checks pass and the tests pass.
+run_with: >-
+  `skylos done` (compares uncommitted changes with `HEAD`) or
+  `skylos done --base origin/main` for a pull request; it needs the test
+  run, so not with `--no-tests`
+verify:
+  mode: manual
+  reason: >-
+    Only `skylos done` runs this rule, and it needs the tests to run under
+    pytest and to be rerun against changed code; the handbook build runs
+    `skylos .` scans, which never report it.
+
+what_it_is: >-
+  A changed line in non-test Python code that no test runs, or that tests
+  run without noticing when it is wrong. Skylos traces the test run to see
+  which tests execute each changed line, then changes the line on purpose
+  (a mutation, such as `>=` to `>`) and reruns those tests: if they all
+  still pass, no test checks that line.
+
+why_it_matters: >-
+  Coverage alone says a line ran, not that a test would catch a mistake in
+  it. A coding agent can change a boundary or a condition, see the suite
+  pass, and ship a change no test actually pins down.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  expect_file: shop/pricing.py
+  expect_line: 5
+  base_files:
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "shop"
+        version = "0.3.0"
+
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+    - filename: shop/pricing.py
+      code: |
+        """Volume discounts for wholesale orders."""
+
+
+        def bulk_discount(quantity):
+            if quantity >= 10:
+                return 0.1
+            return 0.0
+    - filename: tests/test_pricing.py
+      code: |
+        from shop.pricing import bulk_discount
+
+
+        def test_large_order_gets_discount():
+            assert bulk_discount(50) == 0.1
+
+
+        def test_single_item_pays_full_price():
+            assert bulk_discount(1) == 0.0
+  files:
+    - filename: shop/pricing.py
+      code: |
+        """Volume discounts for wholesale orders."""
+
+
+        def bulk_discount(quantity):
+            if quantity >= 12:
+                return 0.1
+            return 0.0
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "shop"
+        version = "0.3.0"
+
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+    - filename: shop/pricing.py
+      code: |
+        """Volume discounts for wholesale orders."""
+
+
+        def bulk_discount(quantity):
+            if quantity >= 10:
+                return 0.1
+            return 0.0
+    - filename: tests/test_pricing.py
+      code: |
+        from shop.pricing import bulk_discount
+
+
+        def test_large_order_gets_discount():
+            assert bulk_discount(50) == 0.1
+
+
+        def test_single_item_pays_full_price():
+            assert bulk_discount(1) == 0.0
+  files:
+    - filename: shop/pricing.py
+      code: |
+        """Volume discounts for wholesale orders."""
+
+
+        def bulk_discount(quantity):
+            if quantity >= 12:
+                return 0.1
+            return 0.0
+    - filename: tests/test_pricing.py
+      code: |
+        from shop.pricing import bulk_discount
+
+
+        def test_large_order_gets_discount():
+            assert bulk_discount(50) == 0.1
+
+
+        def test_single_item_pays_full_price():
+            assert bulk_discount(1) == 0.0
+
+
+        def test_discount_starts_at_twelve():
+            assert bulk_discount(12) == 0.1
+            assert bulk_discount(11) == 0.0
+  why: >-
+    The same threshold change, but a new test checks both sides of it.
+    When Skylos turns `>=` into `>`, `bulk_discount(12)` returns 0.0 and the
+    test fails, so the line is checked.
+
+how_skylos_decides:
+  - >-
+    Runs in `skylos done`, after the blocking checks and the `tests_pass`
+    check. It needs pytest, and every test must have run and passed; with
+    `--no-tests`, another test command or failing tests the check is
+    skipped.
+  - >-
+    Picks the changed lines in non-test Python files (not `test_*.py`,
+    `*_test.py`, `conftest.py` or files under `test`, `tests` or `testing`
+    folders, and not migrations), anchored to their statement or condition.
+    Logging calls, imports, docstrings, type hints and module-level code are
+    skipped.
+  - >-
+    Uses the trace of the test run to find which tests execute each line. A
+    line no test runs is reported once per function ("No test runs ...").
+  - >-
+    For a line that tests run, makes one mutation chosen by what the line
+    does (flip a comparison, negate a condition, change a return value, a
+    number, an operator or an argument, or drop a call), loads it in memory
+    inside the test process and reruns only the tests that run the line. If
+    all of them still pass, it reports "No test fails if ...". The working
+    tree is never modified.
+  - >-
+    At most 20 mutants run, within `changed_lines_budget_seconds` (120 by
+    default). Lines past either limit are counted as not checked, never as
+    passing.
+
+source_refs:
+  - path: skylos/done/mutation.py
+    symbol: "def check_changed_lines("
+  - path: skylos/done/mutation.py
+    symbol: "def select_targets("
+  - path: skylos/done/mutation.py
+    symbol: "def make_mutant("
+  - path: skylos/done/mutation.py
+    symbol: "MAX_MUTANTS = 20"
+  - path: skylos/done/runner.py
+    symbol: "def run_mutant("
+  - path: skylos/done/config.py
+    symbol: '"changed_lines_checked": "advise"'
+    note: the default mode.
+
+fix:
+  explanation: >-
+    Add a test that would fail if the changed line were wrong. For a
+    threshold, check the values just on each side of it.
+  language: python
+  code: |
+    def test_discount_starts_at_twelve():
+        assert bulk_discount(12) == 0.1
+        assert bulk_discount(11) == 0.0
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Some lines are not worth a test, such as a changed default log level
+      or a message string; the finding is advice for that reason.
+    - >-
+      A mutation that does not change behaviour (an equivalent mutant) is
+      reported even though no test could catch it.
+    - >-
+      Only Python run under pytest is checked. Changed lines in other
+      languages, or in projects whose `test_command` is not pytest, are not
+      checked.
+  suppress:
+    - text: >-
+        `skylos done` findings ignore `# skylos: ignore[...]` comments and the
+        `[tool.skylos] ignore` list. The check only advises by default; to
+        turn it off, commit the mode to the base branch first (the change
+        under review cannot change its own check):
+      language: toml
+      code: |
+        [tool.skylos.done.checks]
+        changed_lines_checked = "off"
+
+related: [SKY-A113, SKY-A102, SKY-A101]

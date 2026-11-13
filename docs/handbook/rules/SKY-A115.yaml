@@ -1,0 +1,272 @@
+id: SKY-A115
+title: Test answer hard-coded in code
+family: ai-defects
+severity: HIGH
+severity_note: >-
+  Reported as advice, not as a blocking finding, when the evidence is
+  weaker: the test does not call the function, the assertion is new in the
+  change, the function has no other way to compute its answer, the input
+  is a trivial value or a single word, or the input and answer are small
+  enough to be a real edge case.
+languages: [Python, JavaScript, TypeScript]
+gate:
+  full: not_run
+  note: >-
+    Only `skylos done` runs this rule, in its `test_special_casing` check.
+    That check blocks by default: a blocking SKY-A115 finding fails the
+    done verdict, and advice findings are listed without failing it. Set
+    the check to "advise" or "off" under `[tool.skylos.done.checks]` in the
+    base commit's `pyproject.toml` to change that.
+run_with: >-
+  `skylos done` after a change (default base `HEAD`, so uncommitted edits),
+  or `skylos done --base origin/main` for a pull request
+verify:
+  mode: manual
+  reason: >-
+    Only `skylos done` runs this rule; the handbook build checks examples
+    with `skylos .`, which never reports it. All four examples were run by
+    hand with `skylos done --no-tests`.
+
+what_it_is: >-
+  A hard-coded test answer is a branch, `match` or `switch` case, or lookup
+  table that recognises one test's exact input and returns that test's
+  exact expected answer. SKY-A115 compares the lines a change added to
+  non-test code with the assertions in the repository's tests and reports
+  such a match.
+
+why_it_matters: >-
+  A coding agent that cannot make a failing test pass may teach the code
+  the test instead of fixing the logic. The test goes green, every other
+  input still gets the wrong answer, and the change looks like a fix in
+  review.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  expect_file: billing/discounts.py
+  expect_line: 5
+  base_files:
+    - filename: billing/discounts.py
+      code: |
+        """Loyalty discounts for the checkout service."""
+
+
+        def loyalty_discount(order_total, years):
+            rate = min(years, 5) * 0.01
+            return round(order_total * rate, 2)
+    - filename: tests/test_discounts.py
+      code: |
+        from billing.discounts import loyalty_discount
+
+
+        def test_seven_year_customer_gets_seven_percent():
+            assert loyalty_discount(250.0, 7) == 17.5
+  files:
+    - filename: billing/discounts.py
+      code: |
+        """Loyalty discounts for the checkout service."""
+
+
+        def loyalty_discount(order_total, years):
+            if order_total == 250.0 and years == 7:
+                return 17.5
+            rate = min(years, 5) * 0.01
+            return round(order_total * rate, 2)
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: billing/discounts.py
+      code: |
+        """Loyalty discounts for the checkout service."""
+
+
+        def loyalty_discount(order_total, years):
+            rate = min(years, 5) * 0.01
+            return round(order_total * rate, 2)
+    - filename: tests/test_discounts.py
+      code: |
+        from billing.discounts import loyalty_discount
+
+
+        def test_seven_year_customer_gets_seven_percent():
+            assert loyalty_discount(250.0, 7) == 17.5
+
+
+        def test_empty_order_gets_no_discount():
+            assert loyalty_discount(0, 7) == 0.0
+  files:
+    - filename: billing/discounts.py
+      code: |
+        """Loyalty discounts for the checkout service."""
+
+
+        def loyalty_discount(order_total, years):
+            if order_total == 0:
+                return 0.0
+            rate = min(years, 10) * 0.01
+            return round(order_total * rate, 2)
+  why: >-
+    The new branch also returns one test's exact answer for that test's
+    exact input, but the input is 0, a trivial value that real base cases
+    use all the time. The change also fixes the rate, so the seven-year
+    test passes by computing the answer.
+
+more_examples:
+  - flagged:
+      language: javascript
+      setup: git_diff
+      expect_file: src/shipping.js
+      expect_line: 4
+      base_files:
+        - filename: src/shipping.js
+          code: |
+            const RATE_PER_KG = 3.2;
+
+            export function shippingCost(weightKg) {
+              return Math.round(weightKg * RATE_PER_KG * 100) / 100;
+            }
+        - filename: tests/shipping.test.js
+          code: |
+            import { expect, test } from "vitest";
+            import { shippingCost } from "../src/shipping.js";
+
+            test("charges the per-kilo rate", () => {
+              expect(shippingCost(12.5)).toBe(43.75);
+            });
+      files:
+        - filename: src/shipping.js
+          code: |
+            const RATE_PER_KG = 3.2;
+
+            export function shippingCost(weightKg) {
+              if (weightKg === 12.5) {
+                return 43.75;
+              }
+              return Math.round(weightKg * RATE_PER_KG * 100) / 100;
+            }
+    not_flagged:
+      language: javascript
+      setup: git_diff
+      base_files:
+        - filename: src/shipping.js
+          code: |
+            const RATE_PER_KG = 3.2;
+
+            export function shippingCost(weightKg) {
+              return Math.round(weightKg * RATE_PER_KG * 100) / 100;
+            }
+        - filename: tests/shipping.test.js
+          code: |
+            import { expect, test } from "vitest";
+            import { shippingCost } from "../src/shipping.js";
+
+            test("charges the per-kilo rate", () => {
+              expect(shippingCost(12.5)).toBe(43.75);
+            });
+
+            test("an empty parcel costs nothing", () => {
+              expect(shippingCost(0)).toBe(0);
+            });
+      files:
+        - filename: src/shipping.js
+          code: |
+            const RATE_PER_KG = 3.5;
+
+            export function shippingCost(weightKg) {
+              if (weightKg === 0) {
+                return 0;
+              }
+              return Math.round(weightKg * RATE_PER_KG * 100) / 100;
+            }
+      why: >-
+        The rate is fixed, so the 12.5 kg test passes by computing 43.75.
+        The new zero-weight branch matches a test too, but 0 is a trivial
+        input, so it is left alone.
+
+how_skylos_decides:
+  - >-
+    Runs in `skylos done`, which compares the working tree (or a pull
+    request) with a base commit. Only lines the change added to non-test
+    Python, JavaScript and TypeScript files are read; test files, test
+    helper folders and `conftest.py` are skipped.
+  - >-
+    Collects special cases on the added lines: an `if`, conditional
+    expression, `match` or `switch` case, or dictionary or object lookup that
+    compares an input with a literal and answers with a literal. Cases whose
+    answer restates the input, or whose inputs and answer are all trivial
+    (0, 1, -1, empty, `None`, booleans), are dropped.
+  - >-
+    Reads the repository's Python and JavaScript/TypeScript tests and looks
+    for an assertion that passes the same input and expects the same answer.
+    A special case that matches no assertion is not reported, and one whose
+    exact code was already in the base version (moved or reformatted) is not
+    new.
+  - >-
+    Blocks only when everything points at the test: the test calls the
+    function by name, the assertion was already in the base version, the
+    function also computes its answer another way, no input is trivial or a
+    single word, no string input or answer is already quoted in non-test
+    code at the base, and the values are specific (a number of two or more
+    digits or with a fraction, two or more inputs, a collection, or text of
+    more than one word).
+  - >-
+    Anything weaker is reported as advice, or dropped when the input is a
+    single word such as a keyword or an enum value and the evidence is weak.
+    A special case in generated code, or in a new file nothing imports or
+    runs, is advice too.
+
+source_refs:
+  - path: skylos/done/special_cases.py
+    symbol: "def find_special_cases("
+  - path: skylos/done/special_cases.py
+    symbol: "def _judge("
+    note: blocking versus advice.
+  - path: skylos/done/special_cases.py
+    symbol: "def _specific("
+  - path: skylos/done/special_cases.py
+    symbol: "def _worth_judging("
+  - path: skylos/done/answer_sites.py
+    symbol: "def scan_source("
+  - path: skylos/done/answer_sites.py
+    symbol: "def _is_test_code("
+  - path: skylos/done/expected_answers.py
+    symbol: "def _trivial("
+  - path: skylos/done/checks.py
+    symbol: "def check_test_special_casing("
+  - path: skylos/done/config.py
+    symbol: '"test_special_casing": "block"'
+
+fix:
+  explanation: >-
+    Remove the special case and fix the general calculation, so every input
+    gets the right answer and the test passes for the right reason.
+  language: python
+  code: |
+    def loyalty_discount(order_total, years):
+        rate = min(years, 10) * 0.01
+        return round(order_total * rate, 2)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A real business rule whose numbers happen to equal a test's input and
+      answer, such as a fixed price for one product size, can be reported.
+      Quoting the value as a named constant elsewhere in the code at the
+      base turns a string match into advice; numbers are not looked up.
+    - >-
+      It only sees literal comparisons on added lines. A special case
+      hidden in a data file, computed from the test's name, or added in an
+      earlier commit than the base is not reported.
+  suppress:
+    - text: >-
+        `skylos done` does not read `# skylos: ignore` comments. To make the
+        whole check advisory, set its mode in the base commit's
+        `pyproject.toml`; settings in the change itself are ignored.
+      language: toml
+      code: |
+        [tool.skylos.done.checks]
+        test_special_casing = "advise"
+
+related: [SKY-A116, SKY-A117, SKY-A101, SKY-A113]

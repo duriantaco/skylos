@@ -1,0 +1,217 @@
+id: SKY-A104
+title: Public CLI surface drift
+family: ai-defects
+severity: MEDIUM
+languages: [Python (argparse, Click, Typer)]
+gate:
+  full: counted
+  note: >-
+    Counts toward `max_ai_defects` when the scan has a change to compare.
+run_with: >-
+  `skylos . --ai-defects --diff origin/main` (or `-a`) on a change
+
+what_it_is: >-
+  A command-line tool's flags, such as `--dry-run`, are a public interface:
+  scripts, CI jobs and other people's muscle memory depend on them.
+  SKY-A104 reports a change that removes or renames a flag without keeping
+  the old spelling.
+
+why_it_matters: >-
+  A renamed flag breaks every script that still passes the old one, often
+  only when that script next runs in production or CI. Coding agents
+  rename flags while tidying code and rarely mention it in the summary.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  expect_file: invoicer/cli.py
+  expect_line: 7
+  base_files:
+    - filename: invoicer/cli.py
+      code: |
+        import argparse
+
+
+        def build_parser():
+            parser = argparse.ArgumentParser(prog="invoicer")
+            parser.add_argument("--input", required=True)
+            parser.add_argument("--dry-run", action="store_true")
+            return parser
+  files:
+    - filename: invoicer/cli.py
+      code: |
+        import argparse
+
+
+        def build_parser():
+            parser = argparse.ArgumentParser(prog="invoicer")
+            parser.add_argument("--input", required=True)
+            parser.add_argument("--preview", action="store_true")
+            return parser
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: invoicer/cli.py
+      code: |
+        import argparse
+
+
+        def build_parser():
+            parser = argparse.ArgumentParser(prog="invoicer")
+            parser.add_argument("--input", required=True)
+            parser.add_argument("--dry-run", action="store_true")
+            return parser
+  files:
+    - filename: invoicer/cli.py
+      code: |
+        import argparse
+
+
+        def build_parser():
+            parser = argparse.ArgumentParser(prog="invoicer")
+            parser.add_argument("--input", required=True)
+            parser.add_argument("--preview", "--dry-run", action="store_true")
+            return parser
+  why: >-
+    The new name was added and the old spelling kept as an alias, so
+    scripts that pass `--dry-run` still work.
+
+more_examples:
+  - flagged:
+      language: python
+      setup: git_diff
+      scan_flags: ["--ai-defects"]
+      expect_file: invoicer/sync.py
+      base_files:
+        - filename: invoicer/sync.py
+          code: |
+            import click
+
+
+            @click.command()
+            @click.option("--force", is_flag=True)
+            @click.option("--limit", type=int, default=100)
+            def sync(force, limit):
+                click.echo(f"syncing {limit} invoices (force={force})")
+      files:
+        - filename: invoicer/sync.py
+          code: |
+            import click
+
+
+            @click.command()
+            @click.option("--limit", type=int, default=100)
+            def sync(limit):
+                click.echo(f"syncing {limit} invoices")
+    not_flagged:
+      language: python
+      setup: git_diff
+      scan_flags: ["--ai-defects"]
+      base_files:
+        - filename: invoicer/sync.py
+          code: |
+            import click
+
+
+            @click.command()
+            @click.option("--force", is_flag=True)
+            @click.option("--limit", type=int, default=100)
+            def sync(force, limit):
+                click.echo(f"syncing {limit} invoices (force={force})")
+      files:
+        - filename: invoicer/sync.py
+          code: |
+            import click
+
+
+            @click.command()
+            @click.option("--force/--no-force", default=False)
+            @click.option("--limit", type=int, default=100)
+            def sync(force, limit):
+                click.echo(f"syncing {limit} invoices (force={force})")
+      why: >-
+        The option line changed, but `--force` is still on the new line (now
+        with a `--no-force` partner), so nothing callers use was removed.
+
+how_skylos_decides:
+  - >-
+    Runs with `--ai-defects` when there is a change to compare: in a diff
+    scan (`--diff` or `--diff-base`), or in a full scan of a Git checkout
+    with uncommitted changes. It reads the Git diff of each changed file
+    against the base.
+  - >-
+    Reads a file when it looks like a command-line module: named `cli.py`,
+    `commands.py` or `main.py`, under a `cli/` or `commands/` folder, or
+    with `add_argument(`, `click.option(`, `typer.Option(` or `Option(`
+    anywhere in its diff.
+  - >-
+    Collects the `--flag` names on removed and added lines that hold one of
+    those option calls. Commented-out lines are skipped.
+  - >-
+    Reports each flag that was on a removed line and is on no added line in
+    the same file, once per flag. The line is the removed line's number in
+    the base version.
+
+source_refs:
+  - path: skylos/rules/ai_defect/api_surface_drift.py
+    symbol: "def detect_cli_surface_drift("
+  - path: skylos/rules/ai_defect/api_surface_drift.py
+    symbol: "def _is_likely_cli_file("
+  - path: skylos/rules/ai_defect/api_surface_drift.py
+    symbol: "def _option_flags("
+  - path: skylos/analyzer.py
+    symbol: "def _scan_ai_defect_diff_signals("
+
+fix:
+  explanation: >-
+    Keep the old spelling working: add it as an alias next to the new name,
+    and remove it only in a release whose notes say so. If the flag really
+    must go, say so in the pull request so the reviewer can check callers.
+  language: python
+  filename: invoicer/cli.py
+  code: |
+    import argparse
+
+
+    def build_parser():
+        parser = argparse.ArgumentParser(prog="invoicer")
+        parser.add_argument("--input", required=True)
+        parser.add_argument("--preview", "--dry-run", action="store_true")
+        return parser
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A deliberate removal of a deprecated flag is reported. That is
+      intended: the finding asks the reviewer to confirm the break.
+    - >-
+      A flag moved to a different file in the same change is reported,
+      because added and removed flags are compared within one file.
+    - >-
+      A flag removed by deleting its whole line is reported at that line's
+      number in the base version. A `--diff` scan keeps only findings on
+      changed lines of the new file, so it usually drops this one; a full
+      scan of a checkout with uncommitted changes, or `-a` without `--diff`,
+      reports it. The Click example above is checked that way.
+    - >-
+      Only Python option calls are read. Command-line flags declared in
+      other languages, a removed subcommand or a changed default are not
+      seen.
+  suppress:
+    - check: {kind: inline, expect: reported}
+      text: >-
+        An inline `# skylos: ignore[SKY-A104]` comment does not silence it
+        in Skylos 5.6.0: this rule reports a path relative to the project,
+        and the inline-ignore lookup does not match it. Use the setting
+        below.
+      language: python
+      code: |
+        parser.add_argument("--preview", action="store_true")  # skylos: ignore[SKY-A104]
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-A104"]` turns the rule off for the
+        project.
+
+related: [SKY-A102, SKY-A135]

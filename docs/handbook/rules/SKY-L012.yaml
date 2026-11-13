@@ -1,0 +1,316 @@
+id: SKY-L012
+title: Phantom symbol reference
+family: ai-defects
+severity: CRITICAL
+severity_note: >-
+  The catalog gives no severity for this rule; every detector behind it
+  reports CRITICAL.
+languages: [Python, Go, Java, TypeScript, JavaScript]
+gate:
+  full: critical_blocks
+  note: >-
+    Counts toward `max_ai_defects`. Every finding is CRITICAL, and
+    `block_ai_defect_severities` (under `[tool.skylos.gate]`) is
+    `["CRITICAL"]` by default, so one finding fails the gate on its own.
+    The agent hook (`skylos verify`) also blocks on it.
+run_with: >-
+  `skylos . --ai-defects` (or `-a`); reads the code as it is, no diff needed
+
+what_it_is: >-
+  A phantom symbol is a function, class or name that the code uses but that
+  does not exist where the code says it lives: `auth.verify_token()` when
+  the project's `auth` module only defines `verify_access_token`. SKY-L012
+  checks each reference into the project's own modules, and into a few
+  installed packages, against what those modules really define.
+
+why_it_matters: >-
+  Coding agents guess helper names that sound right. In Python the guess
+  fails only when that line runs, often on the error path or in the
+  security check nobody exercised, and a missing `verify_token` can crash
+  the endpoint it was meant to protect. In Go, Java and TypeScript the build
+  breaks, but only after the change has been written and reviewed.
+
+flagged_example:
+  language: python
+  expect_file: app/views.py
+  expect_line: 5
+  files:
+    - filename: app/__init__.py
+      code: ""
+    - filename: app/auth.py
+      code: |
+        """Token checks for the API."""
+
+        import hashlib
+        import hmac
+
+
+        def verify_access_token(token, secret):
+            body, _, signature = token.rpartition(".")
+            expected = hmac.new(secret, body.encode(), hashlib.sha256).hexdigest()
+            return hmac.compare_digest(expected, signature)
+    - filename: app/views.py
+      code: |
+        from app import auth
+
+
+        def get_invoice(request, invoice_id, secret):
+            if not auth.verify_token(request.headers["Authorization"], secret):
+                return {"status": 401}
+            return {"status": 200, "invoice": invoice_id}
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: app/__init__.py
+      code: ""
+    - filename: app/auth.py
+      code: |
+        """Token checks for the API."""
+
+        import hashlib
+        import hmac
+
+
+        def verify_access_token(token, secret):
+            body, _, signature = token.rpartition(".")
+            expected = hmac.new(secret, body.encode(), hashlib.sha256).hexdigest()
+            return hmac.compare_digest(expected, signature)
+    - filename: app/views.py
+      code: |
+        from app import auth
+
+
+        def get_invoice(request, invoice_id, secret):
+            header = request.headers["Authorization"]
+            if not auth.verify_access_token(header, secret):
+                return {"status": 401}
+            return {"status": 200, "invoice": invoice_id}
+  why: >-
+    The view calls the helper that `app/auth.py` really defines. Skylos
+    resolves `auth` to the local module, finds `verify_access_token` among
+    its top-level names and has nothing to report.
+
+more_examples:
+  - flagged:
+      language: go
+      expect_file: api/invoices.go
+      expect_line: 10
+      files:
+        - filename: go.mod
+          language: text
+          code: |
+            module example.com/shop
+
+            go 1.22
+        - filename: auth/token.go
+          code: |
+            package auth
+
+            import "strings"
+
+            func VerifyAccessToken(header string) bool {
+            	return strings.HasPrefix(header, "Bearer ") && len(header) > 7
+            }
+        - filename: api/invoices.go
+          code: |
+            package api
+
+            import (
+            	"net/http"
+
+            	"example.com/shop/auth"
+            )
+
+            func GetInvoice(w http.ResponseWriter, r *http.Request) {
+            	if !auth.VerifyToken(r.Header.Get("Authorization")) {
+            		w.WriteHeader(http.StatusUnauthorized)
+            		return
+            	}
+            	w.WriteHeader(http.StatusOK)
+            }
+    not_flagged:
+      language: go
+      files:
+        - filename: go.mod
+          language: text
+          code: |
+            module example.com/shop
+
+            go 1.22
+        - filename: auth/token.go
+          code: |
+            package auth
+
+            import "strings"
+
+            func VerifyAccessToken(header string) bool {
+            	return strings.HasPrefix(header, "Bearer ") && len(header) > 7
+            }
+        - filename: api/invoices.go
+          code: |
+            package api
+
+            import (
+            	"net/http"
+
+            	"example.com/shop/auth"
+            )
+
+            func GetInvoice(w http.ResponseWriter, r *http.Request) {
+            	if !auth.VerifyAccessToken(r.Header.Get("Authorization")) {
+            		w.WriteHeader(http.StatusUnauthorized)
+            		return
+            	}
+            	w.WriteHeader(http.StatusOK)
+            }
+      why: >-
+        `example.com/shop/auth` is a package of this module (`go.mod`), and
+        it exports `VerifyAccessToken`. The flagged version names
+        `VerifyToken`, which the package does not declare; the finding lists
+        the close match.
+  - flagged:
+      language: typescript
+      expect_file: src/routes/invoices.ts
+      expect_line: 1
+      files:
+        - filename: src/auth/token.ts
+          code: |
+            export function verifyAccessToken(header: string): boolean {
+              return header.startsWith("Bearer ") && header.length > 7;
+            }
+        - filename: src/routes/invoices.ts
+          code: |
+            import { verifyToken } from "../auth/token";
+
+            export function getInvoice(headers: Record<string, string>, id: string) {
+              if (!verifyToken(headers["authorization"])) {
+                return { status: 401 };
+              }
+              return { status: 200, id };
+            }
+    not_flagged:
+      language: typescript
+      files:
+        - filename: src/auth/token.ts
+          code: |
+            export function verifyAccessToken(header: string): boolean {
+              return header.startsWith("Bearer ") && header.length > 7;
+            }
+        - filename: src/routes/invoices.ts
+          code: |
+            import { verifyAccessToken } from "../auth/token";
+
+            export function getInvoice(headers: Record<string, string>, id: string) {
+              if (!verifyAccessToken(headers["authorization"])) {
+                return { status: 401 };
+              }
+              return { status: 200, id };
+            }
+      why: >-
+        The import names an export that `src/auth/token.ts` really has. In
+        TypeScript and JavaScript the finding sits on the import line, where
+        the missing name is first requested.
+
+how_skylos_decides:
+  - >-
+    Python: builds a table of every module in the project and the names
+    each one defines at top level, imports or re-exports. It then follows
+    each `from app.auth import name`, `auth.name(...)`, `auth.name` and
+    `@auth.name` in the scanned files to the local module it points at, and
+    reports the reference when that module has no such name. Decorators are
+    reported as SKY-L023 instead.
+  - >-
+    Python, stays silent when the name may exist: the target module has a
+    module-level `__getattr__` or otherwise writes its own namespace, the
+    name is bound only in some branches, the reference sits under a
+    `try`/`except AttributeError` (or `ImportError` for imports), or it is
+    only used for type checking and the module defines it there.
+  - >-
+    Python, bare calls: a call to a name that is not bound anywhere in
+    scope is reported when it closely resembles a function elsewhere in the
+    project (a stale name after a rename). A separate check reports a bare
+    call to a well-known security helper name, such as `sanitize_input()`
+    or `verify_token()`, that the file neither defines nor imports.
+  - >-
+    Python, installed packages: for the packages the API signature check
+    inspects (`requests`, `pandas`, `boto3`, `openai`, `jwt`, or
+    `api_signature_modules`), an import of a submodule that the installed
+    package does not have, such as `from requests.retry import Retry`, is
+    reported under this rule too.
+  - >-
+    Go: resolves imports of packages in the same module (from `go.mod`) and
+    reports `pkg.Name` when that package does not declare an exported
+    `Name`. Java: checks references to the project's own classes and static
+    members. TypeScript and JavaScript: checks named imports from relative
+    project files against what those files export. Each finding lists close
+    matches when there are any.
+
+source_refs:
+  - path: skylos/rules/ai_defect/phantom_refs.py
+    symbol: "def scan_repo_phantom_security_references("
+  - path: skylos/rules/ai_defect/phantom_refs.py
+    symbol: "def _build_call_finding("
+  - path: skylos/rules/ai_defect/phantom_refs.py
+    symbol: "def _bare_call_finding("
+    note: the resemblance test for unbound bare calls.
+  - path: skylos/rules/ai_defect/phantom_refs.py
+    symbol: "_ATTRIBUTE_GUARDS = frozenset"
+  - path: skylos/rules/ai_defect/phantom_call.py
+    symbol: "class PhantomCallRule"
+    note: the security-helper name list lives in skylos/rules/vibe_dictionary.py.
+  - path: skylos/rules/ai_defect/api_signature_hallucination.py
+    symbol: "def _check_submodule_path("
+  - path: skylos/rules/ai_defect/go_api_hallucination.py
+    symbol: "def _missing_go_symbol_finding("
+  - path: skylos/rules/ai_defect/js_api_hallucination.py
+    symbol: "def _missing_symbol_finding("
+  - path: skylos/rules/ai_defect/java_api_hallucination_reporting.py
+    symbol: "def _java_finding("
+  - path: skylos/analyzer.py
+    symbol: "scan_python_local_api_hallucinations("
+
+fix:
+  explanation: >-
+    Call the helper that really exists, or write the missing one in the
+    module the code imports it from. Do not silence the finding by catching
+    the resulting `AttributeError`: the check would still never run.
+  language: python
+  filename: app/views.py
+  code: |
+    from app import auth
+
+
+    def get_invoice(request, invoice_id, secret):
+        header = request.headers["Authorization"]
+        if not auth.verify_access_token(header, secret):
+            return {"status": 401}
+        return {"status": 200, "invoice": invoice_id}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A module that adds names at run time in a way Skylos cannot follow,
+      for example a plugin loader that calls `setattr()` on another module
+      with a computed name, can make a real name look missing.
+    - >-
+      A bare call to a security-helper name such as `sanitize_input()` is
+      reported when the name comes from a star import of an installed
+      package or a `builtins` patch, because the file neither defines nor
+      imports it by name.
+    - >-
+      To add your own helper names to the security list, set
+      `extra_phantom_names` under `[tool.skylos.vibe]`.
+  suppress:
+    - check: inline
+      text: >-
+        On the reported line, with the reason the name exists at run time:
+      language: python
+      code: |
+        if not auth.verify_token(header, secret):  # skylos: ignore[SKY-L012] plugin adds it
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L012"]` turns the rule off for the
+        project.
+
+related: [SKY-L023, SKY-D224, SKY-D222]

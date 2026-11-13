@@ -1,0 +1,161 @@
+id: SKY-D224
+title: API signature hallucination
+family: ai-defects
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Counts toward `max_ai_defects`. HIGH findings do not fail the gate on
+    their own unless `block_ai_defect_severities` under
+    `[tool.skylos.gate]` lists `"HIGH"`. The agent hook (`skylos verify`)
+    blocks on it.
+run_with: >-
+  `skylos . --ai-defects` (or `-a`); reads the code as it is, no diff needed
+
+what_it_is: >-
+  An API signature hallucination is a call to a library function, method or
+  keyword argument that the installed library does not have, such as
+  `requests.Session(timeout=10)`. SKY-D224 imports the library in the Python
+  that runs Skylos, reads the real function signatures and compares each call
+  in your code with them.
+
+why_it_matters: >-
+  Coding agents mix up similar libraries and versions, so they write calls
+  that look right and fail with `TypeError` or `AttributeError` the first
+  time the line runs. A wrong keyword in a rarely used path, such as a retry
+  or timeout setting, often ships because no test reaches it.
+
+flagged_example:
+  language: python
+  filename: clients/orders.py
+  expect_line: 7
+  code: |
+    import requests
+
+    API_URL = "https://api.example.com/v1/orders"
+
+
+    def fetch_orders(token):
+        session = requests.Session(timeout=10)
+        session.headers["Authorization"] = f"Bearer {token}"
+        response = session.get(API_URL)
+        response.raise_for_status()
+        return response.json()
+
+not_flagged_example:
+  language: python
+  filename: clients/orders.py
+  code: |
+    import requests
+
+    API_URL = "https://api.example.com/v1/orders"
+
+
+    def fetch_orders(token):
+        session = requests.Session()
+        session.headers["Authorization"] = f"Bearer {token}"
+        response = session.get(API_URL, timeout=10)
+        response.raise_for_status()
+        return response.json()
+  why: >-
+    `requests.Session()` takes no arguments, but `Session.get()` passes extra
+    keywords on to the request, so `timeout=10` is accepted there. Skylos
+    checks each keyword against the signature of the exact function called;
+    a function that takes `**kwargs` accepts every keyword.
+
+how_skylos_decides:
+  - >-
+    Checks only imports of a short list of packages: `requests`, `pandas`,
+    `boto3`, `openai` and `jwt` by default. `api_signature_modules` under
+    `[tool.skylos]` replaces that list. A file that never mentions one of
+    these names is skipped, and a package name the project uses for its own
+    module, or a relative import, is never checked.
+  - >-
+    Imports each package in the Python environment that runs Skylos and
+    records its public functions, classes, methods and their parameters. The
+    result is cached in `.skylos/cache/` and reused while the environment
+    stays the same. A package that is not installed, or fails to import, is
+    skipped and counted as unchecked in the scan summary.
+  - >-
+    Skips a package when the project declares a different distribution for
+    the same import name, or a version on another major release line than
+    the installed one (`PyJWT<2` declared, 2.x installed): the installed API
+    is then no evidence about the project's.
+  - >-
+    Follows `import requests`, `from requests import Session`, aliases and
+    objects created from a known class (`session = requests.Session()`). It
+    reports a call to a module function or class the package does not
+    expose, a method the class does not have, and a keyword argument the
+    signature does not accept. A `from pkg import name` of a missing name is
+    reported where the name is called. Bare decorators from these packages
+    are checked as calls.
+  - >-
+    Stays silent for imports inside `try`/`except ImportError` or
+    `contextlib.suppress(ImportError)`, a `from pkg import name` nested
+    under `if` or a loop, functions that take `**kwargs`, and members or
+    signatures the inspection could not read in full. An import of a submodule the package does not
+    have (`from requests.retry import Retry`) is reported as SKY-L012.
+
+source_refs:
+  - path: skylos/rules/ai_defect/api_signature_hallucination.py
+    symbol: "DEFAULT_API_SIGNATURE_ALLOWLIST = ("
+  - path: skylos/rules/ai_defect/api_signature_hallucination.py
+    symbol: "def scan_python_api_signature_hallucinations("
+  - path: skylos/rules/ai_defect/api_signature_hallucination.py
+    symbol: "def _check_call_target("
+  - path: skylos/rules/ai_defect/api_signature_hallucination.py
+    symbol: "def _keyword_accepted("
+  - path: skylos/rules/ai_defect/api_signature_hallucination.py
+    symbol: "def _unverifiable_roots("
+    note: declared distribution or major version differs from the installed one.
+  - path: skylos/core/python_api_surface.py
+    symbol: "def build_python_api_surface("
+  - path: skylos/analyzer.py
+    symbol: "api_modules = project_cfg.get(\"api_signature_modules\")"
+
+fix:
+  explanation: >-
+    Check the library's documentation for the version you install and move
+    the argument to the call that accepts it, or use the function that
+    exists. Pin the library in your manifest so Skylos, your tests and
+    production agree on one API.
+  language: python
+  filename: clients/orders.py
+  code: |
+    import requests
+
+    API_URL = "https://api.example.com/v1/orders"
+
+
+    def fetch_orders(token):
+        session = requests.Session()
+        session.headers["Authorization"] = f"Bearer {token}"
+        response = session.get(API_URL, timeout=10)
+        response.raise_for_status()
+        return response.json()
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      The check reads the package installed next to Skylos. If Skylos runs
+      in its own environment (`pipx`, a CI image) with another version than
+      your project, and your manifest does not pin the version, a call that
+      is valid in your version can be reported. Run Skylos in the project's
+      environment, or declare the version so mismatched majors are skipped.
+    - >-
+      A method added at run time, for example by a plugin that patches the
+      class, is not in the recorded signature and is reported.
+  suppress:
+    - check: inline
+      text: >-
+        On the reported line, with the reason the call is valid:
+      language: python
+      code: |
+        session = requests.Session(timeout=10)  # skylos: ignore[SKY-D224] patched by our plugin
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D224"]` turns the rule off for the
+        project.
+
+related: [SKY-L012, SKY-D222, SKY-D225]

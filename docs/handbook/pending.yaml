@@ -1,48 +1,4 @@
 pending:
-  SKY-A102:
-    reason: Not yet written.
-  SKY-A103:
-    reason: Not yet written.
-  SKY-A104:
-    reason: Not yet written.
-  SKY-A105:
-    reason: Not yet written.
-  SKY-A106:
-    reason: Not yet written.
-  SKY-A110:
-    reason: Not yet written.
-  SKY-A111:
-    reason: Not yet written.
-  SKY-A112:
-    reason: Not yet written.
-  SKY-A113:
-    reason: Not yet written.
-  SKY-A114:
-    reason: Not yet written.
-  SKY-A115:
-    reason: Not yet written.
-  SKY-A116:
-    reason: Not yet written.
-  SKY-A117:
-    reason: Not yet written.
-  SKY-A118:
-    reason: Not yet written.
-  SKY-A119:
-    reason: Not yet written.
-  SKY-A120:
-    reason: Not yet written.
-  SKY-A121:
-    reason: Not yet written.
-  SKY-A122:
-    reason: Not yet written.
-  SKY-A125:
-    reason: Not yet written.
-  SKY-A135:
-    reason: Not yet written.
-  SKY-A136:
-    reason: Not yet written.
-  SKY-A137:
-    reason: Not yet written.
   SKY-C303:
     reason: Not yet written.
   SKY-C304:
@@ -63,13 +19,7 @@ pending:
       and `--verify` only reads reported findings. A page needs either a verify check
       for suppressed findings or a product decision to list SKY-D218. Draft kept outside
       the repository.'
-  SKY-D222:
-    reason: Not yet written.
   SKY-D223:
-    reason: Not yet written.
-  SKY-D224:
-    reason: Not yet written.
-  SKY-D225:
     reason: Not yet written.
   SKY-D400:
     reason: Not yet written.
@@ -133,8 +83,6 @@ pending:
     reason: Not yet written.
   SKY-L011:
     reason: Not yet written.
-  SKY-L012:
-    reason: Not yet written.
   SKY-L013:
     reason: Not yet written.
   SKY-L014:
@@ -142,8 +90,6 @@ pending:
   SKY-L016:
     reason: Not yet written.
   SKY-L017:
-    reason: Not yet written.
-  SKY-L023:
     reason: Not yet written.
   SKY-L028:
     reason: Not yet written.

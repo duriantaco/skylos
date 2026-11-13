@@ -1,0 +1,296 @@
+id: SKY-A112
+title: Test settings loosened
+family: ai-defects
+severity: HIGH
+languages: [pytest settings (pyproject.toml, pytest.ini, tox.ini, setup.cfg, conftest.py), coverage settings, Jest and Vitest configs, package.json test scripts, GitHub Actions test steps]
+gate:
+  full: not_run
+  note: >-
+    Only `skylos done` reports it, in its `test_tampering` check, which
+    blocks by default. A quiet GitHub Actions test step is also listed under
+    the `silenced_checks` check, which only advises by default. `skylos cicd
+    risk-review` counts it as "tests weakened", which needs a human
+    approval.
+run_with: >-
+  `skylos done` (compares uncommitted changes with `HEAD`) or
+  `skylos done --base origin/main` for a pull request; agent hooks run it
+  when the agent stops
+verify:
+  mode: manual
+  reason: >-
+    Only `skylos done` runs this rule; the handbook build runs `skylos .`
+    scans, which never report it.
+
+what_it_is: >-
+  The change makes the test run check less without editing a single test:
+  it deselects or ignores tests in the pytest options, adds a `conftest.py`
+  hook that can drop tests or rewrite their results, lowers a coverage
+  floor, or lets a test command fail quietly. Each loosening the change adds
+  is one finding.
+
+why_it_matters: >-
+  The test files still look intact, so a reviewer who checks the tests sees
+  nothing wrong. Yet the failing test no longer runs, or its failure no
+  longer fails the build, and the suite reports green.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  expect_file: pyproject.toml
+  expect_line: 7
+  base_files:
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "refunds"
+        version = "1.4.0"
+
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+        addopts = "-q"
+    - filename: refunds/policy.py
+      code: |
+        def refund_amount(paid, days_since_purchase):
+            if days_since_purchase > 30:
+                return 0
+            return paid
+    - filename: tests/test_policy.py
+      code: |
+        from refunds.policy import refund_amount
+
+
+        def test_full_refund_within_30_days():
+            assert refund_amount(80, 10) == 80
+
+
+        def test_no_refund_after_30_days():
+            assert refund_amount(80, 31) == 0
+  files:
+    - filename: refunds/policy.py
+      code: |
+        def refund_amount(paid, days_since_purchase):
+            if days_since_purchase > 60:
+                return 0
+            return paid
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "refunds"
+        version = "1.4.0"
+
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+        addopts = "-q --deselect tests/test_policy.py::test_no_refund_after_30_days"
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "refunds"
+        version = "1.4.0"
+
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+        addopts = "-q"
+    - filename: refunds/policy.py
+      code: |
+        def refund_amount(paid, days_since_purchase):
+            if days_since_purchase > 30:
+                return 0
+            return paid
+    - filename: tests/test_policy.py
+      code: |
+        from refunds.policy import refund_amount
+
+
+        def test_full_refund_within_30_days():
+            assert refund_amount(80, 10) == 80
+
+
+        def test_no_refund_after_30_days():
+            assert refund_amount(80, 31) == 0
+  files:
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "refunds"
+        version = "1.4.0"
+
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+        addopts = "-q -p no:cacheprovider"
+  why: >-
+    The new option turns off a pytest plugin, but `cacheprovider` only
+    stores state between runs; every test still runs and still counts.
+    Skylos treats turning off `cacheprovider`, `randomly`, `random_order`,
+    `xdist`, `sugar`, `rerunfailures` and `flaky` as harmless.
+
+more_examples:
+  - flagged:
+      language: json
+      setup: git_diff
+      expect_file: package.json
+      expect_line: 5
+      base_files:
+        - filename: package.json
+          code: |
+            {
+              "name": "checkout-web",
+              "private": true,
+              "scripts": {
+                "test": "jest"
+              }
+            }
+        - filename: src/total.test.js
+          language: javascript
+          code: |
+            const { total } = require("./total");
+
+            test("sums line items", () => {
+              expect(total([2, 3])).toBe(5);
+            });
+      files:
+        - filename: package.json
+          code: |
+            {
+              "name": "checkout-web",
+              "private": true,
+              "scripts": {
+                "test": "jest || true"
+              }
+            }
+    not_flagged:
+      language: json
+      setup: git_diff
+      base_files:
+        - filename: package.json
+          code: |
+            {
+              "name": "checkout-web",
+              "private": true,
+              "scripts": {
+                "test": "jest"
+              }
+            }
+        - filename: src/total.test.js
+          language: javascript
+          code: |
+            const { total } = require("./total");
+
+            test("sums line items", () => {
+              expect(total([2, 3])).toBe(5);
+            });
+      files:
+        - filename: package.json
+          code: |
+            {
+              "name": "checkout-web",
+              "private": true,
+              "scripts": {
+                "test": "jest --ci --coverage"
+              }
+            }
+      why: >-
+        The script gained options, but neither filters which tests run nor
+        lets a failure pass: `--ci` and `--coverage` change how Jest runs and
+        reports, not what it checks.
+
+how_skylos_decides:
+  - >-
+    Runs in `skylos done`, which compares the working tree (or a pull
+    request's head) with a base commit: `HEAD` by default, the merge base
+    with `--base`. Its settings come from the base commit, never from the
+    change.
+  - >-
+    Reads only changed settings files: `pyproject.toml`, `pytest.ini`,
+    `.pytest.ini`, `tox.ini`, `setup.cfg`, `.coveragerc`, `conftest.py`,
+    `.github/workflows/*.yml`, Jest and Vitest configs and `package.json`,
+    each compared with its base version.
+  - >-
+    pytest: reports new `addopts` entries that select or skip tests (`-k`,
+    `-m`, `--deselect`, `--ignore`, `--ignore-glob`, `--lf`, `--sw`,
+    `--co`), turn off a plugin other than a known harmless one, or load the
+    repository's own plugin; a lower `--cov-fail-under`; new
+    `norecursedirs`; narrower `testpaths` or test-name patterns; and
+    `xfail_strict` turned off. A new ignore that matches no existing test is
+    skipped.
+  - >-
+    `conftest.py`: a new or changed hook that can drop tests or change their
+    results (`pytest_collection_modifyitems`, `pytest_runtest_makereport`,
+    `pytest_report_teststatus` and others), new `collect_ignore` entries,
+    and a changed helper that such a hook depends on.
+  - >-
+    Coverage: `fail_under` lowered or removed, and new `omit` patterns.
+    Jest and Vitest: new ignore patterns that drop existing test files,
+    narrower match settings, `passWithNoTests` turned on, lower coverage
+    thresholds, and a `package.json` test script that gains a filter, a new
+    `||` fallback such as `|| true`, or stops running a test runner.
+  - >-
+    GitHub Actions: a step that runs tests and newly gets
+    `continue-on-error: true` (on the step or its job) or a script that
+    swallows its failure (`|| true`, `set +e`, `exit 0`). A brand-new
+    advisory test step is not a loosening.
+
+source_refs:
+  - path: skylos/done/test_config.py
+    symbol: "def detect_loosened_test_config("
+  - path: skylos/done/test_config.py
+    symbol: "def _compare_pytest_options("
+  - path: skylos/done/test_config.py
+    symbol: "_HARMLESS_DISABLED_PLUGINS = frozenset("
+  - path: skylos/done/test_config.py
+    symbol: "def _conftest("
+  - path: skylos/done/test_config.py
+    symbol: "def _workflow("
+  - path: skylos/done/js_test_config.py
+    symbol: "def detect_loosened_js_test_config("
+  - path: skylos/done/checks.py
+    symbol: "def check_test_tampering("
+  - path: skylos/done/config.py
+    symbol: '"test_tampering": "block"'
+    note: the default mode.
+
+fix:
+  explanation: >-
+    Remove the deselect and fix the code: here the refund window moved from
+    30 to 60 days without anyone deciding it should. If a test really must
+    stop running, mark that one test with a reason in the test file, where
+    reviewers see it, rather than hiding it in shared settings.
+  language: toml
+  code: |
+    [tool.pytest.ini_options]
+    testpaths = ["tests"]
+    addopts = "-q"
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A deliberate split, such as moving slow tests behind `-m "not slow"`
+      while CI runs them in another job, is reported. Say so in the pull
+      request.
+    - >-
+      Settings built at run time (a Jest config returned by a function or
+      spread from another object, options passed on the command line) are
+      not read, so loosening done there is not seen.
+    - >-
+      A brand-new config file only counts when it leaves out tests that
+      already existed.
+  suppress:
+    - text: >-
+        `skylos done` findings ignore `# skylos: ignore[...]` comments and the
+        `[tool.skylos] ignore` list. To stop the check from blocking, commit a
+        lower mode to the base branch first (the change under review cannot
+        loosen its own check):
+      language: toml
+      code: |
+        [tool.skylos.done.checks]
+        test_tampering = "advise"
+
+related: [SKY-A110, SKY-A111, SKY-A121, SKY-A119]

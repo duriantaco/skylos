@@ -1,0 +1,154 @@
+id: SKY-D225
+title: Dependency version hallucination
+family: ai-defects
+severity: HIGH
+languages: [Python (requirements.txt, pyproject.toml), JavaScript/TypeScript (package.json), Go modules, install commands in scripts, Dockerfiles, CI files and docs]
+gate:
+  full: counted
+  note: >-
+    Counts toward `max_ai_defects`. HIGH findings do not fail the gate on
+    their own unless `block_ai_defect_severities` under
+    `[tool.skylos.gate]` lists `"HIGH"`. The agent hook (`skylos verify`)
+    blocks on it. `skylos done` lists it as advice unless
+    `unknown_imports = "block"` is set under `[tool.skylos.done.checks]`.
+run_with: >-
+  `skylos . --ai-defects` (or `-a`) with network access to PyPI, the npm
+  registry and the Go module proxy
+
+what_it_is: >-
+  A version hallucination is a pin to a release that was never published,
+  such as `flask==4.2.0` when Flask's newest major is 3. The package is
+  real, the version is invented. SKY-D225 asks the registry whether each
+  pinned version of a dependency exists.
+
+why_it_matters: >-
+  The install fails in CI or, worse, on the next fresh deploy, long after
+  the change was merged. A coding agent that sees the failure often
+  "fixes" it by removing the pin, so the project then installs whatever
+  the newest release is.
+
+verify:
+  mode: manual
+  reason: >-
+    needs PyPI, the npm registry and the Go module proxy, so one offline
+    scan cannot reproduce it; examples checked by hand online with Skylos
+    5.6.0
+
+flagged_example:
+  language: text
+  filename: requirements.txt
+  expect_line: 1
+  code: |
+    flask==4.2.0
+    gunicorn==23.0.0
+
+not_flagged_example:
+  language: text
+  filename: requirements.txt
+  code: |
+    flask==3.1.0
+    gunicorn==23.0.0
+  why: >-
+    Flask 3.1.0 is a published release, so PyPI answers for that version and
+    nothing is reported. Skylos reports a pin only when the registry knows
+    the package but not the version.
+
+more_examples:
+  - flagged:
+      language: json
+      filename: package.json
+      expect_line: 6
+      code: |
+        {
+          "name": "checkout-api",
+          "version": "1.0.0",
+          "private": true,
+          "dependencies": {
+            "express": "6.2.0",
+            "express-rate-limit": "7.4.0"
+          }
+        }
+    not_flagged:
+      language: json
+      filename: package.json
+      code: |
+        {
+          "name": "checkout-api",
+          "version": "1.0.0",
+          "private": true,
+          "dependencies": {
+            "express": "4.21.2",
+            "express-rate-limit": "7.4.0"
+          }
+        }
+      why: >-
+        Express 4.21.2 exists in the npm registry. For npm, only exact
+        versions are checked: a range such as `^6.2.0` is checked for the
+        package name alone.
+
+how_skylos_decides:
+  - >-
+    Reads `requirements.txt`, `pyproject.toml`, `package.json`, `go.mod`
+    and other manifests up to three folders deep, plus `pip install
+    name==1.0`, `npm install name@1.0` and `go get` lines in shell scripts,
+    Dockerfiles, `.github/workflows` files and shell blocks in Markdown.
+  - >-
+    Takes one version per entry: the `==` pin, or the lower bound of `~=`
+    and `>=` for Python; the exact version for npm; the required version
+    for Go. Wildcard pins such as `==1.2.*` and npm ranges are not checked
+    for a version.
+  - >-
+    Asks the registry for that version: the PyPI JSON API, the npm registry
+    or the Go module proxy. When the version is missing but the package
+    exists, reports SKY-D225 on the manifest line. When the package is
+    missing too, the finding is SKY-D222 instead.
+  - >-
+    Skips entries the registry cannot answer (network error, timeout),
+    manifests that use a private index or registry (`--index-url`,
+    `[[tool.poetry.source]]`, an `.npmrc` registry, `PIP_INDEX_URL=`), and
+    ecosystems without a checker, such as Cargo or Maven. Answers are cached
+    in `.skylos/cache/dependency_versions.json`.
+
+source_refs:
+  - path: skylos/rules/ai_defect/manifest_dependency_hallucination.py
+    symbol: "def scan_manifest_dependency_hallucinations("
+  - path: skylos/rules/ai_defect/manifest_dependency_hallucination.py
+    symbol: "def _check_registry_version_urls("
+    note: version missing but package present means SKY-D225.
+  - path: skylos/rules/ai_defect/manifest_dependency_hallucination.py
+    symbol: "def _missing_version_finding("
+  - path: skylos/rules/ai_defect/manifest_dependency_hallucination.py
+    symbol: "def _status_for_dependency_spec("
+    note: npm ranges are never a missing version.
+  - path: skylos/rules/sca/vulnerability_scanner.py
+    symbol: "def _extract_version_candidate("
+
+fix:
+  explanation: >-
+    Pin a version the registry really has, normally the newest release of
+    the major version your code was written for. Look it up with
+    `pip index versions flask` or `npm view express versions` instead of
+    trusting a suggested number.
+  language: text
+  code: |
+    flask==3.1.0
+    gunicorn==23.0.0
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A version published only to your own mirror or private index is
+      reported when the manifest does not name that index. Add the
+      `--index-url` line or `.npmrc` registry Skylos can read.
+    - >-
+      A release that the maintainers deleted from the registry is reported
+      as missing, which is usually right: a fresh install fails too.
+    - >-
+      Without network access the registry check cannot answer and nothing
+      is reported.
+  suppress:
+    - text: >-
+        `[tool.skylos] ignore = ["SKY-D225"]` turns the rule off for the
+        project.
+
+related: [SKY-D222, SKY-A106, SKY-D224]

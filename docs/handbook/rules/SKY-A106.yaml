@@ -1,0 +1,230 @@
+id: SKY-A106
+title: Suspicious dependency version bump
+family: ai-defects
+severity: LOW
+languages: [Python packaging (pyproject.toml, setup.py, requirements files, uv.lock, poetry.lock)]
+gate:
+  full: counted
+  note: >-
+    Counts toward `max_ai_defects`; LOW, so it never fails the gate on its
+    own. The finding is marked as a signal to review, not a defect.
+run_with: >-
+  `skylos . --ai-defects` (or `-a`) on a Git checkout with uncommitted
+  changes, or `skylos . --ai-defects --diff origin/main` for committed ones
+
+what_it_is: >-
+  A mirrored bump is a dependency whose version changes from exactly the
+  project's old version to exactly its new one in the same change: the
+  project goes from 2.3.0 to 2.4.0 and so does `pydantic-settings`. It is
+  the fingerprint of a find-and-replace of a version number. SKY-A106
+  points at the dependency line so a person can confirm the change was
+  meant.
+
+why_it_matters: >-
+  A coding agent asked to "bump the version to 2.4.0" often replaces every
+  `2.3.0` in the file. The unrelated dependency then moves to a release
+  nobody chose or tested, which may not exist, may break the API, or may
+  pull in a different set of transitive packages.
+
+flagged_example:
+  language: toml
+  setup: git_diff
+  scan_flags: ["--ai-defects"]
+  expect_file: pyproject.toml
+  expect_line: 7
+  base_files:
+    - filename: pyproject.toml
+      code: |
+        [project]
+        name = "acme-billing"
+        version = "2.3.0"
+        requires-python = ">=3.10"
+        dependencies = [
+            "httpx>=0.27",
+            "pydantic-settings==2.3.0",
+        ]
+  files:
+    - filename: pyproject.toml
+      code: |
+        [project]
+        name = "acme-billing"
+        version = "2.4.0"
+        requires-python = ">=3.10"
+        dependencies = [
+            "httpx>=0.27",
+            "pydantic-settings==2.4.0",
+        ]
+
+not_flagged_example:
+  language: toml
+  setup: git_diff
+  scan_flags: ["--ai-defects"]
+  base_files:
+    - filename: pyproject.toml
+      code: |
+        [project]
+        name = "acme-billing"
+        version = "2.3.0"
+        requires-python = ">=3.10"
+        dependencies = [
+            "httpx>=0.27",
+            "acme-billing-core==2.3.0",
+        ]
+
+        [tool.uv.sources]
+        acme-billing-core = { workspace = true }
+
+        [tool.uv.workspace]
+        members = ["core"]
+    - filename: core/pyproject.toml
+      code: |
+        [project]
+        name = "acme-billing-core"
+        version = "2.3.0"
+        requires-python = ">=3.10"
+        dependencies = []
+  files:
+    - filename: pyproject.toml
+      code: |
+        [project]
+        name = "acme-billing"
+        version = "2.4.0"
+        requires-python = ">=3.10"
+        dependencies = [
+            "httpx>=0.27",
+            "acme-billing-core==2.4.0",
+        ]
+
+        [tool.uv.sources]
+        acme-billing-core = { workspace = true }
+
+        [tool.uv.workspace]
+        members = ["core"]
+    - filename: core/pyproject.toml
+      code: |
+        [project]
+        name = "acme-billing-core"
+        version = "2.4.0"
+        requires-python = ">=3.10"
+        dependencies = []
+  why: >-
+    `acme-billing-core` is a package of the same repository (its own
+    `core/pyproject.toml` is part of the change, and `[tool.uv.sources]`
+    marks it as a workspace member). Packages released together move in
+    lockstep on purpose, so Skylos skips dependencies it knows are the
+    repository's own.
+
+how_skylos_decides:
+  - >-
+    Runs with `--ai-defects` on a Git checkout. Without a diff base it
+    compares the files at the last commit with the files on disk. With one
+    (`--diff REF`, `--diff-base REF`, `SKYLOS_DIFF_BASE` or a pull request
+    base in CI) it compares the merge base with the last commit, so only
+    committed changes count: `--diff HEAD` compares the last commit with
+    itself and finds nothing. Only files that exist on both sides and
+    changed are read, together with the `pyproject.toml` and `setup.py` of
+    their folder and the folders above.
+  - >-
+    Reads the project's own name and version from `[project]` or
+    `[tool.poetry]` in `pyproject.toml`, or from literal arguments of
+    `setup()` in `setup.py` (it never runs `setup.py`). The project version
+    must have changed and the name must have stayed the same.
+  - >-
+    Reads dependency pins in that project's `pyproject.toml`, `setup.py`,
+    `requirements*.txt` files and `uv.lock` or `poetry.lock`. A dependency
+    whose version went from exactly the old project version to exactly the
+    new one is reported on its line, unless it names a package of the same
+    repository or one with a local source override.
+  - >-
+    Skips files it cannot parse with certainty: dynamic versions, URL
+    requirements, multi-line values and more than one changed version in
+    the same place. No registry is contacted.
+
+source_refs:
+  - path: skylos/rules/ai_defect/dependency_version_bump.py
+    symbol: "def detect_mirrored_dependency_bumps("
+  - path: skylos/rules/ai_defect/dependency_version_bump.py
+    symbol: "def is_supported_path("
+  - path: skylos/rules/ai_defect/dependency_version_bump.py
+    symbol: "def _changed_dependencies("
+  - path: skylos/rules/ai_defect/dependency_bump_scan.py
+    symbol: "def scan_mirrored_dependency_bumps("
+  - path: skylos/rules/ai_defect/dependency_bump_scan.py
+    symbol: "def _revisions("
+    note: which two snapshots are compared.
+  - path: skylos/analyzer.py
+    symbol: "def _dependency_bump_findings("
+
+fix:
+  explanation: >-
+    Put the dependency back to the version it had, and change it in its own
+    commit only if you mean to upgrade it, after reading its release notes.
+  language: toml
+  code: |
+    [project]
+    name = "acme-billing"
+    version = "2.4.0"
+    requires-python = ">=3.10"
+    dependencies = [
+        "httpx>=0.27",
+        "pydantic-settings==2.3.0",
+    ]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A real upgrade that happens to land on the same number as your new
+      release is reported. That is rare, and the finding only asks for a
+      second look.
+    - >-
+      A sibling package released in lockstep is reported when its own
+      manifest is not part of the change and no local source names it.
+    - >-
+      It misses an uncommitted bump in a `--diff HEAD` scan, because a diff
+      base makes it compare committed snapshots only. Run a plain
+      `skylos . --ai-defects` before committing, or diff against the base
+      branch after.
+  suppress:
+    - text: >-
+        `[tool.skylos] ignore = ["SKY-A106"]` in `pyproject.toml` turns the
+        rule off for the project.
+      language: toml
+      code: |
+        [tool.skylos]
+        ignore = ["SKY-A106"]
+      check:
+        kind: example
+        example:
+          language: toml
+          setup: git_diff
+          scan_flags: ["--ai-defects"]
+          base_files:
+            - filename: pyproject.toml
+              code: |
+                [project]
+                name = "acme-billing"
+                version = "2.3.0"
+                requires-python = ">=3.10"
+                dependencies = [
+                    "httpx>=0.27",
+                    "pydantic-settings==2.3.0",
+                ]
+
+                [tool.skylos]
+                ignore = ["SKY-A106"]
+          files:
+            - filename: pyproject.toml
+              code: |
+                [project]
+                name = "acme-billing"
+                version = "2.4.0"
+                requires-python = ">=3.10"
+                dependencies = [
+                    "httpx>=0.27",
+                    "pydantic-settings==2.4.0",
+                ]
+
+                [tool.skylos]
+                ignore = ["SKY-A106"]
+
+related: [SKY-D225, SKY-D222, SKY-A101]

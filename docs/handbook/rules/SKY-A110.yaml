@@ -1,0 +1,289 @@
+id: SKY-A110
+title: Test deleted
+family: ai-defects
+severity: HIGH
+languages: [Python tests (pytest, unittest), JavaScript/TypeScript tests (Jest, Vitest, Mocha, node:test, Playwright)]
+gate:
+  full: not_run
+  note: >-
+    Only `skylos done` reports it, in its `test_tampering` check, which
+    blocks by default: one deleted test fails the verdict. A test deleted
+    together with the code it tested, a rewritten test, or one with fewer
+    assertions is listed as advice and does not block. `skylos cicd
+    risk-review` counts a blocking finding as "tests weakened", which needs
+    a human approval.
+run_with: >-
+  `skylos done` (compares uncommitted changes with `HEAD`) or
+  `skylos done --base origin/main` for a pull request; agent hooks run it
+  when the agent stops
+verify:
+  mode: manual
+  reason: >-
+    Only `skylos done` runs this rule; the handbook build runs `skylos .`
+    scans, which never report it.
+
+what_it_is: >-
+  A test that existed at the base commit is gone after the change, and no
+  test with the same body exists anywhere else. SKY-A110 also reports a test
+  left with no assertion at all, a test overwritten in place by one that
+  tests something else, and a parametrized test that lost cases.
+
+why_it_matters: >-
+  When a coding agent cannot make a test pass, deleting the test is the
+  fastest way to a green run. The behaviour that test protected then has no
+  check at all, and a deleted block in a long diff is easy to miss in
+  review.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  expect_file: tests/test_discounts.py
+  base_files:
+    - filename: billing/discounts.py
+      code: |
+        """Discount rules for the checkout."""
+
+
+        def apply_discount(price, percent):
+            if not 0 <= percent <= 100:
+                raise ValueError("percent must be between 0 and 100")
+            return round(price * (100 - percent) / 100, 2)
+    - filename: tests/test_discounts.py
+      code: |
+        import pytest
+
+        from billing.discounts import apply_discount
+
+
+        def test_applies_percentage():
+            assert apply_discount(200, 25) == 150
+
+
+        def test_rejects_percent_over_100():
+            with pytest.raises(ValueError):
+                apply_discount(200, 120)
+  files:
+    - filename: billing/discounts.py
+      code: |
+        """Discount rules for the checkout."""
+
+
+        def apply_discount(price, percent):
+            percent = min(max(percent, 0), 100)
+            return round(price * (100 - percent) / 100, 2)
+    - filename: tests/test_discounts.py
+      code: |
+        import pytest
+
+        from billing.discounts import apply_discount
+
+
+        def test_applies_percentage():
+            assert apply_discount(200, 25) == 150
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: billing/discounts.py
+      code: |
+        """Discount rules for the checkout."""
+
+
+        def apply_discount(price, percent):
+            if not 0 <= percent <= 100:
+                raise ValueError("percent must be between 0 and 100")
+            return round(price * (100 - percent) / 100, 2)
+    - filename: tests/test_discounts.py
+      code: |
+        import pytest
+
+        from billing.discounts import apply_discount
+
+
+        def test_applies_percentage():
+            assert apply_discount(200, 25) == 150
+
+
+        def test_rejects_percent_over_100():
+            with pytest.raises(ValueError):
+                apply_discount(200, 120)
+  files:
+    - filename: tests/test_discounts.py
+      code: |
+        from billing.discounts import apply_discount
+
+
+        def test_applies_percentage():
+            assert apply_discount(200, 25) == 150
+    - filename: tests/test_discount_limits.py
+      code: |
+        import pytest
+
+        from billing.discounts import apply_discount
+
+
+        def test_rejects_percent_over_100():
+            with pytest.raises(ValueError):
+                apply_discount(200, 120)
+  why: >-
+    The test left `test_discounts.py` but still exists, with the same body,
+    in a new file. Skylos matches tests by body, so a moved or renamed test
+    is not a deletion.
+
+more_examples:
+  - flagged:
+      language: javascript
+      setup: git_diff
+      expect_file: src/cart.test.js
+      base_files:
+        - filename: src/cart.js
+          code: |
+            export function cartTotal(items) {
+              if (items.some((item) => item.qty < 0)) {
+                throw new Error("negative quantity");
+              }
+              return items.reduce((sum, item) => sum + item.price * item.qty, 0);
+            }
+        - filename: src/cart.test.js
+          code: |
+            import { cartTotal } from "./cart";
+
+            test("adds up price times quantity", () => {
+              expect(cartTotal([{ price: 5, qty: 2 }])).toBe(10);
+            });
+
+            test("refuses a negative quantity", () => {
+              expect(() => cartTotal([{ price: 5, qty: -1 }])).toThrow();
+            });
+      files:
+        - filename: src/cart.test.js
+          code: |
+            import { cartTotal } from "./cart";
+
+            test("adds up price times quantity", () => {
+              expect(cartTotal([{ price: 5, qty: 2 }])).toBe(10);
+            });
+    not_flagged:
+      language: javascript
+      setup: git_diff
+      base_files:
+        - filename: src/cart.js
+          code: |
+            export function cartTotal(items) {
+              if (items.some((item) => item.qty < 0)) {
+                throw new Error("negative quantity");
+              }
+              return items.reduce((sum, item) => sum + item.price * item.qty, 0);
+            }
+        - filename: src/cart.test.js
+          code: |
+            import { cartTotal } from "./cart";
+
+            test("adds up price times quantity", () => {
+              expect(cartTotal([{ price: 5, qty: 2 }])).toBe(10);
+            });
+
+            test("refuses a negative quantity", () => {
+              expect(() => cartTotal([{ price: 5, qty: -1 }])).toThrow();
+            });
+      files:
+        - filename: src/cart.test.js
+          code: |
+            import { cartTotal } from "./cart";
+
+            test("adds up price times quantity", () => {
+              expect(cartTotal([{ price: 5, qty: 2 }])).toBe(10);
+            });
+
+            test("rejects a negative quantity", () => {
+              expect(() => cartTotal([{ price: 5, qty: -1 }])).toThrow();
+            });
+      why: >-
+        Only the title changed. The body is the same, so Skylos pairs the
+        two tests as a rename and reports nothing.
+
+how_skylos_decides:
+  - >-
+    Runs in `skylos done`, which compares the working tree (or a pull
+    request's head) with a base commit: `HEAD` by default, the merge base
+    with `--base`. Its settings come from the base commit, never from the
+    change.
+  - >-
+    Builds a static inventory of every test at the base and at head without
+    importing anything: pytest functions and `Test*` methods in `test_*.py`
+    and `*_test.py` files, `unittest.TestCase` methods in any Python file,
+    and `it`, `test`, `specify` calls (inside `describe` blocks) in
+    `*.test.*`, `*.spec.*` and `__tests__` JavaScript and TypeScript files.
+    Each test records a hash of its body and how many assertions it makes.
+  - >-
+    Pairs each base test with a head test of the same file, class and name.
+    A base test with no partner is then matched to a new test with the same
+    body (a move or rename, not reported), to a new test with a similar
+    title and body, to the same name under a renamed class or `describe`, or
+    to a new test written where it stood. The later pairings are rewrites.
+  - >-
+    A base test still unpaired is a deletion. It is advice instead of a
+    blocking finding when the test used a function, class or module the
+    change removed, or asserted text the change deleted from the code, so a
+    feature removed with its tests does not block.
+  - >-
+    Also reports, as blocking: a paired test left with no countable
+    assertion, a test overwritten in place by one about a different
+    subject, and a parametrize or `.each` table with fewer literal cases.
+    Fewer assertions, a new early `return` and other rewrites are advice.
+  - >-
+    A deleted test is reported at its line in the base version of the file.
+
+source_refs:
+  - path: skylos/done/checks.py
+    symbol: "def check_test_tampering("
+  - path: skylos/done/inventory.py
+    symbol: "def compare_inventories("
+  - path: skylos/done/inventory.py
+    symbol: "def is_pytest_file("
+  - path: skylos/done/js_inventory.py
+    symbol: "def is_js_test_file("
+  - path: skylos/done/feature_removal.py
+    symbol: "class SubjectRemoval"
+    note: when a deleted test becomes advice.
+  - path: skylos/done/config.py
+    symbol: '"test_tampering": "block"'
+    note: the default mode.
+
+fix:
+  explanation: >-
+    Put the test back and change the code until it passes. If the behaviour
+    really changed on purpose (here, clamping instead of refusing), replace
+    the test with one that checks the new behaviour, in the same change.
+  language: python
+  code: |
+    def test_clamps_percent_over_100():
+        assert apply_discount(200, 120) == 0
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A test deleted on purpose, such as a duplicate or a test for behaviour
+      the product no longer has, is reported unless the change also removes
+      the code or text the test used. Say why in the pull request; a
+      reviewer can accept it.
+    - >-
+      A JavaScript test whose title is a template literal with `${...}`, a
+      variable or another expression is not inventoried, so its deletion is
+      not seen.
+    - >-
+      A test moved and heavily edited in the same change can look like a
+      deletion plus a new test when its title and body both differ too much.
+  suppress:
+    - text: >-
+        `skylos done` findings ignore `# skylos: ignore[...]` comments and the
+        `[tool.skylos] ignore` list. To stop this check from blocking,
+        commit a lower mode to the base branch first (the change under
+        review cannot loosen its own check):
+      language: toml
+      code: |
+        [tool.skylos.done.checks]
+        test_tampering = "advise"
+
+related: [SKY-A101, SKY-A111, SKY-A112, SKY-A113]

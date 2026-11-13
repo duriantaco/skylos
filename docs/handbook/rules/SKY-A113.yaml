@@ -1,0 +1,215 @@
+id: SKY-A113
+title: Tests fail when Skylos runs them
+family: ai-defects
+severity: HIGH
+languages: [Python (pytest, found automatically), any test command that writes JUnit XML (set test_command and junit_xml)]
+gate:
+  full: not_run
+  note: >-
+    Only `skylos done` reports it, in its `tests_pass` check, which blocks
+    by default: one failing test fails the verdict, and a run that cannot
+    finish leaves it unfinished. A flaky test (failed once, passed on a
+    rerun) is advice. Failures that also fail on the base commit still
+    block unless the base sets `allow_preexisting_failures = true`.
+run_with: >-
+  `skylos done` (compares uncommitted changes with `HEAD`) or
+  `skylos done --base origin/main` for a pull request; agent hooks run it
+  when the agent stops
+verify:
+  mode: manual
+  reason: >-
+    Only `skylos done` runs this rule, and it runs the project's tests; the
+    handbook build runs `skylos .` scans, which never report it.
+
+what_it_is: >-
+  Skylos runs the project's tests itself and reports each test that fails.
+  What a coding agent says about its own test run is ignored: only the
+  results Skylos reads from its own run count.
+
+why_it_matters: >-
+  Agents often report "all tests pass" after running only some tests, an
+  old command, or nothing at all. A change that breaks a test should not be
+  called finished, and a reviewer should not have to rerun the suite to
+  find out.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "blog"
+        version = "1.2.0"
+
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+    - filename: blog/slug.py
+      code: |
+        import re
+
+
+        def slugify(title):
+            slug = re.sub(r"[^a-z0-9]+", "-", title.lower())
+            return slug.strip("-")
+    - filename: tests/test_slug.py
+      code: |
+        import pytest
+
+        from blog.slug import slugify
+
+
+        def test_spaces_become_dashes():
+            assert slugify("Hello World") == "hello-world"
+
+
+        def test_punctuation_is_dropped():
+            assert slugify("Rock & Roll!") == "rock-roll"
+
+
+        @pytest.mark.xfail(reason="accents are dropped, issue 212")
+        def test_accents_are_kept():
+            assert slugify("Café Crème") == "cafe-creme"
+  files:
+    - filename: blog/slug.py
+      code: |
+        import re
+
+
+        def slugify(title):
+            slug = re.sub(r"\s+", "-", title.lower())
+            return slug.strip("-")
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "blog"
+        version = "1.2.0"
+
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+    - filename: blog/slug.py
+      code: |
+        import re
+
+
+        def slugify(title):
+            slug = re.sub(r"[^a-z0-9]+", "-", title.lower())
+            return slug.strip("-")
+    - filename: tests/test_slug.py
+      code: |
+        import pytest
+
+        from blog.slug import slugify
+
+
+        def test_spaces_become_dashes():
+            assert slugify("Hello World") == "hello-world"
+
+
+        def test_punctuation_is_dropped():
+            assert slugify("Rock & Roll!") == "rock-roll"
+
+
+        @pytest.mark.xfail(reason="accents are dropped, issue 212")
+        def test_accents_are_kept():
+            assert slugify("Café Crème") == "cafe-creme"
+  files:
+    - filename: blog/slug.py
+      code: |
+        import re
+
+
+        def slugify(title, max_length=80):
+            slug = re.sub(r"[^a-z0-9]+", "-", title.lower())
+            return slug.strip("-")[:max_length].rstrip("-")
+  why: >-
+    `test_accents_are_kept` still fails, but it is marked `xfail`: an
+    expected failure that pytest reports as such, not as a failed test. The
+    other two tests pass, so the run passes.
+
+how_skylos_decides:
+  - >-
+    Runs in `skylos done`, last among its checks, and only when no earlier
+    blocking check failed. With `--no-tests` it does not run, and a blocking
+    check that did not run leaves the verdict unfinished.
+  - >-
+    Chooses the command: `test_command` from `[tool.skylos.done]` at the
+    base, else `python -m pytest` when the project looks like a pytest
+    project, using the active virtualenv, the repository's `.venv` or
+    `venv`, or a `python3` on `PATH` that has pytest.
+  - >-
+    For pytest, adds its own `--junitxml` and drops `PYTEST_ADDOPTS` and
+    `PYTEST_PLUGINS` from the environment, so neither the change nor the
+    caller can narrow the run. Another command must write JUnit XML to the
+    `junit_xml` path; an exit code alone is not accepted.
+  - >-
+    Reads the JUnit results. A failing test is rerun once: failing twice is
+    a blocking finding, passing on the rerun is flaky advice. Failing tests
+    are also rerun on the base commit to label each failure as introduced
+    or already there.
+  - >-
+    Also reports a test in a changed test file that did not report a result
+    although its file ran, a test file with no results, and parametrized
+    tests that reported fewer cases than they have. A run past
+    `test_budget_seconds` (300 by default) or with no results is
+    unfinished, never passing.
+
+source_refs:
+  - path: skylos/done/checks.py
+    symbol: "def check_tests_pass("
+  - path: skylos/done/runner.py
+    symbol: "def run_tests("
+  - path: skylos/done/runner.py
+    symbol: "def _invocation("
+  - path: skylos/done/runner.py
+    symbol: "def _project_python("
+  - path: skylos/done/preexisting.py
+    symbol: "def label("
+    note: introduced or already failing on the base.
+  - path: skylos/done/config.py
+    symbol: '"tests_pass": "block"'
+    note: the default mode.
+
+fix:
+  explanation: >-
+    Fix the code until the failing test passes; here, keep dropping
+    punctuation. Run `skylos done` again to get a passing receipt. If the
+    test is wrong, change the test in the same change and say why.
+  language: python
+  code: |
+    def slugify(title):
+        slug = re.sub(r"[^a-z0-9]+", "-", title.lower())
+        return slug.strip("-")
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A test that fails only on this machine (a missing service, a missing
+      dependency in the chosen interpreter) is reported like any failure.
+      Set `test_command` to the command your project really uses.
+    - >-
+      A test that already failed before the change still blocks by default;
+      the finding says it also fails on the base.
+    - >-
+      JavaScript and other tests run only through `test_command` with
+      `junit_xml`; without them, a JavaScript-only project's tests are not
+      run.
+  suppress:
+    - text: >-
+        `skylos done` findings ignore `# skylos: ignore[...]` comments and the
+        `[tool.skylos] ignore` list. To accept failures that also fail on the
+        base, commit this to the base branch first (the change under review
+        cannot change its own check):
+      language: toml
+      code: |
+        [tool.skylos.done]
+        allow_preexisting_failures = true
+
+related: [SKY-A110, SKY-A111, SKY-A120]
