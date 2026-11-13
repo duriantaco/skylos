@@ -346,7 +346,7 @@ _RULES = (
         "SKY-L005", "Unused exception variable", "quality", finding_type="advice"
     ),
     RuleCatalogEntry(
-        "SKY-L006", "Shadowed loop variable", "quality", finding_type="review"
+        "SKY-L006", "Inconsistent return paths", "quality", finding_type="review"
     ),
     RuleCatalogEntry(
         "SKY-L007", "Empty error handler", "quality", finding_type="review"
@@ -470,10 +470,10 @@ _RULES = (
         "SKY-P401", "Potential unbounded read", "quality", finding_type="advice"
     ),
     RuleCatalogEntry(
-        "SKY-P402", "Repeated expensive operation", "quality", finding_type="advice"
+        "SKY-P402", "Unbounded pandas read_csv", "quality", finding_type="advice"
     ),
     RuleCatalogEntry(
-        "SKY-P403", "Suspicious performance pattern", "quality", finding_type="advice"
+        "SKY-P403", "Repeated scan in nested loops", "quality", finding_type="advice"
     ),
     RuleCatalogEntry(
         "SKY-P404",
@@ -499,7 +499,7 @@ _RULES = (
         "SKY-T104",
         "TypeScript compiler suppression directive",
         "quality",
-        "MEDIUM",
+        "HIGH",
         finding_type="review",
     ),
     RuleCatalogEntry(
@@ -562,14 +562,14 @@ _RULES = (
         "SKY-D201",
         "Dynamic code execution via eval",
         "security",
-        "HIGH",
+        "CRITICAL",
         finding_type="review",
     ),
     RuleCatalogEntry(
         "SKY-D202",
         "Dynamic code execution via exec",
         "security",
-        "HIGH",
+        "CRITICAL",
         finding_type="review",
     ),
     RuleCatalogEntry(
@@ -765,7 +765,7 @@ _RULES = (
         "SKY-D236",
         "XML external entity (XXE)",
         "security",
-        "HIGH",
+        "CRITICAL",
         aliases=("xxe", "xml external entity"),
         finding_type="review",
     ),
@@ -899,7 +899,7 @@ _RULES = (
         "SKY-D260",
         "Prompt injection exposure",
         "security",
-        "HIGH",
+        "CRITICAL",
         aliases=("prompt injection", "hidden unicode"),
         finding_type="review",
     ),
@@ -998,7 +998,7 @@ _RULES = (
         "SKY-D283",
         "Unauthenticated control, destructive or admin route",
         "security",
-        "HIGH",
+        "CRITICAL",
         aliases=("missing authentication", "unauthenticated route"),
         finding_type="review",
     ),
@@ -1034,7 +1034,7 @@ _RULES = (
         "SKY-D294",
         "GitHub Actions template injection",
         "security",
-        "CRITICAL",
+        "HIGH",
         finding_type="review",
     ),
     RuleCatalogEntry(
@@ -1055,14 +1055,14 @@ _RULES = (
         "SKY-D297",
         "GitHub Actions secrets inheritance",
         "security",
-        "HIGH",
+        "MEDIUM",
         finding_type="review",
     ),
     RuleCatalogEntry(
         "SKY-D298",
         "GitHub Actions overprovisioned secrets",
         "security",
-        "HIGH",
+        "MEDIUM",
         finding_type="review",
     ),
     RuleCatalogEntry(
@@ -1076,7 +1076,7 @@ _RULES = (
         "SKY-D300",
         "GitHub Actions unsafe environment file write",
         "security",
-        "HIGH",
+        "MEDIUM",
         finding_type="review",
     ),
     RuleCatalogEntry(
@@ -1097,21 +1097,21 @@ _RULES = (
         "SKY-D303",
         "GitHub Actions unsound contains condition",
         "security",
-        "MEDIUM",
+        "HIGH",
         finding_type="review",
     ),
     RuleCatalogEntry(
         "SKY-D304",
         "GitHub Actions spoofable bot condition",
         "security",
-        "MEDIUM",
+        "HIGH",
         finding_type="review",
     ),
     RuleCatalogEntry(
         "SKY-D305",
         "GitHub Actions unsound multiline condition",
         "security",
-        "MEDIUM",
+        "HIGH",
         finding_type="review",
     ),
     RuleCatalogEntry(
@@ -1153,14 +1153,14 @@ _RULES = (
         "SKY-D311",
         "GitHub Actions lax artifact upload",
         "security",
-        "MEDIUM",
+        "LOW",
         finding_type="review",
     ),
     RuleCatalogEntry(
         "SKY-D312",
         "GitHub Actions JavaScript install scripts",
         "security",
-        "HIGH",
+        "MEDIUM",
         finding_type="review",
     ),
     RuleCatalogEntry(
@@ -1299,7 +1299,7 @@ _RULES = (
         "SKY-D365",
         "Agent hook command committed in the repository",
         "security",
-        "HIGH",
+        "CRITICAL",
         aliases=("agent hook", "SessionStart hook", ".claude/settings.json hooks"),
         finding_type="review",
     ),
@@ -1307,7 +1307,7 @@ _RULES = (
         "SKY-D366",
         "Editor task that runs when the folder opens",
         "security",
-        "HIGH",
+        "CRITICAL",
         aliases=("folderOpen", "runOn folderOpen", ".vscode/tasks.json"),
         finding_type="review",
     ),
@@ -1464,14 +1464,14 @@ _RULES = (
         "SKY-D320",
         "GitLab CI release cache poisoning risk",
         "security",
-        "HIGH",
+        "MEDIUM",
         finding_type="review",
     ),
     RuleCatalogEntry(
         "SKY-D321",
         "GitLab CI privileged job missing timeout",
         "security",
-        "MEDIUM",
+        "LOW",
         finding_type="review",
     ),
     RuleCatalogEntry(
@@ -1824,7 +1824,7 @@ _RULES = (
     ),
     RuleCatalogEntry(
         "SKY-G206",
-        "Go unsafe package import",
+        "Go unsafe package call",
         "security",
         "LOW",
         finding_type="review",
@@ -1885,12 +1885,12 @@ _RULES = (
         "SKY-S102",
         "Client-side secret exposure",
         "secrets",
-        "HIGH",
+        "CRITICAL",
         finding_type="review",
     ),
     RuleCatalogEntry(
         "SKY-SC001",
-        "Smart contract security issue",
+        "Security contract regression",
         "security",
         "HIGH",
         finding_type="review",
@@ -1918,21 +1918,29 @@ _SECURITY_RULE_CWES = {
     "SKY-D226": ("CWE-79",),
     "SKY-D227": ("CWE-79",),
     "SKY-D228": ("CWE-79",),
+    "SKY-D229": ("CWE-643",),
     "SKY-D230": ("CWE-601",),
     "SKY-D231": ("CWE-942",),
     "SKY-D232": ("CWE-347",),
     "SKY-D233": ("CWE-502",),
     "SKY-D234": ("CWE-915",),
     "SKY-D235": ("CWE-78",),
+    "SKY-D236": ("CWE-611",),
+    "SKY-D237": ("CWE-917", "CWE-94", "CWE-74"),
+    "SKY-D238": ("CWE-943",),
+    "SKY-D239": ("CWE-90",),
     "SKY-D240": ("CWE-1427",),
     "SKY-D241": ("CWE-306",),
     "SKY-D242": ("CWE-22",),
     "SKY-D243": ("CWE-1327",),
     "SKY-D244": ("CWE-798",),
+    "SKY-D245": ("CWE-94",),
+    "SKY-D246": ("CWE-347",),
     "SKY-D250": ("CWE-330",),
     "SKY-D251": ("CWE-532",),
     "SKY-D252": ("CWE-614",),
     "SKY-D253": ("CWE-208",),
+    "SKY-D254": ("CWE-501",),
     "SKY-D255": ("CWE-98",),
     "SKY-D257": ("CWE-749",),
     "SKY-D258": ("CWE-200",),
@@ -1955,21 +1963,28 @@ _SECURITY_RULE_CWES = {
     "SKY-D338": ("CWE-200",),
     "SKY-D339": ("CWE-15",),
     "SKY-D341": ("CWE-829",),
+    "SKY-D344": ("CWE-94",),
     "SKY-D345": ("CWE-494",),
     "SKY-D346": ("CWE-489",),
     "SKY-D347": ("CWE-306",),
     "SKY-D348": ("CWE-377",),
     "SKY-D349": ("CWE-1336",),
+    "SKY-D355": ("CWE-79",),
+    "SKY-D356": ("CWE-319",),
+    "SKY-D357": ("CWE-470",),
+    "SKY-D358": ("CWE-306", "CWE-1327"),
+    "SKY-D359": ("CWE-348",),
     "SKY-D378": ("CWE-22",),
     "SKY-D379": ("CWE-1333",),
+    "SKY-S102": ("CWE-201", "CWE-798"),
     "SKY-SC001": ("CWE-862",),
 }
 
 
 def _with_cwes(entries):
-    """CWE ids of the security rules Skylos raises on Python code. Findings
-    from Python files carry them (``finding["cwe"]``) so SARIF and
-    compliance consumers get CWE taxa. Shell-guard rules without a clear
+    """CWE ids of the catalog's security rules. Findings from Python files
+    carry them (``finding["cwe"]``) so SARIF and compliance consumers get
+    CWE taxa. Shell-guard rules without a clear
     weakness class (broad destructive command, unapproved publish) have
     none."""
     result = []

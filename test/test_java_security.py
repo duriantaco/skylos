@@ -693,6 +693,29 @@ class App {
     assert "SKY-D252" not in _rule_ids(findings)
 
 
+def test_insecure_cookie_has_the_same_severity_as_other_languages(tmp_path):
+    from skylos.rules.catalog import get_rule_catalog
+
+    findings = _scan_java(
+        tmp_path,
+        """import javax.servlet.http.*;
+
+class App {
+  void issue(HttpServletResponse response, String sessionId) {
+    Cookie cookie = new Cookie("SESSION", sessionId);
+    cookie.setHttpOnly(true);
+    cookie.setSecure(false);
+    response.addCookie(cookie);
+  }
+}
+""",
+    )
+
+    cookies = [f for f in findings if f["rule_id"] == "SKY-D252"]
+    assert [(f["line"], f["severity"]) for f in cookies] == [(8, "MEDIUM")]
+    assert get_rule_catalog("SKY-D252")[0]["severity"] == "MEDIUM"
+
+
 def test_java_random_remember_me_cookie_flags(tmp_path):
     findings = _scan_java(
         tmp_path,
@@ -2429,6 +2452,55 @@ def test_expression_jndi_ldap_and_xpath_sinks(tmp_path, statement, rule_id):
     )
     hits = _findings_on(_scan_java(tmp_path, code), _marked_line(code), rule_id)
     assert [finding["severity"] for finding in hits] == ["CRITICAL"]
+
+
+@pytest.mark.parametrize(
+    ("statement", "rule_id", "cwe"),
+    [
+        (
+            "new org.springframework.expression.spel.standard.SpelExpressionParser().parseExpression(value); // SINK",
+            "SKY-D237",
+            "CWE-917",
+        ),
+        (
+            "new javax.naming.InitialContext().lookup(value); // SINK",
+            "SKY-D237",
+            "CWE-74",
+        ),
+        (
+            'new javax.script.ScriptEngineManager().getEngineByName("js").eval(value); // SINK',
+            "SKY-D237",
+            "CWE-94",
+        ),
+        (
+            'xpath.evaluate("/u[@n=\'" + value + "\']", doc); // SINK',
+            "SKY-D229",
+            "CWE-643",
+        ),
+        (
+            'ctx.search("ou=people", "(uid=" + value + ")", null); // SINK',
+            "SKY-D239",
+            "CWE-90",
+        ),
+    ],
+)
+def test_injection_sink_cwe_is_one_the_rule_catalog_declares(
+    tmp_path, statement, rule_id, cwe
+):
+    from skylos.rules.catalog import get_rule_cwes
+
+    code = (
+        "import javax.servlet.http.*;\n\nclass App {\n"
+        "  void run(HttpServletRequest request, javax.xml.xpath.XPath xpath, Object doc, "
+        "javax.naming.directory.DirContext ctx) throws Exception {\n"
+        '    String value = request.getParameter("v");\n'
+        f"    {statement}\n"
+        "  }\n}\n"
+    )
+    hits = _findings_on(_scan_java(tmp_path, code), _marked_line(code), rule_id)
+
+    assert [finding["cwe"] for finding in hits] == [cwe]
+    assert cwe in get_rule_cwes(rule_id)
 
 
 @pytest.mark.parametrize(

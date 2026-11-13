@@ -219,7 +219,7 @@ def test_builtin_catalog_exposes_nextjs_security_rule_contracts():
         "name": "Client-side secret exposure",
         "category": "secrets",
         "finding_type": "review",
-        "severity": "HIGH",
+        "severity": "CRITICAL",
         "source": "builtin",
         "aliases": [],
     }
@@ -253,7 +253,7 @@ def test_builtin_catalog_exposes_typescript_quality_signal_rules():
         "SKY-T104": {
             "name": "TypeScript compiler suppression directive",
             "category": "quality",
-            "severity": "MEDIUM",
+            "severity": "HIGH",
         },
         "SKY-T105": {
             "name": "Unvalidated JSON type assertion",

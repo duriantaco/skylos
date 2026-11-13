@@ -337,3 +337,140 @@ def test_gitlab_prefixed_publish_and_yarn_install(tmp_path):
     )
     assert _gitlab_lines(tmp_path, text, "SKY-D340") == [4]
     assert _gitlab_lines(tmp_path, text, "SKY-D341") == []
+
+
+RELEASE_JOBS = """# pre-publish: lint runs before publishing
+stages: [test, release]
+
+default:
+  cache:
+    paths: [.npm/]
+
+npm-publish:
+  stage: release
+  timeout: 10 minutes
+  rules:
+    - if: $CI_COMMIT_TAG
+{npm_marker}  cache:
+    key: release
+    paths: [.npm/]
+  script:
+    - npm publish
+
+{publish_marker}publish:
+  stage: release
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - npm publish
+"""
+
+
+def _release_rows(tmp_path, text):
+    (tmp_path / ".gitlab-ci.yml").write_text(text, encoding="utf-8")
+    return sorted(
+        (finding["rule_id"], finding["value"], finding["line"], finding["severity"])
+        for finding in scan_gitlab_ci(tmp_path)
+        if finding["rule_id"] in {"SKY-D320", "SKY-D321"}
+    )
+
+
+def test_release_cache_and_timeout_point_at_their_own_job(tmp_path):
+    rows = _release_rows(
+        tmp_path, RELEASE_JOBS.format(npm_marker="", publish_marker="")
+    )
+
+    assert rows == [
+        ("SKY-D320", "npm-publish:cache", 13, "MEDIUM"),
+        ("SKY-D320", "publish:cache", 19, "MEDIUM"),
+        ("SKY-D321", "publish:timeout", 19, "LOW"),
+    ]
+
+
+def test_release_job_markers_suppress_only_their_own_rule_and_line(tmp_path):
+    rows = _release_rows(
+        tmp_path,
+        RELEASE_JOBS.format(
+            npm_marker="  # skylos: ignore[SKY-D320] release-only cache key\n",
+            publish_marker="# skylos: ignore[SKY-D321] project timeout is set\n",
+        ),
+    )
+
+    assert rows == [("SKY-D320", "publish:cache", 21, "MEDIUM")]
+
+
+def test_release_job_marker_on_an_unrelated_line_does_not_hide_findings(tmp_path):
+    text = RELEASE_JOBS.format(npm_marker="", publish_marker="").replace(
+        "# pre-publish: lint runs before publishing",
+        "# pre-publish: skylos: ignore[SKY-D320] skylos: ignore[SKY-D321]",
+    )
+
+    assert [row[:3] for row in _release_rows(tmp_path, text)] == [
+        ("SKY-D320", "npm-publish:cache", 13),
+        ("SKY-D320", "publish:cache", 19),
+        ("SKY-D321", "publish:timeout", 19),
+    ]
+
+
+AMBIGUOUS_TOKEN_JOBS = """stages: [deploy]
+
+migrate:
+  stage: deploy
+  timeout: 10 minutes
+  id_tokens:
+    VAULT_ID_TOKEN:
+      aud: https://vault.acme.example
+  secrets:
+{migrate_marker}    DATABASE_PASSWORD:
+      vault: production/db/password@ops
+      file: false
+  script:
+    - ./migrate.sh
+
+deploy-production:
+  stage: deploy
+  timeout: 20 minutes
+  id_tokens:
+    AWS_ID_TOKEN:
+      aud: sts.amazonaws.com
+    VAULT_ID_TOKEN:
+      aud: https://vault.acme.example
+  secrets:
+{deploy_marker}    DATABASE_PASSWORD:
+      vault: production/db/password@ops
+      file: false
+  script:
+    - kubectl apply -f k8s/
+"""
+
+
+def _ambiguous_rows(tmp_path, migrate_marker="", deploy_marker=""):
+    (tmp_path / ".gitlab-ci.yml").write_text(
+        AMBIGUOUS_TOKEN_JOBS.format(
+            migrate_marker=migrate_marker, deploy_marker=deploy_marker
+        ),
+        encoding="utf-8",
+    )
+    return [
+        (finding["value"], finding["line"])
+        for finding in scan_gitlab_ci(tmp_path)
+        if finding["rule_id"] == "SKY-D323"
+    ]
+
+
+def test_ambiguous_secret_token_points_at_the_reporting_jobs_secret(tmp_path):
+    assert _ambiguous_rows(tmp_path) == [("deploy-production:DATABASE_PASSWORD", 25)]
+
+
+def test_ambiguous_secret_marker_on_another_jobs_key_does_not_hide_it(tmp_path):
+    marker = "    # skylos: ignore[SKY-D323] belongs to the migrate job\n"
+
+    assert _ambiguous_rows(tmp_path, migrate_marker=marker) == [
+        ("deploy-production:DATABASE_PASSWORD", 26)
+    ]
+
+
+def test_ambiguous_secret_marker_above_its_own_key_suppresses_it(tmp_path):
+    marker = "    # skylos: ignore[SKY-D323] both tokens share an audience\n"
+
+    assert _ambiguous_rows(tmp_path, deploy_marker=marker) == []

@@ -610,3 +610,53 @@ def test_graph_query_finding_claims_no_source(tmp_path):
 )
 def test_text_that_only_mentions_cypher_stays_quiet(tmp_path, code):
     assert not _graph_rows(scan(tmp_path, code))
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "code", "cwes"),
+    [
+        (
+            "SKY-D355",
+            "from jinja2 import Environment\nEnvironment()\n",
+            ["CWE-79"],
+        ),
+        (
+            "SKY-D356",
+            "import requests\nrequests.get('http://api.example.com/data')\n",
+            ["CWE-319"],
+        ),
+        (
+            "SKY-D357",
+            "from importlib import import_module as load\nfrom flask import request\nload(request.args['plugin'])\n",
+            ["CWE-470"],
+        ),
+        (
+            "SKY-D358",
+            "import gradio as gr\nwith gr.Blocks() as demo:\n    pass\ndemo.launch(server_name='0.0.0.0')\n",
+            ["CWE-306", "CWE-1327"],
+        ),
+        (
+            "SKY-D359",
+            "from functools import cached_property\nfrom flask.helpers import url_for\nclass Page:\n    @cached_property\n    def content(self):\n        return render(self.get_ctx())\n    def get_ctx(self):\n        def link():\n            return url_for('search', _external=True)\n        return {'link': link}\n",
+            ["CWE-348"],
+        ),
+        (
+            "SKY-D344",
+            "def is_admin(user):\n    access = 'user'\n    if access != 'user\u202e \u2066# admin\u2069 \u2066':\n        return True\n    return False\n",
+            ["CWE-94"],
+        ),
+    ],
+)
+def test_python_security_findings_carry_their_rule_cwes(tmp_path, rule_id, code, cwes):
+    import json
+
+    from skylos.analyzer import analyze
+
+    (tmp_path / "server.py").write_text(code, encoding="utf-8")
+
+    result = json.loads(analyze(str(tmp_path), enable_danger=True))
+
+    hits = [f for f in result.get("danger", []) if f["rule_id"] == rule_id]
+    assert hits
+    assert [entry["id"] for entry in hits[0]["cwe"]] == cwes
+    assert all(entry["name"] != entry["id"] for entry in hits[0]["cwe"])

@@ -717,7 +717,7 @@ RULE_FIXES: dict[str, dict[str, str]] = {
         "python": "Log the exception, or write except SomeError: without 'as e'.",
     },
     "SKY-L006": {
-        "default": "Rename the inner loop variable so it does not shadow the outer one."
+        "default": "Write return None instead of a bare return, or return a value on every path."
     },
     "SKY-L007": {"default": "Log or handle the error instead of silently ignoring it."},
     "SKY-L008": {
@@ -807,7 +807,9 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-P401": {
         "default": "Read in bounded chunks, or check the size before reading everything."
     },
-    "SKY-P402": {"default": "Compute the expensive value once, outside the loop."},
+    "SKY-P402": {
+        "default": "Pass chunksize= or nrows= to read_csv so a large file is not loaded at once."
+    },
     "SKY-P403": {
         "default": "Index one side in a dict or set to avoid the nested scan, if all pairs are not needed."
     },

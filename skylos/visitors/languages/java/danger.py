@@ -1366,7 +1366,7 @@ def _scan_servlet_security_flows(
                         findings,
                         seen,
                         rule_id="SKY-D252",
-                        severity="HIGH",
+                        severity="MEDIUM",
                         message="Cookie is added with Secure disabled. Set Secure before sending sensitive cookies.",
                         file_path=file_path,
                         line=line_no,

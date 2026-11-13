@@ -1342,3 +1342,123 @@ def test_docker_action_built_from_its_own_dockerfile_is_not_an_unpinned_image(
         for finding in findings
         if finding["rule_id"] == "SKY-D296"
     ] == expected
+
+
+_INHERIT_JOBS = """name: Deploy
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{{{ secrets.LINT_TOKEN }}}}" > /dev/null{lint_marker}
+  deploy:
+    uses: ./.github/workflows/reusable.yml
+{deploy_marker}    secrets: inherit
+  deploy-eu:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      region: eu
+    secrets: inherit{eu_marker}
+"""
+
+
+def _inherit_rows(tmp_path, lint_marker="", deploy_marker="", eu_marker=""):
+    text = _INHERIT_JOBS.format(
+        lint_marker=lint_marker, deploy_marker=deploy_marker, eu_marker=eu_marker
+    )
+    return [
+        (finding["value"], finding["line"], finding["severity"])
+        for finding in _workflow_findings(tmp_path, text, "SKY-D297")
+    ]
+
+
+def test_secrets_inherit_is_reported_on_each_jobs_own_secrets_line(tmp_path):
+    assert _inherit_rows(tmp_path) == [
+        ("deploy:inherit", 14, "MEDIUM"),
+        ("deploy-eu:inherit", 19, "MEDIUM"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("markers", "expected"),
+    [
+        (
+            {"deploy_marker": "    # skylos: ignore[SKY-D297] reviewed\n"},
+            [("deploy-eu:inherit", 20)],
+        ),
+        (
+            {"eu_marker": "  # skylos: ignore[SKY-D297] reviewed"},
+            [("deploy:inherit", 14)],
+        ),
+        (
+            {"lint_marker": "  # skylos: ignore[SKY-D297]"},
+            [("deploy:inherit", 14), ("deploy-eu:inherit", 19)],
+        ),
+    ],
+)
+def test_secrets_inherit_marker_applies_only_to_its_own_job(
+    tmp_path, markers, expected
+):
+    rows = _inherit_rows(tmp_path, **markers)
+
+    assert [row[:2] for row in rows] == expected
+
+
+_FIXED_SEVERITY_WORKFLOW = """name: Release
+on:
+  release:
+permissions: read-all
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upload-artifact@{sha}
+        with:
+          name: dist
+          path: dist/
+      - run: npm install
+      - run: cat version.txt >> $GITHUB_ENV
+      - if: contains('refs/heads/main refs/heads/release', github.ref)
+        run: echo ref
+      - if: github.actor == 'dependabot[bot]'
+        run: echo bot
+      - if: |
+          ${{{{ github.event_name == 'release' }}}}
+        run: echo multiline
+      - run: echo "${{{{ toJSON(secrets) }}}}"
+  call:
+    uses: org/repo/.github/workflows/reuse.yml@{sha}
+    secrets: inherit
+"""
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "severity"),
+    [
+        ("SKY-D297", "MEDIUM"),
+        ("SKY-D298", "MEDIUM"),
+        ("SKY-D300", "MEDIUM"),
+        ("SKY-D303", "HIGH"),
+        ("SKY-D304", "HIGH"),
+        ("SKY-D305", "HIGH"),
+        ("SKY-D311", "LOW"),
+        ("SKY-D312", "MEDIUM"),
+    ],
+)
+def test_fixed_severity_workflow_rules_report_their_catalog_severity(
+    tmp_path, rule_id, severity
+):
+    from skylos.rules.catalog import get_rule_catalog
+
+    text = _FIXED_SEVERITY_WORKFLOW.format(
+        sha="de0fac2e4500dabe0009e67214ff5f5447ce83dd"
+    )
+    findings = _workflow_findings(tmp_path, text, rule_id)
+
+    assert findings
+    assert {finding["severity"] for finding in findings} == {severity}
+    assert get_rule_catalog(rule_id)[0]["severity"] == severity

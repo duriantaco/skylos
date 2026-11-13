@@ -753,6 +753,65 @@ def test_hardening_regression_reports_on_the_changed_file_with_base_exceptions(
     assert dict(fake.settings_roots)["head"] == [".npmrc", "pyproject.toml"]
 
 
+def test_hardening_regressions_point_at_the_weakened_setting(tmp_path):
+    _repo(
+        tmp_path,
+        {
+            ".npmrc": "fetch-retries=1\nregistry=https://registry.npmjs.org/\nignore-scripts=true\nmin-release-age=7\n",
+            "package.json": '{\n  "name": "shop",\n  "dependencies": {\n    "esbuild": "0.25.0"\n  },\n  "pnpm": {\n    "onlyBuiltDependencies": ["sharp"]\n  }\n}\n',
+        },
+    )
+    _git(tmp_path, "checkout", "-qb", "pr")
+    _commit(
+        tmp_path,
+        {
+            ".npmrc": "fetch-retries=1\nregistry=https://registry.npmjs.org/\nignore-scripts=false\nmin-release-age=1\n",
+            "package.json": '{\n  "name": "shop",\n  "dependencies": {\n    "esbuild": "0.25.0"\n  },\n  "pnpm": {\n    "onlyBuiltDependencies": ["sharp", "esbuild"]\n  }\n}\n',
+        },
+    )
+    fake = FakeDiffApi(
+        regressions=[
+            {
+                "kind": "ignore_scripts_disabled",
+                "detail": "npm ignore-scripts was turned off (was true, now False)",
+                "path": ".npmrc",
+                "setting": "npm_ignore_scripts",
+                "base": True,
+                "head": False,
+            },
+            {
+                "kind": "cooldown_lowered",
+                "detail": "npm min-release-age lowered from 7 to 1",
+                "path": ".npmrc",
+                "setting": "npm_days",
+                "base": 7,
+                "head": 1,
+            },
+            {
+                "kind": "allow_builds_added",
+                "detail": "esbuild added to pnpm onlyBuiltDependencies",
+                "path": "package.json",
+                "setting": "pnpm_only_built_dependencies",
+                "base": None,
+                "head": "esbuild",
+                "package": "esbuild",
+            },
+        ]
+    )
+
+    findings, _receipt, errors = _diff(tmp_path, fake)
+
+    assert errors == []
+    assert sorted(
+        (Path(item["file"]).name, item["metadata"]["regression"], item["line"])
+        for item in findings
+    ) == [
+        (".npmrc", "cooldown_lowered", 4),
+        (".npmrc", "ignore_scripts_disabled", 3),
+        ("package.json", "allow_builds_added", 7),
+    ]
+
+
 def test_hardening_check_failed_is_an_error_not_a_pass(tmp_path):
     _repo(tmp_path, {".npmrc": "min-release-age=7\n"})
     _commit(tmp_path, {".npmrc": "min-release-age=1\n"})
@@ -1907,6 +1966,39 @@ def test_real_hardening_regressions_report_a_removed_cooldown(tmp_path):
 
 
 @pytest.mark.skipif(
+    _real("hardening_settings") is None or _real("hardening_regressions") is None,
+    reason="ca9.api hardening functions are not installed",
+)
+def test_real_hardening_regression_points_at_the_turned_off_setting(tmp_path):
+    _repo(
+        tmp_path,
+        {
+            ".npmrc": "registry=https://registry.npmjs.org/\nignore-scripts=true\n",
+            "package.json": '{"name":"a"}\n',
+        },
+    )
+    _commit(
+        tmp_path,
+        {".npmrc": "registry=https://registry.npmjs.org/\nignore-scripts=false\n"},
+    )
+
+    findings, _receipt, errors = diff.supply_chain_diff_findings(
+        tmp_path,
+        "HEAD~1",
+        api=_real("hardening_settings"),
+        dependencies=True,
+        security=False,
+        review_upgrades=False,
+    )
+
+    assert errors == []
+    assert [
+        (item["metadata"]["regression"], Path(item["file"]).name, item["line"])
+        for item in findings
+    ] == [("ignore_scripts_disabled", ".npmrc", 2)]
+
+
+@pytest.mark.skipif(
     _real("review_upgrades") is None, reason="ca9.api.review_upgrades is not installed"
 )
 def test_real_review_upgrades_answers_every_pair_or_stops_the_gate(tmp_path):
@@ -2817,3 +2909,12 @@ def test_publish_job_change_to_a_shell_line_the_inventory_does_not_model(
     assert [
         item["line"] for item in findings if item["rule_id"] == "SKY-D375"
     ] == expected
+
+
+def test_permission_levels_stay_readable_in_redacted_messages():
+    assert redact("job 'publish' gets id-token: write from job permissions") == (
+        "job 'publish' gets id-token: write from job permissions"
+    )
+    assert redact("NPM_TOKEN: npm_abcdefghijklmnop1234") == "NPM_TOKEN: [redacted]"
+    assert redact("password: writer") == "password: [redacted]"
+    assert redact("API_TOKEN=write2") == "API_TOKEN=[redacted]"

@@ -21,10 +21,10 @@ manager.
 | `SKY-D368` | HIGH | An MCP server launched from a hidden home-directory or temp path outside the repository (`~/.dev-utils/server.js`) |
 | `SKY-D369` | MEDIUM | An MCP server package whose name imitates a vendor it is not published by (`postmark-mcp`) |
 | `SKY-D370` | HIGH | Committed agent settings override the API base URL (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`), which sends the API key to that host (the CVE-2026-21852 shape) |
-| `SKY-D371` | HIGH | A tool is installed without a pinned version or hash (`curl \| sh`, `pip install x`, a `setup-*` action without a version) in a job that holds publish credentials or `id-token: write` |
+| `SKY-D371` | HIGH; MEDIUM when the job only has `id-token: write` | A tool is installed without a pinned version or hash (`curl \| sh`, `pip install x`, a `setup-*` action without a version) in a job that holds publish credentials or `id-token: write` |
 | `SKY-D372` | HIGH | A download without a checksum or signature check reaches the publish step |
 | `SKY-D373` | HIGH | A job that can mint OIDC tokens (GitHub `id-token: write`, GitLab `id_tokens`) publishes without a deployment `environment:` |
-| `SKY-D374` | HIGH | A publishing workflow can be started by `workflow_dispatch` or a push to any branch |
+| `SKY-D374` | HIGH; MEDIUM when only pushes to wildcard branches such as `release/*` reach it; LOW when every reachable publish job runs in a fixed environment | A publishing workflow can be started by `workflow_dispatch` or a push to any branch |
 | `SKY-D375` | MEDIUM | `--diff` only: the change adds or modifies a CI job that publishes packages (steps, triggers, permissions, secrets; moved lines alone do not count) |
 | `SKY-D376` | MEDIUM | A job passes secrets (`secrets: inherit` or named secrets) to a reusable workflow from another repository |
 | `SKY-D377` | MEDIUM | An agent or editor config repeats a key (for example two `hooks` blocks): JSON parsers keep different copies, so what you read is not what runs |

@@ -3,10 +3,12 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Iterator
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from skylos.core.safe_cache_io import read_project_text_no_symlink, read_text_no_symlink
+from skylos.rules.config.cicd.yaml_source import YamlSource, load_yaml_with_locations
 from skylos.rules.config.findings import config_finding
 from skylos.security.command_guard import script_comment_ignores, shell_command_risks
 
@@ -295,6 +297,23 @@ def _line_for_key(lines: list[str], key: str) -> int:
         if pattern.search(line):
             return lineno
     return 1
+
+
+@lru_cache(maxsize=4)
+def _yaml_source(text: str) -> YamlSource | None:
+    loaded = load_yaml_with_locations(
+        text, max_depth=MAX_YAML_GRAPH_DEPTH, max_nodes=MAX_YAML_GRAPH_NODES
+    )
+    if loaded is None:
+        return None
+    return loaded[1]
+
+
+def _line_for_path(lines: list[str], path: tuple[Any, ...], fallback: int) -> int:
+    source = _yaml_source("\n".join(lines))
+    if source is None:
+        return fallback
+    return source.line_for_path(path) or fallback
 
 
 def _line_for_value(lines: list[str], value: Any, *, fallback_key: str = "") -> int:
@@ -892,6 +911,9 @@ def _scan_release_cache(
         cache = _effective_job_value(data, job, "cache")
         if not _cache_enabled(cache):
             continue
+        cache_path = (job_id,)
+        if "cache" in job:
+            cache_path = (job_id, "cache")
         _add_finding(
             findings,
             lines,
@@ -903,7 +925,9 @@ def _scan_release_cache(
                     "cache restore in publish/deploy jobs, or isolate release caches."
                 ),
                 file=path,
-                line=_line_for_contains(lines, f"{job_id}:"),
+                line=_line_for_path(
+                    lines, cache_path, _line_for_contains(lines, f"{job_id}:")
+                ),
                 severity="MEDIUM",
                 value=f"{job_id}:cache",
             ),
@@ -939,7 +963,9 @@ def _scan_missing_timeouts(
                     "bounded job timeout to limit hung or compromised CI runs."
                 ),
                 file=path,
-                line=_line_for_contains(lines, f"{job_id}:"),
+                line=_line_for_path(
+                    lines, (job_id,), _line_for_contains(lines, f"{job_id}:")
+                ),
                 severity="LOW",
                 value=f"{job_id}:timeout",
             ),
@@ -1021,7 +1047,11 @@ def _scan_secret_token_ambiguity(
                     f"{ambiguous[0]} does not select an explicit token."
                 ),
                 file=path,
-                line=_line_for_key(lines, ambiguous[0]),
+                line=_line_for_path(
+                    lines,
+                    (job_id, "secrets", ambiguous[0]),
+                    _line_for_key(lines, ambiguous[0]),
+                ),
                 severity="MEDIUM",
                 value=f"{job_id}:{ambiguous[0]}",
             ),

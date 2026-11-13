@@ -1207,7 +1207,7 @@ class JavaSecurityFlowAnalyzer:
         ):
             self._add_finding(
                 "SKY-D252",
-                "HIGH",
+                "MEDIUM",
                 "Cookie is added with Secure disabled. Set Secure before sending sensitive cookies.",
                 line,
                 category="cookie_security",

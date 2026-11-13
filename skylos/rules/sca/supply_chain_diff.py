@@ -607,6 +607,63 @@ def _locate(text: str | None, needle: str) -> int:
     return 1
 
 
+_SETTING_KEYS = {
+    "npm_ignore_scripts": ("ignore-scripts",),
+    "bun_ignore_scripts": ("ignoreScripts",),
+    "yarn_enable_scripts": ("enableScripts",),
+    "pnpm_strict_dep_builds": ("strictDepBuilds", "strict-dep-builds"),
+    "pnpm_dangerously_allow_all_builds": (
+        "dangerouslyAllowAllBuilds",
+        "dangerously-allow-all-builds",
+    ),
+    "pnpm_never_built_dependencies": (
+        "neverBuiltDependencies",
+        "never-built-dependencies",
+    ),
+    "npm_days": ("min-release-age",),
+    "pnpm_minutes": ("minimumReleaseAge", "minimum-release-age"),
+    "yarn": ("npmMinimalAgeGate",),
+    "bun_seconds": ("minimumReleaseAge",),
+    "uv": ("exclude-newer",),
+    "pip": ("uploaded-prior-to",),
+    "dependabot_days": ("default-days",),
+    "renovate": ("minimumReleaseAge",),
+}
+_LIST_SETTING_KEYS = {
+    "pnpm_allow_builds": ("allowBuilds",),
+    "pnpm_only_built_dependencies": (
+        "onlyBuiltDependencies",
+        "only-built-dependencies",
+    ),
+    "bun_trusted_dependencies": ("trustedDependencies",),
+    "npm12_allow_scripts": ("allowScripts",),
+}
+
+
+def _setting_line(text: str | None, setting: str, package: str) -> int | None:
+    keys = _LIST_SETTING_KEYS.get(setting)
+    needle = package
+    if keys is None:
+        keys = _SETTING_KEYS.get(setting)
+        needle = ""
+        if package and setting == "renovate":
+            return None
+    if not text or not keys:
+        return None
+    names = "|".join(re.escape(key) for key in keys)
+    pattern = re.compile(rf"^\s*(?:[\w-]+\.)*[\"']?(?:{names})[\"']?\s*[:=]")
+    rows = text.splitlines()
+    for index, row in enumerate(rows):
+        if not pattern.match(row):
+            continue
+        if needle:
+            for offset, later in enumerate(rows[index:]):
+                if needle in later:
+                    return index + offset + 1
+        return index + 1
+    return None
+
+
 def hardening_findings(sides: GitSides, api, receipt: dict, errors: list) -> list[dict]:
     settings = _api_function(api, "hardening_settings")
     regressions = _api_function(api, "hardening_regressions")
@@ -685,9 +742,11 @@ def _hardening_finding(sides, item, kind, detail, package, head) -> dict:
         path = "."
     line = item.get("line")
     if not isinstance(line, int) or isinstance(line, bool):
-        setting = _text(item.get("setting"), 80).split(".")[-1]
-        needle = package or str(item.get("head") or "") or setting
-        line = _locate(head.get(path), needle)
+        setting = _text(item.get("setting"), 80)
+        line = _setting_line(head.get(path), setting, package)
+        if line is None:
+            needle = package or str(item.get("head") or "") or setting.split(".")[-1]
+            line = _locate(head.get(path), needle)
     metadata = {
         "regression": kind,
         "setting": _text(item.get("setting"), 80),

@@ -27,6 +27,11 @@ Rule IDs use a stable public prefix:
 | `SKY-GPU` | GPU release compatibility findings |
 | `SKY-CIRC` | Circular dependency finding |
 
+A severity written as a range, such as `MEDIUM-HIGH`, means the rule grades
+each finding; the rule's row or the notes under its table say what decides
+the level. The rule catalog (`skylos rules`, Skylos Cloud) records the highest
+severity of the range.
+
 ## Product Glossary
 
 | Term | Meaning |
@@ -164,7 +169,7 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D233 | MEDIUM-CRITICAL | Unsafe deserialization: `marshal.load(s)`, `shelve.open`, `jsonpickle.decode`, `dill.load(s)`, `dill.Unpickler`; Java `XMLDecoder`, XStream `fromXML` with `AnyTypePermission` (HIGH, CRITICAL with request data) or without explicit type permissions (MEDIUM, HIGH with request data: XStream has an allowlist by default from 1.4.18), SnakeYAML `load` without `SafeConstructor` (MEDIUM, HIGH with request data: safe by default from SnakeYAML 2.0), Jackson `enableDefaultTyping` or `activateDefaultTyping` with `LaissezFaireSubTypeValidator`, `@JsonTypeInfo(use = Id.CLASS/MINIMAL_CLASS)` (MEDIUM), Kryo `setRegistrationRequired(false)`; C# `BinaryFormatter`, `SoapFormatter`, `NetDataContractSerializer`, `LosFormatter` and `ObjectStateFormatter` deserialization (HIGH, CRITICAL with request data), Json.NET `TypeNameHandling` other than `None` (HIGH, MEDIUM with a `SerializationBinder`), `new JavaScriptSerializer(new SimpleTypeResolver())` (HIGH) | Python, Java, Kotlin, C# | CWE-502 / A08 |
 | D234 | HIGH | Mass assignment | Python | A01 |
 | D235 | HIGH | Remote command execution via `exec_command` | Python | CWE-78 |
-| D236 | HIGH-CRITICAL | XML external entity (XXE): an XML parser created and used without disabling DTDs or external entities | Java, Kotlin | CWE-611 / A05 |
+| D236 | MEDIUM-CRITICAL | XML external entity (XXE): an XML parser created and used without disabling DTDs or external entities | Java, Kotlin | CWE-611 / A05 |
 | D237 | CRITICAL | Expression, JNDI or script injection: request data evaluated as SpEL, OGNL, MVEL, EL or JEXL, looked up through JNDI, or run by a script engine or Groovy | Java, Kotlin | CWE-917 / CWE-94 / CWE-74 / A03 |
 | D238 | HIGH | NoSQL injection: request data as a MongoDB/Mongoose query object or `$where` | TS/JS | CWE-943 / A03 |
 | D239 | CRITICAL | LDAP injection: request data in the base DN or filter of a JNDI `DirContext`, Spring `LdapTemplate` or UnboundID `LDAPConnection` search | Java | CWE-90 / A03 |
@@ -179,13 +184,13 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D248 | MEDIUM | Hardcoded internal URL | TS/JS | CWE-798 |
 | D250 | MEDIUM | Insecure randomness for security-sensitive values | Python, TS/JS, Go, Java | CWE-330 |
 | D251 | HIGH | Sensitive data in logs | Python, TS/JS | CWE-532 |
-| D252 | MEDIUM | Insecure cookie flags | TS/JS, Go, Java | CWE-614 |
+| D252 | MEDIUM | Insecure cookie flags | Python, TS/JS, Go, Java | CWE-614 |
 | D253 | MEDIUM | Timing-unsafe comparison | TS/JS | CWE-208 |
 | D254 | HIGH | HTTP session trust boundary violation | Java | CWE-501 |
 | D255 | CRITICAL | File inclusion: request data chooses the path of PHP `include`/`require`/`include_once`/`require_once` (reported as D215 before this release) | PHP | CWE-98 / A03 |
 | D257 | HIGH | Android WebView JavaScript bridge: `addJavascriptInterface` in a class (or file, for top-level code) that sets `javaScriptEnabled = true` / `setJavaScriptEnabled(true)`; every page the WebView loads can call the bridge's `@JavascriptInterface` methods | Kotlin | CWE-749 / A05 |
 | D258 | MEDIUM | Android WebView file URL access: `allowFileAccessFromFileURLs` or `allowUniversalAccessFromFileURLs` set to `true` (property or setter form), so a `file://` page can read other local files or any origin | Kotlin | CWE-200 / A05 |
-| D260 | HIGH-CRITICAL | Prompt injection scanner | Text, config, prompt, and source files | AI supply-chain |
+| D260 | MEDIUM-CRITICAL | Prompt injection scanner | Text, config, prompt, and source files | AI supply-chain |
 | D261 | HIGH | Untrusted input to LLM prompt | Python | OWASP LLM01 |
 | D262 | CRITICAL | Unsafe LLM output handling | Python | OWASP LLM05 |
 | D263 | HIGH | Sensitive data sent to LLM | Python | OWASP LLM02 |
@@ -701,7 +706,7 @@ D339, and redundant `//`, `/./` and `..` segments do not hide one.
 
 | ID | Severity | Name | File Types | Details |
 |:---|:---|:---|:---|:---|
-| D260 | HIGH-CRITICAL | Prompt injection scanner | `.py`, `.md`, `.rst`, `.txt`, `.yaml`, `.yml`, `.json`, `.toml`, `.env` | Multi-file scanner with text canonicalization. Bidirectional control characters in Python source are reported once, as D344; D260 keeps them in other files. In YAML and TOML, comments document settings and are not scanned. YAML comment boundaries come from PyYAML's scanner (a `#` inside any scalar, quoted, block or flow, is value text); TOML ones from a string-aware lexer checked by `tomllib`. A file that does not parse keeps every line except whole-line comments. Terminology about generated LLM response text is distinguished from credential disclosure. Access tokens, environment credentials and API keys remain covered by the disclosure patterns |
+| D260 | MEDIUM-CRITICAL | Prompt injection scanner | `.py`, `.md`, `.rst`, `.txt`, `.yaml`, `.yml`, `.json`, `.toml`, `.env` | Multi-file scanner with text canonicalization. Bidirectional control characters in Python source are reported once, as D344; D260 keeps them in other files. In YAML and TOML, comments document settings and are not scanned. YAML comment boundaries come from PyYAML's scanner (a `#` inside any scalar, quoted, block or flow, is value text); TOML ones from a string-aware lexer checked by `tomllib`. A file that does not parse keeps every line except whole-line comments. Terminology about generated LLM response text is distinguished from credential disclosure. Access tokens, environment credentials and API keys remain covered by the disclosure patterns |
 
 Finding types:
 
@@ -905,24 +910,24 @@ Read-only mounts can still expose sensitive data or container-runtime sockets.
 | D291 | MEDIUM-HIGH | Missing or excessive permissions. A job's own `permissions` replaces the workflow's, so workflow-level values are judged by the jobs that inherit them: missing permissions are one finding per workflow naming those jobs (none when every job declares its own), `read-all`/`write-all` need an inheriting job, and a workflow-level `X: write` needs two (with one it is already job-scoped). A job's own `read-all`/`write-all` is reported on that job | GitHub Actions |
 | D292 | HIGH (LOW for GitHub-owned) | Unpinned action or reusable workflow (not a full commit SHA). Valid same-repository job calls using `./.github/workflows/...` or `$/.github/workflows/...` already select the caller's commit and need no additional SHA pin. GitHub-owned `actions/*` and `github/*` at a tag or branch are LOW (GitHub runs the workflow and owns them); a path with `.`, `..` or empty segments gets no such discount. Every other owner, dynamic `${{ }}` refs and refs with no `@` are HIGH | GitHub Actions |
 | D293 | MEDIUM | Checkout persists credentials where they can reach someone new: a later `actions/upload-artifact` of the checkout (`.git` included: before v4.4, or with `include-hidden-files: true`, or a SHA pin), a pull request's code checked out in a job accounts without write access can start, or an explicitly write-scoped token beside a later third-party action. GitHub-owned and local actions already hold the token; an undeclared token scope is D291's finding | GitHub Actions |
-| D294 | HIGH-LOW | Template injection: a `${{ }}` expression in code (`run:`, container and service `options`, code inputs of known actions such as `actions/github-script` `script`) whose value an attacker can shape. Each expression is parsed (`format()`, `toJSON()`, `fromJSON()`, `join()`, `case()` values, `a && b || c`, `github['event']`); a comparison or `contains()` result is not a value. What a context can hold comes from GitHub's webhook payload schemas (PR number or SHA: fixed, not reported). `env` and `matrix` values are followed to the expressions that set them; step outputs to the `$GITHUB_OUTPUT` line that writes them (a direct `${{ }}` or a `$VAR` from `env`), job outputs through `needs`, and reusable-workflow inputs to the local callers that pass them. A payload field counts only for the events that carry it (`github.event.inputs` exists on `workflow_dispatch`, `head_commit` on `push`); base-repository, organization and installation fields are set by maintainers. Severity is who can make the job run: HIGH (MEDIUM for structured text) when an account without write access can, after `if:`/`needs` gates; MEDIUM when it is not known (composite actions, reusable workflows without a local caller); LOW when only writers can or a fork's own sandboxed `pull_request` run sets it. Writer-set values not listed as untrusted by GitHub (`github.ref`, `ref_name`, `base_ref`, `vars.*`) and step/job outputs are not reported | GitHub Actions |
+| D294 | LOW-HIGH | Template injection: a `${{ }}` expression in code (`run:`, container and service `options`, code inputs of known actions such as `actions/github-script` `script`) whose value an attacker can shape. Each expression is parsed (`format()`, `toJSON()`, `fromJSON()`, `join()`, `case()` values, `a && b || c`, `github['event']`); a comparison or `contains()` result is not a value. What a context can hold comes from GitHub's webhook payload schemas (PR number or SHA: fixed, not reported). `env` and `matrix` values are followed to the expressions that set them; step outputs to the `$GITHUB_OUTPUT` line that writes them (a direct `${{ }}` or a `$VAR` from `env`), job outputs through `needs`, and reusable-workflow inputs to the local callers that pass them. A payload field counts only for the events that carry it (`github.event.inputs` exists on `workflow_dispatch`, `head_commit` on `push`); base-repository, organization and installation fields are set by maintainers. Severity is who can make the job run: HIGH (MEDIUM for structured text) when an account without write access can, after `if:`/`needs` gates; MEDIUM when it is not known (composite actions, reusable workflows without a local caller); LOW when only writers can or a fork's own sandboxed `pull_request` run sets it. Writer-set values not listed as untrusted by GitHub (`github.ref`, `ref_name`, `base_ref`, `vars.*`) and step/job outputs are not reported | GitHub Actions |
 | D295 | HIGH | Self-hosted runner exposure | GitHub Actions |
-| D296 | MEDIUM | Unpinned container image | GitHub Actions |
-| D297 | HIGH | Secrets inheritance into reusable workflow | GitHub Actions |
+| D296 | MEDIUM-HIGH | Unpinned container image: HIGH with no tag or `latest`, MEDIUM for any other tag or an image built from an expression | GitHub Actions |
+| D297 | MEDIUM | Secrets inheritance into reusable workflow | GitHub Actions |
 | D298 | MEDIUM | Overprovisioned secrets | GitHub Actions |
 | D299 | MEDIUM | Secret used outside protected environment in a job that accounts without write access can start (`issues`, `issue_comment`, `pull_request_target`, `discussion`, review events, `workflow_run` after a fork-reachable run), after the job's `if`, `needs` and approval environment are applied. Writer-started events and `pull_request` (no secrets for forks) are not reported | GitHub Actions |
-| D300 | HIGH | Unsafe environment file write | GitHub Actions |
+| D300 | MEDIUM | Unsafe environment file write | GitHub Actions |
 | D301 | HIGH | Hardcoded container credentials | GitHub Actions |
 | D302 | HIGH | Broad GitHub App token permissions | GitHub Actions |
-| D303 | MEDIUM | Unsound `contains()` condition | GitHub Actions |
-| D304 | MEDIUM | Spoofable bot condition | GitHub Actions |
-| D305 | MEDIUM | Unsound multiline condition | GitHub Actions |
+| D303 | HIGH | Unsound `contains()` condition | GitHub Actions |
+| D304 | HIGH | Spoofable bot condition | GitHub Actions |
+| D305 | HIGH | Unsound multiline condition | GitHub Actions |
 | D306 | HIGH | Insecure commands enabled | GitHub Actions |
-| D307 | MEDIUM | Anonymous action/workflow definition | GitHub Actions |
+| D307 | LOW | Anonymous action/workflow definition | GitHub Actions |
 | D308 | MEDIUM-HIGH | Cache poisoning risk. Read side (MEDIUM): a step that runs on the `release` or tag-push event of a release-like workflow restores a cache, either because an input enables it or because the action caches without being asked: `actions/setup-go` v4+ (`cache`), `jdx/mise-action`, `actions-rust-lang/setup-rust-toolchain`, `mlugg/setup-zig`, `Swatinem/rust-cache` (unless `lookup-only`), `oven-sh/setup-bun` (unless `no-cache`), `gradle/actions/setup-gradle` (unless `cache-disabled`), `ramsey/composer-install` (unless `ignore-cache`), `astral-sh/setup-uv` v5-v9 on GitHub-hosted runners (`enable-cache: auto`; v10+ skips release and tag runs) and `actions/setup-node` v5+ after a checkout when the root `package.json` names npm in `packageManager` or `devEngines.packageManager`. A job whose `cache-mode` is `none` or `write-only` restores nothing; a commit pin needs a version comment to count. Write side (HIGH): GitHub gives low-trust runs that resolve to the default branch (`pull_request_target`, `issue_comment`, `workflow_run`, issue and discussion events) read-only caches unless `cache-mode: write` or `write-only` is declared; `pull_request_review` runs, like `pull_request`, write only to the merge ref. Reported when such a job, reachable by accounts without write access, has a step they reach that checks out pull request code, downloads the triggering run's artifacts or expands event text into a script. A called workflow gets the local caller's explicit `cache-mode` when it sets none, may request more when the caller sets none, and does not start when it requests more than the caller's. Defaults from each action's action.yml and GitHub's dependency-caching reference, 2026-10-21 | GitHub Actions |
 | D309 | HIGH | Broad secret environment exposure | GitHub Actions |
 | D310 | HIGH | OIDC token exposed to local build script | GitHub Actions |
-| D311 | MEDIUM | Lax artifact upload | GitHub Actions |
+| D311 | LOW | Lax artifact upload | GitHub Actions |
 | D312 | MEDIUM | JavaScript install scripts in CI | GitHub Actions |
 | D313 | LOW | Privileged job missing a bounded timeout while reachable accounts without write access can run pull request code. The default is 360 minutes on both GitHub-hosted and self-hosted runners; trusted jobs and jobs that do not run PR code are not reported | GitHub Actions |
 | D350 | MEDIUM-CRITICAL | AI agent on an untrusted trigger with no actor gate | GitHub Actions |
@@ -941,8 +946,8 @@ Read-only mounts can still expose sensitive data or container-runtime sockets.
 | D317 | HIGH | Untrusted eval | GitLab CI |
 | D318 | HIGH | Docker-in-Docker TLS disabled | GitLab CI |
 | D319 | HIGH | OIDC local-script exposure | GitLab CI |
-| D320 | HIGH | Release cache poisoning risk | GitLab CI |
-| D321 | MEDIUM | Privileged job missing timeout | GitLab CI |
+| D320 | MEDIUM | Release cache poisoning risk | GitLab CI |
+| D321 | LOW | Privileged job missing timeout | GitLab CI |
 | D322 | MEDIUM | Dynamic runner tag | GitLab CI |
 | D323 | MEDIUM | Ambiguous secret token | GitLab CI |
 | D330 | HIGH | Privileged edge container | Docker Compose |
@@ -983,10 +988,10 @@ repository-level workflows and agent configs at the Git top. See
 | D368 | HIGH | MCP server launched from a hidden home-directory or temp path outside the repository | MCP configs |
 | D369 | MEDIUM | MCP server package whose name imitates a vendor it is not published by | MCP configs |
 | D370 | HIGH | Agent API base URL (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`) overridden in committed settings | agent settings |
-| D371 | HIGH | Tool installed without a pinned version or hash in a job holding publish credentials or `id-token: write` | GitHub Actions, GitLab CI |
+| D371 | MEDIUM-HIGH | Tool installed without a pinned version or hash in a job holding publish credentials or `id-token: write` (MEDIUM when the job only has `id-token: write`) | GitHub Actions, GitLab CI |
 | D372 | HIGH | Download without a checksum or signature check reaching the publish step | GitHub Actions, GitLab CI |
 | D373 | HIGH | OIDC publish job without a deployment `environment:` | GitHub Actions (`id-token: write`), GitLab CI (`id_tokens`) |
-| D374 | HIGH | Publishing workflow startable by `workflow_dispatch` or a push to any branch | GitHub Actions |
+| D374 | LOW-HIGH | Publishing workflow startable by `workflow_dispatch` or a push to any branch (MEDIUM when only wildcard branch pushes reach it, LOW when every reachable publish job runs in a fixed environment) | GitHub Actions |
 | D375 | MEDIUM | `--diff` only: the change adds or modifies a CI job that publishes packages (base `ci_inventory` against head, line numbers ignored) | GitHub Actions, GitLab CI |
 | D376 | MEDIUM | Secrets (`secrets: inherit` or named) passed to a reusable workflow from another repository | GitHub Actions |
 | D377 | MEDIUM | Agent or editor config with duplicated keys, so what you read is not what runs | agent and editor settings, MCP configs |
@@ -1255,7 +1260,7 @@ across different operating-system/CPU platforms.
 | ID | Severity | Name | Languages / Scope | CWE |
 |:---|:---|:---|:---|:---|
 | S101 | HIGH-CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Kotlin, Go, PHP, Rust, Swift, Dart, C#, C/C++, shell scripts (including extensionless files with a shell `#!` line), Dockerfiles, Terraform (`.tf`, `.tfvars`, `.hcl`), `.properties`, XML, Gradle, `.npmrc`, `.pypirc` and config files | CWE-798 |
-| S102 | HIGH* | Secret material or server-only environment variable exposed to client-accessible code | TS/JS, HTML, client bundles | CWE-200 |
+| S102 | HIGH-CRITICAL | Secret material or server-only environment variable exposed to client-accessible code | TS/JS, HTML, client bundles | CWE-201, CWE-798 |
 
 `SKY-S101` is `CRITICAL` for provider tokens and for high-entropy values
 under a secret-like name (`key`, `token`, `secret`, `password`, `auth`,
@@ -1349,7 +1354,7 @@ The Go engine may emit `SKY-G` IDs. Cross-language equivalents are remapped to
 | Go Output | Unified ID | Vulnerability |
 |:---|:---|:---|
 | SKY-G203 | SKY-G203 | Defer in loop / resource leak risk |
-| SKY-G206 | SKY-G206 | Unsafe package usage |
+| SKY-G206 | SKY-G206 | Call into the `unsafe` package, such as `unsafe.Pointer(...)`; importing it alone is not reported |
 | SKY-G207 | SKY-D207 | Weak MD5 |
 | SKY-G208 | SKY-D208 | Weak SHA1 |
 | SKY-G209 | SKY-D250 | Weak random source |
@@ -1681,7 +1686,7 @@ provided. See [cleanup test-quality checks](docs/cleanup.md#python-test-quality-
 |:---|:---|:---|:---|:---|
 | Q301 | WARN-HIGH | Cyclomatic complexity | Python, TS/JS, Java, Go | default >10 |
 | Q302 | MEDIUM | Deep nesting | Python, TS/JS, Java, Go | default >3 |
-| Q305 | MEDIUM | Duplicate condition / duplicate branch body | Python, TS/JS | control-flow correctness |
+| Q305 | MEDIUM | Duplicate condition / duplicate branch body | Python, TS/JS, Rust | control-flow correctness |
 | Q306 | MEDIUM | Cognitive complexity | Python | Boolean operator sequences and control-flow nesting |
 | Q401 | HIGH | Async blocking call | Python | blocking calls inside async code |
 | Q402 | LOW | Await in loop | TS/JS | review bounded parallelism only when iterations are independent and ordering/rate limits allow |
@@ -1715,9 +1720,9 @@ provided. See [cleanup test-quality checks](docs/cleanup.md#python-test-quality-
 | F101 | MEDIUM | FastAPI response model / return typing practice | Python |
 | F102 | MEDIUM/HIGH | Framework route auth guard or defeated ownership check; privileged action routes are SKY-D283 | Python |
 | R101 | MEDIUM | Repository missing Python type-check command | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
-| R102 | MEDIUM | Repository missing Python lint command | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
-| R103 | MEDIUM | Repository missing Skylos quality gate | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
-| R104 | MEDIUM | Repository missing pre-commit config | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
+| R102 | LOW | Repository missing Python lint command | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
+| R103 | LOW | Repository missing Skylos quality gate | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
+| R104 | LOW | Repository missing pre-commit config | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
 | R105 | LOW | Repository missing TypeScript type-check command | Repo policy | recognizes `tsc` and Next builds with type errors enabled |
 | CIRC | LOW | Circular dependency between modules (top-level imports). A design finding: severity does not grow with cycle length | Python |
 
@@ -2385,7 +2390,7 @@ from `format(String)`.
 | DC005 | LOW | Unused parameter | LLM report dead-code ID |
 | DC006 | LOW | Empty or unused file | LLM report dead-code ID |
 | UC001 | MEDIUM | Unreachable code after control-flow exit | Python |
-| UC002 | MEDIUM | Unreachable code after return/throw/break/continue | TS/JS, Java |
+| UC002 | MEDIUM | Unreachable code after return/throw/break/continue | TS/JS, Java, C#, Rust |
 | E002 | LOW | Empty or docstring-only file | Python |
 | E003 | LOW | Unused TypeScript/JavaScript file | TS/JS |
 | E004 | LOW | Unnecessary export | TS/JS |

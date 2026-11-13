@@ -58,8 +58,13 @@ _SECRET_OPTION = re.compile(
     r"(?i)(?<!\S)(--[a-z0-9-]*(?:password|passwd|pass|token|secret|api-?key|apikey|auth|credential)"
     r"[a-z0-9-]*)(=|\s+)(?!-|\$)" + _VALUE
 )
+_PERMISSION_LEVEL = r"(?!(?:read|write|none)(?=[\s,;)}\]]|$))"
 _SECRET_ASSIGN = re.compile(
-    r"(?i)\b(" + _SECRET_NAME + r")([\"']?\s*[=:]\s*)(?!\$)" + _VALUE
+    r"(?i)\b("
+    + _SECRET_NAME
+    + r")([\"']?\s*[=:]\s*)(?!\$)"
+    + _PERMISSION_LEVEL
+    + _VALUE
 )
 _SEGMENTS = re.compile(r"(\s*(?:&&|\|\||;|\|)\s*)")
 _PASSWORD_P_PROGRAMS = frozenset(

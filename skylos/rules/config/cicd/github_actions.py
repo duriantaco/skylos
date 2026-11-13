@@ -2274,7 +2274,7 @@ def _scan_secrets_inherit(
                         "Pass only the specific secrets it needs."
                     ),
                     file=path,
-                    line=_line_for_contains(lines, "secrets"),
+                    line=_line_for_job_field(lines, job_id, "secrets"),
                     severity="MEDIUM",
                     value=f"{job_id}:inherit",
                 ),
