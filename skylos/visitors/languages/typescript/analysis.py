@@ -113,6 +113,13 @@ class _TsEntryDiscovery:
     scope: str
 
 
+
+def _has_default_export(defn) -> bool:
+    factors = getattr(defn, "confidence_factors", None)
+    if not isinstance(factors, (list, tuple, set, frozenset)):
+        return False
+    return "default_export" in factors
+
 def resolve_ts_module(source: str, importer: str, monorepo_resolver=None) -> str | None:
     if not source.startswith("."):
         if monorepo_resolver:
@@ -315,7 +322,7 @@ def _build_ts_import_graph(ts_raw_imports, defs, monorepo_resolver=None):
     )
     default_export_defs = defaultdict(list)
     for defn in defs.values():
-        if "default_export" in getattr(defn, "confidence_factors", ()):
+        if _has_default_export(defn):
             default_export_defs[str(defn.filename)].append(defn)
     source_reexported_names = defaultdict(set)
     for exporter_file, raw_imports in ts_raw_imports.items():
@@ -2382,7 +2389,7 @@ def mark_package_api_ts_exports_consumed(
         for defn in defs.values():
             if (
                 defn.is_exported
-                and "default_export" in getattr(defn, "confidence_factors", ())
+                and _has_default_export(defn)
                 and os.path.realpath(str(defn.filename)) in host_entries
             ):
                 consumed_exports.setdefault(str(defn.filename), set()).add(
