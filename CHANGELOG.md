@@ -16,6 +16,42 @@
 * **cicd:** only treat a real YAML comment as an inline ignore for D340 and for shell-command findings on a one-line `run:`, so a marker inside a quoted step value no longer hides a publish or exfiltration finding.
 * **cicd:** locate each shell-command finding inside its own `run:` value, so repeating the command next to an ignore marker elsewhere in the workflow no longer hides it and identical steps are each reported.
 
+## [5.7.0](https://github.com/duriantaco/skylos/compare/v5.6.0...v5.7.0) (2026-11-14)
+
+
+### Features
+
+* **output:** send evidence for why each finding was flagged ([#1226](https://github.com/duriantaco/skylos/issues/1226)) ([f9c1782](https://github.com/duriantaco/skylos/commit/f9c17829552108202ccae648f4c85550877228c0))
+* **quality:** flag tests that run no project code or cannot fail ([#1231](https://github.com/duriantaco/skylos/issues/1231)) ([a60801c](https://github.com/duriantaco/skylos/commit/a60801c3260e7ec8ac8148520a45718251e1a52b))
+* **sca:** verify public npm packages behind private mirrors ([#1216](https://github.com/duriantaco/skylos/issues/1216)) ([8199421](https://github.com/duriantaco/skylos/commit/8199421635cf88042d4ffea4b40e43fd49cc74a8))
+* **security:** catch slow regexes and weak path checks ([#1230](https://github.com/duriantaco/skylos/issues/1230)) ([31d7e3d](https://github.com/duriantaco/skylos/commit/31d7e3d54439cb0ec2fb5c8aa0130257f8292f8a))
+* **typescript:** flag re-exports that nothing imports ([#1238](https://github.com/duriantaco/skylos/issues/1238)) ([e876df1](https://github.com/duriantaco/skylos/commit/e876df16e8852782ec8c3b2b71d36a9f2afcb8a4))
+
+
+### Bug Fixes
+
+* **cicd:** locate unsafe environment writes by step ([#1219](https://github.com/duriantaco/skylos/issues/1219)) ([629f7df](https://github.com/duriantaco/skylos/commit/629f7df0132b0a0c8d48a17c4d24b568b490fe1a))
+* **cicd:** only treat real YAML comments as D340 ignores ([#1225](https://github.com/duriantaco/skylos/issues/1225)) ([1a105bd](https://github.com/duriantaco/skylos/commit/1a105bdc3227b0dce8507a19da9f69fcf90eade2))
+* **cicd:** recognize release-only publish context ([#1218](https://github.com/duriantaco/skylos/issues/1218)) ([01bb700](https://github.com/duriantaco/skylos/commit/01bb70024049f7b2aa38294740f81732df7edf6a))
+* **danger:** run the graph query check when the keyword has no space ([#1228](https://github.com/duriantaco/skylos/issues/1228)) ([017365e](https://github.com/duriantaco/skylos/commit/017365e64b19109199fc9d037c80b7f795e2087b))
+* **report:** honour [tool.skylos].ignore for SKY-E004 unused exports ([#1221](https://github.com/duriantaco/skylos/issues/1221)) ([7372b5f](https://github.com/duriantaco/skylos/commit/7372b5f2572e7e32491b5362ddf952af3a6cba70))
+* **sca:** keep the npm mirror identity cache usable ([#1224](https://github.com/duriantaco/skylos/issues/1224)) ([89b8873](https://github.com/duriantaco/skylos/commit/89b88730c8c2c6fe952c8d61d06975f8422a9925))
+* **security:** catch more Python flaws, faster scans, upgrade notice ([#1227](https://github.com/duriantaco/skylos/issues/1227)) ([a5024d7](https://github.com/duriantaco/skylos/commit/a5024d78565de6ed5840fa3e0c96c8ab6db27c00))
+* **security:** distinguish remote-code settings from model loaders ([#1222](https://github.com/duriantaco/skylos/issues/1222)) ([3f47e36](https://github.com/duriantaco/skylos/commit/3f47e36da352caae19acd789690094ce9e372fd0))
+* **security:** only trust a path prefix check that ends with a separator ([#1233](https://github.com/duriantaco/skylos/issues/1233)) ([3c62928](https://github.com/duriantaco/skylos/commit/3c629289f2c5384102c4258064cae150fcbf7189))
+
+
+### Performance Improvements
+
+* **analyzer:** reduce repeated Python analysis work ([#1214](https://github.com/duriantaco/skylos/issues/1214)) ([3b50dc0](https://github.com/duriantaco/skylos/commit/3b50dc04656f287434a3a18cad28d824708550a6))
+
+
+### Documentation
+
+* **cloud:** describe yearly Workspace and Growth plans ([#1223](https://github.com/duriantaco/skylos/issues/1223)) ([d938873](https://github.com/duriantaco/skylos/commit/d9388732296a4b8de5faaa66d22322c224987bfd))
+* **handbook:** rule handbook with verified examples and a Skylos Cloud guide ([#1232](https://github.com/duriantaco/skylos/issues/1232)) ([2e2a2ea](https://github.com/duriantaco/skylos/commit/2e2a2eae52c0197ebd1c92e2e437212a6b03aade))
+* **readme:** cut the README and move details into guides ([#1234](https://github.com/duriantaco/skylos/issues/1234)) ([20f5a15](https://github.com/duriantaco/skylos/commit/20f5a15139ab637d176bcb383df13957e725400e))
+
 ## [5.6.0](https://github.com/duriantaco/skylos/compare/v5.5.0...v5.6.0) (2026-11-11)
 
 
