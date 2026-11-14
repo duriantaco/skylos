@@ -230,7 +230,7 @@ expected answers and tool calls, use `skylos agent test`. See
 [agent verification](./docs/agent-verification.md) and
 [agent behavior testing](./docs/agent-behavior-testing.md).
 
-## Language support
+## Language Support
 
 | Language | Dead code | Security | Quality |
 |:---|:---:|:---:|:---:|
@@ -239,13 +239,13 @@ expected answers and tool calls, use `skylos agent test`. See
 | Java | Yes | Yes | Yes |
 | Go | Yes | Partial | Partial |
 | PHP | Yes | Yes | No |
-| Dart | Yes | Partial | No |
-| C# | Partial | Partial | Partial |
 | Rust | Experimental | Partial | Partial |
 | Ruby | Partial | Partial | No |
+| Dart | Yes | Partial | No |
+| C# | Partial | Partial | Partial |
+| C++ | Partial | No | No |
 | Kotlin | Partial | Partial | No |
 | Swift | Partial | No | No |
-| C++ | Partial | No | No |
 | Shell | No | Partial | No |
 
 - Python has the deepest coverage.

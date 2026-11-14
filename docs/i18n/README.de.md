@@ -248,13 +248,13 @@ Siehe [Agent-Verifikation](../agent-verification.md) und
 | Java | Ja | Ja | Ja |
 | Go | Ja | Teilweise | Teilweise |
 | PHP | Ja | Ja | Nein |
-| Dart | Ja | Teilweise | Nein |
-| C# | Teilweise | Teilweise | Teilweise |
 | Rust | Experimentell | Teilweise | Teilweise |
 | Ruby | Teilweise | Teilweise | Nein |
+| Dart | Ja | Teilweise | Nein |
+| C# | Teilweise | Teilweise | Teilweise |
+| C++ | Teilweise | Nein | Nein |
 | Kotlin | Teilweise | Teilweise | Nein |
 | Swift | Teilweise | Nein | Nein |
-| C++ | Teilweise | Nein | Nein |
 | Shell | Nein | Teilweise | Nein |
 
 - Python hat die tiefste Abdeckung.

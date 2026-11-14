@@ -199,13 +199,13 @@ skylos defend . --format md -o evidence.md   # 含 OWASP LLM Top 10 覆盖情况
 | Java | 是 | 是 | 是 |
 | Go | 是 | 部分 | 部分 |
 | PHP | 是 | 是 | 否 |
-| Dart | 是 | 部分 | 否 |
-| C# | 部分 | 部分 | 部分 |
 | Rust | 实验性 | 部分 | 部分 |
 | Ruby | 部分 | 部分 | 否 |
+| Dart | 是 | 部分 | 否 |
+| C# | 部分 | 部分 | 部分 |
+| C++ | 部分 | 否 | 否 |
 | Kotlin | 部分 | 部分 | 否 |
 | Swift | 部分 | 否 | 否 |
-| C++ | 部分 | 否 | 否 |
 | Shell | 否 | 部分 | 否 |
 
 - Python 的覆盖最深。
