@@ -11,8 +11,9 @@ gate:
 
 what_it_is: >-
   `requests` waits for a server's answer as long as it takes unless you pass
-  `timeout=`. SKY-L031 reports a `requests`, `httpx` or `urlopen` call made
-  without a timeout, or with `timeout=None`.
+  `timeout=`. SKY-L031 reports a `requests` or `urlopen` call made without a
+  timeout, and any of them or an `httpx` call with `timeout=None`. Plain
+  `httpx` calls already wait at most five seconds by default.
 
 why_it_matters: >-
   A server that accepts the connection and never answers holds the calling
@@ -74,8 +75,8 @@ how_skylos_decides:
     `urllib.request.urlopen` and a bare `urlopen`. Add names with
     `extra_network_timeout_calls` under `[tool.skylos.vibe]`.
   - >-
-    Reports MEDIUM when the call has no `timeout=` keyword, or when it passes
-    `timeout=None`. Any other `timeout=` value, even a variable, counts as a
+    Reports MEDIUM when a `requests` or `urlopen` call has no `timeout=`
+    keyword, or when any of the calls passes `timeout=None`. Any other `timeout=` value, even a variable, counts as a
     timeout.
   - >-
     The finding points at the line where the call starts.
@@ -113,10 +114,6 @@ fix:
 
 false_alarms_and_suppression:
   misfires:
-    - >-
-      `httpx` functions already apply a five-second default timeout, so an
-      `httpx.get(url)` without `timeout=` does not hang forever; it is still
-      reported.
     - >-
       A timeout passed through `**kwargs`, or as the third positional
       argument of `urlopen(url, data, timeout)`, is not seen, and the call is

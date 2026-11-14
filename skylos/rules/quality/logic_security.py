@@ -3870,6 +3870,9 @@ def _qualified_call_name(func_node):
     return None
 
 
+_DEFAULT_TIMEOUT_LIBRARIES = frozenset({"httpx"})
+
+
 def _is_none_constant(node: ast.AST) -> bool:
     return isinstance(node, ast.Constant) and node.value is None
 
@@ -3895,6 +3898,11 @@ class MissingNetworkTimeoutRule(SkylosRule):
 
         timeout_kw = next((kw for kw in node.keywords if kw.arg == "timeout"), None)
         if timeout_kw is not None and not _is_none_constant(timeout_kw.value):
+            return None
+        if (
+            timeout_kw is None
+            and call_name.split(".", 1)[0] in _DEFAULT_TIMEOUT_LIBRARIES
+        ):
             return None
 
         basename = Path(filename).name

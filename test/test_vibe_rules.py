@@ -2230,11 +2230,20 @@ class TestMissingNetworkTimeout:
         assert l031
         assert l031[0]["name"] == "requests.get"
 
-    def test_httpx_call_without_timeout_flagged(self):
+    def test_httpx_call_without_timeout_uses_the_library_default(self):
         code = """
         import httpx
         def send(payload):
             return httpx.post("https://api.example.com/data", json=payload)
+        """
+        findings = check_code(MissingNetworkTimeoutRule(), code, filename="app.py")
+        assert not any(f["rule_id"] == "SKY-L031" for f in findings)
+
+    def test_httpx_call_with_timeout_none_flagged(self):
+        code = """
+        import httpx
+        def send(payload):
+            return httpx.post("https://api.example.com/data", json=payload, timeout=None)
         """
         findings = check_code(MissingNetworkTimeoutRule(), code, filename="app.py")
         assert any(f["rule_id"] == "SKY-L031" for f in findings)
