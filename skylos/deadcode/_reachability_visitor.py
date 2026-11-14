@@ -753,8 +753,25 @@ class SourceVisitor(ast.NodeVisitor):
 
     def visit_Return(self, node: ast.Return | ast.Yield | ast.YieldFrom) -> None:
         if node.value is not None:
+            self.outside_consumer = self._owner_is_module_api()
             self._protect_value(node.value)
+            self.outside_consumer = False
             self.visit(node.value)
+
+    def _owner_is_module_api(self) -> bool:
+        """Code outside the project can call the function that returns this value."""
+        if self.owner is None:
+            return False
+        definition = self.index.candidates.get(self.owner)
+        if definition is None:
+            return False
+        name = definition.simple_name
+        if name.startswith("_"):
+            return False
+        exported = _literal_export_list(self.module.tree)
+        if exported is not None:
+            return name in exported
+        return self.module.path.name == "__init__.py"
 
     visit_Yield = visit_Return
     visit_YieldFrom = visit_Return

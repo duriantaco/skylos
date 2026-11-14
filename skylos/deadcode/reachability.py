@@ -125,6 +125,7 @@ class PythonReachabilityReport:
         self.protected_keys: set[str] = set()
         self.protected_callback_keys: set[str] = set()
         self.dynamic_lookup_keys: set[str] = set()
+        self.opaque_lookup = False
         self.name_exposed_keys: set[str] = set()
         self._referenced_names: frozenset[str] | None = None
         self.reasons: dict[str, str] = {}
@@ -197,6 +198,7 @@ class PythonReachabilityReport:
         )
         self.unreachable_keys = set(candidates) - reached if self.complete else set()
         opaque = self._has_opaque_lookup(reached | protected)
+        self.opaque_lookup = opaque
         self.dynamic_lookup_keys = set()
         if opaque:
             self.dynamic_lookup_keys = set(self.unreachable_keys)
@@ -218,7 +220,7 @@ class PythonReachabilityReport:
         whose name appears nowhere has no caller that an unresolved receiver
         could hide.
         """
-        if self.graph.unread_text:
+        if self.graph.unread_text or self.opaque_lookup:
             return set()
         named = self._names_in_source()
         methods = self.index.method_classes
