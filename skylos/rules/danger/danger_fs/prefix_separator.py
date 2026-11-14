@@ -26,21 +26,93 @@ def dotted(node):
     return ".".join(reversed(parts))
 
 
-def ends_with_separator(node, resolve, canonical):
+def module_level_imports(tree):
+    """``name -> dotted target`` for the imports the module itself makes.
+
+    A name imported inside one function says nothing about another scope, so
+    those bindings are left out: a bare name is then simply unresolved, which
+    is the conservative answer.
+    """
+    aliases = {}
+    pending = list(ast.iter_child_nodes(tree))
+    while pending:
+        node = pending.pop()
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    aliases[alias.asname] = alias.name
+                else:
+                    top = alias.name.split(".", 1)[0]
+                    aliases[top] = top
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for alias in node.names:
+                if alias.name != "*":
+                    aliases[alias.asname or alias.name] = (
+                        f"{node.module}.{alias.name}"
+                    )
+        pending.extend(ast.iter_child_nodes(node))
+    return aliases
+
+
+def ends_with_separator(node, resolve, canonical, module_resolve=None, depth=0):
     """True when the prefix ``node`` provably ends with a separator.
 
     ``resolve(name)`` returns the one expression a name is bound to, or None.
     ``canonical(node)`` returns the standard-library name an expression
     refers to (``"os.sep"``), or None when it is not a trusted import.
+    A name with no binding of its own is looked up as an import, so
+    ``from os import sep`` counts wherever ``os.sep`` does.
+
+    A tuple's members are expanded with ``module_resolve``: they belong to the
+    scope that declared the tuple, not to the scope doing the check.
     """
-    if isinstance(node, ast.Tuple):
-        return bool(node.elts) and all(
-            ends_with_separator(item, resolve, canonical) for item in node.elts
-        )
-    value = _resolved(node, resolve, 0)
-    if value is None or _only_separators(value, resolve, canonical, 0):
+    if depth > _MAX_DEPTH:
         return False
-    return _terminal(value, resolve, canonical, 0)
+    if isinstance(node, ast.Tuple):
+        return _tuple_members_end_at_separators(
+            node.elts, resolve, canonical, module_resolve, depth
+        )
+    value = _resolved(node, resolve, depth)
+    if value is None:
+        return False
+    if isinstance(value, ast.Tuple):
+        return _tuple_members_end_at_separators(
+            value.elts, resolve, canonical, module_resolve, depth
+        )
+    if _only_separators(value, resolve, canonical, depth):
+        return False
+    return _terminal(value, resolve, canonical, depth)
+
+
+def _names_mean_the_same(node, resolve, module_resolve) -> bool:
+    """No name in ``node`` is bound at module level to something other than
+    what the scope doing the check resolves it to."""
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name):
+            module_value = module_resolve(child.id)
+            if module_value is not None and resolve(child.id) is not module_value:
+                return False
+    return True
+
+
+def _tuple_members_end_at_separators(items, resolve, canonical, module_resolve, depth):
+    if not items:
+        return False
+    if module_resolve is not None and not all(
+        _names_mean_the_same(item, resolve, module_resolve) for item in items
+    ):
+        # A member names something the checking scope binds differently, so
+        # the tuple's runtime value is not the one written here.
+        return False
+    member_resolve = module_resolve or resolve
+    return all(
+        ends_with_separator(item, member_resolve, canonical, module_resolve, depth + 1)
+        for item in items
+    )
 
 
 def _resolved(node, resolve, depth):
@@ -58,7 +130,10 @@ def _only_separators(node, resolve, canonical, depth):
     if depth > _MAX_DEPTH or node is None:
         return False
     if isinstance(node, ast.Name):
-        return _only_separators(resolve(node.id), resolve, canonical, depth + 1)
+        value = resolve(node.id)
+        if value is None:
+            return canonical(node) in SEPARATOR_NAMES
+        return _only_separators(value, resolve, canonical, depth + 1)
     if isinstance(node, ast.Constant):
         return isinstance(node.value, str) and node.value.strip("/\\") == ""
     if isinstance(node, ast.Attribute):
@@ -85,7 +160,10 @@ def _terminal(node, resolve, canonical, depth):
     if depth > _MAX_DEPTH or node is None:
         return False
     if isinstance(node, ast.Name):
-        return _terminal(resolve(node.id), resolve, canonical, depth + 1)
+        value = resolve(node.id)
+        if value is None:
+            return canonical(node) in SEPARATOR_NAMES
+        return _terminal(value, resolve, canonical, depth + 1)
     if isinstance(node, ast.Constant):
         return isinstance(node.value, str) and node.value.endswith(SEPARATORS)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
@@ -112,7 +190,10 @@ def _join_ends_with_separator(call, resolve, canonical, depth):
         return False
     last = call.args[-1]
     if isinstance(last, ast.Constant) and last.value == "":
-        return True
+        return not all(
+            _only_separators(argument, resolve, canonical, depth + 1)
+            for argument in call.args[:-1]
+        )
     if _only_separators(last, resolve, canonical, depth + 1):
         return False
     return _terminal(last, resolve, canonical, depth + 1)

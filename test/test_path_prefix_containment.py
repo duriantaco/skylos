@@ -85,7 +85,14 @@ def sink_line(code):
         ("target.startswith('/')", None, ""),
         ("target.startswith(f'{os.sep}')", None, ""),
         ("target.startswith(SEP)", None, "SEP = os.path.sep\n"),
+        ("target.startswith(sep)", None, "from os import sep\n"),
         ("target.startswith(os.path.join(BASE, '/'))", None, ""),
+        ("target.startswith(os.path.join('/', ''))", None, ""),
+        (
+            "target.startswith(os.path.join(base, ''))",
+            "    base = ''\n    target = os.path.normpath(os.path.join(BASE, name))\n",
+            "",
+        ),
     ],
 )
 def test_prefix_without_a_separator_does_not_prove_containment(
@@ -103,7 +110,21 @@ def test_prefix_without_a_separator_does_not_prove_containment(
         ("target.startswith(BASE + os.path.sep)", None, ""),
         ("target.startswith(BASE + '/')", None, ""),
         ("target.startswith(f'{BASE}/')", None, ""),
+        ("target.startswith(BASE + sep)", None, "from os import sep\n"),
+        ("target.startswith(BASE + sep)", None, "from os.path import sep\n"),
+        ("target.startswith(BASE + separator)", None, "from os import sep as separator\n"),
+        ("target.startswith(f'{BASE}{sep}')", None, "from os import sep\n"),
+        (
+            "target.startswith((BASE + sep, OTHER + '/'))",
+            None,
+            "from os import sep\nOTHER = '/srv/other'\n",
+        ),
         ("target.startswith(os.path.join(BASE, ''))", None, ""),
+        (
+            "target.startswith(PREFIXES)",
+            None,
+            "OTHER = '/srv/other'\nPREFIXES = (BASE + os.sep, OTHER + '/')\n",
+        ),
         ("target.startswith('/srv/files/')", None, ""),
         (
             "target.startswith(PREFIX)",
@@ -148,6 +169,24 @@ def test_sibling_prefix_in_a_positive_branch_is_reported(tmp_path):
     line = code.splitlines().index("        return FileResponse(target)") + 1
 
     assert traversal_lines(tmp_path, code) == [line]
+
+
+def test_sep_rebound_in_the_checking_function_does_not_prove_containment(tmp_path):
+    code = """import os
+from os import sep
+
+BASE = "/srv/files"
+
+def read(sep, name):
+    if ".." in name:
+        raise ValueError
+    target = os.path.realpath(os.path.join(BASE, name))
+    if not target.startswith(BASE + sep):
+        raise ValueError
+    return open(target).read()
+"""
+
+    assert traversal_lines(tmp_path, code) == [12]
 
 
 def test_separator_prefix_in_a_positive_branch_stays_quiet(tmp_path):
@@ -210,3 +249,78 @@ def read():
 """
 
     assert traversal_lines(tmp_path, code) == []
+
+
+def test_tuple_prefix_members_resolve_in_their_declaration_scope(tmp_path):
+    # The module binds BASE to "", so PREFIXES is ("/",): a prefix of only
+    # separators, which proves nothing. The function's own BASE is a
+    # different binding and must not be used to expand the tuple.
+    code = """import os
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+
+app = FastAPI()
+BASE = ""
+PREFIXES = (BASE + "/",)
+
+
+@app.get("/files/{name}")
+def download(name: str):
+    BASE = "/srv/files"
+    target = os.path.normpath(os.path.join(BASE, name))
+    if not target.startswith(PREFIXES):
+        raise HTTPException(404)
+    return FileResponse(target)
+"""
+
+    assert traversal_lines(tmp_path, code) == [sink_line(code)]
+
+
+def test_import_alias_from_another_scope_does_not_prove_containment(tmp_path):
+    # The module's S is os.extsep ("."); a separator imported as S inside an
+    # unrelated function says nothing about it.
+    code = """import os
+from os import extsep as S
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+
+app = FastAPI()
+BASE = "/srv/files"
+
+
+def unrelated(path):
+    from os import sep as S
+    return path + S
+
+
+@app.get("/files/{name}")
+def download(name: str):
+    target = os.path.normpath(os.path.join(BASE, name))
+    if not target.startswith(BASE + S):
+        raise HTTPException(404)
+    return FileResponse(target)
+"""
+
+    assert traversal_lines(tmp_path, code) == [sink_line(code)]
+
+
+def test_self_referential_tuple_prefix_does_not_abort_the_scan(tmp_path):
+    code = """import os
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+
+app = FastAPI()
+BASE = "/srv/files"
+PREFIXES = (PREFIXES,)
+
+
+@app.get("/files/{name}")
+def download(name: str):
+    target = os.path.normpath(os.path.join(BASE, name))
+    if not target.startswith(PREFIXES):
+        raise HTTPException(404)
+    return FileResponse(target)
+"""
+
+    assert traversal_lines(tmp_path, code) == [sink_line(code)]
+

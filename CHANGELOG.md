@@ -6,6 +6,7 @@
 
 * **deadcode:** stop reporting attributes declared on Protocol classes as unused variables.
 * **danger:** reach the graph-query check for compact or multi-line Cypher instead of skipping the whole security scan.
+* **danger:** prove a separator prefix the same way for an imported separator, a named tuple of prefixes and a base joined with an empty string, reading each name in the scope that declares it, so a valid containment guard is no longer reported and a vacuous one is no longer trusted.
 * **deadcode:** only treat a class as a protocol when it inherits `typing.Protocol` or `typing_extensions.Protocol`, so `asyncio.Protocol` subclasses keep their dead members reported.
 * **cicd:** read the PR diff as bytes and parse Git's quoted and TAB-terminated paths, so non-ASCII names, non-UTF-8 bytes and bare CRs no longer hide security regressions from the PR review.
 * **cicd:** keep changed-line counts and risk evidence scoped to the PR diff in summary-only reviews.
