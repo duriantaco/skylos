@@ -448,3 +448,61 @@ def test_hook_entry_skips_full_cli_import(tmp_path):
     )
     assert "HEAVY=" in result.stderr
     assert result.stderr.split("HEAVY=")[-1].strip() == ""
+
+
+_REBINDING_FIXTURE = {
+    "pkg/__init__.py": "",
+    "pkg/core/__init__.py": "from .component import component\n",
+    "pkg/core/component.py": (
+        "class _C:\n    def output_types(self):\n        return 1\n\ncomponent = _C()\n"
+    ),
+    "pkg/plain/__init__.py": "class Obj:\n    pass\n\ncomponent = Obj()\n",
+    "pkg/plain/component.py": "def helper():\n    return 1\n",
+    "pkg/other.py": "def real():\n    return 1\n",
+    "pkg/alias/__init__.py": "from pkg import other as component\n",
+    "pkg/alias/component.py": "def helper():\n    return 1\n",
+    "app.py": (
+        "import pkg.plain.component\n"
+        "from pkg.core import component\n"
+        "from pkg.alias import component as aliased\n\n"
+        "def f():\n"
+        "    component.output_types()\n"
+        "    aliased.missing_alias()\n"
+        "    return pkg.plain.component.missing_plain()\n"
+    ),
+}
+
+
+def test_cached_scan_keeps_package_rebinding_answers(tmp_path):
+    for name, source in _REBINDING_FIXTURE.items():
+        _write(tmp_path, name, source)
+    _assert_same(tmp_path, ["app.py"])
+    warm, info = _assert_same(tmp_path, ["app.py"])
+    assert info["loaded_entries"] > 0
+    assert _names(warm) == ["missing_alias", "missing_plain"]
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        ["not a kind", None],
+        ["module", None],
+        ["loaded module", None],
+        ["module", ""],
+        ["object", "pkg.other"],
+    ],
+    ids=["unknown-kind", "module-without-target", "cached-module-without-target", "empty-target", "object-with-target"],
+)
+def test_tampered_package_binding_is_rebuilt(tmp_path, binding):
+    for name, source in _REBINDING_FIXTURE.items():
+        _write(tmp_path, name, source)
+    _scan(tmp_path, ["app.py"], cached=True)
+    cache = tmp_path / mfi.CACHE_PATH
+    data = json.loads(cache.read_text(encoding="utf-8"))
+    for entry in data["entries"].values():
+        payload = entry.get("facts") if isinstance(entry, dict) else None
+        if isinstance(payload, dict) and payload.get("pb"):
+            payload["pb"] = {"component": binding}
+    cache.write_text(json.dumps(data), encoding="utf-8")
+    warm, _info = _assert_same(tmp_path, ["app.py"])
+    assert _names(warm) == ["missing_alias", "missing_plain"]

@@ -75,6 +75,7 @@ class _ScopeInfo:
     bound_names: set[str]
     local_imports: dict[str, list[tuple[int, str]]]
     imported_module_paths: dict[str, list[tuple[int, str]]]
+    loaded_modules: dict = dataclass_field(default_factory=dict)
 
 
 @dataclass
@@ -106,6 +107,8 @@ class _ModuleFacts:
     # but enough that a reference to them is not a phantom.
     possible_members: set[str] = dataclass_field(default_factory=set)
     type_checking_possible_members: set[str] = dataclass_field(default_factory=set)
+    package_bindings: dict = dataclass_field(default_factory=dict)
+    package_star: tuple = ()
 
 
 @releases_python_ast_cache
@@ -138,6 +141,7 @@ def scan_repo_phantom_security_references(
     module_type_checking_node_ids = {}
     module_possible_members = {}
     module_type_checking_possible_members = {}
+    module_package_bindings = {}
     parse_failures = set()
 
     for file_path in files:
@@ -193,6 +197,10 @@ def scan_repo_phantom_security_references(
         module_possible_members[module_name] = facts.possible_members
         module_type_checking_possible_members[module_name] = (
             facts.type_checking_possible_members
+        )
+        module_package_bindings[module_name] = (
+            facts.package_bindings,
+            facts.package_star,
         )
         dynamic_modules.discard(module_name)
         type_checking_dynamic_modules.discard(module_name)
@@ -364,6 +372,15 @@ def scan_repo_phantom_security_references(
                 )
             return module_members, module_alias_exports, dynamic_modules
 
+        def _package_binding(package, name):
+            return stored_package_binding(
+                module_package_bindings,
+                package,
+                name,
+                star_exports=_star_export_names,
+                aliases=module_alias_exports,
+            )
+
         findings.extend(
             _direct_local_import_findings(
                 file_path,
@@ -403,6 +420,7 @@ def scan_repo_phantom_security_references(
                     module_alias_exports=active_aliases,
                     local_modules=local_modules,
                     ensure_module_loaded=_ensure_module_loaded,
+                    binds_name=_package_binding,
                 )
                 if not resolved:
                     continue
@@ -466,6 +484,7 @@ def scan_repo_phantom_security_references(
                     module_alias_exports=active_aliases,
                     local_modules=local_modules,
                     ensure_module_loaded=_ensure_module_loaded,
+                    binds_name=_package_binding,
                 )
                 if not resolved:
                     continue
@@ -520,6 +539,7 @@ def scan_repo_phantom_security_references(
                     module_alias_exports=active_aliases,
                     local_modules=local_modules,
                     ensure_module_loaded=_ensure_module_loaded,
+                    binds_name=_package_binding,
                 )
                 if not resolved:
                     continue
@@ -701,8 +721,12 @@ def _conditionally_bound_names(tree, *, type_checking_mode=False):
 
     Module facts keep names bound on every path. That is too strong for
     saying a name does not exist when the module binds it inside
-    ``try``/``except`` (an optional import whose handler exits or falls back)
-    or when one of its functions declares it ``global``. ``TYPE_CHECKING``
+    ``try``/``except`` (an optional import whose handler exits or falls back),
+    inside ``with`` (the context manager may swallow the exception that stops
+    the binding, as ``contextlib.suppress`` and lazy-import guards do) or when
+    one of its functions declares it ``global``. A name bound only under a
+    runtime ``if``, a loop or a ``match`` case stays unbound here: importing it
+    fails whenever that path is skipped. ``TYPE_CHECKING``
     guards and constant conditions still select one branch, and a later
     top-level ``del`` still removes a name.
     """
@@ -777,7 +801,7 @@ def _conditionally_bound_names(tree, *, type_checking_mode=False):
                 for item in stmt.items:
                     if item.optional_vars is not None:
                         bind(_extract_target_names(item.optional_vars), in_try)
-                visit(stmt.body, in_try=in_try, top_level=False)
+                visit(stmt.body, in_try=True, top_level=False)
             elif isinstance(stmt, ast.Match):
                 for case in stmt.cases:
                     bind(_extract_match_pattern_names(case.pattern), in_try)
@@ -981,6 +1005,346 @@ def _created_module_attributes(
 
 def _is_package_module_file(file_path):
     return file_path.name in {"__init__.py", "__init__.pyi", "__init__.pyw"}
+
+
+MODULE_BINDING = "module"
+CACHED_MODULE_BINDING = "loaded module"
+LOADED_OBJECT_BINDING = "loaded object"
+OBJECT_BINDING = "object"
+UNBOUND_BINDING = "unbound"
+_BINDING_KINDS = frozenset(
+    {MODULE_BINDING, CACHED_MODULE_BINDING, LOADED_OBJECT_BINDING, OBJECT_BINDING, UNBOUND_BINDING}
+)
+_MAX_BINDING_HOPS = 8
+
+
+def stored_package_binding(
+    package_bindings, package, name, *, star_exports=None, aliases=None
+):
+    """What ``package.name`` is once the package ``__init__`` has run, from the
+    package's module facts (``package_bindings[package]`` is ``(bindings,
+    star_sources)``; see ``_collect_package_bindings``). None: the package binds
+    nothing under that name, so Python falls back to the submodule."""
+    entry = package_bindings.get(package)
+    if entry is None:
+        return None
+    bindings, stars = entry
+    result = bindings.get(name)
+    for source, overwritten in stars:
+        if name in overwritten:
+            continue
+        exported = None
+        if star_exports is not None:
+            exported = star_exports(source)
+        if exported is not None and name not in exported:
+            continue
+        target = None
+        if aliases is not None:
+            target = aliases.get(source, {}).get(name)
+        if target is not None:
+            result = MODULE_BINDING, target
+        elif _child_of_package(source, package) == name:
+            result = LOADED_OBJECT_BINDING, None
+        else:
+            result = OBJECT_BINDING, None
+    return result
+
+
+def local_star_export_names(module_name, module_files, seen=()):
+    if module_name in seen:
+        return None
+    module_file = module_files.get(module_name)
+    if module_file is None:
+        return None
+    _source, tree = load_python_module(module_file, MODE_REPLACE)
+    if tree is None:
+        return None
+    names, nested, explicit_all = _may_bound_module_names(
+        tree, module_name, _is_package_module_file(module_file)
+    )
+    if explicit_all is not None:
+        return set(explicit_all)
+    if "__getattr__" in names:
+        return None
+    result = set()
+    for name in names:
+        if not name.startswith("_"):
+            result.add(name)
+    for source in nested:
+        exported = local_star_export_names(source, module_files, (*seen, module_name))
+        if exported is None:
+            return None
+        result.update(exported)
+    return result
+
+
+def _child_of_package(module_name, package):
+    prefix = f"{package}."
+    if not module_name or not module_name.startswith(prefix):
+        return None
+    return module_name[len(prefix):].split(".")[0]
+
+
+def _walrus_names(expressions):
+    names = set()
+    stack = [node for node in expressions if node is not None]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Lambda):
+            continue
+        if isinstance(node, ast.NamedExpr):
+            names.update(_extract_target_names(node.target))
+        stack.extend(ast.iter_child_nodes(node))
+    return names
+
+
+def _statement_expressions(stmt):
+    if isinstance(stmt, (ast.Expr, ast.Assign, ast.AnnAssign, ast.AugAssign)):
+        return [stmt.value]
+    if isinstance(stmt, (ast.If, ast.While)):
+        return [stmt.test]
+    if isinstance(stmt, (ast.For, ast.AsyncFor)):
+        return [stmt.iter]
+    if isinstance(stmt, (ast.With, ast.AsyncWith)):
+        return [item.context_expr for item in stmt.items]
+    if isinstance(stmt, ast.Match):
+        return [stmt.subject]
+    return []
+
+
+def _collect_package_bindings(tree, package, local_modules):
+    """How the package ``__init__`` leaves each name it binds, as Python's
+    import system does: ``(MODULE_BINDING, target)`` for a module, from an
+    import alias or because loading the child module ``package.name`` sets that
+    attribute; ``(LOADED_OBJECT_BINDING, None)`` for a value bound right after
+    its submodule loaded (``from .component import component``): the submodule
+    is already in ``sys.modules``, so importing it again leaves the value in
+    place; ``(OBJECT_BINDING, None)`` for any other value or a binding on a
+    path that may not run, which a first import of the submodule replaces;
+    ``(CACHED_MODULE_BINDING, target)`` for a module alias installed after
+    its same-named child was already loaded, which later imports preserve;
+    ``(UNBOUND_BINDING, None)`` for a deleted name. A bare annotation binds
+    nothing. Star sources retain the names later overwritten explicitly.
+    Returns ``(bindings, star_sources)``."""
+    if not isinstance(tree, ast.Module):
+        return {}, ()
+    guards = type_checking_guard_branches(tree)
+    bindings = {}
+    loaded = set()
+    stars = []
+
+    def record(names, kind, target, conditional):
+        for name in names:
+            current_kind = kind
+            current_target = target
+            if conditional and bindings.get(name) != (kind, target):
+                current_kind = OBJECT_BINDING
+                current_target = None
+            child_module = f"{package}.{name}"
+            if child_module in loaded:
+                if current_kind == OBJECT_BINDING:
+                    current_kind = LOADED_OBJECT_BINDING
+                elif current_kind == MODULE_BINDING and current_target != child_module:
+                    current_kind = CACHED_MODULE_BINDING
+            bindings[name] = current_kind, current_target
+            if not conditional:
+                for _source, overwritten in stars:
+                    overwritten.add(name)
+
+    def load_module(module, conditional):
+        child = _child_of_package(module, package)
+        if child is not None:
+            child_module = f"{package}.{child}"
+            if child_module not in loaded:
+                record({child}, MODULE_BINDING, child_module, conditional)
+            loaded.add(child_module)
+
+    def assigned_module(value):
+        chain = _flatten_attribute_chain(value)
+        if not chain:
+            return None
+        binding = bindings.get(chain[0])
+        if binding is None:
+            return None
+        kind, target = binding
+        if kind not in {MODULE_BINDING, CACHED_MODULE_BINDING}:
+            return None
+        for segment in chain[1:]:
+            target = f"{target}.{segment}"
+            if target not in local_modules:
+                return None
+        return target
+
+    def visit_import_from(stmt, conditional):
+        base = _resolve_import_from_base(package, stmt, is_package=True)
+        load_module(base, conditional)
+        for alias in stmt.names:
+            if alias.name == "*":
+                stars.append((base, set()))
+                continue
+            name = alias.asname or alias.name
+            full = alias.name
+            if base:
+                full = f"{base}.{alias.name}"
+            if full in local_modules:
+                load_module(full, conditional)
+                record({name}, MODULE_BINDING, full, conditional)
+            else:
+                record({name}, OBJECT_BINDING, None, conditional)
+
+    def visit_import(stmt, conditional):
+        for alias in stmt.names:
+            load_module(alias.name, conditional)
+            if alias.asname:
+                record({alias.asname}, MODULE_BINDING, alias.name, conditional)
+            else:
+                head = alias.name.split(".")[0]
+                record({head}, MODULE_BINDING, head, conditional)
+
+    def visit_if(stmt, conditional):
+        branch = guards.get(id(stmt))
+        truth = _static_truth_value(stmt.test)
+        if branch is not None:
+            truth = not branch
+        if truth is None:
+            visit(stmt.body, True)
+            visit(stmt.orelse, True)
+        elif truth:
+            visit(stmt.body, conditional)
+        else:
+            visit(stmt.orelse, conditional)
+
+    def visit(statements, conditional):
+        for stmt in statements:
+            record(_walrus_names(_statement_expressions(stmt)), OBJECT_BINDING, None, conditional)
+            if isinstance(stmt, ast.Import):
+                visit_import(stmt, conditional)
+            elif isinstance(stmt, ast.ImportFrom):
+                visit_import_from(stmt, conditional)
+            elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                record({stmt.name}, OBJECT_BINDING, None, conditional)
+                record(_global_declared_names(stmt), OBJECT_BINDING, None, True)
+            elif isinstance(stmt, ast.Assign):
+                target_module = assigned_module(stmt.value)
+                kind = OBJECT_BINDING
+                if target_module is not None:
+                    kind = MODULE_BINDING
+                for target in stmt.targets:
+                    record(_extract_target_names(target), kind, target_module, conditional)
+            elif isinstance(stmt, ast.AnnAssign):
+                if stmt.value is not None:
+                    target_module = assigned_module(stmt.value)
+                    kind = OBJECT_BINDING
+                    if target_module is not None:
+                        kind = MODULE_BINDING
+                    record(_extract_target_names(stmt.target), kind, target_module, conditional)
+            elif isinstance(stmt, ast.AugAssign):
+                if stmt.value is not None:
+                    record(_extract_target_names(stmt.target), OBJECT_BINDING, None, conditional)
+            elif _is_type_alias_statement(stmt):
+                record(_extract_target_names(stmt.name), OBJECT_BINDING, None, conditional)
+            elif isinstance(stmt, ast.Delete):
+                for target in stmt.targets:
+                    record(_extract_target_names(target), UNBOUND_BINDING, None, conditional)
+            elif isinstance(stmt, ast.If):
+                visit_if(stmt, conditional)
+            elif _is_try_statement(stmt):
+                visit(stmt.body, True)
+                for handler in stmt.handlers:
+                    if handler.name:
+                        record({handler.name}, OBJECT_BINDING, None, True)
+                    visit(handler.body, True)
+                visit(stmt.orelse, True)
+                visit(stmt.finalbody, conditional)
+            elif isinstance(stmt, (ast.For, ast.AsyncFor)):
+                record(_extract_target_names(stmt.target), OBJECT_BINDING, None, True)
+                visit(stmt.body, True)
+                visit(stmt.orelse, True)
+            elif isinstance(stmt, ast.While):
+                visit(stmt.body, True)
+                visit(stmt.orelse, True)
+            elif isinstance(stmt, (ast.With, ast.AsyncWith)):
+                for item in stmt.items:
+                    if item.optional_vars is not None:
+                        record(_extract_target_names(item.optional_vars), OBJECT_BINDING, None, conditional)
+                visit(stmt.body, True)
+            elif isinstance(stmt, ast.Match):
+                for case in stmt.cases:
+                    record(_extract_match_pattern_names(case.pattern), OBJECT_BINDING, None, True)
+                    visit(case.body, True)
+
+    visit(tree.body, False)
+    frozen_stars = []
+    for source, overwritten in stars:
+        frozen_stars.append((source, tuple(sorted(overwritten))))
+    return bindings, tuple(frozen_stars)
+
+
+def _attribute_target(module_name, explicit, binds_name, ensure_module_loaded, hops=0):
+    """The module ``module_name`` (``package.name``) names when read as an
+    attribute of its package, or None for a value that is not a module or is
+    not known to be one. ``explicit``: the referring file loads that submodule
+    itself, which replaces any value the package bound without loading it."""
+    if binds_name is None or "." not in module_name:
+        return module_name
+    if hops > _MAX_BINDING_HOPS:
+        return None
+    package, name = module_name.rsplit(".", 1)
+    if not ensure_module_loaded(package):
+        return module_name
+    binding = binds_name(package, name)
+    if binding is None:
+        return module_name
+    kind, target = binding
+    if kind == LOADED_OBJECT_BINDING:
+        return None
+    if kind == UNBOUND_BINDING:
+        return module_name
+    if explicit and kind != CACHED_MODULE_BINDING:
+        return module_name
+    if kind == OBJECT_BINDING:
+        return None
+    if target == module_name:
+        return module_name
+    return _attribute_target(target, False, binds_name, ensure_module_loaded, hops + 1)
+
+
+def _file_loads_module(module_name, tree, scope_infos, reference):
+    info = scope_infos.get(tree)
+    if info is None:
+        return False
+    prefix = f"{module_name}."
+
+    def statement_loads(stmt):
+        for loaded in info.loaded_modules.get(id(stmt), ()):
+            if loaded == module_name or loaded.startswith(prefix):
+                return True
+        if isinstance(stmt, ast.If):
+            truth = _static_truth_value(stmt.test)
+            statements = []
+            if truth is True:
+                statements = stmt.body
+            elif truth is False:
+                statements = stmt.orelse
+            for child in statements:
+                if statement_loads(child):
+                    return True
+        return False
+
+    parent_map = _ast_index_for(tree).parent_map
+    child = reference
+    while child in parent_map:
+        parent = parent_map[child]
+        for _field, value in ast.iter_fields(parent):
+            if not isinstance(value, list) or child not in value:
+                continue
+            for sibling in value:
+                if sibling is child:
+                    break
+                if isinstance(sibling, ast.stmt) and statement_loads(sibling):
+                    return True
+        child = parent
+    return False
 
 
 def _module_has_member(
@@ -1215,7 +1579,38 @@ def _facts_to_payload(facts):
         "td": facts.has_type_checking_dynamic_getattr,
         "p": sorted(facts.possible_members),
         "tp": type_checking_possible,
+        "pb": {name: list(binding) for name, binding in facts.package_bindings.items()},
+        "ps": list(facts.package_star),
     }
+
+
+def _bindings_from_payload(payload):
+    bindings = {}
+    for name, binding in (payload or {}).items():
+        kind, target = binding
+        if not isinstance(name, str) or kind not in _BINDING_KINDS:
+            raise ValueError("unknown package binding")
+        if kind in {MODULE_BINDING, CACHED_MODULE_BINDING}:
+            if not isinstance(target, str) or not target:
+                raise ValueError("package module binding target")
+        elif target is not None:
+            raise ValueError("package object binding target")
+        bindings[name] = (kind, target)
+    return bindings
+
+
+def _package_stars_from_payload(payload):
+    if not payload:
+        return ()
+    result = []
+    for source, overwritten in payload:
+        if not isinstance(source, str) or not isinstance(overwritten, (list, tuple)):
+            raise ValueError("package star import")
+        for name in overwritten:
+            if not isinstance(name, str):
+                raise ValueError("package star binding")
+        result.append((source, tuple(overwritten)))
+    return tuple(result)
 
 
 def _facts_from_payload(payload):
@@ -1244,8 +1639,10 @@ def _facts_from_payload(payload):
             type_checking_possible_members=(
                 set(possible) if tc_possible is None else set(tc_possible)
             ),
+            package_bindings=_bindings_from_payload(payload.get("pb")),
+            package_star=_package_stars_from_payload(payload.get("ps")),
         )
-    except (KeyError, TypeError, ValueError):
+    except (AttributeError, KeyError, TypeError, ValueError):
         return None
 
 
@@ -1351,6 +1748,12 @@ def _build_module_facts(
     else:
         type_checking = runtime.copy()
     dynamic_namespace = _writes_module_namespace(tree)
+    package_bindings = {}
+    package_star = ()
+    if is_package:
+        package_bindings, package_star = _collect_package_bindings(
+            tree, current_module, local_modules
+        )
     possible_members = _conditionally_bound_names(tree, type_checking_mode=False)
     type_checking_possible_members = (
         _conditionally_bound_names(tree, type_checking_mode=True)
@@ -1375,6 +1778,8 @@ def _build_module_facts(
         type_checking_node_ids=type_checking_node_ids,
         possible_members=possible_members,
         type_checking_possible_members=type_checking_possible_members,
+        package_bindings=package_bindings,
+        package_star=package_star,
     )
 
 
@@ -1985,6 +2390,7 @@ def _uses_future_annotations(tree):
 
 _SCOPE_NODE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 _FUNCTION_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+_COMPREHENSION_TYPES = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2035,6 +2441,7 @@ def _build_ast_index(tree):
     import_nodes = []
     scan_nodes = []
 
+    outer_iterables = {}
     todo = deque([(tree, (tree,))])
     while todo:
         node, chain = todo.popleft()
@@ -2049,12 +2456,16 @@ def _build_ast_index(tree):
             scope_nodes.append(node)
             if not isinstance(node, ast.Lambda):
                 scan_nodes.append(node)
+        elif isinstance(node, _COMPREHENSION_TYPES):
+            scope_nodes.append(node)
 
         is_function_scope = isinstance(node, _FUNCTION_SCOPE_TYPES)
-        if is_function_scope:
+        if is_function_scope or isinstance(node, _COMPREHENSION_TYPES):
             child_chain = tuple(
                 scope for scope in chain if not isinstance(scope, ast.ClassDef)
             ) + (node,)
+            if isinstance(node, _COMPREHENSION_TYPES) and node.generators:
+                outer_iterables[id(node.generators[0].iter)] = chain
         elif isinstance(node, ast.ClassDef):
             child_chain = chain + (node,)
         else:
@@ -2077,10 +2488,14 @@ def _build_ast_index(tree):
             for child in children:
                 if not isinstance(child, ast.AST):
                     continue
-                if isinstance(child, (ast.Attribute, ast.Call)):
+                if not isinstance(
+                    child, (ast.operator, ast.unaryop, ast.boolop, ast.cmpop, ast.expr_context)
+                ):
                     parent_map[child] = node
                 if decorators and child in decorators:
                     todo.append((child, chain))
+                elif id(child) in outer_iterables:
+                    todo.append((child, outer_iterables.pop(id(child))))
                 else:
                     todo.append((child, child_chain))
 
@@ -2123,14 +2538,31 @@ register_dependent_clear(_SCOPE_INFOS_CACHE.clear)
 
 
 def _build_scope_infos(tree, current_module, local_modules, is_package=False):
-    scope_infos = {
-        tree: _collect_scope_info(tree, current_module, local_modules, is_package)
-    }
+    module_info = _collect_scope_info(tree, current_module, local_modules, is_package)
+    module_info.loaded_modules = _loaded_modules(tree, current_module, is_package)
+    scope_infos = {tree: module_info}
     for node in _ast_index_for(tree).scope_nodes:
         scope_infos[node] = _collect_scope_info(
             node, current_module, local_modules, is_package
         )
     return scope_infos
+
+
+def _loaded_modules(tree, current_module, is_package):
+    """Modules any import in the file loads: ``import a.b`` and ``import a.b
+    as c`` load ``a.b``; ``from a.b import c`` loads ``a.b``."""
+    loaded = {}
+    for node in _ast_index_for(tree).import_nodes:
+        names = set()
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.name)
+        else:
+            base = _resolve_import_from_base(current_module, node, is_package=is_package)
+            if base:
+                names.add(base)
+        loaded[id(node)] = frozenset(names)
+    return loaded
 
 
 def _collect_scope_info(scope_node, current_module, local_modules, is_package=False):
@@ -2266,6 +2698,11 @@ def _collect_scope_info(scope_node, current_module, local_modules, is_package=Fa
             collector.visit(stmt)
     elif isinstance(scope_node, ast.Lambda):
         collector.visit(scope_node.body)
+    elif isinstance(scope_node, _COMPREHENSION_TYPES):
+        for generator in scope_node.generators:
+            names = _extract_target_names(generator.target)
+            shadowed.update(names)
+            bound.update(names)
 
     return _ScopeInfo(
         shadowed_names=shadowed,
@@ -2286,6 +2723,7 @@ def _resolve_local_module_member(
     module_alias_exports,
     local_modules,
     ensure_module_loaded,
+    binds_name=None,
 ):
     chain = _flatten_attribute_chain(expr)
     if not chain or len(chain) < 2:
@@ -2299,6 +2737,14 @@ def _resolve_local_module_member(
         scope_infos=scope_infos,
     )
     if not base_module:
+        return None
+    base_module = _attribute_target(
+        base_module,
+        _file_loads_module(base_module, tree, scope_infos, expr),
+        binds_name,
+        ensure_module_loaded,
+    )
+    if base_module is None:
         return None
 
     if _is_explicitly_imported_module_reference(
@@ -2314,14 +2760,25 @@ def _resolve_local_module_member(
     for segment in chain[1:-1]:
         direct_module = f"{current_module}.{segment}"
         if direct_module in local_modules:
-            current_module = direct_module
+            target = _attribute_target(
+                direct_module,
+                _file_loads_module(direct_module, tree, scope_infos, expr),
+                binds_name,
+                ensure_module_loaded,
+            )
+            if target is None:
+                return None
+            current_module = target
             continue
 
         if not ensure_module_loaded(current_module):
             return None
         exported_module = module_alias_exports.get(current_module, {}).get(segment)
         if exported_module:
-            current_module = exported_module
+            target = _attribute_target(exported_module, False, binds_name, ensure_module_loaded)
+            if target is None:
+                return None
+            current_module = target
             continue
 
         return None
