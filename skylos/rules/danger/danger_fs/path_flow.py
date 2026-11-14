@@ -18,6 +18,7 @@ from skylos.rules.danger.danger_fs.prefix_separator import (
     bound_names,
     dotted as prefix_dotted,
     ends_with_separator,
+    module_level_imports,
     scope_bindings,
 )
 from skylos.security.receiver_resolution import ReceiverResolver
@@ -655,6 +656,7 @@ class _PathFlowChecker(TaintVisitor):
         self._builtin_string_refs = builtin_references(node, {"str"})
         self._module_rebound = frozenset(bound_names(node))
         self._module_bindings = scope_bindings(node)
+        self._module_import_aliases = module_level_imports(node)
         self._global_names = frozenset(
             name
             for item in ast.walk(node)
@@ -1198,8 +1200,21 @@ class _PathFlowChecker(TaintVisitor):
         if len(call.args) != 1 or call.keywords:
             return False
         return ends_with_separator(
-            call.args[0], self._prefix_binding, self._prefix_canonical
+            call.args[0],
+            self._prefix_binding,
+            self._prefix_canonical,
+            self._prefix_module_binding,
         )
+
+    def _prefix_module_binding(self, name):
+        """The module-level value of ``name``: a tuple's members belong to the
+        scope that declared them, not to the scope doing the check."""
+        if name in self._global_names:
+            return None
+        values = self._module_bindings.get(name)
+        if values and len(values) == 1:
+            return values[0]
+        return None
 
     def _prefix_binding(self, name):
         function = self._current_function()
@@ -1228,7 +1243,7 @@ class _PathFlowChecker(TaintVisitor):
         head, _, rest = name.partition(".")
         if head in self._module_rebound:
             return None
-        base = self.import_aliases.get(head)
+        base = self._module_import_aliases.get(head)
         if base is None:
             return None
         if rest:
@@ -1929,3 +1944,6 @@ def scan(tree, file_path, findings, *, project_root=None):
         checker.visit(tree)
     except Exception as e:
         print(f"Path traversal analysis failed for {file_path}: {e}", file=sys.stderr)
+
+
+

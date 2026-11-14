@@ -203,6 +203,29 @@ def save(name, data):
         handle.write(data)
 """
 
+IMPORTED_SEPARATOR = """import os
+from os import sep
+
+def save(name, data):
+    if ".." in name:
+        raise ValueError
+    target = os.path.realpath(os.path.join(UPLOADS, name))
+    if not target.startswith(UPLOADS + sep):
+        raise ValueError
+    with open(target, "wb") as handle:
+        handle.write(data)
+"""
+
+IMPORTED_SEPARATOR_ALIAS = """import os
+from os import sep as S
+
+def save(name, data):
+    if ".." in name or name.startswith(S):
+        raise ValueError
+    with open(os.path.join(UPLOADS, name), "wb") as handle:
+        handle.write(data)
+"""
+
 JOINED_FIRST = """import os
 
 def listing(folder):
@@ -305,6 +328,8 @@ def read(name):
         IS_ABSOLUTE_REJECTED,
         BASENAME,
         SECURE_FILENAME,
+        IMPORTED_SEPARATOR,
+        IMPORTED_SEPARATOR_ALIAS,
         JOINED_FIRST,
         CONCATENATED_AFTER_BASE,
         NO_FILE_OPERATION,
