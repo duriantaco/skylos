@@ -180,6 +180,13 @@ def build_ts_import_graph(
     inactive consumers. Its final pass credits references exactly once.
     """
 
+    from .platform_extensions import expand_platform_imports
+
+    ts_raw_imports = expand_platform_imports(
+        ts_raw_imports,
+        lambda source, importer: resolve_ts_module(source, importer, monorepo_resolver),
+    )
+
     def build():
         if reexport_context is not None:
             from .reexport_demand import build_reexport_demand
@@ -306,6 +313,19 @@ def _build_ts_import_graph(ts_raw_imports, defs, monorepo_resolver=None):
         for file, imports in ts_raw_imports.items()
         if any("\\" in name for imp in imports for name in imp.get("names", ()))
     )
+    default_export_defs = defaultdict(list)
+    for defn in defs.values():
+        if "default_export" in getattr(defn, "confidence_factors", ()):
+            default_export_defs[str(defn.filename)].append(defn)
+    source_reexported_names = defaultdict(set)
+    for exporter_file, raw_imports in ts_raw_imports.items():
+        for imp in raw_imports:
+            if not imp.get("is_reexport"):
+                continue
+            for name in imp.get("names", ()):
+                source_reexported_names[str(exporter_file)].add(
+                    name.rpartition(" as ")[2].strip()
+                )
 
     for importer_file, raw_imports in ts_raw_imports.items():
         for imp in raw_imports:
@@ -330,8 +350,18 @@ def _build_ts_import_graph(ts_raw_imports, defs, monorepo_resolver=None):
                             name.split(" as ")[0].strip() if " as " in name else name
                         )
                         consumed_exports[resolved].add(actual_name)
+                        if actual_name == "default" or name == imp.get(
+                            "default_import"
+                        ):
+                            for defn in default_export_defs.get(resolved, ()):
+                                consumed_exports[resolved].add(defn.simple_name)
+                                if defs.get(f"{resolved}:{name}") is not defn:
+                                    defn.references += 1
                     target_key = f"{resolved}:{name}"
-                    if target_key in defs:
+                    if target_key in defs and not (
+                        defs[target_key].type == "import"
+                        and name in source_reexported_names.get(resolved, ())
+                    ):
                         defs[target_key].references += 1
 
     for resolved in consume_all_exports:
@@ -1736,6 +1766,18 @@ def _iter_entry_discoveries(
                         _classify_entry_scope(entry_file, "package", reason),
                     )
                 )
+        shipped_files, host_files = discover_package_named_files(str(package_root))
+        for entry_file in sorted(shipped_files | host_files):
+            if entry_file in ts_files:
+                reason = "package-named-file"
+                discoveries.append(
+                    _TsEntryDiscovery(
+                        entry_file,
+                        "package",
+                        reason,
+                        _classify_entry_scope(entry_file, "package", reason),
+                    )
+                )
 
         script_entries, executable_entries, script_configs = (
             _discover_script_entry_candidates(str(package_root))
@@ -1988,6 +2030,133 @@ def _discover_package_entry_files(
     return entry_files
 
 
+_PACKAGE_NON_LOADING_KEYS = frozenset(
+    {
+        "name",
+        "version",
+        "description",
+        "keywords",
+        "author",
+        "contributors",
+        "maintainers",
+        "license",
+        "licenses",
+        "repository",
+        "bugs",
+        "homepage",
+        "funding",
+        "scripts",
+        "dependencies",
+        "devDependencies",
+        "peerDependencies",
+        "peerDependenciesMeta",
+        "optionalDependencies",
+        "bundledDependencies",
+        "bundleDependencies",
+        "overrides",
+        "resolutions",
+        "engines",
+        "os",
+        "cpu",
+        "workspaces",
+        "packageManager",
+        "publishConfig",
+        "files",
+        "directories",
+        "typesVersions",
+        "imports",
+        "sideEffects",
+        "jest",
+        "eslintConfig",
+        "eslintIgnore",
+        "prettier",
+        "stylelint",
+        "lint-staged",
+        "husky",
+        "commitlint",
+        "browserslist",
+        "nyc",
+        "c8",
+        "release",
+        "renovate",
+        "volta",
+        "pnpm",
+        "standard",
+        "xo",
+        "size-limit",
+        "bundlesize",
+        *_TS_PACKAGE_ENTRY_FIELDS,
+    }
+)
+_PACKAGE_NON_LOADING_KEY_RE = re.compile(r"ignore|exclude|sideeffects", re.IGNORECASE)
+_PACKAGE_PATH_VALUE_RE = re.compile(
+    r"(?:\.{1,2}/)*[A-Za-z0-9_@~+\-][A-Za-z0-9_@~+.\-/]*"
+)
+_MAX_PACKAGE_VALUES = 4096
+
+
+def _package_source_file(package_root: str, value) -> str | None:
+    if not isinstance(value, str) or len(value) > 512:
+        return None
+    if _PACKAGE_PATH_VALUE_RE.fullmatch(value) is None:
+        return None
+    if not value.lower().endswith(_ENTRY_FILE_SUFFIXES):
+        return None
+    candidate = os.path.realpath(os.path.join(package_root, value))
+    if not os.path.isfile(candidate):
+        return None
+    if not _path_is_inside(candidate, package_root):
+        return None
+    return candidate
+
+
+def discover_package_named_files(package_root: str) -> tuple[set[str], set[str]]:
+    """Source files a ``package.json`` names by exact path outside the
+    standard entry fields.
+
+    Returns ``(shipped, host_entries)``: ``files`` entries that name one file
+    (npm publishes it at that path), and path values of the package's custom
+    keys (``"pi": {"extensions": ["./src/ext.ts"]}``), which a host tool loads
+    by path. Descriptions, lint/format/coverage settings and ignore/exclude
+    lists do not load a file.
+    """
+    data = _read_json_file(os.path.join(package_root, "package.json"))
+    if not data:
+        return set(), set()
+    shipped: set[str] = set()
+    files = data.get("files")
+    if isinstance(files, list):
+        for value in files:
+            resolved = _package_source_file(package_root, value)
+            if resolved:
+                shipped.add(resolved)
+
+    host_entries: set[str] = set()
+    pending = [
+        value
+        for key, value in data.items()
+        if key not in _PACKAGE_NON_LOADING_KEYS
+        and not _PACKAGE_NON_LOADING_KEY_RE.search(key)
+    ]
+    inspected = 0
+    while pending and inspected < _MAX_PACKAGE_VALUES:
+        value = pending.pop()
+        inspected += 1
+        if isinstance(value, dict):
+            pending.extend(
+                child
+                for key, child in value.items()
+                if not _PACKAGE_NON_LOADING_KEY_RE.search(str(key))
+            )
+        elif isinstance(value, list):
+            pending.extend(value)
+        else:
+            resolved = _package_source_file(package_root, value)
+            if resolved:
+                host_entries.add(resolved)
+    return shipped, host_entries
+
+
 def _workspace_package_roots(workspace_inventory) -> list[Path]:
     package_roots: set[Path] = set()
     if (
@@ -2157,6 +2326,8 @@ def mark_package_api_ts_exports_consumed(
     so their public API needs to be resolved before unused-export demotion.
     Reuse the JS API-surface resolver here to retain exact ``export *``
     semantics, including default-export exclusion and ambiguity handling.
+    A file that the package manifest names under a custom key is loaded by
+    a host tool through its default export, which is kept the same way.
     """
     if not defs or not project_root:
         return set()
@@ -2203,6 +2374,20 @@ def mark_package_api_ts_exports_consumed(
         MAX_JS_API_PACKAGES,
         MAX_JS_API_REEXPORT_DEPTH,
     )
+
+    host_entries: set[str] = set()
+    for package_root in sorted(package_roots, key=str)[:MAX_JS_API_PACKAGES]:
+        host_entries.update(discover_package_named_files(str(package_root))[1])
+    if host_entries:
+        for defn in defs.values():
+            if (
+                defn.is_exported
+                and "default_export" in getattr(defn, "confidence_factors", ())
+                and os.path.realpath(str(defn.filename)) in host_entries
+            ):
+                consumed_exports.setdefault(str(defn.filename), set()).add(
+                    defn.simple_name
+                )
 
     package_entries: set[str] = set()
     for package_root in sorted(package_roots, key=str)[:MAX_JS_API_PACKAGES]:

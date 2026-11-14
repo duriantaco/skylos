@@ -125,6 +125,8 @@ class PythonReachabilityReport:
         self.protected_keys: set[str] = set()
         self.protected_callback_keys: set[str] = set()
         self.dynamic_lookup_keys: set[str] = set()
+        self.name_exposed_keys: set[str] = set()
+        self._referenced_names: frozenset[str] | None = None
         self.reasons: dict[str, str] = {}
         self._data_names: frozenset[str] | None = None
         self._cog_imports: frozenset[tuple[str, str]] | None = None
@@ -173,6 +175,7 @@ class PythonReachabilityReport:
             candidates,
             uncertainty=False,
         ).intersection(candidates)
+        self.name_exposed_keys = data_named | spelled | self.graph.spelled_targets
         exposed_receivers = set(self.graph.receiver_roots) | data_named | spelled
         for owner in reached:
             exposed_receivers.update(self.graph.receiver_edges.get(owner, ()))
@@ -206,6 +209,86 @@ class PythonReachabilityReport:
             for key in self.unreachable_keys
         }
         return self
+
+    def unnamed_receiver_methods(self) -> set[str]:
+        """Protected methods that no spelling in the project can select.
+
+        An escaped instance exposes a method only to code that names it: an
+        attribute access, a lookup pattern, a string or a data file. A method
+        whose name appears nowhere has no caller that an unresolved receiver
+        could hide.
+        """
+        if self.graph.unread_text:
+            return set()
+        named = self._names_in_source()
+        methods = self.index.method_classes
+        unnamed = set()
+        retained = self.protected_keys | self.protected_callback_keys
+        for key in retained - self.name_exposed_keys:
+            if key not in methods:
+                continue
+            definition = self.index.candidates[key]
+            name = definition.simple_name
+            if name in named or (name.startswith("__") and name.endswith("__")):
+                continue
+            if getattr(definition, "decorators", None):
+                continue
+            unnamed.add(key)
+        return unnamed
+
+    def direct_call_sites(self, names: set[str]) -> tuple[set[str], set[str]]:
+        """Names the project only calls as ``name(...)``, and only as ``self.name(...)``.
+
+        A value use, a string spelling, argument unpacking at a call site or a
+        call on any other receiver leaves the callee or its arguments unknown.
+        """
+        bare: set[str] = set()
+        on_self: set[str] = set()
+        unknown: set[str] = set()
+        for module in self.index.modules.values():
+            nodes = list(ast.walk(module.tree))
+            calls = {
+                id(node.func): node for node in nodes if isinstance(node, ast.Call)
+            }
+            for node in nodes:
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    if len(node.value) > 65_536:
+                        return set(), set()
+                    unknown.update(re.findall(r"\w+", node.value))
+                    continue
+                if not isinstance(node, (ast.Name, ast.Attribute)):
+                    continue
+                if not isinstance(node.ctx, ast.Load):
+                    continue
+                call = calls.get(id(node))
+                if isinstance(node, ast.Name):
+                    if call is None or _unpacks_arguments(call):
+                        unknown.add(node.id)
+                    else:
+                        bare.add(node.id)
+                elif call is None or _unpacks_arguments(call):
+                    unknown.add(node.attr)
+                elif isinstance(node.value, ast.Name) and node.value.id in ("self", "cls"):
+                    on_self.add(node.attr)
+                else:
+                    unknown.add(node.attr)
+        wanted = names - unknown
+        return wanted & (bare - on_self), wanted & (on_self - bare)
+
+    def _names_in_source(self) -> frozenset[str]:
+        if self._referenced_names is None:
+            names: set[str] = set()
+            for module in self.index.modules.values():
+                for node in ast.walk(module.tree):
+                    if isinstance(node, ast.Attribute):
+                        names.add(node.attr)
+                    elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                        names.add(node.id)
+                    elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                        if len(node.value) <= 65_536:
+                            names.update(re.findall(r"\w+", node.value))
+            self._referenced_names = frozenset(names)
+        return self._referenced_names
 
     def _receiver_spelled_targets(self, reached: set[str]) -> set[str]:
         patterns = {
@@ -385,6 +468,12 @@ class PythonReachabilityReport:
             for ref in self.graph.references.get((path, line), ())
             if ref.name in {name, "*"} or ref.target == target
         ]
+
+
+def _unpacks_arguments(call: ast.Call) -> bool:
+    return any(isinstance(argument, ast.Starred) for argument in call.args) or any(
+        keyword.arg is None for keyword in call.keywords
+    )
 
 
 def _source_paths(files: Iterable[str | Path], root: Path) -> tuple[list[Path], bool]:

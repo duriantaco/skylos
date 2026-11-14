@@ -68,6 +68,16 @@ _MCP_IMPORTS = {
 }
 
 _MCP_SERVER_CLASSES = {"FastMCP", "Server"}
+_AUTH_KEYWORDS = frozenset(
+    {
+        "auth",
+        "authenticator",
+        "auth_server_provider",
+        "token_verifier",
+        "middleware",
+        "auth_middleware",
+    }
+)
 _MCP_TOOL_DECORATORS = {"tool", "resource", "prompt"}
 _NETWORK_TRANSPORTS = {"sse", "streamable-http", "streamable_http", "http"}
 
@@ -151,6 +161,7 @@ class _MCPChecker:
         self.file_path = file_path
         self.findings = findings
         self._mcp_server_vars = set()
+        self._server_settings = {}
 
     def _report(self, rule_id, node, message, severity="HIGH"):
         self.findings.append(
@@ -166,6 +177,7 @@ class _MCPChecker:
 
     def check(self, tree):
         """Walk the tree without depending on Python's recursion limit."""
+        self._record_server_settings(tree)
         stack = [tree]
         while stack:
             node = stack.pop()
@@ -303,6 +315,33 @@ class _MCPChecker:
             ):
                 self._check_server_run(node)
 
+    def _record_server_settings(self, tree):
+        """``name = FastMCP(..., host=...)``: the SDK takes the bind address
+        and auth provider in the constructor and ``run()`` only starts it."""
+        found = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+                continue
+            qn = _qualified_name(node.value)
+            if not qn or not any(qn.endswith(cls) for cls in _MCP_SERVER_CLASSES):
+                continue
+            host = None
+            has_auth = False
+            for kw in node.value.keywords:
+                if kw.arg == "host":
+                    host = _get_string_value(kw.value)
+                elif kw.arg in _AUTH_KEYWORDS:
+                    has_auth = True
+                elif kw.arg is None:
+                    host = None
+                    break
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    found.setdefault(target.id, []).append((host, has_auth))
+        self._server_settings = {
+            name: values[0] for name, values in found.items() if len(values) == 1
+        }
+
     def _check_server_run(self, node):
         transport = None
         host = None
@@ -313,14 +352,19 @@ class _MCPChecker:
                 transport = _get_string_value(kw.value)
             elif kw.arg == "host":
                 host = _get_string_value(kw.value)
-            elif kw.arg in (
-                "auth",
-                "authenticator",
-                "auth_server_provider",
-                "middleware",
-                "auth_middleware",
-            ):
+            elif kw.arg in _AUTH_KEYWORDS:
                 has_auth = True
+
+        receiver = (_qualified_name(node) or "").rsplit(".", 1)[0]
+        built_host, built_auth = self._server_settings.get(receiver, (None, False))
+        has_auth = has_auth or built_auth
+        if (
+            host is None
+            and built_host == "0.0.0.0"
+            and transport
+            and transport.lower() in _NETWORK_TRANSPORTS
+        ):
+            host = built_host
 
         is_network = False
         if transport and transport.lower() in _NETWORK_TRANSPORTS:

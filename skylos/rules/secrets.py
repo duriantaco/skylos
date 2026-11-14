@@ -536,7 +536,7 @@ def _provider_value_is_placeholder(provider: str, token: str) -> bool:
 
 _PARAMETER_EXPANSION_REFERENCE_RE = re.compile(
     r"\$\{[A-Za-z_][A-Za-z0-9_]*"
-    r"(?::?\?[^}]*|:?[-=+](?:\$\{[A-Za-z_][A-Za-z0-9_]*\})?)?\}"
+    r"(?::?\?[^}]*|:?[-=+](?:\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Z_][A-Z0-9_]*)?)?\}"
     r"|\$\([^()]*\)"
 )
 
@@ -840,7 +840,54 @@ def _keyed_value_is_not_secret(key: str, value: str) -> bool:
         secret_shapes.is_reference(value)
         or secret_shapes.is_env_name_list(value)
         or secret_shapes.names_its_key(key, value)
+        or secret_shapes.restates_its_key(key, value)
     )
+
+
+def _keyed_value_is_reader_text(key: str, value: str) -> bool:
+    """A sentence written for a reader, or prose under a key whose last word
+    says it describes the credential. Its long tokens stay scanned on their
+    own."""
+    return secret_shapes.is_message_sentence(value) or (
+        secret_shapes.describes_its_key(key, value)
+        and not _has_random_component(value)
+    )
+
+
+def _bare_token_encodes_public_text(line_content: str, start: int, end: int) -> bool:
+    """Judge the whole base64 literal around a bare token, then the token
+    alone (the continuation of a literal split across lines)."""
+    run_start = start
+    while run_start > 0 and line_content[run_start - 1] in _BASE64_RUN_CHARACTERS:
+        run_start -= 1
+    run_end = end
+    while run_end < len(line_content) and line_content[run_end] in _BASE64_RUN_CHARACTERS:
+        run_end += 1
+    padding_end = run_end
+    while padding_end < min(len(line_content), run_end + 2) and line_content[padding_end] == "=":
+        padding_end += 1
+    return encodes_public_text(
+        line_content[run_start:padding_end]
+    ) or encodes_public_text(line_content[start:end])
+
+
+def encodes_public_text(token: str) -> bool:
+    """A base64 token that decodes to printable text holding no credential:
+    no credential word, ``user:password`` pair, URL password, provider
+    token, random component or second layer of encoding."""
+    text = secret_shapes.decoded_plain_text(token)
+    if text is None:
+        return False
+    if (
+        secret_shapes.names_a_credential(text)
+        or secret_shapes.is_user_password_pair(text)
+        or _has_random_component(text)
+        or secret_shapes.decoded_plain_text(text.strip()) is not None
+    ):
+        return False
+    if next(_url_credential_candidates(text), None) is not None:
+        return False
+    return not any(pattern.search(text) for _, pattern in PROVIDER_PATTERNS)
 
 
 def _label_literal_ends_after_line(file_lines, line_number, comment_prefix):
@@ -915,6 +962,8 @@ def _keyed_generic_candidates(
             # A file path, or a URL without credentials. A secret-named URL
             # with a random component (a capability link) stays reported.
             continue
+        if _keyed_value_is_reader_text(key, keyed_token):
+            continue
         keyed_spans.append((keyed_start, keyed_end))
         if _keyed_value_is_not_secret(key, keyed_token) or (
             secret_shapes.describes_token_label(key, keyed_token)
@@ -928,6 +977,9 @@ def _keyed_generic_candidates(
 
 
 _RANDOM_COMPONENT_RE = re.compile(r"[A-Za-z0-9_-]{20,}")
+_BASE64_RUN_CHARACTERS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/_-"
+)
 
 
 _HEX_CREDENTIAL_RE = re.compile(r"[0-9a-f]{20,64}|[0-9A-F]{20,64}")
@@ -2084,6 +2136,8 @@ def _capture_npm_integrity_path(path):
 def _capture_bun_integrity_path(path):
     if _is_bun_package_tuple_path(path, 0):
         return ("bun_descriptor", path[1])
+    if _is_bun_package_tuple_path(path, 2):
+        return ("bun_git_id", path[1])
     if _is_bun_package_tuple_path(path, 3):
         return ("bun_integrity", path[1])
     if len(path) == 3 and path[0] == "packages" and path[2] == 3:
@@ -2130,7 +2184,7 @@ def _json_context_values(rel_name: str, string_spans):
         if not (
             rel_name == "bun.lock"
             and isinstance(kind, tuple)
-            and kind[0] == "bun_descriptor"
+            and kind[0] in {"bun_descriptor", "bun_git_id"}
         )
     ]
 
@@ -2157,9 +2211,51 @@ def _approved_npm_json_spans(document, string_spans):
     return approved_spans
 
 
+_BUN_GITHUB_DESCRIPTOR_RE = re.compile(
+    r"github:(?P<owner>[A-Za-z0-9][A-Za-z0-9-]{0,38})/"
+    r"(?P<repo>[A-Za-z0-9._-]{1,100})#(?P<commit>[0-9a-f]{7,40})"
+)
+
+
+def _bun_github_resolution(descriptor: str):
+    split = _split_npm_descriptor(descriptor)
+    if split is None:
+        return None
+    return _BUN_GITHUB_DESCRIPTOR_RE.fullmatch(split[1])
+
+
+def _is_bun_github_resolution(descriptor: str, value: str) -> bool:
+    """The id Bun derives from the ``github:owner/repo#commit`` resolution
+    written in the same package tuple: ``owner-repo-commit`` or the commit."""
+    match = _bun_github_resolution(descriptor)
+    if match is None:
+        return False
+    expected = "-".join(match.group("owner", "repo", "commit"))
+    return value.lower() in {expected.lower(), match.group("commit")}
+
+
+def _is_approved_bun_span(kind, value, descriptors) -> bool:
+    if not isinstance(kind, tuple):
+        return False
+    descriptor = descriptors.get(kind[1], "")
+    if kind[0] == "bun_integrity":
+        return _is_valid_sri_token(value) and (
+            _is_bun_registry_descriptor(descriptor)
+            or _bun_github_resolution(descriptor) is not None
+        )
+    if kind[0] == "bun_git_id":
+        return _is_bun_github_resolution(descriptor, value)
+    return False
+
+
 def _approved_bun_json_spans(document, string_spans):
+    from skylos.rules.sca.bun_lockfile import SUPPORTED_BUN_LOCK_VERSIONS
+
     lockfile_version = document.get("lockfileVersion")
-    if type(lockfile_version) is not int or lockfile_version not in {0, 1}:
+    if (
+        type(lockfile_version) is not int
+        or lockfile_version not in SUPPORTED_BUN_LOCK_VERSIONS
+    ):
         return []
     descriptors = {
         kind[1]: value
@@ -2169,10 +2265,7 @@ def _approved_bun_json_spans(document, string_spans):
     return [
         (start, end)
         for kind, value, start, end in string_spans
-        if isinstance(kind, tuple)
-        and kind[0] == "bun_integrity"
-        and _is_bun_registry_descriptor(descriptors.get(kind[1], ""))
-        and _is_valid_sri_token(value)
+        if _is_approved_bun_span(kind, value, descriptors)
     ]
 
 
@@ -4182,6 +4275,22 @@ def _looks_like_generic_key_value(value: str) -> bool:
         and any(c.isalpha() for c in value)
         and any(c.isdigit() for c in value)
         and _entropy(value) >= 3.5
+        and not _is_worded_slug(value)
+    )
+
+
+_KEY_SLUG_PART_RE = re.compile(r"[A-Za-z]{1,12}[0-9]{0,4}|[0-9]{1,8}")
+
+
+def _is_worded_slug(value: str) -> bool:
+    """``linux-x86_64-appimage``: three or more short parts, each a word, a
+    number or a word with a version, at least one a lowercase word. A name,
+    not a random key."""
+    parts = [part for part in re.split(r"[-_.]+", value) if part]
+    return (
+        len(parts) >= 3
+        and all(_KEY_SLUG_PART_RE.fullmatch(part) for part in parts)
+        and any(len(part) >= 4 and part.isalpha() and part.islower() for part in parts)
     )
 
 
@@ -4370,6 +4479,7 @@ def _is_public_bare_token(file_lines, line_number, token, start, public_pem):
         or secret_shapes.is_evm_address(token)
         or secret_shapes.in_public_document_url(line, start, end)
         or secret_shapes.in_public_location(line, start, end)
+        or secret_shapes.in_class_attribute(line, start, end)
         or secret_shapes.in_ssh_public_key(line, start, end)
         or secret_shapes.covered(public_pem.get(line_number, ()), start, end)
         or secret_shapes.is_jwk_public_member(file_lines, line_number - 1, token)
@@ -5120,6 +5230,23 @@ def scan_ctx(
                 min_entropy=min_entropy,
             ):
                 continue
+            if not keyed and first_secret_name_at == -1:
+                first_secret_name = _SECRET_NAME_NEARBY_RE.search(line_content)
+                first_secret_name_at = (
+                    first_secret_name.start() if first_secret_name is not None else None
+                )
+            named = (
+                first_secret_name_at not in (-1, None)
+                and first_secret_name_at < col_pos
+            )
+            if (
+                is_bare
+                and not named
+                and _bare_token_encodes_public_text(
+                    line_content, col_pos, col_pos + len(clean_token)
+                )
+            ):
+                continue
 
             generic_finding = {
                 "rule_id": "SKY-S101",
@@ -5139,15 +5266,6 @@ def scan_ctx(
                 )
                 if evidence:
                     generic_finding["public_identifier_evidence"] = evidence
-            if not keyed and first_secret_name_at == -1:
-                first_secret_name = _SECRET_NAME_NEARBY_RE.search(line_content)
-                first_secret_name_at = (
-                    first_secret_name.start() if first_secret_name is not None else None
-                )
-            named = (
-                first_secret_name_at not in (-1, None)
-                and first_secret_name_at < col_pos
-            )
             if (
                 not keyed
                 and not named

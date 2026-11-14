@@ -15,6 +15,7 @@ from skylos.constants import (
 )
 from skylos.rules.secrets import (
     _looks_like_ordered_character_set,
+    encodes_public_text,
     is_client_exposure_context,
     is_public_client_env_name,
     iter_sensitive_client_env_references,
@@ -23,6 +24,7 @@ from skylos.rules import secret_shapes
 from skylos.security.sensitive_data import first_sensitive_name
 from skylos.security.command_guard import findings_for_command, is_external_url
 from skylos.visitors.languages.statement_scan import iter_semicolon_assignments
+from skylos.visitors.languages.typescript.client_runtime import runs_only_on_client
 from skylos.visitors.languages.typescript.security_flow import build_security_flow
 from skylos.visitors.languages.typescript.express_taint import (
     merge_express_taint_findings,
@@ -2456,6 +2458,50 @@ def _is_null_literal_expression(node) -> bool:
     return False
 
 
+def _is_global_undefined(node, source_bytes: bytes, bindings) -> bool:
+    current = node
+    while current is not None:
+        unwrapped = _unwrap_ts_expression(current)
+        if unwrapped is current:
+            break
+        current = unwrapped
+    if current is None or current.type not in {"undefined", "identifier"}:
+        return False
+    if _get_text(source_bytes, current) != "undefined":
+        return False
+    if bindings.dynamic_scope or not bindings.unbound("undefined"):
+        return False
+    return not any(
+        candidate.type == "undefined"
+        and candidate.parent is not None
+        and candidate.parent.type
+        in {
+            "formal_parameters",
+            "required_parameter",
+            "optional_parameter",
+            "variable_declarator",
+            "assignment_expression",
+            "array_pattern",
+            "object_pattern",
+            "pair_pattern",
+            "catch_clause",
+        }
+        and not _is_value_position(candidate)
+        for candidate in bindings.nodes
+    )
+
+
+def _is_value_position(node) -> bool:
+    parent = node.parent
+    if parent.type == "variable_declarator":
+        return parent.child_by_field_name("value") == node
+    if parent.type == "assignment_expression":
+        return parent.child_by_field_name("right") == node
+    if parent.type in {"required_parameter", "optional_parameter"}:
+        return parent.child_by_field_name("value") == node
+    return False
+
+
 def _has_dynamic_url_part(node) -> bool:
     unwrapped = _unwrap_ts_expression(node)
     if unwrapped is not node:
@@ -2585,6 +2631,50 @@ def _lexical_declarator(use_node, name: str, source_bytes: bytes):
     return None
 
 
+_AXIOS_REQUEST_METHODS = frozenset(
+    {
+        "request",
+        "get",
+        "delete",
+        "head",
+        "options",
+        "post",
+        "put",
+        "patch",
+        "postForm",
+        "putForm",
+        "patchForm",
+        "getUri",
+        "create",
+    }
+)
+
+
+def _axios_call_sends_request(args_node, source_bytes: bytes) -> bool:
+    call = args_node.parent
+    function = call.child_by_field_name("function") if call is not None else None
+    if function is None or function.type != "member_expression":
+        return True
+    member = function.child_by_field_name("property")
+    if member is None or member.type != "property_identifier":
+        return True
+    return _get_text(source_bytes, member) in _AXIOS_REQUEST_METHODS
+
+
+def _is_bundled_asset_url(identifier, source_bytes: bytes, bindings) -> bool:
+    entry = bindings.only_binding(_get_text(source_bytes, identifier))
+    if entry is None:
+        return False
+    kind, _value, source, imported = entry
+    return (
+        kind == "import"
+        and imported == "default"
+        and isinstance(source, str)
+        and source.endswith("?url")
+        and not is_external_url(source)
+    )
+
+
 def _static_url_binding(identifier, source_bytes: bytes, bindings):
     """The initializer of the variable ``identifier`` refers to, when that
     variable can only ever hold it: a ``const``, or a ``let``/``var`` that is
@@ -2647,6 +2737,8 @@ def _strict_static_prefix(node, source_bytes: bytes, bindings, depth: int):
     if node.type == "identifier":
         value = _static_url_binding(node, source_bytes, bindings)
         if value is None:
+            if _is_bundled_asset_url(node, source_bytes, bindings):
+                return "", False
             return "", True
         return _strict_static_prefix(value, source_bytes, bindings, depth + 1)
     if node.type == "template_string":
@@ -3356,13 +3448,13 @@ def scan_danger(
                     prefix = source_bytes[line_start : node.start_byte].decode(
                         "utf-8", "replace"
                     )
-                    if secret_shapes.is_character_table(
-                        text
-                    ) and not secret_shapes.names_a_credential(prefix):
+                    names_credential = secret_shapes.names_a_credential(prefix)
+                    if secret_shapes.is_character_table(text) and not names_credential:
                         entropy_finding["public_identifier_evidence"] = (
                             "each character appears once: an encoding alphabet"
                         )
-                    findings.append(entropy_finding)
+                    if names_credential or not encodes_public_text(text):
+                        findings.append(entropy_finding)
 
             # Hardcoded internal URL (SKY-D248)
             if (
@@ -3390,9 +3482,17 @@ def scan_danger(
 
     # --- fetch SSRF (SKY-D216) ---
     url_bindings = None
+    request_calls = {"fetch_args": [], "axios_args": []}
     if complex_captures.get("fetch_args") or complex_captures.get("axios_args"):
-        url_bindings = _JsBindings(root_node, source_bytes)
-    for node in complex_captures.get("fetch_args", []):
+        if not runs_only_on_client(root_node, source_bytes, str(file_path)):
+            url_bindings = _JsBindings(root_node, source_bytes)
+            request_calls["fetch_args"] = complex_captures.get("fetch_args", [])
+            request_calls["axios_args"] = [
+                node
+                for node in complex_captures.get("axios_args", [])
+                if _axios_call_sends_request(node, source_bytes)
+            ]
+    for node in request_calls["fetch_args"]:
         first_arg = _first_real_arg(node)
         if first_arg and _url_arg_is_ssrf_relevant(
             first_arg, source_bytes, str(file_path), url_bindings
@@ -3409,7 +3509,7 @@ def scan_danger(
             )
 
     # --- axios SSRF (SKY-D216) ---
-    for node in complex_captures.get("axios_args", []):
+    for node in request_calls["axios_args"]:
         first_arg = _first_real_arg(node)
         if first_arg and _url_arg_is_ssrf_relevant(
             first_arg, source_bytes, str(file_path), url_bindings
@@ -12575,6 +12675,8 @@ def _check_timing_comparison(
                 if not (
                     _is_null_literal_expression(left)
                     or _is_null_literal_expression(right)
+                    or _is_global_undefined(left, source_bytes, bindings)
+                    or _is_global_undefined(right, source_bytes, bindings)
                     or boolean_literal
                     or _compares_one_form_entry_twice(node, left, right, source_bytes, bindings)
                 ):

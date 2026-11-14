@@ -43,7 +43,7 @@ _SECTIONS = (
     ("unused_parameters", "SKY-U006", "Unused parameter", "LOW"),
     ("unused_files", "SKY-E002", "Unused file", "LOW"),
     ("unused_fixtures", "SKY-U000", "Unused fixture", "LOW"),
-    ("unused_exports", "SKY-U000", "Unused export", "LOW"),
+    ("unused_exports", "SKY-U000", "Unnecessary export", "LOW"),
     ("forgotten", "SKY-U001", "Unused function", "LOW"),
     ("circular_dependencies", "SKY-CIRC", "Circular dependency", "MEDIUM"),
     ("dependency_vulnerabilities", "SKY-SCA-000", "Dependency vulnerability", "HIGH"),

@@ -1,0 +1,1 @@
+{"name": "fx", "private": true, "main": ".webpack/main", "scripts": {"start": "electron-forge start"}, "devDependencies": {"@electron-forge/cli": "7.0.0", "webpack": "5.0.0"}}

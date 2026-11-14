@@ -548,3 +548,100 @@ def test_commented_out_call_does_not_keep_a_function(tmp_path):
     unused = _unused(tmp_path, "unused_functions")
     assert ("a.py", "fetch_fans") in unused
     assert ("a.py", "fetch") not in unused
+
+
+def _logger_module(body=""):
+    return (
+        "import logging\n\nlogger = logging.getLogger(__name__)\n\n\n"
+        + textwrap.dedent(body).lstrip()
+    )
+
+
+def test_module_variable_is_reported_when_other_modules_bind_the_same_name(tmp_path):
+    write_fixture(tmp_path, "lone.py", _logger_module("VALUE = 1\nprint(VALUE)\n"))
+    write_fixture(tmp_path, "shared.py", _logger_module())
+    write_fixture(
+        tmp_path,
+        "busy.py",
+        _logger_module(
+            """
+            def run():
+                logger.info("own binding")
+
+
+            run()
+            """
+        ),
+    )
+    _write(
+        tmp_path,
+        "main.py",
+        """
+        from shared import logger
+
+        logger.info("imported from another module")
+        """,
+    )
+
+    unused = _unused(tmp_path, "unused_variables")
+    assert ("lone.py", "logger") in unused
+    assert ("shared.py", "logger") not in unused
+    assert ("busy.py", "logger") not in unused
+
+
+def test_module_variable_reached_from_another_module_stays_used(tmp_path):
+    write_fixture(tmp_path, "starred.py", _logger_module())
+    write_fixture(tmp_path, "by_attribute.py", _logger_module())
+    write_fixture(tmp_path, "by_string.py", _logger_module())
+    write_fixture(
+        tmp_path,
+        "by_namespace.py",
+        _logger_module(
+            """
+            def lookup(name):
+                return globals()[name]
+
+
+            lookup("logger")
+            """
+        ),
+    )
+    _write(
+        tmp_path,
+        "main.py",
+        """
+        import by_attribute
+        import by_string
+        from starred import *
+
+        logger.info("bound by the star import")
+        by_attribute.logger.info("module attribute")
+        getattr(by_string, "logger").info("looked up by name")
+        """,
+    )
+
+    unused = _unused(tmp_path, "unused_variables")
+    assert not {name for _file, name in unused if name == "logger"}
+
+
+def test_module_variable_imported_over_several_lines_stays_used(tmp_path):
+    write_fixture(tmp_path, "pkg/__init__.py", "")
+    write_fixture(tmp_path, "pkg/shared.py", _logger_module())
+    write_fixture(tmp_path, "pkg/other.py", _logger_module())
+    _write(
+        tmp_path,
+        "pkg/user.py",
+        """
+        from .shared import (
+            logging,
+            logger,
+        )
+
+        logger.info("relative import over several lines")
+        logging.info("module")
+        """,
+    )
+
+    unused = _unused(tmp_path, "unused_variables")
+    assert ("shared.py", "logger") not in unused
+    assert ("other.py", "logger") in unused

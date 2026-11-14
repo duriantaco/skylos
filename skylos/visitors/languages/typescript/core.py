@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import posixpath
 import re
 from bisect import bisect_right
 from pathlib import Path
@@ -84,6 +85,12 @@ _ROUTE_ATTACHMENT_METHODS: set[str] = {
 _QUERY_CACHE: dict[tuple[int, str], Query] = {}
 _PARSER_CACHE: dict[int, Parser] = {}
 _JSX_EXTENSIONS = {".tsx", ".jsx", ".js"}
+_JSX_ELEMENT_TYPES = frozenset(
+    {"jsx_element", "jsx_self_closing_element", "jsx_fragment", "jsx_opening_element"}
+)
+_CLASS_DECLARATION_TYPES = frozenset(
+    {"class_declaration", "abstract_class_declaration", "class"}
+)
 
 _DEFS_PATTERN = """
 (function_declaration name: (identifier) @func_def)
@@ -113,6 +120,7 @@ _REFS_PATTERN = """
 (binary_expression left: (identifier) @ref)
 (assignment_expression right: (identifier) @ref)
 (assignment_pattern right: (identifier) @ref)
+(object_assignment_pattern right: (identifier) @ref)
 (update_expression (identifier) @ref)
 (spread_element (identifier) @ref)
 (member_expression object: (identifier) @ref)
@@ -129,6 +137,7 @@ _REFS_PATTERN = """
 (augmented_assignment_expression right: (identifier) @ref)
 (type_query (identifier) @ref)
 (nested_type_identifier module: (identifier) @ref)
+(nested_identifier object: (identifier) @ref)
 (public_field_definition value: (identifier) @ref)
 (shorthand_property_identifier) @ref
 (decorator (identifier) @ref)
@@ -357,6 +366,9 @@ class TypeScriptCore:
         self._self_ref_index: (
             dict[str, tuple[tuple[int, ...], tuple[int, ...]]] | None
         ) = None
+        self._dependency_bindings: set[str] | None = None
+        self._path_bindings: tuple[set[str], set[str]] | None = None
+        self._class_bases: dict[str, str] | None = None
 
         self._suffix = Path(str(file_path)).suffix.lower()
         self._uses_jsx_parser = self._suffix in _JSX_EXTENSIONS
@@ -474,6 +486,7 @@ class TypeScriptCore:
 
         self._scan_defs()
         self._scan_refs()
+        self._scan_jsx_factory_refs()
         self._scan_imports()
         self._scan_raw_imports()
         self._build_call_graph()
@@ -584,7 +597,14 @@ class TypeScriptCore:
         if c.get("ref") or c.get("prop_ref"):
             self._namespace_import_reads()
 
+        import_bindings = self._import_binding_names()
         for node in c.get("ref", []):
+            if (
+                import_bindings
+                and self._is_source_reexport_name(node)
+                and self._get_text(node) in import_bindings
+            ):
+                continue
             self._add_ref(node)
 
         # `x.foo` / `x[k].foo()` — emit the plain name (so functions/exports
@@ -594,6 +614,7 @@ class TypeScriptCore:
         for node in c.get("prop_ref", []):
             name = self._get_text(node)
             if self._is_self_ref(node, name):
+                self.refs.append((f"~method.{name}", self.file_path))
                 continue
             if node.id in self._shadowed_namespace_properties:
                 self.refs.append((f"~method.{name}", self.file_path))
@@ -613,6 +634,132 @@ class TypeScriptCore:
             self._add_ref(node, value_reference=False)
 
         self._scan_default_parameter_refs()
+
+    def _import_binding_names(self) -> set[str]:
+        names: set[str] = set()
+        for statement in self.root_node.named_children:
+            if statement.type != "import_statement":
+                continue
+            for name in self._extract_import_names_from_stmt(statement):
+                names.add(name.rpartition(" as ")[2].strip())
+        return names
+
+    def _is_source_reexport_name(self, node) -> bool:
+        specifier = node.parent
+        if specifier is None or specifier.type != "export_specifier":
+            return False
+        clause = specifier.parent
+        statement = None
+        if clause is not None:
+            statement = clause.parent
+        return (
+            statement is not None
+            and statement.type == "export_statement"
+            and statement.child_by_field_name("source") is not None
+        )
+
+    def _scan_jsx_factory_refs(self) -> None:
+        if not self._uses_jsx_parser or not self.root_node:
+            return
+        from .jsx_runtime import classic_jsx_bindings
+
+        if not classic_jsx_bindings(
+            str(self.file_path), self.source, has_fragment=True
+        ):
+            return
+        has_element = False
+        has_fragment = False
+        for node in self._iter_nodes(self.root_node):
+            if node.type in _JSX_ELEMENT_TYPES:
+                has_element = True
+                if node.type == "jsx_fragment" or (
+                    node.type == "jsx_opening_element"
+                    and node.child_by_field_name("name") is None
+                ):
+                    has_fragment = True
+                    break
+        if not has_element:
+            return
+        for name in classic_jsx_bindings(
+            str(self.file_path), self.source, has_fragment=has_fragment
+        ):
+            self.refs.append((name, self.file_path))
+
+    def _dependency_import_bindings(self) -> set[str]:
+        if self._dependency_bindings is not None:
+            return self._dependency_bindings
+        from .conventions import is_declared_dependency
+
+        bindings: set[str] = set()
+        for statement in self.root_node.named_children:
+            if statement.type != "import_statement":
+                continue
+            source_node = statement.child_by_field_name("source")
+            if source_node is None:
+                continue
+            specifier = self._get_text(source_node).strip("'\"")
+            if not is_declared_dependency(specifier, str(self.file_path)):
+                continue
+            for name in self._extract_import_names_from_stmt(statement):
+                bindings.add(name.rpartition(" as ")[2].strip())
+        self._dependency_bindings = bindings
+        return bindings
+
+    def _class_base_name(self, class_node) -> str | None:
+        for child in class_node.named_children:
+            if child.type != "class_heritage":
+                continue
+            for clause in child.named_children:
+                if clause.type != "extends_clause":
+                    continue
+                value = clause.child_by_field_name("value")
+                while value is not None and value.type == "member_expression":
+                    value = value.child_by_field_name("object")
+                if value is not None and value.type == "identifier":
+                    return self._get_text(value)
+        return None
+
+    def _extends_dependency_class(self, class_node) -> bool:
+        if self._class_bases is None:
+            self._class_bases = {}
+            for node in self._iter_nodes(self.root_node):
+                if node.type not in _CLASS_DECLARATION_TYPES:
+                    continue
+                name_node = node.child_by_field_name("name")
+                base = self._class_base_name(node)
+                if name_node is not None and base is not None:
+                    self._class_bases[self._get_text(name_node)] = base
+        base = self._class_base_name(class_node)
+        dependency_bindings = self._dependency_import_bindings()
+        seen: set[str] = set()
+        while base is not None and base not in seen:
+            if base in dependency_bindings:
+                return True
+            seen.add(base)
+            base = self._class_bases.get(base)
+        return False
+
+    def _overrides_dependency_method(self, node) -> bool:
+        method = node.parent
+        if method is None or method.type != "method_definition":
+            return False
+        if node.type == "private_property_identifier":
+            return False
+        for child in method.children:
+            if child.type == "accessibility_modifier" and (
+                self._get_text(child) == "private"
+            ):
+                return False
+        class_node = method.parent
+        while (
+            class_node is not None and class_node.type not in _CLASS_DECLARATION_TYPES
+        ):
+            if class_node.type == "object":
+                return False
+            class_node = class_node.parent
+        if class_node is None:
+            return False
+        return self._extends_dependency_class(class_node)
 
     def _scan_default_parameter_refs(self) -> None:
         if not self.root_node:
@@ -667,6 +814,8 @@ class TypeScriptCore:
 
         if type_name == "method":
             if self._should_skip_method_def(node, name):
+                return
+            if self._overrides_dependency_method(node):
                 return
             name = self._qualified_method_name(node, name)
 
@@ -931,12 +1080,18 @@ class TypeScriptCore:
             else {}
         )
         reexport_refs: dict[int, list[str]] = {}
+        import_bindings = self._import_binding_names()
         for node in self._refs_captures.get("ref", ()):
             parent = node.parent
             if parent is not None and parent.type == "export_specifier":
                 clause = parent.parent
                 statement = clause.parent if clause is not None else None
                 if statement is not None and statement.type == "export_statement":
+                    if (
+                        self._get_text(node) in import_bindings
+                        and statement.child_by_field_name("source") is not None
+                    ):
+                        continue
                     reexport_refs.setdefault(statement.id, []).append(
                         self._get_text(node)
                     )
@@ -1508,7 +1663,25 @@ class TypeScriptCore:
                 if value:
                     sources.append(value)
             return sources
+        if node.type == "call_expression":
+            return self._module_directory_join_sources(node)
         return []
+
+    def _module_directory_join_sources(self, node) -> list[str]:
+        from .file_references import path_module_bindings, static_path_join
+
+        if self._path_bindings is None:
+            self._path_bindings = path_module_bindings(self.source, self.root_node)
+        namespaces, functions = self._path_bindings
+        if not namespaces and not functions:
+            return []
+        joined = static_path_join(self.source, node, namespaces, functions)
+        if joined is None or not joined[0] or not joined[1]:
+            return []
+        relative = posixpath.normpath("/".join(joined[1]))
+        if relative.startswith("."):
+            return [relative]
+        return ["./" + relative]
 
     def _glob_import_sources(self, node) -> list[str]:
         matches: list[str] = []

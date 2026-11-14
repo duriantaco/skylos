@@ -453,14 +453,10 @@ func (a *Analyzer) checkCompositeLit(lit *ast.CompositeLit, path string) {
 			if kv, ok := elt.(*ast.KeyValueExpr); ok {
 				if key, ok := kv.Key.(*ast.Ident); ok {
 					if key.Name == "HttpOnly" {
-						if val, ok := kv.Value.(*ast.Ident); ok && val.Name == "true" {
-							hasHttpOnly = true
-						}
+						hasHttpOnly = !isLiteralFalse(kv.Value)
 					}
 					if key.Name == "Secure" {
-						if val, ok := kv.Value.(*ast.Ident); ok && val.Name == "true" {
-							hasSecure = true
-						}
+						hasSecure = !isLiteralFalse(kv.Value)
 					}
 				}
 			}
@@ -470,6 +466,14 @@ func (a *Analyzer) checkCompositeLit(lit *ast.CompositeLit, path string) {
 				"http.Cookie missing HttpOnly or Secure flag. Set both to true to prevent XSS and MITM.")
 		}
 	}
+}
+
+func isLiteralFalse(expr ast.Expr) bool {
+	if paren, ok := expr.(*ast.ParenExpr); ok {
+		return isLiteralFalse(paren.X)
+	}
+	id, ok := expr.(*ast.Ident)
+	return ok && id.Name == "false"
 }
 
 func (a *Analyzer) checkHardcodedSecret(lit *ast.BasicLit, path string) {
@@ -1116,6 +1120,15 @@ func (a *Analyzer) checkUnclosedResource(body *ast.BlockStmt, path string) {
 					mark(node.Rhs[i])
 				}
 			}
+		case *ast.CompositeLit:
+			for _, elt := range node.Elts {
+				if kv, ok := elt.(*ast.KeyValueExpr); ok {
+					elt = kv.Value
+				}
+				if handle := ownedHandleIdent(elt); handle != nil {
+					mark(handle)
+				}
+			}
 		}
 		return true
 	})
@@ -1126,6 +1139,14 @@ func (a *Analyzer) checkUnclosedResource(body *ast.BlockStmt, path string) {
 				"Resource opened but never closed, returned or stored. This may leak file or connection handles.")
 		}
 	}
+}
+
+func ownedHandleIdent(expr ast.Expr) *ast.Ident {
+	if unary, ok := expr.(*ast.UnaryExpr); ok && unary.Op == token.AND {
+		expr = unary.X
+	}
+	id, _ := expr.(*ast.Ident)
+	return id
 }
 
 func (a *Analyzer) checkArchiveExtraction(body *ast.BlockStmt, path string) {

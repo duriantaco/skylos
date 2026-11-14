@@ -1,0 +1,13 @@
+@page "/checkout"
+@inject Shop.Services.BasketState Basket
+
+<h1>Checkout</h1>
+@* Basket.RetiredTotal() was shown here before the redesign. *@
+<button @onclick="Submit">Pay</button>
+
+@code {
+    private async Task Submit()
+    {
+        await Basket.CheckoutAsync();
+    }
+}

@@ -11,8 +11,10 @@ from skylos.security.canonicalize import (
     MAX_BASE64_RESULTS,
     MAX_ZERO_WIDTH_HITS,
     decode_base64_blobs,
+    ZERO_WIDTH_CHARS,
     detect_homoglyphs,
     normalize,
+    remove_zero_width,
     strip_zero_width,
 )
 from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
@@ -181,6 +183,23 @@ _PROMPT_KEYS_RE = re.compile(
 )
 
 
+_LABEL_OPENERS = frozenset("\"'`“‘")
+_LABEL_CLOSE_AND_CONTROL_RE = re.compile(
+    r"[\w ]{0,24}[\"'`”’]\*{0,2}\s+"
+    r"(?:button|link|option|checkbox|toggle|menu(?:\s+item)?|tab|icon)\b",
+    re.I,
+)
+
+
+def _names_a_control(text: str, match: re.Match) -> bool:
+    """``the "Skip Check" button``: a quoted label followed by the kind of
+    control it names is a mention of that control, not a directive."""
+    opener = text[max(0, match.start() - 1) : match.start()]
+    if not opener or opener not in _LABEL_OPENERS:
+        return False
+    return _LABEL_CLOSE_AND_CONTROL_RE.match(text, match.end()) is not None
+
+
 def _pattern_matches(
     pattern: re.Pattern, text: str, *, placeholder_description: bool = False
 ):
@@ -191,6 +210,8 @@ def _pattern_matches(
     """
     for match in pattern.finditer(text):
         if pattern is _NEW_INSTRUCTION_RE and placeholder_description:
+            continue
+        if _names_a_control(text, match):
             continue
         if pattern is _SKIP_DIRECTIVE_RE:
             predicate = _CHECK_VERIFICATION_RE.get(match.group(1).lower())
@@ -425,13 +446,28 @@ def _python_streaming_docstrings(source: str) -> set[tuple[int, str]]:
         if not isinstance(first, ast.Expr) or not isinstance(first.value, ast.Constant):
             continue
         value = first.value.value
-        if isinstance(value, str) and re.fullmatch(
-            r"Uses?\s+streaming\s+to\s+display\s+tokens?\s+as\s+they\s+arrive[.!]?",
-            value.strip(),
-            re.I,
-        ):
+        if isinstance(value, str) and _describes_streaming(value):
             descriptions.add((first.value.lineno, normalize(value)))
     return descriptions
+
+
+_STREAMING_SENTENCE_RE = re.compile(
+    r"Uses?\s+streaming\s+to\s+display\s+tokens?\s+as\s+they\s+arrive[.!]?", re.I
+)
+
+
+def _describes_streaming(docstring: str) -> bool:
+    """The streaming sentence on a line of its own, in a docstring whose
+    other lines match no instruction pattern."""
+    lines = [line.strip() for line in docstring.strip().splitlines()]
+    others = [line for line in lines if not _STREAMING_SENTENCE_RE.fullmatch(line)]
+    if len(others) == len(lines):
+        return False
+    remainder = normalize("\n".join(others))
+    return not any(
+        next(_pattern_matches(pattern, remainder), None) is not None
+        for pattern, _severity in _PATTERNS
+    )
 
 
 def _instruction_pattern_evidence(
@@ -576,6 +612,15 @@ def scan_file(
             and _only_emoji_joiners(source_lines, line_no)
         ):
             continue
+        if (
+            not is_agent_instruction
+            and not is_reviewer_config
+            and char_hex in _SHOWN_ZERO_WIDTH
+            and _zero_width_hides_nothing(
+                source_lines, line_no, _SHOWN_ZERO_WIDTH[char_hex]
+            )
+        ):
+            continue
         hidden_severity, hidden_rule = high_signal("HIGH")
         if (
             is_reviewer_config
@@ -630,7 +675,7 @@ def scan_file(
     severity_order = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 
     for text, line_no, segment_type in segments:
-        normalized = normalize(text)
+        normalized = remove_zero_width(normalize(text))
         if segment_type == "string" and (line_no, normalized) in streaming_docstrings:
             continue
         placeholder_description = (
@@ -778,6 +823,79 @@ _JOINING_SCRIPTS = (
     "MYANMAR",
     "KHMER",
 )
+
+
+_SHOWN_ZERO_WIDTH = {
+    "U+200B": "\u200b",
+    "U+200C": "\u200c",
+    "U+200D": "\u200d",
+    "U+2060": "\u2060",
+    "U+FEFF": "\ufeff",
+}
+_LITERAL_DELIMITERS = frozenset("\"'`")
+_MAX_SHOWN_ZERO_WIDTH_RUN = 2
+_UNSPACED_SCRIPTS = (
+    "CJK",
+    "HIRAGANA",
+    "KATAKANA",
+    "THAI",
+    "LAO",
+    "KHMER",
+    "MYANMAR",
+    "TIBETAN",
+)
+
+
+def _unspaced_script_letter(char: str) -> bool:
+    if not char or unicodedata.category(char)[0] not in ("L", "M"):
+        return False
+    return unicodedata.name(char, "").startswith(_UNSPACED_SCRIPTS)
+
+
+def _names_code_point(line: str, char: str) -> bool:
+    code = ord(char)
+    lowered = line.lower()
+    return f"\\u{code:04x}" in lowered or f"u+{code:04x}" in lowered
+
+
+def _zero_width_hides_nothing(lines: list[str], line_no: int, char: str) -> bool:
+    """Every ``char`` on the line is shown or spaces text, in a run of at
+    most two invisible characters: alone between string or code delimiters
+    (``replace("\u200b", "")``), a U+200B word break between letters of a
+    script written without spaces, or outside a word on a line that spells
+    out the character's code point. A longer run can carry a payload and a
+    character inside a word can split a keyword; both stay reported."""
+    if not 1 <= line_no <= len(lines):
+        return False
+    line = lines[line_no - 1]
+    documented = _names_code_point(line, char)
+    found = False
+    for index, current in enumerate(line):
+        if current != char:
+            continue
+        found = True
+        start = index
+        while start > 0 and line[start - 1] in ZERO_WIDTH_CHARS:
+            start -= 1
+        end = index + 1
+        while end < len(line) and line[end] in ZERO_WIDTH_CHARS:
+            end += 1
+        if end - start > _MAX_SHOWN_ZERO_WIDTH_RUN:
+            return False
+        before = line[start - 1 : start]
+        after = line[end : end + 1]
+        if before in _LITERAL_DELIMITERS and after in _LITERAL_DELIMITERS:
+            continue
+        if (
+            char == "\u200b"
+            and _unspaced_script_letter(before)
+            and _unspaced_script_letter(after)
+        ):
+            continue
+        if documented and not (before.isalnum() and after.isalnum()):
+            continue
+        return False
+    return found
 
 
 def _joins_script_letters(char: str) -> bool:
@@ -1137,6 +1255,9 @@ def _matched_fenced_block_lines(source: str) -> set[int]:
     return fenced_lines
 
 
+_ESCAPE_SEQUENCE_RE = re.compile(r"\\(?:[abfnrtv0]|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2})")
+
+
 def _add_path_homoglyph_findings(
     findings: list[dict], filepath: Path, scan_path: str | Path
 ) -> None:
@@ -1172,9 +1293,12 @@ def _add_source_homoglyph_findings(
     # boundaries can incorrectly treat an ordinary Cyrillic phrase beside an
     # ASCII tag or Python expression as one mixed-script identifier.
     words = "\n".join(
-        " ".join(re.findall(r"\w+", line)) for line in source.splitlines()
+        " ".join(re.findall(r"\w+", _ESCAPE_SEQUENCE_RE.sub(" ", line)))
+        for line in source.splitlines()
     )
-    for char, ascii_like, line_no in detect_homoglyphs(words):
+    for char, ascii_like, line_no in detect_homoglyphs(
+        words, native_scripts=not is_agent_instruction
+    ):
         if len(findings) >= MAX_FINDINGS_PER_FILE:
             return
         if line_no in seen_lines:

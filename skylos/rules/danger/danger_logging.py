@@ -162,6 +162,7 @@ class _Value:
     pairs: tuple[tuple[str | int, _Value], ...] | None = None
     fields: tuple[tuple[str, _Value], ...] | None = None
     http: str | None = None
+    text: bool = False
 
 
 _UNKNOWN = _Value()
@@ -203,7 +204,11 @@ def _joined(left, right):
             for name in sorted(left_fields.keys() | right_fields.keys())
         )
         return _Value(sources=left.sources | right.sources, fields=fields)
-    return _Value(sources=left.sources | right.sources)
+    carriers = [value for value in (left, right) if value.sources]
+    return _Value(
+        sources=left.sources | right.sources,
+        text=bool(carriers) and all(value.text for value in carriers),
+    )
 
 
 class _MemberAssignments(ast.NodeTransformer):
@@ -254,6 +259,68 @@ class _LocalNames(ast.NodeVisitor):
         pass
 
 
+_HELPER_DEPTH = 3
+_FRAGMENT_CHARACTERS = 8
+
+
+def _module_helpers(tree):
+    """Module-level plain functions whose name has no other binding."""
+    counts, rebound = {}, set()
+    for statement in tree.body:
+        names = _LocalNames()
+        names.visit(statement)
+        for name in names.names:
+            counts[name] = counts.get(name, 0) + 1
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Global, ast.Nonlocal)):
+            rebound.update(node.names)
+    helpers = {}
+    for statement in tree.body:
+        if (
+            isinstance(statement, ast.FunctionDef)
+            and not statement.decorator_list
+            and counts.get(statement.name) == 1
+            and statement.name not in rebound
+            and statement.args.vararg is None
+            and statement.args.kwarg is None
+            and not any(
+                isinstance(node, (ast.Yield, ast.YieldFrom, ast.Await))
+                for node in ast.walk(statement)
+            )
+        ):
+            helpers[statement.name] = statement
+    return helpers
+
+
+def _fragment_slice(node):
+    """A slice that keeps at most a few characters: ``[:n]``, ``[-n:]``."""
+    if not isinstance(node, ast.Slice) or node.step is not None:
+        return False
+
+    def bound(part):
+        if part is None:
+            return None
+        try:
+            value = ast.literal_eval(part)
+        except (ValueError, SyntaxError):
+            return False
+        if type(value) is not int:
+            return False
+        return value
+
+    lower, upper = bound(node.lower), bound(node.upper)
+    if lower is False or upper is False:
+        return False
+    if lower is None and upper is not None:
+        return 0 <= upper <= _FRAGMENT_CHARACTERS
+    if upper is None and lower is not None:
+        return -_FRAGMENT_CHARACTERS <= lower < 0
+    if lower is None or upper is None:
+        return False
+    same_side = (lower >= 0) == (upper >= 0)
+    return same_side and 0 <= upper - lower <= _FRAGMENT_CHARACTERS
+
+
 class _LoggingFlow:
     def __init__(self, filename, tree):
         self.filename = str(filename)
@@ -268,6 +335,11 @@ class _LoggingFlow:
         self.import_names = set()
         self.function = None
         self._call_refs = []
+        self.helpers = _module_helpers(tree)
+        self._helper_values = {}
+        self._helper_stack = []
+        self._returns = []
+        self._module_values = None
         declared = _LocalNames()
         for statement in tree.body:
             declared.visit(statement)
@@ -404,7 +476,9 @@ class _LoggingFlow:
                 and isinstance(key, str)
                 and _SECRET_WORDS.search(key)
             ):
-                return _Value(sources=frozenset({"environment variable " + key}))
+                return _Value(
+                    sources=frozenset({"environment variable " + key}), text=True
+                )
             if base.items is not None and isinstance(key, int):
                 return (
                     base.items[key]
@@ -413,6 +487,8 @@ class _LoggingFlow:
                 )
             if base.pairs is not None and key is not None:
                 return dict(base.pairs).get(key, _UNKNOWN)
+            if base.text and _fragment_slice(node.slice):
+                return _UNKNOWN
             return _Value(sources=base.sources)
         if isinstance(node, ast.NamedExpr):
             value = self.expr(node.value)
@@ -509,15 +585,17 @@ class _LoggingFlow:
         if api in {"os.getenv", "os.environ.get"}:
             key = args[0].literal if args else keywords.get("key", _UNKNOWN).literal
             if isinstance(key, str) and _SECRET_WORDS.search(key):
-                return _Value(sources=frozenset({"environment variable " + key}))
+                return _Value(
+                    sources=frozenset({"environment variable " + key}), text=True
+                )
         if api == "getpass.getpass":
-            return _Value(sources=frozenset({"getpass credential input"}))
+            return _Value(sources=frozenset({"getpass credential input"}), text=True)
         if api == "builtins.input":
             prompt = (
                 args[0].literal if args else keywords.get("prompt", _UNKNOWN).literal
             )
             if isinstance(prompt, str) and _SECRET_WORDS.search(prompt):
-                return _Value(sources=frozenset({"credential input prompt"}))
+                return _Value(sources=frozenset({"credential input prompt"}), text=True)
         if api == "logging.getLogger":
             return _Value(api="logging.Logger")
         if api == "logging.LoggerAdapter":
@@ -654,11 +732,79 @@ class _LoggingFlow:
                 "lower",
                 "upper",
             }:
-                return _Value(sources=base.sources)
+                return _Value(sources=base.sources, text=base.text)
             return _combined([base] + args + list(keywords.values()))
         # A helper called redact(), hash(), or sanitize() is not proof that its
         # result omits the credential. Keep unknown transforms reviewable.
+        helper = self._helper(node)
+        if helper is not None:
+            return self._helper_result(helper, args, keyword_args)
         return _combined(args + list(keywords.values()))
+
+    def _helper(self, node):
+        if not isinstance(node.func, ast.Name) or node.func.id not in self.helpers:
+            return None
+        if any(isinstance(arg, ast.Starred) for arg in node.args) or any(
+            keyword.arg is None for keyword in node.keywords
+        ):
+            return None
+        name = node.func.id
+        helper = self.helpers[name]
+        if name in self.values:
+            if self.values[name] is not self._helper_values.get(name):
+                return None
+        elif self.function is None:
+            return None
+        if helper in self._helper_stack or len(self._helper_stack) >= _HELPER_DEPTH:
+            return None
+        if self._namespace_is_dynamic():
+            return None
+        return helper
+
+    def _helper_result(self, helper, args, keyword_args):
+        """What ``helper`` returns for these arguments, read from its body.
+        Its own output calls are reported where it is defined, not here. The
+        result only narrows what the arguments carry: a credential the helper
+        reads by itself is not added to its callers."""
+        spec = helper.args
+        positional = spec.posonlyargs + spec.args
+        named = {p.arg for p in spec.args + spec.kwonlyargs}
+        if len(args) > len(positional) or any(
+            name not in named for name, _ in keyword_args
+        ):
+            return _combined(args + [value for _, value in keyword_args])
+        saved = (self.values, self.symbol, self.function, self.findings)
+        base = self.values
+        if self.function is not None and self._module_values is not None:
+            base = self._module_values
+        self.values = dict(base)
+        self.findings = {}
+        local = _LocalNames()
+        for statement in helper.body:
+            local.visit(statement)
+        for name in local.names | {p.arg for p in positional + spec.kwonlyargs}:
+            self.values[name] = _Value()
+        for parameter, value in zip(positional, args):
+            self.values[parameter.arg] = value
+        for name, value in keyword_args:
+            self.values[name] = value
+        self.function, self.symbol = helper, helper.name
+        self._helper_stack.append(helper)
+        self._returns.append([])
+        try:
+            self.block(helper.body)
+            returned = self._returns[-1]
+        finally:
+            self._returns.pop()
+            self._helper_stack.pop()
+            self.values, self.symbol, self.function, self.findings = saved
+        if not returned:
+            return _UNKNOWN
+        result = _joined_states(returned)
+        passed = _combined(args + [value for _, value in keyword_args]).sources
+        if result.sources <= passed:
+            return result
+        return _Value(sources=result.sources & passed)
 
     def _mapping_update(self, base, value):
         pairs = value.pairs
@@ -856,7 +1002,12 @@ class _LoggingFlow:
             for default in node.args.defaults + node.args.kw_defaults:
                 self.expr(default)
             self.values[node.name] = _UNKNOWN
+            if self.function is None and self.helpers.get(node.name) is node:
+                marker = self._helper_values.setdefault(node.name, _Value())
+                self.values[node.name] = marker
             saved, symbol = self.values.copy(), self.symbol
+            if self.function is None:
+                self._module_values = saved
             previous_function, self.function = self.function, node
             local = _LocalNames()
             for statement in node.body:
@@ -888,7 +1039,11 @@ class _LoggingFlow:
             self._branches([node.body + node.orelse] + [h.body for h in node.handlers])
             return self.block(node.finalbody)
         elif isinstance(node, (ast.Return, ast.Raise)):
-            self.expr(getattr(node, "value", None) or getattr(node, "exc", None))
+            value = self.expr(
+                getattr(node, "value", None) or getattr(node, "exc", None)
+            )
+            if isinstance(node, ast.Return) and self._returns:
+                self._returns[-1].append(value)
             return False
         elif isinstance(node, ast.Delete):
             for target in node.targets:

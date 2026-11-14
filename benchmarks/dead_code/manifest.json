@@ -5,7 +5,9 @@
       "id": "basic-unused-symbols",
       "path": "fixtures/basic_unused_symbols",
       "description": "Basic unused functions, classes, imports, and module variables should be found while referenced symbols stay alive.",
-      "taxonomy": ["basic_detection"],
+      "taxonomy": [
+        "basic_detection"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -21,16 +23,48 @@
       },
       "expect": {
         "unused": [
-          {"kind": "import", "file": "app.py", "symbol": "json"},
-          {"kind": "function", "file": "app.py", "symbol": "unused_helper"},
-          {"kind": "class", "file": "app.py", "symbol": "UnusedWorker"},
-          {"kind": "variable", "file": "app.py", "symbol": "UNUSED_SETTING"},
-          {"kind": "variable", "file": "app.py", "symbol": "RESULT"}
+          {
+            "kind": "import",
+            "file": "app.py",
+            "symbol": "json"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "unused_helper"
+          },
+          {
+            "kind": "class",
+            "file": "app.py",
+            "symbol": "UnusedWorker"
+          },
+          {
+            "kind": "variable",
+            "file": "app.py",
+            "symbol": "UNUSED_SETTING"
+          },
+          {
+            "kind": "variable",
+            "file": "app.py",
+            "symbol": "RESULT"
+          }
         ],
         "used": [
-          {"kind": "function", "file": "app.py", "symbol": "used_helper"},
-          {"kind": "class", "file": "app.py", "symbol": "UsedWorker"},
-          {"kind": "variable", "file": "app.py", "symbol": "USED_SETTING"}
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "used_helper"
+          },
+          {
+            "kind": "class",
+            "file": "app.py",
+            "symbol": "UsedWorker"
+          },
+          {
+            "kind": "variable",
+            "file": "app.py",
+            "symbol": "USED_SETTING"
+          }
         ]
       }
     },
@@ -38,7 +72,10 @@
       "id": "fastapi-route-used",
       "path": "fixtures/fastapi_route_used",
       "description": "FastAPI route handlers and dependency providers are framework entrypoints, not dead code.",
-      "taxonomy": ["framework_precision", "fastapi"],
+      "taxonomy": [
+        "framework_precision",
+        "fastapi"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/fastapi/fastapi",
@@ -54,11 +91,23 @@
       },
       "expect": {
         "unused": [
-          {"kind": "function", "file": "app.py", "symbol": "unused_helper"}
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "unused_helper"
+          }
         ],
         "used": [
-          {"kind": "function", "file": "app.py", "symbol": "get_current_user"},
-          {"kind": "function", "file": "app.py", "symbol": "read_profile"}
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "get_current_user"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "read_profile"
+          }
         ]
       }
     },
@@ -66,7 +115,10 @@
       "id": "dynamic-registry-used",
       "path": "fixtures/dynamic_registry_used",
       "description": "Handlers registered through an explicit local registry should stay alive while unregistered handlers are reported.",
-      "taxonomy": ["dynamic_dispatch", "precision_guard"],
+      "taxonomy": [
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -82,12 +134,28 @@
       },
       "expect": {
         "unused": [
-          {"kind": "function", "file": "app.py", "symbol": "unused_handler"},
-          {"kind": "function", "file": "app.py", "symbol": "dispatch"}
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "unused_handler"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "dispatch"
+          }
         ],
         "used": [
-          {"kind": "function", "file": "app.py", "symbol": "handle_create"},
-          {"kind": "function", "file": "app.py", "symbol": "handle_update"}
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "handle_create"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "handle_update"
+          }
         ]
       }
     },
@@ -95,7 +163,10 @@
       "id": "local-registration-decorator-entrypoints",
       "path": "fixtures/local_registration_decorator",
       "description": "Locally defined decorators that register and return functions should keep decorated entrypoints alive while unregistered helpers are still reported.",
-      "taxonomy": ["dynamic_dispatch", "precision_guard"],
+      "taxonomy": [
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -111,15 +182,43 @@
       },
       "expect": {
         "unused": [
-          {"kind": "function", "file": "app.py", "symbol": "dispatch"},
-          {"kind": "function", "file": "app.py", "symbol": "unused_action"}
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "dispatch"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "unused_action"
+          }
         ],
         "used": [
-          {"kind": "function", "file": "app.py", "symbol": "action"},
-          {"kind": "function", "file": "app.py", "symbol": "on_startup"},
-          {"kind": "function", "file": "app.py", "symbol": "resize_image"},
-          {"kind": "function", "file": "app.py", "symbol": "archive_image"},
-          {"kind": "function", "file": "app.py", "symbol": "warm_cache"}
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "action"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "on_startup"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "resize_image"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "archive_image"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "warm_cache"
+          }
         ]
       }
     },
@@ -127,7 +226,10 @@
       "id": "explicit-same-name-reexports",
       "path": "fixtures/explicit_reexports",
       "description": "Python explicit same-name aliases are public re-export signals and should not be reported as unused imports.",
-      "taxonomy": ["package_entrypoint", "precision_guard"],
+      "taxonomy": [
+        "package_entrypoint",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/pallets/click",
@@ -143,12 +245,28 @@
       },
       "expect": {
         "unused": [
-          {"kind": "import", "file": "app.py", "symbol": "json"},
-          {"kind": "function", "file": "app.py", "symbol": "unused_helper"}
+          {
+            "kind": "import",
+            "file": "app.py",
+            "symbol": "json"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "unused_helper"
+          }
         ],
         "used": [
-          {"kind": "import", "file": "app.py", "symbol": "pathlib"},
-          {"kind": "import", "file": "app.py", "symbol": "PathLike"}
+          {
+            "kind": "import",
+            "file": "app.py",
+            "symbol": "pathlib"
+          },
+          {
+            "kind": "import",
+            "file": "app.py",
+            "symbol": "PathLike"
+          }
         ]
       }
     },
@@ -156,7 +274,10 @@
       "id": "annotation-metadata-import-scope",
       "path": "fixtures/annotation_metadata_scope",
       "description": "Annotation metadata should bind to imported decorators even when a function parameter has the same leaf name.",
-      "taxonomy": ["pydantic", "precision_guard"],
+      "taxonomy": [
+        "pydantic",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/pydantic/pydantic",
@@ -172,13 +293,33 @@
       },
       "expect": {
         "unused": [
-          {"kind": "import", "file": "app.py", "symbol": "json"},
-          {"kind": "function", "file": "app.py", "symbol": "unused_builder"},
-          {"kind": "variable", "file": "app.py", "symbol": "RESULT"}
+          {
+            "kind": "import",
+            "file": "app.py",
+            "symbol": "json"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "unused_builder"
+          },
+          {
+            "kind": "variable",
+            "file": "app.py",
+            "symbol": "RESULT"
+          }
         ],
         "used": [
-          {"kind": "import", "file": "app.py", "symbol": "deprecated"},
-          {"kind": "function", "file": "app.py", "symbol": "build_path"}
+          {
+            "kind": "import",
+            "file": "app.py",
+            "symbol": "deprecated"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "build_path"
+          }
         ]
       }
     },
@@ -186,7 +327,11 @@
       "id": "sqlalchemy-mixed-models",
       "path": "fixtures/sqlalchemy_mixed_models",
       "description": "A realistic model module should report only the unreferenced SQLAlchemy model while keeping used models and ORM columns quiet.",
-      "taxonomy": ["sqlalchemy", "multi_file", "precision_guard"],
+      "taxonomy": [
+        "sqlalchemy",
+        "multi_file",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/sqlalchemy/sqlalchemy",
@@ -202,17 +347,53 @@
       },
       "expect": {
         "unused": [
-          {"kind": "class", "file": "models.py", "symbol": "Tag"},
-          {"kind": "variable", "file": "app.py", "symbol": "RESULT"}
+          {
+            "kind": "class",
+            "file": "models.py",
+            "symbol": "Tag"
+          },
+          {
+            "kind": "variable",
+            "file": "app.py",
+            "symbol": "RESULT"
+          }
         ],
         "used": [
-          {"kind": "class", "file": "models.py", "symbol": "Base"},
-          {"kind": "class", "file": "models.py", "symbol": "Note"},
-          {"kind": "class", "file": "models.py", "symbol": "AuditLog"},
-          {"kind": "variable", "file": "models.py", "symbol": "id"},
-          {"kind": "variable", "file": "models.py", "symbol": "title"},
-          {"kind": "variable", "file": "models.py", "symbol": "name"},
-          {"kind": "function", "file": "repository.py", "symbol": "create_note"}
+          {
+            "kind": "class",
+            "file": "models.py",
+            "symbol": "Base"
+          },
+          {
+            "kind": "class",
+            "file": "models.py",
+            "symbol": "Note"
+          },
+          {
+            "kind": "class",
+            "file": "models.py",
+            "symbol": "AuditLog"
+          },
+          {
+            "kind": "variable",
+            "file": "models.py",
+            "symbol": "id"
+          },
+          {
+            "kind": "variable",
+            "file": "models.py",
+            "symbol": "title"
+          },
+          {
+            "kind": "variable",
+            "file": "models.py",
+            "symbol": "name"
+          },
+          {
+            "kind": "function",
+            "file": "repository.py",
+            "symbol": "create_note"
+          }
         ]
       }
     },
@@ -220,7 +401,12 @@
       "id": "flask-cli-blueprint",
       "path": "fixtures/flask_cli_blueprint",
       "description": "Flask blueprint routes and app CLI commands are entrypoints, while nearby unregistered helpers remain dead code.",
-      "taxonomy": ["framework_precision", "flask", "cli_entrypoint", "precision_guard"],
+      "taxonomy": [
+        "framework_precision",
+        "flask",
+        "cli_entrypoint",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/pallets/flask",
@@ -236,13 +422,33 @@
       },
       "expect": {
         "unused": [
-          {"kind": "function", "file": "app.py", "symbol": "unused_view_helper"},
-          {"kind": "class", "file": "app.py", "symbol": "UnusedFormatter"}
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "unused_view_helper"
+          },
+          {
+            "kind": "class",
+            "file": "app.py",
+            "symbol": "UnusedFormatter"
+          }
         ],
         "used": [
-          {"kind": "function", "file": "app.py", "symbol": "show_order"},
-          {"kind": "function", "file": "app.py", "symbol": "reindex_orders"},
-          {"kind": "variable", "file": "app.py", "symbol": "orders"}
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "show_order"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "reindex_orders"
+          },
+          {
+            "kind": "variable",
+            "file": "app.py",
+            "symbol": "orders"
+          }
         ]
       }
     },
@@ -250,7 +456,11 @@
       "id": "package-service-layers",
       "path": "fixtures/package_service_layers",
       "description": "A small service/repository package should resolve cross-file references and still find stale local strategy code.",
-      "taxonomy": ["multi_file", "service_layer", "basic_detection"],
+      "taxonomy": [
+        "multi_file",
+        "service_layer",
+        "basic_detection"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/psf/requests",
@@ -266,17 +476,53 @@
       },
       "expect": {
         "unused": [
-          {"kind": "import", "file": "service.py", "symbol": "json"},
-          {"kind": "function", "file": "service.py", "symbol": "_unused_reconcile"},
-          {"kind": "class", "file": "service.py", "symbol": "UnusedStrategy"},
-          {"kind": "variable", "file": "service.py", "symbol": "UNUSED_STATUS"},
-          {"kind": "variable", "file": "app.py", "symbol": "RESULT"}
+          {
+            "kind": "import",
+            "file": "service.py",
+            "symbol": "json"
+          },
+          {
+            "kind": "function",
+            "file": "service.py",
+            "symbol": "_unused_reconcile"
+          },
+          {
+            "kind": "class",
+            "file": "service.py",
+            "symbol": "UnusedStrategy"
+          },
+          {
+            "kind": "variable",
+            "file": "service.py",
+            "symbol": "UNUSED_STATUS"
+          },
+          {
+            "kind": "variable",
+            "file": "app.py",
+            "symbol": "RESULT"
+          }
         ],
         "used": [
-          {"kind": "function", "file": "app.py", "symbol": "run_checkout"},
-          {"kind": "function", "file": "service.py", "symbol": "create_invoice"},
-          {"kind": "class", "file": "repository.py", "symbol": "InvoiceRepository"},
-          {"kind": "variable", "file": "service.py", "symbol": "ACTIVE_STATUS"}
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "run_checkout"
+          },
+          {
+            "kind": "function",
+            "file": "service.py",
+            "symbol": "create_invoice"
+          },
+          {
+            "kind": "class",
+            "file": "repository.py",
+            "symbol": "InvoiceRepository"
+          },
+          {
+            "kind": "variable",
+            "file": "service.py",
+            "symbol": "ACTIVE_STATUS"
+          }
         ]
       }
     },
@@ -284,7 +530,12 @@
       "id": "django-management-command",
       "path": "fixtures/django_management_command",
       "description": "Django management command classes and lifecycle methods are CLI entrypoints while unrelated helpers remain dead code.",
-      "taxonomy": ["framework_precision", "django", "cli_entrypoint", "precision_guard"],
+      "taxonomy": [
+        "framework_precision",
+        "django",
+        "cli_entrypoint",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/django/django",
@@ -300,16 +551,48 @@
       },
       "expect": {
         "unused": [
-          {"kind": "function", "file": "shop/management/commands/rebuild_index.py", "symbol": "unused_export_job"},
-          {"kind": "class", "file": "shop/management/commands/rebuild_index.py", "symbol": "UnusedCommandHelper"}
+          {
+            "kind": "function",
+            "file": "shop/management/commands/rebuild_index.py",
+            "symbol": "unused_export_job"
+          },
+          {
+            "kind": "class",
+            "file": "shop/management/commands/rebuild_index.py",
+            "symbol": "UnusedCommandHelper"
+          }
         ],
         "used": [
-          {"kind": "class", "file": "shop/management/commands/rebuild_index.py", "symbol": "Command"},
-          {"kind": "function", "file": "shop/management/commands/rebuild_index.py", "symbol": "add_arguments"},
-          {"kind": "function", "file": "shop/management/commands/rebuild_index.py", "symbol": "handle"},
-          {"kind": "function", "file": "shop/management/commands/rebuild_index.py", "symbol": "rebuild_index"},
-          {"kind": "variable", "file": "shop/management/commands/rebuild_index.py", "symbol": "args"},
-          {"kind": "variable", "file": "shop/management/commands/rebuild_index.py", "symbol": "help"}
+          {
+            "kind": "class",
+            "file": "shop/management/commands/rebuild_index.py",
+            "symbol": "Command"
+          },
+          {
+            "kind": "function",
+            "file": "shop/management/commands/rebuild_index.py",
+            "symbol": "add_arguments"
+          },
+          {
+            "kind": "function",
+            "file": "shop/management/commands/rebuild_index.py",
+            "symbol": "handle"
+          },
+          {
+            "kind": "function",
+            "file": "shop/management/commands/rebuild_index.py",
+            "symbol": "rebuild_index"
+          },
+          {
+            "kind": "variable",
+            "file": "shop/management/commands/rebuild_index.py",
+            "symbol": "args"
+          },
+          {
+            "kind": "variable",
+            "file": "shop/management/commands/rebuild_index.py",
+            "symbol": "help"
+          }
         ]
       }
     },
@@ -317,7 +600,12 @@
       "id": "celery-task-entrypoints",
       "path": "fixtures/celery_tasks",
       "description": "Celery task decorators should keep worker functions alive while unregistered helpers are reported.",
-      "taxonomy": ["framework_precision", "celery", "dynamic_dispatch", "precision_guard"],
+      "taxonomy": [
+        "framework_precision",
+        "celery",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/celery/celery",
@@ -333,13 +621,33 @@
       },
       "expect": {
         "unused": [
-          {"kind": "function", "file": "app.py", "symbol": "unused_task_helper"},
-          {"kind": "class", "file": "app.py", "symbol": "UnusedTaskPayload"}
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "unused_task_helper"
+          },
+          {
+            "kind": "class",
+            "file": "app.py",
+            "symbol": "UnusedTaskPayload"
+          }
         ],
         "used": [
-          {"kind": "function", "file": "app.py", "symbol": "send_receipt"},
-          {"kind": "function", "file": "app.py", "symbol": "rebuild_rollups"},
-          {"kind": "variable", "file": "app.py", "symbol": "celery_app"}
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "send_receipt"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "rebuild_rollups"
+          },
+          {
+            "kind": "variable",
+            "file": "app.py",
+            "symbol": "celery_app"
+          }
         ]
       }
     },
@@ -347,7 +655,12 @@
       "id": "pytest-fixture-entrypoints",
       "path": "fixtures/pytest_fixtures",
       "description": "Pytest tests and fixtures are runtime entrypoints even when referenced through parameter injection.",
-      "taxonomy": ["framework_precision", "pytest", "dynamic_dispatch", "precision_guard"],
+      "taxonomy": [
+        "framework_precision",
+        "pytest",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/pytest-dev/pytest",
@@ -364,9 +677,21 @@
       "expect": {
         "unused": [],
         "used": [
-          {"kind": "function", "file": "tests/test_orders.py", "symbol": "api_client"},
-          {"kind": "function", "file": "tests/test_orders.py", "symbol": "payload_fixture"},
-          {"kind": "function", "file": "tests/test_orders.py", "symbol": "test_create_order"}
+          {
+            "kind": "function",
+            "file": "tests/test_orders.py",
+            "symbol": "api_client"
+          },
+          {
+            "kind": "function",
+            "file": "tests/test_orders.py",
+            "symbol": "payload_fixture"
+          },
+          {
+            "kind": "function",
+            "file": "tests/test_orders.py",
+            "symbol": "test_create_order"
+          }
         ]
       }
     },
@@ -374,7 +699,11 @@
       "id": "pydantic-validator-entrypoints",
       "path": "fixtures/pydantic_validators",
       "description": "Pydantic validators are framework-called methods while unrelated helpers are still reportable.",
-      "taxonomy": ["framework_precision", "pydantic", "precision_guard"],
+      "taxonomy": [
+        "framework_precision",
+        "pydantic",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/pydantic/pydantic",
@@ -390,18 +719,58 @@
       },
       "expect": {
         "unused": [
-          {"kind": "function", "file": "app.py", "symbol": "unused_normalizer"},
-          {"kind": "class", "file": "app.py", "symbol": "UnusedSchema"},
-          {"kind": "variable", "file": "app.py", "symbol": "RESULT"}
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "unused_normalizer"
+          },
+          {
+            "kind": "class",
+            "file": "app.py",
+            "symbol": "UnusedSchema"
+          },
+          {
+            "kind": "variable",
+            "file": "app.py",
+            "symbol": "RESULT"
+          }
         ],
         "used": [
-          {"kind": "class", "file": "app.py", "symbol": "UserInput"},
-          {"kind": "function", "file": "app.py", "symbol": "normalize_email"},
-          {"kind": "function", "file": "app.py", "symbol": "ensure_domain"},
-          {"kind": "function", "file": "app.py", "symbol": "build_user"},
-          {"kind": "variable", "file": "app.py", "symbol": "cls"},
-          {"kind": "variable", "file": "app.py", "symbol": "email"},
-          {"kind": "variable", "file": "app.py", "symbol": "name"}
+          {
+            "kind": "class",
+            "file": "app.py",
+            "symbol": "UserInput"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "normalize_email"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "ensure_domain"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "build_user"
+          },
+          {
+            "kind": "variable",
+            "file": "app.py",
+            "symbol": "cls"
+          },
+          {
+            "kind": "variable",
+            "file": "app.py",
+            "symbol": "email"
+          },
+          {
+            "kind": "variable",
+            "file": "app.py",
+            "symbol": "name"
+          }
         ]
       }
     },
@@ -409,7 +778,11 @@
       "id": "alembic-migration-entrypoints",
       "path": "fixtures/alembic_migration",
       "description": "Alembic migration lifecycle functions and revision metadata are entrypoints; helper code can still be dead.",
-      "taxonomy": ["framework_precision", "alembic", "precision_guard"],
+      "taxonomy": [
+        "framework_precision",
+        "alembic",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/sqlalchemy/alembic",
@@ -425,14 +798,38 @@
       },
       "expect": {
         "unused": [
-          {"kind": "function", "file": "versions/20260425_add_orders.py", "symbol": "unused_migration_helper"},
-          {"kind": "class", "file": "versions/20260425_add_orders.py", "symbol": "UnusedMigrationState"}
+          {
+            "kind": "function",
+            "file": "versions/20260425_add_orders.py",
+            "symbol": "unused_migration_helper"
+          },
+          {
+            "kind": "class",
+            "file": "versions/20260425_add_orders.py",
+            "symbol": "UnusedMigrationState"
+          }
         ],
         "used": [
-          {"kind": "function", "file": "versions/20260425_add_orders.py", "symbol": "upgrade"},
-          {"kind": "function", "file": "versions/20260425_add_orders.py", "symbol": "downgrade"},
-          {"kind": "variable", "file": "versions/20260425_add_orders.py", "symbol": "revision"},
-          {"kind": "variable", "file": "versions/20260425_add_orders.py", "symbol": "down_revision"}
+          {
+            "kind": "function",
+            "file": "versions/20260425_add_orders.py",
+            "symbol": "upgrade"
+          },
+          {
+            "kind": "function",
+            "file": "versions/20260425_add_orders.py",
+            "symbol": "downgrade"
+          },
+          {
+            "kind": "variable",
+            "file": "versions/20260425_add_orders.py",
+            "symbol": "revision"
+          },
+          {
+            "kind": "variable",
+            "file": "versions/20260425_add_orders.py",
+            "symbol": "down_revision"
+          }
         ]
       }
     },
@@ -440,7 +837,11 @@
       "id": "importlib-plugin-loading",
       "path": "fixtures/importlib_plugins",
       "description": "String-based importlib plugin loading should keep loaded plugin hooks alive while stale plugin code is reported.",
-      "taxonomy": ["dynamic_dispatch", "plugin_loading", "precision_guard"],
+      "taxonomy": [
+        "dynamic_dispatch",
+        "plugin_loading",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -456,16 +857,48 @@
       },
       "expect": {
         "unused": [
-          {"kind": "function", "file": "app.py", "symbol": "unused_loader"},
-          {"kind": "function", "file": "plugins/email.py", "symbol": "unused_plugin_hook"},
-          {"kind": "class", "file": "plugins/email.py", "symbol": "UnusedPlugin"},
-          {"kind": "variable", "file": "app.py", "symbol": "RESULT"}
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "unused_loader"
+          },
+          {
+            "kind": "function",
+            "file": "plugins/email.py",
+            "symbol": "unused_plugin_hook"
+          },
+          {
+            "kind": "class",
+            "file": "plugins/email.py",
+            "symbol": "UnusedPlugin"
+          },
+          {
+            "kind": "variable",
+            "file": "app.py",
+            "symbol": "RESULT"
+          }
         ],
         "used": [
-          {"kind": "function", "file": "app.py", "symbol": "load_plugin"},
-          {"kind": "function", "file": "app.py", "symbol": "run_notification"},
-          {"kind": "function", "file": "plugins/email.py", "symbol": "send_email"},
-          {"kind": "variable", "file": "app.py", "symbol": "PLUGIN_MODULE"}
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "load_plugin"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "run_notification"
+          },
+          {
+            "kind": "function",
+            "file": "plugins/email.py",
+            "symbol": "send_email"
+          },
+          {
+            "kind": "variable",
+            "file": "app.py",
+            "symbol": "PLUGIN_MODULE"
+          }
         ]
       }
     },
@@ -473,7 +906,11 @@
       "id": "package-entrypoints",
       "path": "fixtures/package_entrypoints",
       "description": "pyproject project.scripts entrypoints should keep CLI functions alive.",
-      "taxonomy": ["package_entrypoint", "cli_entrypoint", "precision_guard"],
+      "taxonomy": [
+        "package_entrypoint",
+        "cli_entrypoint",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://packaging.python.org",
@@ -490,8 +927,16 @@
       "expect": {
         "unused": [],
         "used": [
-          {"kind": "function", "file": "bench/cli.py", "symbol": "main"},
-          {"kind": "function", "file": "bench/cli.py", "symbol": "format_status"}
+          {
+            "kind": "function",
+            "file": "bench/cli.py",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "bench/cli.py",
+            "symbol": "format_status"
+          }
         ]
       }
     },
@@ -499,8 +944,14 @@
       "id": "go-service-entrypoints",
       "path": "fixtures/go_service",
       "description": "Go HTTP handler references should keep live handlers reachable while stale package-private helpers are reported.",
-      "languages": ["go"],
-      "taxonomy": ["go", "basic_detection", "precision_guard"],
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/golang/go",
@@ -516,12 +967,28 @@
       },
       "expect": {
         "unused": [
-          {"kind": "function", "file": "main.go", "symbol": "unusedReconciler"}
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "unusedReconciler"
+          }
         ],
         "used": [
-          {"kind": "function", "file": "main.go", "symbol": "main"},
-          {"kind": "function", "file": "main.go", "symbol": "healthHandler"},
-          {"kind": "function", "file": "main.go", "symbol": "formatStatus"}
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "healthHandler"
+          },
+          {
+            "kind": "function",
+            "file": "main.go",
+            "symbol": "formatStatus"
+          }
         ]
       }
     },
@@ -529,8 +996,14 @@
       "id": "java-service-entrypoints",
       "path": "fixtures/java_service",
       "description": "Java application entrypoints and method calls should stay live while unused methods and classes are reported.",
-      "languages": ["java"],
-      "taxonomy": ["java", "basic_detection", "precision_guard"],
+      "languages": [
+        "java"
+      ],
+      "taxonomy": [
+        "java",
+        "basic_detection",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/openjdk/jdk",
@@ -546,14 +1019,38 @@
       },
       "expect": {
         "unused": [
-          {"kind": "function", "file": "App.java", "symbol": "unusedFormatter"},
-          {"kind": "class", "file": "App.java", "symbol": "UnusedController"}
+          {
+            "kind": "function",
+            "file": "App.java",
+            "symbol": "unusedFormatter"
+          },
+          {
+            "kind": "class",
+            "file": "App.java",
+            "symbol": "UnusedController"
+          }
         ],
         "used": [
-          {"kind": "class", "file": "App.java", "symbol": "App"},
-          {"kind": "function", "file": "App.java", "symbol": "main"},
-          {"kind": "function", "file": "App.java", "symbol": "handle"},
-          {"kind": "function", "file": "App.java", "symbol": "formatStatus"}
+          {
+            "kind": "class",
+            "file": "App.java",
+            "symbol": "App"
+          },
+          {
+            "kind": "function",
+            "file": "App.java",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "App.java",
+            "symbol": "handle"
+          },
+          {
+            "kind": "function",
+            "file": "App.java",
+            "symbol": "formatStatus"
+          }
         ]
       }
     },
@@ -561,8 +1058,14 @@
       "id": "java-fxml-controller-callbacks",
       "path": "fixtures/java_fxml_controller",
       "description": "JavaFX methods wired through FXML action metadata are framework callbacks, while unwired @FXML methods and ordinary helpers remain dead code.",
-      "languages": ["java"],
-      "taxonomy": ["java", "framework_precision", "precision_guard"],
+      "languages": [
+        "java"
+      ],
+      "taxonomy": [
+        "java",
+        "framework_precision",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/jakemarotta/FXMLExercise",
@@ -578,12 +1081,28 @@
       },
       "expect": {
         "unused": [
-          {"kind": "function", "file": "PrintController.java", "symbol": "staleAnnotated"},
-          {"kind": "function", "file": "PrintController.java", "symbol": "staleHelper"}
+          {
+            "kind": "function",
+            "file": "PrintController.java",
+            "symbol": "staleAnnotated"
+          },
+          {
+            "kind": "function",
+            "file": "PrintController.java",
+            "symbol": "staleHelper"
+          }
         ],
         "used": [
-          {"kind": "class", "file": "PrintController.java", "symbol": "PrintController"},
-          {"kind": "function", "file": "PrintController.java", "symbol": "printButtonAction"}
+          {
+            "kind": "class",
+            "file": "PrintController.java",
+            "symbol": "PrintController"
+          },
+          {
+            "kind": "function",
+            "file": "PrintController.java",
+            "symbol": "printButtonAction"
+          }
         ]
       }
     },
@@ -591,8 +1110,14 @@
       "id": "typescript-vscode-pseudoterminal-callbacks",
       "path": "fixtures/typescript_vscode_pseudoterminal",
       "description": "VS Code Pseudoterminal and provider contract methods are host-invoked callbacks, while unrelated methods on the same classes remain dead code.",
-      "languages": ["typescript"],
-      "taxonomy": ["typescript", "framework_precision", "precision_guard"],
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/microsoft/vscode-extension-samples",
@@ -608,17 +1133,53 @@
       },
       "expect": {
         "unused": [
-          {"kind": "function", "file": "src/extension.ts", "symbol": "staleHelper"},
-          {"kind": "function", "file": "src/extension.ts", "symbol": "staleProviderHelper"}
+          {
+            "kind": "function",
+            "file": "src/extension.ts",
+            "symbol": "staleHelper"
+          },
+          {
+            "kind": "function",
+            "file": "src/extension.ts",
+            "symbol": "staleProviderHelper"
+          }
         ],
         "used": [
-          {"kind": "function", "file": "src/extension.ts", "symbol": "activate"},
-          {"kind": "class", "file": "src/extension.ts", "symbol": "BuildTerminal"},
-          {"kind": "class", "file": "src/extension.ts", "symbol": "InternalTaskProvider"},
-          {"kind": "function", "file": "src/extension.ts", "symbol": "open"},
-          {"kind": "function", "file": "src/extension.ts", "symbol": "close"},
-          {"kind": "function", "file": "src/extension.ts", "symbol": "provideTasks"},
-          {"kind": "function", "file": "src/extension.ts", "symbol": "resolveTask"}
+          {
+            "kind": "function",
+            "file": "src/extension.ts",
+            "symbol": "activate"
+          },
+          {
+            "kind": "class",
+            "file": "src/extension.ts",
+            "symbol": "BuildTerminal"
+          },
+          {
+            "kind": "class",
+            "file": "src/extension.ts",
+            "symbol": "InternalTaskProvider"
+          },
+          {
+            "kind": "function",
+            "file": "src/extension.ts",
+            "symbol": "open"
+          },
+          {
+            "kind": "function",
+            "file": "src/extension.ts",
+            "symbol": "close"
+          },
+          {
+            "kind": "function",
+            "file": "src/extension.ts",
+            "symbol": "provideTasks"
+          },
+          {
+            "kind": "function",
+            "file": "src/extension.ts",
+            "symbol": "resolveTask"
+          }
         ]
       }
     },
@@ -626,8 +1187,17 @@
       "id": "ts-js-package-reachability",
       "path": "fixtures/ts_js_package",
       "description": "TypeScript package entrypoints and imports should keep live exports reachable while stale TS and JS exports are reported.",
-      "languages": ["typescript", "javascript"],
-      "taxonomy": ["typescript", "javascript", "package_entrypoint", "basic_detection", "precision_guard"],
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "javascript",
+        "package_entrypoint",
+        "basic_detection",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/microsoft/TypeScript",
@@ -643,13 +1213,33 @@
       },
       "expect": {
         "unused": [
-          {"kind": "function", "file": "src/service.ts", "symbol": "unusedTransform"},
-          {"kind": "function", "file": "src/legacy.js", "symbol": "legacySync"},
-          {"kind": "file", "file": "src/legacy.js", "symbol": "src/legacy.js"}
+          {
+            "kind": "function",
+            "file": "src/service.ts",
+            "symbol": "unusedTransform"
+          },
+          {
+            "kind": "function",
+            "file": "src/legacy.js",
+            "symbol": "legacySync"
+          },
+          {
+            "kind": "file",
+            "file": "src/legacy.js",
+            "symbol": "src/legacy.js"
+          }
         ],
         "used": [
-          {"kind": "function", "file": "src/service.ts", "symbol": "runJob"},
-          {"kind": "function", "file": "src/service.ts", "symbol": "formatJob"}
+          {
+            "kind": "function",
+            "file": "src/service.ts",
+            "symbol": "runJob"
+          },
+          {
+            "kind": "function",
+            "file": "src/service.ts",
+            "symbol": "formatJob"
+          }
         ]
       }
     },
@@ -1589,7 +2179,9 @@
     },
     {
       "id": "ruby-private-chain",
-      "languages": ["ruby"],
+      "languages": [
+        "ruby"
+      ],
       "symbol_identity": "qualified",
       "path": "fixtures/ruby_private_chain",
       "description": "Ruby private chain; bounded native Ruby source contract.",
@@ -1644,7 +2236,9 @@
     },
     {
       "id": "ruby-member-owners",
-      "languages": ["ruby"],
+      "languages": [
+        "ruby"
+      ],
       "symbol_identity": "qualified",
       "path": "fixtures/ruby_member_owners",
       "description": "Ruby member owners; bounded native Ruby source contract.",
@@ -1699,7 +2293,9 @@
     },
     {
       "id": "ruby-callback-owner",
-      "languages": ["ruby"],
+      "languages": [
+        "ruby"
+      ],
       "symbol_identity": "qualified",
       "path": "fixtures/ruby_callback_owner",
       "description": "Ruby callback owner; bounded native Ruby source contract.",
@@ -4894,6 +5490,2682 @@
             "kind": "function",
             "file": "Probe.swift",
             "symbol": "Worker.entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-jsx-classic-runtime",
+      "path": "fixtures/tsjs_jsx_classic",
+      "description": "With tsconfig jsx: react, JSX reads the React binding; a React import in a file without JSX is still unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/plain.tsx",
+            "symbol": "React"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "src/index.tsx",
+            "symbol": "React"
+          },
+          {
+            "kind": "import",
+            "file": "src/Badge.tsx",
+            "symbol": "React"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-jsx-automatic-runtime",
+      "path": "fixtures/tsjs_jsx_automatic",
+      "description": "With tsconfig jsx: react-jsx the compiler imports the runtime itself, so an unread React import is unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/index.tsx",
+            "symbol": "React"
+          }
+        ],
+        "used": []
+      }
+    },
+    {
+      "id": "typescript-jsx-pragma-factory",
+      "path": "fixtures/tsjs_jsx_pragma",
+      "description": "A @jsx pragma makes JSX read the named factory in that file only.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/other.tsx",
+            "symbol": "h"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "src/index.tsx",
+            "symbol": "h"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-jsx-configured-factory",
+      "path": "fixtures/tsjs_jsx_factory",
+      "description": "tsconfig jsxFactory names the binding JSX reads; React is unused under a custom factory.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/other.tsx",
+            "symbol": "React"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "src/index.tsx",
+            "symbol": "h"
+          },
+          {
+            "kind": "import",
+            "file": "src/other.tsx",
+            "symbol": "h"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-qualified-type-import-use",
+      "path": "fixtures/tsjs_type_use",
+      "description": "A type namespace import used as the root of a qualified type name is read; unnamed type imports are unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/runner.ts",
+            "symbol": "spareNs"
+          },
+          {
+            "kind": "import",
+            "file": "src/runner.ts",
+            "symbol": "Gone"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "src/runner.ts",
+            "symbol": "sdk"
+          },
+          {
+            "kind": "import",
+            "file": "src/runner.ts",
+            "symbol": "Kept"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-destructuring-default-reads",
+      "path": "fixtures/tsjs_default_value",
+      "description": "Default values of destructured bindings and parameters read the import or constant they name.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/panel.ts",
+            "symbol": "spare"
+          },
+          {
+            "kind": "variable",
+            "file": "src/panel.ts",
+            "symbol": "DEFAULT_MAX"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "src/panel.ts",
+            "symbol": "noop"
+          },
+          {
+            "kind": "variable",
+            "file": "src/panel.ts",
+            "symbol": "DEFAULT_MIN"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-dependency-base-overrides",
+      "path": "fixtures/tsjs_override",
+      "description": "Methods of a class that extends a dependency's class can be overrides the dependency calls; methods of base-less and project-base classes are judged normally.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "src/index.ts",
+            "symbol": "Plain.eq"
+          },
+          {
+            "kind": "function",
+            "file": "src/index.ts",
+            "symbol": "Local.matches"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "src/index.ts",
+            "symbol": "Label.eq"
+          },
+          {
+            "kind": "function",
+            "file": "src/index.ts",
+            "symbol": "Label.toDOM"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "typescript-member-call-same-name-local",
+      "path": "fixtures/tsjs_member_same_name",
+      "description": "A method called through an instance inside a declaration of the same name is used; a local variable that only shares a method's name is not a call.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "src/service.ts",
+            "symbol": "format"
+          },
+          {
+            "kind": "function",
+            "file": "src/service.ts",
+            "symbol": "stale"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "src/service.ts",
+            "symbol": "isNewer"
+          }
+        ]
+      }
+    },
+    {
+      "id": "javascript-storybook-config-files",
+      "path": "fixtures/tsjs_storybook",
+      "description": "Storybook loads its named .storybook config files; other files there and orphans need an importer.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": ".storybook/leftover.js",
+            "symbol": ".storybook/leftover.js"
+          },
+          {
+            "kind": "file",
+            "file": "src/orphan.js",
+            "symbol": "src/orphan.js"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": ".storybook/addons.js",
+            "symbol": ".storybook/addons.js"
+          },
+          {
+            "kind": "file",
+            "file": ".storybook/config.js",
+            "symbol": ".storybook/config.js"
+          },
+          {
+            "kind": "file",
+            "file": ".storybook/main.js",
+            "symbol": ".storybook/main.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "javascript-storybook-config-without-storybook",
+      "path": "fixtures/tsjs_storybook_nodep",
+      "description": "Without a Storybook dependency or script, a .storybook file is an ordinary unused file.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": ".storybook/config.js",
+            "symbol": ".storybook/config.js"
+          }
+        ],
+        "used": []
+      }
+    },
+    {
+      "id": "typescript-runner-conf-files",
+      "path": "fixtures/tsjs_conf_files",
+      "description": "karma.conf and wdio.conf in a package that uses the runner are loaded by it; WebdriverIO reads only the exported config.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "variable",
+            "file": "wdio.conf.ts",
+            "symbol": "leftover"
+          },
+          {
+            "kind": "file",
+            "file": "src/settings.conf.ts",
+            "symbol": "src/settings.conf.ts"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "karma.conf.ts",
+            "symbol": "karma.conf.ts"
+          },
+          {
+            "kind": "file",
+            "file": "wdio.conf.ts",
+            "symbol": "wdio.conf.ts"
+          },
+          {
+            "kind": "variable",
+            "file": "wdio.conf.ts",
+            "symbol": "config"
+          }
+        ]
+      }
+    },
+    {
+      "id": "javascript-runner-conf-without-runner",
+      "path": "fixtures/tsjs_conf_nodep",
+      "description": "A karma.conf.js in a package that neither depends on nor runs Karma is unused.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "karma.conf.js",
+            "symbol": "karma.conf.js"
+          }
+        ],
+        "used": []
+      }
+    },
+    {
+      "id": "typescript-tool-config-path-strings",
+      "path": "fixtures/tsjs_tool_config_paths",
+      "description": "Path strings in a tool configuration file load the files they name; comments, prose and path strings in ordinary modules do not.",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "lib/mentioned.ts",
+            "symbol": "lib/mentioned.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/prose.ts",
+            "symbol": "lib/prose.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/stale.ts",
+            "symbol": "lib/stale.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/excluded.ts",
+            "symbol": "lib/excluded.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/orphan.ts",
+            "symbol": "lib/orphan.ts"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "lib/app.ts",
+            "symbol": "lib/app.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/menu.ts",
+            "symbol": "lib/menu.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/renderer.ts",
+            "symbol": "lib/renderer.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/preload.ts",
+            "symbol": "lib/preload.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/api.ts",
+            "symbol": "lib/api.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/resource-en.js",
+            "symbol": "lib/resource-en.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-tsconfig-include-exact-file",
+      "path": "fixtures/tsjs_tsconfig_include",
+      "description": "A tsconfig include entry that names one file is a compilation root; globs, excludes and unlisted files are not.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "tools/other.ts",
+            "symbol": "tools/other.ts"
+          },
+          {
+            "kind": "file",
+            "file": "tools/excluded.ts",
+            "symbol": "tools/excluded.ts"
+          },
+          {
+            "kind": "file",
+            "file": "extra/glob_only.ts",
+            "symbol": "extra/glob_only.ts"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "tools/tester.ts",
+            "symbol": "tools/tester.ts"
+          }
+        ]
+      }
+    },
+    {
+      "id": "javascript-path-join-literal-files",
+      "path": "fixtures/tsjs_path_join",
+      "description": "path.join/path.resolve from node:path with literal segments name the file they build; comments, Array.join and local lookalikes do not.",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "typescript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "lib/commented.js",
+            "symbol": "lib/commented.js"
+          },
+          {
+            "kind": "file",
+            "file": "lib/joined.js",
+            "symbol": "lib/joined.js"
+          },
+          {
+            "kind": "file",
+            "file": "lib/fake.js",
+            "symbol": "lib/fake.js"
+          },
+          {
+            "kind": "file",
+            "file": "lib/orphan.js",
+            "symbol": "lib/orphan.js"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "lib/shared.js",
+            "symbol": "lib/shared.js"
+          },
+          {
+            "kind": "file",
+            "file": "tools/input.ts",
+            "symbol": "tools/input.ts"
+          },
+          {
+            "kind": "file",
+            "file": "src/bundle.ts",
+            "symbol": "src/bundle.ts"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-runtime-command-template-files",
+      "path": "fixtures/tsjs_command_template",
+      "description": "A runtime command built in a template literal runs the script it names; prose and non-command joins do not.",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "templates/hooks/archived-hook.js",
+            "symbol": "templates/hooks/archived-hook.js"
+          },
+          {
+            "kind": "file",
+            "file": "templates/hooks/unregistered.js",
+            "symbol": "templates/hooks/unregistered.js"
+          },
+          {
+            "kind": "file",
+            "file": "templates/report.js",
+            "symbol": "templates/report.js"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "templates/hooks/session-start.js",
+            "symbol": "templates/hooks/session-start.js"
+          },
+          {
+            "kind": "file",
+            "file": "templates/hooks/hook-utils.js",
+            "symbol": "templates/hooks/hook-utils.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-markdown-run-instructions",
+      "path": "fixtures/tsjs_markdown_run",
+      "description": "A runtime command in a Markdown code block or code span is a run instruction; prose, links and non-runtime commands are mentions.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "multi_file",
+        "cli_entrypoint",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "tools/inline.ts",
+            "symbol": "tools/inline.ts"
+          },
+          {
+            "kind": "file",
+            "file": "tools/legacy.ts",
+            "symbol": "tools/legacy.ts"
+          },
+          {
+            "kind": "file",
+            "file": "tools/linked.ts",
+            "symbol": "tools/linked.ts"
+          },
+          {
+            "kind": "file",
+            "file": "tools/catted.ts",
+            "symbol": "tools/catted.ts"
+          },
+          {
+            "kind": "file",
+            "file": "tools/snippet.ts",
+            "symbol": "tools/snippet.ts"
+          },
+          {
+            "kind": "file",
+            "file": "tools/orphan.ts",
+            "symbol": "tools/orphan.ts"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "src/evals/run.ts",
+            "symbol": "src/evals/run.ts"
+          },
+          {
+            "kind": "file",
+            "file": "tools/make.ts",
+            "symbol": "tools/make.ts"
+          },
+          {
+            "kind": "file",
+            "file": "tools/helper.ts",
+            "symbol": "tools/helper.ts"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-package-manifest-named-files",
+      "path": "fixtures/tsjs_package_keys",
+      "description": "package.json files entries that name one file and path values of custom keys load that file; folder entries, descriptions and ignore lists do not.",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "javascript",
+        "package_entrypoint",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "templates/shipped/inner.js",
+            "symbol": "templates/shipped/inner.js"
+          },
+          {
+            "kind": "file",
+            "file": "src/described.ts",
+            "symbol": "src/described.ts"
+          },
+          {
+            "kind": "file",
+            "file": "src/ignored.ts",
+            "symbol": "src/ignored.ts"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "src/ext/plugin.ts",
+            "symbol": "src/ext/plugin.ts"
+          },
+          {
+            "kind": "function",
+            "file": "src/ext/plugin.ts",
+            "symbol": "plugin"
+          },
+          {
+            "kind": "file",
+            "file": "templates/run_tool.js",
+            "symbol": "templates/run_tool.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-react-native-platform-extensions",
+      "path": "fixtures/tsjs_platform_rn",
+      "description": "In a React Native project an import loads every platform sibling of its target; platform files nobody imports stay unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "hooks/lonely.web.ts",
+            "symbol": "hooks/lonely.web.ts"
+          },
+          {
+            "kind": "file",
+            "file": "hooks/useGone.ts",
+            "symbol": "hooks/useGone.ts"
+          },
+          {
+            "kind": "file",
+            "file": "hooks/useGone.ios.ts",
+            "symbol": "hooks/useGone.ios.ts"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "hooks/useScale.web.ts",
+            "symbol": "hooks/useScale.web.ts"
+          },
+          {
+            "kind": "function",
+            "file": "hooks/useScale.web.ts",
+            "symbol": "useScale"
+          },
+          {
+            "kind": "file",
+            "file": "ui/Button.ios.tsx",
+            "symbol": "ui/Button.ios.tsx"
+          },
+          {
+            "kind": "file",
+            "file": "ui/Button.android.tsx",
+            "symbol": "ui/Button.android.tsx"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-platform-suffix-without-react-native",
+      "path": "fixtures/tsjs_platform_none",
+      "description": "Without React Native or Expo, scale.web.ts is an ordinary module that needs its own importer.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "src/scale.web.ts",
+            "symbol": "src/scale.web.ts"
+          }
+        ],
+        "used": []
+      }
+    },
+    {
+      "id": "typescript-source-reexport-import-binding",
+      "path": "fixtures/tsjs_reexport_import",
+      "description": "An `export { X } from` statement re-exports from the module and does not read a local import of X; a local `export { X }` does.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/tools.ts",
+            "symbol": "DESCRIPTION"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "src/tools.ts",
+            "symbol": "LIMIT"
+          },
+          {
+            "kind": "import",
+            "file": "src/tools.ts",
+            "symbol": "helper"
+          },
+          {
+            "kind": "variable",
+            "file": "src/constants.ts",
+            "symbol": "DESCRIPTION"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-default-reexport-from-entry",
+      "path": "fixtures/tsjs_reexport_default",
+      "description": "A default export re-exported by name from the package entry is public API.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "package_entrypoint",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "function",
+            "file": "src/useTimeout.ts",
+            "symbol": "useTimeout"
+          },
+          {
+            "kind": "function",
+            "file": "src/useEnsured.ts",
+            "symbol": "useEnsured"
+          }
+        ]
+      }
+    },
+    {
+      "id": "go-plugin-lookup-symbols",
+      "path": "fixtures/go_plugin_lookup_symbols",
+      "description": "Exported package-main symbols named by plugin.Lookup in a file importing the standard plugin package stay live; unnamed, lowercase and project-Lookup names are still reported.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source contract labelled from the Go plugin package semantics before running the analyzer; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "plugins/greeter/main.go",
+            "symbol": "Describe"
+          },
+          {
+            "kind": "variable",
+            "file": "plugins/greeter/main.go",
+            "symbol": "Settings"
+          },
+          {
+            "kind": "function",
+            "file": "host/host.go",
+            "symbol": "Load"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "plugins/greeter/main.go",
+            "symbol": "Unnamed"
+          },
+          {
+            "kind": "function",
+            "file": "plugins/greeter/main.go",
+            "symbol": "Orphan"
+          },
+          {
+            "kind": "function",
+            "file": "plugins/greeter/main.go",
+            "symbol": "describe"
+          }
+        ]
+      }
+    },
+    {
+      "id": "java-same-name-method-receivers",
+      "path": "fixtures/java_same_name_method_receivers",
+      "description": "A call on a variable whose declared type is written in the same file reaches that type's method even when another class declares the name; uncalled same-named methods, and ones whose name is only called on another type, are still reported.",
+      "languages": [
+        "java"
+      ],
+      "taxonomy": [
+        "java",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source contract labelled from Java package visibility before running the analyzer; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "app/Permissions.java",
+            "symbol": "setFlag"
+          },
+          {
+            "kind": "function",
+            "file": "app/extra/Field.java",
+            "symbol": "setFlag"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app/Permissions.java",
+            "symbol": "isFlag"
+          },
+          {
+            "kind": "function",
+            "file": "other/Idle.java",
+            "symbol": "setFlag"
+          },
+          {
+            "kind": "function",
+            "file": "app/Permissions.java",
+            "symbol": "retire"
+          },
+          {
+            "kind": "function",
+            "file": "app/extra/Field.java",
+            "symbol": "retire"
+          },
+          {
+            "kind": "function",
+            "file": "app/Permissions.java",
+            "symbol": "canRead"
+          },
+          {
+            "kind": "function",
+            "file": "app/extra/Field.java",
+            "symbol": "canRead"
+          }
+        ]
+      }
+    },
+    {
+      "id": "kotlin-same-file-member-extension",
+      "path": "fixtures/kotlin_same_file_member_extension",
+      "description": "A private member extension called through this stays live when another file has a private top-level function of the same name; uncalled private members are still reported.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source contract labelled from Kotlin visibility rules before running the analyzer; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "Server.kt",
+            "symbol": "unwrapAll"
+          },
+          {
+            "kind": "function",
+            "file": "Errors.kt",
+            "symbol": "unwrapAll"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Server.kt",
+            "symbol": "unusedExtension"
+          },
+          {
+            "kind": "function",
+            "file": "Idle.kt",
+            "symbol": "unwrapAll"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rust-signature-type-uses",
+      "path": "fixtures/rust_signature_type_uses",
+      "description": "Imports named only as a plain return type or in trait, struct and impl header bounds are used; an import never named again or named only in a comment and a string is still reported.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source contract labelled from Rust name resolution before running the analyzer; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "PathBuf"
+          },
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "Add"
+          },
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "Sub"
+          },
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "Debug"
+          },
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "Duration"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "BTreeSet"
+          },
+          {
+            "kind": "import",
+            "file": "src/main.rs",
+            "symbol": "Rc"
+          }
+        ]
+      }
+    },
+    {
+      "id": "java-reserved-domain-package",
+      "path": "fixtures/java_reserved_domain_package",
+      "description": "Application code under the com.example / org.example default package namespace is analysed like any other source; real examples folders and other example packages keep their standalone role.",
+      "languages": [
+        "java",
+        "kotlin"
+      ],
+      "taxonomy": [
+        "java",
+        "kotlin",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source contract labelled from RFC 2606 reserved domains and JVM package layout before running the analyzer; target programs are never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "src/main/java/com/example/shop/Cart.java",
+            "symbol": "stale"
+          },
+          {
+            "kind": "function",
+            "file": "src/main/kotlin/org/example/shop/Basket.kt",
+            "symbol": "stale"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "src/main/java/com/example/shop/Cart.java",
+            "symbol": "sum"
+          },
+          {
+            "kind": "function",
+            "file": "src/main/kotlin/org/example/shop/Basket.kt",
+            "symbol": "count"
+          },
+          {
+            "kind": "function",
+            "file": "examples/quickstart/src/main/java/com/acme/Demo.java",
+            "symbol": "stale"
+          },
+          {
+            "kind": "function",
+            "file": "src/main/java/com/acme/example/Sample.java",
+            "symbol": "stale"
+          }
+        ]
+      }
+    },
+    {
+      "id": "python-module-variable-same-name",
+      "path": "fixtures/python_module_variable_same_name",
+      "description": "A module variable nobody imports is unused even when other modules bind and read their own variable of the same name; imports, star imports, module attribute reads and namespace reads keep theirs.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract written before detector output; distilled from reviewer-confirmed misses on never-seen repositories. Target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "variable",
+            "file": "lone.py",
+            "symbol": "logger"
+          }
+        ],
+        "used": [
+          {
+            "kind": "variable",
+            "file": "shared.py",
+            "symbol": "logger"
+          },
+          {
+            "kind": "variable",
+            "file": "busy.py",
+            "symbol": "logger"
+          },
+          {
+            "kind": "variable",
+            "file": "starred.py",
+            "symbol": "logger"
+          },
+          {
+            "kind": "variable",
+            "file": "by_attribute.py",
+            "symbol": "logger"
+          },
+          {
+            "kind": "variable",
+            "file": "by_namespace.py",
+            "symbol": "logger"
+          }
+        ]
+      }
+    },
+    {
+      "id": "python-unnamed-receiver-methods",
+      "path": "fixtures/python_unnamed_receiver_methods",
+      "description": "Methods of an escaped instance that nothing in the project names are unused; literal and prefix lookups, names held as data, proxies, callbacks, protocol members, sibling implementations and instances handed outside the project keep theirs.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "dynamic_dispatch",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract written before detector output; distilled from reviewer-confirmed misses on never-seen repositories. Target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "is_cached"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "_evict"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "get"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "by_literal"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "handle_open"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "_named_in_table"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "_through_proxy"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "_as_callback"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "_flush"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "write"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "launch"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "describe"
+          }
+        ]
+      }
+    },
+    {
+      "id": "python-direct-call-parameters",
+      "path": "fixtures/python_direct_call_parameters",
+      "description": "An unread parameter of a private function that is defined once and only called directly is unused; callbacks, partials, variadics, public functions, string lookups, constant-return default hooks, alternative definitions, abstract implementations and overridden hooks keep theirs.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract written before detector output; distilled from reviewer-confirmed misses on never-seen repositories. Target code is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "parameter",
+            "file": "app.py",
+            "symbol": "factor"
+          },
+          {
+            "kind": "parameter",
+            "file": "app.py",
+            "symbol": "width"
+          }
+        ],
+        "used": [
+          {
+            "kind": "parameter",
+            "file": "app.py",
+            "symbol": "context"
+          },
+          {
+            "kind": "parameter",
+            "file": "app.py",
+            "symbol": "meta"
+          },
+          {
+            "kind": "parameter",
+            "file": "app.py",
+            "symbol": "args"
+          },
+          {
+            "kind": "parameter",
+            "file": "app.py",
+            "symbol": "kwargs"
+          },
+          {
+            "kind": "parameter",
+            "file": "app.py",
+            "symbol": "reserved"
+          },
+          {
+            "kind": "parameter",
+            "file": "app.py",
+            "symbol": "extra"
+          },
+          {
+            "kind": "parameter",
+            "file": "app.py",
+            "symbol": "recorder"
+          },
+          {
+            "kind": "parameter",
+            "file": "app.py",
+            "symbol": "spare"
+          },
+          {
+            "kind": "parameter",
+            "file": "app.py",
+            "symbol": "options"
+          },
+          {
+            "kind": "parameter",
+            "file": "app.py",
+            "symbol": "hint"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ruby-external-base-macros",
+      "languages": [
+        "ruby"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/ruby_external_base_macros",
+      "description": "Class macros with symbol arguments in classes whose superclass is defined in another file: callbacks, validations, helper_method and rescue_from keep the named private methods; unnamed methods, body-level symbol data, visibility calls and a source-defined macro stay reported.",
+      "taxonomy": [
+        "ruby",
+        "precision_guard",
+        "framework_precision"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only control written for the November 2026 real-repository noise round; labels fixed before the detector change. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "reports_controller.rb",
+            "symbol": "ReportsController#load_report"
+          },
+          {
+            "kind": "function",
+            "file": "reports_controller.rb",
+            "symbol": "ReportsController#record_view"
+          },
+          {
+            "kind": "function",
+            "file": "reports_controller.rb",
+            "symbol": "ReportsController#report_title"
+          },
+          {
+            "kind": "function",
+            "file": "reports_controller.rb",
+            "symbol": "ReportsController#render_missing"
+          },
+          {
+            "kind": "function",
+            "file": "report.rb",
+            "symbol": "Report#title_present"
+          },
+          {
+            "kind": "function",
+            "file": "report.rb",
+            "symbol": "Report#normalize_title"
+          },
+          {
+            "kind": "function",
+            "file": "report.rb",
+            "symbol": "Report#sluggable?"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "reports_controller.rb",
+            "symbol": "ReportsController#orphan_filter"
+          },
+          {
+            "kind": "function",
+            "file": "reports_controller.rb",
+            "symbol": "ReportsController#orphan_format"
+          },
+          {
+            "kind": "function",
+            "file": "reports_controller.rb",
+            "symbol": "ReportsController#archive"
+          },
+          {
+            "kind": "function",
+            "file": "report.rb",
+            "symbol": "Report#orphan_callback"
+          },
+          {
+            "kind": "function",
+            "file": "report.rb",
+            "symbol": "PlainRegistry#snapshot"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ruby-constructor-other-file",
+      "languages": [
+        "ruby"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/ruby_constructor_other_file",
+      "description": "A class instantiated only from another file keeps initialize and the private helper it calls; private methods nobody calls, including one sharing the initialize prefix, stay reported.",
+      "taxonomy": [
+        "ruby",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only control written for the November 2026 real-repository noise round; labels fixed before the detector change. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "lib/formatter.rb",
+            "symbol": "Formatter#initialize"
+          },
+          {
+            "kind": "function",
+            "file": "lib/formatter.rb",
+            "symbol": "Formatter#pad"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "lib/formatter.rb",
+            "symbol": "Formatter#initialize_defaults"
+          },
+          {
+            "kind": "function",
+            "file": "lib/formatter.rb",
+            "symbol": "Formatter#orphan_pad"
+          }
+        ]
+      }
+    },
+    {
+      "id": "php-use-const-import",
+      "languages": [
+        "php"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/php_use_const_import",
+      "description": "A use const import is used when the bare constant is read (expression or parameter default); an import never read, or named only in a comment, stays reported.",
+      "taxonomy": [
+        "php",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only control written for the November 2026 real-repository noise round; labels fixed before the detector change. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "import",
+            "file": "src/Cart.php",
+            "symbol": "MAX_ITEMS"
+          },
+          {
+            "kind": "import",
+            "file": "src/Cart.php",
+            "symbol": "DEFAULT_MODE"
+          },
+          {
+            "kind": "class",
+            "file": "src/Cart.php",
+            "symbol": "App.Cart"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/Cart.php",
+            "symbol": "UNUSED_LIMIT"
+          },
+          {
+            "kind": "import",
+            "file": "src/Cart.php",
+            "symbol": "COMMENT_ONLY"
+          }
+        ]
+      }
+    },
+    {
+      "id": "php-phpunit-colocated-tests",
+      "languages": [
+        "php"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/php_phpunit_colocated_tests",
+      "description": "PHPUnit test classes colocated with sources in *Test.php files (direct TestCase subclasses and classes inheriting tests from a test base) are framework-run; a production class named *Test and an abstract test base nobody extends stay reported.",
+      "taxonomy": [
+        "php",
+        "precision_guard",
+        "framework_precision"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only control written for the November 2026 real-repository noise round; labels fixed before the detector change. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "src/CartTest.php",
+            "symbol": "Shop.CartTest"
+          },
+          {
+            "kind": "class",
+            "file": "src/Storage/MemoryAdapterTest.php",
+            "symbol": "Shop.Storage.MemoryAdapterTest"
+          },
+          {
+            "kind": "class",
+            "file": "src/Storage/CachedMemoryAdapterTest.php",
+            "symbol": "Shop.Storage.CachedMemoryAdapterTest"
+          },
+          {
+            "kind": "class",
+            "file": "src/Storage/AdapterTestCase.php",
+            "symbol": "Shop.Storage.AdapterTestCase"
+          },
+          {
+            "kind": "class",
+            "file": "src/Cart.php",
+            "symbol": "Shop.Cart"
+          },
+          {
+            "kind": "class",
+            "file": "src/Storage/MemoryAdapter.php",
+            "symbol": "Shop.Storage.MemoryAdapter"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "class",
+            "file": "src/SpeedTest.php",
+            "symbol": "Shop.SpeedTest"
+          },
+          {
+            "kind": "class",
+            "file": "src/Storage/OrphanTestCase.php",
+            "symbol": "Shop.Storage.OrphanTestCase"
+          }
+        ]
+      }
+    },
+    {
+      "id": "csharp-extension-instance-calls",
+      "languages": [
+        "csharp"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/csharp_extension_instance_calls",
+      "description": "Extension methods called with instance syntax keep the method and its static class; an uncalled private extension, a non-extension method whose only namesake call has one fewer argument on another type, and an extension class nobody calls stay reported.",
+      "taxonomy": [
+        "csharp",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only control written for the November 2026 real-repository noise round; labels fixed before the detector change. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "Extensions.cs",
+            "symbol": "Probe.Ext.BuilderExtensions"
+          },
+          {
+            "kind": "function",
+            "file": "Extensions.cs",
+            "symbol": "Probe.Ext.BuilderExtensions.AddMarker"
+          },
+          {
+            "kind": "function",
+            "file": "Extensions.cs",
+            "symbol": "Probe.Ext.BuilderExtensions.AddDefaults"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Extensions.cs",
+            "symbol": "Probe.Ext.BuilderExtensions.OrphanMarker"
+          },
+          {
+            "kind": "function",
+            "file": "Extensions.cs",
+            "symbol": "Probe.Ext.BuilderExtensions.Pad"
+          },
+          {
+            "kind": "class",
+            "file": "Extensions.cs",
+            "symbol": "Probe.Ext.OrphanExtensions"
+          }
+        ]
+      }
+    },
+    {
+      "id": "csharp-attribute-consumers",
+      "languages": [
+        "csharp"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/csharp_attribute_consumers",
+      "description": "Members and types consumed through attributes (source-generator command, EF Core [DbContext] snapshot, [StructLayout] storage) and a primary constructor stay quiet; compiler-marker attributes, a [Serializable] class, an unreferenced primary-constructor class and a plain struct field stay reported.",
+      "taxonomy": [
+        "csharp",
+        "precision_guard",
+        "framework_precision"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only control written for the November 2026 real-repository noise round; labels fixed before the detector change. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "Models.cs",
+            "symbol": "Probe.Views.BadgeViewModel.Save"
+          },
+          {
+            "kind": "class",
+            "file": "Models.cs",
+            "symbol": "Probe.Views.CatalogContextModelSnapshot"
+          },
+          {
+            "kind": "variable",
+            "file": "Models.cs",
+            "symbol": "Probe.Views.InlineSlots.Slot2"
+          },
+          {
+            "kind": "class",
+            "file": "Models.cs",
+            "symbol": "Probe.Views.CatalogServices"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Models.cs",
+            "symbol": "Probe.Views.BadgeViewModel.OldSave"
+          },
+          {
+            "kind": "function",
+            "file": "Models.cs",
+            "symbol": "Probe.Views.BadgeViewModel.FastOrphan"
+          },
+          {
+            "kind": "function",
+            "file": "Models.cs",
+            "symbol": "Probe.Views.BadgeViewModel.PlainOrphan"
+          },
+          {
+            "kind": "class",
+            "file": "Models.cs",
+            "symbol": "Probe.Views.OrphanSnapshot"
+          },
+          {
+            "kind": "class",
+            "file": "Models.cs",
+            "symbol": "Probe.Views.OrphanServices"
+          },
+          {
+            "kind": "variable",
+            "file": "Models.cs",
+            "symbol": "Probe.Views.PlainSlots.OrphanSlot"
+          }
+        ]
+      }
+    },
+    {
+      "id": "csharp-global-using-binding",
+      "languages": [
+        "csharp"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/csharp_global_using_binding",
+      "description": "Types, attribute classes and typed-receiver members reached through project-wide global using directives stay quiet; unused siblings in the same namespaces stay reported.",
+      "taxonomy": [
+        "csharp",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only control written for the November 2026 real-repository noise round; labels fixed before the detector change. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "Rendering.cs",
+            "symbol": "Probe.Rendering.Casing"
+          },
+          {
+            "kind": "function",
+            "file": "Events.cs",
+            "symbol": "Probe.Events.LogEvent.Copy"
+          },
+          {
+            "kind": "class",
+            "file": "Marks.cs",
+            "symbol": "Probe.Marks.TracedAttribute"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "class",
+            "file": "Rendering.cs",
+            "symbol": "Probe.Rendering.OrphanCasing"
+          },
+          {
+            "kind": "function",
+            "file": "Events.cs",
+            "symbol": "Probe.Events.LogEvent.OrphanClone"
+          },
+          {
+            "kind": "class",
+            "file": "Marks.cs",
+            "symbol": "Probe.Marks.OrphanMarkAttribute"
+          }
+        ]
+      }
+    },
+    {
+      "id": "csharp-call-shapes",
+      "languages": [
+        "csharp"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/csharp_call_shapes",
+      "description": "A method group passed as a named argument and a call whose only argument is a string literal keep their private targets; a callback never passed, a helper never called and a two-parameter helper stay reported.",
+      "taxonomy": [
+        "csharp",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only control written for the November 2026 real-repository noise round; labels fixed before the detector change. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "Shapes.cs",
+            "symbol": "Probe.Shapes.BadgeView.OnTextChanged"
+          },
+          {
+            "kind": "function",
+            "file": "Shapes.cs",
+            "symbol": "Probe.Shapes.BadgeView.Tag"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Shapes.cs",
+            "symbol": "Probe.Shapes.BadgeView.OnOrphanChanged"
+          },
+          {
+            "kind": "function",
+            "file": "Shapes.cs",
+            "symbol": "Probe.Shapes.BadgeView.OrphanTag"
+          },
+          {
+            "kind": "function",
+            "file": "Shapes.cs",
+            "symbol": "Probe.Shapes.BadgeView.Pair"
+          }
+        ]
+      }
+    },
+    {
+      "id": "csharp-reflected-methods",
+      "languages": [
+        "csharp"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/csharp_reflected_methods",
+      "description": "Methods of a type whose methods are enumerated by reflection (typeof(T).GetTypeInfo().DeclaredMethods) stay quiet; an uncalled method of a type nobody reflects over stays reported.",
+      "taxonomy": [
+        "csharp",
+        "precision_guard",
+        "dynamic_dispatch"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only control written for the November 2026 real-repository noise round; labels fixed before the detector change. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "Reflected.cs",
+            "symbol": "Probe.Reflection.SurrogateMethods.Alpha"
+          },
+          {
+            "kind": "function",
+            "file": "Reflected.cs",
+            "symbol": "Probe.Reflection.SurrogateMethods.Beta"
+          },
+          {
+            "kind": "function",
+            "file": "Reflected.cs",
+            "symbol": "Probe.Reflection.PlainMethods.Gamma"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Reflected.cs",
+            "symbol": "Probe.Reflection.PlainMethods.OrphanDelta"
+          }
+        ]
+      }
+    },
+    {
+      "id": "csharp-markup-references",
+      "languages": [
+        "csharp"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/csharp_markup_references",
+      "description": "C# members named from Razor components, XAML event attributes and a cshtml @model stay quiet; members absent from markup or named only inside markup comments, and an unreferenced type that merely shares its name with the type C# code uses, stay reported.",
+      "taxonomy": [
+        "csharp",
+        "precision_guard",
+        "framework_precision"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only control written for the November 2026 real-repository noise round; labels fixed before the detector change. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "Services/BasketState.cs",
+            "symbol": "Shop.Services.BasketState.CheckoutAsync"
+          },
+          {
+            "kind": "function",
+            "file": "Views/CartView.xaml.cs",
+            "symbol": "Shop.Views.CartView.OnCheckoutClicked"
+          },
+          {
+            "kind": "class",
+            "file": "Models/LoginViewModel.cs",
+            "symbol": "Shop.Models.LoginViewModel"
+          },
+          {
+            "kind": "class",
+            "file": "Models/ReceiptViewModel.cs",
+            "symbol": "Shop.Models.ReceiptViewModel"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Services/BasketState.cs",
+            "symbol": "Shop.Services.BasketState.OrphanCount"
+          },
+          {
+            "kind": "function",
+            "file": "Services/BasketState.cs",
+            "symbol": "Shop.Services.BasketState.RetiredTotal"
+          },
+          {
+            "kind": "function",
+            "file": "Views/CartView.xaml.cs",
+            "symbol": "Shop.Views.CartView.OnOrphanClicked"
+          },
+          {
+            "kind": "function",
+            "file": "Views/CartView.xaml.cs",
+            "symbol": "Shop.Views.CartView.OnRetiredClicked"
+          },
+          {
+            "kind": "class",
+            "file": "Models/LoginViewModel.cs",
+            "symbol": "Shop.Models.OrphanViewModel"
+          },
+          {
+            "kind": "class",
+            "file": "Legacy/ReceiptViewModel.cs",
+            "symbol": "Shop.Legacy.ReceiptViewModel"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-shorthand-optional-binding",
+      "languages": [
+        "swift"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/swift_shorthand_optional_binding",
+      "description": "Shorthand optional bindings (if let x, guard let x) read the outer private property; a binding with an initializer and a shorthand that reads a same-named local do not.",
+      "taxonomy": [
+        "swift",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only control written for the November 2026 real-repository noise round; labels fixed before the detector change. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Banner.title"
+          },
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Banner.subtitle"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Banner.footer"
+          },
+          {
+            "kind": "variable",
+            "file": "Probe.swift",
+            "symbol": "Banner.cached"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-coding-keys",
+      "languages": [
+        "swift"
+      ],
+      "symbol_identity": "qualified",
+      "path": "fixtures/swift_coding_keys",
+      "description": "A nested CodingKeys enum conforming to CodingKey inside a Codable type is used by the synthesised conformance; a differently named key enum and a CodingKeys enum in a non-Codable type stay reported.",
+      "taxonomy": [
+        "swift",
+        "precision_guard",
+        "framework_precision"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only control written for the November 2026 real-repository noise round; labels fixed before the detector change. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Payload.CodingKeys"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Payload.RetiredKeys"
+          },
+          {
+            "kind": "class",
+            "file": "Probe.swift",
+            "symbol": "Plain.CodingKeys"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dart-import-binding-kinds",
+      "languages": [
+        "dart"
+      ],
+      "path": "fixtures/dart_import_binding_kinds",
+      "description": "An import is used when the file reads a top-level getter, a typedef or a typed top-level variable it supplies; an import nothing is read from, and one whose getter name only matches a parameter, stay reported.",
+      "taxonomy": [
+        "dart",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only control written for the November 2026 real-repository noise round; labels fixed before the detector change. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "import",
+            "file": "lib/main.dart",
+            "symbol": "getter"
+          },
+          {
+            "kind": "import",
+            "file": "lib/main.dart",
+            "symbol": "alias"
+          },
+          {
+            "kind": "import",
+            "file": "lib/main.dart",
+            "symbol": "version"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "import",
+            "file": "lib/main.dart",
+            "symbol": "spare"
+          },
+          {
+            "kind": "import",
+            "file": "lib/main.dart",
+            "symbol": "shadow"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dart-extension-open-receiver",
+      "languages": [
+        "dart"
+      ],
+      "path": "fixtures/dart_extension_open_receiver",
+      "description": "Extension members called on a receiver whose static type the file does not state (a call result) keep the member and its import; an unnamed member, a member named only as a static call on a class, and an extension nobody calls stay reported.",
+      "taxonomy": [
+        "dart",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only control written for the November 2026 real-repository noise round; labels fixed before the detector change. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "lib/extensions.dart",
+            "symbol": "TextTools.indent"
+          },
+          {
+            "kind": "function",
+            "file": "lib/extensions.dart",
+            "symbol": "TextTools.capitalized"
+          },
+          {
+            "kind": "import",
+            "file": "lib/main.dart",
+            "symbol": "extensions"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "lib/extensions.dart",
+            "symbol": "TextTools.orphanTrim"
+          },
+          {
+            "kind": "function",
+            "file": "lib/extensions.dart",
+            "symbol": "TextTools.parseLike"
+          },
+          {
+            "kind": "function",
+            "file": "lib/spare_extensions.dart",
+            "symbol": "SpareTools.spareWrap"
+          },
+          {
+            "kind": "import",
+            "file": "lib/main.dart",
+            "symbol": "spare_extensions"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dart-field-initializer-call",
+      "languages": [
+        "dart"
+      ],
+      "path": "fixtures/dart_field_initializer_call",
+      "description": "Private methods called from instance and static field initializers stay quiet; an uncalled method and one whose name only resembles a literal-initialised field stay reported.",
+      "taxonomy": [
+        "dart",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source-only control written for the November 2026 real-repository noise round; labels fixed before the detector change. No fixture program executed."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "Settings._compute"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "Settings._build"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "Settings._orphan"
+          },
+          {
+            "kind": "function",
+            "file": "main.dart",
+            "symbol": "Settings._spare"
           }
         ]
       }

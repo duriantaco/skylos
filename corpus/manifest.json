@@ -12,7 +12,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["index"]
+          "unused_functions": [
+            "index"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -32,7 +34,10 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["get_db", "read_root"]
+          "unused_functions": [
+            "get_db",
+            "read_root"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -52,7 +57,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["add"]
+          "unused_functions": [
+            "add"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -72,7 +79,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["my_hook"]
+          "unused_functions": [
+            "my_hook"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -97,7 +106,12 @@
             "pytest_cmdline_main",
             "pytest_assertrepr_compare"
           ],
-          "unused_parameters": ["config", "op", "left", "right"]
+          "unused_parameters": [
+            "config",
+            "op",
+            "left",
+            "right"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -120,7 +134,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["main"]
+          "unused_functions": [
+            "main"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -140,7 +156,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["homepage"]
+          "unused_functions": [
+            "homepage"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -160,7 +178,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["before_start"]
+          "unused_functions": [
+            "before_start"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -180,7 +200,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["home"]
+          "unused_functions": [
+            "home"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -260,7 +282,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["worker_exit"],
+          "unused_functions": [
+            "worker_exit"
+          ],
           "unused_variables": [
             "bind",
             "forwarded_allow_ips",
@@ -389,8 +413,13 @@
       },
       "expect": {
         "absent": {
-          "unused_classes": ["User"],
-          "unused_variables": ["id", "name"]
+          "unused_classes": [
+            "User"
+          ],
+          "unused_variables": [
+            "id",
+            "name"
+          ]
         },
         "present": {
           "unused_classes": [
@@ -446,7 +475,9 @@
       "fixture_notes": "Settings is explicitly constructed and api_url read, providing a visible consumer of the class and its settings field.",
       "expect": {
         "absent": {
-          "unused_classes": ["Settings"]
+          "unused_classes": [
+            "Settings"
+          ]
         },
         "present": {
           "unused_classes": [
@@ -466,8 +497,12 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["hello"],
-          "unused_parameters": ["request"]
+          "unused_functions": [
+            "hello"
+          ],
+          "unused_parameters": [
+            "request"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -490,7 +525,10 @@
       },
       "expect": {
         "absent": {
-          "unused_variables": ["id", "name"]
+          "unused_variables": [
+            "id",
+            "name"
+          ]
         },
         "present": {
           "unused_variables": [
@@ -515,7 +553,10 @@
       "expect": {
         "absent": {},
         "present": {
-          "quality": ["SKY-UC001", "while_false"]
+          "quality": [
+            "SKY-UC001",
+            "while_false"
+          ]
         }
       }
     },
@@ -559,8 +600,13 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["on_connect"],
-          "unused_parameters": ["dbapi_connection", "connection_record"]
+          "unused_functions": [
+            "on_connect"
+          ],
+          "unused_parameters": [
+            "dbapi_connection",
+            "connection_record"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -583,7 +629,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["list_users"]
+          "unused_functions": [
+            "list_users"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -603,7 +651,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["read_items"]
+          "unused_functions": [
+            "read_items"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -623,7 +673,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["ping"]
+          "unused_functions": [
+            "ping"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -643,8 +695,12 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["handle"],
-          "unused_classes": ["Command"]
+          "unused_functions": [
+            "handle"
+          ],
+          "unused_classes": [
+            "Command"
+          ]
         },
         "present": {
           "unused_classes": [
@@ -667,7 +723,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["on_save"]
+          "unused_functions": [
+            "on_save"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -687,8 +745,13 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["on_connect"],
-          "unused_parameters": ["dbapi_connection", "connection_record"]
+          "unused_functions": [
+            "on_connect"
+          ],
+          "unused_parameters": [
+            "dbapi_connection",
+            "connection_record"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -711,8 +774,12 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["validate_schema"],
-          "unused_classes": ["UserSchema"]
+          "unused_functions": [
+            "validate_schema"
+          ],
+          "unused_classes": [
+            "UserSchema"
+          ]
         },
         "present": {
           "unused_classes": [
@@ -735,7 +802,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["timeout"]
+          "unused_functions": [
+            "timeout"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -755,7 +824,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["name"]
+          "unused_functions": [
+            "name"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -775,7 +846,9 @@
       },
       "expect": {
         "absent": {
-          "unused_imports": ["User"]
+          "unused_imports": [
+            "User"
+          ]
         },
         "present": {
           "unused_imports": [
@@ -795,8 +868,12 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["public_function"],
-          "unused_classes": ["PublicClass"]
+          "unused_functions": [
+            "public_function"
+          ],
+          "unused_classes": [
+            "PublicClass"
+          ]
         },
         "present": {
           "unused_classes": [
@@ -819,7 +896,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["main"]
+          "unused_functions": [
+            "main"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -839,7 +918,9 @@
       },
       "expect": {
         "absent": {
-          "unused_classes": ["UserAdmin"]
+          "unused_classes": [
+            "UserAdmin"
+          ]
         },
         "present": {
           "unused_classes": [
@@ -859,8 +940,12 @@
       },
       "expect": {
         "absent": {
-          "unused_classes": ["DemoConfig"],
-          "unused_functions": ["ready"]
+          "unused_classes": [
+            "DemoConfig"
+          ],
+          "unused_functions": [
+            "ready"
+          ]
         },
         "present": {
           "unused_classes": [
@@ -883,8 +968,12 @@
       },
       "expect": {
         "absent": {
-          "unused_classes": ["DemoTask"],
-          "unused_functions": ["run"]
+          "unused_classes": [
+            "DemoTask"
+          ],
+          "unused_functions": [
+            "run"
+          ]
         },
         "present": {
           "unused_classes": [
@@ -985,8 +1074,13 @@
       "fixture_notes": "User(name=\"Ada\").model_dump() calls the wrap model serializer, whose handler(self) delegate reaches the default field serializer; both original serializer guards have actual runtime-use witnesses.",
       "expect": {
         "absent": {
-          "unused_classes": ["User"],
-          "unused_functions": ["serialize_name", "serialize_model"]
+          "unused_classes": [
+            "User"
+          ],
+          "unused_functions": [
+            "serialize_name",
+            "serialize_model"
+          ]
         },
         "present": {
           "unused_classes": [
@@ -1011,8 +1105,12 @@
       "fixture_notes": "User is now explicitly constructed, providing a source witness for model_post_init and class use.",
       "expect": {
         "absent": {
-          "unused_classes": ["User"],
-          "unused_functions": ["model_post_init"]
+          "unused_classes": [
+            "User"
+          ],
+          "unused_functions": [
+            "model_post_init"
+          ]
         },
         "present": {
           "unused_classes": [
@@ -1035,7 +1133,10 @@
       },
       "expect": {
         "absent": {
-          "unused_variables": ["RED", "BLUE"]
+          "unused_variables": [
+            "RED",
+            "BLUE"
+          ]
         },
         "present": {
           "unused_variables": [
@@ -1055,7 +1156,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["run"]
+          "unused_functions": [
+            "run"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -1075,7 +1178,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["run"]
+          "unused_functions": [
+            "run"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -1095,7 +1200,9 @@
       },
       "expect": {
         "absent": {
-          "unused_functions": ["full_name"]
+          "unused_functions": [
+            "full_name"
+          ]
         },
         "present": {
           "unused_functions": [
@@ -1886,6 +1993,254 @@
         "present": {
           "quality": [
             "retired-package"
+          ]
+        }
+      }
+    },
+    {
+      "id": "python-src-package-routes",
+      "path": "fixtures/python_src_package_routes",
+      "description": "FastAPI routes in a top-level package named src, imported as src.api.routes, stay alive when their router is included; an unmounted router and a plain helper are still reported.",
+      "source": {
+        "repo": "https://github.com/fastapi/fastapi",
+        "license": "MIT",
+        "notes": "Distilled from the official Bigger Applications layout (package of routers included with include_router), with the package named src."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": [
+            "list_accounts",
+            "create_account",
+            "account_socket"
+          ]
+        },
+        "present": {
+          "unused_functions": [
+            "orphan_helper",
+            "never_mounted_route"
+          ]
+        }
+      }
+    },
+    {
+      "id": "python-wrapper-decorator-registration",
+      "path": "fixtures/python_wrapper_decorator_registration",
+      "description": "A project decorator that applies a server tool registration to its argument keeps decorated functions alive; decorators that only wrap, cache or return the function do not.",
+      "source": {
+        "repo": "https://github.com/modelcontextprotocol/python-sdk",
+        "license": "MIT",
+        "notes": "Distilled from the documented tool() decorator, applied through a project wrapper as server.tool(name=...)(wrapper)."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": [
+            "open_tab",
+            "close_tab",
+            "list_tabs",
+            "reload_tab",
+            "remote_click",
+            "remote_scroll"
+          ]
+        },
+        "present": {
+          "unused_functions": [
+            "unused_logged",
+            "unused_cached",
+            "unused_identity",
+            "unused_late",
+            "unused_static",
+            "unused_lru",
+            "unused_remote_logged"
+          ]
+        }
+      }
+    },
+    {
+      "id": "python-decorator-factory-registration",
+      "path": "fixtures/python_decorator_factory_registration",
+      "description": "A third-party decorator factory called with a key registers the function; standard-library and retry wrappers, project wrap-only factories and argument-less calls do not.",
+      "source": {
+        "repo": "https://github.com/google/gin-config",
+        "license": "Apache-2.0",
+        "notes": "Distilled from the documented gin.configurable('name') registration that config files select by name."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": [
+            "build_optimizer",
+            "build_network"
+          ]
+        },
+        "present": {
+          "unused_functions": [
+            "unused_retried",
+            "unused_cached",
+            "unused_labelled",
+            "unused_empty_call",
+            "plain_unused"
+          ]
+        }
+      }
+    },
+    {
+      "id": "python-string-forward-references",
+      "path": "fixtures/python_string_forward_references",
+      "description": "Strings inside typing subscripts, cast() and TypeVar(bound=...) are forward references; names that only appear in prose strings are still reported.",
+      "source": {
+        "repo": "https://github.com/python/typing",
+        "license": "PSF-2.0",
+        "notes": "PEP 484 forward references and TYPE_CHECKING-only imports."
+      },
+      "expect": {
+        "absent": {
+          "unused_classes": [
+            "StandardData",
+            "RadioData",
+            "ExtraData",
+            "HistoryData",
+            "CastTarget"
+          ],
+          "unused_imports": [
+            "DataclassInstance",
+            "UUID"
+          ],
+          "unused_variables": [
+            "ItemData"
+          ]
+        },
+        "present": {
+          "unused_classes": [
+            "OrphanData",
+            "LegacyData"
+          ],
+          "unused_imports": [
+            "Decimal",
+            "Fraction"
+          ]
+        }
+      }
+    },
+    {
+      "id": "python-dotted-path-registry",
+      "path": "fixtures/python_dotted_path_registry",
+      "description": "Classes named by full dotted path in a registry that a reachable function resolves with import_module and getattr stay alive; an unresolved path, an unused registry and an unlisted class are still reported.",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "importlib.import_module plus getattr over a literal table of dotted paths."
+      },
+      "expect": {
+        "absent": {
+          "unused_classes": [
+            "AlphaModel",
+            "BetaModel"
+          ]
+        },
+        "present": {
+          "unused_classes": [
+            "AlphaLeftover",
+            "GammaModel",
+            "DeltaModel"
+          ]
+        }
+      }
+    },
+    {
+      "id": "python-local-import-binding",
+      "path": "fixtures/python_local_import_binding",
+      "description": "A function-local import that rebinds a parameter and is then read is used, and importing readline is an import for effect; unread, overwritten and ordinary unused imports are still reported.",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Language-level binding rules for import statements and the documented readline effect on input()."
+      },
+      "expect": {
+        "absent": {
+          "unused_imports": [
+            "reactor",
+            "twisted.internet.task",
+            "recommend",
+            "readline"
+          ]
+        },
+        "present": {
+          "unused_imports": [
+            "pick_unused",
+            "pick_shadowed",
+            "bisect",
+            "getpass"
+          ]
+        }
+      }
+    },
+    {
+      "id": "python-base-class-protocol-members",
+      "path": "fixtures/python_base_class_protocol_members",
+      "description": "Members a documented base class reads by name stay alive (twisted Resource render_<METHOD>, distutils Command option attributes, pydantic inner Config); other members of the same classes are still reported.",
+      "source": {
+        "repo": "https://github.com/twisted/twisted",
+        "license": "MIT",
+        "notes": "twisted.web Resource.render dispatch; setuptools/distutils Command option parsing; pydantic model Config."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": [
+            "render_GET",
+            "render_POST"
+          ],
+          "unused_variables": [
+            "boolean_options",
+            "description",
+            "negative_opt",
+            "user_options"
+          ],
+          "unused_classes": [
+            "Config"
+          ]
+        },
+        "present": {
+          "unused_functions": [
+            "render_page"
+          ],
+          "unused_variables": [
+            "scratch_values",
+            "leftovers"
+          ],
+          "unused_classes": [
+            "Options"
+          ]
+        }
+      }
+    },
+    {
+      "id": "python-exec-namespace",
+      "path": "fixtures/python_exec_namespace",
+      "description": "Module bindings handed to exec(code, globals()), including names copied in by a star import, stay alive; imports beside exec/eval with a fresh namespace are still reported.",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Built-in exec()/eval() namespace semantics."
+      },
+      "expect": {
+        "absent": {
+          "unused_imports": [
+            "list_profiles",
+            "sync_profile",
+            "recording_dir",
+            "start_recording"
+          ],
+          "unused_functions": [
+            "click"
+          ]
+        },
+        "present": {
+          "unused_imports": [
+            "stop_daemon",
+            "bisect"
+          ],
+          "unused_functions": [
+            "never_imported",
+            "recorder_internal_unused"
           ]
         }
       }

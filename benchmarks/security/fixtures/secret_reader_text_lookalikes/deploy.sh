@@ -1,0 +1,3 @@
+#!/bin/sh
+PUSH_TOKEN="${DEPLOY_PUSH_TOKEN:-YokNnoxUqbqHSHmM9-EPq7KoNKAeRF9MczFurT}"
+export PUSH_TOKEN

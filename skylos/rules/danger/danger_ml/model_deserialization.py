@@ -89,6 +89,8 @@ class _ModelDeserializationChecker(TaintVisitor):
         self._project_root = project_root
         self._data_constructors = None
         self._data_constructor_proof_failed = False
+        self._owners = None
+        self._parents = None
 
     def _push(self):
         super()._push()
@@ -187,8 +189,10 @@ class _ModelDeserializationChecker(TaintVisitor):
         )
 
     def _check_model_load_call(self, node: ast.Call, name: str) -> None:
-        if _is_huggingface_artifact_call(name) and not _is_local_dataset_load(
-            node, name
+        if (
+            _is_huggingface_artifact_call(name)
+            and not _is_local_dataset_load(node, name)
+            and not self._loads_filesystem_path(node, name)
         ):
             if _call_uses_missing_or_mutable_revision(node):
                 self._append_huggingface_revision_finding(node, name)
@@ -214,6 +218,118 @@ class _ModelDeserializationChecker(TaintVisitor):
 
         if name == "pickle.load" and self._call_uses_model_path(node):
             self._append_model_load_finding(node, "pickle.load on model artifact")
+
+    def _loads_filesystem_path(self, node: ast.Call, name: str) -> bool:
+        """``from_pretrained``/``load_dataset`` given a ``pathlib``/``os.path``
+        value reads the local filesystem; a string may still be a Hub id."""
+        if name.rsplit(".", 1)[-1] not in {"from_pretrained", "load_dataset"}:
+            return False
+        reference = None
+        for keyword in ("pretrained_model_name_or_path", "path"):
+            if reference is None:
+                reference = _keyword_value(node, keyword)
+        if reference is None and node.args:
+            reference = node.args[0]
+        return self._is_filesystem_path(reference, self._owner(node), 0)
+
+    def _owner(self, node: ast.AST):
+        if self._owners is None:
+            self._owners = {}
+            pending = [(self._tree, self._tree)] if self._tree is not None else []
+            while pending:
+                current, owner = pending.pop()
+                for child in ast.iter_child_nodes(current):
+                    self._owners[id(child)] = owner
+                    inner = owner
+                    if isinstance(child, _SCOPES):
+                        inner = child
+                    pending.append((child, inner))
+        return self._owners.get(id(node))
+
+    def _names_path_class(self, node: ast.AST | None) -> bool:
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            members = [
+                member
+                for member in (node.left, node.right)
+                if not (isinstance(member, ast.Constant) and member.value is None)
+            ]
+            return len(members) == 1 and self._names_path_class(members[0])
+        if isinstance(node, ast.Subscript):
+            wrapper = _dotted_name(node.value, self.aliases) or ""
+            if wrapper.rsplit(".", 1)[-1] != "Optional":
+                return False
+            return self._names_path_class(node.slice)
+        return (_dotted_name(node, self.aliases) or "") in _PATH_CLASSES
+
+    def _is_filesystem_path(self, node: ast.AST | None, scope, depth: int) -> bool:
+        if node is None or depth > _PATH_PROOF_DEPTH:
+            return False
+        if isinstance(node, ast.Constant):
+            return isinstance(node.value, str) and node.value.strip().startswith(
+                ("./", "../", "/", "~")
+            )
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            return self._is_filesystem_path(node.left, scope, depth + 1)
+        if isinstance(node, ast.BoolOp):
+            return all(
+                self._is_filesystem_path(value, scope, depth + 1)
+                for value in node.values
+            )
+        if isinstance(node, ast.Attribute):
+            return node.attr == "parent" and self._is_filesystem_path(
+                node.value, scope, depth + 1
+            )
+        if isinstance(node, ast.Call):
+            called = _qualified_name_from_call(node, self.aliases) or ""
+            if called in _PATH_CLASSES or called in _PATH_STRING_CALLS:
+                return True
+            if called in {"str", "os.fspath"} and len(node.args) == 1:
+                return self._is_filesystem_path(node.args[0], scope, depth + 1)
+            if isinstance(node.func, ast.Attribute) and node.func.attr in _PATH_METHODS:
+                return self._is_filesystem_path(node.func.value, scope, depth + 1)
+            return False
+        if not isinstance(node, ast.Name) or scope is None:
+            return False
+        if isinstance(scope, _FUNCTION_SCOPES):
+            arguments = scope.args
+            for parameter in (
+                *arguments.posonlyargs,
+                *arguments.args,
+                *arguments.kwonlyargs,
+                arguments.vararg,
+                arguments.kwarg,
+            ):
+                if parameter is not None and parameter.arg == node.id:
+                    return self._names_path_class(parameter.annotation)
+        values = []
+        for inner in ast.walk(scope):
+            if self._owner(inner) is not scope and inner is not scope:
+                continue
+            if isinstance(inner, ast.Name) and inner.id == node.id:
+                if isinstance(inner.ctx, ast.Load):
+                    continue
+                binding = self._parents_of(inner)
+                if (
+                    isinstance(binding, ast.Assign)
+                    and len(binding.targets) == 1
+                    and binding.targets[0] is inner
+                ) or (isinstance(binding, ast.AnnAssign) and binding.target is inner):
+                    values.append(binding.value)
+                else:
+                    return False
+            elif isinstance(inner, (ast.Global, ast.Nonlocal)) and node.id in inner.names:
+                return False
+        return bool(values) and all(
+            self._is_filesystem_path(value, scope, depth + 1) for value in values
+        )
+
+    def _parents_of(self, node: ast.AST):
+        if self._parents is None:
+            self._parents = {}
+            for parent in ast.walk(self._tree) if self._tree is not None else ():
+                for child in ast.iter_child_nodes(parent):
+                    self._parents[id(child)] = parent
+        return self._parents.get(id(node))
 
     def _append_huggingface_revision_finding(self, node: ast.Call, call_name: str) -> None:
         line = int(getattr(node, "lineno", 1) or 1)
@@ -354,6 +470,49 @@ _MODEL_REFERENCE_KEYWORDS = (
     "model_name",
     "path",
 )
+
+
+_PATH_PROOF_DEPTH = 6
+_FUNCTION_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+_SCOPES = (*_FUNCTION_SCOPES, ast.ClassDef)
+_PATH_CLASSES = frozenset(
+    {"pathlib.Path", "pathlib.PurePath", "pathlib.PosixPath", "pathlib.WindowsPath"}
+)
+_PATH_STRING_CALLS = frozenset(
+    {
+        "os.path.join",
+        "os.path.abspath",
+        "os.path.expanduser",
+        "os.path.realpath",
+        "os.path.normpath",
+        "os.getcwd",
+        "tempfile.mkdtemp",
+        "pathlib.Path.cwd",
+        "pathlib.Path.home",
+    }
+)
+_PATH_METHODS = frozenset(
+    {
+        "resolve",
+        "expanduser",
+        "absolute",
+        "joinpath",
+        "with_name",
+        "with_suffix",
+        "with_stem",
+        "as_posix",
+    }
+)
+
+
+def _dotted_name(node: ast.AST | None, aliases: dict[str, str]) -> str | None:
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    return ".".join([aliases.get(node.id, node.id), *reversed(parts)])
 
 
 def _loads_local_path(node: ast.Call) -> bool:

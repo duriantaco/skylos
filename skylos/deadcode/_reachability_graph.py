@@ -183,6 +183,8 @@ class ReferenceGraph:
         default_factory=lambda: defaultdict(set)
     )
     unbound_receiver_owners: set[str] = field(default_factory=set)
+    spelled_targets: set[str] = field(default_factory=set)
+    unread_text: bool = False
     receiver_spellings: dict[str, set[str]] = field(
         default_factory=lambda: defaultdict(set)
     )
