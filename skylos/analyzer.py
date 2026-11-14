@@ -4357,6 +4357,7 @@ class Skylos:
         generated_keep_paths=None,
         all_advice=True,
         changed_file_exclude_folders=None,
+        config_exclude_folders=None,
     ) -> str:
         if not isinstance(path, (str, list, tuple)):
             raise TypeError(
@@ -4700,7 +4701,11 @@ class Skylos:
                             configuration_coverage=result[
                                 "analysis_summary"
                             ].setdefault("configuration_coverage", {}),
-                            exclude_folders=exclude_folders,
+                            exclude_folders=(
+                                config_exclude_folders
+                                if config_exclude_folders is not None
+                                else exclude_folders
+                            ),
                         )
                         result["analysis_summary"]["analysis_error_count"] = len(
                             result["analysis_errors"]
@@ -5796,7 +5801,11 @@ class Skylos:
                     analysis_errors=analysis_errors,
                     scan_paths=path if isinstance(path, (list, tuple)) else None,
                     configuration_coverage=configuration_coverage,
-                    exclude_folders=exclude_folders,
+                    exclude_folders=(
+                        config_exclude_folders
+                        if config_exclude_folders is not None
+                        else exclude_folders
+                    ),
                 )
                 if config_findings:
                     all_dangers.extend(config_findings)
@@ -7262,6 +7271,7 @@ def analyze(
     generated_keep_paths=None,
     all_advice=True,
     changed_file_exclude_folders=None,
+    config_exclude_folders=None,
 ) -> str:
     return Skylos().analyze(
         path,
@@ -7290,6 +7300,7 @@ def analyze(
         generated_keep_paths=generated_keep_paths,
         all_advice=all_advice,
         changed_file_exclude_folders=changed_file_exclude_folders,
+        config_exclude_folders=config_exclude_folders,
     )
 
 

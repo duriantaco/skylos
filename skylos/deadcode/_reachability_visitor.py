@@ -460,6 +460,18 @@ class SourceVisitor(ast.NodeVisitor):
                 self.graph.opaque_receiver_owners.add(self.owner)
             if len(node.args) >= 2:
                 self._protect_spelled_targets(node.args[1])
+                # A runtime name can select any member of a receiver whose
+                # possible values we can identify (including conditionals).
+                # Keep that uncertainty on those receivers, not every class
+                # in the project merely because one lookup is opaque.
+                pattern = self._attribute_pattern(
+                    self._attribute_expression(node.args[1])
+                )
+                if not pattern.strip("*"):
+                    previous = self.outside_consumer
+                    self.outside_consumer = True
+                    self._protect_value(node.args[0])
+                    self.outside_consumer = previous
 
         unbound_method = self._unbound_method(node.func)
         if unbound_method is not None:

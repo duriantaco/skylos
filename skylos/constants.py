@@ -257,3 +257,27 @@ def parse_exclude_folders(
             exclude_folders.discard(folder)
 
     return exclude_folders
+
+
+def parse_config_exclude_folders(
+    user_exclude_folders=None,
+    use_defaults=True,
+    include_folders=None,
+    config_exclude_folders=None,
+) -> set[str]:
+    """Keep dependency/build exclusions without hiding active editor tasks."""
+    explicit = parse_exclude_folders(
+        user_exclude_folders=user_exclude_folders,
+        use_defaults=False,
+        include_folders=include_folders,
+        config_exclude_folders=config_exclude_folders,
+    )
+    excluded = parse_exclude_folders(
+        user_exclude_folders=user_exclude_folders,
+        use_defaults=use_defaults,
+        include_folders=include_folders,
+        config_exclude_folders=config_exclude_folders,
+    )
+    if ".vscode" not in explicit:
+        excluded.discard(".vscode")
+    return excluded

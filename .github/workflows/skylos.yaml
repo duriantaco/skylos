@@ -147,20 +147,36 @@ jobs:
           import json
           import os
           import sys
+          from pathlib import Path
 
           severity_rank = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
           report_path = sys.argv[1]
           with open(report_path, encoding="utf-8") as fh:
               report = json.load(fh)
 
+          # These deliberately vulnerable examples are excluded by this
+          # repository's scan policy. Older released scanners miss that
+          # exclusion in config and diff-mode injection checks. Keep their
+          # raw findings in the artifact; real secrets still block everywhere.
+          fixture_root = Path.cwd() / "benchmarks/security/fixtures"
+          excluded_fixture_dangers = 0
           blocking = []
           for category in ("danger", "secrets"):
               for finding in report.get(category, []) or []:
+                  raw_path = finding.get("file") or finding.get("file_path")
+                  if category == "danger" and raw_path:
+                      candidate = Path(os.path.abspath(raw_path))
+                      if candidate.is_relative_to(fixture_root):
+                          excluded_fixture_dangers += 1
+                          continue
                   severity = str(
                       finding.get("severity") or ("HIGH" if category == "secrets" else "")
                   ).upper()
                   if severity_rank.get(severity, 0) >= severity_rank["HIGH"]:
                       blocking.append((category, severity, finding))
+
+          if excluded_fixture_dangers:
+              print(f"Excluded {excluded_fixture_dangers} benchmark fixture danger findings from the self-scan gate; raw findings remain in the report.")
 
           if not blocking:
               print("No high-risk security findings in the scanned scope.")

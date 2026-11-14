@@ -7151,7 +7151,7 @@
     {
       "id": "python-hf-local-checkpoint-path",
       "path": "fixtures/noise_python_hf_local_checkpoint_path",
-      "description": "from_pretrained receives str() of a pathlib.Path parameter: a local directory, nothing is downloaded.",
+      "description": "A Path annotation may still hold a Hub repository id; offline-only and explicit absolute-path controls do not fetch mutable artifacts.",
       "languages": [
         "python"
       ],
@@ -7163,15 +7163,15 @@
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
         "license": "Apache-2.0",
-        "notes": "Noise round 14 Nov 2026 regression pair. The expectation was written before the fix from the language or framework contract; the fixture is original code, not a copy of a measured repository."
+        "notes": "Reviewed 14 Nov 2026: revised the former SKY-D345 absence claim because a Path annotation cannot prevent Hub downloads. The original fixture prefix is preserved as a positive case; explicit offline-only and absolute-path safe controls were added. This is original regression code, not a copy of a measured repository."
       },
       "expect": {
-        "present": {},
-        "absent": {
+        "present": {
           "danger": [
             "SKY-D345"
           ]
-        }
+        },
+        "absent": {}
       }
     },
     {

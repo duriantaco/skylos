@@ -206,8 +206,6 @@ def apply_dead_code_liveness(
         _mark(target, "registered_by_decorator", report)
     for target in find_method_registered_targets(definitions, parsed_files):
         _mark(target, "registered_by_decorator", report)
-    for target in find_exec_namespace_targets(definitions, parsed_files, module_names):
-        _mark(target, "dynamic_module_attribute", report)
     for target in find_patched_instance_methods(definitions, parsed_files):
         _mark(target, "patched_into_external_module", report)
     for target, reason in find_declared_public_api_targets(
@@ -219,6 +217,10 @@ def apply_dead_code_liveness(
         definitions, classes, class_methods, parsed_files, report
     )
     record_finite_dispatch_references(definitions, parsed_files)
+    for target in find_exec_namespace_targets(
+        definitions, parsed_files, module_names, root
+    ):
+        _mark(target, "dynamic_module_attribute", report)
     return report
 
 

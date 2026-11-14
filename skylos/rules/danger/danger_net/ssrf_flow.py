@@ -1624,7 +1624,7 @@ class _SSRFFlowChecker(TaintVisitor):
                 and receiver.value.id in {"self", "cls"}
             ):
                 return False
-            key = (0, receiver.attr)
+            key = (id(self._enclosing_class(node)), receiver.attr)
         elif isinstance(receiver, ast.Name):
             key = (id(self._enclosing_function(node)), receiver.id)
         else:
@@ -1637,8 +1637,15 @@ class _SSRFFlowChecker(TaintVisitor):
     def _binds_only_mappings(self, node: ast.Call) -> bool:
         receiver = node.func.value
         if isinstance(receiver, ast.Attribute):
+            if not self._attribute_reads_assigned_value(node, receiver.attr):
+                return False
             stores_by_attr, setattr_names, unknowable = self._client_attribute_index
             if unknowable or receiver.attr in setattr_names:
+                return False
+            if any(
+                hook in stores_by_attr or hook in setattr_names
+                for hook in {"__getattribute__", "__getattr__", "__setattr__"}
+            ):
                 return False
             stores = [store for store, _owner in stores_by_attr.get(receiver.attr, ())]
             for klass in ast.walk(self.tree) if self.tree is not None else ():
@@ -1662,6 +1669,59 @@ class _SSRFFlowChecker(TaintVisitor):
         if not self._module_global_is_stable(receiver.id):
             return False
         return self._is_mapping_value(self._module_scope.values.get(receiver.id))
+
+    def _attribute_reads_assigned_value(self, node, attribute):
+        """An assignment proves an attribute's value only for a plain object.
+
+        A descriptor or attribute hook can return an HTTP client despite a
+        preceding ``self.client = {}``. Unknown bases/metaclasses can provide
+        those hooks too. Include local subclasses, whose overrides also run
+        when they inherit the method containing this call.
+        """
+        owner = self._enclosing_class(node)
+        if owner is None:
+            return False
+        classes = [
+            item for item in ast.walk(self.tree) if isinstance(item, ast.ClassDef)
+        ]
+        relevant = {owner.name}
+        changed = True
+        while changed:
+            changed = False
+            for klass in classes:
+                if klass.name in relevant:
+                    continue
+                if any(
+                    isinstance(base, ast.Name) and base.id in relevant
+                    for base in klass.bases
+                ):
+                    relevant.add(klass.name)
+                    changed = True
+        hooks = {attribute, "__getattribute__", "__getattr__", "__setattr__"}
+        for klass in classes:
+            if klass.name not in relevant:
+                continue
+            if klass.keywords or klass.decorator_list:
+                return False
+            if any(
+                not isinstance(base, ast.Name)
+                or base.id not in relevant | {"object"}
+                for base in klass.bases
+            ):
+                return False
+            if any(
+                isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and statement.name in hooks
+                for statement in klass.body
+            ):
+                return False
+            if any(
+                name.id in hooks - {attribute}
+                for statement in klass.body
+                for name in _bound_names_of_statement(statement)
+            ):
+                return False
+        return True
 
     def _receiver_is_orm_session(self, node: ast.Call) -> bool:
         """The call's receiver is proven to be an ORM (SQLAlchemy/SQLModel)

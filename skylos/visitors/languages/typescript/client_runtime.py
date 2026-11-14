@@ -34,7 +34,7 @@ _SERVER_RUNTIMES = frozenset(
     }
 )
 _NODE_MODULE_RE = re.compile(
-    rb"""(?:\bfrom\s*|\brequire\s*\(\s*|\bimport\s*\(\s*)['"]"""
+    rb"""(?:\bfrom\s*|\brequire\s*\(\s*|\bimport\s*(?:\(\s*)?)['"]"""
     rb"""(?:node:[^'"]+|fs|fs/promises|http|https|http2|net|tls|dgram|cluster"""
     rb"""|child_process|worker_threads)['"]"""
 )
@@ -77,9 +77,9 @@ def _has_client_directive(root_node, source_bytes: bytes) -> bool:
 
 
 def runs_only_on_client(root_node, source_bytes: bytes, file_path: str) -> bool:
-    if _has_client_directive(root_node, source_bytes):
-        return True
     if _NODE_MODULE_RE.search(source_bytes):
         return False
+    if _has_client_directive(root_node, source_bytes):
+        return True
     directory = os.path.dirname(os.path.abspath(os.fspath(file_path)))
     return _client_only_package(directory)

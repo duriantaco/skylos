@@ -179,6 +179,13 @@ def scope_bindings(scope):
         elif isinstance(node, (ast.Global, ast.Nonlocal)):
             for name in node.names:
                 add(name, None)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                add(alias.asname or alias.name.split(".")[0], None)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            add(node.name, None)
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            add(node.name, None)
         elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             add(node.id, None)
         pending.extend(ast.iter_child_nodes(node))

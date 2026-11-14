@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from ._security_bindings import UNKNOWN, State, Value, joined, unwrap, use_bindings
-from .core import _is_test_path
+from .core import RUST_LANG, _get_parser, _is_test_path
 
 _TAINT_NAME_RE = re.compile(
     r"((?<![a-z])arg|cmd|command|dir|file|filename|input|name|path|payload|request"
@@ -125,20 +125,56 @@ def _declared_test_only(file_path):
         owners.append(folder.parent / f"{folder.name}.rs")
     else:
         owners.append(path.parent.parent / f"{path.parent.name}.rs")
-    declaration = re.compile(
-        r"#\[cfg\(test\)\]\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+"
-        + re.escape(name)
-        + r"\s*;"
-    )
+    if RUST_LANG is None:
+        return False
+    declarations = []
     for owner in owners:
         try:
             if owner != path and owner.is_file():
-                text = owner.read_text(encoding="utf-8", errors="ignore")
-                if declaration.search(text):
-                    return True
+                source = owner.read_bytes()
+                root = _get_parser(RUST_LANG).parse(source).root_node
+                if root.has_error:
+                    return False
+                declarations.extend(_test_module_declarations(root, source, name))
         except OSError:
+            return False
+    # A library and binary can both load the same source file. It is test-only
+    # only when every observed declaration agrees; one production owner wins.
+    return bool(declarations) and all(declarations)
+
+
+def _test_module_declarations(root, source, name):
+    def tokens(node):
+        if node.type in {"line_comment", "block_comment"}:
+            return ()
+        if not node.children or node.type in {"string_literal", "raw_string_literal"}:
+            return (source[node.start_byte : node.end_byte].decode("utf-8", "replace"),)
+        return tuple(token for child in node.children for token in tokens(child))
+
+    declarations = []
+    test_only = path_override = False
+    for child in root.named_children:
+        if child.type in {"line_comment", "block_comment"}:
             continue
-    return False
+        if child.type == "attribute_item":
+            attribute_tokens = tokens(child)
+            test_only |= attribute_tokens == ("#", "[", "cfg", "(", "test", ")", "]")
+            # A path attribute can load this file under a different module
+            # name. Do not use default-name ownership as proof in that case.
+            path_override |= attribute_tokens[:3] == ("#", "[", "path")
+            continue
+        if child.type == "mod_item":
+            declared_name = child.child_by_field_name("name")
+            if declared_name is not None and child.child_by_field_name("body") is None:
+                actual = source[
+                    declared_name.start_byte : declared_name.end_byte
+                ].decode("utf-8", "replace")
+                if path_override:
+                    declarations.append(False)
+                elif actual == name:
+                    declarations.append(test_only)
+        test_only = path_override = False
+    return declarations
 
 
 class _SecurityFlow:

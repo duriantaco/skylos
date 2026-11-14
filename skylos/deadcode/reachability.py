@@ -220,7 +220,7 @@ class PythonReachabilityReport:
         whose name appears nowhere has no caller that an unresolved receiver
         could hide.
         """
-        if self.graph.unread_text or self.opaque_lookup:
+        if self.graph.unread_text:
             return set()
         named = self._names_in_source()
         methods = self.index.method_classes

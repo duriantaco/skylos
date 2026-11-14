@@ -487,8 +487,6 @@ class _LoggingFlow:
                 )
             if base.pairs is not None and key is not None:
                 return dict(base.pairs).get(key, _UNKNOWN)
-            if base.text and _fragment_slice(node.slice):
-                return _UNKNOWN
             return _Value(sources=base.sources)
         if isinstance(node, ast.NamedExpr):
             value = self.expr(node.value)
@@ -500,6 +498,8 @@ class _LoggingFlow:
         if isinstance(node, ast.BoolOp):
             return _combined(self.expr(x) for x in node.values)
         if isinstance(node, ast.BinOp):
+            if self._explicit_text_mask(node):
+                return _UNKNOWN
             return _combined([self.expr(node.left), self.expr(node.right)])
         if isinstance(node, ast.JoinedStr):
             return _combined(self.expr(x) for x in node.values)
@@ -530,6 +530,44 @@ class _LoggingFlow:
         for child in ast.iter_child_nodes(node):
             self.expr(child)
         return _UNKNOWN
+
+    def _explicit_text_mask(self, node):
+        """Only the complete ``text[:n] + '...' + text[-m:]`` mask.
+
+        Individual fragments retain their source: they can be recombined into
+        a whole credential, and even one short slice can disclose a password.
+        Keep the existing conventional prefix/suffix masking policy bounded
+        to one native text value and an explicit ellipsis between its ends.
+        """
+        if not isinstance(node.op, ast.Add):
+            return False
+        if isinstance(node.left, ast.BinOp) and isinstance(node.left.op, ast.Add):
+            parts = (node.left.left, node.left.right, node.right)
+        elif isinstance(node.right, ast.BinOp) and isinstance(node.right.op, ast.Add):
+            parts = (node.left, node.right.left, node.right.right)
+        else:
+            return False
+        if not isinstance(parts[1], ast.Constant):
+            return False
+        if parts[1].value != "...":
+            return False
+        left, right = parts[0], parts[2]
+        if not all(
+            isinstance(part, ast.Subscript)
+            and isinstance(part.value, ast.Name)
+            and isinstance(part.slice, ast.Slice)
+            and _fragment_slice(part.slice)
+            for part in (left, right)
+        ):
+            return False
+        return (
+            left.value.id == right.value.id
+            and left.slice.lower is None
+            and left.slice.upper is not None
+            and right.slice.lower is not None
+            and right.slice.upper is None
+            and self.expr(left.value).text
+        )
 
     def _member(self, base, name):
         if base.api:

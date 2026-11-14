@@ -108,6 +108,11 @@ how_skylos_decides:
     `.format()`, `+`, `join()`, lists, dicts and object fields, and through
     unknown helper calls: a function named `redact()` is not trusted.
   - >-
+    Python retains secret sources through slices and concatenation, including
+    fragments that rebuild a whole token. The conventional bounded
+    `text[:n] + "..." + text[-m:]` mask remains quiet; a slice alone is not
+    proof of redaction.
+  - >-
     Python reports HIGH at a `print()` call or a standard `logging` call
     (`logging.info()`, or `debug`, `info`, `warning`, `error`,
     `exception`, `critical` or `log` on a `logging.getLogger()` logger)

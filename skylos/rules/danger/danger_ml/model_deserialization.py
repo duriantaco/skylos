@@ -3,9 +3,11 @@ from __future__ import annotations
 import ast
 import sys
 
+from skylos.rules.danger.builtin_bindings import builtin_references
 from skylos.rules.danger.calls import _qualified_name_from_call, track_import_aliases
 from skylos.rules.danger.danger_ml.config_constructors import DataConstructorProof
 from skylos.rules.danger.taint import TaintVisitor
+from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
 
 
 MODEL_ARTIFACT_SUFFIXES = (
@@ -91,6 +93,8 @@ class _ModelDeserializationChecker(TaintVisitor):
         self._data_constructor_proof_failed = False
         self._owners = None
         self._parents = None
+        self._path_imports = UntrustedSourceIndex(tree) if tree is not None else None
+        self._builtin_str_refs = builtin_references(tree, {"str"}) if tree else ()
 
     def _push(self):
         super()._push()
@@ -220,10 +224,17 @@ class _ModelDeserializationChecker(TaintVisitor):
             self._append_model_load_finding(node, "pickle.load on model artifact")
 
     def _loads_filesystem_path(self, node: ast.Call, name: str) -> bool:
-        """``from_pretrained``/``load_dataset`` given a ``pathlib``/``os.path``
-        value reads the local filesystem; a string may still be a Hub id."""
+        """An explicit local path or offline-only load cannot fetch a Hub id.
+
+        A Path annotation or construction alone proves neither: Transformers
+        converts the value to text and uses the Hub if no directory exists.
+        """
         if name.rsplit(".", 1)[-1] not in {"from_pretrained", "load_dataset"}:
             return False
+        if name.endswith(".from_pretrained") and self._kw_is_true(
+            node, "local_files_only"
+        ):
+            return True
         reference = None
         for keyword in ("pretrained_model_name_or_path", "path"):
             if reference is None:
@@ -246,47 +257,52 @@ class _ModelDeserializationChecker(TaintVisitor):
                     pending.append((child, inner))
         return self._owners.get(id(node))
 
-    def _names_path_class(self, node: ast.AST | None) -> bool:
-        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-            members = [
-                member
-                for member in (node.left, node.right)
-                if not (isinstance(member, ast.Constant) and member.value is None)
-            ]
-            return len(members) == 1 and self._names_path_class(members[0])
-        if isinstance(node, ast.Subscript):
-            wrapper = _dotted_name(node.value, self.aliases) or ""
-            if wrapper.rsplit(".", 1)[-1] != "Optional":
-                return False
-            return self._names_path_class(node.slice)
-        return (_dotted_name(node, self.aliases) or "") in _PATH_CLASSES
-
-    def _is_filesystem_path(self, node: ast.AST | None, scope, depth: int) -> bool:
+    def _is_filesystem_path(
+        self, node: ast.AST | None, scope, depth: int, *, absolute=False
+    ) -> bool:
         if node is None or depth > _PATH_PROOF_DEPTH:
             return False
         if isinstance(node, ast.Constant):
-            return isinstance(node.value, str) and node.value.strip().startswith(
-                ("./", "../", "/", "~")
-            )
+            prefixes = ("/",) if absolute else ("./", "../", "/", "~")
+            return isinstance(node.value, str) and node.value.startswith(prefixes)
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
-            return self._is_filesystem_path(node.left, scope, depth + 1)
+            return self._is_filesystem_path(node.left, scope, depth + 1, absolute=absolute)
         if isinstance(node, ast.BoolOp):
             return all(
-                self._is_filesystem_path(value, scope, depth + 1)
+                self._is_filesystem_path(value, scope, depth + 1, absolute=absolute)
                 for value in node.values
             )
         if isinstance(node, ast.Attribute):
             return node.attr == "parent" and self._is_filesystem_path(
-                node.value, scope, depth + 1
+                node.value, scope, depth + 1, absolute=absolute
             )
         if isinstance(node, ast.Call):
-            called = _qualified_name_from_call(node, self.aliases) or ""
-            if called in _PATH_CLASSES or called in _PATH_STRING_CALLS:
+            spelling = _qualified_name_from_call(node) or ""
+            called = (
+                self._path_imports.resolved_import(self._owner(node), spelling)
+                if self._path_imports is not None
+                else None
+            )
+            if id(node.func) in self._builtin_str_refs:
+                called = "str"
+            if called in _PATH_STRING_CALLS:
                 return True
+            if called in _PATH_CLASSES | {
+                "os.path.normpath",
+                "os.path.expanduser",
+                "os.path.join",
+            }:
+                return bool(node.args) and self._is_filesystem_path(
+                    node.args[0], scope, depth + 1, absolute=True
+                )
             if called in {"str", "os.fspath"} and len(node.args) == 1:
-                return self._is_filesystem_path(node.args[0], scope, depth + 1)
+                return self._is_filesystem_path(
+                    node.args[0], scope, depth + 1, absolute=absolute
+                )
             if isinstance(node.func, ast.Attribute) and node.func.attr in _PATH_METHODS:
-                return self._is_filesystem_path(node.func.value, scope, depth + 1)
+                return self._is_filesystem_path(
+                    node.func.value, scope, depth + 1, absolute=absolute
+                )
             return False
         if not isinstance(node, ast.Name) or scope is None:
             return False
@@ -300,7 +316,7 @@ class _ModelDeserializationChecker(TaintVisitor):
                 arguments.kwarg,
             ):
                 if parameter is not None and parameter.arg == node.id:
-                    return self._names_path_class(parameter.annotation)
+                    return False
         values = []
         for inner in ast.walk(scope):
             if self._owner(inner) is not scope and inner is not scope:
@@ -319,8 +335,14 @@ class _ModelDeserializationChecker(TaintVisitor):
                     return False
             elif isinstance(inner, (ast.Global, ast.Nonlocal)) and node.id in inner.names:
                 return False
+            elif isinstance(inner, (ast.Import, ast.ImportFrom)) and any(
+                (alias.asname or alias.name.split(".")[0]) in {node.id, "*"}
+                for alias in inner.names
+            ):
+                return False
         return bool(values) and all(
-            self._is_filesystem_path(value, scope, depth + 1) for value in values
+            self._is_filesystem_path(value, scope, depth + 1, absolute=absolute)
+            for value in values
         )
 
     def _parents_of(self, node: ast.AST):
@@ -480,13 +502,9 @@ _PATH_CLASSES = frozenset(
 )
 _PATH_STRING_CALLS = frozenset(
     {
-        "os.path.join",
         "os.path.abspath",
-        "os.path.expanduser",
         "os.path.realpath",
-        "os.path.normpath",
         "os.getcwd",
-        "tempfile.mkdtemp",
         "pathlib.Path.cwd",
         "pathlib.Path.home",
     }
@@ -503,16 +521,6 @@ _PATH_METHODS = frozenset(
         "as_posix",
     }
 )
-
-
-def _dotted_name(node: ast.AST | None, aliases: dict[str, str]) -> str | None:
-    parts = []
-    while isinstance(node, ast.Attribute):
-        parts.append(node.attr)
-        node = node.value
-    if not isinstance(node, ast.Name):
-        return None
-    return ".".join([aliases.get(node.id, node.id), *reversed(parts)])
 
 
 def _loads_local_path(node: ast.Call) -> bool:

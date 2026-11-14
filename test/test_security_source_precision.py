@@ -422,7 +422,7 @@ def main():
     assert _py_lines(tmp_path, "SKY-D357", code) == [14, 15]
 
 
-def test_filesystem_path_reference_downloads_nothing(tmp_path):
+def test_path_annotation_does_not_prove_local_only_loading(tmp_path):
     code = """from pathlib import Path
 
 from transformers import AutoModel
@@ -439,7 +439,7 @@ def named(model_dir: str):
 def either(model: str | Path):
     return AutoModel.from_pretrained(model)
 """
-    assert _py_lines(tmp_path, "SKY-D345", code) == [11, 15]
+    assert _py_lines(tmp_path, "SKY-D345", code) == [7, 11, 15]
 
 
 PATH_ROUTES = """import os

@@ -1189,7 +1189,7 @@ class _PathFlowChecker(TaintVisitor):
         helper = self._module_functions.get(name)
         if helper is None or name in self._global_names:
             return False
-        if len(self._module_bindings.get(name, ())) != 1:
+        if "*" in self._module_bindings or len(self._module_bindings.get(name, ())) != 1:
             return False
         function = self._current_function()
         if function is not None:
@@ -1320,7 +1320,7 @@ class _PathFlowChecker(TaintVisitor):
         if name is None:
             return None
         head, _, rest = name.partition(".")
-        if head in self._module_rebound:
+        if head in self._module_rebound or "*" in self._module_rebound:
             return None
         base = self.import_aliases.get(head)
         if base is None:
