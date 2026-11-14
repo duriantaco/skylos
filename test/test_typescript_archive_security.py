@@ -399,6 +399,52 @@ function extract(entry: { fileName: string }) {
 }
 """
 
+MULTILINE_GUARD = """import fs from "fs";
+import path from "path";
+import yauzl from "yauzl";
+
+function extract(entry: { fileName: string }) {
+  const base = "/tmp/out";
+  const outputPath = path.normalize(path.join(base, entry.fileName));
+  if (outputPath.startsWith(
+    PREFIX
+  )) {
+    fs.writeFileSync(outputPath, "data");
+    return;
+  }
+  throw new Error("bad path");
+}
+"""
+
+MODULE_PREFIX_GUARD = """import fs from "fs";
+import path from "path";
+import yauzl from "yauzl";
+
+const ROOT = "/tmp/out/";
+
+function extract(entry: { fileName: string }) {
+  const outputPath = path.normalize(path.join(ROOT, entry.fileName));
+  if (!outputPath.startsWith(ROOT)) {
+    throw new Error("bad path");
+  }
+  fs.writeFileSync(outputPath, "data");
+}
+"""
+
+LOCAL_PREFIX_GUARD = """import fs from "fs";
+import path from "path";
+import yauzl from "yauzl";
+
+function extract(entry: { fileName: string }) {
+  const ROOT = "/tmp/out/";
+  const outputPath = path.normalize(path.join(ROOT, entry.fileName));
+  if (!outputPath.startsWith(ROOT)) {
+    throw new Error("bad path");
+  }
+  fs.writeFileSync(outputPath, "data");
+}
+"""
+
 
 @pytest.mark.parametrize(
     ("source", "prefix"),
@@ -410,6 +456,9 @@ function extract(entry: { fileName: string }) {
         (BRACELESS_GUARD, "base + path.sep"),
         (BRACELESS_GUARD, "base + '/'"),
         (BRACELESS_GUARD, "'/tmp/out/'"),
+        (MULTILINE_GUARD, "base + path.sep"),
+        (MULTILINE_GUARD, "base + '/'"),
+        (MULTILINE_GUARD, "'/tmp/out/'"),
     ],
 )
 def test_positive_startswith_guard_ending_at_a_separator_is_safe(
@@ -419,12 +468,95 @@ def test_positive_startswith_guard_ending_at_a_separator_is_safe(
     assert "SKY-D215" not in _rule_ids(findings)
 
 
-@pytest.mark.parametrize("source", [POSITIVE_BRANCH_GUARD, BRACELESS_GUARD])
+@pytest.mark.parametrize(
+    "source", [POSITIVE_BRANCH_GUARD, BRACELESS_GUARD, MULTILINE_GUARD]
+)
 @pytest.mark.parametrize("prefix", ["base", "'/tmp/out'", "'/'", "path.sep"])
 def test_startswith_guard_admitting_a_sibling_folder_is_reported(
     tmp_path, source, prefix
 ):
     findings = _scan_ts_file(tmp_path, "archive.ts", source.replace("PREFIX", prefix))
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+@pytest.mark.parametrize("source", [MODULE_PREFIX_GUARD, LOCAL_PREFIX_GUARD])
+def test_guard_prefix_declared_outside_the_guard_window_is_safe(tmp_path, source):
+    findings = _scan_ts_file(tmp_path, "archive.ts", source)
+
+    assert "SKY-D215" not in _rule_ids(findings)
+
+
+@pytest.mark.parametrize("source", [MODULE_PREFIX_GUARD, LOCAL_PREFIX_GUARD])
+def test_guard_prefix_declared_without_a_separator_is_reported(tmp_path, source):
+    findings = _scan_ts_file(
+        tmp_path, "archive.ts", source.replace('"/tmp/out/"', '"/tmp/out"')
+    )
+
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+SHADOWED_PREFIX_GUARD = """import fs from "fs";
+import path from "path";
+import yauzl from "yauzl";
+
+const ROOT = "/tmp/out/";
+
+function extract(entry: { fileName: string }, ROOT: string) {
+  const outputPath = path.normalize(path.join("/tmp/out", entry.fileName));
+  if (!outputPath.startsWith(ROOT)) {
+    throw new Error("bad path");
+  }
+  fs.writeFileSync(outputPath, "data");
+}
+"""
+
+INVERTED_MULTILINE_GUARD = """import fs from "fs";
+import path from "path";
+import yauzl from "yauzl";
+
+const ROOT = "/tmp/out/";
+
+function extract(entry: { fileName: string }) {
+  const outputPath = path.normalize(path.join("/tmp/out", entry.fileName));
+  if (outputPath.startsWith(
+    ROOT
+  ) === false) {
+    fs.writeFileSync(outputPath, "data");
+  }
+}
+"""
+
+SEPARATOR_ALIAS_GUARD = """import fs from "fs";
+import path from "path";
+import yauzl from "yauzl";
+
+const ROOT = "/";
+
+function extract(entry: { fileName: string }) {
+  const outputPath = path.normalize(path.join("/tmp/out", entry.fileName));
+  if (!outputPath.startsWith(ROOT)) {
+    throw new Error("bad path");
+  }
+  fs.writeFileSync(outputPath, "data");
+}
+"""
+
+
+def test_guard_prefix_shadowed_by_a_parameter_is_reported(tmp_path):
+    findings = _scan_ts_file(tmp_path, "archive.ts", SHADOWED_PREFIX_GUARD)
+
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+def test_inverted_multiline_guard_is_reported(tmp_path):
+    findings = _scan_ts_file(tmp_path, "archive.ts", INVERTED_MULTILINE_GUARD)
+
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+def test_guard_prefix_alias_of_a_separator_is_reported(tmp_path):
+    findings = _scan_ts_file(tmp_path, "archive.ts", SEPARATOR_ALIAS_GUARD)
+
     assert "SKY-D215" in _rule_ids(findings)
 
 
