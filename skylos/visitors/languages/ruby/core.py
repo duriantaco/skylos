@@ -19,6 +19,26 @@ except ImportError:  # Reported by the adapter, never treated as a clean scan.
     Language = Parser = tree_sitter_ruby = None
 
 
+_DECLARATION_MACROS = frozenset(
+    {
+        "private",
+        "protected",
+        "public",
+        "private_class_method",
+        "public_class_method",
+        "module_function",
+        "private_constant",
+        "attr_reader",
+        "attr_writer",
+        "attr_accessor",
+        "alias_method",
+        "define_method",
+        "undef_method",
+        "remove_method",
+    }
+)
+
+
 def parse(source: bytes):
     if tree_sitter_ruby is None or Language is None or Parser is None:
         return None
@@ -94,7 +114,7 @@ class RubyCore:
         )
         definition.simple_name = definition.binding_name = name
         definition.is_exported = bool(
-            owner and visibility != "private" and name != "initialize"
+            owner and (visibility != "private" or name == "initialize")
         )
         self.defs.append(definition)
         self.methods.setdefault(canonical, []).append(definition)
@@ -244,6 +264,38 @@ class RubyCore:
             if current in self.classes:
                 pending.extend(self.classes[current].base_classes)
         return False
+
+    def _has_external_base(self, owner):
+        pending, visited = [owner], set()
+        while pending:
+            current = pending.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            definition = self.classes.get(current)
+            if definition is None:
+                continue
+            for base in definition.base_classes:
+                if base in self.classes:
+                    pending.append(base)
+                elif base and base not in self.alias_bindings:
+                    return True
+        return False
+
+    def _macro_symbols(self, args):
+        names = []
+        pending = list(args)
+        while pending:
+            node = pending.pop()
+            if node is None:
+                continue
+            if node.type == "simple_symbol":
+                names.append(self.text(node)[1:])
+            elif node.type == "pair":
+                pending.append(node.child_by_field_name("value"))
+            elif node.type in {"array", "hash"}:
+                pending.extend(node.named_children)
+        return names
 
     def _receiver(self, node, scope):
         if node is None or node.type == "self":
@@ -522,6 +574,15 @@ class RubyCore:
                                 bindings=dict(scope.bindings),
                             ),
                         )
+            if (
+                receiver is None
+                and not scope.method
+                and method not in _DECLARATION_MACROS
+                and self._has_external_base(scope.owner)
+                and not self._class_method_overridden(scope.owner, method)
+            ):
+                for name in self._macro_symbols(args):
+                    self._resolve_call(scope.owner, name, False, scope)
             if (
                 method == "action"
                 and owner in self.rails_classes

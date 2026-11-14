@@ -123,6 +123,8 @@ NON_LIBRARY_DIR_KINDS = {
     "doc_src": "example",
 }
 
+RESERVED_DOMAIN_PACKAGE_PARENTS = frozenset({"com", "org", "net"})
+
 DEFAULT_EXCLUDE_FOLDERS = {
     "__pycache__",
     ".git",
@@ -159,9 +161,17 @@ def is_framework_path(p) -> bool:
 def _non_library_dir_kind_from_parts(
     parts, path_text: str, dir_kinds: dict[str, str]
 ) -> str | None:
+    previous = ""
     for part in parts:
         lowered = part.lower()
         kind = dir_kinds.get(lowered)
+        if (
+            kind == "example"
+            and lowered == "example"
+            and previous in RESERVED_DOMAIN_PACKAGE_PARENTS
+        ):
+            kind = None
+        previous = lowered
         if kind:
             return kind
         if lowered.endswith("_benchmark") or lowered.endswith("_benchmarks"):
@@ -247,3 +257,27 @@ def parse_exclude_folders(
             exclude_folders.discard(folder)
 
     return exclude_folders
+
+
+def parse_config_exclude_folders(
+    user_exclude_folders=None,
+    use_defaults=True,
+    include_folders=None,
+    config_exclude_folders=None,
+) -> set[str]:
+    """Keep dependency/build exclusions without hiding active editor tasks."""
+    explicit = parse_exclude_folders(
+        user_exclude_folders=user_exclude_folders,
+        use_defaults=False,
+        include_folders=include_folders,
+        config_exclude_folders=config_exclude_folders,
+    )
+    excluded = parse_exclude_folders(
+        user_exclude_folders=user_exclude_folders,
+        use_defaults=use_defaults,
+        include_folders=include_folders,
+        config_exclude_folders=config_exclude_folders,
+    )
+    if ".vscode" not in explicit:
+        excluded.discard(".vscode")
+    return excluded

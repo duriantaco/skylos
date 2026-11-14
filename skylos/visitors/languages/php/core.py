@@ -205,6 +205,28 @@ def _get_parser(lang: Language) -> Parser:
     return _PARSER_CACHE[lang_id]
 
 
+_NON_CONSTANT_NAME_PARENTS = frozenset(
+    {
+        "qualified_name",
+        "namespace_name",
+        "namespace_use_clause",
+        "relative_name",
+        "const_element",
+        "enum_case",
+        "class_constant_access_expression",
+        "variable_name",
+        "named_type",
+        "base_clause",
+        "class_interface_clause",
+        "use_declaration",
+        "object_creation_expression",
+        "attribute",
+        "named_label_statement",
+        "goto_statement",
+    }
+)
+
+
 def _is_test_path(file_path: str | Path) -> bool:
     lower = str(file_path).lower().replace("\\", "/")
     return (
@@ -576,6 +598,8 @@ class PhpCore:
 
         bases = self._scan_class_heritage(node, namespace=namespace, aliases=aliases)
         class_def.base_classes = bases
+        if self._is_phpunit_test_class(node, class_name, bases):
+            self.test_decorated_lines.add(line)
         self.defs.append(class_def)
         self._scan_attribute_refs(
             node, namespace=namespace, current_class=qualified, aliases=aliases
@@ -591,6 +615,28 @@ class PhpCore:
             class_bases=bases,
             aliases=aliases,
         )
+
+    def _is_phpunit_test_class(self, node, class_name: str, bases: list[str]) -> bool:
+        if not self.is_test_file or not class_name.endswith("Test"):
+            return False
+        if any(child.type == "abstract_modifier" for child in node.children):
+            return False
+        return any(
+            base.rsplit(".", 1)[-1].endswith(("TestCase", "Test")) for base in bases
+        )
+
+    def _scan_constant_read(self, node, aliases: dict[tuple[str, str], str]) -> None:
+        text = self._get_text(node)
+        if ("const", text) not in aliases:
+            return
+        parent = node.parent
+        if parent is None or parent.type in _NON_CONSTANT_NAME_PARENTS:
+            return
+        for index, child in enumerate(parent.children):
+            if child.start_byte == node.start_byte and child.end_byte == node.end_byte:
+                if parent.field_name_for_child(index) in {"name", "function", "scope"}:
+                    return
+        self._add_ref(text, node.start_byte, current_callable=None)
 
     def _scan_class_heritage(
         self, node, *, namespace: str, aliases: dict[tuple[str, str], str]
@@ -1156,6 +1202,10 @@ class PhpCore:
             # literal is read: escape sequences split its ``string_content``.
             for qualified in php_string_class_refs(self._get_text(node)):
                 self._add_ref(qualified, node.start_byte, current_callable=None)
+            return
+
+        if node.type == "name":
+            self._scan_constant_read(node, aliases)
             return
 
         if node.type == "function_call_expression":

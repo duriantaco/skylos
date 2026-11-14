@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 import ast
+import builtins
 import fnmatch
 import re
 from skylos.deadcode._reachability_bindings import (
     MODULE_BINDING,
+    QUALIFIED_BINDING,
     Binding,
     Bindings,
     FunctionNode,
@@ -30,6 +32,17 @@ from skylos.deadcode._reachability_graph import (
 )
 
 _EXPORT_LIST = "__all__"
+_STORING_METHODS = {
+    "add",
+    "append",
+    "appendleft",
+    "extend",
+    "insert",
+    "put",
+    "put_nowait",
+    "setdefault",
+    "update",
+}
 
 
 def _single_module_function(tree: ast.Module, name: str):
@@ -121,6 +134,7 @@ class SourceVisitor(ast.NodeVisitor):
         self.local: Bindings = {}
         self.owner: str | None = None
         self.proven_context = True
+        self.outside_consumer = False
         self.attribute_names = self._attribute_assignments(module.tree.body, {})
 
     def _protect_binding(
@@ -128,6 +142,8 @@ class SourceVisitor(ast.NodeVisitor):
     ) -> None:
         targets = self.index.escaped_symbols(binding)
         self.graph.protect(targets, self.owner)
+        if self.outside_consumer:
+            self.graph.spelled_targets.update(targets)
         if binding and (
             binding[0] == "instance" or (binding[0] == CLASS_BINDING and retain_class)
         ):
@@ -173,6 +189,7 @@ class SourceVisitor(ast.NodeVisitor):
             return
         if len(node.value) > 65_536:
             self._opaque()
+            self.graph.unread_text = True
             self.graph.references[self.module.path, node.lineno].append(
                 SourceReference("*", None, self.owner)
             )
@@ -289,6 +306,7 @@ class SourceVisitor(ast.NodeVisitor):
                 if _is_star_exported(definition.simple_name, exported):
                     targets.add(key)
         self.graph.protect(targets, self.owner)
+        self.graph.spelled_targets.update(targets)
         destination = (
             self.graph.receiver_roots
             if self.owner is None
@@ -329,8 +347,10 @@ class SourceVisitor(ast.NodeVisitor):
             return
         self._protect_namespace_lookup(node)
         self._mark_unknown_call_receivers(node)
+        self.outside_consumer = self._hands_arguments_outside(node.func)
         for argument in [*node.args, *(kw.value for kw in node.keywords)]:
             self._protect_value(argument)
+        self.outside_consumer = False
         constructor = self.index.resolve(node.func, self.module, self.local)
         if constructor and constructor[0] == CLASS_BINDING:
             self._visit_constructor(node, constructor[1])
@@ -347,6 +367,58 @@ class SourceVisitor(ast.NodeVisitor):
             for identity in self.module.names:
                 self._protect_binding((MODULE_BINDING, identity))
         self.generic_visit(node)
+
+    def _hands_arguments_outside(self, func: ast.AST) -> bool:
+        """The callee is not project code, a builtin or a container store.
+
+        Code outside the project can call members of an object it receives
+        by names the project never spells.
+        """
+        if self.index.resolve(func, self.module, self.local):
+            return False
+        root = func
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        imported = isinstance(root, ast.Name) and self._imported_from_outside(root.id)
+        if isinstance(func, ast.Name):
+            return imported or self._holds_unknown_value(func.id)
+        if imported:
+            return True
+        if isinstance(func, ast.Attribute):
+            return (
+                func.attr not in _STORING_METHODS
+                and func.attr not in self.index.by_simple_name
+                and not (func.attr.startswith("__") and func.attr.endswith("__"))
+            )
+        return True
+
+    def _in_project(self, dotted: str) -> bool:
+        parts = dotted.split(".")
+        return any(
+            self.index.module_names.get(".".join(parts[:end]))
+            for end in range(len(parts), 0, -1)
+        )
+
+    def _scope_binding(self, name: str) -> tuple[bool, Binding | None]:
+        if name in self.local:
+            return True, self.local.get(name)
+        if name in self.module.bindings:
+            return True, self.module.bindings.get(name)
+        return False, None
+
+    def _holds_unknown_value(self, name: str) -> bool:
+        bound, binding = self._scope_binding(name)
+        if not bound:
+            return not hasattr(builtins, name)
+        return binding is None
+
+    def _imported_from_outside(self, name: str) -> bool:
+        _bound, binding = self._scope_binding(name)
+        if binding is None:
+            return False
+        if binding[0] in (QUALIFIED_BINDING, MODULE_BINDING):
+            return not self._in_project(binding[1])
+        return False
 
     def _protect_namespace_lookup(self, node: ast.Call) -> None:
         if not (
@@ -388,6 +460,18 @@ class SourceVisitor(ast.NodeVisitor):
                 self.graph.opaque_receiver_owners.add(self.owner)
             if len(node.args) >= 2:
                 self._protect_spelled_targets(node.args[1])
+                # A runtime name can select any member of a receiver whose
+                # possible values we can identify (including conditionals).
+                # Keep that uncertainty on those receivers, not every class
+                # in the project merely because one lookup is opaque.
+                pattern = self._attribute_pattern(
+                    self._attribute_expression(node.args[1])
+                )
+                if not pattern.strip("*"):
+                    previous = self.outside_consumer
+                    self.outside_consumer = True
+                    self._protect_value(node.args[0])
+                    self.outside_consumer = previous
 
         unbound_method = self._unbound_method(node.func)
         if unbound_method is not None:
@@ -415,6 +499,7 @@ class SourceVisitor(ast.NodeVisitor):
             if matcher.fullmatch(definition.simple_name)
         }
         self.graph.protect(targets, self.owner)
+        self.graph.spelled_targets.update(targets)
         destination = (
             self.graph.receiver_roots
             if self.owner is None
@@ -597,6 +682,7 @@ class SourceVisitor(ast.NodeVisitor):
             return False
         targets = self._getattr_targets(node, binding)
         self.graph.protect(targets, self.owner)
+        self.graph.spelled_targets.update(targets)
         destination = (
             self.graph.receiver_roots
             if self.owner is None
@@ -679,8 +765,25 @@ class SourceVisitor(ast.NodeVisitor):
 
     def visit_Return(self, node: ast.Return | ast.Yield | ast.YieldFrom) -> None:
         if node.value is not None:
+            self.outside_consumer = self._owner_is_module_api()
             self._protect_value(node.value)
+            self.outside_consumer = False
             self.visit(node.value)
+
+    def _owner_is_module_api(self) -> bool:
+        """Code outside the project can call the function that returns this value."""
+        if self.owner is None:
+            return False
+        definition = self.index.candidates.get(self.owner)
+        if definition is None:
+            return False
+        name = definition.simple_name
+        if name.startswith("_"):
+            return False
+        exported = _literal_export_list(self.module.tree)
+        if exported is not None:
+            return name in exported
+        return self.module.path.name == "__init__.py"
 
     visit_Yield = visit_Return
     visit_YieldFrom = visit_Return

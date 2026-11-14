@@ -204,6 +204,36 @@ def _possible_extension_calls(core, classes, definitions, known_methods):
     return list(found.values())
 
 
+def _top_level_binding_names(core):
+    names = []
+    for node in core.root_node.named_children:
+        if node.type in {"getter_signature", "setter_signature"}:
+            name = core._child_by_type(node, "identifier")
+            if name is not None:
+                names.append(core._get_text(name))
+        elif node.type == "type_alias":
+            alias = None
+            for child in node.children:
+                if child.type in {"=", "formal_parameter_list"}:
+                    break
+                if child.type == "type_identifier":
+                    alias = child
+            if alias is not None:
+                names.append(core._get_text(alias))
+        elif node.type == "initialized_identifier_list":
+            for item in node.named_children:
+                name = core._child_by_type(item, "identifier")
+                if name is not None:
+                    names.append(core._get_text(name))
+        elif node.type == "identifier_list":
+            names.extend(
+                core._get_text(child)
+                for child in node.named_children
+                if child.type == "identifier"
+            )
+    return names
+
+
 def collect_value_references(core):
     definitions = {
         definition.name: definition
@@ -373,6 +403,7 @@ def collect_value_references(core):
             visit(child)
 
     visit(core.root_node)
+    core.binding_metadata["declared_names"] = _top_level_binding_names(core)
     core.binding_metadata["possible_extension_calls"] = _possible_extension_calls(
         core, classes, definitions, known_methods
     )

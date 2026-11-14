@@ -102,8 +102,12 @@ def build_analysis_result(
         BELOW_THRESHOLD_SHOW_WITH,
         calibrate_dead_code_confidence,
         experimental_hidden_counts,
+        mark_direct_call_parameters,
     )
 
+    mark_direct_call_parameters(
+        analyzer.defs, getattr(analyzer, "_python_reachability_report", None)
+    )
     # Before the threshold and the evidence ledger read ``confidence``.
     calibrate_dead_code_confidence(
         analyzer.defs, getattr(analyzer, "_ts_demoted_exports", ())

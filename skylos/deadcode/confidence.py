@@ -28,7 +28,14 @@ Factor                                  Cap   Why the evidence is weaker
                                               (3/25 sampled parameters were
                                               truly unused; like Ruff's
                                               opt-in ARG rules, listed only
-                                              with ``--confidence 50``)
+                                              with ``--confidence 50``).
+                                              Not applied to a private,
+                                              undecorated function defined
+                                              once and only called directly:
+                                              no caller can require the
+                                              parameter (7 reported on 20
+                                              labelled repos, 7 dead,
+                                              14 Nov 2026)
 ``class_attribute``                      80   frameworks read class attributes
                                               through metaclasses
 ``imported_only_by_unused_files``        65   alive if any importer is
@@ -68,6 +75,8 @@ threshold: ``skylos done`` compares those sets between revisions.
 
 from __future__ import annotations
 
+import ast
+from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -162,7 +171,8 @@ def _definition_factors(definition: Any, definitions: dict, demoted: set[int]):
         factors.append("deprecated_api")
 
     if kind == "parameter":
-        factors.append("signature_parameter")
+        if not getattr(definition, "direct_call_owner", False):
+            factors.append("signature_parameter")
     elif kind == "method":
         if not simple.startswith(("_", "#")):
             factors.append("public_method")
@@ -182,6 +192,124 @@ def _definition_factors(definition: Any, definitions: dict, demoted: set[int]):
     ):
         factors.append("public_name")
     return list(dict.fromkeys(factors))
+
+
+_UNPROVEN_OWNER_EVIDENCE = {
+    "dynamic_pattern",
+    "unresolved_receiver",
+    "unresolved_callback",
+    "grep_verify",
+    "framework_root",
+    "test_entrypoint",
+    "package_entrypoint",
+}
+_FRAME_READERS = {"locals", "vars", "eval", "exec"}
+
+
+def _has_fixed_signature(owner: Any, definitions: dict) -> bool:
+    """A private, undecorated Python function nothing else can constrain."""
+    node = getattr(owner, "node", None)
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    simple = str(owner.simple_name)
+    if not simple.startswith("_") or simple.startswith("__"):
+        return False
+    if node.decorator_list or getattr(owner, "decorators", None):
+        return False
+    if getattr(owner, "references", 0) <= 0 or getattr(owner, "is_exported", False):
+        return False
+    if _UNPROVEN_OWNER_EVIDENCE.intersection(getattr(owner, "heuristic_refs", None) or ()):
+        return False
+    scope = definitions.get(owner.name.rpartition(".")[0])
+    scope_kind = getattr(scope, "type", None)
+    if scope_kind in {"function", "method"}:
+        return False
+    if scope_kind == "class":
+        bases = [
+            base
+            for base in getattr(scope, "base_classes", None) or ()
+            if base not in ("object", "builtins.object")
+        ]
+        if bases or getattr(scope, "decorators", None):
+            return False
+    if _returns_only_a_constant(node):
+        return False
+    return not any(
+        isinstance(child, ast.Name) and child.id in _FRAME_READERS
+        for child in ast.walk(node)
+    )
+
+
+def _returns_only_a_constant(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """A default hook: its signature serves callers and overriders, not its body."""
+    body = list(node.body)
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+    if len(body) != 1 or not isinstance(body[0], ast.Return):
+        return False
+    return body[0].value is None or isinstance(body[0].value, ast.Constant)
+
+
+def _is_variadic(owner: Any, parameter: Any) -> bool:
+    arguments = owner.node.args
+    return any(
+        argument is not None and argument.arg == parameter.simple_name
+        for argument in (arguments.vararg, arguments.kwarg)
+    )
+
+
+def mark_direct_call_parameters(definitions: dict[str, Any], report: Any) -> None:
+    """Flag unread parameters whose function has no signature contract.
+
+    A private, undecorated function that the project defines once and only
+    calls directly (``name(...)`` for a function, ``self.name(...)`` for a
+    method, with explicit arguments) has every caller in view: nothing passes
+    it as a callback, overrides it, looks it up by name or calls it on an
+    object that may be something else, so no caller can require a parameter
+    its body never reads.
+    """
+    if report is None or not getattr(report, "complete", False):
+        return
+    looked_up_by_name = getattr(report, "name_exposed_keys", ())
+    by_owner: dict[str, list[Any]] = {}
+    for definition in definitions.values():
+        if definition.type != "parameter" or not _is_candidate(definition):
+            continue
+        if not str(definition.filename).endswith(_PYTHON_SUFFIXES):
+            continue
+        owner = definitions.get(definition.name.rpartition(".")[0])
+        if owner is None or owner.name in looked_up_by_name:
+            continue
+        if not _has_fixed_signature(owner, definitions):
+            continue
+        if _is_variadic(owner, definition):
+            continue
+        by_owner.setdefault(owner.simple_name, []).append(definition)
+    if not by_owner:
+        return
+    defined = Counter(
+        definition.simple_name
+        for definition in definitions.values()
+        if definition.type in {"function", "method"}
+    )
+    as_function, on_self = report.direct_call_sites(set(by_owner))
+    for name, parameters in by_owner.items():
+        if defined[name] != 1:
+            continue
+        owner = definitions[parameters[0].name.rpartition(".")[0]]
+        if owner.type == "method":
+            callers_in_view = name in on_self
+        else:
+            callers_in_view = name in as_function
+        if not callers_in_view:
+            continue
+        for parameter in parameters:
+            parameter.direct_call_owner = True
 
 
 def _is_deprecated_python(definition: Any) -> bool:

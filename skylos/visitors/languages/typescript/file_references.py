@@ -9,8 +9,24 @@ workflow, ``subprocess.run(["node", here / "build.js"])`` in Python or
 
 A reference counts only in a loading position: a runtime's script operand,
 an evidenced subprocess call, a script src, a browser worker/importScripts
-argument, or a supported configuration's file-loading field. Its path must
-resolve to exactly one scanned file:
+argument, or a supported configuration's file-loading field. Further loading
+positions:
+
+* a run instruction in Markdown: a line of a fenced shell code block that is
+  a runtime command (``bun run src/evals/run.ts``);
+* a ``tsconfig`` ``include`` entry that names one file (no wildcard);
+* ``path.join`` / ``path.resolve`` from ``node:path`` with literal segments:
+  anchored at ``__dirname`` it names exactly that file, with another base its
+  literal tail must contain a directory;
+* a runtime command built in JS/TS (a string or template literal such as
+  ``node ${join(dir, 'hook.js')}``): the literal tail of its script operand,
+  which may be a bare file name because it is being run;
+* a path string with a directory in a tool configuration file
+  (``forge.config.ts`` ``extraResource``, ``webpack.config.js`` ``entry``),
+  resolved against the configuration's folder or the project root only;
+  strings under an ``ignore``/``exclude`` key name what the tool skips.
+
+Its path must resolve to exactly one scanned file:
 
 * relative to the referencing file's directory or to the project root, with
   or without the file extension, or as a directory ``index`` file;
@@ -19,8 +35,10 @@ resolve to exactly one scanned file:
   its prefix. A bare file name (``worker.js``) is accepted this way only from
   another JS/TS file, whose own liveness then decides the target's.
 
-References in comments, docstrings and Markdown prose are ignored: a mention
-is not a load. A reference from an analysed JS/TS file is an edge (the target
+References in comments, docstrings, Markdown prose, inline code spans and
+Markdown links are ignored: a mention is not a load. A well-formed Internet
+Explorer conditional comment (``<!--[if lt IE 9]>...<![endif]-->``) is markup
+that matching browsers execute, so a script tag inside it is a load. A reference from an analysed JS/TS file is an edge (the target
 lives only while the referencing file does); one from any other file is a
 root.
 """
@@ -74,12 +92,35 @@ _TEMPLATE_SUFFIXES = (
     ".astro",
 )
 _PYTHON_SUFFIXES = (".py",)
+_MARKDOWN_SUFFIXES = (".md", ".mdx", ".markdown")
 _REFERENCE_SUFFIXES = (
     *_STRUCTURED_SUFFIXES,
     *_HASH_COMMENT_SUFFIXES,
     *_TEMPLATE_SUFFIXES,
     *_PYTHON_SUFFIXES,
+    *_MARKDOWN_SUFFIXES,
 )
+_MARKDOWN_SHELL_BLOCKS = frozenset(
+    {
+        "",
+        "sh",
+        "bash",
+        "shell",
+        "zsh",
+        "console",
+        "terminal",
+        "shell-session",
+        "shellsession",
+        "cmd",
+        "powershell",
+        "ps1",
+        "bat",
+        "text",
+        "txt",
+    }
+)
+_MARKDOWN_FENCE_RE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})(?P<info>[^`]*)$")
+_MARKDOWN_PROMPTS = ("$ ", "> ", "% ")
 # Extension-less files whose commands run scripts by path.
 _COMMAND_FILE_NAMES = frozenset(
     {"Makefile", "makefile", "GNUmakefile", "Dockerfile", "Procfile", "justfile"}
@@ -114,7 +155,22 @@ _TEMPLATE_COMMENT_RES = (
     re.compile(r"{#[\s\S]*?#}"),
     re.compile(r"{%-?\s*comment\s*-?%}[\s\S]*?{%-?\s*endcomment\s*-?%}"),
 )
+_CONDITIONAL_COMMENT_RE = re.compile(
+    r"<!--\[if\b[^\]>]*\]>(?P<body>[\s\S]*?)<!\[endif\]-->"
+)
 _SCRIPT_RUNNERS = frozenset({"node", "nodejs", "tsx", "ts-node", "bun", "deno", "k6"})
+_PACKAGE_LAUNCHERS = frozenset({"yarn", "pnpm", "bunx", "pnpx"})
+_LAUNCHER_SUBCOMMANDS = frozenset({"exec", "dlx", "run"})
+_PATH_MODULES = frozenset(
+    {"path", "node:path", "path/posix", "node:path/posix", "pathe", "upath"}
+)
+_PATH_JOIN_FUNCTIONS = frozenset({"join", "resolve"})
+_MODULE_DIRECTORY_EXPRESSIONS = frozenset(
+    {"__dirname", "import.meta.dirname", "import.meta.dir"}
+)
+_COMMAND_PLACEHOLDER = "SKYLOS_DYNAMIC_PATH"
+_NON_LOADING_KEY_RE = re.compile(r"ignore|exclude", re.IGNORECASE)
+_COMMAND_STRING_RE = re.compile(r"^\s*(?:node|nodejs|tsx|ts-node|bun|deno)\s+\S")
 _PYTHON_PROCESS_CALLS = frozenset(
     {
         "subprocess.run",
@@ -208,6 +264,7 @@ def _resolve_token(
     targets: set[str],
     *,
     allow_bare_name: bool,
+    allow_suffix: bool = True,
 ) -> str | None:
     if token.startswith("//"):
         # Protocol-relative or ``scheme://`` URL: another host's file.
@@ -230,7 +287,7 @@ def _resolve_token(
             if real_candidate in targets and _inside(real_candidate, index.root):
                 return real_candidate
 
-    if not has_extension:
+    if not has_extension or not allow_suffix:
         return None
     segments = [part for part in relative.split("/") if part not in {"", "."}]
     while segments and segments[0] == "..":
@@ -281,6 +338,18 @@ def _command_paths(command):
     if not tokens or not isinstance(tokens[0], str):
         return
     runner = os.path.basename(tokens[0])
+    if runner in _PACKAGE_LAUNCHERS:
+        position = 1
+        if position < len(tokens) and tokens[position] in _LAUNCHER_SUBCOMMANDS:
+            position += 1
+        if (
+            position >= len(tokens)
+            or not isinstance(tokens[position], str)
+            or tokens[position] not in _SCRIPT_RUNNERS
+        ):
+            return
+        tokens = tokens[position:]
+        runner = tokens[0]
     if runner == "npx":
         # npx is a package launcher, not itself a JavaScript runtime. Only a
         # known runtime command (and, if supplied, its matching package) proves
@@ -488,6 +557,15 @@ def _config_load_paths(path: Path, source: str):
             return
         if isinstance(data, dict) and isinstance(data.get("files"), list):
             yield from (value for value in data["files"] if isinstance(value, str))
+        if isinstance(data, dict) and isinstance(data.get("include"), list):
+            yield from (
+                value
+                for value in data["include"]
+                if isinstance(value, str)
+                and "*" not in value
+                and "?" not in value
+                and value.lower().endswith(_JS_EXTENSIONS)
+            )
         return
     try:
         data = yaml.safe_load(source)
@@ -625,12 +703,49 @@ def _script_tag_sources(node: ast.AST, *, classic_only: bool = False):
                 yield "expression", (expressions[marker], prefix)
 
 
+def _conditional_comment_body(match) -> str:
+    return match.group("body")
+
+
+def _markdown_commands(source: str):
+    """Lines of fenced shell code blocks; never prose, code spans or links."""
+    source = _TEMPLATE_COMMENT_RES[0].sub("", source)
+    fence = None
+    shell = False
+    for line in source.splitlines():
+        opening = _MARKDOWN_FENCE_RE.match(line)
+        if fence is None:
+            if opening is not None:
+                fence = opening.group("fence")
+                info = opening.group("info").strip().split(" ", 1)[0].lower()
+                shell = info in _MARKDOWN_SHELL_BLOCKS
+            continue
+        stripped = line.strip()
+        if (
+            len(stripped) >= len(fence)
+            and stripped[0] == fence[0]
+            and set(stripped) == {fence[0]}
+        ):
+            fence = None
+            continue
+        if not shell:
+            continue
+        if stripped.startswith(_MARKDOWN_PROMPTS):
+            stripped = stripped[2:]
+        yield stripped
+
+
 def _reference_texts(path: Path, source: str):
     suffix = path.suffix.lower()
     if suffix in _PYTHON_SUFFIXES:
         yield from _python_load_paths(source)
         return
+    if suffix in _MARKDOWN_SUFFIXES:
+        for command in _markdown_commands(source):
+            yield from _shell_load_paths(command)
+        return
     if suffix in _TEMPLATE_SUFFIXES:
+        source = _CONDITIONAL_COMMENT_RE.sub(_conditional_comment_body, source)
         for pattern in _TEMPLATE_COMMENT_RES:
             source = pattern.sub("", source)
         parser = _ScriptSources()
@@ -669,14 +784,27 @@ def _is_module_specifier(source: bytes, node) -> bool:
     )
 
 
-def _js_string_values(path: str, source: bytes):
-    suffix = os.path.splitext(path)[1].lower()
-    parser = (
-        _TSX_PARSER if suffix in {".js", ".jsx", ".tsx", ".mjs", ".cjs"} else _TS_PARSER
-    )
+_LAST_JS_PARSE: list = [None, None, None]
+
+
+def _parse_js(path: str, source: bytes):
+    if _LAST_JS_PARSE[0] == path and _LAST_JS_PARSE[1] == source:
+        return _LAST_JS_PARSE[2]
+    parser = _TS_PARSER
+    if os.path.splitext(path)[1].lower() in {".js", ".jsx", ".tsx", ".mjs", ".cjs"}:
+        parser = _TSX_PARSER
     if parser is None:
+        return None
+    tree = parser.parse(source)
+    _LAST_JS_PARSE[:] = [path, source, tree]
+    return tree
+
+
+def _js_string_values(path: str, source: bytes):
+    tree = _parse_js(path, source)
+    if tree is None:
         return
-    root = parser.parse(source).root_node
+    root = tree.root_node
     bindings = set()
     pending = [root]
     while pending:
@@ -778,6 +906,255 @@ def _js_path_strings(stack, source: bytes):
         stack.extend(node.named_children)
 
 
+def _node_text(source: bytes, node) -> str:
+    return source[node.start_byte : node.end_byte].decode("utf-8", "replace")
+
+
+def _static_string(source: bytes, node) -> str | None:
+    if node.type not in _JS_STRING_NODE_TYPES:
+        return None
+    if any(child.type == "template_substitution" for child in node.children):
+        return None
+    from .build_configs import _js_unescape
+
+    return "".join(
+        _js_unescape(_node_text(source, child))
+        for child in node.children
+        if child.type in _JS_STRING_TEXT_TYPES
+    )
+
+
+def _require_specifier(source: bytes, node) -> str | None:
+    if node is None or node.type != "call_expression":
+        return None
+    function = node.child_by_field_name("function")
+    arguments = node.child_by_field_name("arguments")
+    if (
+        function is None
+        or arguments is None
+        or function.type != "identifier"
+        or _node_text(source, function) != "require"
+        or len(arguments.named_children) != 1
+    ):
+        return None
+    return _static_string(source, arguments.named_children[0])
+
+
+def path_module_bindings(source: bytes, root) -> tuple[set[str], set[str]]:
+    """Local names bound to ``node:path`` and to its ``join``/``resolve``."""
+    namespaces: set[str] = set()
+    functions: set[str] = set()
+    pending = [root]
+    while pending:
+        node = pending.pop()
+        pending.extend(node.named_children)
+        if node.type == "import_statement":
+            specifier = node.child_by_field_name("source")
+            if (
+                specifier is None
+                or _static_string(source, specifier) not in _PATH_MODULES
+            ):
+                continue
+            for clause in node.named_children:
+                if clause.type != "import_clause":
+                    continue
+                for child in clause.named_children:
+                    if child.type == "identifier":
+                        namespaces.add(_node_text(source, child))
+                    elif child.type == "namespace_import":
+                        namespaces.update(
+                            _node_text(source, name)
+                            for name in child.named_children
+                            if name.type == "identifier"
+                        )
+                    elif child.type == "named_imports":
+                        for specifier_node in child.named_children:
+                            name = specifier_node.child_by_field_name("name")
+                            alias = specifier_node.child_by_field_name("alias")
+                            if (
+                                name is not None
+                                and _node_text(source, name) in _PATH_JOIN_FUNCTIONS
+                            ):
+                                functions.add(_node_text(source, alias or name))
+        elif node.type == "variable_declarator":
+            if (
+                _require_specifier(source, node.child_by_field_name("value"))
+                not in _PATH_MODULES
+            ):
+                continue
+            name = node.child_by_field_name("name")
+            if name is None:
+                continue
+            if name.type == "identifier":
+                namespaces.add(_node_text(source, name))
+            elif name.type == "object_pattern":
+                for member in name.named_children:
+                    if member.type == "shorthand_property_identifier_pattern":
+                        if _node_text(source, member) in _PATH_JOIN_FUNCTIONS:
+                            functions.add(_node_text(source, member))
+                    elif member.type == "pair_pattern":
+                        key = member.child_by_field_name("key")
+                        value = member.child_by_field_name("value")
+                        if (
+                            key is not None
+                            and value is not None
+                            and value.type == "identifier"
+                            and _node_text(source, key) in _PATH_JOIN_FUNCTIONS
+                        ):
+                            functions.add(_node_text(source, value))
+    return namespaces, functions
+
+
+def _is_path_join_call(source: bytes, node, namespaces, functions) -> bool:
+    if node.type != "call_expression":
+        return False
+    function = node.child_by_field_name("function")
+    if function is None or node.child_by_field_name("arguments") is None:
+        return False
+    if function.type == "identifier":
+        return _node_text(source, function) in functions
+    if function.type != "member_expression":
+        return False
+    owner = function.child_by_field_name("object")
+    member = function.child_by_field_name("property")
+    return (
+        owner is not None
+        and member is not None
+        and owner.type == "identifier"
+        and _node_text(source, owner) in namespaces
+        and _node_text(source, member) in _PATH_JOIN_FUNCTIONS
+    )
+
+
+def static_path_join(source: bytes, node, namespaces, functions):
+    """``(anchored, segments)`` of a ``path.join``/``path.resolve`` call.
+
+    ``anchored`` means every argument is literal after a leading module
+    directory (``__dirname``). Otherwise ``segments`` is the literal tail
+    after the last non-literal argument.
+    """
+    if not _is_path_join_call(source, node, namespaces, functions):
+        return None
+    anchored = False
+    segments: list[str] = []
+    for index, argument in enumerate(
+        node.child_by_field_name("arguments").named_children
+    ):
+        literal = _static_string(source, argument)
+        if literal is not None:
+            segments.append(literal)
+            continue
+        if index == 0 and _node_text(source, argument) in _MODULE_DIRECTORY_EXPRESSIONS:
+            anchored = True
+            segments = []
+            continue
+        nested = static_path_join(source, argument, namespaces, functions)
+        if nested is not None and index == 0:
+            anchored, segments = nested[0], list(nested[1])
+            continue
+        anchored = False
+        segments = []
+    if any(os.path.isabs(segment) for segment in segments):
+        return None
+    return anchored, segments
+
+
+def _literal_argument_tail(source: bytes, node) -> list[str]:
+    if node.type != "call_expression":
+        return []
+    arguments = node.child_by_field_name("arguments")
+    if arguments is None:
+        return []
+    tail: list[str] = []
+    for argument in reversed(arguments.named_children):
+        literal = _static_string(source, argument)
+        if literal is None:
+            break
+        tail.insert(0, literal)
+    return tail
+
+
+def _command_template_text(source: bytes, node, namespaces, functions) -> str | None:
+    parts: list[str] = []
+    for child in node.children:
+        if child.type in _JS_STRING_TEXT_TYPES:
+            parts.append(_node_text(source, child))
+        elif child.type == "template_substitution":
+            segments: list[str] = []
+            if child.named_children:
+                segments = _literal_argument_tail(source, child.named_children[0])
+            tail = ""
+            if segments and not any(os.path.isabs(part) for part in segments):
+                tail = "/" + "/".join(segments)
+            parts.append(_COMMAND_PLACEHOLDER + tail)
+        elif child.type == "escape_sequence":
+            return None
+    text = "".join(parts)
+    if _COMMAND_STRING_RE.match(text) is None:
+        return None
+    return text
+
+
+def _under_non_loading_key(source: bytes, node) -> bool:
+    current = node.parent
+    while current is not None:
+        if current.type == "pair":
+            key = current.child_by_field_name("key")
+            if key is not None and _NON_LOADING_KEY_RE.search(_node_text(source, key)):
+                return True
+        current = current.parent
+    return False
+
+
+def _js_path_references(path: str, source: bytes, *, tool_config: bool):
+    """``(kind, text)`` path references outside import specifiers.
+
+    ``exact`` is an absolute path, ``relative`` a literal tail that holds a
+    directory, ``command`` the script operand of a runtime command, ``config``
+    a path string of a tool configuration file.
+    """
+    tree = _parse_js(path, source)
+    if tree is None:
+        return
+    root = tree.root_node
+    namespaces, functions = path_module_bindings(source, root)
+    directory = os.path.dirname(path)
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.type == "comment":
+            continue
+        joined = None
+        if namespaces or functions:
+            joined = static_path_join(source, node, namespaces, functions)
+        if joined is not None:
+            anchored, segments = joined
+            if anchored and segments:
+                yield (
+                    "exact",
+                    os.path.normpath(os.path.join(directory, *segments)),
+                )
+            elif segments:
+                tail = "/".join(segments)
+                if "/" in tail.strip("/"):
+                    yield "relative", tail
+            continue
+        if node.type in _JS_STRING_NODE_TYPES:
+            if node.type == "string" and _is_module_specifier(source, node):
+                continue
+            command = _command_template_text(source, node, namespaces, functions)
+            if command is not None:
+                for operand in _shell_load_paths(command):
+                    tail = operand.rsplit(_COMMAND_PLACEHOLDER, 1)[-1].lstrip("/")
+                    if tail:
+                        yield "command", tail
+            elif tool_config and not _under_non_loading_key(source, node):
+                literal = _static_string(source, node)
+                if literal is not None and "/" in literal:
+                    yield "config", literal
+        stack.extend(node.named_children)
+
+
 def _target_names(targets: set[str]) -> frozenset[str]:
     names: set[str] = set()
     for target in targets:
@@ -834,6 +1211,18 @@ def _folder_targets(
             continue
         found.add(target)
     return found
+
+
+def _is_tool_configuration(path: str) -> bool:
+    from .conventions import convention_reason
+    from .tool_configs import is_tool_config_file
+
+    return is_tool_config_file(path) or convention_reason(path) in {
+        "tool-config",
+        "rc-config",
+        "conf-config",
+        "storybook-config",
+    }
 
 
 def collect_ts_path_references(
@@ -907,10 +1296,30 @@ def collect_ts_path_references(
         if not source or not any(name in source for name in names):
             continue
         ref_dir = os.path.dirname(js_file)
-        for text in _js_string_values(js_file, source.encode("utf-8")):
+        source_bytes = source.encode("utf-8")
+        for text in _js_string_values(js_file, source_bytes):
             for token in _tokens(text, names):
                 target = _resolve_token(
                     token, ref_dir, index, targets, allow_bare_name=True
+                )
+                if target is not None and target != js_file:
+                    edges[target].add(js_file)
+        for kind, text in _js_path_references(
+            js_file, source_bytes, tool_config=_is_tool_configuration(js_file)
+        ):
+            if kind == "exact":
+                target = os.path.realpath(text)
+                if target in targets and target != js_file and _inside(target, root):
+                    edges[target].add(js_file)
+                continue
+            for token in _tokens(text, names):
+                target = _resolve_token(
+                    token,
+                    ref_dir,
+                    index,
+                    targets,
+                    allow_bare_name=kind == "command",
+                    allow_suffix=kind != "config",
                 )
                 if target is not None and target != js_file:
                     edges[target].add(js_file)

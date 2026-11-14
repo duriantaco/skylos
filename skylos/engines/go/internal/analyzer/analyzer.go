@@ -453,14 +453,10 @@ func (a *Analyzer) checkCompositeLit(lit *ast.CompositeLit, path string) {
 			if kv, ok := elt.(*ast.KeyValueExpr); ok {
 				if key, ok := kv.Key.(*ast.Ident); ok {
 					if key.Name == "HttpOnly" {
-						if val, ok := kv.Value.(*ast.Ident); ok && val.Name == "true" {
-							hasHttpOnly = true
-						}
+						hasHttpOnly = !isLiteralFalse(kv.Value)
 					}
 					if key.Name == "Secure" {
-						if val, ok := kv.Value.(*ast.Ident); ok && val.Name == "true" {
-							hasSecure = true
-						}
+						hasSecure = !isLiteralFalse(kv.Value)
 					}
 				}
 			}
@@ -470,6 +466,69 @@ func (a *Analyzer) checkCompositeLit(lit *ast.CompositeLit, path string) {
 				"http.Cookie missing HttpOnly or Secure flag. Set both to true to prevent XSS and MITM.")
 		}
 	}
+}
+
+func isLiteralFalse(expr ast.Expr) bool {
+	budget := 256
+	value, known := constantBool(expr, make(map[*ast.Object]bool), 0, &budget)
+	return known && !value
+}
+
+// Runtime values stay unknown; immutable expressions spelling false remain
+// insecure even when they are not the literal identifier false.
+func constantBool(expr ast.Expr, visiting map[*ast.Object]bool, depth int, budget *int) (bool, bool) {
+	*budget--
+	if depth > 32 || *budget < 0 {
+		return false, false
+	}
+	switch node := expr.(type) {
+	case *ast.ParenExpr:
+		return constantBool(node.X, visiting, depth+1, budget)
+	case *ast.Ident:
+		if node.Obj == nil {
+			return node.Name == "true", node.Name == "true" || node.Name == "false"
+		}
+		if node.Obj.Kind != ast.Con || visiting[node.Obj] {
+			return false, false
+		}
+		spec, ok := node.Obj.Decl.(*ast.ValueSpec)
+		if !ok || len(spec.Names) != len(spec.Values) {
+			return false, false
+		}
+		for i, name := range spec.Names {
+			if name.Name == node.Name {
+				visiting[node.Obj] = true
+				value, known := constantBool(spec.Values[i], visiting, depth+1, budget)
+				delete(visiting, node.Obj)
+				return value, known
+			}
+		}
+	case *ast.UnaryExpr:
+		if node.Op == token.NOT {
+			value, known := constantBool(node.X, visiting, depth+1, budget)
+			return !value, known
+		}
+	case *ast.BinaryExpr:
+		left, lok := constantBool(node.X, visiting, depth+1, budget)
+		right, rok := constantBool(node.Y, visiting, depth+1, budget)
+		switch node.Op {
+		case token.LAND:
+			if lok && !left || rok && !right {
+				return false, true
+			}
+			return left && right, lok && rok
+		case token.LOR:
+			if lok && left || rok && right {
+				return true, true
+			}
+			return false, lok && rok
+		case token.EQL:
+			return left == right, lok && rok
+		case token.NEQ:
+			return left != right, lok && rok
+		}
+	}
+	return false, false
 }
 
 func (a *Analyzer) checkHardcodedSecret(lit *ast.BasicLit, path string) {
@@ -1065,6 +1124,18 @@ func deferRunsOnce(d *ast.DeferStmt, loops []ast.Node) bool {
 func (a *Analyzer) checkUnclosedResource(body *ast.BlockStmt, path string) {
 	openVars := make(map[string]ast.Node)
 	handled := make(map[string]bool)
+	bindingKeys := make(map[*ast.Object]string)
+	bindingKey := func(id *ast.Ident) string {
+		if id.Obj == nil {
+			return "global:" + id.Name
+		}
+		if key, ok := bindingKeys[id.Obj]; ok {
+			return key
+		}
+		key := "local:" + strconv.Itoa(len(bindingKeys))
+		bindingKeys[id.Obj] = key
+		return key
+	}
 
 	ast.Inspect(body, func(n ast.Node) bool {
 		if _, ok := n.(*ast.FuncLit); ok {
@@ -1077,7 +1148,7 @@ func (a *Analyzer) checkUnclosedResource(body *ast.BlockStmt, path string) {
 					if funcs, ok := openFuncs[pkg]; ok && funcs[fn] {
 						if len(assign.Lhs) > 0 {
 							if id, ok := assign.Lhs[0].(*ast.Ident); ok {
-								openVars[id.Name] = call
+								openVars[bindingKey(id)] = call
 							}
 						}
 					}
@@ -1090,11 +1161,223 @@ func (a *Analyzer) checkUnclosedResource(body *ast.BlockStmt, path string) {
 		return
 	}
 
-	mark := func(expr ast.Expr) {
-		for _, name := range identNames(expr) {
-			if _, ok := openVars[name]; ok {
-				handled[name] = true
+	// A local aggregate is another local owner, not an ownership transfer.
+	// Keep the handles it actually contains until that owner escapes or closes.
+	owners := make(map[string]map[string]bool)
+	aggregates := make(map[string]bool)
+	sharedOwners := make(map[string]int)
+	referenceOwners := make(map[string]bool)
+	nextSharedOwner := 0
+	locals := make(map[*ast.Object]bool)
+	for name := range openVars {
+		owners[name] = map[string]bool{name: true}
+	}
+	ast.Inspect(body, func(n ast.Node) bool {
+		if _, nested := n.(*ast.FuncLit); nested {
+			return false
+		}
+		switch node := n.(type) {
+		case *ast.AssignStmt:
+			if node.Tok == token.DEFINE {
+				for _, lhs := range node.Lhs {
+					if id, ok := lhs.(*ast.Ident); ok && id.Obj != nil {
+						locals[id.Obj] = true
+					}
+				}
 			}
+		case *ast.ValueSpec:
+			for _, name := range node.Names {
+				if name.Obj != nil {
+					locals[name.Obj] = true
+				}
+			}
+		}
+		return true
+	})
+	var owned func(ast.Expr) map[string]bool
+	owned = func(expr ast.Expr) map[string]bool {
+		result := make(map[string]bool)
+		merge := func(other map[string]bool) {
+			for name := range other {
+				result[name] = true
+			}
+		}
+		switch node := expr.(type) {
+		case *ast.Ident:
+			merge(owners[bindingKey(node)])
+		case *ast.ParenExpr:
+			merge(owned(node.X))
+		case *ast.UnaryExpr:
+			if node.Op == token.AND {
+				merge(owned(node.X))
+			}
+		case *ast.StarExpr:
+			merge(owned(node.X))
+		case *ast.CompositeLit:
+			for _, elt := range node.Elts {
+				if kv, ok := elt.(*ast.KeyValueExpr); ok {
+					elt = kv.Value
+				}
+				merge(owned(elt))
+			}
+		case *ast.SelectorExpr, *ast.IndexExpr:
+			merge(owners[resourceOwnerPath(expr, bindingKey)])
+		case *ast.CallExpr:
+			if id, ok := node.Fun.(*ast.Ident); ok && id.Name == "append" && id.Obj == nil {
+				for _, arg := range node.Args {
+					merge(owned(arg))
+				}
+			}
+		}
+		return result
+	}
+	mark := func(expr ast.Expr) {
+		for name := range owned(expr) {
+			handled[name] = true
+		}
+	}
+	var bindOwner func(string, ast.Expr)
+	bindOwner = func(name string, value ast.Expr) {
+		next := owned(value)
+		source := resourceOwnerPath(value, bindingKey)
+		copied := make(map[string]map[string]bool)
+		copiedAggregates := make(map[string]bool)
+		copiedShared := make(map[string]int)
+		copiedReferences := make(map[string]bool)
+		if source != "" {
+			for key, refs := range owners {
+				if strings.HasPrefix(key, source+".") || strings.HasPrefix(key, source+"[") {
+					copyKey := name + strings.TrimPrefix(key, source)
+					copied[copyKey] = refs
+					copiedAggregates[copyKey] = aggregates[key]
+					copiedShared[copyKey] = sharedOwners[key]
+					copiedReferences[copyKey] = referenceOwners[key]
+				}
+			}
+		}
+		wasAggregate := aggregates[source]
+		shared := sharedOwners[source]
+		reference := referenceOwners[source]
+		if !reference {
+			shared = 0
+		}
+		if _, dereference := value.(*ast.StarExpr); dereference {
+			shared = 0
+			reference = false
+		}
+		for key := range owners {
+			if key == name || strings.HasPrefix(key, name+".") || strings.HasPrefix(key, name+"[") {
+				delete(owners, key)
+				delete(aggregates, key)
+				delete(sharedOwners, key)
+				delete(referenceOwners, key)
+			}
+		}
+		owners[name] = next
+		aggregates[name] = wasAggregate
+		sharedOwners[name] = shared
+		referenceOwners[name] = reference
+		for key, refs := range copied {
+			owners[key] = refs
+			aggregates[key] = copiedAggregates[key]
+			sharedOwners[key] = copiedShared[key]
+			referenceOwners[key] = copiedReferences[key]
+		}
+		if unary, ok := value.(*ast.UnaryExpr); ok && unary.Op == token.AND {
+			group := sharedOwners[source]
+			if group == 0 {
+				nextSharedOwner++
+				group = nextSharedOwner
+			}
+			sharedOwners[name] = group
+			referenceOwners[name] = true
+			if source != "" && !referenceOwners[source] {
+				sharedOwners[source] = group
+			}
+			value = unary.X
+		}
+		if literal, ok := value.(*ast.CompositeLit); ok {
+			aggregates[name] = true
+			switch structure := literal.Type.(type) {
+			case *ast.ArrayType:
+				if structure.Len == nil {
+					nextSharedOwner++
+					sharedOwners[name] = nextSharedOwner
+					referenceOwners[name] = true
+				}
+			case *ast.MapType:
+				nextSharedOwner++
+				sharedOwners[name] = nextSharedOwner
+				referenceOwners[name] = true
+			}
+			fields := compositeFieldNames(literal)
+			for i, elt := range literal.Elts {
+				key := "[" + strconv.Itoa(i) + "]"
+				if kv, ok := elt.(*ast.KeyValueExpr); ok {
+					if field, ok := kv.Key.(*ast.Ident); ok {
+						key = "." + field.Name
+					}
+					elt = kv.Value
+				} else if i < len(fields) {
+					key = "." + fields[i]
+				}
+				bindOwner(name+key, elt)
+			}
+		}
+		for parent := resourceOwnerParent(name); parent != ""; parent = resourceOwnerParent(parent) {
+			if !aggregates[parent] {
+				continue
+			}
+			refs := make(map[string]bool)
+			for key, values := range owners {
+				if strings.HasPrefix(key, parent+".") || strings.HasPrefix(key, parent+"[") {
+					for handle := range values {
+						refs[handle] = true
+					}
+				}
+			}
+			owners[parent] = refs
+		}
+	}
+	writeOwner := func(name string, value ast.Expr) {
+		prefix := ""
+		for owner, shared := range sharedOwners {
+			if shared != 0 && len(owner) > len(prefix) && (strings.HasPrefix(name, owner+".") || strings.HasPrefix(name, owner+"[")) {
+				prefix = owner
+			}
+		}
+		if prefix == "" {
+			bindOwner(name, value)
+			return
+		}
+		var targets []string
+		for owner, shared := range sharedOwners {
+			if shared == sharedOwners[prefix] {
+				targets = append(targets, owner+strings.TrimPrefix(name, prefix))
+			}
+		}
+		for _, target := range targets {
+			bindOwner(target, value)
+		}
+	}
+	assignOwner := func(name string, value ast.Expr) {
+		group := sharedOwners[name]
+		if group == 0 || referenceOwners[name] {
+			bindOwner(name, value)
+			return
+		}
+		// Replacing a value whose address was taken also updates pointers to
+		// that storage. Copying the value itself still makes an independent owner.
+		targets := make(map[string]bool)
+		for owner, shared := range sharedOwners {
+			if shared == group {
+				targets[owner] = referenceOwners[owner]
+			}
+		}
+		for target, reference := range targets {
+			bindOwner(target, value)
+			sharedOwners[target] = group
+			referenceOwners[target] = reference
 		}
 	}
 	ast.Inspect(body, func(n ast.Node) bool {
@@ -1109,11 +1392,35 @@ func (a *Analyzer) checkUnclosedResource(body *ast.BlockStmt, path string) {
 			}
 		case *ast.AssignStmt:
 			for i, lhs := range node.Lhs {
+				if i < len(node.Rhs) {
+					if id, ok := lhs.(*ast.Ident); ok && id.Name != "_" {
+						if node.Tok != token.DEFINE && !locals[id.Obj] {
+							if id.Obj == nil {
+								mark(node.Rhs[i])
+							} else if _, parameter := id.Obj.Decl.(*ast.Field); !parameter {
+								mark(node.Rhs[i])
+							}
+						}
+						if _, isOpen := openVars[bindingKey(id)]; !isOpen {
+							assignOwner(bindingKey(id), node.Rhs[i])
+						}
+					}
+				}
 				if _, isField := lhs.(*ast.SelectorExpr); isField && i < len(node.Rhs) {
-					mark(node.Rhs[i])
+					if root := resourceOwnerRoot(lhs); root != nil && locals[root.Obj] {
+						writeOwner(resourceOwnerPath(lhs, bindingKey), node.Rhs[i])
+					} else {
+						mark(node.Rhs[i])
+					}
 				}
 				if _, isIndex := lhs.(*ast.IndexExpr); isIndex && i < len(node.Rhs) {
 					mark(node.Rhs[i])
+				}
+			}
+		case *ast.ValueSpec:
+			for i, name := range node.Names {
+				if name.Name != "_" && i < len(node.Values) {
+					bindOwner(bindingKey(name), node.Values[i])
 				}
 			}
 		}
@@ -1126,6 +1433,70 @@ func (a *Analyzer) checkUnclosedResource(body *ast.BlockStmt, path string) {
 				"Resource opened but never closed, returned or stored. This may leak file or connection handles.")
 		}
 	}
+}
+
+func resourceOwnerPath(expr ast.Expr, bindingKey func(*ast.Ident) string) string {
+	switch node := expr.(type) {
+	case *ast.Ident:
+		return bindingKey(node)
+	case *ast.ParenExpr:
+		return resourceOwnerPath(node.X, bindingKey)
+	case *ast.StarExpr:
+		return resourceOwnerPath(node.X, bindingKey)
+	case *ast.UnaryExpr:
+		if node.Op == token.AND {
+			return resourceOwnerPath(node.X, bindingKey)
+		}
+	case *ast.SelectorExpr:
+		if base := resourceOwnerPath(node.X, bindingKey); base != "" {
+			return base + "." + node.Sel.Name
+		}
+	case *ast.IndexExpr:
+		if index, ok := node.Index.(*ast.BasicLit); ok && index.Kind == token.INT {
+			if base := resourceOwnerPath(node.X, bindingKey); base != "" {
+				return base + "[" + index.Value + "]"
+			}
+		}
+	}
+	return ""
+}
+
+func resourceOwnerParent(name string) string {
+	index := strings.LastIndexAny(name, ".[")
+	if index < 0 {
+		return ""
+	}
+	return name[:index]
+}
+
+func resourceOwnerRoot(expr ast.Expr) *ast.Ident {
+	switch node := expr.(type) {
+	case *ast.Ident:
+		return node
+	case *ast.SelectorExpr:
+		return resourceOwnerRoot(node.X)
+	case *ast.IndexExpr:
+		return resourceOwnerRoot(node.X)
+	}
+	return nil
+}
+
+func compositeFieldNames(literal *ast.CompositeLit) []string {
+	typeNode := literal.Type
+	if id, ok := typeNode.(*ast.Ident); ok && id.Obj != nil {
+		if spec, ok := id.Obj.Decl.(*ast.TypeSpec); ok {
+			typeNode = spec.Type
+		}
+	}
+	var names []string
+	if structure, ok := typeNode.(*ast.StructType); ok {
+		for _, field := range structure.Fields.List {
+			for _, name := range field.Names {
+				names = append(names, name.Name)
+			}
+		}
+	}
+	return names
 }
 
 func (a *Analyzer) checkArchiveExtraction(body *ast.BlockStmt, path string) {

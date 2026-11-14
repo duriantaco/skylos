@@ -195,6 +195,7 @@ class JavaCore:
         self.defs: list[Definition] = []
         self.refs: list[tuple[str, str]] = []
         self.imports: list[dict[str, str | int]] = []
+        self._receiver_type_cache: dict[int, dict[str, set[str]]] = {}
         self.lang: Language | None = JAVA_LANG
 
         if self.lang:
@@ -569,6 +570,11 @@ class JavaCore:
                                 seen.add(key)
                                 self.refs.append((qualified_ref, self.file_path))
                             continue
+                        declared_type = self._declared_receiver_type(object_node)
+                        if declared_type:
+                            self.refs.append(
+                                (f"{declared_type}.{name}", self.file_path)
+                            )
 
                 key = (name, node.start_byte)
                 if key not in seen:
@@ -606,6 +612,90 @@ class JavaCore:
             if key not in seen:
                 seen.add(key)
                 self.refs.append((name, self.file_path))
+
+    _RECEIVER_SCOPES = frozenset(
+        {
+            "method_declaration",
+            "constructor_declaration",
+            "lambda_expression",
+            "class_declaration",
+            "enum_declaration",
+            "record_declaration",
+            "interface_declaration",
+        }
+    )
+    _RECEIVER_DECLARATIONS = frozenset(
+        {
+            "local_variable_declaration",
+            "field_declaration",
+            "formal_parameter",
+            "enhanced_for_statement",
+            "resource",
+        }
+    )
+
+    def _declared_receiver_type(self, object_node) -> str | None:
+        if object_node.type != "identifier":
+            return None
+        name = self._get_text(object_node)
+        scope = object_node.parent
+        while scope is not None:
+            if scope.type in self._RECEIVER_SCOPES:
+                types = self._declared_types_in_scope(scope).get(name)
+                if types:
+                    if len(types) == 1:
+                        return next(iter(types))
+                    return None
+            scope = scope.parent
+        return None
+
+    def _declared_types_in_scope(self, scope) -> dict[str, set[str]]:
+        cache = self._receiver_type_cache
+        if scope.id in cache:
+            return cache[scope.id]
+        declared: dict[str, set[str]] = {}
+        stack = list(scope.children)
+        while stack:
+            node = stack.pop()
+            if node.type in self._RECEIVER_SCOPES:
+                continue
+            if node.type in self._RECEIVER_DECLARATIONS:
+                type_name = self._simple_type_name(node.child_by_field_name("type"))
+                for variable in self._declared_variable_names(node):
+                    declared.setdefault(variable, set()).add(type_name or "")
+            stack.extend(node.children)
+        resolved = {
+            variable: types for variable, types in declared.items() if "" not in types
+        }
+        cache[scope.id] = resolved
+        return resolved
+
+    def _declared_variable_names(self, node) -> list[str]:
+        name_node = node.child_by_field_name("name")
+        if name_node is not None and name_node.type == "identifier":
+            return [self._get_text(name_node)]
+        names = []
+        for child in node.children:
+            if child.type != "variable_declarator":
+                continue
+            declarator_name = child.child_by_field_name("name")
+            if declarator_name is not None and declarator_name.type == "identifier":
+                names.append(self._get_text(declarator_name))
+        return names
+
+    def _simple_type_name(self, type_node) -> str | None:
+        if type_node is None:
+            return None
+        if type_node.type == "generic_type":
+            type_node = type_node.children[0]
+        if type_node.type == "scoped_type_identifier":
+            type_node = type_node.children[-1]
+        if type_node.type != "type_identifier":
+            return None
+        text = self._get_text(type_node)
+        if text == "var":
+            return None
+        return text
 
     def _scan_reflection_refs(self) -> None:
         if self.root_node is None:

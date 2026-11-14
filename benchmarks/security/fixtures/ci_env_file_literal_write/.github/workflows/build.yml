@@ -1,0 +1,10 @@
+name: build
+on: [pull_request]
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'C:\Tools\Assembler' >> "$GITHUB_PATH"
+      - run: echo /opt/tool/bin >> $GITHUB_PATH
+      - run: echo "TOOL_MODE=release" >> "$GITHUB_ENV"

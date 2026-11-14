@@ -101,6 +101,7 @@ class _Checker(ast.NodeVisitor):
             tree, module_name_for(file_path)
         )
         self.unsafe_import_roots, self.unknown_global_write = _unsafe_import_roots(tree)
+        self.fixed_tables = None
         self.imported_roots: dict[str, str] = {}
         self.cached_functions: set[int] = set()
         self.tree = tree
@@ -1005,16 +1006,19 @@ class _Checker(ast.NodeVisitor):
             if self.sources is None:
                 self.sources = UntrustedSourceIndex(self.tree, follow_local_calls=True)
             arg = node.args[0] if node.args else kwargs.get("name")
-            evidence = self.sources.evidence(
-                self.functions[-1] if self.functions else None,
-                arg,
-                sink="dynamic Python import",
-                missing_guard="select a module from a fixed allowlist",
-                evidence_kind="python_dynamic_import_taint",
-            )
-            if evidence is None and self.functions:
+            fixed = self._selects_from_fixed_table(arg)
+            evidence = None
+            if not fixed:
+                evidence = self.sources.evidence(
+                    self.functions[-1] if self.functions else None,
+                    arg,
+                    sink="dynamic Python import",
+                    missing_guard="select a module from a fixed allowlist",
+                    evidence_kind="python_dynamic_import_taint",
+                )
+            if evidence is None and self.functions and not fixed:
                 evidence = self._module_import_source(self.functions[-1], arg)
-            if evidence is None and self.project_root is not None:
+            if evidence is None and self.project_root is not None and not fixed:
                 from .project_security_sources import ProjectSources
 
                 if self.project_sources is None:
@@ -1155,6 +1159,79 @@ class _Checker(ast.NodeVisitor):
         ):
             self._invalidate_mapping(node.func.value)
             self.bindings[node.func.value.id] = None
+
+    def _fixed_string_tables(self):
+        """Module-level ``NAME = {...: "text"}`` tables that are bound once and
+        only ever read by key, membership or ``get``/``keys``/``values``/``items``."""
+        if self.fixed_tables is not None:
+            return self.fixed_tables
+        candidates = {}
+        for statement in self.tree.body:
+            target = None
+            if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+                target = statement.targets[0]
+            elif isinstance(statement, ast.AnnAssign):
+                target = statement.target
+            value = getattr(statement, "value", None)
+            if (
+                isinstance(target, ast.Name)
+                and isinstance(value, ast.Dict)
+                and value.values
+                and all(key is not None for key in value.keys)
+                and all(
+                    isinstance(item, ast.Constant) and isinstance(item.value, str)
+                    for item in value.values
+                )
+            ):
+                candidates[target.id] = target
+        parents = {}
+        for parent in ast.walk(self.tree):
+            for child in ast.iter_child_nodes(parent):
+                parents[id(child)] = parent
+        for node in ast.walk(self.tree):
+            if isinstance(node, (ast.Global, ast.Nonlocal)):
+                for name in node.names:
+                    candidates.pop(name, None)
+            elif isinstance(node, ast.arg):
+                candidates.pop(node.arg, None)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    candidates.pop(alias.asname or alias.name.split(".")[0], None)
+            elif isinstance(node, (*_FUNCTIONS, ast.ClassDef)):
+                candidates.pop(node.name, None)
+            elif isinstance(node, ast.Name) and node.id in candidates:
+                if candidates[node.id] is node:
+                    continue
+                parent = parents.get(id(node))
+                read = isinstance(node.ctx, ast.Load) and (
+                    (
+                        isinstance(parent, ast.Subscript)
+                        and parent.value is node
+                        and isinstance(parent.ctx, ast.Load)
+                    )
+                    or (
+                        isinstance(parent, ast.Compare)
+                        and node in parent.comparators
+                        and all(isinstance(op, (ast.In, ast.NotIn)) for op in parent.ops)
+                    )
+                    or (
+                        isinstance(parent, ast.Attribute)
+                        and parent.attr in {"get", "keys", "values", "items"}
+                    )
+                )
+                if not read:
+                    del candidates[node.id]
+        if self.unknown_global_write or self.dynamic_namespace:
+            candidates = {}
+        self.fixed_tables = frozenset(candidates) - frozenset(self.rebound_globals)
+        return self.fixed_tables
+
+    def _selects_from_fixed_table(self, expression):
+        return (
+            isinstance(expression, ast.Subscript)
+            and isinstance(expression.value, ast.Name)
+            and expression.value.id in self._fixed_string_tables()
+        )
 
     def _module_import_source(self, function, expression):
         if not isinstance(expression, ast.Name):

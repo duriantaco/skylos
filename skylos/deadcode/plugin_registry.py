@@ -13,6 +13,13 @@ from skylos.deadcode.python_ast import ParsedPythonFile
 _PLUGIN_TARGET_RE = re.compile(
     r"^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*):([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)$"
 )
+_DOTTED_TARGET_RE = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$")
+_SPLIT_SEPARATORS = {
+    "split": {":"},
+    "rsplit": {":", "."},
+    "partition": {":"},
+    "rpartition": {":", "."},
+}
 _ENTRY_ROOT_NAMES = {"main", "cli", "run", "app", "create_app"}
 _ROOT_EVIDENCE_MARKERS = {
     "framework_root",
@@ -225,11 +232,14 @@ def _literal_strings(node: ast.AST) -> set[str]:
 
 
 def _plugin_target_qname(value: str) -> str:
-    match = _PLUGIN_TARGET_RE.match(value.strip())
-    if not match:
-        return ""
-    module_name, member_name = match.groups()
-    return f"{module_name}.{member_name}"
+    text = value.strip()
+    match = _PLUGIN_TARGET_RE.match(text)
+    if match:
+        module_name, member_name = match.groups()
+        return f"{module_name}.{member_name}"
+    if _DOTTED_TARGET_RE.match(text):
+        return text
+    return ""
 
 
 # Live registry use detection
@@ -312,9 +322,11 @@ def _registries_used_by_importlib_getattr_flow(
 ) -> set[str]:
     path_vars: dict[str, str] = {}
     split_vars: dict[tuple[str, str], str] = {}
+    module_vars: dict[str, str] = {}
     live_registries: set[str] = set()
+    nodes = list(ast.walk(function))
 
-    for child in ast.walk(function):
+    for child in nodes:
         for target, value in _iter_simple_assignments(child):
             registry_qname = _registry_qname_from_lookup(
                 value,
@@ -324,16 +336,22 @@ def _registries_used_by_importlib_getattr_flow(
             )
             if registry_qname in registry_qnames:
                 path_vars[_target_name(target)] = registry_qname
+            imported_from = _import_module_arg_name(value, import_ctx)
+            if imported_from and _target_name(target):
+                module_vars[_target_name(target)] = imported_from
 
+    for child in nodes:
+        for target, value in _iter_simple_assignments(child):
             split_source = _split_source_var(value)
             if split_source and split_source in path_vars:
-                module_var, func_var = _split_assignment_pair(target)
+                module_var, func_var = _split_assignment_pair(target, value)
                 if module_var and func_var:
                     split_vars[(module_var, func_var)] = path_vars[split_source]
 
+    for child in nodes:
         if not isinstance(child, ast.Call):
             continue
-        split_key = _importlib_getattr_split_key(child, import_ctx)
+        split_key = _importlib_getattr_split_key(child, import_ctx, module_vars)
         if split_key and split_key in split_vars:
             live_registries.add(split_vars[split_key])
 
@@ -486,10 +504,21 @@ def _target_name(target: ast.AST) -> str:
     return ""
 
 
-def _split_assignment_pair(target: ast.AST) -> tuple[str | None, str | None]:
-    if not isinstance(target, (ast.Tuple, ast.List)) or len(target.elts) != 2:
+def _split_assignment_pair(
+    target: ast.AST, value: ast.AST | None = None
+) -> tuple[str | None, str | None]:
+    if not isinstance(target, (ast.Tuple, ast.List)):
         return None, None
-    left, right = target.elts
+    expected = 2
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Attribute)
+        and value.func.attr in {"partition", "rpartition"}
+    ):
+        expected = 3
+    if len(target.elts) != expected:
+        return None, None
+    left, right = target.elts[0], target.elts[-1]
     if isinstance(left, ast.Name) and isinstance(right, ast.Name):
         return left.id, right.id
     return None, None
@@ -499,18 +528,34 @@ def _split_source_var(value: ast.AST | None) -> str:
     if not isinstance(value, ast.Call):
         return ""
     func = value.func
-    if not (
-        isinstance(func, ast.Attribute)
-        and func.attr == "split"
-        and isinstance(func.value, ast.Name)
-    ):
+    if not isinstance(func, ast.Attribute) or func.attr not in _SPLIT_SEPARATORS:
         return ""
     if not value.args:
         return ""
     sep = value.args[0]
-    if isinstance(sep, ast.Constant) and sep.value == ":":
-        return func.value.id
+    if (
+        not isinstance(sep, ast.Constant)
+        or sep.value not in _SPLIT_SEPARATORS[func.attr]
+    ):
+        return ""
+    if func.attr == "rsplit" and not _splits_once(value):
+        return ""
+    source = func.value
+    while isinstance(source, ast.Call) and isinstance(source.func, ast.Attribute):
+        source = source.func.value
+    if isinstance(source, ast.Name):
+        return source.id
     return ""
+
+
+def _splits_once(call: ast.Call) -> bool:
+    limit = None
+    if len(call.args) > 1:
+        limit = call.args[1]
+    for keyword in call.keywords:
+        if keyword.arg == "maxsplit":
+            limit = keyword.value
+    return isinstance(limit, ast.Constant) and limit.value == 1
 
 
 def _registry_qname_from_lookup(
@@ -575,6 +620,7 @@ def _attribute_parts(expr: ast.AST) -> list[str]:
 def _importlib_getattr_split_key(
     node: ast.Call,
     import_ctx: _ImportContext,
+    module_vars: dict[str, str] | None = None,
 ) -> tuple[str, str] | None:
     if not (isinstance(node.func, ast.Name) and node.func.id == "getattr"):
         return None
@@ -584,6 +630,8 @@ def _importlib_getattr_split_key(
     if not isinstance(func_arg, ast.Name):
         return None
     module_var = _import_module_arg_name(module_call, import_ctx)
+    if not module_var and module_vars and isinstance(module_call, ast.Name):
+        module_var = module_vars.get(module_call.id, "")
     if not module_var:
         return None
     return module_var, func_arg.id

@@ -98,3 +98,31 @@ def local_binding_reads(file_path: str, name: str, line: int):
             and isinstance(node.ctx, ast.Load)
         }
     )
+
+
+_NAMESPACE_READERS = {"globals", "vars", "locals", "eval", "exec", "__import__"}
+
+
+def module_binding_reads(file_path: str, name: str):
+    """Line numbers where a module reads its own global ``name`` by bare name.
+
+    Returns None when the module cannot be parsed or reads its namespace
+    dynamically, so the caller keeps its wider search.
+    """
+    tree = parsed_python_source(file_path)
+    if tree is None or not name:
+        return None
+    reads = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "__dict__":
+            return None
+        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            if node.target.id == name:
+                reads.add(node.lineno)
+        if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+            continue
+        if node.id in _NAMESPACE_READERS:
+            return None
+        if node.id == name:
+            reads.add(node.lineno)
+    return sorted(reads)

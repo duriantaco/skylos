@@ -1,0 +1,9 @@
+{
+  "name": "fx",
+  "private": true,
+  "description": "see src/described.ts",
+  "main": "src/index.ts",
+  "files": ["dist", "templates/run_tool.js", "templates/shipped/"],
+  "host": {"extensions": ["./src/ext/plugin.ts"]},
+  "eslintIgnore": ["src/ignored.ts"]
+}

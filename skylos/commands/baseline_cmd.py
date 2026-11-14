@@ -7,7 +7,7 @@ from rich.markup import escape
 
 from skylos import analyze as run_analyze
 from skylos.config import load_config, resolve_config_file_path
-from skylos.constants import parse_exclude_folders
+from skylos.constants import parse_config_exclude_folders, parse_exclude_folders
 from skylos.core.baseline import save_baseline
 from skylos.core.cli_shared import quiet_analyzer_logs
 from skylos.core.gatekeeper import _analysis_incomplete_reasons
@@ -71,6 +71,11 @@ def run_baseline_command(argv: list[str]) -> int:
         "enable_secrets": True,
         "enable_ai_defects": True,
         "exclude_folders": sorted(exclude_folders),
+        "config_exclude_folders": sorted(
+            parse_config_exclude_folders(
+                config_exclude_folders=project_config.get("exclude")
+            )
+        ),
     }
     if config_file is not None:
         analyze_kwargs["config_file"] = config_file

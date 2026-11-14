@@ -1,0 +1,6 @@
+{
+  "compilerOptions": {"strict": true},
+  // compile roots
+  "include": ["src/index.ts", "tools/tester.ts", "extra/**/*.ts"],
+  "exclude": ["tools/excluded.ts"]
+}

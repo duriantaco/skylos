@@ -828,6 +828,7 @@ def test_cli_guardrail_baseline_subcommand_writes_baseline(tmp_path, monkeypatch
         enable_secrets=True,
         enable_ai_defects=True,
         exclude_folders=sorted(cli.DEFAULT_EXCLUDE_FOLDERS),
+        config_exclude_folders=sorted(cli.DEFAULT_EXCLUDE_FOLDERS - {".vscode"}),
     )
     mock_save.assert_called_once()
 
@@ -875,6 +876,7 @@ def test_baseline_command_defaults_to_current_directory():
         enable_secrets=True,
         enable_ai_defects=True,
         exclude_folders=sorted(cli.DEFAULT_EXCLUDE_FOLDERS),
+        config_exclude_folders=sorted(cli.DEFAULT_EXCLUDE_FOLDERS - {".vscode"}),
     )
 
 

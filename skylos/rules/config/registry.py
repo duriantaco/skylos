@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from skylos.core.file_discovery import should_exclude_path
 from skylos.core.git_context import GitContext
 from skylos.rules.config.agent_publish import scan_agent_publish
 from skylos.rules.config.cicd.github_actions import (
@@ -202,4 +203,29 @@ def scan_config_files(
             ),
         )
     )
-    return findings
+    return _outside_excluded_folders(findings, root, exclude_folders)
+
+
+def _outside_excluded_folders(
+    findings: list[dict[str, Any]],
+    root: str | Path,
+    exclude_folders: list[str] | tuple[str, ...] | None,
+) -> list[dict[str, Any]]:
+    if not exclude_folders:
+        return findings
+    base = Path(root).resolve()
+    if base.is_file():
+        base = base.parent
+    kept = []
+    for finding in findings:
+        raw = finding.get("file")
+        if not raw:
+            kept.append(finding)
+            continue
+        path = Path(raw)
+        if not path.is_absolute():
+            path = base / path
+        if should_exclude_path(path, base, exclude_folders):
+            continue
+        kept.append(finding)
+    return kept

@@ -105,9 +105,43 @@ deserialization/path traversal with matched safe guards.
 
 ### Additional paired controls
 
-The default suite has 200 cases and 212 expectations: 111 required findings
-and 101 absence controls. All 139 cases from the preceding stage retain their
+The default suite has 275 cases and 288 expectations: 148 required findings
+and 140 absence controls. All 200 cases from the preceding stage retain their
 original objects and labels.
+
+The latest 38 cases (`fixtures/noise_*`) pair a claim that had no source with
+a lookalike that must still report, across Rust, TS/JS and Python: a Rust
+path helper whose callers are all fixed, test-only code (also a file its
+parent declares as `#[cfg(test)] mod`) and Cargo build scripts against a command-line caller, `cfg(not(test))` code, a non-Cargo
+variable and an axum request extractor; `axios.isAxiosError`, `?url` asset
+imports and device or browser packages against a real `axios.get`, an
+ordinary import, a package that also declares a server runtime, a Next.js
+route handler and a Node script; a presence check against `undefined`
+against a webhook token compare; a `dict.get` lookup against a receiver that
+can be an HTTP client; a masked key against the raw key printed beside it; a
+fixed import table against a fallback to the raw argument; a `pathlib` model
+path against a string that may be a Hub id; a full-match filename check
+against a prefix match and a search; and an MCP server whose bind address is
+set in the constructor. Each expectation was written before its fix and
+replayed against the unchanged baseline (21 of 38 pass there). They are
+regression cases, not independent application holdouts.
+
+Another 25 cases come from a labelled scan of eight open-source Go, Rust,
+Java and Kotlin repositories. Five Go cases pair cookie flags computed at run
+time with an absent or literal-false flag, and a file handle stored in a
+composite literal with one whose literal copies only its name. Fourteen Java
+cases give `SKY-D216`, `SKY-D229`, `SKY-D230` and `SKY-D239` their missing safe
+counterparts and add both polarities for `SKY-D204`, `SKY-D207`, `SKY-D211`,
+`SKY-D212` and `SKY-D226`. Six Kotlin cases add both polarities for Ktor
+redirects (`SKY-D230`), HTML responses (`SKY-D226`) and Java deserialization
+(`SKY-D204`). The Java and Kotlin cases already pass on the preceding
+analyzer: they are corpus coverage, not a detection change.
+
+Twelve further cases (six pairs) cover reader text and encodings that are not
+credentials (a newer Bun lockfile, a message sentence, base64 of printable
+text), scripts and invisible characters shown as data, and literal or
+non-credential values in GitHub Actions, each beside a value that must still
+report.
 
 The latest 61 cases add Python captured-callable and provider controls,
 TS/JS shell-enabled `spawn`/`execFile` variants and Go sanitizer/guard pairs.

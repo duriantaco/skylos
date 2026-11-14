@@ -203,9 +203,11 @@ how_skylos_decides:
     constant) and the cookie is then passed to `addCookie()`, it reports
     HIGH. `setHttpOnly` is not checked.
   - >-
-    Go: the Go engine reports a `net/http` `Cookie{...}` literal that does
-    not write both `HttpOnly: true` and `Secure: true`. It reports it as
-    SKY-G221, shown as SKY-D252.
+    Go: the Go engine reports a `net/http` `Cookie{...}` literal when either
+    `HttpOnly` or `Secure` is absent or proven false, including bounded
+    boolean expressions and immutable constant aliases. A present flag whose
+    runtime value is unknown is not judged. It reports SKY-G221, shown as
+    SKY-D252.
 
 source_refs:
   - path: skylos/rules/danger/danger_web/cookie_flags.py

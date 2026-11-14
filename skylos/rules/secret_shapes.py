@@ -11,6 +11,8 @@ these predicates.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 from functools import lru_cache
 
@@ -54,6 +56,12 @@ _SHELL_REFERENCE_RE = re.compile(
 )
 # {{ .Values.token }}, {{ vault_token | b64encode }}: no quoted literal inside.
 _TEMPLATE_REFERENCE_RE = re.compile(r"\{\{\s*[A-Za-z_.$][\w.\-\[\] |]*\}\}")
+_DOTTED_REFERENCE_RE = re.compile(
+    r"\$\{[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+\}"
+)
+_RESOLVER_REFERENCE_RE = re.compile(
+    r"\$\{[A-Za-z][A-Za-z0-9_.]*:\s*[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\s*\}"
+)
 _ENV_NAME_WORD_RE = re.compile(r"[A-Z]+[0-9]{0,2}|[0-9]{1,4}")
 _ENV_NAME_LIST_RE = re.compile(
     r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+(?:\s*[,; ]\s*[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)*"
@@ -78,7 +86,8 @@ _PLAIN_HTTP_URL_RE = re.compile(
 
 def is_reference(value: str) -> bool:
     """The whole value names a secret kept elsewhere: ``${{ secrets.X }}``,
-    ``${X}``, ``$X``, ``%X%`` or a ``{{ template.var }}``."""
+    ``${X}``, ``$X``, ``%X%``, a ``{{ template.var }}``, a dotted
+    ``${var.x}`` or a resolver over a variable name (``${oc.env:X_KEY}``)."""
     stripped = value.strip()
     return any(
         pattern.fullmatch(stripped)
@@ -86,6 +95,8 @@ def is_reference(value: str) -> bool:
             _ACTIONS_EXPRESSION_RE,
             _SHELL_REFERENCE_RE,
             _TEMPLATE_REFERENCE_RE,
+            _DOTTED_REFERENCE_RE,
+            _RESOLVER_REFERENCE_RE,
         )
     )
 
@@ -221,6 +232,117 @@ def names_its_key(key: str, value: str) -> bool:
     return len(normalized) >= 8 and normalized == _normalized_name(
         key.rsplit(".", 1)[-1]
     )
+
+
+_NAME_WORD_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+_NAMESPACED_NAME_RE = re.compile(r"[A-Za-z@][A-Za-z0-9_.:/@-]*")
+_MAX_NAMESPACE_WORDS = 2
+_MAX_NAMESPACE_WORD_LENGTH = 12
+
+
+def _name_words(text: str) -> list[str]:
+    return [word.lower() for word in _NAME_WORD_RE.findall(text)]
+
+
+def restates_its_key(key: str, value: str) -> bool:
+    """``LOGIN_CREDENTIALS: "shop_login_credentials"``: a storage or field
+    name built from the key's own words behind a short namespace. A value
+    with any other word, digit run or random part is not one."""
+    stripped = value.strip()
+    if not _NAMESPACED_NAME_RE.fullmatch(stripped):
+        return False
+    key_words = _name_words(key.rsplit(".", 1)[-1])
+    value_words = _name_words(stripped)
+    extra = len(value_words) - len(key_words)
+    if len(key_words) < 2 or not 0 <= extra <= _MAX_NAMESPACE_WORDS:
+        return False
+    if value_words[extra:] != key_words:
+        return False
+    return all(
+        word.isalpha() and len(word) <= _MAX_NAMESPACE_WORD_LENGTH
+        for word in value_words[:extra]
+    )
+
+
+_SENTENCE_WORD_RE = re.compile(
+    r"[(\[\"'“‘«¿¡]*[^\W\d_]+(?:['’-][^\W\d_]+)*[)\]\"'”’».,:;!?…]*"
+)
+_SENTENCE_SEPARATOR_RE = re.compile(r"[:;,.!?…–—/&-]|[0-9]{1,4}[.,:;]?")
+_SENTENCE_END = ".:!?…。"
+_SENTENCE_OPENERS = " ([\"'“‘«¿¡"
+_SENTENCE_CLOSERS = " )]\"'”’»"
+_SENTENCE_CLAUSE_RE = re.compile(r"[,;:.!?] ")
+_MAX_SENTENCE_WORD_LENGTH = 24
+
+
+def is_message_sentence(value: str) -> bool:
+    """``"Sign-in failed: wrong user name or password."``: text written for
+    a reader. It starts with a capital letter, is made only of natural words
+    (letters, with inner hyphens or apostrophes), has three or more of them
+    and carries sentence punctuation. A lowercase run of words can be a
+    generated passphrase and is not a sentence here; a word with digits or
+    symbols in it is not a natural word."""
+    words = 0
+    for token in value.split():
+        if _SENTENCE_WORD_RE.fullmatch(token):
+            if len(token) > _MAX_SENTENCE_WORD_LENGTH:
+                return False
+            words += 1
+        elif not _SENTENCE_SEPARATOR_RE.fullmatch(token):
+            return False
+    if words < 3:
+        return False
+    if not value.lstrip(_SENTENCE_OPENERS)[:1].isupper():
+        return False
+    ending = value.rstrip(_SENTENCE_CLOSERS)[-1:]
+    return ending in _SENTENCE_END or bool(_SENTENCE_CLAUSE_RE.search(value))
+
+
+_PROSE_ATTRIBUTE_WORDS = frozenset(
+    {
+        "caption",
+        "comment",
+        "desc",
+        "description",
+        "error",
+        "help",
+        "hint",
+        "instructions",
+        "label",
+        "message",
+        "msg",
+        "note",
+        "notes",
+        "placeholder",
+        "prompt",
+        "title",
+        "tooltip",
+    }
+)
+_MIXED_WORD_MIN_LENGTH = 12
+
+
+def describes_its_key(key: str, value: str) -> bool:
+    """``api_key_description: "Acme API key for image search"``: the key's
+    last word says the value is text about the credential, and the value is
+    prose. A word that mixes letters and digits at password length keeps the
+    finding, as does a value without spaces."""
+    words = [word for word in re.split(r"[_-]+", key.rsplit(".", 1)[-1].lower()) if word]
+    if len(words) < 2 or words[-1] not in _PROSE_ATTRIBUTE_WORDS:
+        return False
+    if not is_prose(value):
+        return False
+    for token in value.split():
+        if "://" in token:
+            continue
+        core = token.strip("()[]{}<>\"'.,:;!?")
+        if (
+            len(core) >= _MIXED_WORD_MIN_LENGTH
+            and any(char.isdigit() for char in core)
+            and any(char.isalpha() for char in core)
+        ):
+            return False
+    return True
 
 
 _CREDENTIAL_LABEL_WORDS = frozenset(
@@ -504,11 +626,77 @@ def covered(spans: list[tuple[int, int]], start: int, end: int) -> bool:
     return any(left <= start and end <= right for left, right in spans)
 
 
+_BASE64_TOKEN_RE = re.compile(r"[A-Za-z0-9+/_-]+={0,2}")
+_BASE64_URL_TO_STANDARD = str.maketrans("-_", "+/")
+_PLAIN_TEXT_BYTES = frozenset((*range(0x20, 0x7F), 0x09, 0x0A, 0x0D))
+_MIN_PLAIN_TEXT_BYTES = 12
+_MIN_CONTINUATION_LENGTH = 32
+_USER_PASSWORD_PAIR_RE = re.compile(r"[A-Za-z0-9._%+@-]{1,64}:(?!//)\S{4,}")
+
+
+def _decode_plain_text(body: str) -> str | None:
+    usable = body
+    if len(usable) % 4 == 1:
+        usable = usable[:-1]
+    usable += "=" * (-len(usable) % 4)
+    try:
+        decoded = base64.b64decode(usable, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if len(decoded) < _MIN_PLAIN_TEXT_BYTES or not _PLAIN_TEXT_BYTES.issuperset(decoded):
+        return None
+    return decoded.decode("ascii")
+
+
+def decoded_plain_text(token: str) -> str | None:
+    """The printable ASCII text a base64 token encodes, or None.
+
+    Random bytes decode to printable ASCII with probability 0.37 per byte,
+    so twelve or more printable bytes mean the token encodes text and its
+    entropy comes from the encoding. A long token may be the continuation of
+    a literal split across lines; it then starts inside a 4-character group,
+    so the three other alignments are tried as well."""
+    if not _BASE64_TOKEN_RE.fullmatch(token):
+        return None
+    body = token.rstrip("=").translate(_BASE64_URL_TO_STANDARD)
+    offsets = (0,)
+    if len(body) >= _MIN_CONTINUATION_LENGTH:
+        offsets = (0, 1, 2, 3)
+    for offset in offsets:
+        text = _decode_plain_text(body[offset:])
+        if text is not None:
+            return text
+    return None
+
+
+def is_user_password_pair(text: str) -> bool:
+    """``user:password``: the payload of an HTTP Basic credential."""
+    return bool(_USER_PASSWORD_PAIR_RE.fullmatch(text.strip()))
+
+
+_CLASS_ATTRIBUTE_RE = re.compile(
+    r"""(?<![A-Za-z0-9_-])class(?:Name)?\s*=\s*(?P<q>["'])(?P<names>[^"'<>{}$]*)(?P=q)"""
+)
+
+
+def in_class_attribute(line: str, start: int, end: int) -> bool:
+    """One of the names in an HTML/JSX ``class="..."`` attribute: a CSS
+    class, whose hash suffix is a build artifact."""
+    return any(
+        match.start("names") <= start and end <= match.end("names")
+        for match in _CLASS_ATTRIBUTE_RE.finditer(line)
+    )
+
+
 # ---------------------------------------------------------------------------
 # URLs and file paths
 # ---------------------------------------------------------------------------
 
-_URI_RE = re.compile(r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{1,30}://[^\s'\"`<>]+")
+_URI_RE = re.compile(
+    r"(?:(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{1,30}://"
+    r"|(?<=[\"'`])//(?=[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?:[/?#:\"'`]|$)))"
+    r"[^\s'\"`<>]+"
+)
 # Query/fragment parameters that carry a credential: api_key, access_token,
 # client_secret, password, X-Amz-Signature, sig (Azure SAS), auth.
 _SECRET_PARAM_NAME_RE = re.compile(
@@ -565,13 +753,19 @@ def in_url_credential(line: str, start: int, end: int) -> bool:
     return _uri_part_carries_credential(uri, start - uri_start, end - uri_start)
 
 
+def _authority_start(uri: str) -> int:
+    if uri.startswith("//"):
+        return 2
+    return uri.index("://") + 3
+
+
 def is_public_url_value(value: str) -> bool:
-    """The whole value is a URL with no user info and no secret-named query
-    or fragment parameter."""
+    """The whole value is a URL (``scheme://`` or scheme-relative ``//host``)
+    with no user info and no secret-named query or fragment parameter."""
     text = value.strip()
-    if _URI_RE.fullmatch(text) is None:
+    if _URI_RE.fullmatch('"' + text, 1) is None:
         return False
-    authority_start = text.index("://") + 3
+    authority_start = _authority_start(text)
     authority_end = authority_start
     while authority_end < len(text) and text[authority_end] not in "/?#":
         authority_end += 1
@@ -592,7 +786,7 @@ def _uri_part_carries_credential(uri: str, start: int, end: int) -> bool:
     """Whether ``uri[start:end]`` is where a URL carries a credential: user
     info, the value of a secret-named parameter, or a path under a
     webhook/token-like host or segment."""
-    authority_start = uri.index("://") + 3
+    authority_start = _authority_start(uri)
     authority_end = authority_start
     while authority_end < len(uri) and uri[authority_end] not in "/?#":
         authority_end += 1

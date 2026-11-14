@@ -77,7 +77,7 @@ _FINDING_TITLES = (
     ("unused_classes", "Unused Classes"),
     ("unused_files", "Unused Files"),
     ("unused_fixtures", "Unused Fixtures"),
-    ("unused_exports", "Unused Exports"),
+    ("unused_exports", "Unnecessary Exports"),
 )
 
 

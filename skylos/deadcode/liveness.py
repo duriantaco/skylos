@@ -17,6 +17,9 @@ from skylos.deadcode.registration_liveness import (
     find_patched_instance_methods,
     find_registered_decorator_targets,
 )
+from skylos.deadcode._registration_external import find_external_decorator_targets
+from skylos.deadcode.class_protocol_liveness import find_class_protocol_members
+from skylos.deadcode.exec_namespace_liveness import find_exec_namespace_targets
 from skylos.deadcode.string_references import (
     find_dynamic_module_attribute_targets,
 )
@@ -158,6 +161,8 @@ def apply_dead_code_liveness(
 
     _rescue_optional_import_fallbacks(definitions, refs, report)
     _rescue_protocol_overrides(classes, class_methods, report)
+    for target in find_class_protocol_members(definitions, parsed_files):
+        _mark(target, "protocol_override", report)
     _rescue_registration_methods(classes, class_methods, report)
     for target, reason in find_framework_entrypoint_targets(
         definitions, parsed_files, root, exclude_folders=exclude_folders
@@ -195,6 +200,10 @@ def apply_dead_code_liveness(
         definitions, parsed_files, module_names
     ):
         _mark(target, "registered_by_decorator", report)
+    for target in find_external_decorator_targets(
+        definitions, parsed_files, module_names, root
+    ):
+        _mark(target, "registered_by_decorator", report)
     for target in find_method_registered_targets(definitions, parsed_files):
         _mark(target, "registered_by_decorator", report)
     for target in find_patched_instance_methods(definitions, parsed_files):
@@ -208,6 +217,10 @@ def apply_dead_code_liveness(
         definitions, classes, class_methods, parsed_files, report
     )
     record_finite_dispatch_references(definitions, parsed_files)
+    for target in find_exec_namespace_targets(
+        definitions, parsed_files, module_names, root
+    ):
+        _mark(target, "dynamic_module_attribute", report)
     return report
 
 

@@ -90,6 +90,15 @@ class PythonImportRoots:
             return None
         return top.parent
 
+    def _root_source_alias(self, path: Path) -> tuple[Path, str] | None:
+        parts = _module_parts(path, self.root)
+        if not parts or len(parts) < 2 or parts[0] not in _SOURCE_ROOTS:
+            return None
+        source_root = self.root / parts[0]
+        if self._is_package(source_root):
+            return source_root, ".".join(parts[1:])
+        return self.root, ".".join(parts)
+
     def _project_root(self, path: Path) -> Path | None:
         for directory in self._inner_directories(path):
             if self._is_package(directory):
@@ -122,6 +131,9 @@ class PythonImportRoots:
                 parts = parts[1:]
             if parts:
                 found.append((project_root, ".".join(parts)))
+        source_alias = self._root_source_alias(path)
+        if source_alias is not None:
+            found.append(source_alias)
         result = tuple(dict.fromkeys(found))
         self._aliases[path] = result
         return result

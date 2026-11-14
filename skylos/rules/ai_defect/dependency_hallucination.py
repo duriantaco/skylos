@@ -4665,6 +4665,107 @@ def _is_build_backend_import(file_path, mod):
     return mod in _SETUP_BUILD_MODULES and Path(str(file_path)).name == "setup.py"
 
 
+def _build_script_context(root, directory, cache):
+    """What the ``setup.py`` in ``directory`` imports, and the distributions
+    its ``pyproject.toml`` lists in ``[build-system].requires`` (PEP 518)."""
+    if directory not in cache:
+        helpers = frozenset()
+        requires = frozenset()
+        setup_source = read_project_text_no_symlink(
+            root,
+            directory / "setup.py",
+            max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+            encoding="utf-8",
+            errors="ignore",
+        )
+        if setup_source is not None:
+            helpers = frozenset(_extract_imports(setup_source))
+            pyproject = read_project_text_no_symlink(
+                root,
+                directory / "pyproject.toml",
+                max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+                encoding="utf-8",
+                errors="ignore",
+            )
+            requires = _build_system_requires(pyproject)
+        cache[directory] = (helpers, requires)
+    return cache[directory]
+
+
+def _build_system_requires(pyproject_text):
+    if pyproject_text is None:
+        return frozenset()
+    try:
+        data = tomllib.loads(pyproject_text)
+    except (tomllib.TOMLDecodeError, RecursionError, ValueError):
+        return frozenset()
+    build_system = data.get("build-system")
+    if not isinstance(build_system, dict):
+        return frozenset()
+    requires = build_system.get("requires")
+    if not isinstance(requires, list):
+        return frozenset()
+    return frozenset(_dependency_names(requires))
+
+
+def _is_build_time_import(root, importer, mod, ctx, cache):
+    """An import in ``setup.py``, or in a module beside it that it imports,
+    of the build backend or of a ``[build-system].requires`` distribution:
+    available when the project is built, not a runtime dependency."""
+    if importer is None:
+        return False
+    helpers, requires = _build_script_context(root, importer.parent, cache)
+    if importer.name != "setup.py" and importer.stem not in helpers:
+        return False
+    if mod in _SETUP_BUILD_MODULES and (importer.name == "setup.py" or helpers):
+        return True
+    names = {_normalize_name(mod)}
+    mapped = ctx["import_to_dist"].get(mod)
+    if mapped:
+        names.add(_normalize_name(mapped))
+    names.update(ctx["installed_mapping"].get(mod, ()))
+    return bool(names & requires)
+
+
+_INLINE_SCRIPT_BLOCK_RE = re.compile(
+    r"(?m)^# /// script[ \t]*\r?\n(?P<content>(?:^#(?: .*)?\r?\n)+?)^# ///[ \t]*$"
+)
+
+
+_INLINE_COMMENT_PREFIX_RE = re.compile(r"^# ?")
+
+
+def _inline_script_dependencies(src):
+    """Distributions a script declares for itself in a PEP 723 block
+    (``# /// script`` ... ``# ///``), or None without a valid block."""
+    match = _INLINE_SCRIPT_BLOCK_RE.search(src)
+    if match is None:
+        return None
+    content = "".join(
+        _INLINE_COMMENT_PREFIX_RE.sub("", line, count=1)
+        for line in match.group("content").splitlines(keepends=True)
+    )
+    try:
+        data = tomllib.loads(content)
+    except (tomllib.TOMLDecodeError, RecursionError, ValueError):
+        return None
+    dependencies = data.get("dependencies")
+    if not isinstance(dependencies, list):
+        return None
+    return frozenset(_dependency_names(dependencies))
+
+
+def _declared_inline(mod, inline_dependencies, ctx):
+    if not inline_dependencies:
+        return False
+    names = {_normalize_name(mod)}
+    mapped = ctx["import_to_dist"].get(mod)
+    if mapped:
+        names.add(_normalize_name(mapped))
+    names.update(ctx["installed_mapping"].get(mod, ()))
+    return bool(names & inline_dependencies)
+
+
 class DependencyImportFindings(list):
     """Findings plus the imports that could not be verified (not findings).
 
@@ -4694,6 +4795,7 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
         root: (ctx["declared_specs"], ctx["project_names"], ctx["provider_unknown"])
     }
     environment_scope_cache = {}
+    build_script_cache = {}
 
     for file_path in py_files:
         declared_deps, manifest_context = _dependency_scope_for_file(
@@ -4728,6 +4830,7 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
             continue
         direct_script = _has_direct_script_evidence(src)
         local_fallbacks = _local_import_fallbacks(src, ctx, importer)
+        inline_dependencies = _inline_script_dependencies(src)
         analysis = _SourceImportAnalysis(
             src,
             submodules=submodules,
@@ -4737,6 +4840,8 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
         )
         for mod in sorted(analysis.modules):
             if _is_build_backend_import(file_path, mod):
+                continue
+            if _is_build_time_import(root, importer, mod, ctx, build_script_cache):
                 continue
             required_paths, from_imports = analysis.requirements(mod)
             template = _classify_import(
@@ -4756,6 +4861,10 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
             ):
                 continue
             if _is_repository_module_import(template, mod, ctx, src):
+                continue
+            if template.get("rule_id") == RULE_ID_UNDECLARED and _declared_inline(
+                mod, inline_dependencies, ctx
+            ):
                 continue
 
             finding = dict(template)

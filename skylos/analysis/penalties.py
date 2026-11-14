@@ -1680,7 +1680,7 @@ def _check_data_model_fields(def_obj, analyzer, framework):
             ):
                 return _suppress(def_obj)
             cls_node = getattr(framework, "class_defs", {}).get(cls_simple)
-            if cls_node is not None:
+            if isinstance(cls_node, ast.ClassDef):
                 for base in cls_node.bases:
                     if isinstance(base, ast.Name) and base.id.lower().endswith(
                         ("schema", "model")

@@ -22,6 +22,7 @@ from skylos.cli_core.main_parser import (
     parse_main_cli_args,
 )
 from skylos.constants import (
+    parse_config_exclude_folders,
     parse_exclude_folders,
     DEFAULT_EXCLUDE_FOLDERS,
     get_non_library_dir_kind,
@@ -5120,6 +5121,11 @@ def main() -> None:
                             "enable_quality": True,
                             "enable_ai_defects": True,
                             "exclude_folders": list(exclude_folders),
+                            "config_exclude_folders": sorted(
+                                parse_config_exclude_folders(
+                                    config_exclude_folders=project_config.get("exclude")
+                                )
+                            ),
                             "changed_files": analysis_targets,
                             "grep_verify": False,
                             "progress_callback": _update_precommit_progress,
