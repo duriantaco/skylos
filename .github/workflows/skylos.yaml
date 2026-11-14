@@ -66,7 +66,7 @@ jobs:
           # 5.6.0 has unbounded callable-flow analysis. Use the reviewed
           # performance/security fixes until they are released on PyPI.
           # Keep this immutable and independent of the PR's code or metadata.
-          uv pip install --python .venv/bin/python "skylos @ git+https://github.com/duriantaco/skylos.git@05f6ae47c5f3638461554b8d778b6c11c53a4f49"
+          uv pip install --python .venv/bin/python "skylos @ git+https://github.com/duriantaco/skylos.git@91546cb597054b1ee9a1f1b2d88e84a2577b8154"
           .venv/bin/skylos --version
 
       - name: Use repo Skylos on trusted refs

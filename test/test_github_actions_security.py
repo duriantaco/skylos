@@ -683,7 +683,7 @@ def test_skylos_pr_workflow_uses_trusted_scanner_package():
     assert pr_install_step["if"] == "github.event_name == 'pull_request'"
     assert (
         '"skylos @ git+https://github.com/duriantaco/skylos.git@'
-        '05f6ae47c5f3638461554b8d778b6c11c53a4f49"' in pr_install_step["run"]
+        '91546cb597054b1ee9a1f1b2d88e84a2577b8154"' in pr_install_step["run"]
     )
     assert "${{" not in pr_install_step["run"]
     assert "-e ." not in pr_install_step["run"]
