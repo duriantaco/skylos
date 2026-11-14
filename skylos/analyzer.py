@@ -5869,6 +5869,10 @@ class Skylos:
                         candidate_path = Path(candidate)
                         if not candidate_path.is_absolute():
                             candidate_path = injection_root / candidate_path
+                        if should_exclude_path(
+                            candidate_path, injection_root, exclude_folders
+                        ):
+                            return False
                         rel_hint = None
                         try:
                             rel_hint = candidate_path.relative_to(injection_root)
