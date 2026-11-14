@@ -138,7 +138,12 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
         ),
         "HIGH",
     ),
-    (re.compile(r"send\s+(all\s+)?(data|content|file|code)\s+to\b", re.I), "HIGH"),
+    (
+        re.compile(
+            rf"{_CLAUSE_START}send\s+(all\s+)?(data|content|file|code)\s+to\b", re.I
+        ),
+        "HIGH",
+    ),
 ]
 
 _HTML_COMMENT_RE = re.compile(r"<!--(.*?)-->", re.S)
