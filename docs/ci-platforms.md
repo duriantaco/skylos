@@ -85,6 +85,10 @@ In a shallow clone that command includes `--unshallow`.
 See [Your first Skylos-gated pull request](./first-gated-pr.md). The workflow
 also posts pull request comments, adds annotations and uploads to Skylos Cloud.
 
+The repository's composite [GitHub Action](../action.yml) runs repository pull
+request gates, or an optional digest-pinned container-image gate (see
+[Scan an image with the GitHub Action](./container-image-reports.md#scan-an-image-with-the-github-action)).
+
 ## GitLab CI
 
 The `skylos` job runs in merge request pipelines with `GIT_DEPTH: "0"`, fetches

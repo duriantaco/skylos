@@ -1478,10 +1478,7 @@ def _register_tools(mcp):
         when required), and sends affected code to that provider. It does not
         run your tests.
         Review every change and run trusted tests before keeping it.
-        Costs 10 Skylos credits per real run, charged when the run starts
-        generating fixes, right before the first model call; a run that fails
-        after that is still charged. Dry runs, refused calls and runs with
-        nothing to fix are free. Scan tools cost no credits."""
+        Costs no Skylos credits. Scan tools cost no credits either."""
         access_err = _access_error("remediate")
         if access_err:
             return access_err

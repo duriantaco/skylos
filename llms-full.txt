@@ -20,16 +20,16 @@ Skylos is an open-source (Apache-2.0), local-first static analysis CLI and pull-
 - Languages: 12 supported (Python, TypeScript/JavaScript, Java, Go, PHP, Rust, Ruby, Dart, C#, C++, Kotlin, Shell); dead code in 11 of them and security checks in 11, deepest in Python, TypeScript/JavaScript and Java. Go dead-code and security checks need the `skylos-go` engine, which the PyPI wheels for Linux, macOS and Windows include from 4.50, as do the Docker image and GitHub Action.
 - AI coding agents: `skylos done --base main` flags deleted or skipped tests, loosened CI test steps, silenced lint or type checks, and test-only special cases, and advises on code the branch left without callers. It runs pytest itself; other runners need a `test_command`. `skylos agent install-hooks` checks Claude Code, Codex and Cursor edits locally.
 - CI: `skylos cicd init` writes a GitHub Actions pull-request gate; add `--no-upload` without Skylos Cloud.
-- MCP: `skylos mcp`. Without `SKYLOS_API_KEY` only the dead-code `analyze` tool works (five calls per rolling 24 hours); every other tool needs a free Skylos API key. MCP scans (analyze, security, quality, secrets, provenance) cost no credits. `remediate` costs 10 credits per real run, charged when it starts generating fixes; dry runs (the default), refused calls and runs with nothing to fix are free.
+- MCP: `skylos mcp`. Without `SKYLOS_API_KEY` only the dead-code `analyze` tool works (five calls per rolling 24 hours); every other tool needs a free Skylos API key. MCP tools, including `remediate`, cost no credits.
 - Pricing: the CLI is free. Skylos Cloud has a Free plan for one project and a Workspace plan: $3,000 a year for any number of people and up to 10 projects. Growth is $12,000 a year, with up to 50 projects and single sign-on. Your first workspace gets a 14-day Workspace trial with 50 credits, no card needed. Plans renew each year until you turn renewal off on Billing. Credit packs (from $9 for 50 credits) pay for AI actions and add credits only. There are no seats. Prices are in USD, plus sales tax or VAT. Credits never expire.
 - Interfaces: CLI, GitHub Action, MCP server, VS Code extension.
 
 ## Best repo entry points
 
-- README overview: https://github.com/duriantaco/skylos#what-is-skylos
-- Start in 60 seconds: https://github.com/duriantaco/skylos#start-in-60-seconds
-- Language support: https://github.com/duriantaco/skylos#language-support
-- FAQ: https://github.com/duriantaco/skylos#common-questions
+- README overview: https://github.com/duriantaco/skylos
+- Quick start: https://github.com/duriantaco/skylos#quick-start
+- Language support: https://docs.skylos.dev/language-support
+- FAQ: https://docs.skylos.dev/faq
 - Done gate (`skylos done`): https://github.com/duriantaco/skylos/blob/main/docs/done-gate.md
 - Agent-loop hooks: https://github.com/duriantaco/skylos/blob/main/docs/agent-hooks.md
 - Your first gated pull request: https://github.com/duriantaco/skylos/blob/main/docs/first-gated-pr.md

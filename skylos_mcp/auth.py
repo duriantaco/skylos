@@ -308,8 +308,7 @@ def deduct_credits(tool_name: str) -> tuple[bool, str]:
 
     # Every plan goes through Skylos Cloud's credit check, Enterprise included:
     # Enterprise no longer has unlimited credits (5,000 a year are included).
-    # The scan tools cost 0 credits there, so they still run; remediate is
-    # charged like on any plan.
+    # Skylos Cloud sets the cost; the scan tools and remediate cost 0 credits.
     try:
         import requests
 

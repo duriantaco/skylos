@@ -68,6 +68,6 @@ run one AI pass on its own.
 
 ## What is sent where
 
-See [What Leaves Your Machine](../README.md#what-leaves-your-machine).
+See [What Leaves Your Machine](./privacy-and-network.md).
 `--ai-review` sends code to your model provider (and to Jev when its key is
 set), never to Skylos Cloud unless you upload.
