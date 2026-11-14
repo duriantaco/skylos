@@ -1,5 +1,6 @@
+# seed-base.mjs joins these short parts to create the synthetic credentials.
 fragments:
-  DEMO_STRIPE_KEY: ["sk_live_", "51HandbookDemo0nlyQx7Lm2Vt9RbKc4Zp"]
+  DEMO_STRIPE_KEY: ["sk_live_", "51HandbookDemo0nly", "Qx7Lm2Vt9RbKc4Zp"]
   DEMO_AWS_KEY: ["AKIA", "HANDBOOKDEMO7QX2"]
 
 repos:
