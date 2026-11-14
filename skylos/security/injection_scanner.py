@@ -50,6 +50,11 @@ _CLAUSE_START = (
     r"|\b(?:please|then|now|also|just|always|must|should|shall|will|can|could"
     r"|would|may|might|to|you|(?<!input\s)and)\s+)"
 )
+_OUTSIDE_ADDRESS = (
+    r"(?:\[[^\]\n]*\]\(\s*)?<?"
+    r"(?:[a-z][a-z0-9+.-]*://|mailto:|www\.|[\w.+-]+@[\w-]+(?:\.[\w-]+)+"
+    r"|\d{1,3}(?:\.\d{1,3}){3}\b)"
+)
 _SKIP_DIRECTIVE_RE = re.compile(
     r"skip\s+(security|analysis|review|scanning|checks?)\b", re.I
 )
@@ -140,7 +145,9 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     ),
     (
         re.compile(
-            rf"{_CLAUSE_START}send\s+(all\s+)?(data|content|file|code)\s+to\b", re.I
+            rf"{_CLAUSE_START}send\s+(all\s+)?(data|content|file|code)\s+to\b"
+            rf"|\bsend\s+(all\s+)?(data|content|file|code)\s+to\s+{_OUTSIDE_ADDRESS}",
+            re.I,
         ),
         "HIGH",
     ),
