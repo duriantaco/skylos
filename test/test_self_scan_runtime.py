@@ -223,7 +223,9 @@ def test_actual_isolated_entry_preserves_security_flags_and_diff_scope(
     expected.extend(["--json", "-o", "scan report.json"])
     assert invocation["args"] == expected
     assert invocation["isolated"] == 1
-    assert Path(invocation["provider"]).is_relative_to(installed_scanner[2])
+    assert Path(invocation["provider"]).samefile(
+        installed_scanner[2] / "skylos" / "entry.py"
+    )
     assert not (tmp_path / "hostile-imported").exists()
     assert json.loads((tmp_path / "timer.json").read_text()) == {
         "delay": 300,
