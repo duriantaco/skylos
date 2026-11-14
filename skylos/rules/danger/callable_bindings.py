@@ -42,13 +42,20 @@ class _CallableFlow(ValueFlow):
         )
 
     def _bind(self, name, labels):
+        self._tick(len(labels))
         super()._bind(name, labels)
         self.bindings.setdefault(name, []).append((self.position, frozenset(labels)))
 
+    def _weak(self, name, labels):
+        self._tick(len(labels))
+        super()._weak(name, labels)
+
     def _expression(self, node, value):
         if isinstance(node, ast.Attribute):
+            receivers = value(node.value)
+            self._tick(len(receivers))
             labels = set()
-            for label in value(node.value):
+            for label in receivers:
                 if label in {_UNKNOWN, _LOCAL}:
                     labels.add(label)
                 else:
