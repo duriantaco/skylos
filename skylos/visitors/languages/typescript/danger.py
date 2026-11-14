@@ -3910,11 +3910,15 @@ def _check_archive_extraction_path_traversal(
     source_text = source_bytes.decode("utf-8", errors="replace")
     if not any(hint in source_text for hint in _ARCHIVE_LIBRARY_HINTS):
         return
+    file_lines = source_text.splitlines()
 
-    for scope_lines, start_line in _iter_archive_scopes(root_node, source_text):
+    for scope_lines, start_line, scope_node in _iter_archive_scopes(
+        root_node, source_text
+    ):
         scope_text = "\n".join(scope_lines)
         if not scope_text.strip():
             continue
+        scope_parameter_names = _archive_scope_parameter_names(scope_node, source_bytes)
         tainted_names: set[str] = set()
         latest_assignment: dict[str, int] = {}
         events: list[tuple[int, int, object]] = []
@@ -3953,6 +3957,9 @@ def _check_archive_extraction_path_traversal(
                 used_names,
                 direct_entry,
                 line_offset - guard_start,
+                file_lines,
+                scope_lines,
+                scope_parameter_names,
             ):
                 continue
 
@@ -3977,7 +3984,9 @@ def _iter_nodes(root_node):
         stack.extend(reversed(node.children))
 
 
-def _iter_archive_scopes(root_node, source_text: str) -> list[tuple[list[str], int]]:
+def _iter_archive_scopes(
+    root_node, source_text: str
+) -> list[tuple[list[str], int, object]]:
     all_lines = source_text.splitlines()
     scopes = [root_node]
     scopes.extend(
@@ -3985,7 +3994,34 @@ def _iter_archive_scopes(root_node, source_text: str) -> list[tuple[list[str], i
         for node in _iter_nodes(root_node)
         if node.type in _ARCHIVE_SCOPE_NODE_TYPES
     )
-    return [_scope_lines_without_nested_scopes(scope, all_lines) for scope in scopes]
+    return [
+        (*_scope_lines_without_nested_scopes(scope, all_lines), scope)
+        for scope in scopes
+    ]
+
+
+def _archive_scope_parameter_names(scope_node, source_bytes: bytes) -> set[str]:
+    """The parameter names the scope declares. Their value comes from the
+    caller, so a file-level constant of the same spelling says nothing."""
+    names: set[str] = set()
+
+    def text_of(node) -> str:
+        return source_bytes[node.start_byte : node.end_byte].decode(
+            "utf-8", errors="replace"
+        )
+
+    pending = [scope_node]
+    while pending:
+        node = pending.pop()
+        if node is not scope_node and node.type in _ARCHIVE_SCOPE_NODE_TYPES:
+            continue
+        if node.type in ("required_parameter", "optional_parameter"):
+            pattern = node.child_by_field_name("pattern")
+            if pattern is not None and pattern.type == "identifier":
+                names.add(text_of(pattern))
+            continue
+        pending.extend(node.children)
+    return names
 
 
 def _archive_guard_block_contains_sink(
@@ -4029,8 +4065,9 @@ _SEPARATOR_MEMBER = re.compile(r"^(?:path\.)?sep$")
 _PATH_JOIN_CALL = re.compile(r"^path\.(?:join|normalize)\((.*)\)$", re.S)
 
 
-def _call_argument_texts(line: str, token: str) -> list[str]:
-    """The argument text of each ``token(...)`` call on the line."""
+def _call_argument_texts(line: str, token: str) -> tuple[list[str], bool]:
+    """The argument text of each ``token(...)`` call in ``line``, and whether
+    every call closed inside it."""
     found = []
     start = line.find(token)
     while start != -1:
@@ -4052,10 +4089,10 @@ def _call_argument_texts(line: str, token: str) -> list[str]:
                 depth -= 1
             index += 1
         if depth:
-            return []
+            return found, False
         found.append(line[start + len(token) : index - 1].strip())
         start = line.find(token, index)
-    return found
+    return found, True
 
 
 def _split_last_plus(text: str) -> str | None:
@@ -4096,7 +4133,35 @@ def _declared_value(name: str, lines: list[str]) -> str | None:
     return values[0]
 
 
-def _text_ends_with_separator(text: str, lines: list[str], depth: int = 0) -> bool:
+def _prefix_name_value(
+    name: str,
+    lines: list[str],
+    scope_lines: list[str] | None,
+    parameter_names: set[str] | None,
+    fallback_lines: list[str] | None,
+) -> str | None:
+    """The value a prefix name stands for, from the narrowest place that
+    declares it: the guard window, then its own scope, then the file. A
+    parameter may hold anything, so it never falls back to the file."""
+    value = _declared_value(name, lines)
+    if value is None and scope_lines is not None:
+        value = _declared_value(name, scope_lines)
+    if value is None:
+        if parameter_names is not None and name in parameter_names:
+            return None
+        if fallback_lines is not None:
+            value = _declared_value(name, fallback_lines)
+    return value
+
+
+def _text_ends_with_separator(
+    text: str,
+    lines: list[str],
+    depth: int = 0,
+    fallback_lines: list[str] | None = None,
+    scope_lines: list[str] | None = None,
+    parameter_names: set[str] | None = None,
+) -> bool:
     text = text.strip()
     if depth > 6 or not text:
         return False
@@ -4107,22 +4172,32 @@ def _text_ends_with_separator(text: str, lines: list[str], depth: int = 0) -> bo
     if text.startswith("`") and text.endswith("`"):
         if text.endswith("}`"):
             inner = text[text.rfind("${") + 2 : -2]
-            return _text_ends_with_separator(inner, lines, depth + 1)
+            return _text_ends_with_separator(
+                inner, lines, depth + 1, fallback_lines, scope_lines, parameter_names
+            )
         return text.endswith(("/`", "\\\\`"))
     right = _split_last_plus(text)
     if right is not None:
-        return _text_ends_with_separator(right, lines, depth + 1)
+        return _text_ends_with_separator(
+            right, lines, depth + 1, fallback_lines, scope_lines, parameter_names
+        )
     if _SEPARATOR_MEMBER.match(text):
         return True
     joined = _PATH_JOIN_CALL.match(text)
     if joined:
         arguments = [part.strip() for part in joined.group(1).split(",")]
-        return _text_ends_with_separator(arguments[-1], lines, depth + 1)
+        return _text_ends_with_separator(
+            arguments[-1], lines, depth + 1, fallback_lines, scope_lines, parameter_names
+        )
     if re.fullmatch(r"[A-Za-z_$][\w$]*", text):
-        value = _declared_value(text, lines)
+        value = _prefix_name_value(
+            text, lines, scope_lines, parameter_names, fallback_lines
+        )
         if value is None:
             return False
-        return _text_ends_with_separator(value, lines, depth + 1)
+        return _text_ends_with_separator(
+            value, lines, depth + 1, fallback_lines, scope_lines, parameter_names
+        )
     return False
 
 
@@ -4133,22 +4208,73 @@ def _only_separator_text(text: str) -> bool:
     return bool(quoted) and quoted.group(quoted.lastindex).strip("/\\") == ""
 
 
-def _starts_with_separator_prefix(line: str, lines: list[str]) -> bool:
-    """Every ``startsWith`` prefix on the guard line ends at a separator:
+def _resolves_to_only_separator(
+    text: str,
+    lines: list[str],
+    scope_lines: list[str] | None,
+    parameter_names: set[str] | None,
+    fallback_lines: list[str] | None,
+    depth: int = 0,
+) -> bool:
+    """A name that resolves to nothing but separators proves no containment,
+    exactly like the literal it stands for."""
+    text = text.strip()
+    while depth <= 6 and re.fullmatch(r"[A-Za-z_$][\w$]*", text):
+        value = _prefix_name_value(
+            text, lines, scope_lines, parameter_names, fallback_lines
+        )
+        if value is None:
+            return False
+        text = value.strip()
+        depth += 1
+    return _only_separator_text(text)
+
+
+def _starts_with_separator_prefix(
+    line: str,
+    lines: list[str],
+    index: int = 0,
+    source_lines: list[str] | None = None,
+    scope_lines: list[str] | None = None,
+    parameter_names: set[str] | None = None,
+) -> tuple[bool, str]:
+    """Whether every ``startsWith`` prefix on the guard condition ends at a
+    separator, and the condition text read with its continuation lines.
     ``'/tmp/out2/x'.startsWith('/tmp/out')`` is true."""
-    arguments = _call_argument_texts(line, "startsWith(")
-    if not arguments:
-        return False
+    text = line
+    arguments, closed = _call_argument_texts(text, "startsWith(")
+    while not closed and index + 1 < len(lines) and text.count("\n") < 3:
+        index += 1
+        text += "\n" + lines[index]
+        arguments, closed = _call_argument_texts(text, "startsWith(")
+    if not closed or not arguments:
+        return False, text
     for argument in arguments:
         if _only_separator_text(argument):
-            return False
-        if not _text_ends_with_separator(argument, lines):
-            return False
-    return True
+            return False, text
+        if _resolves_to_only_separator(
+            argument, lines, scope_lines, parameter_names, source_lines
+        ):
+            return False, text
+        if not _text_ends_with_separator(
+            argument,
+            lines,
+            fallback_lines=source_lines,
+            scope_lines=scope_lines,
+            parameter_names=parameter_names,
+        ):
+            return False, text
+    return True, text
 
 
 def _archive_lines_have_guard(
-    lines: list[str], names: set[str], direct_entry: bool, sink_idx: int
+    lines: list[str],
+    names: set[str],
+    direct_entry: bool,
+    sink_idx: int,
+    source_lines: list[str] | None = None,
+    scope_lines: list[str] | None = None,
+    parameter_names: set[str] | None = None,
 ) -> bool:
     has_normalize = False
 
@@ -4168,31 +4294,31 @@ def _archive_lines_have_guard(
                 return True
         if "normalize(" in line:
             has_normalize = True
-        if (
-            has_normalize
-            and "if" in line
-            and "startsWith(" in line
-            and ("!" in line or "=== false" in line or "== false" in line)
-            and _starts_with_separator_prefix(line, lines)
-        ):
-            trailing = "\n".join(lines[idx : min(len(lines), idx + 4)])
-            if any(token in trailing for token in _ARCHIVE_CONTROL_FLOW_HINTS):
-                return True
-        if (
-            idx <= sink_idx
-            and has_normalize
-            and "if" in line
-            and "startsWith(" in line
-            and _starts_with_separator_prefix(line, lines)
-            and "!" not in line
-            and "=== false" not in line
-            and "== false" not in line
-            and (
-                _archive_guard_block_contains_sink(lines, idx, sink_idx)
-                or _archive_guard_without_braces_contains_sink(lines, idx, sink_idx)
+        if has_normalize and "if" in line and "startsWith(" in line:
+            prefixed, condition = _starts_with_separator_prefix(
+                line, lines, idx, source_lines, scope_lines, parameter_names
             )
-        ):
-            return True
+            # The polarity belongs to the whole condition: a guard that only
+            # says `=== false` on a continuation line is still inverted.
+            inverted = (
+                "!" in condition or "=== false" in condition or "== false" in condition
+            )
+            if prefixed and inverted:
+                trailing = "\n".join(lines[idx : min(len(lines), idx + 4)])
+                if any(token in trailing for token in _ARCHIVE_CONTROL_FLOW_HINTS):
+                    return True
+            if (
+                idx <= sink_idx
+                and prefixed
+                and not inverted
+                and (
+                    _archive_guard_block_contains_sink(lines, idx, sink_idx)
+                    or _archive_guard_without_braces_contains_sink(
+                        lines, idx, sink_idx
+                    )
+                )
+            ):
+                return True
 
     return False
 
