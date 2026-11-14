@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import unicodedata
 from pathlib import Path
 
 from skylos.deadcode.framework_liveness import (
@@ -375,10 +376,43 @@ def _project_may_register_converters(definitions, paths):
     for path in paths:
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
+        except FileNotFoundError:
+            # A missing candidate contains no source to analyze. Preserve the
+            # empty-scope fast path without parsing or building an index.
             continue
-        if "register_converter" in text:
+        except OSError:
+            # Failure to inspect a source is not proof that this pass is idle.
             return True
+        if "register_converter" not in text and (
+            text.isascii()
+            or "register_converter" not in unicodedata.normalize("NFKC", text)
+        ):
+            continue
+        # Only the few textual candidates need parsing. Examples in comments,
+        # docstrings and fixture strings do not call a registration provider.
+        # Parse original text so Python applies its own identifier semantics.
+        try:
+            tree = ast.parse(text)
+        except (SyntaxError, ValueError, RecursionError):
+            return True
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and node.id == "register_converter":
+                return True
+            if isinstance(node, ast.Attribute) and node.attr == "register_converter":
+                return True
+            if (
+                isinstance(node, ast.alias)
+                and node.name.rsplit(".", 1)[-1] == "register_converter"
+            ):
+                return True
+            # _qualified also supports literal subscript provider aliases,
+            # including the legacy *.register_converter shim allowance.
+            if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+                key = node.slice.value
+                if isinstance(key, str) and (
+                    key == "register_converter" or key.endswith(".register_converter")
+                ):
+                    return True
     return False
 
 
