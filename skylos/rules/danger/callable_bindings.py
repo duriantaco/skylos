@@ -10,7 +10,7 @@ from .import_proof import provider_is_unshadowed
 _UNKNOWN = "?"
 _LOCAL = "!local"
 _MEMBER = "$member:"
-_ROOTS = frozenset({"pickle", "cloudpickle", "os", "subprocess", "asyncio"})
+_ROOTS = frozenset({"pickle", "cloudpickle", "dill", "os", "subprocess", "asyncio"})
 _BUILTINS = frozenset({"eval", "exec"})
 _UNPICKLER_BASES = {
     "pickle.Unpickler": "pickle.Unpickler",
@@ -18,6 +18,51 @@ _UNPICKLER_BASES = {
     "dill.Unpickler": "dill.Unpickler",
 }
 _SCOPES = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+# A recovery flow retains only the native identities this index can report,
+# their import prefixes, and the two unknown/local markers. In particular it
+# cannot grow arbitrary receiver paths such as tensorlib.cat.axis.cat.axis.
+_RECOVERY_NAMES = frozenset(
+    {
+        _UNKNOWN,
+        _LOCAL,
+        *_BUILTINS,
+        *_ROOTS,
+        "builtins",
+        "_pickle",
+        "dill",
+        *_UNPICKLER_BASES,
+        *_UNPICKLER_BASES.values(),
+        "pickle.load",
+        "pickle.loads",
+        "pickle.Unpickler.load",
+        "cloudpickle.load",
+        "cloudpickle.loads",
+        "dill.load",
+        "dill.loads",
+        "os.system",
+        "os.popen",
+        "subprocess.getoutput",
+        "subprocess.getstatusoutput",
+        "asyncio.subprocess",
+        "asyncio.create_subprocess_shell",
+        "asyncio.subprocess.create_subprocess_shell",
+    }
+)
+
+
+def _recovery_labels(labels):
+    result = set()
+    for label in labels:
+        if label in _RECOVERY_NAMES:
+            result.add(label)
+        elif label.startswith("subprocess."):
+            # The calls rule treats every subprocess member with shell=True
+            # alike. Keep the exact member lookup before widening its value,
+            # so replacing run() does not hide an untouched Popen().
+            result.add("subprocess.*")
+        else:
+            result.add(_LOCAL)
+    return frozenset(result)
 
 
 def _tracked(name):
@@ -42,18 +87,25 @@ class _CallableFlow(ValueFlow):
         )
 
     def _bind(self, name, labels):
-        self._tick(len(labels))
+        if self.owner.recovery:
+            labels = _recovery_labels(labels)
+        else:
+            self._tick(len(labels))
         super()._bind(name, labels)
         self.bindings.setdefault(name, []).append((self.position, frozenset(labels)))
 
     def _weak(self, name, labels):
-        self._tick(len(labels))
+        if self.owner.recovery:
+            labels = _recovery_labels(labels)
+        else:
+            self._tick(len(labels))
         super()._weak(name, labels)
 
     def _expression(self, node, value):
         if isinstance(node, ast.Attribute):
             receivers = value(node.value)
-            self._tick(len(receivers))
+            if not self.owner.recovery:
+                self._tick(len(receivers))
             labels = set()
             for label in receivers:
                 if label in {_UNKNOWN, _LOCAL}:
@@ -63,7 +115,7 @@ class _CallableFlow(ValueFlow):
                     labels.update(
                         self._current(_MEMBER + name) if _tracked(name) else {name}
                     )
-            return labels
+            return _recovery_labels(labels) if self.owner.recovery else labels
         if isinstance(node, ast.Call):
             # Retain the existing Unpickler(...).load() constructor spelling.
             constructors = value(node.func)
@@ -148,13 +200,16 @@ class _CallableFlow(ValueFlow):
 
 
 class _CallableIndex:
-    def __init__(self, module):
+    def __init__(self, module, *, recovery=False):
         self.module = module
+        self.recovery = recovery
+        self.recovery_index = None
         self._ready = True
         self.parents = {}
         self.flows = {}
         self.watched = {}
         self.remaining = 200000
+        self.flow_work = 0
         self.reads = {}
         self.read_work = 0
         self.mutable_outer = set()
@@ -216,15 +271,16 @@ class _CallableIndex:
         # reaches this module through parent pointers. The flow caches hold
         # closures (flow.<locals>.outer), and every cache is keyed by id(),
         # so the unpickled index rebuilds them from the module on first use.
-        return {"module": self.module}
+        return {"module": self.module, "recovery": self.recovery}
 
     def __setstate__(self, state):
         self.module = state["module"]
+        self.recovery = state.get("recovery", False)
         self._ready = False
 
     def _ensure_ready(self):
         if not self._ready:
-            self.__init__(self.module)
+            self.__init__(self.module, recovery=self.recovery)
 
     def scope(self, node):
         self._ensure_ready()
@@ -294,6 +350,7 @@ class _CallableIndex:
 
         engine = _CallableFlow(scope, self, outer, min(60000, self.remaining))
         result = engine.run(self.watched.get(key, ()))
+        self.flow_work += engine._steps
         self.remaining -= engine._steps
         if result is not None:
             self.flows[key] = engine, result
@@ -311,6 +368,17 @@ class _CallableIndex:
             return (legacy,) if legacy else ()
         flow = self.flow(self.scope(node))
         if flow is None or not self.complete:
+            if (
+                not self.recovery
+                and self.complete
+                and (self.flow_work or self.remaining > 0)
+            ):
+                if self.recovery_index is None:
+                    self.recovery_index = _CallableIndex(self.module, recovery=True)
+                # Retry with a finite label domain and the same statement/
+                # expression budgets. Dropping the failed flow's identities
+                # outright would miss aliases such as invoke = eval.
+                return self.recovery_index.names(node, legacy, filename, project_root)
             return (legacy,) if legacy else ()
         _, results = flow
         labels = results.get(id(node.func))
@@ -344,7 +412,8 @@ def callable_names(node, legacy, module, filename=None, project_root=None):
     """Possible native identities, retaining legacy warnings for unknown flow.
 
     Names rebound to a known different provider or source-owned definition do
-    not keep an obsolete import identity. Work limits retain the legacy result.
+    not keep an obsolete import identity. Work limits retain the legacy result
+    and retry captured identities with a finite native-callable label domain.
     """
     if not isinstance(module, ast.Module):
         return (legacy,) if legacy else ()
