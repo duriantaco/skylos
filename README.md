@@ -320,8 +320,8 @@ says it uploads, such as `skylos cloud` or `--upload`. A saved login alone
 never uploads anything. There are no analytics.
 
 Dependency and package checks send package names and versions to OSV and the
-public registries, never source. LLM commands send code to the model provider
-you configure. Every request, its trigger and how to turn it off:
+public registries, never source. LLM commands share code only with the model
+provider you configure. Every request, its trigger and how to turn it off:
 [privacy and network](./docs/privacy-and-network.md).
 
 ## Results
