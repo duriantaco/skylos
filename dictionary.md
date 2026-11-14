@@ -2443,6 +2443,25 @@ from `format(String)`.
 | E003 | LOW | Unused TypeScript/JavaScript file | TS/JS |
 | E004 | LOW | Unnecessary export | TS/JS |
 
+SKY-E004 also reports an unused re-export (`type: "reexport"` in JSON): an
+entry such as `export { a } from "./a"`, `export type { T } from "./t"`, an
+imported binding listed in `export { x }`, or `export default x` where `x` is
+another export or an import, when no file in the project requests that name
+from the module, directly or through other re-exports, `export *` or a
+namespace import. Each entry is reported on its own line. Public modules
+stay silent: package.json `main`, `module`, `types`, `exports`, `bin` and
+`browser` targets (a build output maps to its source; when it cannot be
+mapped, every module with the same file name stays silent), tool, framework,
+test and script entries, files named by path elsewhere, `index`/`main`/`cli`
+files at a package root or its `src/`, and modules no file imports. A call
+with a literal relative path (`importActual("./x")`, a `createRequire`
+result) loads the whole module; mock registrations (`vi.mock`, `jest.mock`)
+do not. A computed `import()`/`require()` keeps every module under the
+directories its static path pieces name silent. A module whose name matches
+the last segment of an unresolved import stays silent, and the check is
+skipped for projects with Vue, Svelte, Astro, MDX or Marko files or inline
+module scripts in HTML, whose imports Skylos does not read.
+
 SKY-UC001 preserves a sole unreachable `yield`/`yield None` that establishes
 generator semantics in its enclosing function. Nested function/class bodies
 do not supply that marker. Redundant markers and later unreachable statements

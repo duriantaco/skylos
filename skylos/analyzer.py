@@ -2531,6 +2531,24 @@ class Skylos:
             workspace_inventory=workspace_inventory,
         )
 
+    def _find_unused_ts_reexports(
+        self, files, exclude_folders, workspace_inventory=None, analysis_errors=()
+    ):
+        from skylos.visitors.languages.typescript.unused_reexports import (
+            find_unused_ts_reexports,
+        )
+
+        return find_unused_ts_reexports(
+            files,
+            getattr(self, "_ts_all_raw_imports", {}),
+            project_root=str(self._project_root),
+            resolver=getattr(self, "_ts_source_resolver", None),
+            workspace_inventory=workspace_inventory,
+            exclude_folders=exclude_folders,
+            browser_entry_points=getattr(self, "_browser_script_entry_files", ()),
+            analysis_errors=analysis_errors,
+        )
+
     def _propagate_transitive_dead(self, analysis_errors=()):
         dead_set = set()
         dead_classes = set()
@@ -6646,6 +6664,7 @@ class Skylos:
                     if str(f).endswith(_TS_JS_SOURCE_EXTS)
                 },
             )
+        self._ts_all_raw_imports = ts_raw_imports
         self._build_ts_import_graph(
             ts_raw_imports, graph_resolver, credit_references=False
         )
@@ -6931,6 +6950,19 @@ class Skylos:
             files,
             exclude_folders,
             workspace_inventory=workspace_inventory,
+        )
+        _extend_unsuppressed_dead_file_findings(
+            self._find_unused_ts_reexports(
+                files,
+                exclude_folders,
+                workspace_inventory=workspace_inventory,
+                analysis_errors=analysis_errors,
+            ),
+            project_ignore=project_ignore,
+            per_file_ignore_lines=per_file_ignore_lines,
+            per_file_ignore_rules=per_file_ignore_rules,
+            unused_files=unused_ts_exports,
+            all_suppressed=all_suppressed,
         )
 
         if enable_quality:
