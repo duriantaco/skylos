@@ -681,7 +681,11 @@ def test_skylos_pr_workflow_uses_trusted_scanner_package():
         s for s in steps if s.get("name") == "Install trusted Skylos for pull requests"
     )
     assert pr_install_step["if"] == "github.event_name == 'pull_request'"
-    assert '"skylos>=4.7.0"' in pr_install_step["run"]
+    assert (
+        '"skylos @ git+https://github.com/duriantaco/skylos.git@'
+        '05f6ae47c5f3638461554b8d778b6c11c53a4f49"' in pr_install_step["run"]
+    )
+    assert "${{" not in pr_install_step["run"]
     assert "-e ." not in pr_install_step["run"]
 
     local_install_step = next(
