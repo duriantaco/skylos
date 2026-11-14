@@ -71,13 +71,15 @@ how_skylos_decides:
     of named secrets is not reported.
   - >-
     The trigger and the called workflow are not read. One MEDIUM finding per
-    job, on the first line of the file that contains the word `secrets`.
+    job, on that job's `secrets: inherit` line.
 
 source_refs:
   - path: skylos/rules/config/cicd/github_actions.py
     symbol: "def _scan_secrets_inherit("
   - path: test/test_github_actions_security.py
     symbol: "def test_github_actions_scanner_detects_extended_offline_risks("
+  - path: test/test_github_actions_secrets_inherit_line.py
+    symbol: "def test_each_job_is_reported_on_its_own_secrets_inherit_line("
 
 fix:
   explanation: >-
@@ -106,18 +108,13 @@ false_alarms_and_suppression:
       A reusable workflow in the same repository that really uses many
       secrets is reported the same as an outside one.
     - >-
-      The finding sits on the first line of the file that contains the word
-      `secrets`, which can be an earlier step that reads `secrets.NAME`, so a
-      marker next to `secrets: inherit` may not match it.
-    - >-
       Calls to a reusable workflow in another repository can also get
       SKY-D376, which reports secrets handed to outside code.
   suppress:
     - check: inline
       text: >-
         Put `# skylos: ignore[SKY-D297]` on the reported line or on the line
-        directly above it, one rule per marker. Check the reported line first:
-        it is not always the `secrets: inherit` line.
+        directly above it, one rule per marker.
       language: yaml
       code: |
         uses: ./.github/workflows/deploy.yml
